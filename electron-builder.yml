@@ -38,7 +38,7 @@ mac:
     - NSMicrophoneUsageDescription: Application requests access to the device's microphone.
     - NSDocumentsFolderUsageDescription: Application requests access to the user's Documents folder.
     - NSDownloadsFolderUsageDescription: Application requests access to the user's Downloads folder.
-  afterSign: scripts/notarize/notarize.ts
+  notarize: true
   hardenedRuntime: true
   x64ArchFiles: 'Contents/Resources/app.asar.unpacked/node_modules/**/*.{node,dylib}'
   target:
