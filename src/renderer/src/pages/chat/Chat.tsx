@@ -1,12 +1,12 @@
 import { ActiveModelChip } from '@components/common/active-model-chip/ActiveModelChip'
-import { UpdateCard } from '@components/common/update-card/UpdateCard'
 import { ApprovalCard } from '@components/common/approval-card/ApprovalCard'
 import { AttachmentList } from '@components/common/attachment-list/AttachmentList'
-import { ContextMeter } from '@components/common/context-meter/ContextMeter'
 import { AudioPlayer } from '@components/common/audio-player/AudioPlayer'
+import { ContextMeter } from '@components/common/context-meter/ContextMeter'
 import { ProviderErrorCard } from '@components/common/provider-error-card/ProviderErrorCard'
 import { ToolCard } from '@components/common/tool-card/ToolCard'
 import { TurnFooter } from '@components/common/turn-footer/TurnFooter'
+import { UpdateCard } from '@components/common/update-card/UpdateCard'
 import { CopyButton } from '@components/core/copy-button/CopyButton'
 import { Markdown } from '@components/core/markdown/Markdown'
 import {
@@ -138,7 +138,7 @@ export function Chat(): React.JSX.Element {
     model: string | null
   }>({ supportsVision: true, model: null })
   const [dragActive, setDragActive] = useState(false)
-  const [contextTokens, setContextTokens] = useState<number | null>(null)
+  const [, setContextTokens] = useState<number | null>(null)
   const [contextBudget, setContextBudget] = useState<number | null>(null)
   const [inputTokens, setInputTokens] = useState<number | null>(null)
   const [outputTokens, setOutputTokens] = useState<number | null>(null)
@@ -1644,7 +1644,10 @@ function StatusBar({
   ]
 
   return (
-    <code aria-hidden className="text-muted bg-surface border-border flex h-5 items-center gap-1.5 rounded border px-1.5 font-mono text-[10px]">
+    <code
+      aria-hidden
+      className="text-muted bg-surface border-border flex h-5 items-center gap-1.5 rounded border px-1.5 font-mono text-[10px]"
+    >
       {parts.map((part, i) => (
         <Fragment key={i}>
           {i > 0 && (

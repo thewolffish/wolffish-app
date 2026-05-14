@@ -2,7 +2,7 @@ import { Button } from '@components/core/button/Button'
 import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn/cn'
 import type { ComputerUseConfig, ComputerUsePermissions } from '@preload/index'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 const RESOLUTION_OPTIONS = [
@@ -17,16 +17,16 @@ export function ComputerUsePanel(): React.JSX.Element {
   const toast = useToast()
 
   const [config, setConfig] = useState<ComputerUseConfig | null>(null)
-  const savedConfig = useRef<ComputerUseConfig | null>(null)
+  const [savedConfig, setSavedConfig] = useState<ComputerUseConfig | null>(null)
   const [permissions, setPermissions] = useState<ComputerUsePermissions | null>(null)
   const [busy, setBusy] = useState(false)
   const loaded = config !== null
   const dirty =
     loaded &&
-    savedConfig.current !== null &&
-    (config!.enabled !== savedConfig.current.enabled ||
-      config!.screenshotMaxWidth !== savedConfig.current.screenshotMaxWidth ||
-      config!.screenshotFormat !== savedConfig.current.screenshotFormat)
+    savedConfig !== null &&
+    (config!.enabled !== savedConfig.enabled ||
+      config!.screenshotMaxWidth !== savedConfig.screenshotMaxWidth ||
+      config!.screenshotFormat !== savedConfig.screenshotFormat)
 
   useEffect(() => {
     let cancelled = false
@@ -37,7 +37,7 @@ export function ComputerUsePanel(): React.JSX.Element {
       ])
       if (cancelled) return
       setConfig(cfg)
-      savedConfig.current = cfg
+      setSavedConfig(cfg)
       setPermissions(perms)
     })()
     return () => {
@@ -51,10 +51,10 @@ export function ComputerUsePanel(): React.JSX.Element {
     try {
       const result = await window.api.computerUse.setConfig(config)
       setConfig(result.config)
-      savedConfig.current = result.config
-      toast.success(t('settings.services.computerUse.saveSuccess'))
+      setSavedConfig(result.config)
+      toast.show({ message: t('settings.services.computerUse.saveSuccess'), tone: 'success' })
     } catch {
-      toast.error(t('settings.services.computerUse.saveError'))
+      toast.show({ message: t('settings.services.computerUse.saveError'), tone: 'error' })
     } finally {
       setBusy(false)
     }
@@ -205,7 +205,9 @@ export function ComputerUsePanel(): React.JSX.Element {
                     </span>
                   </div>
                   <div className="flex items-center gap-2 text-sm">
-                    <span className={permissions.screenRecording ? 'text-green-500' : 'text-red-400'}>
+                    <span
+                      className={permissions.screenRecording ? 'text-green-500' : 'text-red-400'}
+                    >
                       {permissions.screenRecording ? '●' : '○'}
                     </span>
                     <span className="text-fg">
