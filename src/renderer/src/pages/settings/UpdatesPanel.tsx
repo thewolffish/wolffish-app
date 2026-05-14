@@ -75,12 +75,9 @@ export function UpdatesPanel(): React.JSX.Element {
     setInstallProgress(0)
     let progress = 0
     progressRef.current = setInterval(() => {
-      progress += Math.random() * 15 + 5
-      if (progress >= 90) {
-        progress = 90
-        if (progressRef.current) clearInterval(progressRef.current)
-      }
-      setInstallProgress(Math.min(progress, 90))
+      const remaining = 99 - progress
+      progress += remaining * (Math.random() * 0.08 + 0.02)
+      setInstallProgress(progress)
     }, 300)
     void window.api.updater.install()
   }, [])
