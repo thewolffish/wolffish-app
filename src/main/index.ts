@@ -1419,13 +1419,12 @@ app.whenReady().then(async () => {
     }
   )
 
-  ipcMain.handle('updater:install', async () => {
+  ipcMain.handle('updater:install', () => {
     if (is.dev) return
-    const { autoUpdater } = await import('electron-updater')
-    await shutdownGracefully()
-    await waitForBackgroundDrain()
+    const { autoUpdater } = require('electron-updater')
+    isShuttingDown = true
     quitInProgress = false
-    autoUpdater.quitAndInstall()
+    autoUpdater.quitAndInstall(false, true)
   })
 
   ipcMain.handle('updater:readChangelog', async (_event, locale?: string) => {
