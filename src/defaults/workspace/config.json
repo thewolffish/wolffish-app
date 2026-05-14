@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "launchAtStartup": true,
+  "llm": {
+    "local": {
+      "enabled": false,
+      "provider": "ollama",
+      "model": "",
+      "endpoint": "http://localhost:11434"
+    },
+    "providers": [],
+    "allowLocalFallback": false,
+    "restrictPowerfulModels": true
+  },
+  "safety": {
+    "bypassPermissions": false
+  },
+  "updates": {
+    "enabled": true
+  },
+  "showChatAnalytics": true,
+  "weekStartsOn": 1,
+  "locale": "en",
+  "theme": "system",
+  "onboardingCompleted": false
+}

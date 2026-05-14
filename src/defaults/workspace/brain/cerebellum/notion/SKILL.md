@@ -1,0 +1,430 @@
+---
+name: notion
+description: Read, create, update, and manage Notion pages, databases, and blocks
+triggers:
+  - notion
+  - workspace
+  - wiki
+  - knowledge base
+  - database
+  - page
+  - note
+  - document
+  - kanban
+  - board
+  - table
+  - task tracker
+  - project management
+tools:
+  - name: notion_search
+    description: Search across all pages and databases the integration can access. Returns page/database titles, IDs, and snippets.
+    parameters:
+      query:
+        type: string
+        description: Search query text
+      filter:
+        type: string
+        required: false
+        description: '"page" or "database" to limit result type. Omit for both.'
+      page_size:
+        type: number
+        required: false
+        description: Max results (default 10, max 100)
+      sort_direction:
+        type: string
+        required: false
+        description: '"ascending" or "descending" by last_edited_time. Default descending.'
+  - name: notion_read_page
+    description: Retrieve a page's properties (title, status, dates, relations, etc). Returns the full property object as raw Notion JSON.
+    parameters:
+      page_id:
+        type: string
+        description: The page ID (UUID, with or without dashes)
+  - name: notion_read_blocks
+    description: Read the block content (body) of a page or block. Returns an array of block objects. Use the page ID to read the top-level content, or a block ID for children of a specific block.
+    parameters:
+      block_id:
+        type: string
+        description: Page or block ID to read children of
+      page_size:
+        type: number
+        required: false
+        description: Max blocks per request (default 100, max 100)
+      start_cursor:
+        type: string
+        required: false
+        description: Cursor for pagination (from a previous response)
+  - name: notion_create_page
+    description: Create a new page. Specify a parent (database or page) and properties. Optionally include block children for the page body.
+    parameters:
+      parent:
+        type: object
+        description: '{ "database_id": "..." } or { "page_id": "..." }'
+      properties:
+        type: object
+        description: 'Page properties as Notion property-value objects. For a database parent, match the database schema. For a page parent, use { "title": { "title": [{ "text": { "content": "Page Title" } }] } }.'
+      children:
+        type: array
+        required: false
+        description: Array of block objects for the page body
+      icon:
+        type: object
+        required: false
+        description: 'Icon object, e.g. { "emoji": "🚀" } or { "external": { "url": "..." } }'
+      cover:
+        type: object
+        required: false
+        description: 'Cover image, e.g. { "external": { "url": "..." } }'
+  - name: notion_update_page
+    description: Update a page's properties, icon, cover, or archive status. Cannot change the page body — use notion_append_blocks, notion_update_block, or notion_delete_block for that.
+    parameters:
+      page_id:
+        type: string
+        description: The page ID to update
+      properties:
+        type: object
+        required: false
+        description: Properties to update (same format as create)
+      icon:
+        type: object
+        required: false
+        description: New icon object
+      cover:
+        type: object
+        required: false
+        description: New cover image object
+      archived:
+        type: boolean
+        required: false
+        description: Set to true to archive (soft-delete) the page
+  - name: notion_append_blocks
+    description: Append new block children to a page or block. Use this to add content to existing pages.
+    parameters:
+      block_id:
+        type: string
+        description: Parent page or block ID to append to
+      children:
+        type: array
+        description: Array of block objects to append
+  - name: notion_read_database
+    description: Query a database with optional filters and sorts. Returns an array of page objects (database rows).
+    parameters:
+      database_id:
+        type: string
+        description: The database ID to query
+      filter:
+        type: object
+        required: false
+        description: Notion filter object (see Notion API filter docs)
+      sorts:
+        type: array
+        required: false
+        description: 'Array of sort objects, e.g. [{ "property": "Name", "direction": "ascending" }]'
+      page_size:
+        type: number
+        required: false
+        description: Max results (default 100, max 100)
+      start_cursor:
+        type: string
+        required: false
+        description: Cursor for pagination
+  - name: notion_update_block
+    description: Update an existing block's content or archive it. Only the block type's own content field can be updated.
+    parameters:
+      block_id:
+        type: string
+        description: The block ID to update
+      type:
+        type: string
+        required: false
+        description: The block type (e.g. "paragraph", "heading_1", "to_do"). Required when updating content.
+      content:
+        type: object
+        required: false
+        description: The block type's content object (e.g. for paragraph, the rich_text array)
+      archived:
+        type: boolean
+        required: false
+        description: Set to true to archive (delete) the block
+  - name: notion_delete_block
+    description: Delete (archive) a block by ID. This removes the block from the page.
+    parameters:
+      block_id:
+        type: string
+        description: The block ID to delete
+  - name: notion_create_database
+    description: Create a new database as a child of an existing page. Define the schema with properties.
+    parameters:
+      parent:
+        type: object
+        description: '{ "page_id": "..." } — the parent page for the new database'
+      title:
+        type: array
+        description: 'Rich text array for the database title, e.g. [{ "text": { "content": "My Database" } }]'
+      properties:
+        type: object
+        description: 'Database property schema. Keys are property names, values are property config objects. E.g. { "Name": { "title": {} }, "Status": { "select": { "options": [{ "name": "Todo" }, { "name": "Done" }] } } }'
+      icon:
+        type: object
+        required: false
+        description: 'Icon object'
+      cover:
+        type: object
+        required: false
+        description: 'Cover image object'
+  - name: notion_update_database
+    description: Update a database's title, description, or property schema.
+    parameters:
+      database_id:
+        type: string
+        description: The database ID to update
+      title:
+        type: array
+        required: false
+        description: New rich text title
+      description:
+        type: array
+        required: false
+        description: Rich text description
+      properties:
+        type: object
+        required: false
+        description: Property schema updates. To rename, include both old key with null and new key with config. To add, include the new property. To remove, set property value to null.
+  - name: notion_list_users
+    description: List all users in the workspace (members and bots).
+    parameters:
+      page_size:
+        type: number
+        required: false
+        description: Max results (default 100, max 100)
+      start_cursor:
+        type: string
+        required: false
+        description: Cursor for pagination
+  - name: notion_get_user
+    description: Get details about a specific user by ID.
+    parameters:
+      user_id:
+        type: string
+        description: The user ID
+  - name: notion_add_comment
+    description: Add a comment to a page or existing discussion thread.
+    parameters:
+      parent:
+        type: object
+        required: false
+        description: '{ "page_id": "..." } to comment on a page'
+      discussion_id:
+        type: string
+        required: false
+        description: Discussion thread ID to reply to (alternative to parent)
+      rich_text:
+        type: array
+        description: Rich text content of the comment
+  - name: notion_list_comments
+    description: List comments on a block or page.
+    parameters:
+      block_id:
+        type: string
+        description: The block or page ID to list comments for
+      page_size:
+        type: number
+        required: false
+        description: Max results (default 100, max 100)
+      start_cursor:
+        type: string
+        required: false
+        description: Cursor for pagination
+danger_patterns:
+  - pattern: '"archived"\s*:\s*true'
+    level: destructive
+    reason: Archiving (soft-deleting) a page or block
+  - pattern: 'notion_delete_block'
+    level: destructive
+    reason: Deleting a block from a page
+  - pattern: 'notion_update_database.*"properties".*:\s*null'
+    level: destructive
+    reason: Removing a database property (column) and its data
+confirm_patterns:
+  - pattern: 'notion_create_page'
+    reason: Creating a new page in Notion
+  - pattern: 'notion_update_page'
+    reason: Updating page properties
+  - pattern: 'notion_append_blocks'
+    reason: Adding content to a page
+  - pattern: 'notion_update_block'
+    reason: Modifying block content
+  - pattern: 'notion_create_database'
+    reason: Creating a new database
+  - pattern: 'notion_update_database'
+    reason: Modifying database schema
+  - pattern: 'notion_add_comment'
+    reason: Adding a comment
+---
+
+# Notion
+
+## Content model
+
+Notion's API uses a block-based content model:
+
+- **Pages** are the primary unit. A page has **properties** (metadata like title, status, dates, people, relations) and a **body** made of **blocks**.
+- **Databases** are collections of pages. Each page in a database has properties matching the database schema (columns). Databases can be queried with filters and sorts.
+- **Blocks** are content elements: paragraphs, headings, lists, to-dos, code, images, embeds, toggles, callouts, tables, columns, and more. Blocks can have **children** (nested blocks).
+
+## How properties work
+
+Properties are key-value pairs on a page. The key is the property name, the value is a typed object:
+
+- `title` — the page name: `{ "title": [{ "text": { "content": "My Page" } }] }`
+- `rich_text` — text field: `{ "rich_text": [{ "text": { "content": "some text" } }] }`
+- `number` — `{ "number": 42 }`
+- `select` — `{ "select": { "name": "Option A" } }`
+- `multi_select` — `{ "multi_select": [{ "name": "Tag1" }, { "name": "Tag2" }] }`
+- `date` — `{ "date": { "start": "2024-01-15", "end": "2024-01-20" } }`
+- `checkbox` �� `{ "checkbox": true }`
+- `url` — `{ "url": "https://example.com" }`
+- `email` — `{ "email": "user@example.com" }`
+- `phone_number` — `{ "phone_number": "+1234567890" }`
+- `people` — `{ "people": [{ "id": "user-uuid" }] }`
+- `relation` — `{ "relation": [{ "id": "page-uuid" }] }`
+- `status` — `{ "status": { "name": "In Progress" } }`
+- `formula`, `rollup`, `created_time`, `last_edited_time`, `created_by`, `last_edited_by` — read-only computed properties
+
+## How blocks work
+
+Each block has a `type` field and a corresponding content object. Common block types:
+
+```
+paragraph:     { "rich_text": [{ "text": { "content": "Hello" } }] }
+heading_1:     { "rich_text": [{ "text": { "content": "Title" } }] }
+heading_2:     { "rich_text": [{ "text": { "content": "Subtitle" } }] }
+heading_3:     { "rich_text": [{ "text": { "content": "Section" } }] }
+bulleted_list_item: { "rich_text": [{ "text": { "content": "Item" } }] }
+numbered_list_item: { "rich_text": [{ "text": { "content": "Item" } }] }
+to_do:         { "rich_text": [{ "text": { "content": "Task" } }], "checked": false }
+toggle:        { "rich_text": [{ "text": { "content": "Toggle title" } }] }
+code:          { "rich_text": [{ "text": { "content": "const x = 1" } }], "language": "javascript" }
+quote:         { "rich_text": [{ "text": { "content": "Quote text" } }] }
+callout:       { "rich_text": [{ "text": { "content": "Important!" } }], "icon": { "emoji": "⚠️" } }
+divider:       {}
+table_of_contents: {}
+image:         { "external": { "url": "https://..." } }
+bookmark:      { "url": "https://..." }
+equation:      { "expression": "E = mc^2" }
+```
+
+When creating blocks, wrap the content under `{ "type": "<block_type>", "<block_type>": { ... } }`:
+
+```json
+{
+  "type": "paragraph",
+  "paragraph": {
+    "rich_text": [{ "text": { "content": "Hello world" } }]
+  }
+}
+```
+
+## Rich text
+
+Rich text is an array of text objects with optional annotations:
+
+```json
+[
+  {
+    "type": "text",
+    "text": { "content": "Bold text", "link": null },
+    "annotations": { "bold": true, "italic": false, "strikethrough": false, "underline": false, "code": false, "color": "default" }
+  },
+  {
+    "type": "text",
+    "text": { "content": " and normal text" }
+  }
+]
+```
+
+Annotations are optional — omit them for plain text. Available colors: `default`, `gray`, `brown`, `orange`, `yellow`, `green`, `blue`, `purple`, `pink`, `red`, and background variants like `gray_background`.
+
+## Database filters
+
+Filters are nested objects. Simple filter:
+```json
+{ "property": "Status", "status": { "equals": "Done" } }
+```
+
+Compound filter:
+```json
+{
+  "and": [
+    { "property": "Status", "status": { "equals": "In Progress" } },
+    { "property": "Priority", "select": { "equals": "High" } }
+  ]
+}
+```
+
+Filter operators vary by property type:
+- text/rich_text: `equals`, `does_not_equal`, `contains`, `does_not_contain`, `starts_with`, `ends_with`, `is_empty`, `is_not_empty`
+- number: `equals`, `does_not_equal`, `greater_than`, `less_than`, `greater_than_or_equal_to`, `less_than_or_equal_to`
+- checkbox: `equals`, `does_not_equal`
+- select: `equals`, `does_not_equal`, `is_empty`, `is_not_empty`
+- multi_select: `contains`, `does_not_contain`, `is_empty`, `is_not_empty`
+- date: `equals`, `before`, `after`, `on_or_before`, `on_or_after`, `is_empty`, `is_not_empty`, `past_week`, `past_month`, `past_year`, `next_week`, `next_month`, `next_year`
+- status: `equals`, `does_not_equal`
+- people: `contains`, `does_not_contain`, `is_empty`, `is_not_empty`
+- relation: `contains`, `does_not_contain`, `is_empty`, `is_not_empty`
+
+## Database sorts
+
+```json
+[
+  { "property": "Created", "direction": "descending" },
+  { "property": "Name", "direction": "ascending" }
+]
+```
+
+Or sort by timestamp: `{ "timestamp": "last_edited_time", "direction": "descending" }`
+
+## IDs
+
+Notion IDs are UUIDs. They can be formatted with or without dashes:
+- `12345678-1234-1234-1234-123456789abc`
+- `123456781234123412341234567890abc`
+
+Both formats are accepted in all tools. You can extract page IDs from Notion URLs — the 32-character hex string after the last dash in the URL path.
+
+## Pagination
+
+List and query endpoints return `has_more` and `next_cursor`. When `has_more` is true, pass `next_cursor` as `start_cursor` in the next call to get the next page of results.
+
+## Workflow patterns
+
+### Read a page fully
+1. `notion_read_page` — get properties (title, metadata)
+2. `notion_read_blocks` — get the page body (content blocks)
+3. For deeply nested content, call `notion_read_blocks` again with child block IDs
+
+### Add content to a page
+1. Build block objects for the content
+2. `notion_append_blocks` with the page ID and block array
+
+### Create a database entry
+1. Use `notion_read_database` to understand the schema
+2. Build properties matching the database columns
+3. `notion_create_page` with `parent: { "database_id": "..." }`
+
+### Update a database entry
+1. `notion_update_page` with the page ID and updated properties
+
+### Archive / soft-delete
+- Pages: `notion_update_page` with `archived: true`
+- Blocks: `notion_delete_block` or `notion_update_block` with `archived: true`
+
+## Limitations
+
+- The integration can only access pages and databases explicitly shared with it
+- Rate limit: ~3 requests/second sustained
+- Block content max: 2000 blocks per append
+- Rich text max: 2000 characters per text block
+- Cannot upload files — use external URLs for images and file blocks
+- Cannot change page parent after creation
+- Cannot reorder blocks — only append new ones

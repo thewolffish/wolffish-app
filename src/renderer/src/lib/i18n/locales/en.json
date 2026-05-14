@@ -1,0 +1,1031 @@
+{
+  "app": {
+    "name": "Wolffish",
+    "tagline": "A calm home for your work"
+  },
+  "common": {
+    "back": "Back",
+    "offline": "No network connection",
+    "diskUsage": "{{free}} free of {{total}}"
+  },
+  "closing": {
+    "title": "Closing Wolffish",
+    "subtitle": "Wolffish is finishing up some background work so nothing is lost.",
+    "bodyTitle": "Saving your work",
+    "body": "Closes once your work is saved."
+  },
+  "onboarding": {
+    "welcome": "Welcome to Wolffish",
+    "subtitle": "Pick a theme and language. Change anytime.",
+    "getStarted": "Get Started",
+    "settingsTitle": "Preferences",
+    "settingsSubtitle": "Adjust your theme and language. Changes save instantly.",
+    "done": "Done"
+  },
+  "theme": {
+    "label": "Appearance",
+    "system": "System",
+    "light": "Light",
+    "dark": "Dark"
+  },
+  "locale": {
+    "label": "Language",
+    "en": "English",
+    "ar": "العربية"
+  },
+  "lowDiskSpace": {
+    "title": "Not enough free space",
+    "subtitle": "Wolffish needs at least {{min}} free to run.",
+    "titleChecking": "Checking free space",
+    "subtitleChecking": "Looking at how much room is left on your disk.",
+    "titleOk": "You're good to go",
+    "subtitleOk": "There's plenty of room for Wolffish to run.",
+    "checkingTitle": "Checking free space",
+    "checking": "Please wait while we measure your free disk space.",
+    "hint": "Only {{free}} is free. Delete unused downloads, videos, or apps, then recalculate.",
+    "enough": "{{free}} free",
+    "enoughHint": "That's enough for Wolffish to run.",
+    "recalculate": "Recalculate",
+    "continue": "Continue",
+    "toast": {
+      "stillLow": "Still low on space. Delete more files and try again."
+    }
+  },
+  "ollamaSetup": {
+    "title": "Install Ollama",
+    "subtitle": "Ollama is a lightweight runtime that lets Wolffish run AI models on your machine. It runs in the background and handles all the heavy lifting.",
+    "titleDetecting": "Detecting Ollama",
+    "subtitleDetecting": "Checking if Ollama — the local AI runtime Wolffish needs — is installed.",
+    "detectingTitle": "Detecting Ollama",
+    "detecting": "Please wait while we detect Ollama.",
+    "titleNotRunning": "Start Ollama",
+    "subtitleNotRunning": "Ollama is installed but not running. Start it to continue.",
+    "howToInstall": "Click below to download Ollama for your system, then run the installer. Wolffish will detect it automatically.",
+    "notRunningHint": "Open Ollama and Wolffish will pick it up automatically. If the button doesn't work, start Ollama yourself and tap Detect.",
+    "download": "Download Ollama",
+    "openOllama": "Open Ollama",
+    "starting": "Opening Ollama",
+    "detectButton": "Detect Ollama",
+    "checking": "Checking",
+    "polling": "Watching for Ollama",
+    "notDetected": "Ollama isn't running yet. Install it and try again.",
+    "detected": "Ollama is running",
+    "detectedHint": "Wolffish can now talk to it.",
+    "continue": "Continue",
+    "toast": {
+      "notDetected": "Ollama not detected. Install it or start it, then try again.",
+      "installedNotRunning": "Ollama is installed but not running. Open it and try again."
+    }
+  },
+  "modelPicker": {
+    "title": "Pick your Wolffish model",
+    "tagline": "Wolffish model downloads once and is local forever.",
+    "specs": {
+      "os": "OS",
+      "cpu": "Cores",
+      "ram": "RAM",
+      "disk": "Free space"
+    },
+    "family": {
+      "gemma": "Gemma",
+      "qwen": "Qwen",
+      "llama": "Llama",
+      "deepseek": "DeepSeek",
+      "kimi": "Kimi"
+    },
+    "modelSize": {
+      "nano": "Nano",
+      "mini": "Mini",
+      "compact": "Compact",
+      "standard": "Standard",
+      "pro": "Pro",
+      "ultra": "Ultra",
+      "max": "Max",
+      "extreme": "Extreme"
+    },
+    "modelDescription": {
+      "nano": "Tiny and quick — barely uses memory.",
+      "mini": "Light and snappy for everyday questions.",
+      "compact": "A solid all-rounder for most work.",
+      "standard": "Balanced capability with a moderate footprint.",
+      "pro": "Capable enough for complex, multi-step work.",
+      "ultra": "Highly capable — needs plenty of memory.",
+      "max": "Frontier-class — requires serious hardware.",
+      "extreme": "The biggest weights this family ships."
+    },
+    "approxRam": "≈ {{ram}} RAM",
+    "params": "{{value}} params",
+    "tooBig": "Too large for your machine",
+    "loadingCatalog": "Fetching available sizes from Ollama",
+    "catalogUnavailable": "Couldn't reach Ollama's registry. Check your connection and try again.",
+    "current": "Currently selected",
+    "alreadyInstalled": "Downloaded",
+    "latest": "Latest",
+    "recommended": "Recommended",
+    "tags": {
+      "vision": "Vision",
+      "tools": "Tools",
+      "thinking": "Thinking",
+      "code": "Code",
+      "safety": "Safety",
+      "embedding": "Embedding",
+      "medical": "Medical",
+      "translation": "Translation",
+      "math": "Math",
+      "reasoning": "Reasoning",
+      "ocr": "OCR"
+    },
+    "install": "Install",
+    "use": "Use this model",
+    "continue": "Continue to chat",
+    "cancel": "Cancel",
+    "retry": "Try again",
+    "speedLine": "{{speed}} / sec · {{eta}} remaining",
+    "speedLineNoEta": "{{speed}} / sec",
+    "pullStatus": {
+      "lookingUp": "Looking up",
+      "downloading": "Downloading",
+      "processing": "Processing",
+      "verifying": "Verifying"
+    },
+    "pullHints": {
+      "lookingUp": "Finding your model in Ollama's registry.",
+      "downloading": "Streaming the model files to your machine.",
+      "processing": "Setting up the model on your machine.",
+      "verifying": "Making sure everything is intact."
+    },
+    "pullErrors": {
+      "manifestMissing": "Ollama doesn't have this model. Pick another one or update Ollama.",
+      "connection": "Couldn't connect. Check your internet and that Ollama is running.",
+      "generic": "Something went wrong. Try to restart the app."
+    },
+    "backToChat": "Back to chat",
+    "reinstallOllama": "Need to reinstall Ollama?"
+  },
+  "settings": {
+    "tabs": {
+      "appearance": "Appearance",
+      "model": "Models",
+      "wolffish": "Preferences",
+      "variables": "Variables",
+      "cellebrum": "Cellebrum",
+      "channels": "Channels",
+      "services": "Services",
+      "usage": "Usage",
+      "data": "Data",
+      "updates": "Updates",
+      "hippocampus": "Hippocampus"
+    },
+    "wolffish": {
+      "title": "Wolffish",
+      "subtitle": "Runtime behavior. Off by default — turn things on as you trust them.",
+      "toggle": {
+        "on": "On",
+        "off": "Off"
+      },
+      "launchAtStartup": {
+        "label": "Launch at startup",
+        "description": "Automatically start Wolffish when you log into your computer. When enabled, Wolffish registers itself as a login item with your operating system — macOS, Windows, and Linux are all supported. This lets Wolffish be ready the moment your session begins, so you can jump straight into a conversation without opening it manually. Disable this if you prefer to launch Wolffish only when you need it.",
+        "active": "Active",
+        "inactive": "Inactive",
+        "enabledToast": "Wolffish will now start automatically when you log in"
+      },
+      "bypassPermissions": {
+        "label": "Bypass permissions mode",
+        "description": "When enabled, all tool actions auto-approve without showing the approval dialog. The amygdala still classifies every action and logs everything to the corpus event bus and feedback files exactly as before — only the human approval step is skipped. Use this for trusted environments where you want full agent autonomy. Disable it any time to restore manual approval."
+      },
+      "allowLocalFallback": {
+        "label": "Run agentic tasks on the local model",
+        "description": "Your local model always answers and chats. This switch decides whether it also gets Wolffish's full toolset — running commands, editing files, and chaining steps the way cloud models do. Off keeps it in plain conversation mode and declines tool-heavy requests. Recommended off — smaller local models tend to misuse tools, loop, or invent results. Turn it on only if your local model is large enough to handle multi-step tool use reliably."
+      },
+      "restrictPowerfulModels": {
+        "label": "Restrict powerful local models",
+        "description": "When enabled, the model picker blocks local models whose memory footprint exceeds what your system can handle comfortably (~55% of total RAM). This prevents severe slowdowns, swap thrashing, and system instability caused by loading oversized models. Turning this off lets you install and run any model regardless of hardware limits — not recommended. Oversized models force your system into heavy disk swapping, making both Wolffish and your entire machine unresponsive."
+      },
+      "showChatAnalytics": {
+        "label": "Show in-chat analytics",
+        "description": "Display a small strip next to the chat input showing elapsed turn time, output tokens, and context size. Off by default — turn it on if you want live visibility into model usage and timing."
+      },
+      "weekStartsOn": {
+        "label": "Start of week",
+        "sunday": "Sunday",
+        "monday": "Monday",
+        "description": "Sets the day Wolffish treats as the first day of the week. Drives how the activity heatmap is laid out and how date ranges like \"this week\" line up in your head. Default is Monday (the ISO 8601 standard most of the world uses); pick Sunday if your calendar app and routines start there. Internal weekly memory files keep their existing ISO-week names so older summaries don't shift."
+      }
+    },
+    "hippocampus": {
+      "tabs": {
+        "compaction": "Compaction"
+      },
+      "compaction": {
+        "title": "Memory compaction",
+        "subtitle": "Wolffish compacts your conversations into long-term memory. Daily compaction extracts key facts from each day's episodes and promotes them to knowledge files. Weekly consolidation merges the week's episodes into a single digest.",
+        "daily": {
+          "label": "Daily compaction",
+          "description": "Extracts key facts from today's conversations and saves them to knowledge files."
+        },
+        "weekly": {
+          "label": "Weekly consolidation",
+          "description": "Merges the week's episode logs into a single digest for archival."
+        },
+        "days": {
+          "0": "Sunday",
+          "1": "Monday",
+          "2": "Tuesday",
+          "3": "Wednesday",
+          "4": "Thursday",
+          "5": "Friday",
+          "6": "Saturday"
+        },
+        "nextRun": "Next run {{time}}"
+      }
+    },
+    "cellebrum": {
+      "title": "Cellebrum",
+      "subtitle": "Loaded capabilities and their runtime status.",
+      "loading": "Loading capabilities…",
+      "empty": "No capabilities loaded.",
+      "active": "Active",
+      "inactive": "Inactive",
+      "error": "Error",
+      "official": "Official",
+      "unknown": "Unknown",
+      "plugin": "Plugin",
+      "tools": "{{count}} tools",
+      "requires": "Requires {{deps}}",
+      "resync": "Resync",
+      "resyncSuccessToast": "Capabilities resynced"
+    },
+    "model": {
+      "providers": {
+        "ollama": "Ollama",
+        "anthropic": "Anthropic",
+        "openai": "OpenAI"
+      },
+      "cloudBadge": "Cloud API",
+      "cloud": {
+        "title": "{{provider}}",
+        "subtitle": "Used when reachable. Falls back to your local model.",
+        "apiKey": "API key",
+        "apiKeyPlaceholder": "Paste your {{provider}} key",
+        "showKey": "Show key",
+        "hideKey": "Hide key",
+        "model": "Model",
+        "modelHint": "Add a key and test the connection below.",
+        "priority": "Fallback Order",
+        "priorityDescription": "Determines which cloud provider is tried first when multiple are configured.",
+        "priorityOptions": {
+          "1": "1st",
+          "2": "2nd",
+          "3": "3rd"
+        },
+        "test": "Test API Connection",
+        "save": "Save",
+        "saving": "Saving…",
+        "remove": "Remove",
+        "keyWorksToast": "{{provider}} key seems to work correctly",
+        "removedToast": "{{provider}} key removed",
+        "status": {
+          "untested": "Models will become available once the key is verified",
+          "testing": "Testing connection",
+          "ready": "Models are ready",
+          "invalid": "Connection failed"
+        },
+        "alerts": {
+          "invalidKey": "The {{provider}} key seems to be invalid. Update it below."
+        },
+        "errors": {
+          "invalidKey": "The API key was rejected. Check it and try again.",
+          "rateLimited": "Rate limited. Wait a moment and try again.",
+          "invalidModel": "Model not available with this key.",
+          "network": "Couldn't reach {{provider}}. Check your connection.",
+          "generic": "Test failed: {{message}}"
+        }
+      }
+    },
+    "channels": {
+      "tabs": {
+        "telegram": "Telegram",
+        "whatsapp": "WhatsApp"
+      }
+    },
+    "services": {
+      "tabs": {
+        "tts": "Text-to-Speech",
+        "stt": "Speech-to-Text",
+        "brave": "Brave Search",
+        "notion": "Notion",
+        "github": "GitHub",
+        "google": "Google Workspace",
+        "memes": "Memes",
+        "computerUse": "Computer Use"
+      },
+      "engine": "Engine",
+      "tts": {
+        "title": "Text-to-Speech",
+        "subtitle": "Configure how Wolffish generates spoken audio from text.",
+        "free": "Free",
+        "engineDescription": "Neural text-to-speech. No API key required.",
+        "voice": "Default voice",
+        "speed": "Speech rate",
+        "previewHint": "Preview uses your browser's built-in voices",
+        "voicesTitle": "Available voices"
+      },
+      "stt": {
+        "title": "Speech-to-Text",
+        "subtitle": "Configure how Wolffish transcribes audio into text.",
+        "local": "Local",
+        "engineDescription": "Open-source speech recognition. Runs entirely on your machine — no API key, no cloud.",
+        "model": "Default model",
+        "language": "Language",
+        "languageDescription": "Auto-detected by default. You can specify a language per transcription to improve accuracy.",
+        "modelsTitle": "Available models",
+        "formatsTitle": "Supported formats"
+      },
+      "telegram": {
+        "title": "Telegram",
+        "subtitle": "Talk to Wolffish from Telegram. Same agent, same memory, same history.",
+        "enable": "Enable Telegram channel",
+        "enableDescription": "Message Wolffish from Telegram to access it remotely.",
+        "toggle": {
+          "on": "On",
+          "off": "Off"
+        },
+        "botToken": "Bot token",
+        "botTokenPlaceholder": "1234567890:ABCdef…",
+        "botTokenHint": "Get one from @BotFather on Telegram. Treated as a secret — stored in config.json on your machine.",
+        "showToken": "Show",
+        "hideToken": "Hide",
+        "allowedUsers": "Allowed user IDs",
+        "allowedUsersPlaceholder": "123456789, 987654321",
+        "allowedUsersHint": "Send /start to @userinfobot to get your ID.",
+        "test": "Send test message",
+        "testHint": "Sends a verification message to the first allowed user without taking the bot online.",
+        "save": "Save",
+        "status": {
+          "label": "Status",
+          "running": "Active",
+          "stopped": "Inactive",
+          "starting": "Starting",
+          "error": "Error"
+        },
+        "testSuccess": "Test message sent",
+        "testFailure": "Test failed: {{message}}",
+        "saveSuccess": "Telegram settings saved",
+        "validation": {
+          "tokenRequired": "Bot token is required when enabled.",
+          "userIdRequired": "Add at least one user ID when enabled.",
+          "userIdInvalid": "User IDs must be numeric."
+        },
+        "errors": {
+          "missing_token": "Bot token is required.",
+          "token_format": "The token format looks wrong. BotFather hands them out as `<digits>:<35-char string>`.",
+          "invalid_token": "Telegram rejected this token. Open @BotFather, run /mybots, choose your bot, then API Token to copy a fresh value.",
+          "invalid_user_id": "Invalid user ID. Send /start to @userinfobot to get yours.",
+          "rate_limit": "Telegram is rate-limiting the bot. Wait a minute and try again.",
+          "network": "Couldn't reach Telegram. Check your internet connection.",
+          "unknown": "Telegram returned an error: {{message}}"
+        },
+        "autoRefresh": {
+          "label": "Auto-refresh conversations",
+          "description": "Start a fresh conversation after idle time. Previous ones stay accessible via /resume.",
+          "staleLabel": "Idle timeout",
+          "hours_one": "{{count}} hour",
+          "hours_other": "{{count}} hours"
+        },
+        "commandsTitle": "Available commands",
+        "commandsSubtitle": "Slash commands users send from Telegram. Type each one exactly.",
+        "commands": {
+          "new": "Start a fresh conversation. Only works when nothing is processing — use /stop first if a task is running.",
+          "current": "Current conversation.",
+          "resume": "Pick a past conversation to continue. The chat switches to the one you choose.",
+          "delete": "Pick a conversation to delete. If it was the active one, a fresh conversation starts.",
+          "clear": "Clear all messages.",
+          "stop": "Cancel the task currently running in this chat.",
+          "approve": "Approve a pending confirmation prompt (e.g. before a destructive action runs).",
+          "deny": "Deny a pending confirmation prompt.",
+          "status": "Wolffish current status."
+        },
+        "limitationsTitle": "Limitations",
+        "limitations": {
+          "singleConversation": "Only one conversation processes at a time.",
+          "busyNotQueued": "Messages sent while busy aren't queued — resend after.",
+          "fileSize": "File downloads capped at 20 MB.",
+          "allowList": "Only allowed user IDs receive replies.",
+          "silentIgnore": "Other messages are silently ignored."
+        }
+      },
+      "brave": {
+        "title": "Brave Search",
+        "subtitle": "Use Brave Search API as the primary web-search provider. When enabled, the agent's web_search tool calls Brave first and only falls back to DuckDuckGo if Brave is unreachable or rate-limited.",
+        "enable": "Enable Brave Search",
+        "enableDescription": "When on, web searches go through Brave first. When off, DuckDuckGo is used directly.",
+        "toggle": {
+          "on": "On",
+          "off": "Off"
+        },
+        "apiKey": "API key",
+        "apiKeyPlaceholder": "BSA_…",
+        "apiKeyHint": "Get a key from api.search.brave.com (free tier: 2,000 queries/month). Stored in config.json on your machine — never sent anywhere except api.search.brave.com.",
+        "showKey": "Show",
+        "hideKey": "Hide",
+        "test": "Test API key",
+        "testHint": "Sends a tiny query to Brave to verify the key works. Counts toward your monthly quota.",
+        "save": "Save",
+        "status": {
+          "label": "Status",
+          "configured": "Active",
+          "disabled": "Inactive",
+          "error": "Error"
+        },
+        "testSuccess": "Brave API key works ({{count}} results returned)",
+        "testFailure": "Test failed: {{message}}",
+        "saveSuccess": "Brave settings saved",
+        "validation": {
+          "keyRequired": "API key is required when enabled."
+        },
+        "errors": {
+          "missing_key": "API key is required.",
+          "invalid_key": "Brave rejected this key. Open api.search.brave.com, sign in, and copy a fresh subscription token.",
+          "rate_limit": "Brave is rate-limiting your key. The free tier allows 1 query per second — wait a moment and try again.",
+          "subscription": "Your Brave subscription is suspended or expired. Check your plan at api.search.brave.com.",
+          "network": "Couldn't reach Brave. Check your internet connection.",
+          "unknown": "Brave returned an error: {{message}}"
+        },
+        "howItWorksTitle": "How it works",
+        "howItWorks": {
+          "primary": "Brave runs first when enabled with a valid key.",
+          "fallback": "Falls back to DuckDuckGo on rate-limit, error, or timeout.",
+          "free": "Free tier: 2,000 queries/month, 1 per second.",
+          "paid": "Heavier use needs a paid plan.",
+          "privacy": "Key stays in your config.json — no proxy, no telemetry."
+        }
+      },
+      "notion": {
+        "title": "Notion",
+        "subtitle": "Connect to Notion to read and write pages, databases, and blocks. The agent uses your integration token to access workspaces shared with the integration.",
+        "token": "Integration token",
+        "tokenPlaceholder": "ntn_…",
+        "tokenHint": "Create an internal integration at notion.so/my-integrations, then share pages/databases with it. Token is stored in config.json on your machine — never sent anywhere except api.notion.com.",
+        "showToken": "Show",
+        "hideToken": "Hide",
+        "test": "Test token",
+        "testHint": "Calls Notion’s /v1/users/me endpoint to verify the integration token is valid.",
+        "save": "Save",
+        "status": {
+          "label": "Status",
+          "configured": "Active",
+          "disabled": "Inactive",
+          "error": "Error"
+        },
+        "testSuccess": "Token valid — connected as {{name}}",
+        "testFailure": "Test failed: {{message}}",
+        "saveSuccess": "Notion settings saved",
+        "validation": {
+          "tokenRequired": "Integration token is required."
+        },
+        "errors": {
+          "missing_token": "Integration token is required.",
+          "invalid_token": "Notion rejected this token. Go to notion.so/my-integrations, verify the integration exists, and copy a fresh token.",
+          "rate_limit": "Notion is rate-limiting requests. Wait a moment and try again.",
+          "network": "Couldn’t reach Notion. Check your internet connection.",
+          "unknown": "Notion returned an error: {{message}}"
+        },
+        "howItWorksTitle": "How it works",
+        "howItWorks": {
+          "integration": "Create an internal integration at notion.so/my-integrations.",
+          "pages": "Share specific pages or databases with the integration to grant access.",
+          "databases": "The agent can search, read, create, and update pages and databases.",
+          "privacy": "Token stays in your config.json — no proxy, no telemetry.",
+          "setup": "Only pages explicitly shared with the integration are accessible."
+        }
+      },
+      "github": {
+        "title": "GitHub",
+        "subtitle": "Connect to GitHub to manage repos, issues, pull requests, branches, CI/Actions, releases, and gists. The agent uses your Personal Access Token to authenticate API calls.",
+        "token": "Personal Access Token",
+        "tokenPlaceholder": "ghp_… or github_pat_…",
+        "tokenHint": "Create a token at <link>github.com/settings/personal-access-tokens</link> with the 'repo' scope (and 'gist' for gists). Token is stored in config.json on your machine — never sent anywhere except api.github.com.",
+        "showToken": "Show",
+        "hideToken": "Hide",
+        "test": "Test connection",
+        "testHint": "Calls GitHub's <code>/user</code> endpoint to verify the token is valid and shows your username.",
+        "save": "Save",
+        "status": {
+          "label": "Status",
+          "configured": "Active",
+          "disabled": "Inactive",
+          "error": "Error"
+        },
+        "testSuccess": "Token valid — connected as @{{login}} ({{name}})",
+        "testFailure": "Test failed: {{message}}",
+        "saveSuccess": "GitHub settings saved",
+        "connectedAs": "Connected as",
+        "validation": {
+          "tokenRequired": "Personal Access Token is required."
+        },
+        "errors": {
+          "missing_token": "Personal Access Token is required.",
+          "invalid_token": "GitHub rejected this token. Go to github.com/settings/personal-access-tokens, verify the token exists and hasn't expired, and copy a fresh one.",
+          "rate_limit": "GitHub is rate-limiting requests. Wait a moment and try again.",
+          "insufficient_scope": "Token lacks required permissions. Ensure the 'repo' scope is granted.",
+          "network": "Couldn't reach GitHub. Check your internet connection.",
+          "unknown": "GitHub returned an error: {{message}}"
+        },
+        "howItWorksTitle": "How it works",
+        "howItWorks": {
+          "pat": "Create a Personal Access Token at <link>github.com/settings/personal-access-tokens</link>.",
+          "scopes": "Grant 'repo' scope for full repository access, 'gist' for gists.",
+          "tools": "The agent can list repos, manage issues and PRs, check CI, create releases, and search code.",
+          "privacy": "Token stays in your config.json — no proxy, no telemetry.",
+          "ci": "CI/Actions logs are available for debugging failed workflows."
+        },
+        "capabilitiesTitle": "What you can ask Wolffish to do",
+        "capabilitiesSubtitle": "Destructive actions are confirmed before they run.",
+        "capabilities": {
+          "repos": "Browse your repositories, get repo details, or create new ones.",
+          "issues": "Read, create, and close issues — including comments and labels.",
+          "prs": "Open pull requests, review their status, and merge them (with approval).",
+          "branches": "List branches and clean up merged ones (with approval).",
+          "ci": "Check CI/Actions runs and pull workflow logs to debug failures.",
+          "releases": "Cut a release with tag, notes, draft, and prerelease support (with approval).",
+          "search": "Search code across all of GitHub by keyword, filename, or language.",
+          "files": "Read any file from any accessible repo without cloning it locally.",
+          "gists": "List your gists or create a new one to share a snippet."
+        }
+      },
+      "google": {
+        "title": "Google Workspace",
+        "subtitle": "Gmail, Drive, Calendar, Contacts, Tasks, and Sheets — drop your OAuth JSON to connect.",
+        "toasts": {
+          "installed": "gogcli {{version}} installed",
+          "installFailed": "Install failed",
+          "updated": "Updated to gogcli {{version}}",
+          "latest": "Latest version is installed",
+          "updateFailed": "Update check failed",
+          "credentialsStored": "Credentials stored",
+          "credentialsRejected": "Credentials rejected",
+          "credentialsDeleted": "Credentials and accounts removed",
+          "credentialsDeleteFailed": "Could not delete credentials",
+          "linkCopied": "Authorization link copied",
+          "linkCopyFailed": "Could not copy link",
+          "authorized": "Account authorized",
+          "authFailed": "Authorization failed",
+          "removed": "Account removed",
+          "removeFailed": "Could not remove account"
+        },
+        "setup": {
+          "label": "gogcli: Google Suite CLI",
+          "ready": "<code>{{version}}</code> is installed and ready",
+          "needsInstall": "Click Install — Wolffish will download <code>gogcli</code> for you",
+          "install": "Install",
+          "update": "Update"
+        },
+        "credentials": {
+          "label": "OAuth Credentials",
+          "hint": "OAuth Desktop client JSON from console.cloud.google.com → APIs & Services → Credentials.",
+          "dropzone": "Drop OAuth client JSON here or click to browse",
+          "validating": "Validating credentials…",
+          "stored": "Credentials stored",
+          "rotate": "Drop a new JSON to replace credentials",
+          "delete": "Delete credentials and all accounts",
+          "project": "Project",
+          "client": "Client"
+        },
+        "auth": {
+          "label": "Accounts",
+          "hint": "Add multiple accounts — the LLM picks which one to use on every call, and fans out across all of them for identity-agnostic requests.",
+          "placeholder": "you@gmail.com",
+          "authorize": "Authorize",
+          "cancel": "Cancel",
+          "addMore": "Add account",
+          "active": "Active",
+          "remove": "Remove",
+          "accountLabel": "Authorized account {{account}}",
+          "linkNote": "If the browser didn't open,",
+          "linkOpen": "open the authorization link",
+          "copyLink": "Copy authorization link"
+        },
+        "status": {
+          "label": "Status",
+          "active": "Active",
+          "inactive": "Inactive",
+          "error": "Error",
+          "accounts": "Connected accounts",
+          "project": "Project ID"
+        },
+        "errors": {
+          "platform_unsupported": "Unsupported OS / architecture",
+          "install_failed": "Install failed",
+          "credentials_invalid": "Credentials rejected",
+          "auth_failed": "Authorization failed",
+          "auth_timeout": "Authorization timed out",
+          "network": "Network error"
+        },
+        "capabilities": {
+          "title": "Available services",
+          "list": [
+            "Gmail — search, send, attachments, labels, drafts, filters, auto-reply, vacation",
+            "Calendar — list/create/update events, invites, OOO, working-location, free/busy",
+            "Drive — list, search, upload, download, convert, permissions, shared drives",
+            "Docs — create, edit by tab, import Markdown, find/replace, export",
+            "Sheets — read/write ranges, rows/cols, tabs, formatting, find/replace",
+            "Slides — create, copy, export, generate from Markdown or templates",
+            "Contacts — search, create, update, directory, custom fields",
+            "Tasks — manage tasklists and tasks with recurring schedules",
+            "Forms — create, manage questions, inspect responses",
+            "Chat — spaces, messages, DMs, emoji reactions (Workspace)",
+            "Classroom — courses, roster, coursework, submissions, announcements",
+            "Apps Script — create projects, inspect content, run functions",
+            "People — profile lookup, directory search",
+            "Keep — list, search, create, delete notes (Workspace)",
+            "Admin — Workspace users/groups directory ops",
+            "Groups — list memberships, view members (Workspace)",
+            "Multiple accounts — switch between Google accounts with aliases",
+            "Encrypted backups — export account data to age-encrypted Git shards",
+            "Email tracking — track opens for sent mail"
+          ]
+        }
+      },
+      "memes": {
+        "title": "Memes",
+        "subtitle": "Generate captioned memes and search for reaction GIFs. Memegen.link works out of the box — Giphy and Imgflip need credentials.",
+        "save": "Save",
+        "saveSuccess": "Memes settings saved",
+        "testConnection": "Test connection",
+        "testAndSave": "Test & save",
+        "testFailure": "Test failed: {{message}}",
+        "testGiphySuccess": "Giphy connection successful",
+        "testImgflipSuccess": "Imgflip connection successful",
+        "showKey": "Show",
+        "hideKey": "Hide",
+        "providerStatus": {
+          "available": "Available",
+          "configured": "Active",
+          "disabled": "Not configured",
+          "error": "Error"
+        },
+        "memegen": {
+          "title": "Memegen",
+          "description": "Free, zero-config meme generator. Always available — no account needed."
+        },
+        "giphy": {
+          "title": "Giphy",
+          "description": "Search and download reaction GIFs. Requires a free API key.",
+          "apiKeyLabel": "API Key",
+          "apiKeyPlaceholder": "Giphy API key",
+          "hint": "Sign up at developers.giphy.com, create an app, and copy the API key.",
+          "getKey": "Get API Key"
+        },
+        "imgflip": {
+          "title": "Imgflip",
+          "description": "Premium meme generation with more templates. Requires a free account.",
+          "usernameLabel": "Username",
+          "usernamePlaceholder": "Imgflip username",
+          "passwordLabel": "Password",
+          "passwordPlaceholder": "Imgflip password",
+          "hint": "Create a free account at imgflip.com. Username and password are used to generate memes.",
+          "createAccount": "Create Account"
+        },
+        "validation": {
+          "giphyKeyRequired": "Giphy API key is required.",
+          "imgflipCredsRequired": "Imgflip username and password are required."
+        },
+        "errors": {
+          "missing_key": "Credentials are required.",
+          "invalid_key": "Credentials were rejected. Check your API key or username/password.",
+          "rate_limit": "Rate limited. Wait a moment and try again.",
+          "network": "Couldn't reach the service. Check your internet connection.",
+          "unknown": "Error: {{message}}"
+        }
+      },
+      "whatsapp": {
+        "title": "WhatsApp",
+        "subtitle": "Connect Wolffish to WhatsApp. Scan the QR code to link your account.",
+        "enable": "Enable WhatsApp",
+        "enableDescription": "Connect to WhatsApp and listen for messages.",
+        "toggle": {
+          "on": "On",
+          "off": "Off"
+        },
+        "connect": "Connect",
+        "connectDescription": "Link your WhatsApp account to get started.",
+        "scanQr": "Scan this QR code with WhatsApp on your phone.",
+        "scanQrHelp": "Open WhatsApp → Settings → Linked Devices → Link a Device",
+        "status": {
+          "label": "Status",
+          "connected": "Connected",
+          "connecting": "Connecting",
+          "qr": "Waiting for QR scan",
+          "error": "Error",
+          "disconnected": "Disconnected",
+          "inactive": "Inactive"
+        },
+        "connectedAs": "Connected as",
+        "allowedPhones": "Allowed phone numbers",
+        "allowedPhonesPlaceholder": "+966xxxxxxxxx, +1xxxxxxxxxx",
+        "allowedPhonesHint": "Comma-separated phone numbers. Only messages from these numbers will be processed.",
+        "save": "Save",
+        "saveSuccess": "WhatsApp settings saved",
+        "logout": "Logout",
+        "logoutSuccess": "WhatsApp session cleared",
+        "logoutFailed": "Failed to logout from WhatsApp",
+        "commandsTitle": "Available commands",
+        "commandsSubtitle": "Send these commands in your WhatsApp chat.",
+        "commands": {
+          "new": "Start a fresh conversation",
+          "current": "Show the active conversation",
+          "resume": "Continue a previous chat",
+          "delete": "Delete a saved conversation",
+          "stop": "Cancel the current task",
+          "approve": "Approve a pending tool call",
+          "deny": "Deny a pending tool call",
+          "status": "System status report",
+          "local": "Switch to local model",
+          "cloud": "Switch to cloud model"
+        },
+        "limitationsTitle": "Limitations",
+        "limitations": {
+          "singleConversation": "One active conversation per phone number at a time",
+          "busyNotQueued": "Messages sent while busy get a short reply, not queued",
+          "allowList": "Only allowed phone numbers can interact",
+          "silentIgnore": "Messages from non-allowed numbers are silently ignored"
+        },
+        "validation": {
+          "phoneRequired": "At least one phone number is required when enabled"
+        }
+      },
+      "computerUse": {
+        "title": "Computer Use",
+        "subtitle": "Let the agent see your screen and control your mouse and keyboard to perform desktop tasks.",
+        "enableLabel": "Enable Computer Use",
+        "enableHint": "When enabled, the agent can take screenshots, move the mouse, click, scroll, and type.",
+        "resolutionLabel": "Screenshot resolution",
+        "resolutionHint": "Maximum width in pixels. Lower values use less tokens but reduce detail.",
+        "formatLabel": "Screenshot format",
+        "formatHint": "JPEG is smaller and faster. PNG is lossless and better for text-heavy screens.",
+        "save": "Save",
+        "saving": "Saving…",
+        "saveSuccess": "Computer Use settings saved",
+        "saveError": "Failed to save Computer Use settings",
+        "permissionsTitle": "Permissions",
+        "permAccessibility": "Accessibility",
+        "permScreenRecording": "Screen Recording",
+        "recheckPermissions": "Recheck permissions",
+        "howItWorksTitle": "How it works",
+        "howItWorks": {
+          "step1": "The agent takes a screenshot to see what's on your screen.",
+          "step2": "It analyzes the image and decides the next action (click, type, scroll, etc.).",
+          "step3": "After each action it takes another screenshot to verify the result.",
+          "step4": "This loop continues until the task is complete."
+        }
+      }
+    },
+    "variables": {
+      "title": "Variables",
+      "subtitle": "Store API keys, tokens, base URLs, and other values in one place.",
+      "loading": "Loading variables…",
+      "empty": "No variables yet. Add one to get started.",
+      "add": "Add variable",
+      "save": "Save",
+      "remove": "Remove",
+      "reveal": "Reveal value",
+      "hide": "Hide value",
+      "sensitive": "Sensitive",
+      "markSensitive": "Sensitive variable",
+      "cancel": "Cancel",
+      "namePlaceholder": "Variable name",
+      "valuePlaceholder": "Value",
+      "duplicate": "A variable with this name already exists.",
+      "hint": "Variables are stored in config.json and injected into every conversation. The agent can read them to authenticate API calls, connect to services, or fill in values you'd otherwise have to paste each time. Sensitive variables are masked in the UI but available to the agent in plaintext."
+    },
+    "appearance": {
+      "title": "Appearance",
+      "subtitle": "Customize how Wolffish looks and reads."
+    },
+    "usage": {
+      "title": "Usage",
+      "subtitle": "Token usage and cost across providers.",
+      "range": {
+        "today": "Today",
+        "this_month": "This Month",
+        "3_months": "3 Months",
+        "6_months": "6 Months",
+        "ytd": "YTD",
+        "all_time": "All Time"
+      },
+      "stats": {
+        "messages": "Messages",
+        "conversations": "Conversations",
+        "activeDays": "Active Days",
+        "longestStreak": "Longest Streak",
+        "totalTokens": "Total Tokens",
+        "favouriteModel": "Favourite Model",
+        "streakDays": "{{count}} days",
+        "streakDay": "{{count}} day",
+        "noModel": "Unknown"
+      },
+      "providers": {
+        "local": "Ollama",
+        "anthropic": "Anthropic",
+        "openai": "OpenAI",
+        "brave": "Brave Search"
+      },
+      "tokens": "tokens",
+      "queries": "queries",
+      "inputTokens": "Input",
+      "outputTokens": "Output",
+      "cost": "Cost",
+      "noUsage": "No usage",
+      "totalTokens": "Total tokens",
+      "sync": "Sync",
+      "syncSuccessToast": "Usage data resynced",
+      "activity": "Activity",
+      "activityTooltip": "{{date}}: {{tokens}} tokens"
+    },
+    "data": {
+      "title": "Data",
+      "subtitle": "How much space Wolffish is using and how to start over.",
+      "refresh": "Refresh",
+      "refreshSuccessToast": "Data analytics refreshed",
+      "disk": {
+        "title": "Disk usage"
+      },
+      "metrics": {
+        "workspace": "Workspace",
+        "hippocampus": "Hippocampus",
+        "corpus": "Corpus",
+        "prefrontal": "Prefrontal",
+        "ram": "RAM",
+        "cpu": "CPU"
+      },
+      "factoryReset": {
+        "label": "Factory reset",
+        "description": "Deletes all memories, conversations, feedback, task logs, event logs, debug snapshots, knowledge files, and usage data. Default workspace files are recreated from bundled templates. Your API keys, model selection, language, and theme are preserved so you don't have to re-enter them.",
+        "button": "Factory reset",
+        "title": "Factory reset Wolffish?",
+        "warning": "This wipes every memory, conversation, and log. API keys, model selection, language, and theme are preserved. The app will restart. This cannot be undone.",
+        "typePrompt": "Type {{phrase}} to confirm.",
+        "confirmPhrase": "FACTORY RESET",
+        "confirm": "Reset Wolffish",
+        "cancel": "Cancel",
+        "errorToast": "Reset failed. Try again."
+      }
+    }
+  },
+  "chat": {
+    "placeholder": "Message Wolffish",
+    "send": "Send",
+    "stop": "Stop",
+    "telegramReadOnly": "Continue this conversation on Telegram.",
+    "whatsappReadOnly": "Continue this conversation on WhatsApp.",
+    "heartbeatReadOnly": "Automated task — read only.",
+    "empty": {
+      "title": "Wolffish is ready",
+      "subtitle": "Ask anything. I bite through anything."
+    },
+    "thinking": "Thinking…",
+    "awaitingPermission": "Awaiting permission…",
+    "errorPrefix": "Something went wrong",
+    "newChat": "New chat",
+    "attachFile": "Attach file",
+    "selectFolder": "Select working folder",
+    "clearFolder": "Clear working folder",
+    "workingFolder": "Working folder",
+    "dropToAttach": "Drop files to attach",
+    "upload": {
+      "fileTooLarge": "File exceeds maximum size of {{limit}}",
+      "maxFiles": "Maximum {{count}} files per message",
+      "totalExceeded": "Total attachments cannot exceed {{limit}}",
+      "typeNotSupported": "File type not supported",
+      "videoNotAllowed": "Video files are not supported",
+      "visionNotSupported": "{{model}} doesn't support image uploads"
+    },
+    "voice": {
+      "record": "Record voice message",
+      "noMic": "No microphone available",
+      "permissionDenied": "Microphone permission denied",
+      "recording": "Recording",
+      "send": "Send recording",
+      "delete": "Delete recording",
+      "transcribing": "Transcribing…",
+      "transcribed": "Transcribed",
+      "error": "Recording failed"
+    },
+    "changeModel": "Change model",
+    "modelLabel": "Model: {{model}}",
+    "copy": "Copy",
+    "copied": "Copied",
+    "copyMessage": "Copy message",
+    "copyCode": "Copy code",
+    "settings": "Settings",
+    "history": "History",
+    "workspace": "Workspace",
+    "task": {
+      "title": "Task",
+      "status": {
+        "running": "Running",
+        "succeeded": "Done",
+        "failed": "Failed",
+        "stopped": "Stopped"
+      },
+      "stepStatus": {
+        "running": "running",
+        "succeeded": "succeeded",
+        "failed": "failed",
+        "stopped": "stopped"
+      },
+      "attempt": "(attempt {{n}})"
+    },
+    "toolCard": {
+      "status": {
+        "running": "Running",
+        "success": "Done",
+        "failed": "Failed",
+        "denied": "Denied"
+      }
+    },
+    "turnFooter": {
+      "error": "Connection error"
+    },
+    "providerError": {
+      "retry": "Try again"
+    },
+    "providerChange": {
+      "label": "Switched to local model"
+    },
+    "contextMeter": {
+      "tooltip": "{{used}} out of {{max}}"
+    },
+    "status": {
+      "tokenUsage": "↑{{input}} ↓{{output}} tokens",
+      "contextTokens": "{{count}} ctx",
+      "elapsedSeconds": "{{seconds}}s",
+      "elapsedMinutes": "{{minutes}}m {{seconds}}s"
+    },
+    "modeToggle": {
+      "ariaLabel": "Provider mode",
+      "local": "Local",
+      "cloud": "Cloud"
+    },
+    "newChatShort": "New",
+    "approval": {
+      "level": {
+        "safe": "Safe",
+        "warn": "Warning",
+        "confirm": "Confirm",
+        "destructive": "Destructive",
+        "block": "Blocked"
+      },
+      "approve": "Approve",
+      "deny": "Deny",
+      "approved": "Approved",
+      "denied": "Denied"
+    }
+  },
+  "workspace": {
+    "title": "Workspace",
+    "subtitle": "Browse and edit the files that shape Wolffish's behavior.",
+    "loadingTree": "Reading workspace…",
+    "loadingFile": "Loading file…",
+    "empty": "No files yet.",
+    "pickFile": "Select a file from the tree to view or edit it.",
+    "unsupported": "This file type can't be previewed here.",
+    "readOnlyNotice": "This file is read-only.",
+    "readOnly": "Read-only",
+    "edit": "Edit",
+    "preview": "Preview",
+    "save": "Save",
+    "saving": "Saving…",
+    "reset": "Reset to default",
+    "resetTitle": "Reset this file to default?",
+    "resetWarning": "Your current changes to this file will be replaced with the bundled default. This cannot be undone.",
+    "resetConfirm": "Reset",
+    "resetting": "Resetting…",
+    "resetCancel": "Cancel",
+    "resync": "Resync",
+    "resyncSuccess": "Workspace synced",
+    "resyncError": "Sync failed"
+  },
+  "history": {
+    "loading": "Loading conversations…",
+    "empty": "No conversations yet. Start chatting to see them here.",
+    "delete": "Delete",
+    "deleteTitle": "Delete this conversation?",
+    "deleteWarning": "This conversation will be permanently deleted. This cannot be undone.",
+    "deleteConfirm": "Delete",
+    "deleteCancel": "Cancel",
+    "newChat": "New chat"
+  },
+  "units": {
+    "seconds": "{{value}}s",
+    "minutes": "{{value}}m",
+    "hours": "{{value}}h"
+  },
+  "errors": {
+    "provider": {
+      "noProviderTitle": "No model available",
+      "noProviderDescription": "Cloud unreachable and no local model configured. Check settings or retry."
+    }
+  }
+}
