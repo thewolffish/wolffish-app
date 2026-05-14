@@ -38,6 +38,7 @@ type ViewMode = 'edit' | 'preview'
 type MediaType = 'image' | 'video' | 'audio' | 'pdf'
 
 function isReadOnlyPath(relativePath: string): boolean {
+  if (relativePath.startsWith('logs/')) return true
   if (relativePath.endsWith('.log.md')) return true
   if (relativePath.startsWith('brain/conversations/')) return true
   if (relativePath.startsWith('brain/hippocampus/episodes/')) return true
@@ -65,7 +66,7 @@ function languageFor(name: string): CodeLanguage | null {
   if (name.endsWith('.json')) return 'json'
   if (name.endsWith('.md')) return 'markdown'
   if (name.endsWith('.mjs') || name.endsWith('.js')) return 'javascript'
-  if (name.endsWith('.txt')) return 'markdown'
+  if (name.endsWith('.txt') || name.endsWith('.log')) return 'markdown'
   return null
 }
 

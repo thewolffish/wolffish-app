@@ -72,6 +72,7 @@ import {
   writeViewerFile,
   type ViewerTreeNode
 } from '@main/viewer/viewer'
+import { wlog } from '@main/workspace/logger'
 import {
   bundledCapabilityNames,
   clearLocalModel,
@@ -1419,17 +1420,21 @@ app.whenReady().then(async () => {
     }
   )
 
-  ipcMain.handle('updater:install', () => {
+  ipcMain.handle('updater:install', async () => {
     if (is.dev) return
     try {
-      const { autoUpdater } = require('electron-updater')
-      console.log('[updater] quitAndInstall called')
+      const { autoUpdater } = await import('electron-updater')
+      wlog.info(
+        '[updater]',
+        `install requested isShuttingDown=${isShuttingDown} quitInProgress=${quitInProgress}`
+      )
       isShuttingDown = true
       quitInProgress = false
+      wlog.info('[updater]', 'calling quitAndInstall(false, true)')
       autoUpdater.quitAndInstall(false, true)
-      console.log('[updater] quitAndInstall returned')
+      wlog.info('[updater]', 'quitAndInstall returned')
     } catch (err) {
-      console.error('[updater] quitAndInstall failed:', err)
+      wlog.error('[updater]', 'quitAndInstall failed', err)
     }
   })
 
@@ -1830,12 +1835,24 @@ app.whenReady().then(async () => {
 })
 
 app.on('before-quit', (event) => {
+  wlog.info(
+    '[quit]',
+    `before-quit isShuttingDown=${isShuttingDown} quitInProgress=${quitInProgress} hasInflightWork=${hasInflightWork()}`
+  )
   if (quitInProgress) {
+    wlog.info('[quit]', 'drain in progress — preventing quit')
     event.preventDefault()
     return
   }
-  if (isShuttingDown) return
-  if (!hasInflightWork()) return
+  if (isShuttingDown) {
+    wlog.info('[quit]', 'isShuttingDown — allowing quit')
+    return
+  }
+  if (!hasInflightWork()) {
+    wlog.info('[quit]', 'no inflight work — allowing quit')
+    return
+  }
+  wlog.info('[quit]', 'inflight work — preventing quit, starting drain')
   event.preventDefault()
   quitInProgress = true
   broadcast('app:closingPending', { tasks: pendingBackgroundTasks })
