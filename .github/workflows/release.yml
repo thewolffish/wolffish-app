@@ -97,6 +97,11 @@ jobs:
           path: artifacts
           merge-multiple: true
 
+      - name: Debug env
+        run: |
+          echo "ENDPOINT length: ${#R2_ENDPOINT}"
+          echo "BUCKET length: ${#R2_BUCKET}"
+
       - name: Upload to Cloudflare R2
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
