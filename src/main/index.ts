@@ -1421,10 +1421,16 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('updater:install', () => {
     if (is.dev) return
-    const { autoUpdater } = require('electron-updater')
-    isShuttingDown = true
-    quitInProgress = false
-    autoUpdater.quitAndInstall(false, true)
+    try {
+      const { autoUpdater } = require('electron-updater')
+      console.log('[updater] quitAndInstall called')
+      isShuttingDown = true
+      quitInProgress = false
+      autoUpdater.quitAndInstall(false, true)
+      console.log('[updater] quitAndInstall returned')
+    } catch (err) {
+      console.error('[updater] quitAndInstall failed:', err)
+    }
   })
 
   ipcMain.handle('updater:readChangelog', async (_event, locale?: string) => {
