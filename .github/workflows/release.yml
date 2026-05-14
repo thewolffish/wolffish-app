@@ -6,7 +6,7 @@ on:
       - 'v*'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-macos:
@@ -90,7 +90,7 @@ jobs:
             dist/*.AppImage
             dist/latest-linux.yml
 
-  publish-r2:
+  release:
     needs: [build-macos, build-windows, build-linux]
     runs-on: ubuntu-latest
     environment: Production
@@ -115,3 +115,9 @@ jobs:
           aws s3 cp --endpoint-url "$R2_ENDPOINT" "./artifacts/latest-mac.yml" "s3://$R2_BUCKET/latest-mac.yml"
           aws s3 cp --endpoint-url "$R2_ENDPOINT" "./artifacts/latest.yml" "s3://$R2_BUCKET/latest.yml"
           aws s3 cp --endpoint-url "$R2_ENDPOINT" "./artifacts/latest-linux.yml" "s3://$R2_BUCKET/latest-linux.yml"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
