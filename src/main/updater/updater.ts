@@ -1,6 +1,7 @@
-import { autoUpdater, type UpdateDownloadedEvent, type UpdateInfo } from 'electron-updater'
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { is } from '@electron-toolkit/utils'
 import { readConfig } from '@main/workspace/workspace'
+import { app, BrowserWindow, ipcMain } from 'electron'
+import { autoUpdater, type UpdateDownloadedEvent, type UpdateInfo } from 'electron-updater'
 
 const RELEASES_URL = 'https://releases.wolffi.sh'
 
@@ -22,7 +23,7 @@ function extractReleaseNotes(info: UpdateInfo): string | null {
   if (!info.releaseNotes) return null
   if (typeof info.releaseNotes === 'string') return info.releaseNotes
   if (Array.isArray(info.releaseNotes)) {
-    return info.releaseNotes.map((n) => (typeof n === 'string' ? n : n.note ?? '')).join('\n')
+    return info.releaseNotes.map((n) => (typeof n === 'string' ? n : (n.note ?? ''))).join('\n')
   }
   return null
 }
@@ -34,6 +35,8 @@ function broadcast<T>(channel: string, payload: T): void {
 }
 
 export function initUpdater(): void {
+  if (is.dev) return
+
   autoUpdater.autoDownload = true
   autoUpdater.autoInstallOnAppQuit = false
 
@@ -76,7 +79,10 @@ export function initUpdater(): void {
   ipcMain.handle('updater:check', async () => {
     try {
       const result = await autoUpdater.checkForUpdates()
-      return { ok: true, version: result?.updateInfo.version ?? null }
+      const remoteVersion = result?.updateInfo.version ?? null
+      const currentVersion = app.getVersion()
+      const hasUpdate = remoteVersion ? remoteVersion !== currentVersion : false
+      return { ok: true, version: hasUpdate ? remoteVersion : null }
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) }
     }
@@ -88,6 +94,7 @@ export function initUpdater(): void {
 }
 
 export async function checkForUpdatesIfEnabled(): Promise<void> {
+  if (is.dev) return
   const cfg = await readConfig()
   if (cfg?.updates?.enabled === false) return
   try {
