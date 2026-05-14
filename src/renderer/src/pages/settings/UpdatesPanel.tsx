@@ -2,8 +2,7 @@ import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn/cn'
 import type { UpdateCheckResult } from '@preload/index'
 import { useFlow } from '@providers/flow/useFlow'
-import { ArrowUp02Icon, Loading03Icon } from 'hugeicons-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 export function UpdatesPanel(): React.JSX.Element {
@@ -16,7 +15,10 @@ export function UpdatesPanel(): React.JSX.Element {
   const [autoUpdates, setAutoUpdates] = useState(updatesEnabled)
   const [checking, setChecking] = useState(false)
   const [updateReady, setUpdateReady] = useState(false)
+  const [installing, setInstalling] = useState(false)
+  const [installProgress, setInstallProgress] = useState(0)
   const [saving, setSaving] = useState(false)
+  const progressRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
     void window.api.updater.getVersion().then(setAppVersion)
@@ -25,6 +27,12 @@ export function UpdatesPanel(): React.JSX.Element {
   useEffect(() => {
     const unsub = window.api.updater.onReady(() => setUpdateReady(true))
     return unsub
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (progressRef.current) clearInterval(progressRef.current)
+    }
   }, [])
 
   const onToggleAutoUpdates = useCallback(
@@ -63,6 +71,17 @@ export function UpdatesPanel(): React.JSX.Element {
   }, [checking, show, t])
 
   const onInstall = useCallback(() => {
+    setInstalling(true)
+    setInstallProgress(0)
+    let progress = 0
+    progressRef.current = setInterval(() => {
+      progress += Math.random() * 15 + 5
+      if (progress >= 90) {
+        progress = 90
+        if (progressRef.current) clearInterval(progressRef.current)
+      }
+      setInstallProgress(Math.min(progress, 90))
+    }, 300)
     void window.api.updater.install()
   }, [])
 
@@ -155,49 +174,54 @@ export function UpdatesPanel(): React.JSX.Element {
 
           <div className="border-border/60 border-t" />
 
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex flex-col gap-1">
-              <span className="text-fg text-sm font-medium">
-                {t('settings.updates.checkManual', 'Check for updates')}
-              </span>
-              <p className="text-muted text-xs">
-                {t('settings.updates.checkManualDescription', 'Manually check for new versions.')}
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              {updateReady && (
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex flex-col gap-1">
+                <span className="text-fg text-sm font-medium">
+                  {t('settings.updates.checkManual', 'Check for updates')}
+                </span>
+                <p className="text-muted text-xs">
+                  {t('settings.updates.checkManualDescription', 'Manually check for new versions.')}
+                </p>
+              </div>
+              {updateReady ? (
                 <button
                   type="button"
                   onClick={onInstall}
+                  disabled={installing}
                   className={cn(
                     'bg-primary text-primary-fg flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium shadow-sm transition-colors',
                     'hover:bg-primary/90 cursor-pointer',
-                    'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
+                    'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+                    installing && 'cursor-not-allowed opacity-60'
                   )}
                 >
-                  <ArrowUp02Icon size={14} />
-                  <span>{t('settings.updates.installNow', 'Install update')}</span>
+                  <span>{t('settings.updates.install', 'Install')}</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={onCheckForUpdates}
+                  disabled={checking}
+                  className={cn(
+                    'border-border text-fg flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors',
+                    'hover:bg-border/40 cursor-pointer',
+                    'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+                    checking && 'cursor-not-allowed opacity-60'
+                  )}
+                >
+                  <span>{t('settings.updates.check', 'Check')}</span>
                 </button>
               )}
-              <button
-                type="button"
-                onClick={onCheckForUpdates}
-                disabled={checking}
-                className={cn(
-                  'border-border text-fg flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors',
-                  'hover:bg-border/40 cursor-pointer',
-                  'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-                  checking && 'cursor-not-allowed opacity-60'
-                )}
-              >
-                {checking && <Loading03Icon size={14} className="animate-spin" />}
-                <span>
-                  {checking
-                    ? t('settings.updates.checking', 'Checking...')
-                    : t('settings.updates.checkNow', 'Check now')}
-                </span>
-              </button>
             </div>
+            {installing && (
+              <div className="bg-border/30 h-1 overflow-hidden rounded-full">
+                <div
+                  className="h-full bg-emerald-500 transition-[width] duration-300 ease-out"
+                  style={{ width: `${installProgress}%` }}
+                />
+              </div>
+            )}
           </div>
         </section>
       </div>

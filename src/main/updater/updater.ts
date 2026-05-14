@@ -35,6 +35,30 @@ function broadcast<T>(channel: string, payload: T): void {
 }
 
 export function initUpdater(): void {
+  // IPC handlers are always registered so the renderer never calls
+  // an unhandled channel. The autoUpdater wiring is production-only.
+  ipcMain.handle('updater:install', () => {
+    if (is.dev) return
+    autoUpdater.quitAndInstall()
+  })
+
+  ipcMain.handle('updater:check', async () => {
+    if (is.dev) return { ok: true, version: null }
+    try {
+      const result = await autoUpdater.checkForUpdates()
+      const remoteVersion = result?.updateInfo.version ?? null
+      const currentVersion = app.getVersion()
+      const hasUpdate = remoteVersion ? remoteVersion !== currentVersion : false
+      return { ok: true, version: hasUpdate ? remoteVersion : null }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
+  ipcMain.handle('updater:getVersion', () => {
+    return app.getVersion()
+  })
+
   if (is.dev) return
 
   autoUpdater.autoDownload = true
@@ -45,7 +69,6 @@ export function initUpdater(): void {
     url: RELEASES_URL
   })
 
-  // TODO: code signing — once signing is configured, remove this line
   autoUpdater.autoRunAppAfterInstall = true
 
   autoUpdater.on('update-available', (info: UpdateInfo) => {
@@ -70,26 +93,6 @@ export function initUpdater(): void {
 
   autoUpdater.on('error', (err) => {
     console.error('Auto-updater error:', err.message)
-  })
-
-  ipcMain.handle('updater:install', () => {
-    autoUpdater.quitAndInstall()
-  })
-
-  ipcMain.handle('updater:check', async () => {
-    try {
-      const result = await autoUpdater.checkForUpdates()
-      const remoteVersion = result?.updateInfo.version ?? null
-      const currentVersion = app.getVersion()
-      const hasUpdate = remoteVersion ? remoteVersion !== currentVersion : false
-      return { ok: true, version: hasUpdate ? remoteVersion : null }
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
-    }
-  })
-
-  ipcMain.handle('updater:getVersion', () => {
-    return app.getVersion()
   })
 }
 
