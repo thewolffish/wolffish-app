@@ -5,15 +5,22 @@ import { ArrowUp02Icon, Cancel01Icon, FileEditIcon } from 'hugeicons-react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+// Cached outside the component so the event survives mount/unmount
+// cycles (e.g. navigating to changelog and back).
+let cachedUpdate: UpdateReadyEvent | null = null
+
 export function UpdateCard(): React.JSX.Element | null {
   const { t } = useTranslation()
   const { status, goTo } = useFlow()
-  const [update, setUpdate] = useState<UpdateReadyEvent | null>(null)
+  const [update, setUpdate] = useState<UpdateReadyEvent | null>(cachedUpdate)
   const [dismissed, setDismissed] = useState(false)
 
   useEffect(() => {
     if (status?.config?.updates?.enabled === false) return
-    const unsub = window.api.updater.onReady((event) => setUpdate(event))
+    const unsub = window.api.updater.onReady((event) => {
+      cachedUpdate = event
+      setUpdate(event)
+    })
     return unsub
   }, [status?.config?.updates?.enabled])
 
