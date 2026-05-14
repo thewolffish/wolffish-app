@@ -37,11 +37,6 @@ function broadcast<T>(channel: string, payload: T): void {
 export function initUpdater(): void {
   // IPC handlers are always registered so the renderer never calls
   // an unhandled channel. The autoUpdater wiring is production-only.
-  ipcMain.handle('updater:install', () => {
-    if (is.dev) return
-    autoUpdater.quitAndInstall()
-  })
-
   ipcMain.handle('updater:check', async () => {
     if (is.dev) return { ok: true, version: null }
     try {

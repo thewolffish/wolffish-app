@@ -1,16 +1,6 @@
 process.noDeprecation = true
 
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
-import {
-  hasBundledDefault,
-  readBundledDefault,
-  readViewerBinaryFile,
-  readViewerFile,
-  readViewerTree,
-  statViewerFile,
-  writeViewerFile,
-  type ViewerTreeNode
-} from '@main/viewer/viewer'
 import { braveService, type BraveStatus, type BraveTestResult } from '@main/brave/brave'
 import { turnRouter } from '@main/channels/channel'
 import { ElectronChannel } from '@main/channels/electron-channel'
@@ -59,6 +49,7 @@ import type { CloudProviderConfig } from '@main/runtime/thalamus/thalamus'
 import { Thalamus } from '@main/runtime/thalamus/thalamus'
 import type { TimeRange as UsageTimeRange } from '@main/runtime/usage/usage'
 import { detectSystem, type SystemInfo } from '@main/system/system'
+import { checkForUpdatesIfEnabled, initUpdater } from '@main/updater/updater'
 import {
   classifyFile,
   isSupportedExtension,
@@ -72,11 +63,22 @@ import {
 } from '@main/uploads/uploads'
 import { categorizeFile, validateFile, type ValidationError } from '@main/uploads/validation'
 import {
+  hasBundledDefault,
+  readBundledDefault,
+  readViewerBinaryFile,
+  readViewerFile,
+  readViewerTree,
+  statViewerFile,
+  writeViewerFile,
+  type ViewerTreeNode
+} from '@main/viewer/viewer'
+import {
   bundledCapabilityNames,
   clearLocalModel,
   ensureWorkspace,
   factoryReset,
   getBraveConfig,
+  getCompactionConfig,
   getComputerUseConfig,
   getGitHubConfig,
   getGoogleConfig,
@@ -95,6 +97,7 @@ import {
   setBraveConfig as persistBraveConfig,
   setBypassPermissions as persistBypassPermissions,
   setCloudPriority as persistCloudPriority,
+  setCompactionConfig as persistCompactionConfig,
   setComputerUseConfig as persistComputerUseConfig,
   setGitHubConfig as persistGitHubConfig,
   setGoogleConfig as persistGoogleConfig,
@@ -111,8 +114,6 @@ import {
   setTtsConfig as persistTtsConfig,
   setVariables as persistVariables,
   setWeekStartsOn as persistWeekStartsOn,
-  getCompactionConfig,
-  setCompactionConfig as persistCompactionConfig,
   setWhatsAppConfig as persistWhatsAppConfig,
   readConfig,
   reconcileLocalModel,
@@ -134,7 +135,6 @@ import {
   type WhatsAppConfig,
   type WorkspaceStatus
 } from '@main/workspace/workspace'
-import { checkForUpdatesIfEnabled, initUpdater } from '@main/updater/updater'
 import dockIcon from '@resources/icons/icons/1024x1024.png?asset'
 import icon from '@resources/icons/icons/512x512.png?asset'
 import {
@@ -1395,7 +1395,10 @@ app.whenReady().then(async () => {
   })
 
   ipcMain.handle('runtime:setUpdatesEnabled', async (_e, value: boolean) => {
-    await patchConfig((c) => ({ ...c, updates: { ...(c.updates ?? { enabled: true }), enabled: value } }))
+    await patchConfig((c) => ({
+      ...c,
+      updates: { ...(c.updates ?? { enabled: true }), enabled: value }
+    }))
     return { value }
   })
 
@@ -1406,11 +1409,23 @@ app.whenReady().then(async () => {
   ipcMain.handle('runtime:getCompactionConfig', async () => {
     return getCompactionConfig()
   })
-  ipcMain.handle('runtime:setCompactionConfig', async (_e, patch: Partial<import('@main/workspace/workspace').CompactionConfig>) => {
-    const updated = await persistCompactionConfig(patch)
-    const cfg = updated.compaction!
-    agent.brainstem.setCompactionConfig(cfg)
-    return cfg
+  ipcMain.handle(
+    'runtime:setCompactionConfig',
+    async (_e, patch: Partial<import('@main/workspace/workspace').CompactionConfig>) => {
+      const updated = await persistCompactionConfig(patch)
+      const cfg = updated.compaction!
+      agent.brainstem.setCompactionConfig(cfg)
+      return cfg
+    }
+  )
+
+  ipcMain.handle('updater:install', async () => {
+    if (is.dev) return
+    const { autoUpdater } = await import('electron-updater')
+    await shutdownGracefully()
+    await waitForBackgroundDrain()
+    quitInProgress = false
+    autoUpdater.quitAndInstall()
   })
 
   ipcMain.handle('updater:readChangelog', async (_event, locale?: string) => {
