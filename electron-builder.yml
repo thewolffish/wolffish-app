@@ -31,7 +31,6 @@ nsis:
   uninstallDisplayName: ${productName}
   createDesktopShortcut: always
 mac:
-  identity: null
   icon: resources/icons/icons/icon.icns
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
@@ -39,9 +38,7 @@ mac:
     - NSMicrophoneUsageDescription: Application requests access to the device's microphone.
     - NSDocumentsFolderUsageDescription: Application requests access to the user's Documents folder.
     - NSDownloadsFolderUsageDescription: Application requests access to the user's Downloads folder.
-  notarize: false
-  # TODO: code signing — add CSC_LINK, CSC_KEY_PASSWORD, APPLE_ID,
-  # APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID env vars for signing + notarization
+  afterSign: scripts/notarize/notarize.ts
   hardenedRuntime: true
   x64ArchFiles: 'Contents/Resources/app.asar.unpacked/node_modules/**/*.{node,dylib}'
   target:
