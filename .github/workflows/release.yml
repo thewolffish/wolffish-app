@@ -91,16 +91,12 @@ jobs:
   publish-r2:
     needs: [build-macos, build-windows, build-linux]
     runs-on: ubuntu-latest
+    environment: Production
     steps:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
           merge-multiple: true
-
-      - name: Debug env
-        run: |
-          echo "ENDPOINT length: ${#R2_ENDPOINT}"
-          echo "BUCKET length: ${#R2_BUCKET}"
 
       - name: Upload to Cloudflare R2
         env:
@@ -109,4 +105,11 @@ jobs:
           R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
         run: |
-          aws s3 cp --endpoint-url "$R2_ENDPOINT" ./artifacts/ "s3://$R2_BUCKET/" --recursive
+          VERSION=${GITHUB_REF#refs/tags/}
+          aws s3 cp --endpoint-url "$R2_ENDPOINT" ./artifacts/ "s3://$R2_BUCKET/$VERSION/" --recursive
+          sed -i "s|url: |url: $VERSION/|g" ./artifacts/latest-mac.yml
+          sed -i "s|url: |url: $VERSION/|g" ./artifacts/latest.yml
+          sed -i "s|url: |url: $VERSION/|g" ./artifacts/latest-linux.yml
+          aws s3 cp --endpoint-url "$R2_ENDPOINT" "./artifacts/latest-mac.yml" "s3://$R2_BUCKET/latest-mac.yml"
+          aws s3 cp --endpoint-url "$R2_ENDPOINT" "./artifacts/latest.yml" "s3://$R2_BUCKET/latest.yml"
+          aws s3 cp --endpoint-url "$R2_ENDPOINT" "./artifacts/latest-linux.yml" "s3://$R2_BUCKET/latest-linux.yml"
