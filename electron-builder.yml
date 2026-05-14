@@ -42,8 +42,7 @@ mac:
   # TODO: code signing — add CSC_LINK, CSC_KEY_PASSWORD, APPLE_ID,
   # APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID env vars for signing + notarization
   hardenedRuntime: true
-  x64ArchFiles:
-    - "Contents/Resources/app.asar.unpacked/node_modules/@img/sharp-darwin-*/lib/*.node"
+  x64ArchFiles: "Contents/Resources/app.asar.unpacked/node_modules/@img/sharp-darwin-*/lib/*.node"
   target:
     - target: dmg
       arch:
