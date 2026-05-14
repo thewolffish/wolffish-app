@@ -415,6 +415,7 @@ export async function ensureWorkspace(): Promise<void> {
   await ensureUploadsDirectory()
   await ensureFilesDirectory()
   await ensureScreenshotsDirectory()
+  await ensureLogsDirectory()
 }
 
 async function ensureBundledCapabilities(): Promise<void> {
@@ -490,6 +491,10 @@ async function ensureFilesDirectory(): Promise<void> {
 
 async function ensureScreenshotsDirectory(): Promise<void> {
   await fs.mkdir(path.join(WORKSPACE_ROOT, 'screenshots'), { recursive: true })
+}
+
+async function ensureLogsDirectory(): Promise<void> {
+  await fs.mkdir(path.join(WORKSPACE_ROOT, 'logs'), { recursive: true })
 }
 
 // ---------------------------------------------------------------------------
