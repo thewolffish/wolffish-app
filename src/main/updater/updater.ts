@@ -40,25 +40,18 @@ export function initUpdater(): void {
   ipcMain.handle('updater:check', async () => {
     if (is.dev) return { ok: true, version: null }
     try {
-      wlog.info(tag, 'checking for updates')
       const result = await autoUpdater.checkForUpdates()
-      const remoteVersion = result?.updateInfo.version ?? null
-      const currentVersion = app.getVersion()
-      const hasUpdate = remoteVersion ? remoteVersion !== currentVersion : false
-      wlog.info(
-        tag,
-        `check done current=${currentVersion} remote=${remoteVersion} hasUpdate=${hasUpdate}`
-      )
-      return { ok: true, version: hasUpdate ? remoteVersion : null }
+      const version = result?.updateInfo.version ?? null
+      const current = app.getVersion()
+      const hasUpdate = version ? version !== current : false
+      return { ok: true, version: hasUpdate ? version : null }
     } catch (err) {
       wlog.error(tag, 'check failed', err)
       return { ok: false, error: err instanceof Error ? err.message : String(err) }
     }
   })
 
-  ipcMain.handle('updater:getVersion', () => {
-    return app.getVersion()
-  })
+  ipcMain.handle('updater:getVersion', () => app.getVersion())
 
   if (is.dev) return
 
@@ -68,26 +61,21 @@ export function initUpdater(): void {
 
   autoUpdater.autoDownload = true
   autoUpdater.autoInstallOnAppQuit = false
-
-  autoUpdater.setFeedURL({
-    provider: 'generic',
-    url: RELEASES_URL
-  })
-
   autoUpdater.autoRunAppAfterInstall = true
+  autoUpdater.setFeedURL({ provider: 'generic', url: RELEASES_URL })
 
   autoUpdater.on('checking-for-update', () => {
     wlog.separator('Update Check')
-    wlog.info(tag, 'checking for update')
+    wlog.info(tag, 'checking')
   })
 
   autoUpdater.on('update-not-available', (info: UpdateInfo) => {
-    wlog.info(tag, `up to date (latest v${info.version})`)
+    wlog.info(tag, `up to date (v${info.version})`)
   })
 
   autoUpdater.on('update-available', (info: UpdateInfo) => {
     wlog.separator('Update Available')
-    wlog.info(tag, `new version  v${info.version}`)
+    wlog.info(tag, `v${info.version}`)
     broadcast<UpdateAvailableEvent>('updater:available', {
       version: info.version,
       releaseNotes: extractReleaseNotes(info)
@@ -96,7 +84,7 @@ export function initUpdater(): void {
 
   autoUpdater.on('download-progress', (progress) => {
     const pct = Math.round(progress.percent)
-    wlog.info(tag, `download ${pct}% (${progress.transferred}/${progress.total})`)
+    wlog.info(tag, `download ${pct}%  (${progress.transferred}/${progress.total})`)
     broadcast<UpdateDownloadProgressEvent>('updater:progress', { percent: pct })
   })
 
@@ -111,26 +99,21 @@ export function initUpdater(): void {
   })
 
   autoUpdater.on('error', (err) => {
-    wlog.error(tag, 'autoUpdater error', err)
+    wlog.error(tag, err)
   })
 }
 
 export function installUpdate(): void {
   wlog.separator('Install')
-  wlog.info(tag, 'calling quitAndInstall(false, true)')
+  wlog.info(tag, 'quitAndInstall(false, true)')
   autoUpdater.quitAndInstall(false, true)
-  wlog.info(tag, 'quitAndInstall returned')
 }
 
 export async function checkForUpdatesIfEnabled(): Promise<void> {
   if (is.dev) return
   const cfg = await readConfig()
-  if (cfg?.updates?.enabled === false) {
-    wlog.info(tag, 'auto-check skipped — disabled in config')
-    return
-  }
+  if (cfg?.updates?.enabled === false) return
   try {
-    wlog.info(tag, 'auto-check on launch')
     await autoUpdater.checkForUpdates()
   } catch (err) {
     wlog.warn(tag, 'auto-check failed', err)

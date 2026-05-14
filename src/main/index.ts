@@ -1420,11 +1420,9 @@ app.whenReady().then(async () => {
     }
   )
 
-  ipcMain.handle('updater:install', () => {
+  ipcMain.handle('updater:install', async () => {
     if (is.dev) return
-    wlog.info('[updater]', `isShuttingDown  ${isShuttingDown}`)
-    wlog.info('[updater]', `quitInProgress  ${quitInProgress}`)
-    isShuttingDown = true
+    await shutdownGracefully()
     quitInProgress = false
     installUpdate()
   })
@@ -1826,25 +1824,13 @@ app.whenReady().then(async () => {
 })
 
 app.on('before-quit', (event) => {
-  wlog.separator('Before Quit')
-  wlog.info('[quit]', `isShuttingDown   ${isShuttingDown}`)
-  wlog.info('[quit]', `quitInProgress   ${quitInProgress}`)
-  wlog.info('[quit]', `hasInflightWork  ${hasInflightWork()}`)
-
   if (quitInProgress) {
-    wlog.info('[quit]', 'drain in progress — preventing quit')
     event.preventDefault()
     return
   }
-  if (isShuttingDown) {
-    wlog.info('[quit]', 'update shutdown — allowing quit')
-    return
-  }
-  if (!hasInflightWork()) {
-    wlog.info('[quit]', 'clean — allowing quit')
-    return
-  }
-  wlog.info('[quit]', 'inflight work — preventing quit, starting drain')
+  if (isShuttingDown || !hasInflightWork()) return
+
+  wlog.info('[quit]', 'inflight work — draining before quit')
   event.preventDefault()
   quitInProgress = true
   broadcast('app:closingPending', { tasks: pendingBackgroundTasks })

@@ -5,8 +5,6 @@ import { ArrowUp02Icon, Cancel01Icon, FileEditIcon } from 'hugeicons-react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-// Cached outside the component so the event survives mount/unmount
-// cycles (e.g. navigating to changelog and back).
 let cachedUpdate: UpdateReadyEvent | null = null
 
 export function UpdateCard(): React.JSX.Element | null {
@@ -14,6 +12,7 @@ export function UpdateCard(): React.JSX.Element | null {
   const { status, goTo } = useFlow()
   const [update, setUpdate] = useState<UpdateReadyEvent | null>(cachedUpdate)
   const [dismissed, setDismissed] = useState(false)
+  const [installing, setInstalling] = useState(false)
 
   useEffect(() => {
     if (status?.config?.updates?.enabled === false) return
@@ -25,12 +24,9 @@ export function UpdateCard(): React.JSX.Element | null {
   }, [status?.config?.updates?.enabled])
 
   const handleInstall = useCallback(() => {
+    setInstalling(true)
     void window.api.updater.install()
   }, [])
-
-  const handleChangelog = useCallback(() => {
-    goTo('changelog', 'chat')
-  }, [goTo])
 
   if (!update || dismissed) return null
   if (status?.config?.updates?.enabled === false) return null
@@ -63,7 +59,7 @@ export function UpdateCard(): React.JSX.Element | null {
       <div className="flex shrink-0 items-center gap-1.5">
         <button
           type="button"
-          onClick={handleChangelog}
+          onClick={() => goTo('changelog', 'chat')}
           className={cn(
             'text-muted hover:text-fg flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors',
             'hover:bg-border/40 cursor-pointer',
@@ -77,10 +73,12 @@ export function UpdateCard(): React.JSX.Element | null {
         <button
           type="button"
           onClick={handleInstall}
+          disabled={installing}
           className={cn(
             'bg-primary text-primary-fg flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-medium shadow-sm transition-colors',
             'hover:bg-primary/90 cursor-pointer',
-            'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
+            'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+            installing && 'cursor-not-allowed opacity-60'
           )}
         >
           <span>{t('update.install', 'Update')}</span>

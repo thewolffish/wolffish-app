@@ -25,7 +25,7 @@ function serialize(a: unknown): string {
 
 function fmt(level: string, tag: string, args: unknown[]): string {
   const msg = args.map(serialize).join(' ')
-  return `[${time()}] ${level.padEnd(5)} ${tag}  ${msg}\n`
+  return `${time()}  ${level.padEnd(5)}  ${tag}  ${msg}\n`
 }
 
 async function write(line: string): Promise<void> {
@@ -48,9 +48,6 @@ export const wlog = {
     void write(fmt('ERROR', tag, args))
   },
   separator(label?: string): void {
-    const line = label
-      ? `\n${'─'.repeat(40)}\n  ${label}\n${'─'.repeat(40)}\n`
-      : `\n${'─'.repeat(40)}\n`
-    void write(line)
+    void write(label ? `\n${label}\n\n` : '\n')
   }
 }

@@ -193,7 +193,7 @@ export function UpdatesPanel(): React.JSX.Element {
                     installing && 'cursor-not-allowed opacity-60'
                   )}
                 >
-                  <span>{t('settings.updates.install', 'Install')}</span>
+                  <span>{t('settings.updates.install', 'Update')}</span>
                 </button>
               ) : (
                 <button
@@ -214,7 +214,7 @@ export function UpdatesPanel(): React.JSX.Element {
             {installing && (
               <div className="bg-border/30 h-1 overflow-hidden rounded-full">
                 <div
-                  className="h-full bg-emerald-500 transition-[width] duration-300 ease-out"
+                  className="bg-primary h-full transition-[width] duration-300 ease-out"
                   style={{ width: `${installProgress}%` }}
                 />
               </div>

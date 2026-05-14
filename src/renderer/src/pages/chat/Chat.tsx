@@ -986,11 +986,12 @@ export function Chat(): React.JSX.Element {
         )}
       </header>
 
-      <div className="px-6 pt-2">
-        <UpdateCard />
-      </div>
-
-      <div ref={scrollerRef} className="flex-1 overflow-y-auto px-6 py-8">
+      <div ref={scrollerRef} className="relative flex-1 overflow-y-auto px-6 py-8">
+        <div className="pointer-events-none absolute inset-x-0 top-0 z-10 px-6 pt-2">
+          <div className="pointer-events-auto">
+            <UpdateCard />
+          </div>
+        </div>
         <div
           className={cn(
             'mx-auto flex max-w-2xl flex-col gap-4',
