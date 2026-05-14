@@ -14,13 +14,18 @@ function dateStamp(): string {
   return new Date().toISOString().slice(0, 10)
 }
 
-function ts(): string {
-  return new Date().toISOString()
+function time(): string {
+  return new Date().toISOString().replace('T', ' ').replace('Z', '')
+}
+
+function serialize(a: unknown): string {
+  if (a instanceof Error) return `${a.message}\n${a.stack}`
+  return String(a)
 }
 
 function fmt(level: string, tag: string, args: unknown[]): string {
-  const parts = args.map((a) => (a instanceof Error ? `${a.message}\n${a.stack}` : String(a)))
-  return `${ts()} [${level}] ${tag} ${parts.join(' ')}\n`
+  const msg = args.map(serialize).join(' ')
+  return `[${time()}] ${level.padEnd(5)} ${tag}  ${msg}\n`
 }
 
 async function write(line: string): Promise<void> {
@@ -41,5 +46,11 @@ export const wlog = {
   },
   error(tag: string, ...args: unknown[]): void {
     void write(fmt('ERROR', tag, args))
+  },
+  separator(label?: string): void {
+    const line = label
+      ? `\n${'─'.repeat(40)}\n  ${label}\n${'─'.repeat(40)}\n`
+      : `\n${'─'.repeat(40)}\n`
+    void write(line)
   }
 }

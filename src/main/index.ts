@@ -49,7 +49,7 @@ import type { CloudProviderConfig } from '@main/runtime/thalamus/thalamus'
 import { Thalamus } from '@main/runtime/thalamus/thalamus'
 import type { TimeRange as UsageTimeRange } from '@main/runtime/usage/usage'
 import { detectSystem, type SystemInfo } from '@main/system/system'
-import { checkForUpdatesIfEnabled, initUpdater } from '@main/updater/updater'
+import { checkForUpdatesIfEnabled, initUpdater, installUpdate } from '@main/updater/updater'
 import {
   classifyFile,
   isSupportedExtension,
@@ -1420,22 +1420,13 @@ app.whenReady().then(async () => {
     }
   )
 
-  ipcMain.handle('updater:install', async () => {
+  ipcMain.handle('updater:install', () => {
     if (is.dev) return
-    try {
-      const { autoUpdater } = await import('electron-updater')
-      wlog.info(
-        '[updater]',
-        `install requested isShuttingDown=${isShuttingDown} quitInProgress=${quitInProgress}`
-      )
-      isShuttingDown = true
-      quitInProgress = false
-      wlog.info('[updater]', 'calling quitAndInstall(false, true)')
-      autoUpdater.quitAndInstall(false, true)
-      wlog.info('[updater]', 'quitAndInstall returned')
-    } catch (err) {
-      wlog.error('[updater]', 'quitAndInstall failed', err)
-    }
+    wlog.info('[updater]', `isShuttingDown  ${isShuttingDown}`)
+    wlog.info('[updater]', `quitInProgress  ${quitInProgress}`)
+    isShuttingDown = true
+    quitInProgress = false
+    installUpdate()
   })
 
   ipcMain.handle('updater:readChangelog', async (_event, locale?: string) => {
@@ -1835,21 +1826,22 @@ app.whenReady().then(async () => {
 })
 
 app.on('before-quit', (event) => {
-  wlog.info(
-    '[quit]',
-    `before-quit isShuttingDown=${isShuttingDown} quitInProgress=${quitInProgress} hasInflightWork=${hasInflightWork()}`
-  )
+  wlog.separator('Before Quit')
+  wlog.info('[quit]', `isShuttingDown   ${isShuttingDown}`)
+  wlog.info('[quit]', `quitInProgress   ${quitInProgress}`)
+  wlog.info('[quit]', `hasInflightWork  ${hasInflightWork()}`)
+
   if (quitInProgress) {
     wlog.info('[quit]', 'drain in progress — preventing quit')
     event.preventDefault()
     return
   }
   if (isShuttingDown) {
-    wlog.info('[quit]', 'isShuttingDown — allowing quit')
+    wlog.info('[quit]', 'update shutdown — allowing quit')
     return
   }
   if (!hasInflightWork()) {
-    wlog.info('[quit]', 'no inflight work — allowing quit')
+    wlog.info('[quit]', 'clean — allowing quit')
     return
   }
   wlog.info('[quit]', 'inflight work — preventing quit, starting drain')

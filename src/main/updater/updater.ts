@@ -62,7 +62,9 @@ export function initUpdater(): void {
 
   if (is.dev) return
 
-  wlog.info(tag, `init v${app.getVersion()} feed=${RELEASES_URL}`)
+  wlog.separator('Updater Init')
+  wlog.info(tag, `version  ${app.getVersion()}`)
+  wlog.info(tag, `feed     ${RELEASES_URL}`)
 
   autoUpdater.autoDownload = true
   autoUpdater.autoInstallOnAppQuit = false
@@ -75,15 +77,17 @@ export function initUpdater(): void {
   autoUpdater.autoRunAppAfterInstall = true
 
   autoUpdater.on('checking-for-update', () => {
-    wlog.info(tag, 'checking-for-update')
+    wlog.separator('Update Check')
+    wlog.info(tag, 'checking for update')
   })
 
   autoUpdater.on('update-not-available', (info: UpdateInfo) => {
-    wlog.info(tag, `update-not-available latest=v${info.version}`)
+    wlog.info(tag, `up to date (latest v${info.version})`)
   })
 
   autoUpdater.on('update-available', (info: UpdateInfo) => {
-    wlog.info(tag, `update-available v${info.version}`)
+    wlog.separator('Update Available')
+    wlog.info(tag, `new version  v${info.version}`)
     broadcast<UpdateAvailableEvent>('updater:available', {
       version: info.version,
       releaseNotes: extractReleaseNotes(info)
@@ -97,7 +101,9 @@ export function initUpdater(): void {
   })
 
   autoUpdater.on('update-downloaded', (info: UpdateDownloadedEvent) => {
-    wlog.info(tag, `downloaded v${info.version} file=${info.downloadedFile}`)
+    wlog.separator('Download Complete')
+    wlog.info(tag, `version  v${info.version}`)
+    wlog.info(tag, `file     ${info.downloadedFile}`)
     broadcast<UpdateReadyEvent>('updater:ready', {
       version: info.version,
       releaseNotes: extractReleaseNotes(info)
@@ -107,6 +113,13 @@ export function initUpdater(): void {
   autoUpdater.on('error', (err) => {
     wlog.error(tag, 'autoUpdater error', err)
   })
+}
+
+export function installUpdate(): void {
+  wlog.separator('Install')
+  wlog.info(tag, 'calling quitAndInstall(false, true)')
+  autoUpdater.quitAndInstall(false, true)
+  wlog.info(tag, 'quitAndInstall returned')
 }
 
 export async function checkForUpdatesIfEnabled(): Promise<void> {
