@@ -1,5 +1,5 @@
 appId: sh.wolffi.app
-productName: wolffish
+productName: Wolffish
 directories:
   buildResources: build
 files:
