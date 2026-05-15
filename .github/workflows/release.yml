@@ -98,7 +98,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: Production
     steps:
-      - uses: actions/download-artifact@v6
+      - uses: actions/download-artifact@v7
         with:
           path: artifacts
           merge-multiple: true
@@ -120,7 +120,7 @@ jobs:
           aws s3 cp --endpoint-url "$R2_ENDPOINT" "./artifacts/latest-linux.yml" "s3://$R2_BUCKET/latest-linux.yml"
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             artifacts/*.dmg
