@@ -1,6 +1,20 @@
-# Changelog
+## v1.0.35 — 2026-05-15
 
-## v1.0.14 — 2026-05-14
+### Signed & Notarized Updates
+
+Wolffish builds are now code-signed and notarized by Apple. Auto-updates install cleanly on macOS without Gatekeeper warnings or signature validation failures. The full update pipeline — download, verify, quit, replace, relaunch — works end to end.
+
+### Structured Logging
+
+A new workspace logger writes daily log files to `~/.wolffish/workspace/logs/`. The entire updater lifecycle is instrumented: init, check, download progress, install, and quit. Log files are viewable in the built-in file viewer and are read-only.
+
+### Monthly Changelog
+
+The changelog is now organized by month instead of a single file. A sidebar lists months (newest first, localized), and clicking one loads that month's release notes. New version entries go at the top of each month's file.
+
+---
+
+## v1.0.14 — 2026-05-08
 
 ### Auto-Update System
 
@@ -22,7 +36,7 @@ The agent instructions file has been split in two. `agents.core.md` carries Wolf
 
 ---
 
-## v1.0.0 — 2026-05-14
+## v1.0.0 — 2026-05-01
 
 ### Initial Release
 

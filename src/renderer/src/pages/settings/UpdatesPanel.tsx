@@ -108,9 +108,6 @@ export function UpdatesPanel(): React.JSX.Element {
               {t('settings.updates.version', 'Version')}
             </span>
             <div className="flex items-center gap-2">
-              <code className="bg-border/50 text-fg rounded px-2 py-0.5 text-xs font-mono">
-                {appVersion ? `v${appVersion}` : '...'}
-              </code>
               <button
                 type="button"
                 onClick={() => goTo('changelog', 'settings')}
@@ -121,6 +118,9 @@ export function UpdatesPanel(): React.JSX.Element {
               >
                 {t('settings.updates.changelog', 'Changelog')}
               </button>
+              <code className="bg-border/50 text-fg rounded px-2 py-0.5 text-xs font-mono">
+                {appVersion ? `v${appVersion}` : '...'}
+              </code>
             </div>
           </div>
 

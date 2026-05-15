@@ -1427,21 +1427,37 @@ app.whenReady().then(async () => {
     installUpdate()
   })
 
-  ipcMain.handle('updater:readChangelog', async (_event, locale?: string) => {
+  ipcMain.handle('updater:listChangelogMonths', async () => {
+    const { readdir } = await import('node:fs/promises')
+    const base = is.dev
+      ? join(app.getAppPath(), 'src', 'changelog')
+      : join(process.resourcesPath, 'changelog')
+    try {
+      const entries = await readdir(base, { withFileTypes: true })
+      return entries
+        .filter((e) => e.isDirectory() && /^\d{4}-\d{2}$/.test(e.name))
+        .map((e) => e.name)
+        .sort()
+        .reverse()
+    } catch {
+      return []
+    }
+  })
+
+  ipcMain.handle('updater:readChangelog', async (_event, month: string, locale?: string) => {
     const { readFile } = await import('node:fs/promises')
     const lang = locale ?? 'en'
     const base = is.dev
       ? join(app.getAppPath(), 'src', 'changelog')
       : join(process.resourcesPath, 'changelog')
-    // Try the requested locale first, fall back to English
     for (const l of [lang, 'en']) {
       try {
-        return await readFile(join(base, `${l}.md`), 'utf8')
+        return await readFile(join(base, month, `${l}.md`), 'utf8')
       } catch {
         // try next
       }
     }
-    return '# Changelog\n\nNo changelog available.'
+    return ''
   })
 
   ipcMain.handle('workspace:getModelCatalog', () => MODEL_CATALOG)

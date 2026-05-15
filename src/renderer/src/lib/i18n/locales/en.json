@@ -871,7 +871,30 @@
         "cancel": "Cancel",
         "errorToast": "Reset failed. Try again."
       }
+    },
+    "updates": {
+      "title": "Updates",
+      "subtitle": "Manage app updates and version info.",
+      "version": "Version",
+      "changelog": "Changelog",
+      "autoUpdates": "Auto-updates",
+      "autoUpdatesDescription": "Check for and download updates automatically on launch.",
+      "checkManual": "Check for updates",
+      "checkManualDescription": "Manually check for new versions.",
+      "check": "Check",
+      "install": "Update",
+      "upToDate": "Up to date",
+      "updateFound": "Update found",
+      "checkFailed": "Could not check for updates"
     }
+  },
+  "update": {
+    "available": "Update available",
+    "install": "Update",
+    "changelog": "Changelog"
+  },
+  "changelog": {
+    "empty": "No changelog entries yet."
   },
   "chat": {
     "placeholder": "Message Wolffish",

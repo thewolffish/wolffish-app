@@ -835,7 +835,30 @@
         "cancel": "إلغاء",
         "errorToast": "فشلت إعادة الضبط. حاول مرة أخرى."
       }
+    },
+    "updates": {
+      "title": "التحديثات",
+      "subtitle": "إدارة تحديثات التطبيق ومعلومات الإصدار.",
+      "version": "الإصدار",
+      "changelog": "سجل التغييرات",
+      "autoUpdates": "التحديثات التلقائية",
+      "autoUpdatesDescription": "التحقق من التحديثات وتحميلها تلقائياً عند التشغيل.",
+      "checkManual": "التحقق من التحديثات",
+      "checkManualDescription": "التحقق يدوياً من الإصدارات الجديدة.",
+      "check": "تحقق",
+      "install": "تحديث",
+      "upToDate": "محدّث",
+      "updateFound": "يوجد تحديث",
+      "checkFailed": "تعذّر التحقق من التحديثات"
     }
+  },
+  "update": {
+    "available": "تحديث متوفر",
+    "install": "تحديث",
+    "changelog": "سجل التغييرات"
+  },
+  "changelog": {
+    "empty": "لا توجد إدخالات في سجل التغييرات بعد."
   },
   "chat": {
     "placeholder": "اكتب لوولف‌ فيش",

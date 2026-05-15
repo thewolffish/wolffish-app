@@ -852,7 +852,8 @@ export type UpdaterApi = {
   install: () => Promise<void>
   check: () => Promise<UpdateCheckResult>
   getVersion: () => Promise<string>
-  readChangelog: (locale?: string) => Promise<string>
+  listChangelogMonths: () => Promise<string[]>
+  readChangelog: (month: string, locale?: string) => Promise<string>
   onAvailable: (listener: (event: UpdateAvailableEvent) => void) => () => void
   onProgress: (listener: (event: UpdateDownloadProgressEvent) => void) => () => void
   onReady: (listener: (event: UpdateReadyEvent) => void) => () => void
@@ -1154,7 +1155,9 @@ const api: WolffishApi = {
     install: () => ipcRenderer.invoke('updater:install'),
     check: () => ipcRenderer.invoke('updater:check'),
     getVersion: () => ipcRenderer.invoke('updater:getVersion'),
-    readChangelog: (locale?: string) => ipcRenderer.invoke('updater:readChangelog', locale),
+    listChangelogMonths: () => ipcRenderer.invoke('updater:listChangelogMonths'),
+    readChangelog: (month: string, locale?: string) =>
+      ipcRenderer.invoke('updater:readChangelog', month, locale),
     onAvailable: (listener) => subscribe('updater:available', listener),
     onProgress: (listener) => subscribe('updater:progress', listener),
     onReady: (listener) => subscribe('updater:ready', listener)
