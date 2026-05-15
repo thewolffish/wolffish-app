@@ -1,7 +1,7 @@
 import { cn } from '@lib/utils/cn/cn'
 import type { UpdateReadyEvent } from '@preload/index'
 import { useFlow } from '@providers/flow/useFlow'
-import { ArrowUp02Icon, Cancel01Icon, FileEditIcon } from 'hugeicons-react'
+import { ArrowUp02Icon, Cancel01Icon } from 'hugeicons-react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -9,7 +9,7 @@ let cachedUpdate: UpdateReadyEvent | null = null
 
 export function UpdateCard(): React.JSX.Element | null {
   const { t } = useTranslation()
-  const { status, goTo } = useFlow()
+  const { status } = useFlow()
   const [update, setUpdate] = useState<UpdateReadyEvent | null>(cachedUpdate)
   const [dismissed, setDismissed] = useState(false)
   const [installing, setInstalling] = useState(false)
@@ -59,19 +59,6 @@ export function UpdateCard(): React.JSX.Element | null {
       <div className="flex shrink-0 items-center gap-1.5">
         <button
           type="button"
-          onClick={() => goTo('changelog', 'chat')}
-          className={cn(
-            'text-muted hover:text-fg flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors',
-            'hover:bg-border/40 cursor-pointer',
-            'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
-          )}
-        >
-          <FileEditIcon size={14} />
-          <span>{t('update.changelog', 'Changelog')}</span>
-        </button>
-
-        <button
-          type="button"
           onClick={handleInstall}
           disabled={installing}
           className={cn(
@@ -87,11 +74,13 @@ export function UpdateCard(): React.JSX.Element | null {
         <button
           type="button"
           onClick={() => setDismissed(true)}
+          disabled={installing}
           aria-label={t('common.close', 'Close')}
           className={cn(
             'text-muted hover:text-fg rounded-lg p-1 transition-colors',
             'hover:bg-border/40 cursor-pointer',
-            'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
+            'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+            installing && 'cursor-not-allowed opacity-40'
           )}
         >
           <Cancel01Icon size={14} />

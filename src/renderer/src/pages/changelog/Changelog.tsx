@@ -32,14 +32,19 @@ export function Changelog(): React.JSX.Element {
   useEffect(() => {
     void window.api.updater.listChangelogMonths().then((list) => {
       setMonths(list)
-      if (list.length > 0 && !selected) setSelected(list[0])
+      if (list.length > 0) setSelected((prev) => prev ?? list[0])
     })
   }, [])
 
   useEffect(() => {
     if (!selected) return
-    setContent(null)
-    void window.api.updater.readChangelog(selected, locale).then(setContent)
+    let stale = false
+    void window.api.updater.readChangelog(selected, locale).then((md) => {
+      if (!stale) setContent(md)
+    })
+    return () => {
+      stale = true
+    }
   }, [selected, locale])
 
   const handleSelect = useCallback((month: string) => {
@@ -62,7 +67,9 @@ export function Changelog(): React.JSX.Element {
           <span>{t('common.back', 'Back')}</span>
         </button>
         {appVersion && (
-          <span className="text-muted text-xs">v{appVersion}</span>
+          <code className="bg-border/50 text-fg rounded px-2 py-0.5 text-xs font-mono">
+            v{appVersion}
+          </code>
         )}
       </header>
 
@@ -72,7 +79,10 @@ export function Changelog(): React.JSX.Element {
         </div>
       ) : (
         <div dir="ltr" className="flex min-h-0 flex-1">
-          <aside dir={isRtl ? 'rtl' : 'ltr'} className="border-border w-48 shrink-0 overflow-y-auto border-e p-3">
+          <aside
+            dir={isRtl ? 'rtl' : 'ltr'}
+            className="border-border w-48 shrink-0 overflow-y-auto border-r p-3"
+          >
             <ul className="flex flex-col gap-0.5">
               {months.map((month) => (
                 <li key={month}>
