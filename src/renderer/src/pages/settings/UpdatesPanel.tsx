@@ -1,3 +1,4 @@
+import { Button } from '@components/core/button/Button'
 import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn/cn'
 import type { UpdateCheckResult } from '@preload/index'
@@ -217,11 +218,14 @@ export function UpdatesPanel(): React.JSX.Element {
               </div>
             ) : phase === 'ready' || phase === 'installing' ? (
               <div className="flex items-center justify-between gap-4">
-                <span className="text-fg text-sm font-medium">
-                  {t('settings.updates.updateAvailable', 'v{{version}} ready to install', {
-                    version: updateVersion ?? ''
-                  })}
-                </span>
+                <div className="flex items-center gap-2">
+                  <code className="bg-border/50 text-fg rounded px-2 py-0.5 text-xs font-mono">
+                    v{updateVersion}
+                  </code>
+                  <span className="text-fg text-sm font-medium">
+                    {t('settings.updates.updateAvailable', 'Ready to install')}
+                  </span>
+                </div>
                 <button
                   type="button"
                   onClick={onInstall}
@@ -249,19 +253,14 @@ export function UpdatesPanel(): React.JSX.Element {
                     )}
                   </p>
                 </div>
-                <button
+                <Button
                   type="button"
-                  onClick={onCheckForUpdates}
+                  variant="outline"
+                  onClick={() => void onCheckForUpdates()}
                   disabled={phase === 'checking'}
-                  className={cn(
-                    'border-border text-fg flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors',
-                    'hover:bg-border/40 cursor-pointer',
-                    'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-                    phase === 'checking' && 'cursor-not-allowed opacity-60'
-                  )}
                 >
-                  <span>{t('settings.updates.check', 'Check')}</span>
-                </button>
+                  {t('settings.updates.check', 'Check')}
+                </Button>
               </div>
             )}
             {phase === 'installing' && (

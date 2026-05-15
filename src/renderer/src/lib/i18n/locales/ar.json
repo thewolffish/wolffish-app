@@ -851,7 +851,7 @@
       "updateFound": "يوجد تحديث",
       "checkFailed": "تعذّر التحقق من التحديثات",
       "downloading": "جارٍ تحميل التحديث {{version}}…",
-      "updateAvailable": "{{version}} جاهز للتثبيت"
+      "updateAvailable": "جاهز للتثبيت"
     }
   },
   "update": {
