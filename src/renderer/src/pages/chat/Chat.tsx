@@ -111,15 +111,9 @@ export function Chat(): React.JSX.Element {
 
   const [draft, setDraft] = useState('')
   const [streaming, setStreaming] = useState(false)
-  // Per-conversation. Seeded from the loaded conversation file (see
-  // the conversation-loading effect below) and persisted back via
-  // conversation.save when the user picks or clears a folder. The
-  // effective `workingFolder` is derived below — it falls back to null
-  // whenever no conversation is active, so we don't have to clear this
-  // state from inside an effect (which would cascade renders).
-  const [storedFolder, setStoredFolder] = useState<string | null>(null)
-  const workingFolder = activeConversationId ? storedFolder : null
-  const [folderHover, setFolderHover] = useState(false)
+  const [storedFolders, setStoredFolders] = useState<string[]>([])
+  const workingFolders = activeConversationId ? storedFolders : []
+  const [folderListOpen, setFolderListOpen] = useState(false)
   /**
    * Files the user has staged but not yet sent. Each entry holds the
    * already-saved metadata returned from upload:saveFile so the file is
@@ -155,7 +149,7 @@ export function Chat(): React.JSX.Element {
   // per conversation. Lets us emit a one-shot "cleared" notice on the
   // transition from set→null so the model stops referring to the old
   // folder it saw in earlier turns.
-  const sentFolderByConvRef = useRef<Map<string, string | null>>(new Map())
+  const sentFolderByConvRef = useRef<Map<string, string[]>>(new Map())
   // Track the channel of the currently-loaded conversation. Null
   // when there's no active conversation (fresh chat). Telegram
   // conversations are read-only from the in-app chat — we hide the
@@ -386,12 +380,11 @@ export function Chat(): React.JSX.Element {
         if (!conv || activeConversationId !== targetId) return
         conversationRef.current = conv
         titleGeneratedRef.current = conv.title !== 'Untitled'
-        const folder = conv.workingFolder ?? null
-        setStoredFolder(folder)
-        // Seed the per-conversation ref so a clear after restart still
-        // produces a "cleared" notice — the model has seen this folder
-        // in its history even though our ref started empty.
-        sentFolderByConvRef.current.set(conv.id, folder)
+        const raw = conv.workingFolder
+        const folders = Array.isArray(raw) ? raw : typeof raw === 'string' ? [raw] : []
+        setStoredFolders(folders)
+        setFolderListOpen(false)
+        sentFolderByConvRef.current.set(conv.id, folders)
       })
     } else {
       conversationRef.current = null
@@ -551,15 +544,15 @@ export function Chat(): React.JSX.Element {
       // along with this turn even though it can't read them. Tools like
       // stt_transcribe_upload can then pick up the file from this hint.
       const workspaceRoot = status?.rootPath ?? null
-      const previousFolder = sentFolderByConvRef.current.get(conversationId) ?? null
+      const previousFolders = sentFolderByConvRef.current.get(conversationId) ?? []
       const historyContent = composeHistoryContent(
         trimmed,
         attachments,
         workspaceRoot,
-        workingFolder,
-        previousFolder
+        workingFolders,
+        previousFolders
       )
-      sentFolderByConvRef.current.set(conversationId, workingFolder)
+      sentFolderByConvRef.current.set(conversationId, workingFolders)
       const currentEntry: {
         role: 'user'
         content: string
@@ -582,7 +575,7 @@ export function Chat(): React.JSX.Element {
         setMessages((prev) => markError(prev, response.turnId, response.error ?? 'unknown error'))
       }
     },
-    [streaming, messages, setMessages, ensureConversationId, status?.rootPath, workingFolder]
+    [streaming, messages, setMessages, ensureConversationId, status?.rootPath, workingFolders]
   )
 
   const send = useCallback(async () => {
@@ -663,15 +656,15 @@ export function Chat(): React.JSX.Element {
       // raw transcript (no 🎙 prefix) for the model-facing history so
       // the agent doesn't echo our UI marker back.
       const workspaceRoot = status?.rootPath ?? null
-      const previousFolder = sentFolderByConvRef.current.get(conversationId) ?? null
+      const previousFolders = sentFolderByConvRef.current.get(conversationId) ?? []
       const historyContent = `<voice_note>\n${composeHistoryContent(
         transcript,
         [attachment],
         workspaceRoot,
-        workingFolder,
-        previousFolder
+        workingFolders,
+        previousFolders
       )}`
-      sentFolderByConvRef.current.set(conversationId, workingFolder)
+      sentFolderByConvRef.current.set(conversationId, workingFolders)
       const currentEntry: {
         role: 'user'
         content: string
@@ -710,7 +703,7 @@ export function Chat(): React.JSX.Element {
     messages,
     setMessages,
     status,
-    workingFolder
+    workingFolders
   ])
 
   const stop = useCallback(() => {
@@ -813,38 +806,37 @@ export function Chat(): React.JSX.Element {
     setPendingAttachments((prev) => prev.filter((a) => a.filePath !== filePath))
   }, [])
 
-  // Persist the folder onto the conversation file. Re-reads the
-  // conversation from disk before saving so we don't clobber any
-  // recently-persisted messages held only in conversationRef.
-  const persistWorkingFolder = useCallback(
-    async (folder: string | null) => {
-      const conversationId = await ensureConversationId()
-      const conv = await window.api.conversation.load(conversationId)
+  const persistWorkingFolders = useCallback(
+    async (folders: string[]) => {
+      await ensureConversationId()
+      const conv = conversationRef.current
       if (!conv) return
-      conv.workingFolder = folder
+      conv.workingFolder = folders.length > 0 ? folders : null
       await window.api.conversation.save(conv)
-      conversationRef.current = conv
     },
     [ensureConversationId]
   )
 
-  const pickWorkingFolder = useCallback(async () => {
+  const addWorkingFolder = useCallback(async () => {
     if (streaming) return
     const folder = await window.api.upload.pickFolder()
-    if (!folder) return
-    setStoredFolder(folder)
-    await persistWorkingFolder(folder)
-  }, [streaming, persistWorkingFolder])
+    if (!folder || storedFolders.includes(folder)) return
+    const updated = [...storedFolders, folder]
+    setStoredFolders(updated)
+    await persistWorkingFolders(updated)
+  }, [streaming, storedFolders, persistWorkingFolders])
 
-  const clearWorkingFolder = useCallback(async () => {
-    setStoredFolder(null)
-    if (!activeConversationId) return
-    const conv = await window.api.conversation.load(activeConversationId)
-    if (!conv) return
-    conv.workingFolder = null
-    await window.api.conversation.save(conv)
-    conversationRef.current = conv
-  }, [activeConversationId])
+  const removeWorkingFolder = useCallback(
+    async (path: string) => {
+      const updated = storedFolders.filter((f) => f !== path)
+      setStoredFolders(updated)
+      const conv = conversationRef.current
+      if (!conv) return
+      conv.workingFolder = updated.length > 0 ? updated : null
+      await window.api.conversation.save(conv)
+    },
+    [storedFolders]
+  )
 
   const handleDragEnter = useCallback(
     (e: React.DragEvent<HTMLDivElement>) => {
@@ -1133,44 +1125,89 @@ export function Chat(): React.JSX.Element {
             >
               <Image02Icon size={18} />
             </button>
-            <div
-              className="relative"
-              onMouseEnter={() => setFolderHover(true)}
-              onMouseLeave={() => setFolderHover(false)}
-            >
+            <div className="relative">
               <button
                 type="button"
-                onClick={workingFolder ? clearWorkingFolder : pickWorkingFolder}
+                onClick={
+                  workingFolders.length > 0
+                    ? () => setFolderListOpen((p) => !p)
+                    : addWorkingFolder
+                }
                 disabled={streaming}
-                title={workingFolder ? t('chat.clearFolder') : t('chat.selectFolder')}
-                aria-label={workingFolder ? t('chat.clearFolder') : t('chat.selectFolder')}
+                title={
+                  workingFolders.length > 0
+                    ? t('chat.workingFolder')
+                    : t('chat.selectFolder')
+                }
+                aria-label={
+                  workingFolders.length > 0
+                    ? t('chat.workingFolder')
+                    : t('chat.selectFolder')
+                }
                 className={cn(
                   'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border',
                   'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
                   'disabled:cursor-not-allowed disabled:opacity-50',
                   !streaming && 'cursor-pointer',
-                  workingFolder
+                  workingFolders.length > 0
                     ? 'border-primary/40 bg-primary/10 text-primary hover:border-primary/60'
                     : 'border-border bg-surface text-muted hover:text-fg hover:border-muted'
                 )}
               >
                 <Folder01Icon size={18} />
               </button>
-              {folderHover && workingFolder && (
-                <div className="border-border bg-surface text-fg absolute bottom-full mb-2 inset-s-1/2 -translate-x-1/2 rounded-lg border px-2.5 py-1.5 text-xs shadow-sm min-w-[160px]">
-                  <div className="text-muted text-[10px] font-medium uppercase tracking-wide whitespace-nowrap">
-                    {t('chat.workingFolder')}
+              {folderListOpen && workingFolders.length > 0 && (
+                <>
+                  <div
+                    className="fixed inset-0 z-10"
+                    onClick={() => setFolderListOpen(false)}
+                  />
+                  <div className="border-border bg-surface text-fg absolute bottom-full start-0 z-20 mb-2 rounded-lg border px-2 py-2 text-xs shadow-md min-w-[200px] max-w-[280px]">
+                    <div className="text-muted mb-1.5 text-[10px] font-medium uppercase tracking-wide whitespace-nowrap">
+                      {t('chat.workingFolder')}
+                    </div>
+                    <div dir="ltr" className="space-y-1.5">
+                      {workingFolders.map((folder) => (
+                        <div
+                          key={folder}
+                          className="flex items-center gap-1.5"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div
+                              className="truncate text-xs"
+                              title={folder}
+                            >
+                              {folder.split('/').pop()}
+                            </div>
+                            <code
+                              className="border-border bg-bg text-muted mt-0.5 block max-w-[220px] truncate rounded border px-1 py-0.5 font-mono text-[9px]"
+                              title={folder}
+                            >
+                              {folder}
+                            </code>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => void removeWorkingFolder(folder)}
+                            className="text-muted/40 hover:text-red-500 shrink-0 cursor-pointer transition-colors"
+                            title="Remove"
+                          >
+                            <Delete02Icon size={12} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={addWorkingFolder}
+                      disabled={streaming}
+                      className="text-muted hover:text-fg mt-1.5 flex w-full cursor-pointer items-center gap-1 text-[10px]"
+                    >
+                      <PlusSignIcon size={10} />
+                      {t('chat.addMore')}
+                    </button>
                   </div>
-                  <div className="mt-0.5 max-w-[220px] truncate" title={workingFolder}>
-                    {workingFolder.split('/').pop()}
-                  </div>
-                  <code
-                    className="border-border bg-bg text-muted mt-1 block max-w-[220px] truncate rounded border px-1.5 py-0.5 font-mono text-[10px]"
-                    title={workingFolder}
-                  >
-                    {workingFolder}
-                  </code>
-                </div>
+                </>
               )}
             </div>
             <button
@@ -1919,17 +1956,18 @@ function composeHistoryContent(
   text: string,
   attachments: MessageAttachment[],
   workspaceRoot: string | null,
-  workingFolder?: string | null,
-  previousFolder?: string | null
+  workingFolders?: string[],
+  previousFolders?: string[]
 ): string {
   const parts: string[] = []
-  if (workingFolder) {
+  if (workingFolders && workingFolders.length > 0) {
+    const folderList = workingFolders.map((f) => `- ${f}`).join('\n')
     parts.push(
-      `<working_folder>\nThe user has set their current working directory to: ${workingFolder}\nBe attentive that the user has pointed you to this folder. When the user references files, paths, or project context, assume they are relative to this directory unless stated otherwise.\n</working_folder>`
+      `<working_folders>\nThe user has set the following working directories:\n${folderList}\nBe attentive that the user has pointed you to these folders. When the user references files, paths, or project context, assume they are relative to these directories unless stated otherwise.\n</working_folders>`
     )
-  } else if (previousFolder) {
+  } else if (previousFolders && previousFolders.length > 0) {
     parts.push(
-      `<working_folder_cleared>\nThe user has cleared their previously selected working folder (${previousFolder}). It is no longer the active working directory — disregard any earlier references to it as the current context unless the user mentions it again.\n</working_folder_cleared>`
+      `<working_folders_cleared>\nThe user has cleared their previously selected working folders (${previousFolders.join(', ')}). They are no longer the active working directories — disregard any earlier references to them as the current context unless the user mentions them again.\n</working_folders_cleared>`
     )
   }
   if (text) parts.push(text)

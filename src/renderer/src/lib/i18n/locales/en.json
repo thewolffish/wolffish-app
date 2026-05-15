@@ -916,7 +916,8 @@
     "attachFile": "Attach file",
     "selectFolder": "Select working folder",
     "clearFolder": "Clear working folder",
-    "workingFolder": "Working folder",
+    "workingFolder": "Working folders",
+    "addMore": "Add more",
     "dropToAttach": "Drop files to attach",
     "upload": {
       "fileTooLarge": "File exceeds maximum size of {{limit}}",

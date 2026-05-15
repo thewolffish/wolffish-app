@@ -879,7 +879,8 @@
     "attachFile": "إرفاق ملف",
     "selectFolder": "اختر مجلد العمل",
     "clearFolder": "إزالة مجلد العمل",
-    "workingFolder": "مجلد العمل",
+    "workingFolder": "مجلدات العمل",
+    "addMore": "إضافة المزيد",
     "dropToAttach": "أفلِت الملفات للإرفاق",
     "upload": {
       "fileTooLarge": "الملف يتجاوز الحد الأقصى {{limit}}",

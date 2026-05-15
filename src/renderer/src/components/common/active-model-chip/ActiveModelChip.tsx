@@ -25,7 +25,7 @@ export function ActiveModelChip({
   return (
     <div
       className={cn(
-        'border-border/60 text-muted bg-bg/40 self-start',
+        'border-border/60 text-muted bg-surface self-start',
         'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs'
       )}
     >

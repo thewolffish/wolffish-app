@@ -68,7 +68,7 @@ export type ConversationFile = {
   updatedAt: number
   channel?: ConversationChannel
   sealed?: boolean
-  workingFolder?: string | null
+  workingFolder?: string[] | null
 }
 
 export type ConversationMeta = {
