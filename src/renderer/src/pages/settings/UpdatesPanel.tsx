@@ -2,8 +2,11 @@ import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn/cn'
 import type { UpdateCheckResult } from '@preload/index'
 import { useFlow } from '@providers/flow/useFlow'
+import { InformationCircleIcon } from 'hugeicons-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
+type UpdatePhase = 'idle' | 'checking' | 'downloading' | 'ready' | 'installing'
 
 export function UpdatesPanel(): React.JSX.Element {
   const { t } = useTranslation()
@@ -13,9 +16,9 @@ export function UpdatesPanel(): React.JSX.Element {
 
   const [appVersion, setAppVersion] = useState<string | null>(null)
   const [autoUpdates, setAutoUpdates] = useState(updatesEnabled)
-  const [checking, setChecking] = useState(false)
-  const [updateReady, setUpdateReady] = useState(false)
-  const [installing, setInstalling] = useState(false)
+  const [phase, setPhase] = useState<UpdatePhase>('idle')
+  const [updateVersion, setUpdateVersion] = useState<string | null>(null)
+  const [downloadPercent, setDownloadPercent] = useState(0)
   const [installProgress, setInstallProgress] = useState(0)
   const [saving, setSaving] = useState(false)
   const progressRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -25,8 +28,23 @@ export function UpdatesPanel(): React.JSX.Element {
   }, [])
 
   useEffect(() => {
-    const unsub = window.api.updater.onReady(() => setUpdateReady(true))
-    return unsub
+    const unsubAvailable = window.api.updater.onAvailable((event) => {
+      setUpdateVersion(event.version)
+      setDownloadPercent(0)
+      setPhase('downloading')
+    })
+    const unsubProgress = window.api.updater.onProgress((event) => {
+      setDownloadPercent(Math.round(event.percent))
+    })
+    const unsubReady = window.api.updater.onReady((event) => {
+      setUpdateVersion(event.version)
+      setPhase('ready')
+    })
+    return () => {
+      unsubAvailable()
+      unsubProgress()
+      unsubReady()
+    }
   }, [])
 
   useEffect(() => {
@@ -51,27 +69,30 @@ export function UpdatesPanel(): React.JSX.Element {
   )
 
   const onCheckForUpdates = useCallback(async () => {
-    if (checking) return
-    setChecking(true)
+    if (phase !== 'idle') return
+    setPhase('checking')
     try {
       const result: UpdateCheckResult = await window.api.updater.check()
       if (result.ok && result.version) {
-        show({ message: t('settings.updates.updateFound', 'Update found'), tone: 'success' })
+        // onAvailable event will transition to 'downloading'
+        setUpdateVersion(result.version)
       } else if (result.ok) {
         show({ message: t('settings.updates.upToDate', 'Up to date'), tone: 'success' })
+        setPhase('idle')
       } else {
         show({
           message: t('settings.updates.checkFailed', 'Could not check for updates'),
           tone: 'error'
         })
+        setPhase('idle')
       }
-    } finally {
-      setChecking(false)
+    } catch {
+      setPhase('idle')
     }
-  }, [checking, show, t])
+  }, [phase, show, t])
 
   const onInstall = useCallback(() => {
-    setInstalling(true)
+    setPhase('installing')
     setInstallProgress(0)
     let progress = 0
     progressRef.current = setInterval(() => {
@@ -172,46 +193,78 @@ export function UpdatesPanel(): React.JSX.Element {
           <div className="border-border/60 border-t" />
 
           <div className="flex flex-col gap-3">
-            <div className="flex items-center justify-between gap-4">
-              <div className="flex flex-col gap-1">
-                <span className="text-fg text-sm font-medium">
-                  {t('settings.updates.checkManual', 'Check for updates')}
-                </span>
-                <p className="text-muted text-xs">
-                  {t('settings.updates.checkManualDescription', 'Manually check for new versions.')}
-                </p>
-              </div>
-              {updateReady ? (
+            {phase === 'downloading' ? (
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex items-center gap-2">
+                  <InformationCircleIcon size={14} className="text-muted shrink-0" />
+                  <span className="text-muted text-xs">
+                    {t('settings.updates.downloading', 'Downloading update {{version}}…', {
+                      version: updateVersion ? `v${updateVersion}` : ''
+                    })}
+                    {downloadPercent > 0 && ` ${downloadPercent}%`}
+                  </span>
+                </div>
                 <button
                   type="button"
-                  onClick={onInstall}
-                  disabled={installing}
+                  disabled
                   className={cn(
-                    'bg-primary text-primary-fg flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium shadow-sm transition-colors',
-                    'hover:bg-primary/90 cursor-pointer',
-                    'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-                    installing && 'cursor-not-allowed opacity-60'
+                    'bg-primary text-primary-fg flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium shadow-sm',
+                    'cursor-not-allowed opacity-60'
                   )}
                 >
                   <span>{t('settings.updates.install', 'Update')}</span>
                 </button>
-              ) : (
+              </div>
+            ) : phase === 'ready' || phase === 'installing' ? (
+              <div className="flex items-center justify-between gap-4">
+                <span className="text-fg text-sm font-medium">
+                  {t('settings.updates.updateAvailable', 'v{{version}} ready to install', {
+                    version: updateVersion ?? ''
+                  })}
+                </span>
+                <button
+                  type="button"
+                  onClick={onInstall}
+                  disabled={phase === 'installing'}
+                  className={cn(
+                    'bg-primary text-primary-fg flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium shadow-sm transition-colors',
+                    'hover:bg-primary/90 cursor-pointer',
+                    'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+                    phase === 'installing' && 'cursor-not-allowed opacity-60'
+                  )}
+                >
+                  <span>{t('settings.updates.install', 'Update')}</span>
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex flex-col gap-1">
+                  <span className="text-fg text-sm font-medium">
+                    {t('settings.updates.checkManual', 'Check for updates')}
+                  </span>
+                  <p className="text-muted text-xs">
+                    {t(
+                      'settings.updates.checkManualDescription',
+                      'Manually check for new versions.'
+                    )}
+                  </p>
+                </div>
                 <button
                   type="button"
                   onClick={onCheckForUpdates}
-                  disabled={checking}
+                  disabled={phase === 'checking'}
                   className={cn(
                     'border-border text-fg flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors',
                     'hover:bg-border/40 cursor-pointer',
                     'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-                    checking && 'cursor-not-allowed opacity-60'
+                    phase === 'checking' && 'cursor-not-allowed opacity-60'
                   )}
                 >
                   <span>{t('settings.updates.check', 'Check')}</span>
                 </button>
-              )}
-            </div>
-            {installing && (
+              </div>
+            )}
+            {phase === 'installing' && (
               <div className="bg-border/30 h-1 overflow-hidden rounded-full">
                 <div
                   className="bg-primary h-full transition-[width] duration-300 ease-out"

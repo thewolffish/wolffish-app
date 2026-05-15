@@ -10,7 +10,7 @@ A new workspace logger writes daily log files to `~/.wolffish/workspace/logs/`. 
 
 ### Monthly Changelog
 
-The changelog is now organized by month instead of a single file. A sidebar lists months (newest first, localized), and clicking one loads that month's release notes. New version entries go at the top of each month's file.
+The changelog is now organized by month instead of a single file. A sidebar lists months (newest first, localized), and clicking one loads that month's release notes. New version entries go at the top of each month's file. Each version header now shows its release date, and the current app version is displayed in the changelog header.
 
 ---
 

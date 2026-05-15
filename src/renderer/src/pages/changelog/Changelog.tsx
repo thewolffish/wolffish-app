@@ -20,9 +20,14 @@ export function Changelog(): React.JSX.Element {
   const BackIcon = isRtl ? ArrowRight02Icon : ArrowLeft02Icon
   const { goTo, returnTo } = useFlow()
 
+  const [appVersion, setAppVersion] = useState('')
   const [months, setMonths] = useState<string[]>([])
   const [selected, setSelected] = useState<string | null>(null)
   const [content, setContent] = useState<string | null>(null)
+
+  useEffect(() => {
+    void window.api.updater.getVersion().then(setAppVersion)
+  }, [])
 
   useEffect(() => {
     void window.api.updater.listChangelogMonths().then((list) => {
@@ -56,6 +61,9 @@ export function Changelog(): React.JSX.Element {
           <BackIcon size={16} />
           <span>{t('common.back', 'Back')}</span>
         </button>
+        {appVersion && (
+          <span className="text-muted text-xs">v{appVersion}</span>
+        )}
       </header>
 
       {months.length === 0 ? (

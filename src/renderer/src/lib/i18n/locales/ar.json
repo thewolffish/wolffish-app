@@ -849,7 +849,9 @@
       "install": "تحديث",
       "upToDate": "محدّث",
       "updateFound": "يوجد تحديث",
-      "checkFailed": "تعذّر التحقق من التحديثات"
+      "checkFailed": "تعذّر التحقق من التحديثات",
+      "downloading": "جارٍ تحميل التحديث {{version}}…",
+      "updateAvailable": "{{version}} جاهز للتثبيت"
     }
   },
   "update": {

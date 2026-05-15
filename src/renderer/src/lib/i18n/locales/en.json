@@ -885,7 +885,9 @@
       "install": "Update",
       "upToDate": "Up to date",
       "updateFound": "Update found",
-      "checkFailed": "Could not check for updates"
+      "checkFailed": "Could not check for updates",
+      "downloading": "Downloading update {{version}}…",
+      "updateAvailable": "{{version}} ready to install"
     }
   },
   "update": {
