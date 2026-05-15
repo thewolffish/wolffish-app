@@ -9,6 +9,11 @@ import { useTranslation } from 'react-i18next'
 
 type UpdatePhase = 'idle' | 'checking' | 'downloading' | 'ready' | 'installing'
 
+let cachedReadyVersion: string | null = null
+window.api.updater.onReady((event) => {
+  cachedReadyVersion = event.version
+})
+
 export function UpdatesPanel(): React.JSX.Element {
   const { t } = useTranslation()
   const { show } = useToast()
@@ -17,8 +22,8 @@ export function UpdatesPanel(): React.JSX.Element {
 
   const [appVersion, setAppVersion] = useState<string | null>(null)
   const [autoUpdates, setAutoUpdates] = useState(updatesEnabled)
-  const [phase, setPhase] = useState<UpdatePhase>('idle')
-  const [updateVersion, setUpdateVersion] = useState<string | null>(null)
+  const [phase, setPhase] = useState<UpdatePhase>(cachedReadyVersion ? 'ready' : 'idle')
+  const [updateVersion, setUpdateVersion] = useState<string | null>(cachedReadyVersion)
   const [downloadPercent, setDownloadPercent] = useState(0)
   const [installProgress, setInstallProgress] = useState(0)
   const [saving, setSaving] = useState(false)
@@ -38,6 +43,7 @@ export function UpdatesPanel(): React.JSX.Element {
       setDownloadPercent(Math.round(event.percent))
     })
     const unsubReady = window.api.updater.onReady((event) => {
+      cachedReadyVersion = event.version
       setUpdateVersion(event.version)
       setPhase('ready')
     })
@@ -218,13 +224,18 @@ export function UpdatesPanel(): React.JSX.Element {
               </div>
             ) : phase === 'ready' || phase === 'installing' ? (
               <div className="flex items-center justify-between gap-4">
-                <div className="flex items-center gap-2">
-                  <code className="bg-border/50 text-fg rounded px-2 py-0.5 text-xs font-mono">
-                    v{updateVersion}
-                  </code>
+                <div className="flex flex-col gap-1">
                   <span className="text-fg text-sm font-medium">
-                    {t('settings.updates.updateAvailable', 'Ready to install')}
+                    {t('settings.updates.installReady', 'Install downloaded update')}
                   </span>
+                  <div className="flex items-center gap-2">
+                    <code className="bg-border/50 text-fg rounded px-2 py-0.5 text-xs font-mono">
+                      v{updateVersion}
+                    </code>
+                    <span className="text-muted text-xs">
+                      {t('settings.updates.updateAvailable', 'Ready to install')}
+                    </span>
+                  </div>
                 </div>
                 <button
                   type="button"

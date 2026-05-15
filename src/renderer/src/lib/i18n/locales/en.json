@@ -887,6 +887,7 @@
       "updateFound": "Update found",
       "checkFailed": "Could not check for updates",
       "downloading": "Downloading update {{version}}…",
+      "installReady": "Install downloaded update",
       "updateAvailable": "Ready to install"
     }
   },
