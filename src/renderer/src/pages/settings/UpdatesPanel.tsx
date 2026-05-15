@@ -4,7 +4,7 @@ import { cn } from '@lib/utils/cn/cn'
 import type { UpdateCheckResult } from '@preload/index'
 import { useFlow } from '@providers/flow/useFlow'
 import { InformationCircleIcon } from 'hugeicons-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 type UpdatePhase = 'idle' | 'checking' | 'downloading' | 'ready' | 'installing'
@@ -25,9 +25,7 @@ export function UpdatesPanel(): React.JSX.Element {
   const [phase, setPhase] = useState<UpdatePhase>(cachedReadyVersion ? 'ready' : 'idle')
   const [updateVersion, setUpdateVersion] = useState<string | null>(cachedReadyVersion)
   const [downloadPercent, setDownloadPercent] = useState(0)
-  const [installProgress, setInstallProgress] = useState(0)
   const [saving, setSaving] = useState(false)
-  const progressRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
     void window.api.updater.getVersion().then(setAppVersion)
@@ -51,12 +49,6 @@ export function UpdatesPanel(): React.JSX.Element {
       unsubAvailable()
       unsubProgress()
       unsubReady()
-    }
-  }, [])
-
-  useEffect(() => {
-    return () => {
-      if (progressRef.current) clearInterval(progressRef.current)
     }
   }, [])
 
@@ -100,13 +92,6 @@ export function UpdatesPanel(): React.JSX.Element {
 
   const onInstall = useCallback(() => {
     setPhase('installing')
-    setInstallProgress(0)
-    let progress = 0
-    progressRef.current = setInterval(() => {
-      const remaining = 99 - progress
-      progress += remaining * (Math.random() * 0.08 + 0.02)
-      setInstallProgress(progress)
-    }, 300)
     void window.api.updater.install()
   }, [])
 
@@ -272,14 +257,6 @@ export function UpdatesPanel(): React.JSX.Element {
                 >
                   {t('settings.updates.check', 'Check')}
                 </Button>
-              </div>
-            )}
-            {phase === 'installing' && (
-              <div className="bg-border/30 h-1 overflow-hidden rounded-full">
-                <div
-                  className="bg-primary h-full transition-[width] duration-300 ease-out"
-                  style={{ width: `${installProgress}%` }}
-                />
               </div>
             )}
           </div>
