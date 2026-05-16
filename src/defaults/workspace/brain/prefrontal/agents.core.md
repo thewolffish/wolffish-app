@@ -1,3 +1,5 @@
+<!-- READ ONLY — This file is controlled by Wolffish. Any manual changes will be overwritten. -->
+
 # Agent procedures
 
 ## On every message

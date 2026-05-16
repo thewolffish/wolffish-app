@@ -44,6 +44,7 @@ function isReadOnlyPath(relativePath: string): boolean {
   if (relativePath.startsWith('brain/hippocampus/episodes/')) return true
   if (relativePath.startsWith('brain/motor/tasks/')) return true
   if (relativePath.startsWith('brain/prefrontal/.debug/')) return true
+  if (relativePath === 'brain/prefrontal/agents.core.md') return true
   if (relativePath.startsWith('brain/basalganglia/')) return true
   const cereMatch = relativePath.match(/^brain\/cerebellum\/([^/]+)/)
   if (cereMatch && cereMatch[1].startsWith('.')) return true

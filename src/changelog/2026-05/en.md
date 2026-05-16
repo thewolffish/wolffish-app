@@ -1,3 +1,11 @@
+## v1.0.47 — 2026-05-17
+
+### Core Agent File is Now Read-Only
+
+The `agents.core.md` file in the workspace viewer is now locked to preview-only mode. This file defines Wolffish's core agent procedures and is managed entirely by the system — manual edits were never intended and would be silently overwritten on the next update. The file is no longer editable in the built-in viewer.
+
+---
+
 ## v1.0.46 — 2026-05-16
 
 ### Launch at Startup Toggle Fix
