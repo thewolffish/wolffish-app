@@ -1,3 +1,25 @@
+## v1.0.44 — 2026-05-16
+
+### No More Arbitrary Limits
+
+Wolffish capabilities used to enforce hard-coded timeouts and result caps that had nothing to do with what was actually possible — a 2-minute ceiling on shell commands, a 10-result cap on web search, a 30s limit on browser navigation, 8KB of tool output visible to the agent. These weren't safety measures; they were guesses baked in at development time that caused real failures in practice: `npm install` getting killed mid-way, `ffmpeg` encoding jobs timing out, large search results silently truncated before the agent could read them.
+
+All of those limits are gone. Every capability now runs until it finishes. The agent decides whether to set a timeout — and when it does, it picks a value that actually matches the command. A quick `which ffmpeg` might get 5 seconds. A `brew install` from source gets as long as it needs.
+
+**What changed:**
+
+- **Shell** — no default or minimum timeout. Commands run to completion unless you explicitly set one.
+- **Browser** — navigation and waits use Playwright's defaults; no hard ceiling on how long a page can take to load.
+- **ffmpeg, package manager, speech-to-text, text-to-speech, Node.js, cloudflared** — all install and run operations are now timeout-free.
+- **Web search** — the 10-result cap is removed. Ask for as many results as you need.
+- **GitHub** — `per_page` cap raised from 30 to the API's actual maximum of 100.
+- **Tool output** — the motor's result buffer grew from 8KB to 100KB, so the agent now sees the full output of a tool call instead of a truncated slice.
+- **Retries** — the default retry limit increased from 3 to 10, with gradual backoff. Transient failures (network blips, slow starts) recover automatically instead of giving up after the third attempt.
+
+The only limits that remain are memory-protection caps on file sizes (documents at 100MB, audio at 500MB) — those exist to protect your machine, not to second-guess the agent.
+
+---
+
 ## v1.0.35 — 2026-05-15
 
 ### Signed & Notarized Updates

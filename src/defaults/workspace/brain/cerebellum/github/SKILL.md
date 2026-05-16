@@ -58,7 +58,7 @@ tools:
       per_page:
         type: number
         required: false
-        description: Results per page (default 10, max 30)
+        description: Results per page (default 10, max 100)
   - name: github_get_repo
     description: Get details for a specific repository including open issues count, stars, forks, default branch, language, and topics.
     parameters:
@@ -114,7 +114,7 @@ tools:
       per_page:
         type: number
         required: false
-        description: Results per page (default 10, max 30)
+        description: Results per page (default 10, max 100)
   - name: github_get_issue
     description: Get a single issue with full body and comments.
     parameters:
@@ -191,7 +191,7 @@ tools:
       per_page:
         type: number
         required: false
-        description: Results per page (default 10, max 30)
+        description: Results per page (default 10, max 100)
   - name: github_get_pr
     description: Get a single pull request with full body, diff stats, and review status.
     parameters:
@@ -344,7 +344,7 @@ tools:
       per_page:
         type: number
         required: false
-        description: Results per page (default 10, max 30)
+        description: Results per page (default 10, max 100)
   - name: github_get_file_content
     description: Get the contents of a file from a repository.
     parameters:
@@ -367,7 +367,7 @@ tools:
       per_page:
         type: number
         required: false
-        description: Results per page (default 10, max 30)
+        description: Results per page (default 10, max 100)
   - name: github_create_gist
     description: Create a new gist.
     parameters:
@@ -423,7 +423,7 @@ tools:
       per_page:
         type: number
         required: false
-        description: Results per page (default 10, max 30)
+        description: Results per page (default 10, max 100)
   - name: github_get_authenticated_user
     description: Get the authenticated user's profile. Returns username, name, email, bio, public repos count, followers, and created date.
     parameters: {}
@@ -447,7 +447,7 @@ tools:
       per_page:
         type: number
         required: false
-        description: Results per page (default 10, max 30)
+        description: Results per page (default 10, max 100)
   - name: github_add_collaborator
     description: Invite a collaborator to a repository.
     parameters:
@@ -495,7 +495,7 @@ tools:
       per_page:
         type: number
         required: false
-        description: Results per page (default 10, max 30)
+        description: Results per page (default 10, max 100)
   - name: github_add_comment
     description: Add a comment to an issue or PR.
     parameters:
@@ -523,7 +523,7 @@ tools:
       per_page:
         type: number
         required: false
-        description: Results per page (default 10, max 30)
+        description: Results per page (default 10, max 100)
   - name: github_create_label
     description: Create a label in a repository.
     parameters:
@@ -579,7 +579,7 @@ tools:
       per_page:
         type: number
         required: false
-        description: Results per page (default 10, max 30)
+        description: Results per page (default 10, max 100)
   - name: github_create_milestone
     description: Create a milestone in a repository.
     parameters:
@@ -622,7 +622,7 @@ tools:
       per_page:
         type: number
         required: false
-        description: Results per page (default 10, max 30)
+        description: Results per page (default 10, max 100)
   - name: github_request_reviewers
     description: Request reviewers on a pull request.
     parameters:
@@ -657,7 +657,7 @@ tools:
       per_page:
         type: number
         required: false
-        description: Results per page (default 10, max 30)
+        description: Results per page (default 10, max 100)
   - name: github_update_pr
     description: Update a pull request's title, body, state, or base branch.
     parameters:
@@ -701,7 +701,7 @@ tools:
       per_page:
         type: number
         required: false
-        description: Results per page (default 10, max 30)
+        description: Results per page (default 10, max 100)
   - name: github_get_release
     description: Get a single release with full body and asset download URLs.
     parameters:
@@ -781,7 +781,7 @@ tools:
       per_page:
         type: number
         required: false
-        description: Results per page (default 10, max 30)
+        description: Results per page (default 10, max 100)
   - name: github_mark_notifications_read
     description: Mark all notifications as read.
     parameters:
@@ -801,7 +801,7 @@ tools:
       per_page:
         type: number
         required: false
-        description: Results per page (default 10, max 30)
+        description: Results per page (default 10, max 100)
   - name: github_star_repo
     description: Star a repository for the authenticated user.
     parameters:
@@ -964,6 +964,10 @@ Always include actionable links in responses:
 - Repos: `https://github.com/{owner}/{repo}`
 - Releases: include the release URL from the API response
 - Commits: `https://github.com/{owner}/{repo}/commit/{sha}`
+
+## Pagination
+
+`per_page` is accepted by most list tools. The GitHub API hard-caps it at **100** — requesting more than 100 returns a validation error. For large result sets, page through with multiple calls rather than requesting an impossibly large single page.
 
 ## Rate limits
 

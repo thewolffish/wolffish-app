@@ -4,7 +4,6 @@ import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
 
 const CREDENTIAL_TTL_MS = 60 * 60 * 1000
-const DEFAULT_TIMEOUT_MS = 30_000
 const DEFAULT_VIEWPORT = { width: 1280, height: 720 }
 const MAX_OUTPUT = 100_000
 const MAX_NETWORK_LOG = 200
@@ -246,14 +245,14 @@ async function browserNavigate(args) {
   if (!page) return { success: false, error: 'No active page in session.' }
 
   const waitUntil = args?.wait_until || 'domcontentloaded'
-  const timeout = args?.timeout_ms || DEFAULT_TIMEOUT_MS
+  const timeout = args?.timeout_ms || 0
 
   let response
   try {
-    response = await page.goto(args.url, { waitUntil, timeout })
+    response = await page.goto(args.url, { waitUntil, timeout: timeout || undefined })
   } catch (err) {
     if (waitUntil === 'networkidle') {
-      response = await page.goto(args.url, { waitUntil: 'domcontentloaded', timeout })
+      response = await page.goto(args.url, { waitUntil: 'domcontentloaded', timeout: timeout || undefined })
     } else {
       throw err
     }
@@ -615,30 +614,29 @@ async function browserWait(args) {
   const page = getPage(session, args?.tab_id)
   if (!page) return { success: false, error: 'No active page in session.' }
 
-  const timeout = args?.timeout_ms || DEFAULT_TIMEOUT_MS
+  const timeout = args?.timeout_ms || 0
   const type = args?.type
 
   if (type === 'selector') {
     if (!args?.selector) return { success: false, error: 'selector is required for type=selector.' }
     const state = args?.state || 'visible'
-    await page.locator(args.selector).first().waitFor({ state, timeout })
+    await page.locator(args.selector).first().waitFor({ state, timeout: timeout || undefined })
     return { success: true, output: `Element ${args.selector} is ${state}.` }
   }
 
   if (type === 'navigation') {
-    const opts = { timeout }
-    if (args?.url_pattern) opts.url = new RegExp(args.url_pattern)
-    await page.waitForURL(args?.url_pattern ? new RegExp(args.url_pattern) : /.*/, { timeout })
+    await page.waitForURL(args?.url_pattern ? new RegExp(args.url_pattern) : /.*/, { timeout: timeout || undefined })
     return { success: true, output: `Navigation complete. URL: ${page.url()}` }
   }
 
   if (type === 'timeout') {
-    await new Promise(r => setTimeout(r, Math.min(timeout, 30_000)))
-    return { success: true, output: `Waited ${Math.min(timeout, 30_000)}ms.` }
+    if (!timeout) return { success: false, error: 'timeout_ms is required for type=timeout' }
+    await new Promise(r => setTimeout(r, timeout))
+    return { success: true, output: `Waited ${timeout}ms.` }
   }
 
   if (type === 'network_idle') {
-    await page.waitForLoadState('networkidle', { timeout })
+    await page.waitForLoadState('networkidle', { timeout: timeout || undefined })
     return { success: true, output: 'Network is idle.' }
   }
 
@@ -782,7 +780,7 @@ async function browserMultiTab(args) {
   session.activeTab = tabId
 
   if (args?.url) {
-    await newPage.goto(args.url, { waitUntil: 'domcontentloaded', timeout: DEFAULT_TIMEOUT_MS })
+    await newPage.goto(args.url, { waitUntil: 'domcontentloaded' })
   }
 
   return {

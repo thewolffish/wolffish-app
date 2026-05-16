@@ -4,8 +4,6 @@ import path from 'node:path'
 
 let workspaceRoot = null
 
-const EXEC_TIMEOUT_MS = 30_000
-const TRANSFER_TIMEOUT_MS = 60_000
 
 const GOG_PATH = path.join(
   os.homedir(),
@@ -26,9 +24,9 @@ const MISSING_ACCOUNT_ERROR = {
     'Missing required `account` parameter. Call google_accounts to get the list of authorized account emails, then pass one as `account` on this tool. There is no default — every google_* call must specify which account to use.'
 }
 
-function run(args, timeout = EXEC_TIMEOUT_MS, transform) {
+function run(args, timeout = 0, transform) {
   return new Promise((resolve) => {
-    execFile(GOG_PATH, args, { timeout, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {
+    execFile(GOG_PATH, args, { timeout: timeout || undefined, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {
       if (err) {
         // gog binary is missing — point the user (and the LLM) at Settings.
         if (err.code === 'ENOENT' || /no such file or directory/i.test(err.message || '')) {
@@ -100,7 +98,7 @@ async function gmailSearch(args) {
   const acc = base[3]
   const cmdArgs = [...base, 'gmail', 'search', args?.query ?? '']
   if (args?.max) cmdArgs.push('--max', String(args.max))
-  return run(cmdArgs, EXEC_TIMEOUT_MS, stampCount(acc))
+  return run(cmdArgs, 0, stampCount(acc))
 }
 
 async function gmailRead(args) {
@@ -154,7 +152,7 @@ async function gmailLabels(args) {
   const base = buildBase(args)
   if (!base) return MISSING_ACCOUNT_ERROR
   const acc = base[3]
-  return run([...base, 'gmail', 'labels'], EXEC_TIMEOUT_MS, stampCount(acc))
+  return run([...base, 'gmail', 'labels'], 0, stampCount(acc))
 }
 
 function buildQueryOrIds(base, subcmd, args) {
@@ -228,7 +226,7 @@ async function driveList(args) {
   const cmdArgs = [...base, 'drive', 'list']
   if (args?.parent) cmdArgs.push('--parent', args.parent)
   if (args?.max) cmdArgs.push('--max', String(args.max))
-  return run(cmdArgs, EXEC_TIMEOUT_MS, stampCount(acc))
+  return run(cmdArgs, 0, stampCount(acc))
 }
 
 async function driveSearch(args) {
@@ -238,7 +236,7 @@ async function driveSearch(args) {
   const acc = base[3]
   const cmdArgs = [...base, 'drive', 'search', args.query]
   if (args?.max) cmdArgs.push('--max', String(args.max))
-  return run(cmdArgs, EXEC_TIMEOUT_MS, stampCount(acc))
+  return run(cmdArgs, 0, stampCount(acc))
 }
 
 async function driveUpload(args) {
@@ -249,7 +247,7 @@ async function driveUpload(args) {
   const cmdArgs = [...base, 'drive', 'upload', filePath]
   if (args?.parent) cmdArgs.push('--parent', args.parent)
   if (args?.name) cmdArgs.push('--name', args.name)
-  return run(cmdArgs, TRANSFER_TIMEOUT_MS)
+  return run(cmdArgs)
 }
 
 async function driveDownload(args) {
@@ -260,7 +258,7 @@ async function driveDownload(args) {
   const outPath = path.isAbsolute(args.output)
     ? args.output
     : path.resolve(workspaceRoot, args.output)
-  return run([...base, 'drive', 'download', args.file_id, '--output', outPath], TRANSFER_TIMEOUT_MS)
+  return run([...base, 'drive', 'download', args.file_id, '--output', outPath])
 }
 
 async function driveDelete(args) {
@@ -289,7 +287,7 @@ async function calendarEvents(args) {
   if (args?.from) cmdArgs.push('--from', args.from)
   if (args?.to) cmdArgs.push('--to', args.to)
   if (args?.max) cmdArgs.push('--max', String(args.max))
-  return run(cmdArgs, EXEC_TIMEOUT_MS, stampCount(acc))
+  return run(cmdArgs, 0, stampCount(acc))
 }
 
 async function calendarCreate(args) {
@@ -349,7 +347,7 @@ async function contactsSearch(args) {
   const acc = base[3]
   const cmdArgs = [...base, 'contacts', 'search', args.query]
   if (args?.max) cmdArgs.push('--max', String(args.max))
-  return run(cmdArgs, EXEC_TIMEOUT_MS, stampCount(acc))
+  return run(cmdArgs, 0, stampCount(acc))
 }
 
 async function tasksList(args) {
@@ -364,7 +362,7 @@ async function tasksList(args) {
     cmdArgs.push('lists')
   }
   if (args?.max) cmdArgs.push('--max', String(args.max))
-  return run(cmdArgs, EXEC_TIMEOUT_MS, stampCount(acc))
+  return run(cmdArgs, 0, stampCount(acc))
 }
 
 async function tasksAdd(args) {
@@ -448,7 +446,7 @@ async function googleAccounts() {
     execFile(
       GOG_PATH,
       ['--json', '--no-input', 'auth', 'list'],
-      { timeout: EXEC_TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024 },
+      { maxBuffer: 4 * 1024 * 1024 },
       (err, stdout, stderr) => {
         if (err) {
           if (err.code === 'ENOENT' || /no such file or directory/i.test(err.message || '')) {

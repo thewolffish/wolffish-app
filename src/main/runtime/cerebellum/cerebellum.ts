@@ -1053,7 +1053,6 @@ async function readNpmDependencies(capDir: string): Promise<Record<string, strin
   }
 }
 
-const NPM_INSTALL_TIMEOUT_MS = 5 * 60 * 1000
 const NPM_OUTPUT_LIMIT = 50_000
 
 /**
@@ -1093,21 +1092,8 @@ function runNpmInstall(
     const finish = (result: { success: boolean; output?: string; error?: string }): void => {
       if (resolved) return
       resolved = true
-      clearTimeout(timer)
       resolve(result)
     }
-
-    const timer = setTimeout(() => {
-      try {
-        child.kill('SIGKILL')
-      } catch {
-        // ignore
-      }
-      finish({
-        success: false,
-        error: `npm install timed out after ${Math.round(NPM_INSTALL_TIMEOUT_MS / 1000)}s in ${cwd}`
-      })
-    }, NPM_INSTALL_TIMEOUT_MS)
 
     child.stdout?.on('data', (chunk: Buffer) => {
       if (stdout.length < NPM_OUTPUT_LIMIT) {

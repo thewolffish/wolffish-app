@@ -7,8 +7,6 @@ import { promisify } from 'node:util'
 
 const execFileP = promisify(execFile)
 
-const TTS_TIMEOUT_MS = 120_000
-const INSTALL_TIMEOUT_MS = 180_000
 const PROBE_TIMEOUT_MS = 10_000
 const MAX_OUTPUT = 50_000
 
@@ -276,17 +274,8 @@ function runInstall(bin, args) {
     const finish = (r) => {
       if (resolved) return
       resolved = true
-      clearTimeout(timer)
       resolve(r)
     }
-    const timer = setTimeout(() => {
-      try {
-        child.kill('SIGKILL')
-      } catch {
-        // already dead
-      }
-      finish({ ok: false, error: 'install timed out' })
-    }, INSTALL_TIMEOUT_MS)
     child.stdout?.on('data', (c) => {
       stdout = clampOutput(stdout, c)
     })
@@ -446,17 +435,8 @@ function runEdgeTts(inputFile, outputFile, voice, rate) {
     const finish = (r) => {
       if (resolved) return
       resolved = true
-      clearTimeout(timer)
       resolve(r)
     }
-    const timer = setTimeout(() => {
-      try {
-        child.kill('SIGKILL')
-      } catch {
-        // already dead
-      }
-      finish({ ok: false, error: `edge-tts timed out after ${TTS_TIMEOUT_MS / 1000}s` })
-    }, TTS_TIMEOUT_MS)
 
     child.stderr?.on('data', (c) => {
       stderr = clampOutput(stderr, c)

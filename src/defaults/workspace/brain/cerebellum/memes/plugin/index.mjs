@@ -1,8 +1,6 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
-const FETCH_TIMEOUT_MS = 15_000
-
 let pluginDir = ''
 let workspaceRoot = ''
 let cacheDir = ''
@@ -33,14 +31,7 @@ function encodeMemgenLine(text) {
 }
 
 async function fetchWithTimeout(url, options = {}) {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
-  try {
-    const response = await fetch(url, { ...options, signal: controller.signal })
-    return response
-  } finally {
-    clearTimeout(timer)
-  }
+  return fetch(url, options)
 }
 
 async function downloadImage(url, filename) {
@@ -173,7 +164,7 @@ async function memeTemplates(args) {
 
 async function gifSearch(args) {
   const query = String(args?.query ?? '')
-  const limit = Math.min(Number(args?.limit) || 3, 10)
+  const limit = Number(args?.limit) || 3
 
   const config = await readConfigSync()
   const apiKey = config?.memes?.giphy?.apiKey
@@ -216,7 +207,7 @@ async function gifSearch(args) {
 }
 
 async function gifTrending(args) {
-  const limit = Math.min(Number(args?.limit) || 5, 10)
+  const limit = Number(args?.limit) || 5
 
   const config = await readConfigSync()
   const apiKey = config?.memes?.giphy?.apiKey

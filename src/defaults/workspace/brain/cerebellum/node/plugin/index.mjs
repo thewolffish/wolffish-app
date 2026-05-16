@@ -3,7 +3,6 @@ import { promisify } from 'node:util'
 
 const execFileP = promisify(execFile)
 
-const INSTALL_TIMEOUT_MS = 300_000
 const MAX_OUTPUT = 50_000
 
 async function which(cmd) {
@@ -99,15 +98,7 @@ async function nodeInstall() {
       stderr = clampOutput(stderr, c)
     })
 
-    const timer = setTimeout(() => {
-      try {
-        child.kill('SIGKILL')
-      } catch {}
-      resolve({ success: false, error: 'Node.js installation timed out after 5 minutes' })
-    }, INSTALL_TIMEOUT_MS)
-
     child.on('close', (code) => {
-      clearTimeout(timer)
       const output = (stdout + '\n' + stderr).trim()
       if (code === 0) {
         resolve({ success: true, output: output || 'Node.js installed successfully' })
@@ -120,7 +111,6 @@ async function nodeInstall() {
     })
 
     child.on('error', (err) => {
-      clearTimeout(timer)
       resolve({ success: false, error: err.message })
     })
   })

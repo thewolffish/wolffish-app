@@ -8,7 +8,6 @@ const execFileP = promisify(execFile)
 
 const UNSAFE_CHARS = /[;|&$`\n\r]/
 const MAX_OUTPUT = 50_000
-const INSTALL_TIMEOUT_MS = 300_000
 
 const HOMEBREW_INSTALL_CMD =
   '/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
@@ -33,7 +32,7 @@ function clampOutput(buf, chunk) {
   return buf + chunk.toString().slice(0, MAX_OUTPUT - buf.length)
 }
 
-function runSpawn(cmd, args, env = process.env, timeoutMs = INSTALL_TIMEOUT_MS) {
+function runSpawn(cmd, args, env = process.env) {
   return new Promise((resolve) => {
     let child
     try {
@@ -53,22 +52,11 @@ function runSpawn(cmd, args, env = process.env, timeoutMs = INSTALL_TIMEOUT_MS) 
       stderr = clampOutput(stderr, c)
     })
 
-    const timer = setTimeout(() => {
-      try {
-        child.kill('SIGKILL')
-      } catch {
-        // already dead
-      }
-      resolve({ code: -1, stdout, stderr: stderr + '\n[timed out]' })
-    }, timeoutMs)
-
     child.on('close', (code) => {
-      clearTimeout(timer)
       resolve({ code: code ?? -1, stdout, stderr })
     })
 
     child.on('error', (err) => {
-      clearTimeout(timer)
       resolve({ code: -1, stdout, stderr: stderr + '\n' + (err?.message ?? String(err)) })
     })
   })
@@ -127,7 +115,7 @@ osascript \\
   // `sudo -A -v` validates and refreshes the timestamp without running any
   // command. -A forces askpass even when a TTY is technically available,
   // so we always get the GUI dialog.
-  const auth = await runSpawn('sudo', ['-A', '-v'], env, 120_000)
+  const auth = await runSpawn('sudo', ['-A', '-v'], env)
 
   if (auth.code !== 0) {
     await rm(tmpDir, { recursive: true, force: true }).catch(() => {})
@@ -277,8 +265,7 @@ async function pkgInstallManager() {
         '-c',
         'curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh | /bin/bash'
       ],
-      env,
-      INSTALL_TIMEOUT_MS
+      env
     )
     const combined = (install.stdout + '\n' + install.stderr).trim()
     if (install.code !== 0) {

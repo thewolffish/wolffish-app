@@ -3,8 +3,6 @@ import { promisify } from 'node:util'
 
 const execFileP = promisify(execFile)
 
-const INSTALL_TIMEOUT_MS = 300_000
-const TUNNEL_URL_TIMEOUT_MS = 30_000
 const MAX_OUTPUT = 50_000
 
 async function which(cmd) {
@@ -101,15 +99,7 @@ async function cloudflaredInstall() {
       stderr = clampOutput(stderr, c)
     })
 
-    const timer = setTimeout(() => {
-      try {
-        child.kill('SIGKILL')
-      } catch {}
-      resolve({ success: false, error: 'cloudflared installation timed out after 5 minutes' })
-    }, INSTALL_TIMEOUT_MS)
-
     child.on('close', (code) => {
-      clearTimeout(timer)
       const output = (stdout + '\n' + stderr).trim()
       if (code === 0) {
         resolve({ success: true, output: output || 'cloudflared installed successfully' })
@@ -122,7 +112,6 @@ async function cloudflaredInstall() {
     })
 
     child.on('error', (err) => {
-      clearTimeout(timer)
       resolve({ success: false, error: err.message })
     })
   })
@@ -150,7 +139,6 @@ async function cloudflaredTunnel(args) {
     const finish = (result) => {
       if (resolved) return
       resolved = true
-      clearTimeout(timer)
       resolve(result)
     }
 
@@ -173,13 +161,6 @@ async function cloudflaredTunnel(args) {
         })
       }
     })
-
-    const timer = setTimeout(() => {
-      finish({
-        success: false,
-        error: `Tunnel creation timed out. Output: ${stderr.slice(0, 500)}`
-      })
-    }, TUNNEL_URL_TIMEOUT_MS)
 
     child.on('close', (code) => {
       finish({

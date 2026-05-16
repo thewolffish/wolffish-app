@@ -18,7 +18,7 @@ triggers:
   - wget
 tools:
   - name: shell_exec
-    description: Run a shell command and return its output. Default cwd is the user home directory; default timeout 120s, floored at 60s. Pick a timeout that matches the command — see the timeout guidelines below. Set background=true for long-lived processes (dev servers, watchers).
+    description: Run a shell command and return its output. Default cwd is the user home directory. No default timeout — commands run until they exit. Set background=true for long-lived processes (dev servers, watchers).
     parameters:
       command:
         type: string
@@ -30,7 +30,7 @@ tools:
       timeout:
         type: number
         required: false
-        description: Timeout in ms. Default 120000, floored at 60000 (anything smaller is bumped up). Use 60000 for quick inspections, 60000–120000 for git ops, 120000–180000 for installs/builds/scaffolding/dev servers. Ignored when background is true.
+        description: Optional timeout in ms. If omitted, the command runs until it exits naturally. Use short timeouts (5000–15000) for quick checks where you want fast failure, or omit for commands with unpredictable duration. Ignored when background is true.
       background:
         type: boolean
         required: false
@@ -83,30 +83,25 @@ confirm_patterns:
 
 - Tool: `shell_exec`
 - Method: runs commands via the system's default shell (`/bin/sh` on Unix, `cmd.exe` on Windows)
-- Timeout: 120 s default, floored at 60 s. Anything smaller you pass is silently bumped to 60 s.
+- Timeout: none by default — commands run until they exit. You may pass an explicit timeout if you want fast failure on a command you expect to finish quickly.
 - Returns combined stdout+stderr; truncated past ~100 KB
 
 ## Timeout guidelines
 
-Pick the budget by what the command actually does. The motor doubles
-the timeout on each retry when a timeout fires, so being slightly
-generous up front avoids burning a retry on the same wall.
+There is no enforced floor or default. You decide based on the command:
 
-- **15–30 s requested → bumped to 60 s by the floor.** There is no
-  point asking for less. Read-only inspections (`ls`, `pwd`, `cat`,
-  `wc -l`, `node -v`, `git --version`, `rg 'foo'`) finish in
-  milliseconds and complete well under the floor anyway.
-- **60–120 s — git operations.** `git status`, `git diff`, `git log`,
-  `git fetch`, `git pull`, `git push`. Most finish quickly but a slow
-  network or a large repo can stretch them.
-- **120–180 s — installs, builds, scaffolding, dev servers.**
-  `npm install`, `pip install`, `npm run build`, `cargo build`,
-  `npx create-*`, `tsc`, `vite build`, starting `npm run dev`. Cold
-  caches, lockfile resolution, and binary downloads can blow past 60 s
-  routinely. Warn the user first.
-- **Beyond 180 s — explicitly justify it.** If you genuinely need
-  longer (a heavy test suite, a large image build), say so to the
-  user before firing.
+- **Omit timeout entirely** for commands with unpredictable duration:
+  installs (`npm install`, `pip install`, `brew install`), builds
+  (`npm run build`, `cargo build`, `tsc`), large git operations,
+  test suites, media processing. Let them run to completion.
+- **Short timeout (5000–15000 ms)** for instant checks where you want
+  fast failure: `which ffmpeg`, `node -v`, `git --version`, `ls`.
+  If these don't finish in seconds, something is wrong.
+- **Medium timeout (30000–60000 ms)** for network-dependent commands
+  where you don't want to wait forever on a dead connection:
+  `curl`, `git fetch`, `git push`.
+- **Use background mode** for processes that never exit on their own
+  (dev servers, watchers, daemons). Timeout is irrelevant here.
 
 ## Long-lived processes (dev servers, watchers, daemons)
 
@@ -125,7 +120,7 @@ background: true
 Call 2 — verify in a SEPARATE tool call (not chained with `&&`, not `;`):
 ```
 command: "sleep 10 && curl -s -o /dev/null -w '%{http_code}' http://localhost:3000 && echo ' up' || tail -30 /tmp/myapp.log"
-timeout: 60000
+timeout: 30000
 ```
 
 Notes:

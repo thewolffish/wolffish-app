@@ -7,10 +7,6 @@ import { promisify } from 'node:util'
 const execFileP = promisify(execFile)
 
 const PROBE_TIMEOUT_MS = 10_000
-const WHISPER_INSTALL_TIMEOUT_MS = 600_000
-const TRANSCRIBE_BASE_TIMEOUT_MS = 120_000
-const TRANSCRIBE_PER_MB_MS = 30_000 / 10 // 30s per 10MB → 3s/MB
-const DETECT_TIMEOUT_MS = 60_000
 const MAX_OUTPUT = 200_000
 const MAX_FILE_BYTES = 500 * 1024 * 1024
 
@@ -289,17 +285,8 @@ function runInstall(bin, args) {
     const finish = (r) => {
       if (resolved) return
       resolved = true
-      clearTimeout(timer)
       resolve(r)
     }
-    const timer = setTimeout(() => {
-      try {
-        child.kill('SIGKILL')
-      } catch {
-        // already dead
-      }
-      finish({ ok: false, error: 'install timed out' })
-    }, WHISPER_INSTALL_TIMEOUT_MS)
     child.stdout?.on('data', (c) => {
       if (stdout.length < MAX_OUTPUT) stdout += c.toString()
     })
@@ -499,20 +486,23 @@ function runChild(bin, args, timeoutMs, label) {
     let stdout = ''
     let stderr = ''
     let resolved = false
+    let timer = null
     const finish = (r) => {
       if (resolved) return
       resolved = true
-      clearTimeout(timer)
+      if (timer) clearTimeout(timer)
       resolve(r)
     }
-    const timer = setTimeout(() => {
-      try {
-        child.kill('SIGKILL')
-      } catch {
-        // already dead
-      }
-      finish({ ok: false, error: `${label} timed out after ${Math.round(timeoutMs / 1000)}s` })
-    }, timeoutMs)
+    if (timeoutMs > 0) {
+      timer = setTimeout(() => {
+        try {
+          child.kill('SIGKILL')
+        } catch {
+          // already dead
+        }
+        finish({ ok: false, error: `${label} timed out after ${Math.round(timeoutMs / 1000)}s` })
+      }, timeoutMs)
+    }
     child.stdout?.on('data', (chunk) => {
       if (stdout.length < MAX_OUTPUT) stdout += chunk.toString()
     })
@@ -604,11 +594,7 @@ async function transcribeFile(absPath, language, model, corpus) {
   const chosenModel = pickModel(model)
   corpus?.('stt.transcribing', { filePath: absPath, model: chosenModel })
 
-  const sizeMb = st.size / (1024 * 1024)
-  const timeout = Math.min(
-    1_800_000,
-    TRANSCRIBE_BASE_TIMEOUT_MS + Math.ceil(sizeMb * TRANSCRIBE_PER_MB_MS)
-  )
+  const timeout = 0
 
   let parsed
   if (executor.type === 'binary') {
@@ -751,7 +737,7 @@ async function detectLanguage(absPath, corpus) {
     )
     await mkdir(tmpOutDir, { recursive: true })
     try {
-      const res = await runWhisperBinary(absPath, defaultModel, '', tmpOutDir, DETECT_TIMEOUT_MS)
+      const res = await runWhisperBinary(absPath, defaultModel, '', tmpOutDir, 0)
       if (!res.ok) {
         corpus?.('stt.failed', { error: res.error })
         return { success: false, error: res.error }
@@ -800,7 +786,7 @@ except Exception as exc:
 
   let result
   try {
-    result = await runWhisperModule(tmpScript, DETECT_TIMEOUT_MS)
+    result = await runWhisperModule(tmpScript, 0)
   } finally {
     await unlink(tmpScript).catch(() => undefined)
   }

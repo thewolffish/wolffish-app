@@ -2,10 +2,7 @@ import * as cheerio from 'cheerio'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
-const FETCH_TIMEOUT_MS = 10_000
-const SEARCH_TIMEOUT_MS = 8_000
 const DEFAULT_MAX_RESULTS = 5
-const MAX_RESULTS_CAP = 10
 const DEFAULT_MAX_LENGTH = 15_000
 const BRAVE_SEARCH_ENDPOINT = 'https://api.search.brave.com/res/v1/web/search'
 
@@ -31,7 +28,7 @@ const toolDefinitions = [
         query: { type: 'string', description: 'The search query' },
         maxResults: {
           type: 'number',
-          description: 'Maximum number of results to return (default 5, max 10)'
+          description: 'Maximum number of results to return (default 5)'
         }
       },
       required: ['query']
@@ -73,14 +70,8 @@ function unwrapDdgUrl(url) {
   return url
 }
 
-async function fetchWithTimeout(url, options, timeoutMs) {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
-  try {
-    return await fetch(url, { ...options, signal: controller.signal })
-  } finally {
-    clearTimeout(timer)
-  }
+async function fetchWithTimeout(url, options) {
+  return fetch(url, options)
 }
 
 // Search providers — both scrape DuckDuckGo via different endpoints. They are
@@ -138,7 +129,6 @@ async function runProvider(provider, query, maxResults) {
         'Accept-Language': 'en-US,en;q=0.9'
       }
     },
-    SEARCH_TIMEOUT_MS
   )
   if (!res.ok) throw new Error(`${provider.name} returned HTTP ${res.status}`)
   const html = await res.text()
@@ -161,7 +151,6 @@ async function searchBrave(apiKey, query, maxResults) {
         'X-Subscription-Token': apiKey
       }
     },
-    SEARCH_TIMEOUT_MS
   )
   if (res.status === 401 || res.status === 403) {
     throw new Error('brave: invalid API key')
@@ -242,10 +231,7 @@ async function executeSearch(args) {
   const query = String(args?.query ?? '').trim()
   if (!query) return { success: false, error: 'empty search query' }
 
-  const maxResults = Math.min(
-    Math.max(1, Math.round(Number(args?.maxResults) || DEFAULT_MAX_RESULTS)),
-    MAX_RESULTS_CAP
-  )
+  const maxResults = Math.max(1, Math.round(Number(args?.maxResults) || DEFAULT_MAX_RESULTS))
 
   let results
   let provider
@@ -333,7 +319,7 @@ async function executeFetch(args) {
     return { success: false, error: 'Blocked: cannot fetch private/local network addresses' }
   }
 
-  const maxLength = Math.max(1000, Number(args?.maxLength) || DEFAULT_MAX_LENGTH)
+  const maxLength = Number(args?.maxLength) || DEFAULT_MAX_LENGTH
 
   let response
   try {
@@ -347,11 +333,10 @@ async function executeFetch(args) {
         },
         redirect: 'follow'
       },
-      FETCH_TIMEOUT_MS
     )
   } catch (err) {
     if (err?.name === 'AbortError') {
-      return { success: false, error: `Request timed out after ${FETCH_TIMEOUT_MS / 1000}s` }
+      return { success: false, error: 'Request aborted' }
     }
     return { success: false, error: `Fetch failed: ${err?.message ?? err}` }
   }

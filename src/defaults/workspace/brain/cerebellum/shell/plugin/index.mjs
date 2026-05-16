@@ -3,14 +3,6 @@ import { access, constants } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import path from 'node:path'
 
-// 2 min covers most installs/builds without making the model wait for
-// the full ceiling on quick commands; the LLM can override per call.
-const DEFAULT_TIMEOUT_MS = 120_000
-// Floor every call at 60s. The model often picks 5–15s "to be fast"
-// and then a flaky DNS lookup or a cold npm cache trips an avoidable
-// failure. 60s is the smallest window where transient slowness still
-// recovers; below that we just generate retries.
-const MIN_TIMEOUT_MS = 60_000
 const MAX_OUTPUT_BYTES = 100_000
 
 // Node's child_process treats `~` as a literal directory name, so a cwd
@@ -34,7 +26,7 @@ const toolDefinitions = [
         timeout: {
           type: 'number',
           description:
-            'Timeout in ms (default: 120000, floored at 60000). Pick 60000–180000 for installs/builds, 60000 for quick inspections. Ignored when background is true.'
+            'Optional timeout in ms. If omitted, the command runs until it exits naturally. Use short timeouts (5000–15000) for quick checks, longer ones for builds/installs, or omit entirely for commands with unpredictable duration. Ignored when background is true.'
         },
         background: {
           type: 'boolean',
@@ -76,9 +68,8 @@ async function execShell(args) {
     return execBackground({ command, cwd, shellBin, flag })
   }
 
-  const requested =
-    typeof args?.timeout === 'number' && args.timeout > 0 ? args.timeout : DEFAULT_TIMEOUT_MS
-  const timeoutMs = Math.max(requested, MIN_TIMEOUT_MS)
+  const timeoutMs =
+    typeof args?.timeout === 'number' && args.timeout > 0 ? args.timeout : 0
 
   return execForeground({ command, cwd, shellBin, flag, timeoutMs })
 }
@@ -88,7 +79,7 @@ async function execShell(args) {
 // stdio means the child has no pipes to inherit (so the foreground 'close'
 // event isn't blocked by descendants holding fd 1/2 open); unref tells Node's
 // event loop not to wait for this child. Without all three, the tool hangs
-// for up to MIN_TIMEOUT_MS even though the user asked for background launch.
+// indefinitely even though the user asked for background launch.
 function execBackground({ command, cwd, shellBin, flag }) {
   try {
     const child = spawn(shellBin, [flag, command], {
@@ -121,25 +112,28 @@ function execForeground({ command, cwd, shellBin, flag, timeoutMs }) {
     let stdout = ''
     let stderr = ''
     let resolved = false
+    let timer = null
     const finish = (result) => {
       if (resolved) return
       resolved = true
-      clearTimeout(timer)
+      if (timer) clearTimeout(timer)
       resolve(result)
     }
 
-    const timer = setTimeout(() => {
-      try {
-        child.kill('SIGKILL')
-      } catch {
-        // already dead
-      }
-      finish({
-        success: false,
-        error: `Command timed out after ${timeoutMs}ms`,
-        output: combine(stdout, stderr)
-      })
-    }, timeoutMs)
+    if (timeoutMs > 0) {
+      timer = setTimeout(() => {
+        try {
+          child.kill('SIGKILL')
+        } catch {
+          // already dead
+        }
+        finish({
+          success: false,
+          error: `Command timed out after ${timeoutMs}ms`,
+          output: combine(stdout, stderr)
+        })
+      }, timeoutMs)
+    }
 
     child.stdout?.on('data', (chunk) => {
       stdout = clamp(stdout, chunk)

@@ -22,8 +22,6 @@ function expandTildeArg(arg) {
 }
 
 const MAX_OUTPUT = 100_000
-const RUN_TIMEOUT_MS = 600_000
-const INSTALL_TIMEOUT_MS = 300_000
 
 async function which(cmd) {
   try {
@@ -146,15 +144,7 @@ async function ffmpegInstall() {
       stderr = clampOutput(stderr, c)
     })
 
-    const timer = setTimeout(() => {
-      try {
-        child.kill('SIGKILL')
-      } catch {}
-      resolve({ success: false, error: 'ffmpeg installation timed out after 5 minutes' })
-    }, INSTALL_TIMEOUT_MS)
-
     child.on('close', (code) => {
-      clearTimeout(timer)
       const output = (stdout + '\n' + stderr).trim()
       if (code === 0) {
         resolve({ success: true, output: output || 'ffmpeg installed successfully' })
@@ -167,7 +157,6 @@ async function ffmpegInstall() {
     })
 
     child.on('error', (err) => {
-      clearTimeout(timer)
       resolve({ success: false, error: err.message })
     })
   })
@@ -198,15 +187,7 @@ async function ffmpegRun(args) {
       stderr = clampOutput(stderr, c)
     })
 
-    const timer = setTimeout(() => {
-      try {
-        child.kill('SIGKILL')
-      } catch {}
-      resolve({ success: false, error: 'ffmpeg command timed out after 10 minutes' })
-    }, RUN_TIMEOUT_MS)
-
     child.on('close', (code) => {
-      clearTimeout(timer)
       const output = (stdout + '\n' + stderr).trim()
       if (code === 0) {
         resolve({ success: true, output: output || '(completed successfully)' })
@@ -220,7 +201,6 @@ async function ffmpegRun(args) {
     })
 
     child.on('error', (err) => {
-      clearTimeout(timer)
       resolve({ success: false, error: err.message })
     })
   })

@@ -59,10 +59,10 @@ export type MotorOptions = {
   corpus?: Corpus
 }
 
-const DEFAULT_RETRIES = 3
+const DEFAULT_RETRIES = 10
 // Backoff between retries — gives transient failures (network blips,
 // container restarts, race conditions) time to clear before re-firing.
-const DEFAULT_BACKOFF_MS = [2000, 6000, 18000]
+const DEFAULT_BACKOFF_MS = [2000, 4000, 8000, 15000, 30000, 60000, 60000, 60000, 60000, 60000]
 // Heuristic for "this failed because the tool's timeout hit" — the shell
 // plugin emits "Command timed out after Nms" and most other plugins use
 // the same phrasing. When matched, the retry doubles the original
@@ -469,7 +469,7 @@ export class Motor {
   }
 }
 
-const MAX_OUTPUT_BYTES = 8000
+const MAX_OUTPUT_BYTES = 100_000
 
 function truncate(text: string): string {
   if (text.length <= MAX_OUTPUT_BYTES) return text

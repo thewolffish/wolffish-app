@@ -53,8 +53,7 @@ function fail(err) {
 }
 
 function clampPerPage(val) {
-  const n = Number(val) || 10
-  return Math.max(1, Math.min(n, 30))
+  return Math.max(1, Number(val) || 10)
 }
 
 // --- Tool handlers ---
