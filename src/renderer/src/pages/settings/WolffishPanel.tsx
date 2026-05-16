@@ -11,8 +11,8 @@ export function WolffishPanel(): React.JSX.Element {
   const { status, refreshStatus } = useFlow()
   const config = status?.config ?? null
 
-  const [launchAtStartup, setLaunchAtStartupState] = useState<boolean>(false)
-  const [startupActive, setStartupActive] = useState<boolean>(false)
+  const [launchAtStartup, setLaunchAtStartupState] = useState<boolean | null>(null)
+  const [startupActive, setStartupActive] = useState<boolean | null>(null)
   const [blockCredentials, setBlockCredentials] = useState<boolean>(
     config?.safety?.blockCredentials ?? false
   )
@@ -147,12 +147,16 @@ export function WolffishPanel(): React.JSX.Element {
         </header>
 
         <section className="bg-surface border-border flex flex-col gap-6 rounded-2xl border p-6">
-          <StartupSetting
-            value={launchAtStartup}
-            active={startupActive}
-            onChange={onChangeLaunchAtStartup}
-            disabled={savingKey === 'launchAtStartup'}
-          />
+          {launchAtStartup !== null && startupActive !== null ? (
+            <StartupSetting
+              value={launchAtStartup}
+              active={startupActive}
+              onChange={onChangeLaunchAtStartup}
+              disabled={savingKey === 'launchAtStartup'}
+            />
+          ) : (
+            <div className="h-[52px]" />
+          )}
           <div className="border-border/60 border-t" />
           <SettingToggle
             label={t('settings.wolffish.blockCredentials.label')}

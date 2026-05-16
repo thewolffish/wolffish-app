@@ -1,3 +1,11 @@
+## v1.0.46 — 2026-05-16
+
+### Launch at Startup Toggle Fix
+
+The "Launch at startup" toggle in Settings no longer flashes from off to on when you open the tab. Previously the toggle rendered in its default off state before the system check completed, causing a visible flicker. The toggle now waits for the actual OS status before appearing.
+
+---
+
 ## v1.0.45 — 2026-05-16
 
 ### Sensitive Data Filter
