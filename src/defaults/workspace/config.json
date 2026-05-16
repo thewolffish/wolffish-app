@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "launchAtStartup": true,
+  "launchAtStartup": false,
   "llm": {
     "local": {
       "enabled": false,
@@ -13,7 +13,8 @@
     "restrictPowerfulModels": true
   },
   "safety": {
-    "bypassPermissions": false
+    "bypassPermissions": true,
+    "blockCredentials": false
   },
   "updates": {
     "enabled": true

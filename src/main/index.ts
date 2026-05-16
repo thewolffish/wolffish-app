@@ -96,6 +96,7 @@ import {
   patchConfig,
   setAllowLocalFallback as persistAllowLocalFallback,
   setBraveConfig as persistBraveConfig,
+  setBlockCredentials as persistBlockCredentials,
   setBypassPermissions as persistBypassPermissions,
   setCloudPriority as persistCloudPriority,
   setCompactionConfig as persistCompactionConfig,
@@ -503,6 +504,7 @@ app.whenReady().then(async () => {
   thalamus.setAllowLocalFallback(cfg?.llm.allowLocalFallback ?? false)
   thalamus.setLocalOnly(cfg?.llm.localOnly ?? false)
   agent.amygdala.setBypassPermissions(cfg?.safety?.bypassPermissions ?? false)
+  turnRunner.setBlockCredentials(cfg?.safety?.blockCredentials ?? false)
   agent.cerebellum.setDisabled(cfg?.disabledCapabilities ?? [])
 
   // Compaction schedule from config. Brainstem.init() will call
@@ -575,6 +577,11 @@ app.whenReady().then(async () => {
   ipcMain.handle('runtime:setBypassPermissions', async (_e, value: boolean) => {
     await persistBypassPermissions(value)
     agent.amygdala.setBypassPermissions(value)
+    return { value }
+  })
+  ipcMain.handle('runtime:setBlockCredentials', async (_e, value: boolean) => {
+    await persistBlockCredentials(value)
+    turnRunner.setBlockCredentials(value)
     return { value }
   })
   ipcMain.handle('runtime:setAllowLocalFallback', async (_e, value: boolean) => {

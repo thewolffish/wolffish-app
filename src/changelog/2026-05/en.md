@@ -1,3 +1,15 @@
+## v1.0.45 — 2026-05-16
+
+### Sensitive Data Filter
+
+Wolffish has always been able to detect and block messages that look like passwords, API keys, or private keys. That behaviour is now opt-in.
+
+The filter is **off by default** — keeping it always-on turned out to limit what the agent could do, since discussing credentials is a normal part of many workflows (setting up integrations, debugging auth issues, explaining how to rotate keys). With it off, the agent handles those conversations naturally.
+
+If you want the hard guard back — so that accidentally pasting a secret into chat discards the message entirely — go to **Settings → Wolffish** and turn on **Block sensitive data in messages**. When enabled, any message that appears to contain a password, API key, access token, or private key is rejected before it reaches the agent, is never stored anywhere, and you get a short notification explaining what happened. This applies across the desktop app, Telegram, and WhatsApp.
+
+---
+
 ## v1.0.44 — 2026-05-16
 
 ### No More Arbitrary Limits

@@ -73,8 +73,13 @@ export type TurnHandle = {
  */
 export class TurnRunner {
   private chain: Promise<void> = Promise.resolve()
+  private blockCredentials: boolean = false
 
   constructor(private readonly agent: Agent) {}
+
+  setBlockCredentials(value: boolean): void {
+    this.blockCredentials = value
+  }
 
   send(opts: TurnSendOptions): TurnHandle {
     const turnId = generateTurnId()
@@ -87,7 +92,7 @@ export class TurnRunner {
 
     const lastMessage = opts.history[opts.history.length - 1]
     const userContent = lastMessage && lastMessage.role === 'user' ? lastMessage.content : ''
-    const sensitive = detectSensitiveData(userContent)
+    const sensitive = this.blockCredentials ? detectSensitiveData(userContent) : null
 
     if (sensitive) {
       // Sensitive-data gate runs synchronously and bypasses the chain

@@ -190,6 +190,10 @@
         "inactive": "Inactive",
         "enabledToast": "Wolffish will now start automatically when you log in"
       },
+      "blockCredentials": {
+        "label": "Block sensitive data in messages",
+        "description": "When enabled, messages that appear to contain passwords, API keys, tokens, or private keys are immediately discarded — they never reach the agent, are never stored, and you get a short notification instead. Off by default so the agent can freely discuss credentials when needed. Turn it on if you want a hard guard against accidentally pasting secrets into chat."
+      },
       "bypassPermissions": {
         "label": "Bypass permissions mode",
         "description": "When enabled, all tool actions auto-approve without showing the approval dialog. The amygdala still classifies every action and logs everything to the corpus event bus and feedback files exactly as before — only the human approval step is skipped. Use this for trusted environments where you want full agent autonomy. Disable it any time to restore manual approval."

@@ -13,6 +13,9 @@ export function WolffishPanel(): React.JSX.Element {
 
   const [launchAtStartup, setLaunchAtStartupState] = useState<boolean>(false)
   const [startupActive, setStartupActive] = useState<boolean>(false)
+  const [blockCredentials, setBlockCredentials] = useState<boolean>(
+    config?.safety?.blockCredentials ?? false
+  )
   const [bypass, setBypass] = useState<boolean>(config?.safety?.bypassPermissions ?? false)
   const [allowFallback, setAllowFallback] = useState<boolean>(
     config?.llm.allowLocalFallback ?? false
@@ -23,7 +26,14 @@ export function WolffishPanel(): React.JSX.Element {
   )
   const [weekStartsOn, setWeekStartsOnState] = useState<WeekStartsOn>(config?.weekStartsOn ?? 1)
   const [savingKey, setSavingKey] = useState<
-    'launchAtStartup' | 'bypass' | 'fallback' | 'analytics' | 'restrictModels' | 'weekStart' | null
+    | 'launchAtStartup'
+    | 'blockCredentials'
+    | 'bypass'
+    | 'fallback'
+    | 'analytics'
+    | 'restrictModels'
+    | 'weekStart'
+    | null
   >(null)
 
   useEffect(() => {
@@ -49,6 +59,18 @@ export function WolffishPanel(): React.JSX.Element {
       if (next && result.active) {
         show({ message: t('settings.wolffish.launchAtStartup.enabledToast'), tone: 'success' })
       }
+    } finally {
+      setSavingKey(null)
+    }
+  }
+
+  const onChangeBlockCredentials = async (next: boolean): Promise<void> => {
+    if (savingKey !== null || next === blockCredentials) return
+    setSavingKey('blockCredentials')
+    try {
+      await window.api.runtime.setBlockCredentials(next)
+      setBlockCredentials(next)
+      await refreshStatus()
     } finally {
       setSavingKey(null)
     }
@@ -130,6 +152,14 @@ export function WolffishPanel(): React.JSX.Element {
             active={startupActive}
             onChange={onChangeLaunchAtStartup}
             disabled={savingKey === 'launchAtStartup'}
+          />
+          <div className="border-border/60 border-t" />
+          <SettingToggle
+            label={t('settings.wolffish.blockCredentials.label')}
+            description={t('settings.wolffish.blockCredentials.description')}
+            value={blockCredentials}
+            onChange={onChangeBlockCredentials}
+            disabled={savingKey === 'blockCredentials'}
           />
           <div className="border-border/60 border-t" />
           <SettingToggle

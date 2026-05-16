@@ -50,6 +50,7 @@ export type CloudProviderConfig = {
 
 export type SafetyConfig = {
   bypassPermissions: boolean
+  blockCredentials: boolean
 }
 
 export type TelegramConfig = {
@@ -65,12 +66,7 @@ export type WhatsAppConfig = {
   allowedPhoneNumbers: string[]
 }
 
-export type WhatsAppConnectionStatus =
-  | 'disconnected'
-  | 'connecting'
-  | 'qr'
-  | 'connected'
-  | 'error'
+export type WhatsAppConnectionStatus = 'disconnected' | 'connecting' | 'qr' | 'connected' | 'error'
 
 export type WhatsAppChannelStatus = {
   status: WhatsAppConnectionStatus
@@ -339,6 +335,7 @@ export type RuntimeApi = {
   setLaunchAtStartup: (value: boolean) => Promise<{ value: boolean; active: boolean }>
   getLaunchAtStartupStatus: () => Promise<LaunchAtStartupStatus>
   setBypassPermissions: (value: boolean) => Promise<{ value: boolean }>
+  setBlockCredentials: (value: boolean) => Promise<{ value: boolean }>
   setAllowLocalFallback: (value: boolean) => Promise<{ value: boolean }>
   setShowChatAnalytics: (value: boolean) => Promise<{ value: boolean }>
   setLocalOnly: (value: boolean) => Promise<{ value: boolean }>
@@ -772,12 +769,7 @@ export type MemesConfig = {
   }
 }
 
-export type MemesErrorKind =
-  | 'missing_key'
-  | 'invalid_key'
-  | 'rate_limit'
-  | 'network'
-  | 'unknown'
+export type MemesErrorKind = 'missing_key' | 'invalid_key' | 'rate_limit' | 'network' | 'unknown'
 
 export type MemesStatus = {
   memegen: 'available'
@@ -789,9 +781,7 @@ export type MemesStatus = {
   imgflipError: string | null
 }
 
-export type MemesTestResult =
-  | { ok: true }
-  | { ok: false; kind: MemesErrorKind; message?: string }
+export type MemesTestResult = { ok: true } | { ok: false; kind: MemesErrorKind; message?: string }
 
 export type MemesApi = {
   getConfig: () => Promise<MemesConfig>
@@ -824,9 +814,7 @@ export type ComputerUsePermissions = {
 
 export type ComputerUseApi = {
   getConfig: () => Promise<ComputerUseConfig>
-  setConfig: (
-    patch: Partial<ComputerUseConfig>
-  ) => Promise<{ ok: true; config: ComputerUseConfig }>
+  setConfig: (patch: Partial<ComputerUseConfig>) => Promise<{ ok: true; config: ComputerUseConfig }>
   checkPermissions: () => Promise<ComputerUsePermissions>
 }
 
@@ -844,9 +832,7 @@ export type UpdateReadyEvent = {
   releaseNotes: string | null
 }
 
-export type UpdateCheckResult =
-  | { ok: true; version: string | null }
-  | { ok: false; error: string }
+export type UpdateCheckResult = { ok: true; version: string | null } | { ok: false; error: string }
 
 export type UpdaterApi = {
   install: () => Promise<void>
@@ -1036,6 +1022,7 @@ const api: WolffishApi = {
     setLaunchAtStartup: (value) => ipcRenderer.invoke('runtime:setLaunchAtStartup', value),
     getLaunchAtStartupStatus: () => ipcRenderer.invoke('runtime:getLaunchAtStartupStatus'),
     setBypassPermissions: (value) => ipcRenderer.invoke('runtime:setBypassPermissions', value),
+    setBlockCredentials: (value) => ipcRenderer.invoke('runtime:setBlockCredentials', value),
     setAllowLocalFallback: (value) => ipcRenderer.invoke('runtime:setAllowLocalFallback', value),
     setShowChatAnalytics: (value) => ipcRenderer.invoke('runtime:setShowChatAnalytics', value),
     setLocalOnly: (value) => ipcRenderer.invoke('runtime:setLocalOnly', value),

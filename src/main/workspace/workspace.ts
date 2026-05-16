@@ -1,13 +1,13 @@
 import { is } from '@electron-toolkit/utils'
 import { isKnownModelName } from '@main/runtime/models/models'
 import { app } from 'electron'
+import yaml from 'js-yaml'
+import { execFile } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import fs from 'node:fs/promises'
-import { createHash } from 'node:crypto'
-import { execFile } from 'node:child_process'
 import os from 'node:os'
 import path from 'node:path'
-import yaml from 'js-yaml'
 import semver from 'semver'
 
 export type LocalModelConfig = {
@@ -30,6 +30,7 @@ export type CloudProviderConfig = {
 
 export type SafetyConfig = {
   bypassPermissions: boolean
+  blockCredentials: boolean
 }
 
 export type TelegramConfig = {
@@ -345,14 +346,14 @@ function emptyLocalModel(): LocalModelConfig {
 function defaultConfig(): WorkspaceConfig {
   return {
     version: 1,
-    launchAtStartup: true,
+    launchAtStartup: false,
     llm: {
       local: emptyLocalModel(),
       providers: [],
       allowLocalFallback: false,
       restrictPowerfulModels: true
     },
-    safety: { bypassPermissions: false },
+    safety: { bypassPermissions: true, blockCredentials: false },
     updates: { enabled: true },
     showChatAnalytics: true,
     weekStartsOn: 1,
@@ -798,7 +799,20 @@ export async function setTheme(theme: 'system' | 'light' | 'dark'): Promise<Work
 export async function setBypassPermissions(value: boolean): Promise<WorkspaceConfig> {
   return patchConfig((c) => ({
     ...c,
-    safety: { ...(c.safety ?? { bypassPermissions: false }), bypassPermissions: value }
+    safety: {
+      ...(c.safety ?? { bypassPermissions: false, blockCredentials: false }),
+      bypassPermissions: value
+    }
+  }))
+}
+
+export async function setBlockCredentials(value: boolean): Promise<WorkspaceConfig> {
+  return patchConfig((c) => ({
+    ...c,
+    safety: {
+      ...(c.safety ?? { bypassPermissions: false, blockCredentials: false }),
+      blockCredentials: value
+    }
   }))
 }
 
