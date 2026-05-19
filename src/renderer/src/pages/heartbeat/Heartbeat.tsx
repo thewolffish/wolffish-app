@@ -16,7 +16,7 @@ import {
   FloppyDiskIcon,
   Refresh01Icon
 } from 'hugeicons-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 const HEARTBEAT_PATH = 'brain/brainstem/heartbeat.md'
@@ -35,7 +35,6 @@ function formatFromNow(targetMs: number, nowMs: number, locale: string): string 
   }
   return rtf.format(Math.round(diff / 1000), 'second')
 }
-
 
 const DAY_MAP: Record<string, number> = {
   sunday: 0,
@@ -171,8 +170,23 @@ function parseSidebarJobs(
   const lines = content.split('\n')
   const result: SidebarJob[] = []
   const activeByLabel = new Map(activeJobs.map((j) => [j.label, j]))
+  let insideRawComment = false
 
   for (let i = 0; i < lines.length; i++) {
+    if (
+      !insideRawComment &&
+      /<!--/.test(lines[i]) &&
+      !/-->/.test(lines[i]) &&
+      !/^<!--\s*##\s+/.test(lines[i])
+    ) {
+      insideRawComment = true
+      continue
+    }
+    if (insideRawComment) {
+      if (/-->/.test(lines[i])) insideRawComment = false
+      continue
+    }
+
     const activeLine = lines[i].match(/^##\s+(.+?)\s*$/)
     const inactiveSingle = lines[i].match(/^<!--\s*##\s+(.+?)\s*-->$/)
     const inactiveBlock = !inactiveSingle && lines[i].match(/^<!--\s*##\s+(.+?)\s*$/)
@@ -196,7 +210,10 @@ function parseSidebarJobs(
       if (!isBlock && lines[j].trim() !== '') endIdx = j
     }
 
-    const body = bodyLines.join('\n').replace(/\n{3,}/g, '\n\n').trim()
+    const body = bodyLines
+      .join('\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim()
     const activeJob = activeByLabel.get(label)
     const cron = activeJob?.cron ?? schedule.cron
 
@@ -237,30 +254,23 @@ export function Heartbeat(): React.JSX.Element {
     return () => clearInterval(id)
   }, [])
 
-  const loadedRef = useRef(false)
-
-  const loadData = useCallback(async () => {
-    try {
-      const [jobList, raw] = await Promise.all([
-        window.api.heartbeat.getJobs(),
-        window.api.viewer.readFile(HEARTBEAT_PATH)
-      ])
-      setJobs(jobList)
-      if (!loadedRef.current) {
+  useEffect(() => {
+    let cancelled = false
+    Promise.all([window.api.heartbeat.getJobs(), window.api.viewer.readFile(HEARTBEAT_PATH)])
+      .then(([jobList, raw]) => {
+        if (cancelled) return
+        setJobs(jobList)
         setContent(raw)
         setOriginalContent(raw)
-        loadedRef.current = true
-      }
-    } catch {
-      // heartbeat.md may not exist yet
-    } finally {
-      setLoading(false)
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
     }
   }, [])
-
-  useEffect(() => {
-    void loadData()
-  }, [loadData])
 
   const handleSave = useCallback(async (): Promise<void> => {
     if (saving) return
@@ -290,10 +300,19 @@ export function Heartbeat(): React.JSX.Element {
   }, [handleSave])
 
   const handleRefresh = useCallback(async (): Promise<void> => {
-    loadedRef.current = false
-    setLoading(true)
-    await loadData()
-  }, [loadData])
+    try {
+      const [jobList, raw] = await Promise.all([
+        window.api.heartbeat.getJobs(),
+        window.api.viewer.readFile(HEARTBEAT_PATH)
+      ])
+      setJobs(jobList)
+      setContent(raw)
+      setOriginalContent(raw)
+      toast.show({ tone: 'success', message: t('workspace.resynced') })
+    } catch {
+      toast.show({ tone: 'error', message: t('workspace.resyncError') })
+    }
+  }, [t, toast])
 
   const handleToggle = useCallback(
     async (job: SidebarJob): Promise<void> => {
@@ -367,9 +386,7 @@ export function Heartbeat(): React.JSX.Element {
             className="border-border w-72 shrink-0 overflow-y-auto border-r p-3"
           >
             {sidebarJobs.length === 0 ? (
-              <p className="text-muted px-2 py-6 text-center text-xs">
-                {t('heartbeat.noJobs')}
-              </p>
+              <p className="text-muted px-2 py-6 text-center text-xs">{t('heartbeat.noJobs')}</p>
             ) : (
               <ul className="flex flex-col gap-2">
                 {sidebarJobs.map((job) => (
@@ -381,9 +398,7 @@ export function Heartbeat(): React.JSX.Element {
                       )}
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <span className="text-fg truncate text-sm font-medium">
-                          {job.label}
-                        </span>
+                        <span className="text-fg truncate text-sm font-medium">{job.label}</span>
                         <div
                           role="tablist"
                           className="border-border bg-bg/40 inline-flex shrink-0 items-center rounded-lg border p-0.5"
@@ -470,9 +485,7 @@ export function Heartbeat(): React.JSX.Element {
             <div className="border-border flex items-center justify-between gap-2 border-b px-4 py-3">
               <div className="flex items-center gap-2">
                 <span className="text-fg text-sm font-medium">heartbeat.md</span>
-                {isDirty && (
-                  <span className="text-muted text-xs italic">(unsaved)</span>
-                )}
+                {isDirty && <span className="text-muted text-xs italic">(unsaved)</span>}
               </div>
               <div className="flex items-center gap-1">
                 <button
@@ -516,7 +529,12 @@ export function Heartbeat(): React.JSX.Element {
         </div>
       )}
       {detailJob && (
-        <Modal open onClose={() => setDetailJob(null)} title={detailJob.label} className="!max-w-3xl">
+        <Modal
+          open
+          onClose={() => setDetailJob(null)}
+          title={detailJob.label}
+          className="max-w-3xl!"
+        >
           <div className="flex flex-col gap-3">
             <div className="flex items-center gap-2">
               <Badge variant="primary" size="sm">
@@ -533,7 +551,9 @@ export function Heartbeat(): React.JSX.Element {
                 {detailJob.active ? t('heartbeat.active') : t('heartbeat.inactive')}
               </span>
               {detailJob.cron && (
-                <code className="bg-bg rounded border border-border px-1.5 py-0.5 text-[10px] font-mono text-muted">{detailJob.cron}</code>
+                <code className="bg-bg rounded border border-border px-1.5 py-0.5 text-[10px] font-mono text-muted">
+                  {detailJob.cron}
+                </code>
               )}
               {detailJob.active && detailJob.nextRunMs != null && (
                 <span className="text-muted ms-auto text-[11px]">
@@ -545,7 +565,7 @@ export function Heartbeat(): React.JSX.Element {
               )}
             </div>
             <div className="relative">
-              <div className="absolute top-2 end-2 z-10">
+              <div className="absolute top-2 inset-e-2 z-10">
                 <CopyButton text={detailJob.body} variant="overlay" />
               </div>
               <pre className="bg-bg max-h-[60vh] overflow-auto rounded-lg border border-border p-4 text-xs font-mono text-fg leading-relaxed whitespace-pre-wrap">

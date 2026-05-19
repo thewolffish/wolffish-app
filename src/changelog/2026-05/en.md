@@ -1,3 +1,15 @@
+## v1.0.60 — 2026-05-20
+
+### Heartbeat Resync Fix
+
+The Resync button on the Heartbeat page no longer flashes the editor. Previously, clicking it would unmount the entire editor and show a loading message while fetching — causing a visible flash even on fast connections. The editor now stays in place and updates silently when new data arrives, matching the behavior of the workspace viewer. Resync also shows a success or error toast now, same as the viewer page does.
+
+### Default Heartbeat Examples No Longer Show as Jobs
+
+The default `heartbeat.md` ships with a large commented-out example block demonstrating every schedule type. The sidebar was incorrectly parsing the `##` headings inside that block as real jobs, filling the list with dozens of phantom automations on first launch. The parser now skips raw comment blocks that don't use the single-job comment syntax (`<!-- ## Heading -->`).
+
+---
+
 ## v1.0.59 — 2026-05-19
 
 ### Heartbeat Dashboard

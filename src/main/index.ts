@@ -95,8 +95,8 @@ import {
   markOnboardingComplete,
   patchConfig,
   setAllowLocalFallback as persistAllowLocalFallback,
-  setBraveConfig as persistBraveConfig,
   setBlockCredentials as persistBlockCredentials,
+  setBraveConfig as persistBraveConfig,
   setBypassPermissions as persistBypassPermissions,
   setCloudPriority as persistCloudPriority,
   setCompactionConfig as persistCompactionConfig,
@@ -484,11 +484,11 @@ function resolveShellPath(): void {
   if (process.platform === 'win32') return
   const userShell = process.env.SHELL || '/bin/sh'
   try {
-    const raw = execFileSync(
-      userShell,
-      ['-ilc', 'printf "__WFPATH__%s__WFPATH__" "$PATH"'],
-      { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] }
-    )
+    const raw = execFileSync(userShell, ['-ilc', 'printf "__WFPATH__%s__WFPATH__" "$PATH"'], {
+      encoding: 'utf8',
+      timeout: 5000,
+      stdio: ['ignore', 'pipe', 'ignore']
+    })
     const resolved = raw.match(/__WFPATH__(.+?)__WFPATH__/)?.[1]
     if (resolved && resolved.includes(':')) process.env.PATH = resolved
   } catch {
@@ -1525,13 +1525,12 @@ app.whenReady().then(async () => {
     (_e, relativePath: string): Promise<Buffer> => readViewerBinaryFile(relativePath)
   )
   ipcMain.handle('viewer:download', async (_e, relativePath: string): Promise<{ ok: boolean }> => {
-    const { readViewerBinaryFile: readBin } = await import('@main/viewer/viewer')
     const mainWin = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
     if (!mainWin) return { ok: false }
     const fileName = relativePath.split('/').pop() ?? relativePath
     const result = await dialog.showSaveDialog(mainWin, { defaultPath: fileName })
     if (result.canceled || !result.filePath) return { ok: false }
-    const buf = await readBin(relativePath)
+    const buf = await readViewerBinaryFile(relativePath)
     const { writeFile } = await import('node:fs/promises')
     await writeFile(result.filePath, buf)
     return { ok: true }
@@ -1918,7 +1917,7 @@ function nextCronMs(expr: string, nowMs: number): number | null {
     const interval = parseInt(minute.slice(2))
     if (!interval) return null
     const cur = now.getMinutes()
-    let next = Math.ceil((cur + 1) / interval) * interval
+    const next = Math.ceil((cur + 1) / interval) * interval
     const d = new Date(now)
     d.setSeconds(0, 0)
     if (next >= 60) {
@@ -1935,7 +1934,7 @@ function nextCronMs(expr: string, nowMs: number): number | null {
     if (!interval) return null
     const mm = minute === '*' ? 0 : parseInt(minute)
     const curH = now.getHours()
-    let nextH = Math.ceil((curH + 1) / interval) * interval
+    const nextH = Math.ceil((curH + 1) / interval) * interval
     const d = new Date(now)
     d.setSeconds(0, 0)
     d.setMinutes(mm)
