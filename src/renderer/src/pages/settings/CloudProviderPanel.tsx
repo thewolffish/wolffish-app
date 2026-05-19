@@ -366,7 +366,7 @@ export function CloudProviderPanel({ provider }: { provider: ProviderId }): Reac
           <StatusLine status={status} error={error} hasModels={hasModels} />
 
           <div className="flex items-center justify-between gap-2">
-            <Button variant="outline" size="md" onClick={() => void onTest()} disabled={!canTest}>
+            <Button size="md" onClick={() => void onTest()} disabled={!canTest}>
               {t('settings.model.cloud.test')}
             </Button>
             {stored?.apiKey && (

@@ -393,7 +393,12 @@ export function TelegramPanel(): React.JSX.Element {
             <Button
               type="button"
               onClick={() => void handleTest()}
-              disabled={busy !== 'idle' || !loaded}
+              disabled={
+                busy !== 'idle' ||
+                !loaded ||
+                botToken.trim().length === 0 ||
+                allowedUsersInput.trim().length === 0
+              }
             >
               {t('settings.services.telegram.test')}
             </Button>
