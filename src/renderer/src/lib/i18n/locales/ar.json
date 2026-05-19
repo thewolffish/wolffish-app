@@ -915,6 +915,7 @@
     "settings": "الاعدادات",
     "history": "السجل",
     "workspace": "مساحة العمل",
+    "heartbeat": "نبض القلب",
     "task": {
       "title": "مهمة",
       "status": {
@@ -999,7 +1000,26 @@
     "resetCancel": "إلغاء",
     "resync": "إعادة المزامنة",
     "resyncSuccess": "تمت مزامنة مساحة العمل",
-    "resyncError": "فشلت المزامنة"
+    "resyncError": "فشلت المزامنة",
+    "resynced": "تمت إعادة مزامنة الملف",
+    "saved": "تم حفظ الملف",
+    "saveError": "فشل الحفظ"
+  },
+  "heartbeat": {
+    "title": "نبض القلب",
+    "noJobs": "لا توجد أتمتة نشطة. أضف عناوين جدولة إلى heartbeat.md للبدء.",
+    "active": "نشط",
+    "inactive": "غير نشط",
+    "type": {
+      "startup": "بدء التشغيل",
+      "every": "فترة",
+      "hourly": "كل ساعة",
+      "daily": "يومي",
+      "weekday": "أيام العمل",
+      "weekly": "أسبوعي",
+      "monthly": "شهري",
+      "cron": "كرون"
+    }
   },
   "history": {
     "loading": "جاري تحميل المحادثات…",

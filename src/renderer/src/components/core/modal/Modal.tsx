@@ -11,6 +11,8 @@ export type ModalProps = {
   footer?: ReactNode
   /** Click-outside / ESC dismissable (default true). */
   dismissable?: boolean
+  /** Extra classes for the dialog panel. */
+  className?: string
 }
 
 export function Modal({
@@ -19,7 +21,8 @@ export function Modal({
   title,
   children,
   footer,
-  dismissable = true
+  dismissable = true,
+  className
 }: ModalProps): React.JSX.Element | null {
   useEffect(() => {
     if (!open || !dismissable) return
@@ -47,7 +50,8 @@ export function Modal({
         onClick={(e) => e.stopPropagation()}
         className={cn(
           'bg-surface border-border text-fg flex w-full max-w-md flex-col gap-4 rounded-2xl border p-6',
-          'shadow-xl dark:shadow-2xl'
+          'shadow-xl dark:shadow-2xl',
+          className
         )}
       >
         {title && <h2 className="text-fg text-lg font-semibold tracking-tight">{title}</h2>}

@@ -1,3 +1,25 @@
+## v1.0.59 — 2026-05-19
+
+### Heartbeat Dashboard
+
+You can now see exactly what your agent is doing in the background. The new **Heartbeat** page — accessible from the chat toolbar — gives you a live view of every scheduled automation running in the brainstem: startup tasks, intervals, hourly jobs, daily routines, and weekly schedules. Each job shows its type, cron expression, and when it fires next (with a live countdown). Click any job to inspect the full instruction body with syntax highlighting.
+
+This was built because heartbeat automations were invisible before — you'd define schedules in `heartbeat.md` and just trust they were running. Now you can verify at a glance.
+
+### Shell PATH Resolution
+
+GUI apps on macOS and Linux don't inherit your terminal's PATH. That meant binaries installed via Homebrew, nvm, cargo, pyenv, and similar tools were invisible to the agent — shell commands would fail with "command not found" even though they worked fine in your terminal. Wolffish now spawns your login shell at startup to capture the real PATH and uses it for every child process. It also refreshes PATH after installing system dependencies, so newly installed binaries are immediately available without restarting.
+
+### Better Shell Error Diagnostics
+
+When a shell command fails, the error message now includes the first 500 characters of output alongside the exit code. Previously you'd just see "Command exited with code 1" with no hint about what went wrong. The agent can now read the actual error and act on it — no more blind retries.
+
+### Workspace Viewer Refresh
+
+The "Reset to Default" button has been removed from the workspace viewer. It was a footgun — one click would silently wipe any edits you'd made to a file, replacing it with the factory version. In its place, every file now has a **Resync** button that reloads the file from disk without overwriting anything. The tree-level resync button also got a text label so it's easier to find. Additionally, `heartbeat.md` is now read-only in the viewer to prevent accidental edits to live schedules.
+
+---
+
 ## v1.0.47 — 2026-05-17
 
 ### Core Agent File is Now Read-Only

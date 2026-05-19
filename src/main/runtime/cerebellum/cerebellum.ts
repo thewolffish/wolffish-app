@@ -3,7 +3,7 @@ import type { Corpus } from '@main/runtime/corpus/corpus'
 import type { ToolDefinition } from '@main/runtime/thalamus/thalamus'
 import type { ToolCall } from '@main/runtime/wernicke/wernicke'
 import yaml from 'js-yaml'
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
@@ -527,6 +527,7 @@ export class Cerebellum {
 
       try {
         await this.installCapability(depCap, capabilityName, hook)
+        refreshPath()
         this.dependencyCache.set(depName, true)
         this.options.corpus?.emit('dependency.installed', {
           capability: capabilityName,
@@ -1131,4 +1132,25 @@ function runNpmInstall(
 
 function hashString(s: string): string {
   return createHash('sha256').update(s).digest('hex').slice(0, 32)
+}
+
+/**
+ * Re-resolve PATH from the user's login shell and write it back into
+ * process.env.PATH. Called after a system dependency install so newly
+ * installed binaries are visible to every subsequent spawn — shell
+ * plugin, npm install, browser plugin, all of them.
+ */
+function refreshPath(): void {
+  if (process.platform === 'win32') return
+  const userShell = process.env.SHELL || '/bin/sh'
+  try {
+    const resolved = execFileSync(userShell, ['-lc', 'printf "%s" "$PATH"'], {
+      encoding: 'utf8',
+      timeout: 5000,
+      stdio: ['ignore', 'pipe', 'ignore']
+    }).trim()
+    if (resolved && resolved.includes(':')) process.env.PATH = resolved
+  } catch {
+    // best-effort
+  }
 }

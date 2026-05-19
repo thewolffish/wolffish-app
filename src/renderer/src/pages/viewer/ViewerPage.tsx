@@ -1,11 +1,9 @@
 import { Badge } from '@components/core/badge/Badge'
-import { Button } from '@components/core/button/Button'
 import { CodeEditor, type CodeLanguage } from '@components/core/code-editor/CodeEditor'
 import { CopyButton } from '@components/core/copy-button/CopyButton'
 import { Markdown } from '@components/core/markdown/Markdown'
 import { Modal } from '@components/core/modal/Modal'
 import { useToast } from '@components/core/toast/useToast'
-import { Tooltip } from '@components/core/tooltip/Tooltip'
 import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn/cn'
 import type { ViewerTreeNode } from '@preload/index'
@@ -27,7 +25,6 @@ import {
   Pdf02Icon,
   PlayIcon,
   Refresh01Icon,
-  UndoIcon,
   VideoOffIcon,
   VolumeMute02Icon
 } from 'hugeicons-react'
@@ -45,6 +42,7 @@ function isReadOnlyPath(relativePath: string): boolean {
   if (relativePath.startsWith('brain/motor/tasks/')) return true
   if (relativePath.startsWith('brain/prefrontal/.debug/')) return true
   if (relativePath === 'brain/prefrontal/agents.core.md') return true
+  if (relativePath === 'brain/brainstem/heartbeat.md') return true
   if (relativePath.startsWith('brain/basalganglia/')) return true
   const cereMatch = relativePath.match(/^brain\/cerebellum\/([^/]+)/)
   if (cereMatch && cereMatch[1].startsWith('.')) return true
@@ -217,7 +215,6 @@ export function ViewerPage(): React.JSX.Element {
   const [originalContent, setOriginalContent] = useState<string>('')
   const [editorContent, setEditorContent] = useState<string>('')
   const [fileError, setFileError] = useState<string | null>(null)
-  const [hasDefault, setHasDefault] = useState(false)
   const [mtimeMs, setMtimeMs] = useState<number | null>(null)
 
   const [now, setNow] = useState(() => Date.now())
@@ -227,8 +224,6 @@ export function ViewerPage(): React.JSX.Element {
   }, [])
 
   const [saving, setSaving] = useState(false)
-  const [resetOpen, setResetOpen] = useState(false)
-  const [resetting, setResetting] = useState(false)
   const [viewMode, setViewMode] = useState<ViewMode>('edit')
 
   const loadCounter = useRef(0)
@@ -259,16 +254,14 @@ export function ViewerPage(): React.JSX.Element {
     setFileError(null)
     try {
       const isMedia = detectMediaType(relativePath) !== null
-      const [content, defaulted, statInfo] = await Promise.all([
+      const [content, statInfo] = await Promise.all([
         isMedia ? Promise.resolve('') : window.api.viewer.readFile(relativePath),
-        window.api.viewer.hasDefault(relativePath),
         window.api.viewer.stat(relativePath)
       ])
       if (loadCounter.current !== id) return
       setSelectedPath(relativePath)
       setOriginalContent(content)
       setEditorContent(content)
-      setHasDefault(defaulted)
       setMtimeMs(statInfo.mtimeMs)
       setViewMode(isMedia || isReadOnlyPath(relativePath) ? 'preview' : 'edit')
     } catch (err) {
@@ -278,7 +271,6 @@ export function ViewerPage(): React.JSX.Element {
       setSelectedPath(relativePath)
       setOriginalContent('')
       setEditorContent('')
-      setHasDefault(false)
       setMtimeMs(null)
     }
   }, [])
@@ -317,23 +309,11 @@ export function ViewerPage(): React.JSX.Element {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [handleSave])
 
-  const handleReset = useCallback(async (): Promise<void> => {
-    if (!selectedPath || resetting) return
-    setResetting(true)
-    try {
-      const defaultContent = await window.api.viewer.readDefault(selectedPath)
-      await window.api.viewer.writeFile(selectedPath, defaultContent)
-      setOriginalContent(defaultContent)
-      setEditorContent(defaultContent)
-      setMtimeMs(Date.now())
-      setResetOpen(false)
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      setFileError(message)
-    } finally {
-      setResetting(false)
-    }
-  }, [resetting, selectedPath])
+  const handleRefreshFile = useCallback(async (): Promise<void> => {
+    if (!selectedPath) return
+    await loadFile(selectedPath)
+    toast.show({ tone: 'success', message: t('workspace.resynced') })
+  }, [selectedPath, loadFile, toast, t])
 
   const handleDownload = useCallback(async (): Promise<void> => {
     if (!selectedPath) return
@@ -381,22 +361,21 @@ export function ViewerPage(): React.JSX.Element {
           <BackIcon size={16} />
           <span>{t('common.back')}</span>
         </button>
-        <Tooltip content={t('workspace.resync')} side="bottom" align="start">
-          <button
-            type="button"
-            onClick={() => void handleResync()}
-            disabled={resyncing}
-            aria-label={t('workspace.resync')}
-            className={cn(
-              'text-muted hover:text-fg cursor-pointer rounded-lg p-2',
-              'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-              'disabled:cursor-not-allowed disabled:opacity-40',
-              resyncing && 'animate-spin'
-            )}
-          >
-            <Refresh01Icon size={16} />
-          </button>
-        </Tooltip>
+        <button
+          type="button"
+          onClick={() => void handleResync()}
+          disabled={resyncing}
+          aria-label={t('workspace.resync')}
+          className={cn(
+            'inline-flex items-center gap-1 rounded-md text-xs cursor-pointer transition-colors',
+            'text-muted hover:text-fg px-1.5 py-0.5',
+            'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+            'disabled:cursor-not-allowed disabled:opacity-40'
+          )}
+        >
+          <Refresh01Icon size={14} className={cn(resyncing && 'animate-spin')} />
+          <span>{t('workspace.resync')}</span>
+        </button>
       </header>
 
       <div dir="ltr" className="flex min-h-0 flex-1">
@@ -446,15 +425,6 @@ export function ViewerPage(): React.JSX.Element {
                       <FloppyDiskIcon size={16} />
                     </IconButton>
                   )}
-                  {hasDefault && !readOnly && !mediaType && (
-                    <IconButton
-                      label={t('workspace.reset')}
-                      disabled={saving || resetting}
-                      onClick={() => setResetOpen(true)}
-                    >
-                      <UndoIcon size={16} />
-                    </IconButton>
-                  )}
                   {(readOnly || mediaType) && (
                     <Badge variant="default" size="md">
                       {t('workspace.readOnly')}
@@ -464,6 +434,23 @@ export function ViewerPage(): React.JSX.Element {
                     <IconButton label="Download" onClick={() => void handleDownload()}>
                       <Download01Icon size={16} />
                     </IconButton>
+                  )}
+                  {!mediaType && (
+                    <button
+                      type="button"
+                      onClick={() => void handleRefreshFile()}
+                      disabled={saving}
+                      aria-label={t('workspace.resync')}
+                      className={cn(
+                        'inline-flex items-center gap-1 rounded-md text-xs cursor-pointer transition-colors',
+                        'text-muted hover:text-fg px-1.5 py-0.5',
+                        'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+                        'disabled:cursor-not-allowed disabled:opacity-40'
+                      )}
+                    >
+                      <Refresh01Icon size={14} />
+                      <span>{t('workspace.resync')}</span>
+                    </button>
                   )}
                   {!mediaType && <CopyButton text={editorContent} variant="inline" />}
                   {!mediaType && (
@@ -514,12 +501,6 @@ export function ViewerPage(): React.JSX.Element {
         </section>
       </div>
 
-      <ResetConfirmModal
-        open={resetOpen}
-        resetting={resetting}
-        onClose={() => !resetting && setResetOpen(false)}
-        onConfirm={() => void handleReset()}
-      />
     </main>
   )
 }
@@ -1136,36 +1117,3 @@ function ViewerTreeNodeItem({
   )
 }
 
-function ResetConfirmModal({
-  open,
-  resetting,
-  onClose,
-  onConfirm
-}: {
-  open: boolean
-  resetting: boolean
-  onClose: () => void
-  onConfirm: () => void
-}): React.JSX.Element {
-  const { t } = useTranslation()
-  return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      dismissable={!resetting}
-      title={t('workspace.resetTitle')}
-      footer={
-        <>
-          <Button size="md" variant="primary" disabled={resetting} onClick={onConfirm}>
-            {resetting ? t('workspace.resetting') : t('workspace.resetConfirm')}
-          </Button>
-          <Button size="md" variant="ghost" disabled={resetting} onClick={onClose}>
-            {t('workspace.resetCancel')}
-          </Button>
-        </>
-      }
-    >
-      <p>{t('workspace.resetWarning')}</p>
-    </Modal>
-  )
-}

@@ -149,9 +149,12 @@ function execForeground({ command, cwd, shellBin, flag, timeoutMs }) {
       if (code === 0) {
         finish({ success: true, output: output || '(no output)' })
       } else {
+        const diagnostic = output.slice(0, 500)
         finish({
           success: false,
-          error: `Command exited with code ${code}`,
+          error: diagnostic
+            ? `Command exited with code ${code}: ${diagnostic}`
+            : `Command exited with code ${code}`,
           output
         })
       }

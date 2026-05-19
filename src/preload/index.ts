@@ -492,6 +492,19 @@ export type ViewerApi = {
   resync: () => Promise<ViewerTreeNode[]>
 }
 
+export type HeartbeatJobView = {
+  id: string
+  type: string
+  cron: string | null
+  label: string
+  body: string
+  nextRunMs: number | null
+}
+
+export type HeartbeatApi = {
+  getJobs: () => Promise<HeartbeatJobView[]>
+}
+
 export type CapabilityEntry = {
   name: string
   description: string
@@ -908,6 +921,7 @@ export type WolffishApi = {
   chat: ChatApi
   conversation: ConversationApi
   viewer: ViewerApi
+  heartbeat: HeartbeatApi
   app: AppApi
   data: DataApi
   runtime: RuntimeApi
@@ -1010,6 +1024,9 @@ const api: WolffishApi = {
     stat: (relativePath) => ipcRenderer.invoke('viewer:stat', relativePath),
     download: (relativePath) => ipcRenderer.invoke('viewer:download', relativePath),
     resync: () => ipcRenderer.invoke('viewer:resync')
+  },
+  heartbeat: {
+    getJobs: () => ipcRenderer.invoke('heartbeat:getJobs')
   },
   app: {
     factoryReset: () => ipcRenderer.invoke('app:factoryReset'),

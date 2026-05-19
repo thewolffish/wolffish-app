@@ -150,6 +150,7 @@ import {
   shell,
   systemPreferences
 } from 'electron'
+import { execFileSync } from 'node:child_process'
 import os from 'node:os'
 import { join } from 'node:path'
 
@@ -470,6 +471,30 @@ async function drainAndQuit(): Promise<void> {
   app.quit()
 }
 
+/**
+ * macOS and Linux GUI apps inherit launchd/XDG environment, which
+ * typically lacks user-specific PATH entries (Homebrew, nvm, cargo,
+ * pyenv, etc.). Spawn the user's login shell once to capture their
+ * real PATH and merge it into process.env so every child_process.spawn
+ * downstream (shell plugin, npm install, dependency checks) sees the
+ * same binaries the user's terminal would. Windows resolves PATH from
+ * the registry at process start, so no fixup is needed there.
+ */
+function resolveShellPath(): void {
+  if (process.platform === 'win32') return
+  const userShell = process.env.SHELL || '/bin/sh'
+  try {
+    const resolved = execFileSync(userShell, ['-lc', 'printf "%s" "$PATH"'], {
+      encoding: 'utf8',
+      timeout: 5000,
+      stdio: ['ignore', 'pipe', 'ignore']
+    }).trim()
+    if (resolved && resolved.includes(':')) process.env.PATH = resolved
+  } catch {
+    // best-effort — keep the existing PATH if the shell fails
+  }
+}
+
 app.whenReady().then(async () => {
   electronApp.setAppUserModelId('com.wolffish.app')
 
@@ -477,6 +502,7 @@ app.whenReady().then(async () => {
     app.dock?.setIcon(dockIcon)
   }
 
+  resolveShellPath()
   await ensureWorkspace()
   await reconcileLocalModel()
   initUpdater()
@@ -1510,6 +1536,16 @@ app.whenReady().then(async () => {
     return { ok: true }
   })
 
+  // Heartbeat
+  ipcMain.handle('heartbeat:getJobs', () => {
+    const jobs = agent.brainstem.getActiveJobs()
+    const now = Date.now()
+    return jobs.map((j) => ({
+      ...j,
+      nextRunMs: j.cron ? nextCronMs(j.cron, now) : null
+    }))
+  })
+
   // Conversations
   ipcMain.handle('conversation:list', (): Promise<ConversationMeta[]> => listConversations())
   ipcMain.handle(
@@ -1870,6 +1906,68 @@ app.on('will-quit', () => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
+
+function nextCronMs(expr: string, nowMs: number): number | null {
+  const parts = expr.trim().split(/\s+/)
+  if (parts.length !== 5) return null
+  const [minute, hour, dom, , dow] = parts
+  const now = new Date(nowMs)
+
+  if (minute.startsWith('*/') && hour === '*') {
+    const interval = parseInt(minute.slice(2))
+    if (!interval) return null
+    const cur = now.getMinutes()
+    let next = Math.ceil((cur + 1) / interval) * interval
+    const d = new Date(now)
+    d.setSeconds(0, 0)
+    if (next >= 60) {
+      d.setHours(d.getHours() + 1)
+      d.setMinutes(next % 60)
+    } else {
+      d.setMinutes(next)
+    }
+    return d.getTime()
+  }
+
+  if (hour.startsWith('*/')) {
+    const interval = parseInt(hour.slice(2))
+    if (!interval) return null
+    const mm = minute === '*' ? 0 : parseInt(minute)
+    const curH = now.getHours()
+    let nextH = Math.ceil((curH + 1) / interval) * interval
+    const d = new Date(now)
+    d.setSeconds(0, 0)
+    d.setMinutes(mm)
+    if (nextH >= 24) {
+      d.setDate(d.getDate() + 1)
+      d.setHours(nextH % 24)
+    } else {
+      d.setHours(nextH)
+    }
+    return d.getTime()
+  }
+
+  const mm = minute === '*' ? 0 : parseInt(minute)
+  const hh = hour === '*' ? -1 : parseInt(hour)
+
+  if (hh >= 0 && dom === '*' && dow === '*') {
+    const d = new Date(now)
+    d.setSeconds(0, 0)
+    d.setHours(hh, mm)
+    if (d.getTime() <= nowMs) d.setDate(d.getDate() + 1)
+    return d.getTime()
+  }
+
+  if (hh < 0) {
+    const d = new Date(now)
+    d.setSeconds(0, 0)
+    d.setMinutes(mm)
+    if (d.getTime() <= nowMs) d.setHours(d.getHours() + 1)
+    return d.getTime()
+  }
+
+  return null
+}
 
 function rangeCutoffMs(range: UsageTimeRange): number {
   const now = new Date()

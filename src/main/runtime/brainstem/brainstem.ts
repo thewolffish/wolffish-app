@@ -283,12 +283,13 @@ export class Brainstem {
     })
   }
 
-  getActiveJobs(): Array<{ id: string; type: ScheduleKind; cron: string | null; label: string }> {
+  getActiveJobs(): Array<{ id: string; type: ScheduleKind; cron: string | null; label: string; body: string }> {
     return [...this.jobs.values()].map((j) => ({
       id: j.id,
       type: j.type,
       cron: j.cron,
-      label: j.label
+      label: j.label,
+      body: j.body
     }))
   }
 
@@ -575,11 +576,13 @@ function collectBody(lines: string[], startIndex: number): string {
   const bodyLines: string[] = []
   for (let j = startIndex; j < lines.length; j++) {
     if (/^##\s+/.test(lines[j])) break
-    // Skip markdown horizontal rules — they're section dividers, not instruction text
     if (/^---+\s*$/.test(lines[j])) continue
     bodyLines.push(lines[j])
   }
-  return bodyLines.join('\n').trim()
+  return bodyLines
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
 }
 
 function matchSchedule(text: string): { kind: ScheduleKind; cron: string | null } | null {

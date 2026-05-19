@@ -1,7 +1,7 @@
 import type { HTMLAttributes } from 'react'
 import { cn } from '@lib/utils/cn/cn'
 
-export type BadgeVariant = 'default' | 'warning' | 'success' | 'danger'
+export type BadgeVariant = 'default' | 'primary' | 'warning' | 'success' | 'danger'
 export type BadgeSize = 'sm' | 'md'
 
 export type BadgeProps = HTMLAttributes<HTMLSpanElement> & {
@@ -14,6 +14,8 @@ const base =
 
 const variants: Record<BadgeVariant, string> = {
   default: 'bg-border/40 text-fg ring-1 ring-border',
+  primary:
+    'bg-primary/15 text-primary ring-1 ring-primary/30',
   warning:
     'bg-amber-500/15 text-amber-700 ring-1 ring-amber-500/30 dark:text-amber-300',
   success:

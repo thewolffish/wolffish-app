@@ -36,6 +36,7 @@ import iconTransparent from '@resources/images/icon_transparent.png'
 import {
   Activity04Icon,
   ArrowUp02Icon,
+  HeartCheckIcon,
   CancelCircleIcon,
   Clock01Icon,
   CloudIcon,
@@ -942,6 +943,21 @@ export function Chat(): React.JSX.Element {
                 )}
               >
                 <FileEditIcon size={14} />
+              </button>
+            </Tooltip>
+            <Tooltip content={t('chat.heartbeat')}>
+              <button
+                type="button"
+                onClick={() => goTo('heartbeat')}
+                disabled={streaming}
+                aria-label={t('chat.heartbeat')}
+                className={cn(
+                  'text-muted hover:text-fg flex cursor-pointer items-center justify-center rounded-lg p-1.5',
+                  'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+                  'disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-muted'
+                )}
+              >
+                <HeartCheckIcon size={14} />
               </button>
             </Tooltip>
             <Tooltip content={t('chat.history')}>
