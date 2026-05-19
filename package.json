@@ -1,6 +1,6 @@
 {
   "name": "wolffish-app",
-  "version": "1.0.50",
+  "version": "1.0.51",
   "description": "Bite through anything. Your brain. Your machine. No leash. 🐟",
   "main": "./out/main/index.js",
   "author": "Younes Alturkey <younes@wolffi.sh>",
