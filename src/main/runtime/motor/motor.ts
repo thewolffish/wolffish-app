@@ -85,7 +85,7 @@ export type ToolError = {
 }
 
 const PERMISSION_RE =
-  /permission denied|access denied|need sudo|not permitted|EACCES|EPERM|requires admin|requires root|operation not permitted|insufficient privileges/i
+  /permission denied|access denied|need sudo|not permitted|not authorized|EACCES|EPERM|requires admin|requires root|operation not permitted|insufficient privileges|Failed to get sources|assistive access/i
 const VALIDATION_RE = /invalid argument|missing required|EINVAL|bad request/i
 const NOT_FOUND_RE = /command not found|not found|ENOENT|no such file|is not installed/i
 const NETWORK_RE = /ECONNREFUSED|ETIMEDOUT|ECONNRESET|network error|fetch failed|DNS resolution/i

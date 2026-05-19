@@ -119,6 +119,29 @@ danger_patterns:
 
 You can see and control the user's desktop through screenshots and input actions.
 
+## Required Setup (macOS)
+
+macOS sandboxes screen and input access behind system permissions. **All three must be granted to Wolffish before computer-use tools will work.** These are one-time grants that persist across restarts.
+
+| Permission | What it unlocks | System Settings path | Error when missing |
+|---|---|---|---|
+| **Screen Recording** | `computer_screenshot`, `computer_list_displays` | Privacy & Security › Screen Recording › enable **Wolffish** | `Failed to get sources` |
+| **Accessibility** | `computer_mouse_click`, `computer_mouse_move`, `computer_mouse_scroll`, `computer_keyboard_type`, `computer_keyboard_press` | Privacy & Security › Accessibility › enable **Wolffish** | `not permitted` / `assistive access` |
+| **Automation** | `osascript` commands (activate apps, list windows) via `shell_exec` | Privacy & Security › Automation › allow **Wolffish** to control target apps | `Not authorized to send Apple events` |
+
+After granting **Screen Recording**, Wolffish must be restarted for the change to take effect (macOS requirement). Accessibility and Automation take effect immediately.
+
+**Windows and Linux** do not require these permissions — computer-use tools work out of the box.
+
+### If a permission is missing
+
+macOS will silently fail the tool call rather than showing a prompt. The tool returns one of the error strings above, and retrying will never succeed. When you see one of these errors:
+
+1. Stop using computer-use tools immediately — do not retry.
+2. Tell the user which permission is missing and the exact System Settings path.
+3. Finish any non-computer-use parts of the task.
+4. Ask the user to grant the permission (and restart Wolffish if it was Screen Recording), then come back and ask you to continue.
+
 ## Workflow
 
 1. **Always screenshot first.** Before any action, call `computer_screenshot` to see the current state of the screen. Never guess what's on screen — always look.
