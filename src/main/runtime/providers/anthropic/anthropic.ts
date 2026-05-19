@@ -39,12 +39,14 @@ export class AnthropicProvider {
     const body: Record<string, unknown> = {
       model: this.model,
       max_tokens: this.maxTokens,
-      system: options.system,
+      system: [{ type: 'text', text: options.system, cache_control: { type: 'ephemeral' } }],
       messages: toAnthropicMessages(options.messages),
       stream: true
     }
     if (options.tools && options.tools.length > 0) {
-      body.tools = options.tools.map(toAnthropicTool)
+      const tools = options.tools.map(toAnthropicTool)
+      ;(tools[tools.length - 1] as Record<string, unknown>).cache_control = { type: 'ephemeral' }
+      body.tools = tools
     }
 
     const response = await fetch(this.endpoint, {
@@ -274,6 +276,24 @@ function toAnthropicMessages(messages: ChatMessage[]): AnthropicMessage[] {
     }
   }
   flushToolResults()
+
+  // Cache breakpoint: mark the last user turn that precedes at least one more
+  // message. Everything up to this point is stable between tool-loop iterations
+  // and across conversation turns, so the prefix cache stays warm.
+  for (let i = out.length - 2; i >= 0; i--) {
+    if (out[i].role === 'user') {
+      const msg = out[i]
+      if (typeof msg.content === 'string') {
+        msg.content = [{ type: 'text', text: msg.content, cache_control: { type: 'ephemeral' } }]
+      } else if (Array.isArray(msg.content) && msg.content.length > 0) {
+        ;(msg.content[msg.content.length - 1] as Record<string, unknown>).cache_control = {
+          type: 'ephemeral'
+        }
+      }
+      break
+    }
+  }
+
   return out
 }
 
