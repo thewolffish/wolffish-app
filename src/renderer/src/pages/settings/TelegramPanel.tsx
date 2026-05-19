@@ -217,19 +217,23 @@ export function TelegramPanel(): React.JSX.Element {
               >
                 {toggleOptions.map((opt) => {
                   const active = opt.value === enabled
+                  const cantEnable = opt.value && botToken.trim().length === 0
                   return (
                     <button
                       key={String(opt.value)}
                       role="tab"
                       type="button"
                       aria-selected={active}
+                      disabled={cantEnable}
                       onClick={() => void handleToggle(opt.value)}
                       className={cn(
                         'rounded-md px-3 py-1 text-xs font-medium transition-colors',
                         'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-                        active
-                          ? 'bg-primary text-primary-fg shadow-sm'
-                          : 'text-muted hover:text-fg cursor-pointer'
+                        cantEnable
+                          ? 'text-muted/50 cursor-not-allowed'
+                          : active
+                            ? 'bg-primary text-primary-fg shadow-sm'
+                            : 'text-muted hover:text-fg cursor-pointer'
                       )}
                     >
                       {opt.label}
