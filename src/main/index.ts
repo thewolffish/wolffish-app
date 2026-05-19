@@ -484,11 +484,12 @@ function resolveShellPath(): void {
   if (process.platform === 'win32') return
   const userShell = process.env.SHELL || '/bin/sh'
   try {
-    const resolved = execFileSync(userShell, ['-lc', 'printf "%s" "$PATH"'], {
-      encoding: 'utf8',
-      timeout: 5000,
-      stdio: ['ignore', 'pipe', 'ignore']
-    }).trim()
+    const raw = execFileSync(
+      userShell,
+      ['-ilc', 'printf "__WFPATH__%s__WFPATH__" "$PATH"'],
+      { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] }
+    )
+    const resolved = raw.match(/__WFPATH__(.+?)__WFPATH__/)?.[1]
     if (resolved && resolved.includes(':')) process.env.PATH = resolved
   } catch {
     // best-effort — keep the existing PATH if the shell fails
