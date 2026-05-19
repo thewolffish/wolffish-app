@@ -53,7 +53,7 @@
   },
   "ollamaSetup": {
     "title": "Install Ollama",
-    "subtitle": "A lightweight runtime that lets Wolffish run AI models locally on your machine.",
+    "subtitle": "A lightweight runtime for running AI models locally.",
     "titleDetecting": "Detecting Ollama",
     "subtitleDetecting": "Checking if Ollama — the local AI runtime Wolffish needs — is installed.",
     "detectingTitle": "Detecting Ollama",
