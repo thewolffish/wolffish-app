@@ -179,9 +179,13 @@ async function takeScreenshot(args) {
     }
 
     const pathLine = savedPath ? `\n${savedPath}` : ''
+    const { x: bx, y: by } = display.bounds
+    const offsetNote = (bx !== 0 || by !== 0)
+      ? ` This display starts at global (${bx}, ${by}) — add (${bx}, ${by}) to all coordinates from this screenshot when calling mouse/click tools.`
+      : ''
     return {
       success: true,
-      output: `Screenshot captured (${nativeWidth}x${nativeHeight}, resized to max ${maxWidth}px wide, ${format})${displayInfo}. Coordinates are in screen pixels (${display.size.width}x${display.size.height}, scale ${display.scaleFactor}x).${pathLine}`,
+      output: `Screenshot captured (${nativeWidth}x${nativeHeight}, resized to max ${maxWidth}px wide, ${format})${displayInfo}. Coordinates are in screen pixels (${display.size.width}x${display.size.height}, scale ${display.scaleFactor}x).${offsetNote}${pathLine}`,
       images: [{ mediaType, data: base64 }]
     }
   } catch (err) {

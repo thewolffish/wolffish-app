@@ -163,10 +163,31 @@ macOS will silently fail the tool call rather than showing a prompt. The tool re
 
 ## Multiple Displays
 
-- If the screenshot doesn't show the app you're looking for, call `computer_list_displays` to see all connected monitors.
-- Use `computer_screenshot` with `display_index` to capture a specific display (0 = primary, 1 = secondary, etc.).
-- Mouse coordinates are global across all displays — a second monitor to the right of a 1920px-wide primary starts at x=1920.
+Users often have 2–3 monitors. The app you need to control may not be on the primary display. **Detecting and handling this correctly is critical — clicking with the wrong coordinates will silently land on the wrong monitor.**
+
+### Discovery
+
+1. **Start with `computer_screenshot` (no args).** This captures display 0 (primary).
+2. **If the target app isn't visible**, call `computer_list_displays` to see all monitors with their bounds.
+3. **Scan each display** with `computer_screenshot` using `display_index` (0, 1, 2, ...) until you find the app.
+4. **Lock onto that display** for the rest of the task — take all subsequent screenshots from the same `display_index`.
+
+### Coordinate translation (critical)
+
+Mouse tools use **global** screen coordinates. Screenshots show **local** coordinates relative to that display's origin.
+
+- **Primary display (bounds 0,0):** Local and global are the same. No translation needed.
+- **Any other display:** The screenshot output includes the global offset, e.g. `This display starts at global (3648, 0) — add (3648, 0) to all coordinates.` **You must add this offset to every coordinate before clicking.**
+
+Example: You see a button at local (200, 300) on a display with bounds (3648, 0). Click at **(3848, 300)**, not (200, 300). If you forget, your click lands on the primary monitor and nothing happens on the target display.
+
+### Keeping focus on the right monitor
+
+- **Before your first click**, use `osascript` or `shell_exec` to activate the target app so it has keyboard focus: `osascript -e 'tell application "Google Chrome" to activate'`
+- **Keyboard shortcuts (Cmd+L, Cmd+A, etc.) go to the focused app**, not to a specific display. Always activate the target app first if you're about to use keyboard input.
+- **Don't switch displays mid-task** unless you need to. Every display switch means a new offset to track.
+- **After switching displays**, always take a fresh screenshot to re-anchor your coordinates. Never reuse coordinates from a screenshot of a different display.
 
 ## Coordinate System
 
-Coordinates are in screen pixels, with (0,0) at the top-left corner of the primary display. X increases rightward, Y increases downward. Screenshots are resized for the model but coordinates in your actions refer to the original screen resolution reported in the screenshot output.
+Coordinates are in screen pixels. The primary display's top-left is (0,0). X increases rightward, Y increases downward. Other displays are offset by their bounds position (e.g. a display to the right of a 1728px-wide primary starts at x=1728 or x=3456 depending on scaling). Screenshots are resized for the model but coordinates in your actions refer to the original screen resolution reported in the screenshot output. **Always read the offset note in the screenshot output before clicking.**
