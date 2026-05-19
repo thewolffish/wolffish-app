@@ -1,7 +1,7 @@
-import fs from 'node:fs/promises'
-import path from 'node:path'
 import type { Corpus } from '@main/runtime/corpus/corpus'
 import type { ProviderId } from '@main/runtime/thalamus/thalamus'
+import fs from 'node:fs/promises'
+import path from 'node:path'
 
 export type UsageEntry = {
   timestamp: Date
@@ -9,6 +9,8 @@ export type UsageEntry = {
   model: string
   inputTokens: number
   outputTokens: number
+  cacheCreationTokens?: number
+  cacheReadTokens?: number
   cost: number
 }
 
@@ -57,6 +59,8 @@ type CachedEntry = {
   model: string
   inputTokens: number
   outputTokens: number
+  cacheCreationTokens?: number
+  cacheReadTokens?: number
   cost: number
 }
 
@@ -137,6 +141,8 @@ export class Usage {
       model: entry.model,
       inputTokens: entry.inputTokens,
       outputTokens: entry.outputTokens,
+      cacheCreationTokens: entry.cacheCreationTokens,
+      cacheReadTokens: entry.cacheReadTokens,
       cost: entry.cost
     }
     this.cache.push(cached)
@@ -288,7 +294,11 @@ export class Usage {
 
     const date = formatDate(entry.timestamp)
     const time = formatTime(entry.timestamp)
-    const line = `- ${date} ${time} | ${entry.model} | in:${entry.inputTokens} out:${entry.outputTokens} | $${entry.cost.toFixed(6)}\n`
+    const cachePart =
+      entry.cacheCreationTokens || entry.cacheReadTokens
+        ? ` cw:${entry.cacheCreationTokens ?? 0} cr:${entry.cacheReadTokens ?? 0}`
+        : ''
+    const line = `- ${date} ${time} | ${entry.model} | in:${entry.inputTokens} out:${entry.outputTokens}${cachePart} | $${entry.cost.toFixed(6)}\n`
 
     let existing = ''
     try {
@@ -329,7 +339,11 @@ export class Usage {
 
     const time = formatTime(entry.timestamp)
     const providerName = providerLabel(entry.provider)
-    const line = `- ${time} | ${providerName} | ${entry.model} | in:${entry.inputTokens} out:${entry.outputTokens} | $${entry.cost.toFixed(6)}\n`
+    const cachePart =
+      entry.cacheCreationTokens || entry.cacheReadTokens
+        ? ` cw:${entry.cacheCreationTokens ?? 0} cr:${entry.cacheReadTokens ?? 0}`
+        : ''
+    const line = `- ${time} | ${providerName} | ${entry.model} | in:${entry.inputTokens} out:${entry.outputTokens}${cachePart} | $${entry.cost.toFixed(6)}\n`
 
     let needsHeader = true
     try {
@@ -395,7 +409,7 @@ export class Usage {
 
 function parseProviderLine(line: string, provider: ProviderId): CachedEntry | null {
   const m =
-    /^-\s+(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})\s+\|\s+(\S+)\s+\|\s+in:(\d+)\s+out:(\d+)\s+\|\s+\$(\d+(?:\.\d+)?)/.exec(
+    /^-\s+(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})\s+\|\s+(\S+)\s+\|\s+in:(\d+)\s+out:(\d+)(?:\s+cw:(\d+)\s+cr:(\d+))?\s+\|\s+\$(\d+(?:\.\d+)?)/.exec(
       line
     )
   if (!m) return null
@@ -405,7 +419,9 @@ function parseProviderLine(line: string, provider: ProviderId): CachedEntry | nu
     model: m[3],
     inputTokens: Number(m[4]),
     outputTokens: Number(m[5]),
-    cost: Number(m[6])
+    cacheCreationTokens: m[6] ? Number(m[6]) : undefined,
+    cacheReadTokens: m[7] ? Number(m[7]) : undefined,
+    cost: Number(m[8])
   }
 }
 
@@ -413,11 +429,18 @@ export function calculateCost(
   provider: ProviderId,
   model: string,
   inputTokens: number,
-  outputTokens: number
+  outputTokens: number,
+  cacheCreationTokens?: number,
+  cacheReadTokens?: number
 ): number {
   if (provider === 'anthropic') {
     const pricing = findPricing(model, ANTHROPIC_PRICING)
-    return inputTokens * pricing.input + outputTokens * pricing.output
+    return (
+      inputTokens * pricing.input +
+      (cacheCreationTokens ?? 0) * pricing.input * 1.25 +
+      (cacheReadTokens ?? 0) * pricing.input * 0.1 +
+      outputTokens * pricing.output
+    )
   }
   if (provider === 'openai') {
     const pricing = findPricing(model, OPENAI_PRICING)
@@ -434,7 +457,12 @@ function findPricing(
 ): { input: number; output: number } {
   if (table[model]) return table[model]
   for (const [key, value] of Object.entries(table)) {
-    if (model.startsWith(key) || key.startsWith(model) || model.includes(key) || key.includes(model))
+    if (
+      model.startsWith(key) ||
+      key.startsWith(model) ||
+      model.includes(key) ||
+      key.includes(model)
+    )
       return value
   }
   const values = Object.values(table)

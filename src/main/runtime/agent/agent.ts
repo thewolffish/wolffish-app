@@ -384,7 +384,10 @@ export class Agent {
           if (usage) {
             turnUsage = {
               inputTokens: turnUsage.inputTokens + usage.inputTokens,
-              outputTokens: turnUsage.outputTokens + usage.outputTokens
+              outputTokens: turnUsage.outputTokens + usage.outputTokens,
+              cacheCreationTokens:
+                (turnUsage.cacheCreationTokens ?? 0) + (usage.cacheCreationTokens ?? 0),
+              cacheReadTokens: (turnUsage.cacheReadTokens ?? 0) + (usage.cacheReadTokens ?? 0)
             }
           }
         })
@@ -661,7 +664,9 @@ export class Agent {
           turnProvider,
           turnModel,
           turnUsage.inputTokens,
-          turnUsage.outputTokens
+          turnUsage.outputTokens,
+          turnUsage.cacheCreationTokens,
+          turnUsage.cacheReadTokens
         )
         await this.usage
           .recordUsage({
@@ -670,6 +675,8 @@ export class Agent {
             model: turnModel,
             inputTokens: turnUsage.inputTokens,
             outputTokens: turnUsage.outputTokens,
+            cacheCreationTokens: turnUsage.cacheCreationTokens,
+            cacheReadTokens: turnUsage.cacheReadTokens,
             cost
           })
           .catch(() => undefined)

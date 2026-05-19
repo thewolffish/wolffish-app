@@ -69,6 +69,8 @@ export class AnthropicProvider {
     const toolBlocks = new Map<number, ToolBlock>()
     let inputTokens = 0
     let outputTokens = 0
+    let cacheCreationTokens = 0
+    let cacheReadTokens = 0
     let stopReason: StopReason = 'unknown'
 
     for await (const event of readSSE(response.body)) {
@@ -90,6 +92,10 @@ export class AnthropicProvider {
         const usage = parsed.message?.usage
         if (typeof usage?.input_tokens === 'number') inputTokens = usage.input_tokens
         if (typeof usage?.output_tokens === 'number') outputTokens = usage.output_tokens
+        if (typeof usage?.cache_creation_input_tokens === 'number')
+          cacheCreationTokens = usage.cache_creation_input_tokens
+        if (typeof usage?.cache_read_input_tokens === 'number')
+          cacheReadTokens = usage.cache_read_input_tokens
         continue
       }
 
@@ -138,7 +144,11 @@ export class AnthropicProvider {
       }
 
       if (parsed.type === 'message_stop') {
-        yield { type: 'turn_meta', stopReason, usage: { inputTokens, outputTokens } }
+        yield {
+          type: 'turn_meta',
+          stopReason,
+          usage: { inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens }
+        }
         continue
       }
 
@@ -162,7 +172,15 @@ type AnthropicEvent = {
     stop_sequence?: string | null
   }
   error?: { message?: string }
-  message?: { id?: string; usage?: { input_tokens?: number; output_tokens?: number } }
+  message?: {
+    id?: string
+    usage?: {
+      input_tokens?: number
+      output_tokens?: number
+      cache_creation_input_tokens?: number
+      cache_read_input_tokens?: number
+    }
+  }
   usage?: { input_tokens?: number; output_tokens?: number }
 }
 

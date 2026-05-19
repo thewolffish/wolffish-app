@@ -63,6 +63,8 @@ export type StopReason = 'end_turn' | 'tool_use' | 'max_tokens' | 'stop_sequence
 export type StreamUsage = {
   inputTokens: number
   outputTokens: number
+  cacheCreationTokens?: number
+  cacheReadTokens?: number
 }
 
 export type NoProviderAvailableInfo = {
