@@ -21,6 +21,7 @@ export function BravePanel(): React.JSX.Element {
   // avoid flicker when the toggle resolves from "guess" to actual value.
   const [enabled, setEnabled] = useState<boolean | null>(null)
   const [apiKey, setApiKey] = useState('')
+  const [hasSavedKey, setHasSavedKey] = useState(false)
   const [keyVisible, setKeyVisible] = useState(false)
   const [status, setStatus] = useState<BraveStatus>({
     status: 'disabled',
@@ -37,6 +38,7 @@ export function BravePanel(): React.JSX.Element {
       const live = await window.api.brave.status()
       if (cancelled) return
       setApiKey(cfg.apiKey)
+      setHasSavedKey(cfg.apiKey.length > 0)
       setStatus(live)
       setEnabled(cfg.enabled)
     })()
@@ -77,6 +79,7 @@ export function BravePanel(): React.JSX.Element {
         })
         setStatus(response.status)
         setEnabled(true)
+        setHasSavedKey(true)
         toast.show({
           message: t('settings.services.brave.testSuccess', { count: result.resultsCount }),
           tone: 'success'
@@ -146,7 +149,7 @@ export function BravePanel(): React.JSX.Element {
               >
                 {toggleOptions.map((opt) => {
                   const active = opt.value === enabled
-                  const cantEnable = opt.value && apiKey.trim().length === 0
+                  const cantEnable = opt.value && !hasSavedKey
                   return (
                     <button
                       key={String(opt.value)}

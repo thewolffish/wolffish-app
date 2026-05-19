@@ -24,6 +24,7 @@ export function TelegramPanel(): React.JSX.Element {
   // and then transitions on load.
   const [enabled, setEnabled] = useState<boolean | null>(null)
   const [botToken, setBotToken] = useState('')
+  const [hasSavedToken, setHasSavedToken] = useState(false)
   const [allowedUsersInput, setAllowedUsersInput] = useState('')
   const [tokenVisible, setTokenVisible] = useState(false)
   const [status, setStatus] = useState<TelegramChannelStatus>({
@@ -48,6 +49,7 @@ export function TelegramPanel(): React.JSX.Element {
       const live = await window.api.telegram.status()
       if (cancelled) return
       setBotToken(cfg.botToken)
+      setHasSavedToken(cfg.botToken.length > 0)
       setAllowedUsersInput(cfg.allowedUserIds.join(', '))
       setAutoRefresh(cfg.autoRefresh ?? true)
       setStaleHours(cfg.staleHours ?? 3)
@@ -129,6 +131,7 @@ export function TelegramPanel(): React.JSX.Element {
         })
         setStatus(response.status)
         setEnabled(true)
+        setHasSavedToken(true)
         toast.show({
           message: t('settings.services.telegram.testSuccess'),
           tone: 'success'
@@ -217,7 +220,7 @@ export function TelegramPanel(): React.JSX.Element {
               >
                 {toggleOptions.map((opt) => {
                   const active = opt.value === enabled
-                  const cantEnable = opt.value && botToken.trim().length === 0
+                  const cantEnable = opt.value && !hasSavedToken
                   return (
                     <button
                       key={String(opt.value)}
