@@ -2,7 +2,7 @@ import { Button } from '@components/core/button/Button'
 import { Input } from '@components/core/input/Input'
 import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn/cn'
-import type { GitHubConfig, GitHubErrorKind, GitHubStatus } from '@preload/index'
+import type { GitHubErrorKind, GitHubStatus } from '@preload/index'
 import { EyeIcon, GithubIcon, ViewOffIcon } from 'hugeicons-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
@@ -43,7 +43,6 @@ export function GitHubPanel(): React.JSX.Element {
   const toast = useToast()
 
   const [token, setToken] = useState('')
-  const [savedToken, setSavedToken] = useState('')
   const [login, setLogin] = useState('')
   const [name, setName] = useState('')
   const [tokenVisible, setTokenVisible] = useState(false)
@@ -54,7 +53,6 @@ export function GitHubPanel(): React.JSX.Element {
   })
   const [busy, setBusy] = useState<'idle' | 'saving' | 'testing'>('idle')
   const [validation, setValidation] = useState<string | null>(null)
-  const [loaded, setLoaded] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -63,11 +61,9 @@ export function GitHubPanel(): React.JSX.Element {
       const live = await window.api.github.status()
       if (cancelled) return
       setToken(cfg.token)
-      setSavedToken(cfg.token)
       setLogin(cfg.login)
       setName(cfg.name)
       setStatus(live)
-      setLoaded(true)
     })()
     return () => {
       cancelled = true
@@ -83,27 +79,6 @@ export function GitHubPanel(): React.JSX.Element {
     },
     [t]
   )
-
-  const handleSave = useCallback(async () => {
-    setValidation(null)
-    setBusy('saving')
-    try {
-      const trimmed = token.trim()
-      const patch: Partial<GitHubConfig> = { token: trimmed }
-      const response = await window.api.github.setConfig(patch)
-      setStatus(response.status)
-      setSavedToken(response.config.token)
-      // Token rotation server-side wipes login/name — reflect that locally.
-      setLogin(response.config.login)
-      setName(response.config.name)
-      toast.show({
-        message: t('settings.services.github.saveSuccess'),
-        tone: 'success'
-      })
-    } finally {
-      setBusy('idle')
-    }
-  }, [token, t, toast])
 
   const handleTest = useCallback(async () => {
     if (token.trim().length === 0) {
@@ -124,7 +99,6 @@ export function GitHubPanel(): React.JSX.Element {
           login: result.login,
           name: result.name ?? ''
         })
-        setSavedToken(response.config.token)
         setLogin(response.config.login)
         setName(response.config.name)
         setStatus(response.status)
@@ -268,19 +242,11 @@ export function GitHubPanel(): React.JSX.Element {
 
           <div className="border-border/60 border-t" />
 
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center justify-end">
             <Button
               type="button"
-              onClick={() => void handleSave()}
-              disabled={busy !== 'idle' || !loaded || token.trim().length === 0 || token.trim() === savedToken}
-            >
-              {t('settings.services.github.save')}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
               onClick={() => void handleTest()}
-              disabled={busy !== 'idle'}
+              disabled={busy !== 'idle' || token.trim().length === 0}
             >
               {t('settings.services.github.test')}
             </Button>

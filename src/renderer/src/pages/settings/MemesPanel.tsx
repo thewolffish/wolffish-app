@@ -18,13 +18,10 @@ export function MemesPanel(): React.JSX.Element {
   const toast = useToast()
 
   const [giphyKey, setGiphyKey] = useState('')
-  const [savedGiphyKey, setSavedGiphyKey] = useState('')
   const [giphyKeyVisible, setGiphyKeyVisible] = useState(false)
 
   const [imgflipUsername, setImgflipUsername] = useState('')
   const [imgflipPassword, setImgflipPassword] = useState('')
-  const [savedImgflipUsername, setSavedImgflipUsername] = useState('')
-  const [savedImgflipPassword, setSavedImgflipPassword] = useState('')
   const [imgflipPasswordVisible, setImgflipPasswordVisible] = useState(false)
 
   const [status, setStatus] = useState<MemesStatus>({
@@ -37,12 +34,6 @@ export function MemesPanel(): React.JSX.Element {
     imgflipError: null
   })
   const [busy, setBusy] = useState<'idle' | 'testingGiphy' | 'testingImgflip'>('idle')
-  const [loaded, setLoaded] = useState(false)
-
-  const giphyDirty = loaded && giphyKey !== savedGiphyKey
-  const imgflipDirty =
-    loaded &&
-    (imgflipUsername !== savedImgflipUsername || imgflipPassword !== savedImgflipPassword)
 
   useEffect(() => {
     let cancelled = false
@@ -51,13 +42,9 @@ export function MemesPanel(): React.JSX.Element {
       const live = await window.api.memes.status()
       if (cancelled) return
       setGiphyKey(cfg.giphy.apiKey)
-      setSavedGiphyKey(cfg.giphy.apiKey)
       setImgflipUsername(cfg.imgflip.username)
-      setSavedImgflipUsername(cfg.imgflip.username)
       setImgflipPassword(cfg.imgflip.password)
-      setSavedImgflipPassword(cfg.imgflip.password)
       setStatus(live)
-      setLoaded(true)
     })()
     return () => {
       cancelled = true
@@ -76,23 +63,19 @@ export function MemesPanel(): React.JSX.Element {
 
   const handleTestGiphy = useCallback(async () => {
     if (giphyKey.trim().length === 0) {
-      toast.show({ message: t('settings.services.memes.validation.giphyKeyRequired'), tone: 'error' })
+      toast.show({
+        message: t('settings.services.memes.validation.giphyKeyRequired'),
+        tone: 'error'
+      })
       return
     }
     setBusy('testingGiphy')
     try {
       const result = await window.api.memes.testGiphy(giphyKey.trim())
       if (result.ok) {
-        if (giphyDirty) {
-          const response = await window.api.memes.setConfig({ giphy: { apiKey: giphyKey.trim() } })
-          setStatus(response.status)
-          setSavedGiphyKey(giphyKey.trim())
-          toast.show({ message: t('settings.services.memes.saveSuccess'), tone: 'success' })
-        } else {
-          toast.show({ message: t('settings.services.memes.testGiphySuccess'), tone: 'success' })
-          const live = await window.api.memes.status()
-          setStatus(live)
-        }
+        const response = await window.api.memes.setConfig({ giphy: { apiKey: giphyKey.trim() } })
+        setStatus(response.status)
+        toast.show({ message: t('settings.services.memes.testGiphySuccess'), tone: 'success' })
       } else {
         toast.show({
           message: t('settings.services.memes.testFailure', {
@@ -106,11 +89,14 @@ export function MemesPanel(): React.JSX.Element {
     } finally {
       setBusy('idle')
     }
-  }, [giphyKey, giphyDirty, t, toast, translateError])
+  }, [giphyKey, t, toast, translateError])
 
   const handleTestImgflip = useCallback(async () => {
     if (!imgflipUsername.trim() || !imgflipPassword.trim()) {
-      toast.show({ message: t('settings.services.memes.validation.imgflipCredsRequired'), tone: 'error' })
+      toast.show({
+        message: t('settings.services.memes.validation.imgflipCredsRequired'),
+        tone: 'error'
+      })
       return
     }
     setBusy('testingImgflip')
@@ -120,19 +106,11 @@ export function MemesPanel(): React.JSX.Element {
         password: imgflipPassword.trim()
       })
       if (result.ok) {
-        if (imgflipDirty) {
-          const response = await window.api.memes.setConfig({
-            imgflip: { username: imgflipUsername.trim(), password: imgflipPassword.trim() }
-          })
-          setStatus(response.status)
-          setSavedImgflipUsername(imgflipUsername.trim())
-          setSavedImgflipPassword(imgflipPassword.trim())
-          toast.show({ message: t('settings.services.memes.saveSuccess'), tone: 'success' })
-        } else {
-          toast.show({ message: t('settings.services.memes.testImgflipSuccess'), tone: 'success' })
-          const live = await window.api.memes.status()
-          setStatus(live)
-        }
+        const response = await window.api.memes.setConfig({
+          imgflip: { username: imgflipUsername.trim(), password: imgflipPassword.trim() }
+        })
+        setStatus(response.status)
+        toast.show({ message: t('settings.services.memes.testImgflipSuccess'), tone: 'success' })
       } else {
         toast.show({
           message: t('settings.services.memes.testFailure', {
@@ -146,7 +124,7 @@ export function MemesPanel(): React.JSX.Element {
     } finally {
       setBusy('idle')
     }
-  }, [imgflipUsername, imgflipPassword, imgflipDirty, t, toast, translateError])
+  }, [imgflipUsername, imgflipPassword, t, toast, translateError])
 
   const giphyStatusLabel = useMemo(
     () => t(`settings.services.memes.providerStatus.${status.giphy}`),
@@ -196,9 +174,7 @@ export function MemesPanel(): React.JSX.Element {
               <span className="text-fg text-sm font-medium">
                 {t('settings.services.memes.giphy.title')}
               </span>
-              <p className="text-muted text-xs">
-                {t('settings.services.memes.giphy.description')}
-              </p>
+              <p className="text-muted text-xs">{t('settings.services.memes.giphy.description')}</p>
             </div>
             <div className="flex items-center gap-2">
               <span
@@ -260,13 +236,10 @@ export function MemesPanel(): React.JSX.Element {
           <div className="flex items-center justify-between gap-2">
             <Button
               type="button"
-              variant="outline"
               onClick={() => void handleTestGiphy()}
-              disabled={busy !== 'idle'}
+              disabled={busy !== 'idle' || giphyKey.trim().length === 0}
             >
-              {giphyDirty
-                ? t('settings.services.memes.testAndSave')
-                : t('settings.services.memes.testConnection')}
+              {t('settings.services.memes.testConnection')}
             </Button>
             <a
               href="https://developers.giphy.com/dashboard/?create=true"
@@ -365,13 +338,10 @@ export function MemesPanel(): React.JSX.Element {
           <div className="flex items-center justify-between gap-2">
             <Button
               type="button"
-              variant="outline"
               onClick={() => void handleTestImgflip()}
-              disabled={busy !== 'idle'}
+              disabled={busy !== 'idle' || !imgflipUsername.trim() || !imgflipPassword.trim()}
             >
-              {imgflipDirty
-                ? t('settings.services.memes.testAndSave')
-                : t('settings.services.memes.testConnection')}
+              {t('settings.services.memes.testConnection')}
             </Button>
             <a
               href="https://imgflip.com/signup"

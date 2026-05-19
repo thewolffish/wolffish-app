@@ -2,7 +2,7 @@ import { Button } from '@components/core/button/Button'
 import { Input } from '@components/core/input/Input'
 import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn/cn'
-import type { NotionConfig, NotionErrorKind, NotionStatus } from '@preload/index'
+import type { NotionErrorKind, NotionStatus } from '@preload/index'
 import { EyeIcon, ViewOffIcon } from 'hugeicons-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -18,7 +18,6 @@ export function NotionPanel(): React.JSX.Element {
   const toast = useToast()
 
   const [token, setToken] = useState('')
-  const [savedToken, setSavedToken] = useState('')
   const [tokenVisible, setTokenVisible] = useState(false)
   const [status, setStatus] = useState<NotionStatus>({
     status: 'disabled',
@@ -27,7 +26,6 @@ export function NotionPanel(): React.JSX.Element {
   })
   const [busy, setBusy] = useState<'idle' | 'saving' | 'testing'>('idle')
   const [validation, setValidation] = useState<string | null>(null)
-  const [loaded, setLoaded] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -36,9 +34,7 @@ export function NotionPanel(): React.JSX.Element {
       const live = await window.api.notion.status()
       if (cancelled) return
       setToken(cfg.token)
-      setSavedToken(cfg.token)
       setStatus(live)
-      setLoaded(true)
     })()
     return () => {
       cancelled = true
@@ -55,23 +51,6 @@ export function NotionPanel(): React.JSX.Element {
     [t]
   )
 
-  const handleSave = useCallback(async () => {
-    setValidation(null)
-    setBusy('saving')
-    try {
-      const patch: Partial<NotionConfig> = { token: token.trim() }
-      const response = await window.api.notion.setConfig(patch)
-      setStatus(response.status)
-      setSavedToken(token.trim())
-      toast.show({
-        message: t('settings.services.notion.saveSuccess'),
-        tone: 'success'
-      })
-    } finally {
-      setBusy('idle')
-    }
-  }, [token, t, toast])
-
   const handleTest = useCallback(async () => {
     if (token.trim().length === 0) {
       setValidation(t('settings.services.notion.validation.tokenRequired'))
@@ -82,6 +61,8 @@ export function NotionPanel(): React.JSX.Element {
     try {
       const result = await window.api.notion.test(token.trim())
       if (result.ok) {
+        const response = await window.api.notion.setConfig({ token: token.trim() })
+        setStatus(response.status)
         toast.show({
           message: t('settings.services.notion.testSuccess', {
             name: result.name,
@@ -96,9 +77,9 @@ export function NotionPanel(): React.JSX.Element {
           }),
           tone: 'error'
         })
+        const live = await window.api.notion.status()
+        setStatus(live)
       }
-      const live = await window.api.notion.status()
-      setStatus(live)
     } finally {
       setBusy('idle')
     }
@@ -197,19 +178,11 @@ export function NotionPanel(): React.JSX.Element {
 
           <div className="border-border/60 border-t" />
 
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center justify-end">
             <Button
               type="button"
-              onClick={() => void handleSave()}
-              disabled={busy !== 'idle' || !loaded || token.trim().length === 0 || token.trim() === savedToken}
-            >
-              {t('settings.services.notion.save')}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
               onClick={() => void handleTest()}
-              disabled={busy !== 'idle'}
+              disabled={busy !== 'idle' || token.trim().length === 0}
             >
               {t('settings.services.notion.test')}
             </Button>

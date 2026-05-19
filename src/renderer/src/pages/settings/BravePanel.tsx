@@ -2,7 +2,7 @@ import { Button } from '@components/core/button/Button'
 import { Input } from '@components/core/input/Input'
 import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn/cn'
-import type { BraveConfig, BraveErrorKind, BraveStatus } from '@preload/index'
+import type { BraveErrorKind, BraveStatus } from '@preload/index'
 import { EyeIcon, ViewOffIcon } from 'hugeicons-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -21,7 +21,6 @@ export function BravePanel(): React.JSX.Element {
   // avoid flicker when the toggle resolves from "guess" to actual value.
   const [enabled, setEnabled] = useState<boolean | null>(null)
   const [apiKey, setApiKey] = useState('')
-  const [savedApiKey, setSavedApiKey] = useState('')
   const [keyVisible, setKeyVisible] = useState(false)
   const [status, setStatus] = useState<BraveStatus>({
     status: 'disabled',
@@ -30,7 +29,6 @@ export function BravePanel(): React.JSX.Element {
   })
   const [busy, setBusy] = useState<'idle' | 'saving' | 'testing'>('idle')
   const [validation, setValidation] = useState<string | null>(null)
-  const loaded = enabled !== null
 
   useEffect(() => {
     let cancelled = false
@@ -39,7 +37,6 @@ export function BravePanel(): React.JSX.Element {
       const live = await window.api.brave.status()
       if (cancelled) return
       setApiKey(cfg.apiKey)
-      setSavedApiKey(cfg.apiKey)
       setStatus(live)
       setEnabled(cfg.enabled)
     })()
@@ -48,12 +45,11 @@ export function BravePanel(): React.JSX.Element {
     }
   }, [])
 
-  const validate = useCallback((): { ok: true } | { ok: false; error: string } => {
-    if (enabled && apiKey.trim().length === 0) {
-      return { ok: false, error: t('settings.services.brave.validation.keyRequired') }
-    }
-    return { ok: true }
-  }, [apiKey, enabled, t])
+  const handleToggle = useCallback(async (value: boolean) => {
+    setEnabled(value)
+    const response = await window.api.brave.setConfig({ enabled: value })
+    setStatus(response.status)
+  }, [])
 
   const translateError = useCallback(
     (kind: BraveErrorKind, message?: string | null): string => {
@@ -65,29 +61,6 @@ export function BravePanel(): React.JSX.Element {
     [t]
   )
 
-  const handleSave = useCallback(async () => {
-    if (enabled === null) return
-    const result = validate()
-    if (!result.ok) {
-      setValidation(result.error)
-      return
-    }
-    setValidation(null)
-    setBusy('saving')
-    try {
-      const patch: Partial<BraveConfig> = { enabled, apiKey: apiKey.trim() }
-      const response = await window.api.brave.setConfig(patch)
-      setStatus(response.status)
-      setSavedApiKey(apiKey.trim())
-      toast.show({
-        message: t('settings.services.brave.saveSuccess'),
-        tone: 'success'
-      })
-    } finally {
-      setBusy('idle')
-    }
-  }, [apiKey, enabled, t, toast, validate])
-
   const handleTest = useCallback(async () => {
     if (apiKey.trim().length === 0) {
       setValidation(t('settings.services.brave.validation.keyRequired'))
@@ -98,6 +71,12 @@ export function BravePanel(): React.JSX.Element {
     try {
       const result = await window.api.brave.test(apiKey.trim())
       if (result.ok) {
+        const response = await window.api.brave.setConfig({
+          enabled: true,
+          apiKey: apiKey.trim()
+        })
+        setStatus(response.status)
+        setEnabled(true)
         toast.show({
           message: t('settings.services.brave.testSuccess', { count: result.resultsCount }),
           tone: 'success'
@@ -109,10 +88,9 @@ export function BravePanel(): React.JSX.Element {
           }),
           tone: 'error'
         })
+        const live = await window.api.brave.status()
+        setStatus(live)
       }
-      // Re-read live status so the chip reflects the test outcome.
-      const live = await window.api.brave.status()
-      setStatus(live)
     } finally {
       setBusy('idle')
     }
@@ -174,7 +152,7 @@ export function BravePanel(): React.JSX.Element {
                       role="tab"
                       type="button"
                       aria-selected={active}
-                      onClick={() => setEnabled(opt.value)}
+                      onClick={() => void handleToggle(opt.value)}
                       className={cn(
                         'rounded-md px-3 py-1 text-xs font-medium transition-colors',
                         'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
@@ -261,24 +239,11 @@ export function BravePanel(): React.JSX.Element {
 
           <div className="border-border/60 border-t" />
 
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center justify-end">
             <Button
               type="button"
-              onClick={() => void handleSave()}
-              disabled={
-                busy !== 'idle' ||
-                !loaded ||
-                apiKey.trim().length === 0 ||
-                apiKey.trim() === savedApiKey
-              }
-            >
-              {t('settings.services.brave.save')}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
               onClick={() => void handleTest()}
-              disabled={busy !== 'idle'}
+              disabled={busy !== 'idle' || apiKey.trim().length === 0}
             >
               {t('settings.services.brave.test')}
             </Button>

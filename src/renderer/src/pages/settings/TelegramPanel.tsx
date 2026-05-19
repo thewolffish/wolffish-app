@@ -3,7 +3,7 @@ import { Input } from '@components/core/input/Input'
 import { Select, type SelectOption } from '@components/core/select/Select'
 import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn/cn'
-import type { TelegramChannelStatus, TelegramConfig, TelegramErrorKind } from '@preload/index'
+import type { TelegramChannelStatus, TelegramErrorKind } from '@preload/index'
 import { EyeIcon, ViewOffIcon } from 'hugeicons-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -80,19 +80,11 @@ export function TelegramPanel(): React.JSX.Element {
     [t]
   )
 
-  const validate = useCallback((): { ok: true; ids: number[] } | { ok: false; error: string } => {
-    const parsed = parseUserIds(allowedUsersInput)
-    if (!parsed.ok) return parsed
-    if (enabled) {
-      if (botToken.trim().length === 0) {
-        return { ok: false, error: t('settings.services.telegram.validation.tokenRequired') }
-      }
-      if (parsed.ids.length === 0) {
-        return { ok: false, error: t('settings.services.telegram.validation.userIdRequired') }
-      }
-    }
-    return parsed
-  }, [allowedUsersInput, botToken, enabled, parseUserIds, t])
+  const handleToggle = useCallback(async (value: boolean) => {
+    setEnabled(value)
+    const response = await window.api.telegram.setConfig({ enabled: value })
+    setStatus(response.status)
+  }, [])
 
   const translateError = useCallback(
     (kind: TelegramErrorKind, message?: string | null): string => {
@@ -105,34 +97,6 @@ export function TelegramPanel(): React.JSX.Element {
     },
     [t]
   )
-
-  const handleSave = useCallback(async () => {
-    if (enabled === null) return
-    const result = validate()
-    if (!result.ok) {
-      setValidation(result.error)
-      return
-    }
-    setValidation(null)
-    setBusy('saving')
-    try {
-      const patch: Partial<TelegramConfig> = {
-        enabled,
-        botToken: botToken.trim(),
-        allowedUserIds: result.ids,
-        autoRefresh: autoRefresh ?? true,
-        staleHours
-      }
-      const response = await window.api.telegram.setConfig(patch)
-      setStatus(response.status)
-      toast.show({
-        message: t('settings.services.telegram.saveSuccess'),
-        tone: 'success'
-      })
-    } finally {
-      setBusy('idle')
-    }
-  }, [botToken, enabled, t, toast, validate])
 
   const handleTest = useCallback(async () => {
     const parsed = parseUserIds(allowedUsersInput)
@@ -156,6 +120,15 @@ export function TelegramPanel(): React.JSX.Element {
         userId: parsed.ids[0]
       })
       if (result.ok) {
+        const response = await window.api.telegram.setConfig({
+          enabled: true,
+          botToken: botToken.trim(),
+          allowedUserIds: parsed.ids,
+          autoRefresh: autoRefresh ?? true,
+          staleHours
+        })
+        setStatus(response.status)
+        setEnabled(true)
         toast.show({
           message: t('settings.services.telegram.testSuccess'),
           tone: 'success'
@@ -171,7 +144,7 @@ export function TelegramPanel(): React.JSX.Element {
     } finally {
       setBusy('idle')
     }
-  }, [allowedUsersInput, botToken, parseUserIds, t, toast, translateError])
+  }, [allowedUsersInput, autoRefresh, botToken, parseUserIds, staleHours, t, toast, translateError])
 
   const statusLabel = useMemo(() => {
     return t(`settings.services.telegram.status.${status.status}`)
@@ -199,7 +172,10 @@ export function TelegramPanel(): React.JSX.Element {
     () =>
       Array.from({ length: 24 }, (_, i) => {
         const h = i + 1
-        return { value: String(h), label: t('settings.services.telegram.autoRefresh.hours', { count: h }) }
+        return {
+          value: String(h),
+          label: t('settings.services.telegram.autoRefresh.hours', { count: h })
+        }
       }),
     [t]
   )
@@ -247,7 +223,7 @@ export function TelegramPanel(): React.JSX.Element {
                       role="tab"
                       type="button"
                       aria-selected={active}
-                      onClick={() => setEnabled(opt.value)}
+                      onClick={() => void handleToggle(opt.value)}
                       className={cn(
                         'rounded-md px-3 py-1 text-xs font-medium transition-colors',
                         'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
@@ -406,20 +382,11 @@ export function TelegramPanel(): React.JSX.Element {
 
           <div className="border-border/60 border-t" />
 
-          {/* Save first (primary action), test on the opposite side. */}
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center justify-end">
             <Button
               type="button"
-              onClick={() => void handleSave()}
-              disabled={busy !== 'idle' || !loaded}
-            >
-              {t('settings.services.telegram.save')}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
               onClick={() => void handleTest()}
-              disabled={busy !== 'idle'}
+              disabled={busy !== 'idle' || !loaded}
             >
               {t('settings.services.telegram.test')}
             </Button>
