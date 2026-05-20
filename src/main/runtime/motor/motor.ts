@@ -88,7 +88,7 @@ const PERMISSION_RE =
   /permission denied|access denied|need sudo|not permitted|not authorized|EACCES|EPERM|requires admin|requires root|operation not permitted|insufficient privileges|Failed to get sources|assistive access|HTTP 401\b|HTTP 403\b|HTTP 451\b|\bForbidden\b|\bUnauthorized\b/i
 const VALIDATION_RE = /invalid argument|missing required|EINVAL|bad request|HTTP 400\b|HTTP 422\b/i
 const NOT_FOUND_RE =
-  /command not found|not found|ENOENT|no such file|is not installed|HTTP 404\b|HTTP 410\b/i
+  /command not found|not found|no .+ found|ENOENT|no such file|is not installed|HTTP 404\b|HTTP 410\b/i
 const NETWORK_RE = /ECONNREFUSED|ETIMEDOUT|ECONNRESET|network error|fetch failed|DNS resolution/i
 const TIMEOUT_RE = /timed out|timeout|SIGTERM/i
 
