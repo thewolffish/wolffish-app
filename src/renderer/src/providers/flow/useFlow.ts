@@ -3,9 +3,11 @@ import type {
   ApprovalDecision,
   ApprovalDescription,
   DangerLevel,
+  DataAnalytics,
   MessageAttachment,
   Segment,
   SegmentTurnEndReason,
+  SystemInfo,
   WorkspaceStatus
 } from '@preload/index'
 
@@ -111,6 +113,9 @@ export type FlowContextValue = {
   goTo: (screen: Screen, returnTo?: Screen | null) => void
   /** Where the user should land after the current screen's primary action. */
   returnTo: Screen | null
+  dataAnalytics: DataAnalytics | null
+  systemInfo: SystemInfo | null
+  refreshData: () => Promise<void>
   refreshStatus: () => Promise<void>
   clearModel: () => Promise<void>
   /**

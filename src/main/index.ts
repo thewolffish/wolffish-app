@@ -1437,6 +1437,16 @@ app.whenReady().then(async () => {
     return { value }
   })
 
+  ipcMain.handle(
+    'runtime:setLastSettingsState',
+    async (_e, patch: Record<string, string>) => {
+      await patchConfig((c) => ({
+        ...c,
+        lastSettingsState: { ...c.lastSettingsState, ...patch }
+      }))
+    }
+  )
+
   ipcMain.handle('runtime:setWeekStartsOn', async (_e, value: WeekStartsOn) => {
     await persistWeekStartsOn(value)
     return { value }

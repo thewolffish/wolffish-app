@@ -233,7 +233,7 @@ export function WhatsAppPanel(): React.JSX.Element {
           <div
             className={cn(
               'flex flex-col gap-5 transition-opacity',
-              enabled === false && 'pointer-events-none opacity-40'
+              !enabled && 'pointer-events-none opacity-40'
             )}
           >
             {/* Status row — always visible so layout is stable */}

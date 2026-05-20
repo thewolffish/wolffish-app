@@ -372,7 +372,7 @@ export function TelegramPanel(): React.JSX.Element {
             )}
           </div>
 
-          {autoRefresh && (
+          {autoRefresh !== false && (
             <Select<string>
               label={t('settings.services.telegram.autoRefresh.staleLabel')}
               value={String(staleHours)}

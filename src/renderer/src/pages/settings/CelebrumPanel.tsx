@@ -9,8 +9,7 @@ import {
   CheckmarkBadge01Icon,
   HelpCircleIcon,
   Refresh01Icon,
-  SecurityCheckIcon,
-  Tick01Icon
+  SecurityCheckIcon
 } from 'hugeicons-react'
 
 export function CelebrumPanel(): React.JSX.Element {
@@ -41,6 +40,8 @@ export function CelebrumPanel(): React.JSX.Element {
       const data = await window.api.cerebellum.reload()
       setCapabilities(data)
       toast.show({ tone: 'success', message: t('settings.cellebrum.resyncSuccessToast') })
+    } catch {
+      toast.show({ tone: 'error', message: t('settings.cellebrum.resyncErrorToast') })
     } finally {
       setResyncing(false)
     }
@@ -71,12 +72,14 @@ export function CelebrumPanel(): React.JSX.Element {
             disabled={resyncing}
             aria-label={t('settings.cellebrum.resync')}
             className={cn(
-              'text-muted hover:text-fg mt-1 shrink-0 cursor-pointer rounded-lg p-2',
+              'inline-flex items-center gap-1 rounded-md text-xs cursor-pointer transition-colors',
+              'text-muted hover:text-fg px-1.5 py-0.5',
               'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-              resyncing && 'animate-spin'
+              'disabled:cursor-not-allowed disabled:opacity-40'
             )}
           >
-            <Refresh01Icon size={16} />
+            <Refresh01Icon size={14} />
+            <span>{t('settings.cellebrum.resync')}</span>
           </button>
         </header>
 
@@ -168,23 +171,32 @@ function CapabilityRow({
           </div>
         </div>
 
-        <button
-          type="button"
-          onClick={() => onToggle(!cap.enabled)}
-          className={cn(
-            'relative h-5 w-9 shrink-0 cursor-pointer rounded-full transition-colors',
-            cap.enabled ? 'bg-primary' : 'bg-border'
-          )}
+        <div
+          role="tablist"
+          className="border-border bg-bg/40 inline-flex shrink-0 items-center rounded-lg border p-0.5"
         >
-          <span
-            className={cn(
-              'bg-white absolute top-0.5 left-0.5 flex h-4 w-4 items-center justify-center rounded-full shadow transition-transform',
-              cap.enabled && 'translate-x-4'
-            )}
-          >
-            {cap.enabled && <Tick01Icon size={10} className="text-primary" />}
-          </span>
-        </button>
+          {[false, true].map((val) => {
+            const active = val === cap.enabled
+            return (
+              <button
+                key={String(val)}
+                role="tab"
+                type="button"
+                aria-selected={active}
+                onClick={() => onToggle(val)}
+                className={cn(
+                  'rounded-md px-3 py-1 text-xs font-medium transition-colors',
+                  'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+                  active
+                    ? 'bg-primary text-primary-fg shadow-sm'
+                    : 'text-muted hover:text-fg cursor-pointer'
+                )}
+              >
+                {t(val ? 'settings.wolffish.toggle.on' : 'settings.wolffish.toggle.off')}
+              </button>
+            )
+          })}
+        </div>
       </div>
 
       {cap.description && (

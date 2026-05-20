@@ -1,7 +1,10 @@
 import { Select, type SelectOption } from '@components/core/Select'
+import { useToast } from '@components/core/toast/useToast'
+import { cn } from '@lib/utils/cn'
 import type { CompactionConfig } from '@preload/index'
 import { useFlow } from '@providers/flow/useFlow'
 import { useLocale } from '@providers/locale/useLocale'
+import { Refresh01Icon } from 'hugeicons-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -12,11 +15,13 @@ const HOUR_OPTIONS: SelectOption<string>[] = Array.from({ length: 24 }, (_, i) =
 
 export function CompactionPanel(): React.JSX.Element {
   const { t } = useTranslation()
+  const toast = useToast()
   const { locale } = useLocale()
   const { refreshStatus } = useFlow()
 
   const [config, setConfig] = useState<CompactionConfig | null>(null)
   const [saving, setSaving] = useState<'daily' | 'weekly' | null>(null)
+  const [resyncing, setResyncing] = useState(false)
   const [now, setNow] = useState(() => Date.now())
 
   useEffect(() => {
@@ -28,6 +33,20 @@ export function CompactionPanel(): React.JSX.Element {
       cancelled = true
     }
   }, [])
+
+  const onResync = async (): Promise<void> => {
+    setResyncing(true)
+    try {
+      const cfg = await window.api.runtime.getCompactionConfig()
+      setConfig(cfg)
+      setNow(Date.now())
+      toast.show({ tone: 'success', message: t('settings.hippocampus.compaction.resyncSuccessToast') })
+    } catch {
+      toast.show({ tone: 'error', message: t('settings.hippocampus.compaction.resyncErrorToast') })
+    } finally {
+      setResyncing(false)
+    }
+  }
 
   // Tick every 60s so the "runs in …" label stays fresh
   useEffect(() => {
@@ -64,13 +83,30 @@ export function CompactionPanel(): React.JSX.Element {
   return (
     <div className="flex min-h-full w-full items-start justify-center px-6 py-10">
       <div className="flex w-full max-w-2xl flex-col gap-6">
-        <header className="flex flex-col gap-2">
-          <h1 className="text-fg text-2xl font-semibold tracking-tight">
-            {t('settings.hippocampus.compaction.title')}
-          </h1>
-          <p className="text-muted text-sm leading-relaxed">
-            {t('settings.hippocampus.compaction.subtitle')}
-          </p>
+        <header className="flex items-start justify-between gap-4">
+          <div className="flex flex-col gap-2">
+            <h1 className="text-fg text-2xl font-semibold tracking-tight">
+              {t('settings.hippocampus.compaction.title')}
+            </h1>
+            <p className="text-muted text-sm leading-relaxed">
+              {t('settings.hippocampus.compaction.subtitle')}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => void onResync()}
+            disabled={resyncing}
+            aria-label={t('settings.hippocampus.compaction.resync')}
+            className={cn(
+              'inline-flex items-center gap-1 rounded-md text-xs cursor-pointer transition-colors',
+              'text-muted hover:text-fg px-1.5 py-0.5',
+              'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+              'disabled:cursor-not-allowed disabled:opacity-40'
+            )}
+          >
+            <Refresh01Icon size={14} />
+            <span>{t('settings.hippocampus.compaction.resync')}</span>
+          </button>
         </header>
 
         <section className="bg-surface border-border flex items-center justify-between rounded-2xl border px-6 py-4">

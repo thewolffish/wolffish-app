@@ -427,7 +427,7 @@ export function ViewerPage(): React.JSX.Element {
                         'disabled:cursor-not-allowed disabled:opacity-40'
                       )}
                     >
-                      <Refresh01Icon size={14} className={cn(resyncing && 'animate-spin')} />
+                      <Refresh01Icon size={14} />
                       <span>{t('workspace.resync')}</span>
                     </button>
                   )}

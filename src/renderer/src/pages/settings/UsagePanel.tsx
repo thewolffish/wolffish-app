@@ -97,6 +97,8 @@ export function UsagePanel(): React.JSX.Element {
       setStats(st)
       setDaily(d)
       toast.show({ tone: 'success', message: t('settings.usage.syncSuccessToast') })
+    } catch {
+      toast.show({ tone: 'error', message: t('settings.usage.syncErrorToast') })
     } finally {
       setSyncing(false)
     }
@@ -118,12 +120,14 @@ export function UsagePanel(): React.JSX.Element {
             disabled={syncing}
             aria-label={t('settings.usage.sync')}
             className={cn(
-              'text-muted hover:text-fg mt-1 shrink-0 cursor-pointer rounded-lg p-2',
+              'inline-flex items-center gap-1 rounded-md text-xs cursor-pointer transition-colors',
+              'text-muted hover:text-fg px-1.5 py-0.5',
               'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-              syncing && 'animate-spin'
+              'disabled:cursor-not-allowed disabled:opacity-40'
             )}
           >
-            <Refresh01Icon size={16} />
+            <Refresh01Icon size={14} />
+            <span>{t('settings.usage.sync')}</span>
           </button>
         </header>
 

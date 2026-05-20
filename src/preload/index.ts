@@ -126,6 +126,13 @@ export type WorkspaceConfig = {
   tts?: TtsConfig
   computerUse?: ComputerUseConfig
   updates?: UpdatesConfig
+  lastSettingsState?: {
+    tab?: string
+    provider?: string
+    channel?: string
+    service?: string
+    hippocampusTab?: string
+  }
   locale: Locale
   theme: ThemeSource
   onboardingCompleted: boolean
@@ -342,6 +349,7 @@ export type RuntimeApi = {
   setRestrictPowerfulModels: (value: boolean) => Promise<{ value: boolean }>
   setUpdatesEnabled: (value: boolean) => Promise<{ value: boolean }>
   setWeekStartsOn: (value: WeekStartsOn) => Promise<{ value: WeekStartsOn }>
+  setLastSettingsState: (patch: Record<string, string>) => Promise<void>
   getCompactionConfig: () => Promise<CompactionConfig>
   setCompactionConfig: (patch: Partial<CompactionConfig>) => Promise<CompactionConfig>
 }
@@ -1069,6 +1077,7 @@ const api: WolffishApi = {
       ipcRenderer.invoke('runtime:setRestrictPowerfulModels', value),
     setUpdatesEnabled: (value) => ipcRenderer.invoke('runtime:setUpdatesEnabled', value),
     setWeekStartsOn: (value) => ipcRenderer.invoke('runtime:setWeekStartsOn', value),
+    setLastSettingsState: (patch) => ipcRenderer.invoke('runtime:setLastSettingsState', patch),
     getCompactionConfig: () => ipcRenderer.invoke('runtime:getCompactionConfig'),
     setCompactionConfig: (patch) => ipcRenderer.invoke('runtime:setCompactionConfig', patch)
   },

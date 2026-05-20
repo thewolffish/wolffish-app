@@ -184,7 +184,7 @@ export function UpdatesPanel(): React.JSX.Element {
 
           <div className="border-border/60 border-t" />
 
-          <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-3 min-h-[52px]">
             {phase === 'downloading' ? (
               <div className="flex items-center justify-between gap-4">
                 <div className="flex flex-col gap-1">

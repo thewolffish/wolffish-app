@@ -232,6 +232,13 @@ export type WorkspaceConfig = {
   computerUse?: ComputerUseConfig
   compaction?: CompactionConfig
   updates?: UpdatesConfig
+  lastSettingsState?: {
+    tab?: string
+    provider?: string
+    channel?: string
+    service?: string
+    hippocampusTab?: string
+  }
   disabledCapabilities?: string[]
   locale: 'en' | 'ar'
   theme: 'system' | 'light' | 'dark'

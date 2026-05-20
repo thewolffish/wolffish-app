@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
-import type { WorkspaceStatus } from '@preload/index'
+import type { DataAnalytics, SystemInfo, WorkspaceStatus } from '@preload/index'
 import {
   FlowContext,
   type ChatMessage,
@@ -18,6 +18,8 @@ export function FlowProvider({ children }: { children: ReactNode }): React.JSX.E
   const [ready, setReady] = useState(false)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
+  const [dataAnalytics, setDataAnalytics] = useState<DataAnalytics | null>(null)
+  const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null)
 
   const decideInitialScreen = useCallback(async (): Promise<{
     screen: Screen
@@ -67,10 +69,16 @@ export function FlowProvider({ children }: { children: ReactNode }): React.JSX.E
 
   useEffect(() => {
     let cancelled = false
-    void decideInitialScreen().then((r) => {
+    void Promise.all([
+      decideInitialScreen(),
+      window.api.data.getAnalytics(),
+      window.api.system.getInfo()
+    ]).then(([r, analytics, sys]) => {
       if (cancelled) return
       setStatus(r.status)
       setScreen(r.screen)
+      setDataAnalytics(analytics)
+      setSystemInfo(sys)
       setReady(true)
     })
     return () => {
@@ -81,6 +89,15 @@ export function FlowProvider({ children }: { children: ReactNode }): React.JSX.E
   const refreshStatus = useCallback(async () => {
     const s = await window.api.workspace.getStatus()
     setStatus(s)
+  }, [])
+
+  const refreshData = useCallback(async () => {
+    const [analytics, sys] = await Promise.all([
+      window.api.data.getAnalytics(),
+      window.api.system.getInfo()
+    ])
+    setDataAnalytics(analytics)
+    setSystemInfo(sys)
   }, [])
 
   const goTo = useCallback((next: Screen, ret?: Screen | null) => {
@@ -108,6 +125,9 @@ export function FlowProvider({ children }: { children: ReactNode }): React.JSX.E
       setMessages,
       activeConversationId,
       setActiveConversationId,
+      dataAnalytics,
+      systemInfo,
+      refreshData,
       goTo,
       returnTo,
       refreshStatus,
@@ -119,6 +139,9 @@ export function FlowProvider({ children }: { children: ReactNode }): React.JSX.E
       status,
       messages,
       activeConversationId,
+      dataAnalytics,
+      systemInfo,
+      refreshData,
       goTo,
       returnTo,
       refreshStatus,

@@ -1,3 +1,31 @@
+## v1.0.71 — 2026-05-20
+
+### Settings Tab Persistence
+
+The settings page now remembers exactly where you left off — the active tab and every sub-tab (provider, channel, service, hippocampus tab) are saved to config.json and restored on the next visit. A module-level cache provides instant restoration within the same session without re-reading the config, while config.json persistence survives app restarts. Navigation from other pages (e.g. the changelog back button) can now target a specific settings tab instead of always landing on the default models page.
+
+### Settings Panel Flash Fixes
+
+Three visual glitches that caused brief flashes or layout jumps when opening settings panels:
+
+- **Services tab flash**: The selected service fell back to the first available while capabilities were still loading, causing a visible tab swap. The fallback now waits until capabilities have loaded before applying.
+- **WhatsApp opacity flash**: The connection status section briefly appeared at full opacity before snapping to its disabled state. The initial render now defaults to disabled until the connection check resolves.
+- **Telegram layout jump**: The auto-refresh interval selector was hidden during loading because the state started as null. The gate condition was changed so the selector renders immediately, matching its final layout.
+
+### Button Label & Toggle Cleanup
+
+All "Test API" / "Test connection" / "Test API connection" buttons across settings panels have been relabeled to "Save" — the underlying handlers already validate-then-save, so "Test" was misleading. The cellebrum capability toggle has been changed from a sliding checkbox to a segmented Off/On control matching every other toggle in settings.
+
+### Unified Resync Buttons
+
+The resync/refresh buttons in Cellebrum, Usage, Data, and Heartbeat panels now match the viewer page pattern: a compact inline button with an icon and text label, disabled state with lowered opacity, and both success and error toasts. The compaction (hippocampus) panel gained a resync button where it previously had none. The spinning icon animation was removed from all resync buttons app-wide — the disabled opacity is sufficient feedback.
+
+### Data Analytics Loaded at Startup
+
+System info and data analytics are now fetched once during app boot in FlowProvider and served from context. The data panel reads them instantly on open instead of fetching on every visit. The refresh button still works, updating the shared context for all consumers.
+
+---
+
 ## v1.0.70 — 2026-05-20
 
 ### API Cost Optimization: Prompt Cache Fix

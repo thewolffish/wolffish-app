@@ -241,7 +241,10 @@
           "5": "Friday",
           "6": "Saturday"
         },
-        "nextRun": "Next run {{time}}"
+        "nextRun": "Next run {{time}}",
+        "resync": "Resync",
+        "resyncSuccessToast": "Compaction config resynced",
+        "resyncErrorToast": "Failed to resync compaction config"
       }
     },
     "cellebrum": {
@@ -258,7 +261,8 @@
       "tools": "{{count}} tools",
       "requires": "Requires {{deps}}",
       "resync": "Resync",
-      "resyncSuccessToast": "Capabilities resynced"
+      "resyncSuccessToast": "Capabilities resynced",
+      "resyncErrorToast": "Failed to resync capabilities"
     },
     "model": {
       "providers": {
@@ -283,7 +287,7 @@
           "2": "2nd",
           "3": "3rd"
         },
-        "test": "Test API Connection",
+        "test": "Save",
         "save": "Save",
         "saving": "Saving…",
         "remove": "Remove",
@@ -363,7 +367,7 @@
         "allowedUsers": "Allowed user IDs",
         "allowedUsersPlaceholder": "123456789, 987654321",
         "allowedUsersHint": "Send /start to @userinfobot to get your ID.",
-        "test": "Send test message",
+        "test": "Save",
         "testHint": "Sends a verification message to the first allowed user without taking the bot online.",
         "save": "Save",
         "status": {
@@ -433,7 +437,7 @@
         "apiKeyHint": "Get a key from api.search.brave.com (free tier: 2,000 queries/month). Stored in config.json on your machine — never sent anywhere except api.search.brave.com.",
         "showKey": "Show",
         "hideKey": "Hide",
-        "test": "Test API key",
+        "test": "Save",
         "testHint": "Sends a tiny query to Brave to verify the key works. Counts toward your monthly quota.",
         "save": "Save",
         "status": {
@@ -473,7 +477,7 @@
         "tokenHint": "Create an internal integration at notion.so/my-integrations, then share pages/databases with it. Token is stored in config.json on your machine — never sent anywhere except api.notion.com.",
         "showToken": "Show",
         "hideToken": "Hide",
-        "test": "Test token",
+        "test": "Save",
         "testHint": "Calls Notion’s /v1/users/me endpoint to verify the integration token is valid.",
         "save": "Save",
         "status": {
@@ -512,7 +516,7 @@
         "tokenHint": "Create a token at <link>github.com/settings/personal-access-tokens</link> with the 'repo' scope (and 'gist' for gists). Token is stored in config.json on your machine — never sent anywhere except api.github.com.",
         "showToken": "Show",
         "hideToken": "Hide",
-        "test": "Test connection",
+        "test": "Save",
         "testHint": "Calls GitHub's <code>/user</code> endpoint to verify the token is valid and shows your username.",
         "save": "Save",
         "status": {
@@ -656,7 +660,7 @@
         "subtitle": "Generate captioned memes and search for reaction GIFs. Memegen.link works out of the box — Giphy and Imgflip need credentials.",
         "save": "Save",
         "saveSuccess": "Memes settings saved",
-        "testConnection": "Test connection",
+        "testConnection": "Save",
         "testAndSave": "Test & save",
         "testFailure": "Test failed: {{message}}",
         "testGiphySuccess": "Giphy connection successful",
@@ -844,6 +848,7 @@
       "totalTokens": "Total tokens",
       "sync": "Sync",
       "syncSuccessToast": "Usage data resynced",
+      "syncErrorToast": "Failed to sync usage data",
       "activity": "Activity",
       "activityTooltip": "{{date}}: {{tokens}} tokens"
     },
@@ -852,6 +857,7 @@
       "subtitle": "How much space Wolffish is using and how to start over.",
       "refresh": "Refresh",
       "refreshSuccessToast": "Data analytics refreshed",
+      "refreshErrorToast": "Failed to refresh data",
       "disk": {
         "title": "Disk usage"
       },

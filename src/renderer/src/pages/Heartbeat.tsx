@@ -496,7 +496,7 @@ export function Heartbeat(): React.JSX.Element {
                   'disabled:cursor-not-allowed disabled:opacity-40'
                 )}
               >
-                <Refresh01Icon size={14} className={cn(loading && 'animate-spin')} />
+                <Refresh01Icon size={14} />
                 <span>{t('workspace.resync')}</span>
               </button>
               <CopyButton text={content} variant="inline" />

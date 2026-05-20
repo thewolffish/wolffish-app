@@ -15,21 +15,21 @@ import { ModelPicker } from '@pages/ModelPicker'
 import { BravePanel } from '@pages/settings/BravePanel'
 import { CelebrumPanel } from '@pages/settings/CelebrumPanel'
 import { CloudProviderPanel } from '@pages/settings/CloudProviderPanel'
+import { CompactionPanel } from '@pages/settings/CompactionPanel'
+import { ComputerUsePanel } from '@pages/settings/ComputerUsePanel'
 import { DataPanel } from '@pages/settings/DataPanel'
+import { GitHubPanel } from '@pages/settings/GitHubPanel'
 import { GooglePanel } from '@pages/settings/GooglePanel'
 import { prefetchGooglePanel } from '@pages/settings/googleSnapshot'
-import { GitHubPanel } from '@pages/settings/GitHubPanel'
 import { MemesPanel } from '@pages/settings/MemesPanel'
 import { NotionPanel } from '@pages/settings/NotionPanel'
 import { SpeechToTextPanel } from '@pages/settings/SpeechToTextPanel'
 import { TelegramPanel } from '@pages/settings/TelegramPanel'
-import { WhatsAppPanel } from '@pages/settings/WhatsAppPanel'
 import { TextToSpeechPanel } from '@pages/settings/TextToSpeechPanel'
+import { UpdatesPanel } from '@pages/settings/UpdatesPanel'
 import { UsagePanel } from '@pages/settings/UsagePanel'
 import { VariablesPanel } from '@pages/settings/VariablesPanel'
-import { ComputerUsePanel } from '@pages/settings/ComputerUsePanel'
-import { CompactionPanel } from '@pages/settings/CompactionPanel'
-import { UpdatesPanel } from '@pages/settings/UpdatesPanel'
+import { WhatsAppPanel } from '@pages/settings/WhatsAppPanel'
 import { WolffishPanel } from '@pages/settings/WolffishPanel'
 import { useFlow } from '@providers/flow/useFlow'
 import { useLocale } from '@providers/locale/useLocale'
@@ -43,6 +43,7 @@ import {
   BrainIcon,
   BubbleChatIcon,
   CloudIcon,
+  ComputerIcon,
   Database02Icon,
   DnaIcon,
   GithubIcon,
@@ -52,10 +53,9 @@ import {
   PuzzleIcon,
   SmileDizzyIcon,
   VolumeHighIcon,
-  WhatsappIcon,
-  ComputerIcon
+  WhatsappIcon
 } from 'hugeicons-react'
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { IconType } from 'react-icons'
 
@@ -92,18 +92,91 @@ const TABS: Tab[] = [
   { key: 'appearance', icon: <PaintBoardIcon size={18} />, labelKey: 'settings.tabs.appearance' }
 ]
 
+const TAB_KEYS = new Set<string>(TABS.map((t) => t.key))
+
+type SettingsSnapshot = {
+  tab: TabKey
+  provider: Provider
+  channel: Channel
+  service: Service
+  hippocampusTab: HippocampusTab
+}
+
+let memo: SettingsSnapshot | null = null
+
+function restoreSnapshot(
+  cfg: { lastSettingsState?: Record<string, string> } | null
+): SettingsSnapshot {
+  if (memo) return memo
+  const s = cfg?.lastSettingsState
+  const result: SettingsSnapshot = {
+    tab: s?.tab && TAB_KEYS.has(s.tab) ? (s.tab as TabKey) : 'model',
+    provider:
+      s?.provider && PROVIDERS.includes(s.provider as Provider)
+        ? (s.provider as Provider)
+        : 'ollama',
+    channel:
+      s?.channel && CHANNELS.includes(s.channel as Channel)
+        ? (s.channel as Channel)
+        : 'telegram',
+    service: s?.service ? (s.service as Service) : 'brave',
+    hippocampusTab:
+      s?.hippocampusTab && HIPPOCAMPUS_TABS.includes(s.hippocampusTab as HippocampusTab)
+        ? (s.hippocampusTab as HippocampusTab)
+        : 'compaction'
+  }
+  memo = result
+  return result
+}
+
+function persistField(key: string, value: string): void {
+  void window.api.runtime.setLastSettingsState({ [key]: value })
+}
+
 export function Settings(): React.JSX.Element {
   const { t } = useTranslation()
   const { locale } = useLocale()
   const isRtl = RTL_LOCALES.has(locale)
   const BackIcon = isRtl ? ArrowRight02Icon : ArrowLeft02Icon
-  const { goTo } = useFlow()
+  const { goTo, status } = useFlow()
 
-  const [active, setActive] = useState<TabKey>('model')
-  const [provider, setProvider] = useState<Provider>('ollama')
-  const [channel, setChannel] = useState<Channel>('telegram')
-  const [service, setService] = useState<Service>('brave')
-  const [hippocampusTab, setHippocampusTab] = useState<HippocampusTab>('compaction')
+  const [snapshot] = useState(() => restoreSnapshot(status?.config ?? null))
+
+  const [active, setActiveRaw] = useState<TabKey>(snapshot.tab)
+  const [provider, setProviderRaw] = useState<Provider>(snapshot.provider)
+  const [channel, setChannelRaw] = useState<Channel>(snapshot.channel)
+  const [service, setServiceRaw] = useState<Service>(snapshot.service)
+  const [hippocampusTab, setHippocampusTabRaw] = useState<HippocampusTab>(snapshot.hippocampusTab)
+
+  const setActive = useCallback((key: TabKey) => {
+    setActiveRaw(key)
+    memo = { ...(memo ?? snapshot), tab: key }
+    persistField('tab', key)
+  }, [snapshot])
+
+  const setProvider = useCallback((p: Provider) => {
+    setProviderRaw(p)
+    memo = { ...(memo ?? snapshot), provider: p }
+    persistField('provider', p)
+  }, [snapshot])
+
+  const setChannel = useCallback((ch: Channel) => {
+    setChannelRaw(ch)
+    memo = { ...(memo ?? snapshot), channel: ch }
+    persistField('channel', ch)
+  }, [snapshot])
+
+  const setService = useCallback((s: Service) => {
+    setServiceRaw(s)
+    memo = { ...(memo ?? snapshot), service: s }
+    persistField('service', s)
+  }, [snapshot])
+
+  const setHippocampusTab = useCallback((ht: HippocampusTab) => {
+    setHippocampusTabRaw(ht)
+    memo = { ...(memo ?? snapshot), hippocampusTab: ht }
+    persistField('hippocampusTab', ht)
+  }, [snapshot])
 
   // The TTS and STT panels only make sense when their cerebellum
   // capabilities are loaded — without the plugin folders, the saved
@@ -154,7 +227,9 @@ export function Settings(): React.JSX.Element {
   // without triggering an effect-driven setState.
   const effectiveService: Service = visibleServices.includes(service)
     ? service
-    : (visibleServices[0] ?? 'brave')
+    : loadedCapabilities
+      ? (visibleServices[0] ?? 'brave')
+      : service
 
   const ttsAvailable = visibleServices.includes('tts')
   const sttAvailable = visibleServices.includes('stt')
@@ -411,9 +486,7 @@ export function Settings(): React.JSX.Element {
         <TabPanel active={active === 'services' && effectiveService === 'google'}>
           <GooglePanel />
         </TabPanel>
-        <TabPanel
-          active={active === 'services' && effectiveService === 'memes' && memesAvailable}
-        >
+        <TabPanel active={active === 'services' && effectiveService === 'memes' && memesAvailable}>
           <MemesPanel />
         </TabPanel>
         <TabPanel

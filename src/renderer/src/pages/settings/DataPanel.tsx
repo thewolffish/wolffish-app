@@ -6,6 +6,7 @@ import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn'
 import { formatBytes } from '@lib/utils/format'
 import type { DataAnalytics, SystemInfo } from '@preload/index'
+import { useFlow } from '@providers/flow/useFlow'
 import {
   AiBrain01Icon,
   CpuIcon,
@@ -16,7 +17,7 @@ import {
   Refresh01Icon,
   WasteIcon
 } from 'hugeicons-react'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 type IconComp = React.ComponentType<{ size?: number; className?: string }>
@@ -24,39 +25,21 @@ type IconComp = React.ComponentType<{ size?: number; className?: string }>
 export function DataPanel(): React.JSX.Element {
   const { t } = useTranslation()
   const toast = useToast()
-  const [analytics, setAnalytics] = useState<DataAnalytics | null>(null)
-  const [system, setSystem] = useState<SystemInfo | null>(null)
+  const { dataAnalytics: analytics, systemInfo: system, refreshData } = useFlow()
   const [refreshing, setRefreshing] = useState(false)
   const [resetOpen, setResetOpen] = useState(false)
 
   const refresh = async (): Promise<void> => {
     setRefreshing(true)
     try {
-      const [data, sys] = await Promise.all([
-        window.api.data.getAnalytics(),
-        window.api.system.getInfo()
-      ])
-      setAnalytics(data)
-      setSystem(sys)
+      await refreshData()
       toast.show({ tone: 'success', message: t('settings.data.refreshSuccessToast') })
+    } catch {
+      toast.show({ tone: 'error', message: t('settings.data.refreshErrorToast') })
     } finally {
       setRefreshing(false)
     }
   }
-
-  useEffect(() => {
-    let stale = false
-    void Promise.all([window.api.data.getAnalytics(), window.api.system.getInfo()]).then(
-      ([data, sys]) => {
-        if (stale) return
-        setAnalytics(data)
-        setSystem(sys)
-      }
-    )
-    return () => {
-      stale = true
-    }
-  }, [])
 
   return (
     <div className="flex min-h-full w-full items-start justify-center px-6 py-10">
@@ -74,12 +57,14 @@ export function DataPanel(): React.JSX.Element {
             disabled={refreshing}
             aria-label={t('settings.data.refresh')}
             className={cn(
-              'text-muted hover:text-fg mt-1 shrink-0 cursor-pointer rounded-lg p-2',
+              'inline-flex items-center gap-1 rounded-md text-xs cursor-pointer transition-colors',
+              'text-muted hover:text-fg px-1.5 py-0.5',
               'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-              refreshing && 'animate-spin'
+              'disabled:cursor-not-allowed disabled:opacity-40'
             )}
           >
-            <Refresh01Icon size={16} />
+            <Refresh01Icon size={14} />
+            <span>{t('settings.data.refresh')}</span>
           </button>
         </header>
 
