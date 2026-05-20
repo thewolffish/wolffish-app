@@ -125,7 +125,7 @@ const components: Components = {
             onClick={() => void window.api.upload.download(relativePath)}
             aria-label="Download"
             className={cn(
-              'absolute end-2 top-2 flex h-7 w-7 cursor-pointer items-center justify-center',
+              'absolute inset-e-2 top-2 flex h-7 w-7 cursor-pointer items-center justify-center',
               'rounded-md bg-bg/80 text-fg shadow-sm backdrop-blur-sm',
               'opacity-0 transition-opacity group-hover:opacity-100',
               'focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-transparent'

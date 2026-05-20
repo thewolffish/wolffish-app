@@ -1,3 +1,11 @@
+## v1.0.73 — 2026-05-20
+
+### Expanded Prompt Editor
+
+A new expand button inside the chat text input opens a full-screen code editor for composing longer messages in Markdown. The button is vertically centered inside the input and uses absolute positioning so it doesn't shift the input or surrounding elements out of alignment.
+
+---
+
 ## v1.0.71 — 2026-05-20
 
 ### Settings Tab Persistence

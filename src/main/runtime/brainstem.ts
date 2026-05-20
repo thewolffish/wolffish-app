@@ -329,21 +329,32 @@ export class Brainstem {
     }))
   }
 
-  async runCompaction(date?: string): Promise<CompactionResult> {
+  async runCompaction(date?: string, jobId?: string): Promise<CompactionResult> {
     const targetDate = date ?? formatDate(new Date())
+    const log = (kind: JobLogEntry['kind'], summary: string): void => {
+      if (jobId) {
+        this.listener?.onJobLog?.({ id: jobId, timestamp: Date.now(), kind, summary })
+      }
+    }
+
     if (!this.hippocampus || !this.thalamus) {
       return { date: targetDate, promoted: 0, skipped: true, reason: 'not configured' }
     }
 
+    log('text', `Fetching episode for ${targetDate}`)
     const episode = await this.hippocampus.getEpisode(targetDate)
     if (!episode) {
+      log('text', 'No episode found — skipping')
       return { date: targetDate, promoted: 0, skipped: true, reason: 'no episode' }
     }
 
     const entryCount = countEpisodeEntries(episode.content)
     if (entryCount < MIN_EPISODE_ENTRIES_FOR_COMPACTION) {
+      log('text', `Only ${entryCount} entries — skipping`)
       return { date: targetDate, promoted: 0, skipped: true, reason: 'too few entries' }
     }
+
+    log('text', `Analyzing ${entryCount} episode entries`)
 
     const messages: ChatMessage[] = [
       { role: 'user', content: `${COMPACTION_USER_PREFIX}${episode.content}` }
@@ -371,6 +382,7 @@ export class Brainstem {
     }
 
     if (NOTHING_TO_PROMOTE.test(response.trim())) {
+      log('text', 'Nothing to promote')
       await this.hippocampus.writeConsolidated(
         weekKey(targetDate),
         summaryHeader(targetDate, response)
@@ -384,8 +396,11 @@ export class Brainstem {
       for (const fact of facts) {
         await this.hippocampus.promoteToKnowledge(file, fact)
         promoted += 1
+        log('tool_result', `Promoted fact to ${file}`)
       }
     }
+
+    log('text', `Promoted ${promoted} fact${promoted === 1 ? '' : 's'} to knowledge`)
 
     await this.hippocampus.writeConsolidated(
       weekKey(targetDate),
@@ -488,13 +503,25 @@ export class Brainstem {
     return job
   }
 
-  private async runWeeklyReview(): Promise<void> {
+  private async runWeeklyReview(jobId?: string): Promise<void> {
+    const log = (kind: JobLogEntry['kind'], summary: string): void => {
+      if (jobId) {
+        this.listener?.onJobLog?.({ id: jobId, timestamp: Date.now(), kind, summary })
+      }
+    }
+
     if (!this.hippocampus) return
     const today = new Date()
+    log('text', 'Fetching recent episodes')
     const recent = await this.hippocampus.getRecentEpisodes(7)
-    if (recent.length === 0) return
+    if (recent.length === 0) {
+      log('text', 'No episodes found — skipping')
+      return
+    }
+    log('text', `Consolidating ${recent.length} episode${recent.length === 1 ? '' : 's'}`)
     const digest = recent.map((ep) => `## ${ep.date}\n\n${ep.content}`).join('\n\n---\n\n')
     await this.hippocampus.writeConsolidated(weekKey(formatDate(today)), digest)
+    log('text', 'Weekly digest written')
   }
 
   // ── Config-driven compaction scheduler ────────────────────────────────
@@ -516,7 +543,7 @@ export class Brainstem {
               label: 'Daily compaction',
               body: ''
             },
-            () => this.runCompaction().then(() => undefined)
+            () => this.runCompaction(undefined, 'compaction-daily').then(() => undefined)
           )
         })
       )
@@ -537,7 +564,7 @@ export class Brainstem {
               label: 'Weekly consolidation',
               body: ''
             },
-            () => this.runWeeklyReview()
+            () => this.runWeeklyReview('compaction-weekly')
           )
         })
       )

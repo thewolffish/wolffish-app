@@ -8,13 +8,10 @@ import { ProviderErrorCard } from '@components/common/provider-error-card/Provid
 import { ToolCard } from '@components/common/tool-card/ToolCard'
 import { TurnFooter } from '@components/common/turn-footer/TurnFooter'
 import { UpdateCard } from '@components/common/update-card/UpdateCard'
+import { CodeEditor } from '@components/core/CodeEditor'
 import { CopyButton } from '@components/core/CopyButton'
 import { Markdown } from '@components/core/Markdown'
-import {
-  OllamaLogo,
-  TelegramLogo,
-  WhatsAppLogo
-} from '@components/core/ProviderLogos'
+import { OllamaLogo, TelegramLogo, WhatsAppLogo } from '@components/core/ProviderLogos'
 import { useToast } from '@components/core/toast/useToast'
 import { Tooltip } from '@components/core/Tooltip'
 import { RTL_LOCALES } from '@lib/i18n'
@@ -33,11 +30,12 @@ import {
   type ToolTiming
 } from '@providers/flow/useFlow'
 import { useLocale } from '@providers/locale/useLocale'
+import { useTheme } from '@providers/theme/useTheme'
 import iconTransparent from '@resources/images/icon_transparent.png'
 import {
   Activity04Icon,
+  ArrowExpandIcon,
   ArrowUp02Icon,
-  HeartCheckIcon,
   CancelCircleIcon,
   Clock01Icon,
   CloudIcon,
@@ -45,6 +43,7 @@ import {
   Delete02Icon,
   FileEditIcon,
   Folder01Icon,
+  HeartCheckIcon,
   Image02Icon,
   Mic01Icon,
   PauseIcon,
@@ -54,6 +53,7 @@ import {
   StopCircleIcon
 } from 'hugeicons-react'
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 
 // On macOS the OS draws traffic lights in our chrome (titleBarStyle: 'hiddenInset'),
@@ -66,6 +66,7 @@ type ToolResultSegment = Extract<Segment, { kind: 'tool_result' }>
 export function Chat(): React.JSX.Element {
   const { t } = useTranslation()
   const { locale } = useLocale()
+  const { isDark } = useTheme()
   const toast = useToast()
   const isRtl = RTL_LOCALES.has(locale)
   const {
@@ -127,9 +128,13 @@ export function Chat(): React.JSX.Element {
   })
 
   const [draft, setDraft] = useState('')
+  const [draftExpanded, setDraftExpanded] = useState(false)
   const [streaming, setStreaming] = useState(false)
   const [storedFolders, setStoredFolders] = useState<string[]>([])
-  const workingFolders = activeConversationId ? storedFolders : []
+  const workingFolders = useMemo(
+    () => (activeConversationId ? storedFolders : []),
+    [activeConversationId, storedFolders]
+  )
   const [folderListOpen, setFolderListOpen] = useState(false)
   /**
    * Files the user has staged but not yet sent. Each entry holds the
@@ -1163,20 +1168,12 @@ export function Chat(): React.JSX.Element {
               <button
                 type="button"
                 onClick={
-                  workingFolders.length > 0
-                    ? () => setFolderListOpen((p) => !p)
-                    : addWorkingFolder
+                  workingFolders.length > 0 ? () => setFolderListOpen((p) => !p) : addWorkingFolder
                 }
                 disabled={streaming}
-                title={
-                  workingFolders.length > 0
-                    ? t('chat.workingFolder')
-                    : t('chat.selectFolder')
-                }
+                title={workingFolders.length > 0 ? t('chat.workingFolder') : t('chat.selectFolder')}
                 aria-label={
-                  workingFolders.length > 0
-                    ? t('chat.workingFolder')
-                    : t('chat.selectFolder')
+                  workingFolders.length > 0 ? t('chat.workingFolder') : t('chat.selectFolder')
                 }
                 className={cn(
                   'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border',
@@ -1192,25 +1189,16 @@ export function Chat(): React.JSX.Element {
               </button>
               {folderListOpen && workingFolders.length > 0 && (
                 <>
-                  <div
-                    className="fixed inset-0 z-10"
-                    onClick={() => setFolderListOpen(false)}
-                  />
-                  <div className="border-border bg-surface text-fg absolute bottom-full start-0 z-20 mb-2 rounded-lg border px-2 py-2 text-xs shadow-md min-w-[200px] max-w-[280px]">
+                  <div className="fixed inset-0 z-10" onClick={() => setFolderListOpen(false)} />
+                  <div className="border-border bg-surface text-fg absolute bottom-full inset-s-0 z-20 mb-2 rounded-lg border px-2 py-2 text-xs shadow-md min-w-[200px] max-w-[280px]">
                     <div className="text-muted mb-1.5 text-[10px] font-medium uppercase tracking-wide whitespace-nowrap">
                       {t('chat.workingFolder')}
                     </div>
                     <div dir="ltr" className="space-y-1.5">
                       {workingFolders.map((folder) => (
-                        <div
-                          key={folder}
-                          className="flex items-center gap-1.5"
-                        >
+                        <div key={folder} className="flex items-center gap-1.5">
                           <div className="min-w-0 flex-1">
-                            <div
-                              className="truncate text-xs"
-                              title={folder}
-                            >
+                            <div className="truncate text-xs" title={folder}>
                               {folder.split('/').pop()}
                             </div>
                             <code
@@ -1262,25 +1250,34 @@ export function Chat(): React.JSX.Element {
             </button>
             {recPhase === 'idle' ? (
               <>
-                <textarea
-                  value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault()
-                      if (!streaming) void send()
-                    }
-                  }}
-                  rows={1}
-                  placeholder={t('chat.placeholder')}
-                  dir={isRtl ? 'rtl' : 'ltr'}
-                  className={cn(
-                    'bg-surface text-fg border-border placeholder:text-muted hover:border-muted',
-                    'min-h-10 max-h-40 flex-1 resize-none rounded-lg border px-3 py-2 text-sm',
-                    'focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-                    placeholderAlign
-                  )}
-                />
+                <div className="relative flex min-w-0 flex-1 flex-col">
+                  <textarea
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault()
+                        if (!streaming) void send()
+                      }
+                    }}
+                    rows={1}
+                    placeholder={t('chat.placeholder')}
+                    dir={isRtl ? 'rtl' : 'ltr'}
+                    className={cn(
+                      'bg-surface text-fg border-border placeholder:text-muted hover:border-muted',
+                      'min-h-10 max-h-40 w-full resize-none rounded-lg border px-3 py-2 text-sm',
+                      'focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+                      placeholderAlign
+                    )}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setDraftExpanded(true)}
+                    className="text-muted hover:text-fg absolute inset-e-2 top-1/2 z-10 -translate-y-1/2 cursor-pointer opacity-50 hover:opacity-100"
+                  >
+                    <ArrowExpandIcon size={14} />
+                  </button>
+                </div>
                 <button
                   type="submit"
                   disabled={
@@ -1373,6 +1370,28 @@ export function Chat(): React.JSX.Element {
           </div>
         </form>
       )}
+      {draftExpanded &&
+        createPortal(
+          <div
+            role="presentation"
+            onClick={() => setDraftExpanded(false)}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="border-border bg-surface flex h-[80vh] w-[80vw] flex-col overflow-hidden rounded-2xl border shadow-xl"
+            >
+              <CodeEditor
+                value={draft}
+                language="markdown"
+                isDark={isDark}
+                onChange={setDraft}
+                className="flex-1 overflow-auto"
+              />
+            </div>
+          </div>,
+          document.body
+        )}
     </main>
   )
 }
