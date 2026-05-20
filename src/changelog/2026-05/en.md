@@ -1,3 +1,53 @@
+## v1.0.70 — 2026-05-20
+
+### API Cost Optimization: Prompt Cache Fix
+
+The Anthropic provider was invalidating its entire prompt cache on every iteration of the agent loop. The cause: the `<runtime>` block — which carries a live iteration counter and tool count — was embedded in the middle of the system prompt, inside a single cached content block. Because Anthropic's prefix cache requires byte-exact matches, changing even one character in the runtime counter broke the cache chain for everything downstream — system instructions, tool definitions, and the message history prefix. Every API call rewrote the full context from scratch instead of reading it from cache.
+
+The fix splits the Anthropic system parameter into two content blocks: a stable prefix (identity, instructions, tools, memory — everything before `<runtime>`) with a `cache_control` breakpoint, and the volatile runtime block without one. The stable prefix now stays cached across all iterations of a turn, and the runtime block sits outside the cache boundary where changes don't affect anything upstream.
+
+On a real 66-iteration heartbeat run, this shifted 3.5 million tokens from cache writes ($6.25/MTok) to cache reads ($0.50/MTok) — cutting the dominant cost component by roughly 60%. This is the single largest cost reduction in this release. OpenAI's automatic prefix caching already handled this correctly since the runtime block was at the end of the system string, but the Anthropic provider needed the explicit two-block split.
+
+### API Cost Optimization: Message History Compaction
+
+Long-running agentic loops (like the heartbeat's computer-use posting phase) accumulate screenshots and tool results that are never referenced again. A 60-iteration session could carry 15 base64 screenshots (~100K tokens each) and dozens of web_fetch bodies (10-15K chars each) in every subsequent API call — all of it re-sent to the model on every iteration even though the model already analyzed and acted on it turns ago.
+
+The agent loop now runs a compaction pass between iterations with two conservative rules:
+
+1. **Screenshot eviction** — keeps the 5 most recent screenshots. Older ones have their binary image data removed and a text marker prepended. The model's own analysis of those screenshots is preserved in the adjacent assistant messages — only the raw pixels are dropped.
+
+2. **Tool result truncation** — tool results older than 6 assistant turns that exceed 2,000 characters are trimmed to a 500-character prefix. Error results are never truncated, since the model may need them for retry logic.
+
+All mutations are local to the in-flight message array inside the current turn. Nothing is persisted — the conversation file, hippocampus, and renderer history are unaffected. The thresholds are deliberately gentle: most short conversations never trigger compaction at all, and the preserved content (5 recent images, 500-char prefixes, all errors intact) is more than enough for the model to maintain context continuity.
+
+### Heartbeat: Posting Phase Streamlined
+
+The daily heartbeat's LinkedIn posting instructions were updated to prevent a scroll verification loop that dominated the run's cost. The model would paste the post into LinkedIn's rich-text composer, then try to scroll to the top to verify every line — but LinkedIn's composer ignores standard scroll-to-top commands. The model would escalate scroll amounts (10 → 50 → 200 units) across 11 consecutive screenshot-scroll-wait cycles, each a full API round-trip carrying the entire accumulated context.
+
+The updated instructions tell the model to: save the post to a file first, copy it via `osascript` (which preserves formatting better than direct paste), take one spot-check screenshot after pasting, and post immediately without scrolling. The formatting is already correct in the source file — the scroll-to-verify loop added no value.
+
+This eliminates roughly 11 API iterations and 11 screenshots from the run, saving both the direct cost of those calls and the cascading cost of carrying those screenshots in every subsequent iteration.
+
+### Cost Tracking Accuracy
+
+The cost calculation had three compounding errors:
+
+1. **Wrong model pricing.** The pricing table had `claude-opus-4` at $15/$75/MTok (the deprecated Opus 4.0 rate). The actual model in use — `claude-opus-4-6` — costs $5/$25/MTok. The fuzzy model-name matcher (`startsWith`) matched `claude-opus-4-6` to the `claude-opus-4` entry, inflating every cost figure by 3x. Fixed by adding explicit entries for all current Opus 4.5/4.6/4.7 variants and sorting match keys longest-first so `claude-opus-4-6` matches before `claude-opus-4`.
+
+2. **No cache cost distinction.** The old formula applied a flat input rate to all input tokens. Anthropic charges 1.25x for cache writes and 0.10x for cache reads; OpenAI gives a 50% discount on cached tokens. The new formula uses per-model multipliers from the pricing table: `cacheWrite` and `cacheRead` fields on every entry, applied as multipliers on the base input rate. Both providers now share the same unified formula.
+
+3. **Dashboard gap.** Even with correct per-token rates, the raw calculation under-predicts the actual Anthropic dashboard charge by about 16.6% — likely from request-level rounding and cache-tier auto-promotion on long agentic loops. A calibrated billing offset (`CLOUD_BILLING_OFFSET = 0.166`) is applied on top of the fact-based token math so the UI never under-reports spending. The offset is documented with the exact calibration data point (dashboard $44.62 vs raw $38.28) and errs +$0.01 above actual.
+
+Haiku 3.5 pricing was also corrected ($0.80/$4, was $1/$5), and local/Ollama models now correctly report $0 cost.
+
+### OpenAI Cache Token Tracking
+
+The OpenAI provider wasn't parsing cached token counts from the API response. OpenAI returns `prompt_tokens_details.cached_tokens` alongside the main usage fields, but the provider only read `prompt_tokens` and `completion_tokens` — cached tokens were invisible. This meant OpenAI cost calculations ignored the 50% cache discount entirely, and the usage dashboard showed no cache activity for OpenAI models.
+
+The provider now extracts `cached_tokens`, subtracts it from `inputTokens` to get the uncached count (matching how Anthropic reports its split), and includes `cacheReadTokens` in the turn metadata. The cost formula picks up the discount automatically through the per-model `cacheRead: 0.50` multiplier in the pricing table.
+
+---
+
 ## v1.0.69 — 2026-05-20
 
 ### Source Tree Cleanup

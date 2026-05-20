@@ -639,6 +639,10 @@ export class Agent {
           stopReason = 'canceled'
           break
         }
+
+        // Between iterations: compact old images and stale tool results
+        // to bound context growth in long-running agentic loops.
+        compactMessages(messages)
       }
 
       if (task) {
@@ -858,5 +862,74 @@ async function* captureUsage(
       onCapture(null, null, chunk.usage)
     }
     yield chunk
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Message history compaction
+// ---------------------------------------------------------------------------
+// Between agent loop iterations the message array grows with every tool
+// result — including base64 screenshots (~100K tokens each) and bulky
+// web_fetch bodies (10-15K chars). Left unchecked a 60-iteration heartbeat
+// run accumulates ~15 screenshots and ~120K chars of stale research text,
+// all re-sent on every subsequent API call.
+//
+// compactMessages runs after each iteration and applies two conservative
+// passes that preserve context quality:
+//
+//   1. Image eviction  — keeps the N most recent screenshots. Older ones
+//      have their binary data removed; the tool's text output (dimensions,
+//      display info) is kept and a marker prepended. The model's analysis
+//      of those screenshots is preserved verbatim in the adjacent assistant
+//      messages.
+//
+//   2. Result truncation — tool results older than M assistant turns whose
+//      text exceeds a character threshold are trimmed to a prefix. Error
+//      results are never truncated (the model may reference them for retry
+//      logic).
+//
+// All mutations are local to the in-flight `messages` array inside
+// respond(). Nothing is persisted — the renderer, hippocampus, and
+// conversation file are unaffected.
+// ---------------------------------------------------------------------------
+
+/** How many screenshot images to keep (counted from the most recent). */
+const COMPACT_KEEP_IMAGES = 5
+/** Only truncate text results older than this many assistant turns. */
+const COMPACT_STALE_TURNS = 6
+/** Only truncate text results longer than this (chars). */
+const COMPACT_TRUNCATE_ABOVE = 2000
+/** How many leading chars to preserve when truncating. */
+const COMPACT_KEEP_CHARS = 500
+
+function compactMessages(messages: ChatMessage[]): void {
+  // Pass 1: evict old screenshot images
+  let imagesFromEnd = 0
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]
+    if (m.role !== 'tool') continue
+    if (!m.images || m.images.length === 0) continue
+    imagesFromEnd++
+    if (imagesFromEnd > COMPACT_KEEP_IMAGES) {
+      m.images = undefined
+      if (!m.content.startsWith('[Screenshot')) {
+        m.content = `[Screenshot analyzed — image omitted from context]\n${m.content}`
+      }
+    }
+  }
+
+  // Pass 2: truncate stale large tool results
+  let assistantTurns = 0
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === 'assistant') assistantTurns++
+    const m = messages[i]
+    if (m.role !== 'tool') continue
+    if (m.isError) continue
+    if (assistantTurns < COMPACT_STALE_TURNS) continue
+    if (m.content.length <= COMPACT_TRUNCATE_ABOVE) continue
+    const originalLength = m.content.length
+    m.content =
+      m.content.slice(0, COMPACT_KEEP_CHARS) +
+      `\n\n[…truncated ${originalLength - COMPACT_KEEP_CHARS} chars — full result was processed in an earlier iteration]`
   }
 }

@@ -39,7 +39,7 @@ export class AnthropicProvider {
     const body: Record<string, unknown> = {
       model: this.model,
       max_tokens: this.maxTokens,
-      system: [{ type: 'text', text: options.system, cache_control: { type: 'ephemeral' } }],
+      system: buildSystemBlocks(options.system),
       messages: toAnthropicMessages(options.messages),
       stream: true
     }
@@ -313,6 +313,26 @@ function toAnthropicMessages(messages: ChatMessage[]): AnthropicMessage[] {
   }
 
   return out
+}
+
+/**
+ * Split the system prompt so the stable prefix gets cached and the volatile
+ * `<runtime>` block (which changes every iteration) sits in its own uncached
+ * content block. Without this, every iteration invalidates the entire system
+ * prompt cache — the single biggest cost driver in agentic loops.
+ */
+function buildSystemBlocks(system: string): unknown[] {
+  const marker = '<runtime>'
+  const idx = system.lastIndexOf(marker)
+  if (idx > 0) {
+    const stable = system.slice(0, idx).trimEnd()
+    const volatile = system.slice(idx)
+    return [
+      { type: 'text', text: stable, cache_control: { type: 'ephemeral' } },
+      { type: 'text', text: volatile }
+    ]
+  }
+  return [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }]
 }
 
 function safeParseJSON(raw: string): Record<string, unknown> | null {

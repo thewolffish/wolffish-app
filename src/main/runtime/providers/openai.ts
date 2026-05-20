@@ -85,6 +85,7 @@ export class OpenAIProvider {
     let stopReason: StopReason = 'unknown'
     let inputTokens = 0
     let outputTokens = 0
+    let cacheReadTokens = 0
 
     for await (const event of readSSE(response.body)) {
       if (!event.data) continue
@@ -107,6 +108,13 @@ export class OpenAIProvider {
         if (typeof parsed.usage.prompt_tokens === 'number') inputTokens = parsed.usage.prompt_tokens
         if (typeof parsed.usage.completion_tokens === 'number')
           outputTokens = parsed.usage.completion_tokens
+        // OpenAI reports cached tokens inside prompt_tokens (inclusive).
+        // Separate them so the cost formula can apply the 50% discount.
+        const cached = parsed.usage.prompt_tokens_details?.cached_tokens
+        if (typeof cached === 'number' && cached > 0) {
+          cacheReadTokens = cached
+          inputTokens = inputTokens - cached // uncached only, matching Anthropic convention
+        }
       }
 
       const choice = parsed.choices?.[0]
@@ -149,7 +157,11 @@ export class OpenAIProvider {
       }
     }
 
-    yield { type: 'turn_meta', stopReason, usage: { inputTokens, outputTokens } }
+    yield {
+      type: 'turn_meta',
+      stopReason,
+      usage: { inputTokens, outputTokens, cacheReadTokens: cacheReadTokens || undefined }
+    }
   }
 }
 
@@ -184,6 +196,7 @@ type OpenAIEvent = {
     prompt_tokens?: number
     completion_tokens?: number
     total_tokens?: number
+    prompt_tokens_details?: { cached_tokens?: number }
   }
 }
 
@@ -212,7 +225,10 @@ function userContentToOpenAI(content: string | UserContentBlock[]): string | unk
     } else if (block.type === 'document') {
       parts.push({
         type: 'file',
-        file: { filename: 'document.pdf', file_data: `data:${block.mediaType};base64,${block.data}` }
+        file: {
+          filename: 'document.pdf',
+          file_data: `data:${block.mediaType};base64,${block.data}`
+        }
       })
     }
   }

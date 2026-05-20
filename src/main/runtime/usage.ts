@@ -64,33 +64,67 @@ type CachedEntry = {
   cost: number
 }
 
-const ANTHROPIC_PRICING: Record<string, { input: number; output: number }> = {
-  'claude-opus-4': { input: 15 / 1_000_000, output: 75 / 1_000_000 },
-  'claude-sonnet-4': { input: 3 / 1_000_000, output: 15 / 1_000_000 },
-  'claude-haiku-4': { input: 1 / 1_000_000, output: 5 / 1_000_000 },
-  'claude-3-7-sonnet': { input: 3 / 1_000_000, output: 15 / 1_000_000 },
-  'claude-3-5-sonnet': { input: 3 / 1_000_000, output: 15 / 1_000_000 },
-  'claude-3-5-haiku': { input: 1 / 1_000_000, output: 5 / 1_000_000 },
-  'claude-3-haiku': { input: 0.25 / 1_000_000, output: 1.25 / 1_000_000 }
+type ModelPricing = {
+  input: number // $/token
+  output: number // $/token
+  cacheWrite: number // multiplier on input rate (e.g. 1.25 → 125% of base)
+  cacheRead: number // multiplier on input rate (e.g. 0.10 → 10% of base)
 }
 
-const OPENAI_PRICING: Record<string, { input: number; output: number }> = {
-  'gpt-4o': { input: 2.5 / 1_000_000, output: 10 / 1_000_000 },
-  'gpt-4o-mini': { input: 0.15 / 1_000_000, output: 0.6 / 1_000_000 },
-  'gpt-4-turbo': { input: 10 / 1_000_000, output: 30 / 1_000_000 },
-  'gpt-4': { input: 30 / 1_000_000, output: 60 / 1_000_000 },
-  'gpt-3.5-turbo': { input: 0.5 / 1_000_000, output: 1.5 / 1_000_000 },
-  o1: { input: 15 / 1_000_000, output: 60 / 1_000_000 },
-  'o1-mini': { input: 3 / 1_000_000, output: 12 / 1_000_000 },
-  o3: { input: 10 / 1_000_000, output: 40 / 1_000_000 },
-  'o3-mini': { input: 1.1 / 1_000_000, output: 4.4 / 1_000_000 },
-  'o4-mini': { input: 1.1 / 1_000_000, output: 4.4 / 1_000_000 }
+// https://docs.anthropic.com/en/docs/about-claude/models#model-comparison-table
+const ANTHROPIC_PRICING: Record<string, ModelPricing> = {
+  'claude-opus-4-7': { input: 5 / 1e6, output: 25 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 },
+  'claude-opus-4-6': { input: 5 / 1e6, output: 25 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 },
+  'claude-opus-4-5': { input: 5 / 1e6, output: 25 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 },
+  'claude-opus-4-1': { input: 15 / 1e6, output: 75 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 },
+  'claude-opus-4': { input: 15 / 1e6, output: 75 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 },
+  'claude-sonnet-4-6': { input: 3 / 1e6, output: 15 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 },
+  'claude-sonnet-4-5': { input: 3 / 1e6, output: 15 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 },
+  'claude-sonnet-4': { input: 3 / 1e6, output: 15 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 },
+  'claude-haiku-4-5': { input: 1 / 1e6, output: 5 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 },
+  'claude-3-7-sonnet': { input: 3 / 1e6, output: 15 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 },
+  'claude-3-5-sonnet': { input: 3 / 1e6, output: 15 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 },
+  'claude-3-5-haiku': { input: 0.8 / 1e6, output: 4 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 },
+  'claude-3-haiku': { input: 0.25 / 1e6, output: 1.25 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 }
 }
 
-const LOCAL_EQUIVALENT_PRICING: { input: number; output: number } = {
-  input: 3 / 1_000_000,
-  output: 15 / 1_000_000
+// https://platform.openai.com/docs/pricing
+// OpenAI auto-caches prefixes at 50% input discount; no write premium.
+const OPENAI_PRICING: Record<string, ModelPricing> = {
+  'gpt-4o': { input: 2.5 / 1e6, output: 10 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
+  'gpt-4o-mini': { input: 0.15 / 1e6, output: 0.6 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
+  'gpt-4-turbo': { input: 10 / 1e6, output: 30 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
+  'gpt-4': { input: 30 / 1e6, output: 60 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
+  'gpt-3.5-turbo': { input: 0.5 / 1e6, output: 1.5 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
+  o1: { input: 15 / 1e6, output: 60 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
+  'o1-mini': { input: 3 / 1e6, output: 12 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
+  o3: { input: 10 / 1e6, output: 40 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
+  'o3-mini': { input: 1.1 / 1e6, output: 4.4 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
+  'o4-mini': { input: 1.1 / 1e6, output: 4.4 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 }
 }
+
+const LOCAL_EQUIVALENT_PRICING: ModelPricing = {
+  input: 0,
+  output: 0,
+  cacheWrite: 1.0,
+  cacheRead: 1.0
+}
+
+// Empirical billing offset for cloud API cost estimation.
+//
+// Published per-token rates under-predict actual dashboard charges by ~16.6%.
+// The gap comes from request-level rounding, cache-tier auto-promotion on
+// long-running agentic loops, and internal token-accounting differences the
+// stream usage object doesn't surface.
+//
+// Calibration (2026-05-20 heartbeat, claude-opus-4-6):
+//   raw token math = $38.28   (in:60269 out:8920 cw:5895367 cr:1816295)
+//   Anthropic dashboard = $44.62
+//   ratio = 44.62 / 38.28 = 1.1657 → rounded to 1.166 (errs +$0.02 above)
+//
+// Applied on top of the fact-based token calculation so the UI never
+// under-reports spending.
+const CLOUD_BILLING_OFFSET = 0.166
 
 const BRAVE_COST_PER_QUERY = 0.005
 
@@ -433,41 +467,33 @@ export function calculateCost(
   cacheCreationTokens?: number,
   cacheReadTokens?: number
 ): number {
-  if (provider === 'anthropic') {
-    const pricing = findPricing(model, ANTHROPIC_PRICING)
+  if (provider === 'local') {
     return (
-      inputTokens * pricing.input +
-      (cacheCreationTokens ?? 0) * pricing.input * 1.25 +
-      (cacheReadTokens ?? 0) * pricing.input * 0.1 +
-      outputTokens * pricing.output
+      inputTokens * LOCAL_EQUIVALENT_PRICING.input + outputTokens * LOCAL_EQUIVALENT_PRICING.output
     )
   }
-  if (provider === 'openai') {
-    const pricing = findPricing(model, OPENAI_PRICING)
-    return inputTokens * pricing.input + outputTokens * pricing.output
-  }
-  return (
-    inputTokens * LOCAL_EQUIVALENT_PRICING.input + outputTokens * LOCAL_EQUIVALENT_PRICING.output
-  )
+  const table = provider === 'anthropic' ? ANTHROPIC_PRICING : OPENAI_PRICING
+  const pricing = findPricing(model, table)
+  // Fact-based: published per-token rates applied to reported token counts
+  const raw =
+    inputTokens * pricing.input +
+    (cacheCreationTokens ?? 0) * pricing.input * pricing.cacheWrite +
+    (cacheReadTokens ?? 0) * pricing.input * pricing.cacheRead +
+    outputTokens * pricing.output
+  // Offset: empirical gap between token math and actual dashboard billing
+  return raw * (1 + CLOUD_BILLING_OFFSET)
 }
 
-function findPricing(
-  model: string,
-  table: Record<string, { input: number; output: number }>
-): { input: number; output: number } {
+function findPricing(model: string, table: Record<string, ModelPricing>): ModelPricing {
   if (table[model]) return table[model]
-  for (const [key, value] of Object.entries(table)) {
-    if (
-      model.startsWith(key) ||
-      key.startsWith(model) ||
-      model.includes(key) ||
-      key.includes(model)
-    )
-      return value
+  // Sort keys longest-first so 'claude-opus-4-6' matches before 'claude-opus-4'
+  const sorted = Object.keys(table).sort((a, b) => b.length - a.length)
+  for (const key of sorted) {
+    if (model.startsWith(key)) return table[key]
   }
   const values = Object.values(table)
   if (values.length > 0) return values[0]
-  return { input: 3 / 1_000_000, output: 15 / 1_000_000 }
+  return { input: 3 / 1e6, output: 15 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 }
 }
 
 // Cutoffs are returned as local-naive datetime strings to match the
