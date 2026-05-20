@@ -481,7 +481,7 @@ export function Heartbeat(): React.JSX.Element {
         </aside>
 
         <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-          <div className="border-border flex items-center justify-between gap-2 border-b px-4 py-3">
+          <div className="border-border flex shrink-0 items-center justify-between gap-2 border-b px-4 py-3">
             <div className="flex items-center gap-2">
               <span className="text-fg text-sm font-medium">heartbeat.md</span>
               {isDirty && <span className="text-muted text-xs italic">(unsaved)</span>}
@@ -527,7 +527,7 @@ export function Heartbeat(): React.JSX.Element {
               isDark={isDark}
               readOnly={false}
               onChange={setContent}
-              className="h-full w-full"
+              className="min-h-0 w-full flex-1"
             />
           )}
         </section>
