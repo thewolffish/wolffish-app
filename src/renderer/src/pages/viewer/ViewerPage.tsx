@@ -309,12 +309,6 @@ export function ViewerPage(): React.JSX.Element {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [handleSave])
 
-  const handleRefreshFile = useCallback(async (): Promise<void> => {
-    if (!selectedPath) return
-    await loadFile(selectedPath)
-    toast.show({ tone: 'success', message: t('workspace.resynced') })
-  }, [selectedPath, loadFile, toast, t])
-
   const handleDownload = useCallback(async (): Promise<void> => {
     if (!selectedPath) return
     try {
@@ -360,21 +354,6 @@ export function ViewerPage(): React.JSX.Element {
         >
           <BackIcon size={16} />
           <span>{t('common.back')}</span>
-        </button>
-        <button
-          type="button"
-          onClick={() => void handleResync()}
-          disabled={resyncing}
-          aria-label={t('workspace.resync')}
-          className={cn(
-            'inline-flex items-center gap-1 rounded-md text-xs cursor-pointer transition-colors',
-            'text-muted hover:text-fg px-1.5 py-0.5',
-            'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-            'disabled:cursor-not-allowed disabled:opacity-40'
-          )}
-        >
-          <Refresh01Icon size={14} className={cn(resyncing && 'animate-spin')} />
-          <span>{t('workspace.resync')}</span>
         </button>
       </header>
 
@@ -438,8 +417,8 @@ export function ViewerPage(): React.JSX.Element {
                   {!mediaType && (
                     <button
                       type="button"
-                      onClick={() => void handleRefreshFile()}
-                      disabled={saving}
+                      onClick={() => void handleResync()}
+                      disabled={resyncing}
                       aria-label={t('workspace.resync')}
                       className={cn(
                         'inline-flex items-center gap-1 rounded-md text-xs cursor-pointer transition-colors',
@@ -448,7 +427,7 @@ export function ViewerPage(): React.JSX.Element {
                         'disabled:cursor-not-allowed disabled:opacity-40'
                       )}
                     >
-                      <Refresh01Icon size={14} />
+                      <Refresh01Icon size={14} className={cn(resyncing && 'animate-spin')} />
                       <span>{t('workspace.resync')}</span>
                     </button>
                   )}
@@ -500,7 +479,6 @@ export function ViewerPage(): React.JSX.Element {
           )}
         </section>
       </div>
-
     </main>
   )
 }
@@ -1116,4 +1094,3 @@ function ViewerTreeNodeItem({
     </li>
   )
 }
-
