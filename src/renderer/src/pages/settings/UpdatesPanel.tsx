@@ -3,7 +3,7 @@ import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn'
 import type { UpdateCheckResult } from '@preload/index'
 import { useFlow } from '@providers/flow/useFlow'
-import { InformationCircleIcon } from 'hugeicons-react'
+import { Download01Icon } from 'hugeicons-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -187,14 +187,15 @@ export function UpdatesPanel(): React.JSX.Element {
           <div className="flex flex-col gap-3">
             {phase === 'downloading' ? (
               <div className="flex items-center justify-between gap-4">
-                <div className="flex items-center gap-2">
-                  <InformationCircleIcon size={14} className="text-muted shrink-0" />
-                  <span className="text-muted text-xs">
-                    {t('settings.updates.downloading', 'Downloading update {{version}}…', {
-                      version: updateVersion ? `v${updateVersion}` : ''
-                    })}
-                    {downloadPercent > 0 && ` ${downloadPercent}%`}
+                <div className="flex flex-col gap-1">
+                  <span className="text-fg text-sm font-medium">
+                    {t('settings.updates.downloadingTitle', 'Downloading update')}
                   </span>
+                  <p className="text-muted text-xs flex items-center gap-1.5 animate-pulse">
+                    <Download01Icon size={12} className="shrink-0" />
+                    {t('settings.updates.downloadingSubtitle', 'Your update is downloading')}
+                    {downloadPercent > 0 && ` ${downloadPercent}%`}
+                  </p>
                 </div>
                 <button
                   type="button"
