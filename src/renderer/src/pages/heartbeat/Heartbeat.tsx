@@ -375,148 +375,152 @@ export function Heartbeat(): React.JSX.Element {
         <div className="flex items-center gap-2" />
       </header>
 
-      {loading ? (
-        <div className="text-muted flex flex-1 items-center justify-center text-sm">
-          {t('common.loading')}
-        </div>
-      ) : (
-        <div dir="ltr" className="flex min-h-0 flex-1">
-          <aside
-            dir={isRtl ? 'rtl' : 'ltr'}
-            className="border-border w-72 shrink-0 overflow-y-auto border-r p-3"
-          >
-            {sidebarJobs.length === 0 ? (
-              <p className="text-muted px-2 py-6 text-center text-xs">{t('heartbeat.noJobs')}</p>
-            ) : (
-              <ul className="flex flex-col gap-2">
-                {sidebarJobs.map((job) => (
-                  <li key={job.label}>
-                    <div
-                      className={cn(
-                        'bg-surface rounded-lg border border-border px-3 py-2.5',
-                        !job.active && 'opacity-60'
-                      )}
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-fg truncate text-sm font-medium">{job.label}</span>
-                        <div
-                          role="tablist"
-                          className="border-border bg-bg/40 inline-flex shrink-0 items-center rounded-lg border p-0.5"
-                        >
-                          <button
-                            role="tab"
-                            type="button"
-                            aria-selected={job.active}
-                            onClick={() => {
-                              if (!job.active) void handleToggle(job)
-                            }}
-                            className={cn(
-                              'rounded-md px-2 py-0.5 text-[10px] font-medium',
-                              job.active
-                                ? 'bg-primary text-primary-fg shadow-sm'
-                                : 'text-muted hover:text-fg cursor-pointer'
-                            )}
-                          >
-                            {t('settings.wolffish.toggle.on')}
-                          </button>
-                          <button
-                            role="tab"
-                            type="button"
-                            aria-selected={!job.active}
-                            onClick={() => {
-                              if (job.active) void handleToggle(job)
-                            }}
-                            className={cn(
-                              'rounded-md px-2 py-0.5 text-[10px] font-medium',
-                              !job.active
-                                ? 'bg-primary text-primary-fg shadow-sm'
-                                : 'text-muted hover:text-fg cursor-pointer'
-                            )}
-                          >
-                            {t('settings.wolffish.toggle.off')}
-                          </button>
-                        </div>
-                      </div>
-                      <div className="mt-1.5 flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-2">
-                          <Badge variant="primary" size="sm">
-                            {t(`heartbeat.type.${job.type}`)}
-                          </Badge>
-                          <span
-                            className={cn(
-                              'inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
-                              job.active
-                                ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
-                                : 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
-                            )}
-                          >
-                            {job.active ? t('heartbeat.active') : t('heartbeat.inactive')}
-                          </span>
-                          {job.active && job.nextRunMs != null && (
-                            <span className="text-muted text-[11px]">
-                              {formatFromNow(job.nextRunMs, now, locale)}
-                            </span>
-                          )}
-                          {job.active && job.type === 'startup' && (
-                            <span className="text-muted text-[11px]">on launch</span>
-                          )}
-                        </div>
+      <div dir="ltr" className="flex min-h-0 flex-1">
+        <aside
+          dir={isRtl ? 'rtl' : 'ltr'}
+          className="border-border w-72 shrink-0 overflow-y-auto border-r p-3"
+        >
+          {loading ? (
+            <div className="text-muted flex items-center justify-center py-6 text-sm">
+              {t('common.loading')}
+            </div>
+          ) : sidebarJobs.length === 0 ? (
+            <p className="text-muted px-2 py-6 text-center text-xs">{t('heartbeat.noJobs')}</p>
+          ) : (
+            <ul className="flex flex-col gap-2">
+              {sidebarJobs.map((job) => (
+                <li key={job.label}>
+                  <div
+                    className={cn(
+                      'bg-surface rounded-lg border border-border px-3 py-2.5',
+                      !job.active && 'opacity-60'
+                    )}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-fg truncate text-sm font-medium">{job.label}</span>
+                      <div
+                        role="tablist"
+                        className="border-border bg-bg/40 inline-flex shrink-0 items-center rounded-lg border p-0.5"
+                      >
                         <button
+                          role="tab"
                           type="button"
-                          onClick={() => setDetailJob(job)}
-                          className="text-muted hover:text-fg cursor-pointer rounded p-0.5"
+                          aria-selected={job.active}
+                          onClick={() => {
+                            if (!job.active) void handleToggle(job)
+                          }}
+                          className={cn(
+                            'rounded-md px-2 py-0.5 text-[10px] font-medium',
+                            job.active
+                              ? 'bg-primary text-primary-fg shadow-sm'
+                              : 'text-muted hover:text-fg cursor-pointer'
+                          )}
                         >
-                          <EyeIcon size={14} />
+                          {t('settings.wolffish.toggle.on')}
+                        </button>
+                        <button
+                          role="tab"
+                          type="button"
+                          aria-selected={!job.active}
+                          onClick={() => {
+                            if (job.active) void handleToggle(job)
+                          }}
+                          className={cn(
+                            'rounded-md px-2 py-0.5 text-[10px] font-medium',
+                            !job.active
+                              ? 'bg-primary text-primary-fg shadow-sm'
+                              : 'text-muted hover:text-fg cursor-pointer'
+                          )}
+                        >
+                          {t('settings.wolffish.toggle.off')}
                         </button>
                       </div>
-                      {job.body && (
-                        <pre className="bg-bg mt-2 max-h-12 overflow-auto rounded border border-border px-2 py-1.5 text-[10px] font-mono text-muted leading-relaxed whitespace-pre-wrap">
-                          {job.body}
-                        </pre>
-                      )}
                     </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </aside>
+                    <div className="mt-1.5 flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <Badge variant="primary" size="sm">
+                          {t(`heartbeat.type.${job.type}`)}
+                        </Badge>
+                        <span
+                          className={cn(
+                            'inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
+                            job.active
+                              ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                              : 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+                          )}
+                        >
+                          {job.active ? t('heartbeat.active') : t('heartbeat.inactive')}
+                        </span>
+                        {job.active && job.nextRunMs != null && (
+                          <span className="text-muted text-[11px]">
+                            {formatFromNow(job.nextRunMs, now, locale)}
+                          </span>
+                        )}
+                        {job.active && job.type === 'startup' && (
+                          <span className="text-muted text-[11px]">on launch</span>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setDetailJob(job)}
+                        className="text-muted hover:text-fg cursor-pointer rounded p-0.5"
+                      >
+                        <EyeIcon size={14} />
+                      </button>
+                    </div>
+                    {job.body && (
+                      <pre className="bg-bg mt-2 max-h-12 overflow-auto rounded border border-border px-2 py-1.5 text-[10px] font-mono text-muted leading-relaxed whitespace-pre-wrap">
+                        {job.body}
+                      </pre>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </aside>
 
-          <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-            <div className="border-border flex items-center justify-between gap-2 border-b px-4 py-3">
-              <div className="flex items-center gap-2">
-                <span className="text-fg text-sm font-medium">heartbeat.md</span>
-                {isDirty && <span className="text-muted text-xs italic">(unsaved)</span>}
-              </div>
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  onClick={() => void handleRefresh()}
-                  disabled={loading}
-                  className={cn(
-                    'text-muted hover:text-fg inline-flex cursor-pointer items-center gap-1 rounded-md px-1.5 py-0.5 text-xs transition-colors',
-                    'disabled:cursor-not-allowed disabled:opacity-40'
-                  )}
-                >
-                  <Refresh01Icon size={14} className={cn(loading && 'animate-spin')} />
-                  <span>{t('workspace.resync')}</span>
-                </button>
-                <CopyButton text={content} variant="inline" />
-                <button
-                  type="button"
-                  onClick={() => void handleSave()}
-                  disabled={!isDirty || saving}
-                  aria-label={saving ? t('workspace.saving') : t('workspace.save')}
-                  title={saving ? t('workspace.saving') : t('workspace.save')}
-                  className={cn(
-                    'text-muted hover:text-fg hover:bg-border/40 flex h-8 w-8 items-center justify-center rounded-lg cursor-pointer',
-                    'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-                    'disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted'
-                  )}
-                >
-                  <FloppyDiskIcon size={16} />
-                </button>
-              </div>
+        <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          <div className="border-border flex items-center justify-between gap-2 border-b px-4 py-3">
+            <div className="flex items-center gap-2">
+              <span className="text-fg text-sm font-medium">heartbeat.md</span>
+              {isDirty && <span className="text-muted text-xs italic">(unsaved)</span>}
             </div>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => void handleRefresh()}
+                disabled={loading}
+                className={cn(
+                  'text-muted hover:text-fg inline-flex cursor-pointer items-center gap-1 rounded-md px-1.5 py-0.5 text-xs transition-colors',
+                  'disabled:cursor-not-allowed disabled:opacity-40'
+                )}
+              >
+                <Refresh01Icon size={14} className={cn(loading && 'animate-spin')} />
+                <span>{t('workspace.resync')}</span>
+              </button>
+              <CopyButton text={content} variant="inline" />
+              <button
+                type="button"
+                onClick={() => void handleSave()}
+                disabled={!isDirty || saving}
+                aria-label={saving ? t('workspace.saving') : t('workspace.save')}
+                title={saving ? t('workspace.saving') : t('workspace.save')}
+                className={cn(
+                  'text-muted hover:text-fg hover:bg-border/40 flex h-8 w-8 items-center justify-center rounded-lg cursor-pointer',
+                  'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+                  'disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted'
+                )}
+              >
+                <FloppyDiskIcon size={16} />
+              </button>
+            </div>
+          </div>
+          {loading ? (
+            <div className="text-muted flex flex-1 items-center justify-center text-sm">
+              {t('common.loading')}
+            </div>
+          ) : (
             <CodeEditor
               value={content}
               language="markdown"
@@ -525,9 +529,9 @@ export function Heartbeat(): React.JSX.Element {
               onChange={setContent}
               className="h-full w-full"
             />
-          </section>
-        </div>
-      )}
+          )}
+        </section>
+      </div>
       {detailJob && (
         <Modal
           open
