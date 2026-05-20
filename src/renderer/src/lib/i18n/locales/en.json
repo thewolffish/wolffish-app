@@ -1056,6 +1056,12 @@
       "weekly": "Weekly",
       "monthly": "Monthly",
       "cron": "Cron"
+    },
+    "overlay": {
+      "startedAt": "Started at {{time}}",
+      "activity": "Activity",
+      "waiting": "Waiting for output…",
+      "blocked": "Chat is paused while a heartbeat job is running."
     }
   },
   "history": {

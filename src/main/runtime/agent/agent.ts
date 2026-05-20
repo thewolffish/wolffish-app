@@ -716,6 +716,30 @@ export class Agent {
     const segments: import('@main/runtime/broca/broca').Segment[] = []
     const sink: SegmentSink = (seg) => {
       segments.push(seg)
+      const listener = this.brainstem?.['listener']
+      if (listener?.onJobLog) {
+        let summary: string | null = null
+        let kind: 'text' | 'tool_call' | 'tool_result' = 'text'
+        if (seg.kind === 'text' && seg.delta.trim()) {
+          summary = seg.delta.trim().slice(0, 120)
+          kind = 'text'
+        } else if (seg.kind === 'tool_call') {
+          summary = `Tool: ${seg.name}`
+          kind = 'tool_call'
+        } else if (seg.kind === 'tool_result') {
+          const preview = seg.output?.slice(0, 80) ?? (seg.status === 'failed' ? 'error' : 'done')
+          summary = `Result: ${preview}`
+          kind = 'tool_result'
+        }
+        if (summary) {
+          listener.onJobLog({
+            id: opts.jobLabel,
+            timestamp: Date.now(),
+            kind,
+            summary
+          })
+        }
+      }
     }
     const localBroca = new Broca({ corpus: this.corpus, shouldSilenceToolCall: isInternalToolCall })
 

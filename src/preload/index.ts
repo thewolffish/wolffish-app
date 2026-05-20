@@ -501,8 +501,26 @@ export type HeartbeatJobView = {
   nextRunMs: number | null
 }
 
+export type HeartbeatRunningJob = {
+  id: string
+  label: string
+  body: string
+  startedAt: number
+}
+
+export type HeartbeatLogEntry = {
+  id: string
+  timestamp: number
+  kind: 'text' | 'tool_call' | 'tool_result' | 'started' | 'completed' | 'failed' | 'skipped'
+  summary: string
+}
+
 export type HeartbeatApi = {
   getJobs: () => Promise<HeartbeatJobView[]>
+  getRunningJob: () => Promise<HeartbeatRunningJob | null>
+  onJobStarted: (listener: (job: HeartbeatRunningJob) => void) => () => void
+  onJobEnded: (listener: (payload: { id: string; status: 'completed' | 'failed'; error?: string }) => void) => () => void
+  onJobLog: (listener: (entry: HeartbeatLogEntry) => void) => () => void
 }
 
 export type CapabilityEntry = {
@@ -1026,7 +1044,11 @@ const api: WolffishApi = {
     resync: () => ipcRenderer.invoke('viewer:resync')
   },
   heartbeat: {
-    getJobs: () => ipcRenderer.invoke('heartbeat:getJobs')
+    getJobs: () => ipcRenderer.invoke('heartbeat:getJobs'),
+    getRunningJob: () => ipcRenderer.invoke('heartbeat:getRunningJob'),
+    onJobStarted: (listener) => subscribe('heartbeat:jobStarted', listener),
+    onJobEnded: (listener) => subscribe('heartbeat:jobEnded', listener),
+    onJobLog: (listener) => subscribe('heartbeat:jobLog', listener)
   },
   app: {
     factoryReset: () => ipcRenderer.invoke('app:factoryReset'),

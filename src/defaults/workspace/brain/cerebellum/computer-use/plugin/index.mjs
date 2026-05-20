@@ -9,6 +9,7 @@ let permissionError = null
 let workspaceRoot = ''
 let getConversationId = () => null
 let screenshotCounter = 0
+let lastScreenshotMapping = null
 
 const DEFAULT_MAX_WIDTH = 1280
 const DEFAULT_FORMAT = 'jpeg'
@@ -109,6 +110,15 @@ function requirePermissions() {
   return null
 }
 
+function scaleToScreen(x, y) {
+  if (!lastScreenshotMapping) return { x, y }
+  const { scale, offsetX, offsetY } = lastScreenshotMapping
+  return {
+    x: Math.round(x * scale + offsetX),
+    y: Math.round(y * scale + offsetY)
+  }
+}
+
 async function takeScreenshot(args) {
   const denied = requirePermissions()
   if (denied) return denied
@@ -143,10 +153,17 @@ async function takeScreenshot(args) {
     }
 
     const pngBuffer = thumbnail.toPNG()
+    const finalImageWidth = nativeWidth > maxWidth ? maxWidth : nativeWidth
 
     let pipeline = sharp(pngBuffer)
     if (nativeWidth > maxWidth) {
       pipeline = pipeline.resize({ width: maxWidth, withoutEnlargement: true })
+    }
+
+    lastScreenshotMapping = {
+      scale: display.size.width / finalImageWidth,
+      offsetX: display.bounds.x,
+      offsetY: display.bounds.y
     }
 
     let buffer, mediaType
@@ -179,13 +196,10 @@ async function takeScreenshot(args) {
     }
 
     const pathLine = savedPath ? `\n${savedPath}` : ''
-    const { x: bx, y: by } = display.bounds
-    const offsetNote = (bx !== 0 || by !== 0)
-      ? ` This display starts at global (${bx}, ${by}) — add (${bx}, ${by}) to all coordinates from this screenshot when calling mouse/click tools.`
-      : ''
+    const finalImageHeight = Math.round(nativeHeight * (finalImageWidth / nativeWidth))
     return {
       success: true,
-      output: `Screenshot captured (${nativeWidth}x${nativeHeight}, resized to max ${maxWidth}px wide, ${format})${displayInfo}. Coordinates are in screen pixels (${display.size.width}x${display.size.height}, scale ${display.scaleFactor}x).${offsetNote}${pathLine}`,
+      output: `Screenshot captured (${finalImageWidth}x${finalImageHeight}, ${format})${displayInfo}. Use image pixel coordinates when clicking — they are automatically scaled to screen position (${display.size.width}x${display.size.height}, scale ${display.scaleFactor}x).${pathLine}`,
       images: [{ mediaType, data: base64 }]
     }
   } catch (err) {
@@ -218,8 +232,9 @@ async function mouseMove(args) {
   }
 
   try {
-    await nutMouse.move(nutStraightTo(new nutPoint(x, y)))
-    return { success: true, output: `Moved cursor to (${x}, ${y})` }
+    const scaled = scaleToScreen(x, y)
+    await nutMouse.move(nutStraightTo(new nutPoint(scaled.x, scaled.y)))
+    return { success: true, output: `Moved cursor to (${x}, ${y}) → screen (${scaled.x}, ${scaled.y})` }
   } catch (err) {
     return { success: false, error: `Mouse move failed: ${err?.message ?? String(err)}` }
   }
@@ -248,7 +263,8 @@ async function mouseClick(args) {
 
   try {
     if (x !== null && y !== null && Number.isFinite(x) && Number.isFinite(y)) {
-      await nutMouse.move(nutStraightTo(new nutPoint(x, y)))
+      const scaled = scaleToScreen(x, y)
+      await nutMouse.move(nutStraightTo(new nutPoint(scaled.x, scaled.y)))
     }
 
     if (isDouble) {

@@ -1,3 +1,21 @@
+## v1.0.68 — 2026-05-20
+
+### Live Heartbeat Overlay
+
+When a heartbeat job is running, the chat area now shows a live activity dashboard instead of just a static "read only" message. The overlay displays the running job's name, start time, a live elapsed timer, the full instruction body, and a streaming activity log. Each log entry is color-coded by type — blue for tool calls, violet for results, green for completions, red for failures, amber for skipped jobs. The log auto-scrolls and caps at 50 entries to keep memory usage bounded.
+
+This was built because background automations were a black box during execution. You'd see the chat lock up with no indication of what was happening or how far along it was. Now you get a real-time view of every step the agent takes while the job runs.
+
+### Single-Job Execution Queue
+
+Heartbeat jobs now run strictly one at a time. If a scheduled job fires while another is already executing, it's skipped with a log entry explaining why — previously the brainstem only checked per-job concurrency, so two different schedules could overlap and compete for the same resources (model context, tool state). The running job's metadata (id, label, body, start time) is tracked and exposed to the renderer, which is what powers the overlay above.
+
+### Computer-Use Coordinate Auto-Scaling
+
+Screenshot coordinates are now automatically mapped to screen positions when clicking or moving the mouse. Previously, when a screenshot was resized from native resolution down to the max width (1280px), the model received image-pixel coordinates but mouse actions expected screen-space coordinates. On multi-monitor setups it was worse — the model had to manually add the display's global offset to every coordinate. A new `scaleToScreen()` function stores the scale factor and display offset after each screenshot and applies them transparently to all subsequent mouse actions. The screenshot output message was simplified accordingly — it no longer asks the model to do offset math.
+
+---
+
 ## v1.0.60 — 2026-05-20
 
 ### Heartbeat Resync Fix

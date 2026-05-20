@@ -115,6 +115,26 @@ export type ParsedSchedule = {
   body: string
 }
 
+export type RunningJobInfo = {
+  id: string
+  label: string
+  body: string
+  startedAt: number
+}
+
+export type JobLogEntry = {
+  id: string
+  timestamp: number
+  kind: 'text' | 'tool_call' | 'tool_result' | 'started' | 'completed' | 'failed' | 'skipped'
+  summary: string
+}
+
+export type BrainstemListener = {
+  onJobStarted?: (info: RunningJobInfo) => void
+  onJobEnded?: (payload: { id: string; status: 'completed' | 'failed'; error?: string }) => void
+  onJobLog?: (entry: JobLogEntry) => void
+}
+
 export class Brainstem {
   private workspaceRoot: string | null
   private corpus: Corpus | null
@@ -126,10 +146,12 @@ export class Brainstem {
   private jobs = new Map<string, BrainstemJob>()
   private pendingIndex = new Map<string, NodeJS.Timeout>()
   private runningJobs = new Set<string>()
+  private runningJobInfo: RunningJobInfo | null = null
   private jobQueue: Promise<void> = Promise.resolve()
   private compactionTasks: ScheduledTask[] = []
   private compactionConfig: CompactionConfig = DEFAULT_COMPACTION
   private readonly debounceMs: number
+  private listener: BrainstemListener | null = null
 
   constructor(options: BrainstemOptions = {}) {
     this.workspaceRoot = options.workspaceRoot ?? null
@@ -143,6 +165,14 @@ export class Brainstem {
 
   setAgent(agent: Agent): void {
     this.agent = agent
+  }
+
+  setListener(listener: BrainstemListener | null): void {
+    this.listener = listener
+  }
+
+  getRunningJob(): RunningJobInfo | null {
+    return this.runningJobInfo
   }
 
   async init(): Promise<void> {
@@ -283,7 +313,13 @@ export class Brainstem {
     })
   }
 
-  getActiveJobs(): Array<{ id: string; type: ScheduleKind; cron: string | null; label: string; body: string }> {
+  getActiveJobs(): Array<{
+    id: string
+    type: ScheduleKind
+    cron: string | null
+    label: string
+    body: string
+  }> {
     return [...this.jobs.values()].map((j) => ({
       id: j.id,
       type: j.type,
@@ -360,23 +396,42 @@ export class Brainstem {
   }
 
   private async executeJob(schedule: ParsedSchedule, handler: () => Promise<void>): Promise<void> {
-    if (this.runningJobs.has(schedule.id)) {
+    if (this.runningJobs.size > 0) {
       this.corpus?.emit('brainstem.jobSkipped', {
         job: schedule.id,
         label: schedule.label,
-        reason: 'already running'
+        reason: 'another job is running'
+      })
+      this.listener?.onJobLog?.({
+        id: schedule.id,
+        timestamp: Date.now(),
+        kind: 'skipped',
+        summary: `Skipped "${schedule.label}" — another job is running`
       })
       return
     }
     this.runningJobs.add(schedule.id)
-    const timestamp = new Date().toISOString()
+    const start = Date.now()
+    const info: RunningJobInfo = {
+      id: schedule.id,
+      label: schedule.label,
+      body: schedule.body,
+      startedAt: start
+    }
+    this.runningJobInfo = info
     this.corpus?.emit('brainstem.jobStarted', {
       job: schedule.id,
       type: schedule.kind,
       label: schedule.label,
-      timestamp
+      timestamp: new Date(start).toISOString()
     })
-    const start = Date.now()
+    this.listener?.onJobStarted?.(info)
+    this.listener?.onJobLog?.({
+      id: schedule.id,
+      timestamp: start,
+      kind: 'started',
+      summary: `Started "${schedule.label}"`
+    })
     try {
       await handler()
       this.corpus?.emit('brainstem.jobCompleted', {
@@ -386,16 +441,32 @@ export class Brainstem {
         timestamp: new Date().toISOString(),
         durationMs: Date.now() - start
       })
+      this.listener?.onJobEnded?.({ id: schedule.id, status: 'completed' })
+      this.listener?.onJobLog?.({
+        id: schedule.id,
+        timestamp: Date.now(),
+        kind: 'completed',
+        summary: `Completed "${schedule.label}" in ${Math.round((Date.now() - start) / 1000)}s`
+      })
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
       this.corpus?.emit('brainstem.jobFailed', {
         job: schedule.id,
         type: schedule.kind,
         label: schedule.label,
         timestamp: new Date().toISOString(),
-        error: err instanceof Error ? err.message : String(err)
+        error: message
+      })
+      this.listener?.onJobEnded?.({ id: schedule.id, status: 'failed', error: message })
+      this.listener?.onJobLog?.({
+        id: schedule.id,
+        timestamp: Date.now(),
+        kind: 'failed',
+        summary: `Failed "${schedule.label}": ${message}`
       })
     } finally {
       this.runningJobs.delete(schedule.id)
+      this.runningJobInfo = null
     }
   }
 

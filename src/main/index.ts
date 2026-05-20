@@ -1546,6 +1546,16 @@ app.whenReady().then(async () => {
     }))
   })
 
+  ipcMain.handle('heartbeat:getRunningJob', () => {
+    return agent.brainstem.getRunningJob()
+  })
+
+  agent.brainstem.setListener({
+    onJobStarted: (info) => broadcast('heartbeat:jobStarted', info),
+    onJobEnded: (payload) => broadcast('heartbeat:jobEnded', payload),
+    onJobLog: (entry) => broadcast('heartbeat:jobLog', entry)
+  })
+
   // Conversations
   ipcMain.handle('conversation:list', (): Promise<ConversationMeta[]> => listConversations())
   ipcMain.handle(

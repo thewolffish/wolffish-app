@@ -3,6 +3,7 @@ import { ApprovalCard } from '@components/common/approval-card/ApprovalCard'
 import { AttachmentList } from '@components/common/attachment-list/AttachmentList'
 import { AudioPlayer } from '@components/common/audio-player/AudioPlayer'
 import { ContextMeter } from '@components/common/context-meter/ContextMeter'
+import { HeartbeatActiveOverlay } from '@components/common/heartbeat-active-overlay/HeartbeatActiveOverlay'
 import { ProviderErrorCard } from '@components/common/provider-error-card/ProviderErrorCard'
 import { ToolCard } from '@components/common/tool-card/ToolCard'
 import { TurnFooter } from '@components/common/turn-footer/TurnFooter'
@@ -81,6 +82,21 @@ export function Chat(): React.JSX.Element {
   const showAnalytics = status?.config?.showChatAnalytics ?? true
   const localOnly = status?.config?.llm.localOnly ?? false
   const [savingMode, setSavingMode] = useState(false)
+
+  const [heartbeatActive, setHeartbeatActive] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    window.api.heartbeat.getRunningJob().then((job) => {
+      if (!cancelled) setHeartbeatActive(!!job)
+    })
+    const offStarted = window.api.heartbeat.onJobStarted(() => setHeartbeatActive(true))
+    const offEnded = window.api.heartbeat.onJobEnded(() => setHeartbeatActive(false))
+    return () => {
+      cancelled = true
+      offStarted()
+      offEnded()
+    }
+  }, [])
 
   const onNewChat = useCallback(() => {
     setMessages([])
@@ -899,6 +915,8 @@ export function Chat(): React.JSX.Element {
 
   const hasMessages = messages.length > 0
   const placeholderAlign = useMemo(() => (isRtl ? 'text-right' : 'text-left'), [isRtl])
+
+  if (heartbeatActive) return <HeartbeatActiveOverlay />
 
   return (
     <main
