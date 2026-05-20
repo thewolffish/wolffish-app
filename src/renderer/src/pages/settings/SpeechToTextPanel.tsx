@@ -1,4 +1,4 @@
-import { Select, type SelectOption } from '@components/core/select/Select'
+import { Select, type SelectOption } from '@components/core/Select'
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 

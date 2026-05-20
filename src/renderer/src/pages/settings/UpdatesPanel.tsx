@@ -1,6 +1,6 @@
-import { Button } from '@components/core/button/Button'
+import { Button } from '@components/core/Button'
 import { useToast } from '@components/core/toast/useToast'
-import { cn } from '@lib/utils/cn/cn'
+import { cn } from '@lib/utils/cn'
 import type { UpdateCheckResult } from '@preload/index'
 import { useFlow } from '@providers/flow/useFlow'
 import { InformationCircleIcon } from 'hugeicons-react'

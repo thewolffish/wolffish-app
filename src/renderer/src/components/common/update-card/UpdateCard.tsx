@@ -1,4 +1,4 @@
-import { cn } from '@lib/utils/cn/cn'
+import { cn } from '@lib/utils/cn'
 import type { UpdateReadyEvent } from '@preload/index'
 import { useFlow } from '@providers/flow/useFlow'
 import { ArrowUp02Icon, Cancel01Icon } from 'hugeicons-react'

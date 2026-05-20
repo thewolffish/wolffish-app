@@ -1,4 +1,4 @@
-import { Tooltip } from '@components/core/tooltip/Tooltip'
+import { Tooltip } from '@components/core/Tooltip'
 import { useTranslation } from 'react-i18next'
 
 type ContextMeterProps = {

@@ -1,5 +1,5 @@
-import { CodeBlock } from '@components/core/code-block/CodeBlock'
-import { cn } from '@lib/utils/cn/cn'
+import { CodeBlock } from '@components/core/CodeBlock'
+import { cn } from '@lib/utils/cn'
 import type { Segment, ToolResultStatus } from '@preload/index'
 import type { ToolTiming } from '@providers/flow/useFlow'
 import { ArrowDown01Icon, ArrowRight01Icon } from 'hugeicons-react'

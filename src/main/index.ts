@@ -1,7 +1,7 @@
 process.noDeprecation = true
 
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
-import { braveService, type BraveStatus, type BraveTestResult } from '@main/brave/brave'
+import { braveService, type BraveStatus, type BraveTestResult } from '@main/brave'
 import { turnRouter } from '@main/channels/channel'
 import { ElectronChannel } from '@main/channels/electron-channel'
 import { TelegramChannel } from '@main/channels/telegram-channel'
@@ -17,9 +17,9 @@ import {
   saveConversation,
   type ConversationFile,
   type ConversationMeta
-} from '@main/conversations/conversations'
-import { getDataAnalytics, type DataAnalytics } from '@main/data/data'
-import { githubService, type GitHubStatus, type GitHubTestResult } from '@main/github/github'
+} from '@main/conversations'
+import { getDataAnalytics, type DataAnalytics } from '@main/data'
+import { githubService, type GitHubStatus, type GitHubTestResult } from '@main/github'
 import {
   googleService,
   type GoogleAuthResult,
@@ -28,10 +28,10 @@ import {
   type GoogleSetupResult,
   type GoogleStatus,
   type GoogleUpdateResult
-} from '@main/google/google'
-import { acquireLock, releaseLockSync } from '@main/lockfile/lockfile'
-import { memesService, type MemesStatus, type MemesTestResult } from '@main/memes/memes'
-import { notionService, type NotionStatus, type NotionTestResult } from '@main/notion/notion'
+} from '@main/google'
+import { acquireLock, releaseLockSync } from '@main/lockfile'
+import { memesService, type MemesStatus, type MemesTestResult } from '@main/memes'
+import { notionService, type NotionStatus, type NotionTestResult } from '@main/notion'
 import {
   detect as detectOllama,
   isOllamaInstalled,
@@ -40,16 +40,16 @@ import {
   pullModel,
   startOllama,
   type OllamaPullStatus
-} from '@main/ollama/ollama'
-import { Agent } from '@main/runtime/agent/agent'
-import type { ApprovalDecision } from '@main/runtime/amygdala/amygdala'
-import { MODEL_CATALOG } from '@main/runtime/models/models'
-import { localProvider } from '@main/runtime/providers/local/local'
-import type { CloudProviderConfig } from '@main/runtime/thalamus/thalamus'
-import { Thalamus } from '@main/runtime/thalamus/thalamus'
-import type { TimeRange as UsageTimeRange } from '@main/runtime/usage/usage'
-import { detectSystem, type SystemInfo } from '@main/system/system'
-import { checkForUpdatesIfEnabled, initUpdater, installUpdate } from '@main/updater/updater'
+} from '@main/ollama'
+import { Agent } from '@main/runtime/agent'
+import type { ApprovalDecision } from '@main/runtime/amygdala'
+import { MODEL_CATALOG } from '@main/runtime/models'
+import { localProvider } from '@main/runtime/providers/local'
+import type { CloudProviderConfig } from '@main/runtime/thalamus'
+import { Thalamus } from '@main/runtime/thalamus'
+import type { TimeRange as UsageTimeRange } from '@main/runtime/usage'
+import { detectSystem, type SystemInfo } from '@main/system'
+import { checkForUpdatesIfEnabled, initUpdater, installUpdate } from '@main/updater'
 import {
   classifyFile,
   isSupportedExtension,
@@ -71,7 +71,7 @@ import {
   statViewerFile,
   writeViewerFile,
   type ViewerTreeNode
-} from '@main/viewer/viewer'
+} from '@main/viewer'
 import { wlog } from '@main/workspace/logger'
 import {
   bundledCapabilityNames,

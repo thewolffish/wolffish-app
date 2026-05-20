@@ -1,5 +1,5 @@
-import { Select, type SelectOption } from '@components/core/select/Select'
-import { cn } from '@lib/utils/cn/cn'
+import { Select, type SelectOption } from '@components/core/Select'
+import { cn } from '@lib/utils/cn'
 import { PauseIcon, PlayIcon } from 'hugeicons-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'

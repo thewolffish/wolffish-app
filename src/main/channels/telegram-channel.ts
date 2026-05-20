@@ -9,12 +9,12 @@ import {
   type ConversationMessage,
   type ConversationMeta,
   type MessageAttachment
-} from '@main/conversations/conversations'
-import type { Agent } from '@main/runtime/agent/agent'
-import type { ApprovalDecision, ApprovalRequest } from '@main/runtime/amygdala/amygdala'
-import type { Segment, SegmentTurnEndReason } from '@main/runtime/broca/broca'
-import type { CorpusEvents } from '@main/runtime/corpus/corpus'
-import type { LocalProvider } from '@main/runtime/providers/local/local'
+} from '@main/conversations'
+import type { Agent } from '@main/runtime/agent'
+import type { ApprovalDecision, ApprovalRequest } from '@main/runtime/amygdala'
+import type { Segment, SegmentTurnEndReason } from '@main/runtime/broca'
+import type { CorpusEvents } from '@main/runtime/corpus'
+import type { LocalProvider } from '@main/runtime/providers/local'
 import { composeAttachmentContext } from '@main/uploads/compose-attachments'
 import { saveUploadFromBuffer } from '@main/uploads/uploads'
 import {

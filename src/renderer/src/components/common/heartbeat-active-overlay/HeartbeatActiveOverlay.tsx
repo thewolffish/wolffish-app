@@ -1,4 +1,4 @@
-import { cn } from '@lib/utils/cn/cn'
+import { cn } from '@lib/utils/cn'
 import type { HeartbeatLogEntry, HeartbeatRunningJob } from '@preload/index'
 import { Activity04Icon } from 'hugeicons-react'
 import { useEffect, useRef, useState } from 'react'

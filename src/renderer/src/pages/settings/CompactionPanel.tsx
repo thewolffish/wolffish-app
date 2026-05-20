@@ -1,4 +1,4 @@
-import { Select, type SelectOption } from '@components/core/select/Select'
+import { Select, type SelectOption } from '@components/core/Select'
 import type { CompactionConfig } from '@preload/index'
 import { useFlow } from '@providers/flow/useFlow'
 import { useLocale } from '@providers/locale/useLocale'

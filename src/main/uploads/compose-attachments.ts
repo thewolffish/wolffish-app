@@ -1,4 +1,4 @@
-import type { MessageAttachment } from '@main/conversations/conversations'
+import type { MessageAttachment } from '@main/conversations'
 import { workspaceRoot } from '@main/workspace/workspace'
 
 /**

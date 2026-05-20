@@ -3,7 +3,7 @@ import type {
   SkillToolDescriptor,
   ToolExecutionResult,
   WolffishPlugin
-} from '@main/runtime/cerebellum/cerebellum'
+} from '@main/runtime/cerebellum'
 import { workspaceRoot } from '@main/workspace/workspace'
 import fs from 'node:fs/promises'
 import path from 'node:path'

@@ -3,7 +3,7 @@ import type {
   SkillToolDescriptor,
   ToolExecutionResult,
   WolffishPlugin
-} from '@main/runtime/cerebellum/cerebellum'
+} from '@main/runtime/cerebellum'
 import type { WASocket } from '@whiskeysockets/baileys'
 
 export const WHATSAPP_CAPABILITY_NAME = 'whatsapp'

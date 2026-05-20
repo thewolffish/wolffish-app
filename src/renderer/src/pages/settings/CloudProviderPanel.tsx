@@ -1,9 +1,9 @@
-import { Button } from '@components/core/button/Button'
-import { Input } from '@components/core/input/Input'
-import { AnthropicLogo, OpenAILogo } from '@components/core/provider-logos/ProviderLogos'
-import { Select, type SelectOption } from '@components/core/select/Select'
+import { Button } from '@components/core/Button'
+import { Input } from '@components/core/Input'
+import { AnthropicLogo, OpenAILogo } from '@components/core/ProviderLogos'
+import { Select, type SelectOption } from '@components/core/Select'
 import { useToast } from '@components/core/toast/useToast'
-import { cn } from '@lib/utils/cn/cn'
+import { cn } from '@lib/utils/cn'
 import type { CloudProviderConfig, ProviderListEntry, ProviderTestResult } from '@preload/index'
 import {
   AlertCircleIcon,

@@ -1,5 +1,5 @@
 import { useUploadBlob } from '@hooks/use-upload-blob/useUploadBlob'
-import { cn } from '@lib/utils/cn/cn'
+import { cn } from '@lib/utils/cn'
 import { Download01Icon, VideoOffIcon } from 'hugeicons-react'
 import { useCallback } from 'react'
 

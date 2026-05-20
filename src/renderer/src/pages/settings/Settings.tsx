@@ -8,10 +8,10 @@ import {
   OllamaLogo,
   OpenAILogo,
   TelegramLogo
-} from '@components/core/provider-logos/ProviderLogos'
+} from '@components/core/ProviderLogos'
 import { RTL_LOCALES } from '@lib/i18n'
-import { cn } from '@lib/utils/cn/cn'
-import { ModelPicker } from '@pages/model-picker/ModelPicker'
+import { cn } from '@lib/utils/cn'
+import { ModelPicker } from '@pages/ModelPicker'
 import { BravePanel } from '@pages/settings/BravePanel'
 import { CelebrumPanel } from '@pages/settings/CelebrumPanel'
 import { CloudProviderPanel } from '@pages/settings/CloudProviderPanel'

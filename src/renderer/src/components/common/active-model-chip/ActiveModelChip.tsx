@@ -2,8 +2,8 @@ import {
   AnthropicLogo,
   OllamaLogo,
   OpenAILogo
-} from '@components/core/provider-logos/ProviderLogos'
-import { cn } from '@lib/utils/cn/cn'
+} from '@components/core/ProviderLogos'
+import { cn } from '@lib/utils/cn'
 import { CloudIcon } from 'hugeicons-react'
 import type { IconType } from 'react-icons'
 

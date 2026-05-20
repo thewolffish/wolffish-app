@@ -1,5 +1,5 @@
 import { useToast } from '@components/core/toast/useToast'
-import { cn } from '@lib/utils/cn/cn'
+import { cn } from '@lib/utils/cn'
 import type { WeekStartsOn } from '@preload/index'
 import { useFlow } from '@providers/flow/useFlow'
 import { useEffect, useMemo, useState } from 'react'

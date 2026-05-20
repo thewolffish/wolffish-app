@@ -4,9 +4,9 @@ import {
   BraveLogo,
   OllamaLogo,
   OpenAILogo
-} from '@components/core/provider-logos/ProviderLogos'
+} from '@components/core/ProviderLogos'
 import { useToast } from '@components/core/toast/useToast'
-import { cn } from '@lib/utils/cn/cn'
+import { cn } from '@lib/utils/cn'
 import type {
   BraveUsageSummary,
   UsageDailyEntry,

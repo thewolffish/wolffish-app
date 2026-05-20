@@ -1,3 +1,11 @@
+## v1.0.69 — 2026-05-20
+
+### Source Tree Cleanup
+
+Flattened 56 single-file directories that wrapped one file in a redundant folder (e.g. `brave/brave.ts` → `brave.ts`). Import paths are shorter across the board — `@main/brave/brave` becomes `@main/brave`, `@components/core/button/Button` becomes `@components/core/Button`, and so on. No logic or behavior changes; purely structural.
+
+---
+
 ## v1.0.68 — 2026-05-20
 
 ### Live Heartbeat Overlay

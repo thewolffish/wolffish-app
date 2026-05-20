@@ -1,4 +1,4 @@
-import type { Segment, SegmentTurnEndReason, ToolResultStatus } from '@main/runtime/broca/broca'
+import type { Segment, SegmentTurnEndReason, ToolResultStatus } from '@main/runtime/broca'
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 
 export type { Segment, SegmentTurnEndReason, ToolResultStatus }

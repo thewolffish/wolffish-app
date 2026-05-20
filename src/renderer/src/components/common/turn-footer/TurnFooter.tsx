@@ -1,4 +1,4 @@
-import { cn } from '@lib/utils/cn/cn'
+import { cn } from '@lib/utils/cn'
 import { useTranslation } from 'react-i18next'
 
 type FooterReason = 'error'

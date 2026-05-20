@@ -3,7 +3,7 @@ import { FileCard } from '@components/common/file-card/FileCard'
 import { ImageViewer } from '@components/common/image-viewer/ImageViewer'
 import { PdfViewer } from '@components/common/pdf-viewer/PdfViewer'
 import { VideoPlayer } from '@components/common/video-player/VideoPlayer'
-import { cn } from '@lib/utils/cn/cn'
+import { cn } from '@lib/utils/cn'
 import type { MessageAttachment } from '@preload/index'
 import { useEffect, useState } from 'react'
 

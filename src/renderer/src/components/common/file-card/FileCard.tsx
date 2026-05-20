@@ -1,5 +1,5 @@
-import { cn } from '@lib/utils/cn/cn'
-import { formatBytes } from '@lib/utils/format/format'
+import { cn } from '@lib/utils/cn'
+import { formatBytes } from '@lib/utils/format'
 import { Download01Icon, File01Icon } from 'hugeicons-react'
 import { useCallback } from 'react'
 

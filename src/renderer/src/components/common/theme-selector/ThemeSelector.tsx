@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ComputerIcon, Moon02Icon, Sun03Icon } from 'hugeicons-react'
-import { Select, type SelectOption } from '@components/core/select/Select'
+import { Select, type SelectOption } from '@components/core/Select'
 import { useTheme, type ThemeSource } from '@providers/theme/useTheme'
 
 export function ThemeSelector(): React.JSX.Element {

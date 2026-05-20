@@ -1,4 +1,4 @@
-import { cn } from '@lib/utils/cn/cn'
+import { cn } from '@lib/utils/cn'
 import type { Variable } from '@preload/index'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'

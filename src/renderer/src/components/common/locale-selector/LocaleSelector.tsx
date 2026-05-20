@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { GlobalIcon } from 'hugeicons-react'
-import { Select, type SelectOption } from '@components/core/select/Select'
+import { Select, type SelectOption } from '@components/core/Select'
 import { useLocale } from '@providers/locale/useLocale'
 import type { SupportedLocale } from '@lib/i18n'
 

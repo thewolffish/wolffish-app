@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next'
-import { cn } from '@lib/utils/cn/cn'
-import { formatBytes } from '@lib/utils/format/format'
+import { cn } from '@lib/utils/cn'
+import { formatBytes } from '@lib/utils/format'
 
 type Props = {
   freeBytes: number | null

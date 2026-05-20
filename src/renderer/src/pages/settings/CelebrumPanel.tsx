@@ -1,6 +1,6 @@
-import { Badge } from '@components/core/badge/Badge'
+import { Badge } from '@components/core/Badge'
 import { useToast } from '@components/core/toast/useToast'
-import { cn } from '@lib/utils/cn/cn'
+import { cn } from '@lib/utils/cn'
 import type { CapabilityEntry } from '@preload/index'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'

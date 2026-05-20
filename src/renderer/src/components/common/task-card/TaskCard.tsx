@@ -1,5 +1,5 @@
-import { CodeBlock } from '@components/core/code-block/CodeBlock'
-import { cn } from '@lib/utils/cn/cn'
+import { CodeBlock } from '@components/core/CodeBlock'
+import { cn } from '@lib/utils/cn'
 import type { TaskCardState } from '@providers/flow/useFlow'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'

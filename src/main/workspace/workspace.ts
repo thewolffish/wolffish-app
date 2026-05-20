@@ -1,5 +1,5 @@
 import { is } from '@electron-toolkit/utils'
-import { isKnownModelName } from '@main/runtime/models/models'
+import { isKnownModelName } from '@main/runtime/models'
 import { app } from 'electron'
 import yaml from 'js-yaml'
 import { execFile } from 'node:child_process'

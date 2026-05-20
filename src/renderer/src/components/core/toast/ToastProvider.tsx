@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Alert02Icon, CheckmarkCircle02Icon, InformationCircleIcon } from 'hugeicons-react'
-import { cn } from '@lib/utils/cn/cn'
+import { cn } from '@lib/utils/cn'
 import {
   ToastContext,
   type ToastContextValue,

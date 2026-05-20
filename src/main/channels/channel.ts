@@ -1,6 +1,6 @@
-import type { ApprovalDecision, ApprovalRequest } from '@main/runtime/amygdala/amygdala'
-import type { Segment } from '@main/runtime/broca/broca'
-import type { CorpusEvent, CorpusEvents } from '@main/runtime/corpus/corpus'
+import type { ApprovalDecision, ApprovalRequest } from '@main/runtime/amygdala'
+import type { Segment } from '@main/runtime/broca'
+import type { CorpusEvent, CorpusEvents } from '@main/runtime/corpus'
 
 /**
  * A channel is one mouth wolffish can speak through. The Electron renderer

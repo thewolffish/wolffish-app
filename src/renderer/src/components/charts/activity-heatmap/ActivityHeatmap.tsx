@@ -1,4 +1,4 @@
-import { cn } from '@lib/utils/cn/cn'
+import { cn } from '@lib/utils/cn'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
 export type ActivityHeatmapEntry = {

@@ -1,10 +1,10 @@
-import { Button } from '@components/core/button/Button'
+import { Button } from '@components/core/Button'
 import { DiskUsageBar } from '@components/common/disk-usage-bar/DiskUsageBar'
-import { Input } from '@components/core/input/Input'
-import { Modal } from '@components/core/modal/Modal'
+import { Input } from '@components/core/Input'
+import { Modal } from '@components/core/Modal'
 import { useToast } from '@components/core/toast/useToast'
-import { cn } from '@lib/utils/cn/cn'
-import { formatBytes } from '@lib/utils/format/format'
+import { cn } from '@lib/utils/cn'
+import { formatBytes } from '@lib/utils/format'
 import type { DataAnalytics, SystemInfo } from '@preload/index'
 import {
   AiBrain01Icon,

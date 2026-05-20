@@ -1,5 +1,5 @@
-import { CodeBlock } from '@components/core/code-block/CodeBlock'
-import { cn } from '@lib/utils/cn/cn'
+import { CodeBlock } from '@components/core/CodeBlock'
+import { cn } from '@lib/utils/cn'
 import type { RiskLevel } from '@preload/index'
 import type { ApprovalCardState } from '@providers/flow/useFlow'
 import { useTranslation } from 'react-i18next'
