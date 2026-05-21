@@ -59,6 +59,11 @@ function resolveUserPath(input) {
 
 async function readFile(args) {
   const target = resolveUserPath(args?.path)
+  try {
+    await fs.access(target)
+  } catch {
+    return { success: false, error: `not_found: ${target} does not exist. Check the path or list the parent directory first.` }
+  }
   let content
   try {
     content = await fs.readFile(target, 'utf8')

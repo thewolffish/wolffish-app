@@ -77,6 +77,12 @@ confirm_patterns:
 
 ## Rules
 
+- **Verify before reading.** Before calling `file_read`, confirm the file
+  exists — use a directory listing, `file_read` on the parent dir, or prior
+  context that proves the path is real. Skip the check only when you have
+  high certainty the file exists (e.g. you just created it, it appeared in
+  a recent directory listing, or the user pasted its path). Never guess
+  a path and attempt the read blind.
 - Read before you write. Use `file_read` to see what's there before editing.
 - Prefer `file_patch` for surgical edits — it preserves the rest of the file
   exactly as the user wrote it.
