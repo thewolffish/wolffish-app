@@ -184,30 +184,44 @@ export function UpdatesPanel(): React.JSX.Element {
 
           <div className="border-border/60 border-t" />
 
-          <div className="flex flex-col gap-3 min-h-[52px]">
+          <div className="flex flex-col gap-3 min-h-[68px]">
             {phase === 'downloading' ? (
-              <div className="flex items-center justify-between gap-4">
-                <div className="flex flex-col gap-1">
-                  <span className="text-fg text-sm font-medium">
-                    {t('settings.updates.downloadingTitle', 'Downloading update')}
-                  </span>
-                  <p className="text-muted text-xs flex items-center gap-1.5 animate-pulse">
-                    <Download01Icon size={12} className="shrink-0" />
-                    {t('settings.updates.downloadingSubtitle', 'Your update is downloading')}
-                    {downloadPercent > 0 && ` ${downloadPercent}%`}
-                  </p>
+              <>
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex flex-col gap-1">
+                    <span className="text-fg text-sm font-medium">
+                      {t('settings.updates.downloadingTitle', 'Downloading update')}
+                    </span>
+                    <p className="text-muted text-xs flex items-center gap-1.5 animate-pulse">
+                      <Download01Icon size={12} className="shrink-0" />
+                      {t('settings.updates.downloadingSubtitle', 'Your update is downloading')}
+                      {downloadPercent > 0 && ` ${downloadPercent}%`}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled
+                    className={cn(
+                      'bg-primary text-primary-fg flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium shadow-sm',
+                      'cursor-not-allowed opacity-60'
+                    )}
+                  >
+                    <span>{t('settings.updates.install', 'Update')}</span>
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  disabled
-                  className={cn(
-                    'bg-primary text-primary-fg flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium shadow-sm',
-                    'cursor-not-allowed opacity-60'
-                  )}
+                <div
+                  role="progressbar"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={downloadPercent}
+                  className="bg-border/40 h-1 w-full overflow-hidden rounded-full"
                 >
-                  <span>{t('settings.updates.install', 'Update')}</span>
-                </button>
-              </div>
+                  <div
+                    className="bg-primary h-full rounded-full transition-[width] duration-300 ease-out"
+                    style={{ width: `${downloadPercent}%` }}
+                  />
+                </div>
+              </>
             ) : phase === 'ready' || phase === 'installing' ? (
               <div className="flex items-center justify-between gap-4">
                 <div className="flex flex-col gap-1">

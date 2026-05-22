@@ -62,7 +62,18 @@ async function readFile(args) {
   try {
     await fs.access(target)
   } catch {
-    return { success: false, error: `not_found: ${target} does not exist. Check the path or list the parent directory first.` }
+    // Auto-list parent directory so the LLM can self-correct without a second call
+    const parentDir = path.dirname(target)
+    let hint = ''
+    try {
+      const entries = await fs.readdir(parentDir)
+      hint = entries.length > 0
+        ? `\nParent directory ${parentDir} contains: ${entries.join(', ')}`
+        : `\nParent directory ${parentDir} exists but is empty.`
+    } catch {
+      hint = `\nParent directory ${parentDir} also does not exist.`
+    }
+    return { success: false, error: `ENOENT: ${target} not found.${hint}` }
   }
   let content
   try {
