@@ -1,3 +1,11 @@
+## v1.0.76 — 2026-05-22 `Latest`
+
+### What's New After Update
+
+When the app restarts after installing an update, it now opens directly to the changelog so you can see what changed. This only happens once — the next launch goes straight to chat as usual. If the app needs to show a setup screen (Ollama not running, no model selected, onboarding incomplete), that takes priority and the changelog redirect is skipped.
+
+---
+
 ## v1.0.73 — 2026-05-20
 
 ### Expanded Prompt Editor

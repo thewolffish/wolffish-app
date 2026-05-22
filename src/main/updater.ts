@@ -1,6 +1,6 @@
 import { is } from '@electron-toolkit/utils'
 import { wlog } from '@main/workspace/logger'
-import { readConfig } from '@main/workspace/workspace'
+import { patchConfig, readConfig } from '@main/workspace/workspace'
 import { app, BrowserWindow, ipcMain } from 'electron'
 import { autoUpdater, type UpdateDownloadedEvent, type UpdateInfo } from 'electron-updater'
 
@@ -101,6 +101,22 @@ export function initUpdater(): void {
   autoUpdater.on('error', (err) => {
     wlog.error(tag, err)
   })
+}
+
+export async function stampPreUpdateVersion(): Promise<void> {
+  try {
+    await patchConfig((cfg) => ({
+      ...cfg,
+      updates: {
+        ...cfg.updates,
+        enabled: cfg.updates?.enabled ?? true,
+        lastVersion: app.getVersion()
+      }
+    }))
+    wlog.info(tag, `stamped pre-update version ${app.getVersion()}`)
+  } catch (err) {
+    wlog.warn(tag, 'failed to stamp pre-update version', err)
+  }
 }
 
 export function installUpdate(): void {

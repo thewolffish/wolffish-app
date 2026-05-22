@@ -1,4 +1,3 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { DataAnalytics, SystemInfo, WorkspaceStatus } from '@preload/index'
 import {
   FlowContext,
@@ -6,6 +5,7 @@ import {
   type FlowContextValue,
   type Screen
 } from '@providers/flow/useFlow'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 
 // 5 GiB. Anything below this and Wolffish can't pull a model, persist
 // conversations, or breathe — gate the entire app on it.
@@ -72,11 +72,12 @@ export function FlowProvider({ children }: { children: ReactNode }): React.JSX.E
     void Promise.all([
       decideInitialScreen(),
       window.api.data.getAnalytics(),
-      window.api.system.getInfo()
-    ]).then(([r, analytics, sys]) => {
+      window.api.system.getInfo(),
+      window.api.updater.consumePostUpdate().catch(() => false)
+    ]).then(([r, analytics, sys, justUpdated]) => {
       if (cancelled) return
       setStatus(r.status)
-      setScreen(r.screen)
+      setScreen(justUpdated && r.screen === 'chat' ? 'changelog' : r.screen)
       setDataAnalytics(analytics)
       setSystemInfo(sys)
       setReady(true)

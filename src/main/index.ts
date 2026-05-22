@@ -49,7 +49,12 @@ import type { CloudProviderConfig } from '@main/runtime/thalamus'
 import { Thalamus } from '@main/runtime/thalamus'
 import type { TimeRange as UsageTimeRange } from '@main/runtime/usage'
 import { detectSystem, type SystemInfo } from '@main/system'
-import { checkForUpdatesIfEnabled, initUpdater, installUpdate } from '@main/updater'
+import {
+  checkForUpdatesIfEnabled,
+  initUpdater,
+  installUpdate,
+  stampPreUpdateVersion
+} from '@main/updater'
 import {
   classifyFile,
   isSupportedExtension,
@@ -1437,15 +1442,12 @@ app.whenReady().then(async () => {
     return { value }
   })
 
-  ipcMain.handle(
-    'runtime:setLastSettingsState',
-    async (_e, patch: Record<string, string>) => {
-      await patchConfig((c) => ({
-        ...c,
-        lastSettingsState: { ...c.lastSettingsState, ...patch }
-      }))
-    }
-  )
+  ipcMain.handle('runtime:setLastSettingsState', async (_e, patch: Record<string, string>) => {
+    await patchConfig((c) => ({
+      ...c,
+      lastSettingsState: { ...c.lastSettingsState, ...patch }
+    }))
+  })
 
   ipcMain.handle('runtime:setWeekStartsOn', async (_e, value: WeekStartsOn) => {
     await persistWeekStartsOn(value)
@@ -1466,9 +1468,22 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('updater:install', async () => {
     if (is.dev) return
+    await stampPreUpdateVersion()
     await shutdownGracefully()
     quitInProgress = false
     installUpdate()
+  })
+
+  ipcMain.handle('updater:consumePostUpdate', async () => {
+    const cfg = await readConfig()
+    const last = cfg?.updates?.lastVersion
+    if (!last || last === app.getVersion()) return false
+    await patchConfig((c) => {
+      const { lastVersion, ...rest } = c.updates ?? { enabled: true }
+      void lastVersion
+      return { ...c, updates: rest as typeof c.updates }
+    })
+    return true
   })
 
   ipcMain.handle('updater:listChangelogMonths', async () => {

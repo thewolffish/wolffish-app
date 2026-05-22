@@ -134,6 +134,7 @@ export type MemesConfig = {
 
 export type UpdatesConfig = {
   enabled: boolean
+  lastVersion?: string
 }
 
 export type ComputerUseConfig = {

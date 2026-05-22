@@ -527,7 +527,9 @@ export type HeartbeatApi = {
   getJobs: () => Promise<HeartbeatJobView[]>
   getRunningJob: () => Promise<HeartbeatRunningJob | null>
   onJobStarted: (listener: (job: HeartbeatRunningJob) => void) => () => void
-  onJobEnded: (listener: (payload: { id: string; status: 'completed' | 'failed'; error?: string }) => void) => () => void
+  onJobEnded: (
+    listener: (payload: { id: string; status: 'completed' | 'failed'; error?: string }) => void
+  ) => () => void
   onJobLog: (listener: (entry: HeartbeatLogEntry) => void) => () => void
 }
 
@@ -877,6 +879,7 @@ export type UpdaterApi = {
   install: () => Promise<void>
   check: () => Promise<UpdateCheckResult>
   getVersion: () => Promise<string>
+  consumePostUpdate: () => Promise<boolean>
   listChangelogMonths: () => Promise<string[]>
   readChangelog: (month: string, locale?: string) => Promise<string>
   onAvailable: (listener: (event: UpdateAvailableEvent) => void) => () => void
@@ -1190,6 +1193,7 @@ const api: WolffishApi = {
     install: () => ipcRenderer.invoke('updater:install'),
     check: () => ipcRenderer.invoke('updater:check'),
     getVersion: () => ipcRenderer.invoke('updater:getVersion'),
+    consumePostUpdate: () => ipcRenderer.invoke('updater:consumePostUpdate'),
     listChangelogMonths: () => ipcRenderer.invoke('updater:listChangelogMonths'),
     readChangelog: (month: string, locale?: string) =>
       ipcRenderer.invoke('updater:readChangelog', month, locale),
