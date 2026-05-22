@@ -1,8 +1,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { workspaceRoot } from '@main/workspace/workspace'
-import { readConfig } from '@main/workspace/workspace'
-import { streamChat, detect as detectOllama } from '@main/ollama'
+import nlp from 'compromise'
 import type { Segment, SegmentTurnEndReason } from '@main/runtime/broca'
 import type { PersistedApproval, PersistedToolTiming } from '@preload/index'
 
@@ -231,40 +230,33 @@ export function createConversation(model: string | null): ConversationFile {
   }
 }
 
-export async function generateTitle(conv: ConversationFile): Promise<string | null> {
+const MAX_TITLE_WORDS = 5
+
+export function generateTitle(conv: ConversationFile): string {
   const userMsg = conv.messages.find((m) => m.role === 'user')
-  const assistantMsg = conv.messages.find((m) => m.role === 'assistant')
-  if (!userMsg || !assistantMsg) return null
+  if (!userMsg) return 'Untitled'
 
-  const cfg = await readConfig()
-  const model = cfg?.llm.local.model
-  const endpoint = cfg?.llm.local.endpoint
-  if (!model) return null
+  const text = userMsg.content.trim()
+  if (!text) return 'Untitled'
 
-  const reachable = await detectOllama(endpoint)
-  if (!reachable) return null
+  const doc = nlp(text)
 
-  try {
-    const result = await streamChat({
-      endpoint,
-      model,
-      messages: [
-        {
-          role: 'system',
-          content:
-            'Generate a concise title (3-6 words) summarizing this conversation topic. Reply with only the title, nothing else. No quotes, no punctuation at the end.'
-        },
-        { role: 'user', content: userMsg.content },
-        { role: 'assistant', content: assistantMsg.content },
-        { role: 'user', content: 'Generate the title now.' }
-      ],
-      onToken: () => {},
-      temperature: 0.3
-    })
-    const title = result.text.trim().replace(/^["']|["']$/g, '')
-    if (title.length > 0 && title.length < 100) return title
-    return null
-  } catch {
-    return null
+  const topics = doc.topics().out('array') as string[]
+  if (topics.length > 0) {
+    return cap(topics.slice(0, MAX_TITLE_WORDS).join(' '))
   }
+
+  const nouns = doc.nouns().out('array') as string[]
+  if (nouns.length > 0) {
+    return cap(nouns.slice(0, MAX_TITLE_WORDS).join(' '))
+  }
+
+  const words = text.split(/\s+/)
+  return cap(words.slice(0, MAX_TITLE_WORDS).join(' '))
+}
+
+function cap(s: string): string {
+  const t = s.replace(/\s+/g, ' ').trim()
+  if (!t) return 'Untitled'
+  return t.charAt(0).toUpperCase() + t.slice(1)
 }

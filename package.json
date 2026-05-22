@@ -38,6 +38,7 @@
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
     "better-sqlite3": "^12.9.0",
     "chokidar": "^5.0.0",
+    "compromise": "^14.15.0",
     "electron-updater": "^6.8.3",
     "grammy": "^1.42.0",
     "highlight.js": "^11.11.1",

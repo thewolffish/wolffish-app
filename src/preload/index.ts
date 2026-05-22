@@ -440,7 +440,7 @@ export type ConversationApi = {
   save: (conv: ConversationFile) => Promise<{ ok: true }>
   delete: (id: string) => Promise<{ ok: true }>
   create: (model: string | null) => Promise<ConversationFile>
-  generateTitle: (conv: ConversationFile) => Promise<{ title: string | null }>
+  generateTitle: (conv: ConversationFile) => Promise<{ title: string }>
 }
 
 export type ViewerTreeNode =

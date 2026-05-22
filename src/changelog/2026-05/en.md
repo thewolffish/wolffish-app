@@ -1,4 +1,12 @@
-## v1.0.76 — 2026-05-22 `Latest`
+## v1.0.79 — 2026-05-23 `Latest`
+
+### Instant Conversation Titles
+
+Conversation titles are now generated instantly from the first message using local NLP instead of calling the local LLM. The previous approach depended on Ollama being reachable with a model configured — if either failed, the conversation stayed "Untitled" permanently. Titles now appear immediately across all channels (app, Telegram, WhatsApp) with no network dependency.
+
+---
+
+## v1.0.76 — 2026-05-22
 
 ### What's New After Update
 

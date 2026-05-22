@@ -374,15 +374,14 @@ export function Chat(): React.JSX.Element {
       conversationRef.current.updatedAt = Date.now()
       await window.api.conversation.save(conversationRef.current)
 
-      if (!titleGeneratedRef.current && convMessages.length >= 2) {
+      if (!titleGeneratedRef.current && convMessages.some((m) => m.role === 'user')) {
         titleGeneratedRef.current = true
-        window.api.conversation.generateTitle(conversationRef.current).then(({ title }) => {
-          if (title && conversationRef.current) {
-            conversationRef.current.title = title
-            conversationRef.current.updatedAt = Date.now()
-            void window.api.conversation.save(conversationRef.current)
-          }
-        })
+        const { title } = await window.api.conversation.generateTitle(conversationRef.current)
+        if (title !== 'Untitled' && conversationRef.current) {
+          conversationRef.current.title = title
+          conversationRef.current.updatedAt = Date.now()
+          void window.api.conversation.save(conversationRef.current)
+        }
       }
     },
     [currentModel, setActiveConversationId]

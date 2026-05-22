@@ -869,11 +869,9 @@ export class WhatsAppChannel {
 
   private async maybeGenerateTitle(conv: ConversationFile): Promise<void> {
     if (conv.title !== 'Untitled') return
-    const hasUser = conv.messages.some((m) => m.role === 'user')
-    const hasAssistant = conv.messages.some((m) => m.role === 'assistant')
-    if (!hasUser || !hasAssistant) return
-    const title = await generateTitle(conv).catch(() => null)
-    if (!title || title.length === 0) return
+    if (!conv.messages.some((m) => m.role === 'user')) return
+    const title = generateTitle(conv)
+    if (title === 'Untitled') return
     conv.title = title
     conv.updatedAt = Date.now()
     await saveConversation(conv).catch(() => undefined)

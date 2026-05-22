@@ -1601,15 +1601,9 @@ app.whenReady().then(async () => {
     'conversation:create',
     (_e, model: string | null): ConversationFile => createConversation(model)
   )
-  ipcMain.handle(
-    'conversation:generateTitle',
-    (_e, conv: ConversationFile): Promise<{ title: string | null }> => {
-      return trackBackgroundTask(async () => {
-        const title = await generateTitle(conv)
-        return { title }
-      })
-    }
-  )
+  ipcMain.handle('conversation:generateTitle', (_e, conv: ConversationFile): { title: string } => {
+    return { title: generateTitle(conv) }
+  })
 
   // Ollama
   ipcMain.handle('ollama:detect', async () => {
