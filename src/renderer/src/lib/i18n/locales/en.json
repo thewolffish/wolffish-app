@@ -941,7 +941,7 @@
     "voice": {
       "record": "Record voice message",
       "noMic": "No microphone available",
-      "permissionDenied": "Microphone permission denied",
+      "permissionDenied": "Microphone access denied. Grant permission in your system privacy settings.",
       "recording": "Recording",
       "send": "Send recording",
       "delete": "Delete recording",

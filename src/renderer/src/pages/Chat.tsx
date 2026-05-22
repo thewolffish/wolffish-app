@@ -99,11 +99,6 @@ export function Chat(): React.JSX.Element {
     }
   }, [])
 
-  const onNewChat = useCallback(() => {
-    setMessages([])
-    setActiveConversationId(null)
-  }, [setMessages, setActiveConversationId])
-
   const onModeChange = useCallback(
     async (next: boolean) => {
       if (savingMode || next === localOnly) return
@@ -163,6 +158,27 @@ export function Chat(): React.JSX.Element {
   // the next message is sent. Stays visible between turns so the user
   // can see how long the last reply took.
   const [turnEndedAt, setTurnEndedAt] = useState<number | null>(null)
+
+  const onNewChat = useCallback(() => {
+    setMessages([])
+    setActiveConversationId(null)
+    setContextTokens(null)
+    setContextBudget(null)
+    setInputTokens(null)
+    setOutputTokens(null)
+    setTurnStartedAt(null)
+    setTurnEndedAt(null)
+  }, [
+    setMessages,
+    setActiveConversationId,
+    setContextTokens,
+    setContextBudget,
+    setInputTokens,
+    setOutputTokens,
+    setTurnStartedAt,
+    setTurnEndedAt
+  ])
+
   const scrollerRef = useRef<HTMLDivElement>(null)
   const pendingTurnIdRef = useRef<string | null>(null)
   const conversationRef = useRef<ConversationFile | null>(null)
@@ -222,6 +238,18 @@ export function Chat(): React.JSX.Element {
 
   const startRecording = useCallback(async () => {
     try {
+      const access = await window.api.mic.checkAccess()
+      if (access === 'not-determined') {
+        const granted = await window.api.mic.requestAccess()
+        if (!granted) {
+          toast.show({ message: t('chat.voice.permissionDenied'), tone: 'error' })
+          return
+        }
+      } else if (access === 'denied' || access === 'restricted') {
+        toast.show({ message: t('chat.voice.permissionDenied'), tone: 'error' })
+        return
+      }
+
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
         ? 'audio/webm;codecs=opus'

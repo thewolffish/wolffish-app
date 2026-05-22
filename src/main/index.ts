@@ -1084,6 +1084,21 @@ app.whenReady().then(async () => {
   // optional in config.json: an empty string means "use the plugin's
   // own default," which is what every existing config will have until
   // the user touches the panel.
+  ipcMain.handle('mic:checkAccess', (): 'granted' | 'denied' | 'not-determined' | 'restricted' => {
+    if (process.platform === 'darwin' || process.platform === 'win32') {
+      const status = systemPreferences.getMediaAccessStatus('microphone')
+      return status === 'unknown' ? 'granted' : status
+    }
+    return 'granted'
+  })
+
+  ipcMain.handle('mic:requestAccess', async (): Promise<boolean> => {
+    if (process.platform === 'darwin') {
+      return systemPreferences.askForMediaAccess('microphone')
+    }
+    return true
+  })
+
   ipcMain.handle('stt:getConfig', (): Promise<SttConfig> => getSttConfig())
   ipcMain.handle(
     'stt:setConfig',

@@ -889,6 +889,11 @@ export type UpdaterApi = {
 
 export type SttTranscribeResult = { ok: true; transcript: string } | { ok: false; error: string }
 
+export type MicApi = {
+  checkAccess: () => Promise<'granted' | 'denied' | 'not-determined' | 'restricted'>
+  requestAccess: () => Promise<boolean>
+}
+
 export type SttApi = {
   getConfig: () => Promise<SttConfig>
   setConfig: (patch: Partial<SttConfig>) => Promise<{ ok: true; config: SttConfig }>
@@ -966,6 +971,7 @@ export type WolffishApi = {
   github: GitHubApi
   google: GoogleApi
   memes: MemesApi
+  mic: MicApi
   stt: SttApi
   tts: TtsApi
   computerUse: ComputerUseApi
@@ -1174,6 +1180,10 @@ const api: WolffishApi = {
     cancelAuth: () => ipcRenderer.invoke('google:cancelAuth'),
     listAccounts: () => ipcRenderer.invoke('google:listAccounts'),
     removeAccount: (email) => ipcRenderer.invoke('google:removeAccount', email)
+  },
+  mic: {
+    checkAccess: () => ipcRenderer.invoke('mic:checkAccess'),
+    requestAccess: () => ipcRenderer.invoke('mic:requestAccess')
   },
   stt: {
     getConfig: () => ipcRenderer.invoke('stt:getConfig'),

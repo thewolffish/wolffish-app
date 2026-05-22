@@ -1,4 +1,16 @@
-## v1.0.79 — 2026-05-23 `Latest`
+## v1.0.80 — 2026-05-23 `Latest`
+
+### New Conversation Clears Context Meter
+
+Starting a new conversation now resets the context meter and token counters. Previously, the meter kept showing the previous conversation's values until the first message was sent.
+
+### Microphone Permission Prompt
+
+The app now checks system-level microphone permission before attempting to record. On macOS, the system prompt is shown if access hasn't been determined. On Windows, the permission status is checked against system privacy settings. If access was denied on either platform, a toast directs you to your system settings. Previously, clicking the mic button would silently fail on a fresh install or after permission was revoked.
+
+---
+
+## v1.0.79 — 2026-05-23
 
 ### Instant Conversation Titles
 
