@@ -86,9 +86,21 @@ export type ToolError = {
 
 const PERMISSION_RE =
   /permission denied|access denied|need sudo|not permitted|not authorized|EACCES|EPERM|requires admin|requires root|operation not permitted|insufficient privileges|Failed to get sources|assistive access|HTTP 401\b|HTTP 403\b|HTTP 451\b|\bForbidden\b|\bUnauthorized\b/i
-const VALIDATION_RE = /invalid argument|missing required|EINVAL|bad request|HTTP 400\b|HTTP 422\b/i
+// Windows cmd.exe and PowerShell both emit "syntax is incorrect" when a
+// command line is malformed (typically unresolved %ENV% expansion or
+// quoting errors). Treat the same way as EINVAL — retrying the exact
+// same call will produce the exact same error.
+const VALIDATION_RE =
+  /invalid argument|missing required|EINVAL|bad request|HTTP 400\b|HTTP 422\b|syntax is incorrect|incorrect parameter/i
+// Windows phrasings we deliberately add:
+//   * "is not recognized as" — cmd.exe and PowerShell's CommandNotFoundException
+//   * "CommandNotFoundException" — PowerShell typed error name
+//   * "cannot find the file specified" / "cannot find the path specified" —
+//     Win32 GetLastError 2/3, surfaced verbatim by cmd.exe
+// These are the most common deterministic shell errors on Windows; without
+// them the motor retries 10x on a typo and burns ~5 minutes per failure.
 const NOT_FOUND_RE =
-  /command not found|not found|no .+ found|ENOENT|no such file|is not installed|HTTP 404\b|HTTP 410\b/i
+  /command not found|not found|no .+ found|ENOENT|no such file|is not installed|HTTP 404\b|HTTP 410\b|is not recognized as|CommandNotFoundException|cannot find the (?:file|path) specified/i
 const NETWORK_RE = /ECONNREFUSED|ETIMEDOUT|ECONNRESET|network error|fetch failed|DNS resolution/i
 const TIMEOUT_RE = /timed out|timeout|SIGTERM/i
 

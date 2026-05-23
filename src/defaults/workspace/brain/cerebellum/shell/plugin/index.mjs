@@ -1,7 +1,10 @@
-import { spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { access, constants } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import path from 'node:path'
+import { promisify } from 'node:util'
+
+const execFileP = promisify(execFile)
 
 const MAX_OUTPUT_BYTES = 100_000
 
@@ -12,6 +15,54 @@ function resolveCwd(input) {
   if (!raw || raw === '~') return homedir()
   if (raw.startsWith('~/')) return path.join(homedir(), raw.slice(2))
   return raw
+}
+
+// Probe the host once for the best available shell. On Windows the
+// historical default (`cmd.exe`) makes the model's PowerShell-style
+// commands (Start-Process, etc.) deterministically fail; meanwhile the
+// `<device>` block in the system prompt reports `shell: powershell`
+// based on PSModulePath, so the model is being told to write PS syntax
+// against a cmd interpreter. We resolve that by probing PATH for a real
+// PowerShell binary and using it when present. Falls back to cmd.exe if
+// neither pwsh nor powershell.exe is on PATH, so headless / minimal
+// Windows containers still work.
+//
+// Cached so we don't spawn `where` on every shell_exec call. Unix path
+// is unchanged — `/bin/sh` is universal there.
+let shellPromise = null
+
+async function probeWindowsShell() {
+  // Order: PowerShell 7+ (cross-platform, supports `&&` chains),
+  // then Windows PowerShell 5.1 (built-in everywhere since Win7),
+  // then cmd.exe (last-resort, always exists).
+  const candidates = [
+    { name: 'pwsh', args: ['-NoProfile', '-NonInteractive', '-Command'] },
+    { name: 'powershell', args: ['-NoProfile', '-NonInteractive', '-Command'] }
+  ]
+  for (const c of candidates) {
+    try {
+      // `where` succeeds (exit 0) iff the binary is resolvable on PATH.
+      // No version pinning, no absolute paths — works on any Windows
+      // edition that has PowerShell installed (which is all of them
+      // since 2009).
+      await execFileP('where', [c.name], { windowsHide: true })
+      return { bin: c.name, args: c.args }
+    } catch {
+      // not on PATH; try the next
+    }
+  }
+  // Last resort. cmd.exe is guaranteed to exist on every Windows host.
+  return { bin: 'cmd.exe', args: ['/c'] }
+}
+
+function detectShell() {
+  if (shellPromise) return shellPromise
+  if (process.platform !== 'win32') {
+    shellPromise = Promise.resolve({ bin: '/bin/sh', args: ['-c'] })
+    return shellPromise
+  }
+  shellPromise = probeWindowsShell().catch(() => ({ bin: 'cmd.exe', args: ['/c'] }))
+  return shellPromise
 }
 
 const toolDefinitions = [
@@ -60,18 +111,16 @@ async function execShell(args) {
     return { success: false, error: `cwd does not exist or is not accessible: ${cwd}` }
   }
 
-  const isWindows = process.platform === 'win32'
-  const shellBin = isWindows ? 'cmd.exe' : '/bin/sh'
-  const flag = isWindows ? '/c' : '-c'
+  const shell = await detectShell()
 
   if (args?.background === true) {
-    return execBackground({ command, cwd, shellBin, flag })
+    return execBackground({ command, cwd, shell })
   }
 
   const timeoutMs =
     typeof args?.timeout === 'number' && args.timeout > 0 ? args.timeout : 0
 
-  return execForeground({ command, cwd, shellBin, flag, timeoutMs })
+  return execForeground({ command, cwd, shell, timeoutMs })
 }
 
 // detached + ignored stdio + unref is the load-bearing triple: detached makes
@@ -80,13 +129,17 @@ async function execShell(args) {
 // event isn't blocked by descendants holding fd 1/2 open); unref tells Node's
 // event loop not to wait for this child. Without all three, the tool hangs
 // indefinitely even though the user asked for background launch.
-function execBackground({ command, cwd, shellBin, flag }) {
+function execBackground({ command, cwd, shell }) {
   try {
-    const child = spawn(shellBin, [flag, command], {
+    const child = spawn(shell.bin, [...shell.args, command], {
       cwd,
       env: process.env,
       detached: true,
-      stdio: 'ignore'
+      stdio: 'ignore',
+      // windowsHide keeps PowerShell/cmd from briefly flashing a console
+      // window when Wolffish runs as a packaged Electron app — invisible
+      // on Unix.
+      windowsHide: true
     })
     const pid = child.pid
     if (!pid) {
@@ -99,11 +152,15 @@ function execBackground({ command, cwd, shellBin, flag }) {
   }
 }
 
-function execForeground({ command, cwd, shellBin, flag, timeoutMs }) {
+function execForeground({ command, cwd, shell, timeoutMs }) {
   return new Promise((resolve) => {
     let child
     try {
-      child = spawn(shellBin, [flag, command], { cwd, env: process.env })
+      child = spawn(shell.bin, [...shell.args, command], {
+        cwd,
+        env: process.env,
+        windowsHide: true
+      })
     } catch (err) {
       resolve({ success: false, error: err?.message ?? String(err) })
       return

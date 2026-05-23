@@ -340,8 +340,83 @@ async function installViaWinget(id) {
   ])
   const output = (result.stdout + '\n' + result.stderr).trim()
   const command = `winget install --id ${id} -e --accept-source-agreements --accept-package-agreements`
-  if (result.code === 0) return formatInstallResult(true, output, command)
+  if (result.code === 0) {
+    // Newly-installed CLIs land in directories that winget appends to the
+    // *persistent* PATH (registry: HKLM\...\Environment and HKCU\Environment),
+    // but the currently-running Electron process keeps its launch-time PATH.
+    // Without a refresh, the very next call to the freshly installed binary
+    // (e.g. cloudflared after `winget install Cloudflare.cloudflared`) fails
+    // with "not recognized" — invisible to us until the user restarts the app.
+    // Refreshing here makes the install effectively atomic from the model's
+    // perspective. Best-effort: a refresh failure never blocks the success.
+    await refreshWindowsPath()
+    return formatInstallResult(true, output, command)
+  }
   return formatInstallResult(false, output, command)
+}
+
+/**
+ * Re-read the persistent PATH from the Windows registry (machine + user
+ * scopes) and update process.env.PATH so subsequent spawns see binaries
+ * installed during this session. No-op on non-Windows.
+ *
+ * Uses PowerShell's [Environment]::GetEnvironmentVariable rather than
+ * shelling out to reg.exe because PowerShell returns the unexpanded form
+ * pre-joined and is universally available since Windows 7. Falls back
+ * silently if PowerShell isn't on PATH (extremely rare) — the worst case
+ * is the original stale-PATH behavior we already had.
+ */
+async function refreshWindowsPath() {
+  if (process.platform !== 'win32') return
+  try {
+    // Read both scopes and emit them on separate lines so we don't have
+    // to depend on PS-version-specific join cmdlets (`Join-String` is
+    // PowerShell 7+ only — Windows PowerShell 5.1 lacks it). Node joins
+    // the two halves itself. Empty / unset scopes show up as blank
+    // lines, which we filter below.
+    const script =
+      "[Environment]::GetEnvironmentVariable('PATH','Machine');" +
+      "[Environment]::GetEnvironmentVariable('PATH','User')"
+    const { stdout } = await execFileP(
+      'powershell',
+      ['-NoProfile', '-NonInteractive', '-Command', script],
+      { timeout: 5_000, windowsHide: true }
+    )
+    // Merge, don't replace. The current process.env.PATH may contain
+    // session-only entries that aren't in the registry (Electron startup
+    // additions, things Wolffish or its plugins set at boot, prior
+    // in-session installs). Overwriting wipes them. Instead we treat the
+    // registry read as a source of *additional* entries to append.
+    //
+    // Comparison is case-insensitive (Windows filesystem semantics) and
+    // ignores trailing slashes so "C:\Foo" and "C:\Foo\" don't get added
+    // as two distinct entries.
+    const additions = stdout
+      .split(/\r?\n/)
+      .flatMap((line) => line.split(';'))
+      .map((p) => p.trim().replace(/[\\/]+$/, ''))
+      .filter(Boolean)
+    if (additions.length === 0) return
+
+    const current = (process.env.PATH ?? '')
+      .split(';')
+      .map((p) => p.trim())
+      .filter(Boolean)
+    const seen = new Set(current.map((p) => p.toLowerCase().replace(/[\\/]+$/, '')))
+
+    let mutated = false
+    for (const entry of additions) {
+      const key = entry.toLowerCase()
+      if (seen.has(key)) continue
+      seen.add(key)
+      current.push(entry)
+      mutated = true
+    }
+    if (mutated) process.env.PATH = current.join(';')
+  } catch {
+    // Best-effort. If the refresh fails the install still succeeded;
+    // worst case the user restarts the app to pick up the new binary.
+  }
 }
 
 async function installViaLinuxRoot(manager, name) {

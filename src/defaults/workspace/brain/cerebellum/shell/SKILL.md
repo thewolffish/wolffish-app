@@ -82,9 +82,23 @@ confirm_patterns:
 ## Interface
 
 - Tool: `shell_exec`
-- Method: runs commands via the system's default shell (`/bin/sh` on Unix, `cmd.exe` on Windows)
+- Method: runs commands via the host's preferred shell, detected once at startup:
+  - **Unix:** `/bin/sh -c`
+  - **Windows:** PowerShell 7+ (`pwsh`) if installed, else Windows PowerShell 5.1 (`powershell.exe`), else `cmd.exe`. Check the `<device>` block in your system prompt to see which one is active — it's reported as `shell:`.
 - Timeout: none by default — commands run until they exit. You may pass an explicit timeout if you want fast failure on a command you expect to finish quickly.
 - Returns combined stdout+stderr; truncated past ~100 KB
+
+## Writing commands for the active shell
+
+The selected shell determines the syntax that works. Mismatched syntax fails fast (the runtime classifies "is not recognized" / "syntax is incorrect" as non-retryable) — so you'll see one fast error rather than minutes of retries, but you still wasted a call.
+
+- **PowerShell (pwsh or powershell.exe)** — use PowerShell cmdlets and operators. `Get-ChildItem` (or its alias `ls`/`dir`), `Get-Content` (`cat`/`type`), `Start-Process`, `$env:NAME` for env vars, `2>$null` to discard stderr.
+  - On Windows PowerShell 5.1 specifically, `&&` and `||` chain operators do NOT exist — use `;` for unconditional chaining, or wrap in `if ($?) { ... }` for conditional. pwsh 7+ supports `&&`/`||` natively.
+  - `where` is an alias for `Where-Object`; to find an executable use `where.exe foo` or `Get-Command foo`.
+- **cmd.exe** — classic cmd syntax. `dir`, `type`, `set FOO=bar`, `%ENV%` expansion, `2>nul`, `&&` / `||` work.
+- **/bin/sh** — POSIX. `ls`, `cat`, `export FOO=bar`, `$ENV`, `2>/dev/null`, `&&` / `||`.
+
+If you're unsure which dialect a command needs, prefer external `.exe` invocations (`where.exe`, `findstr.exe`, `cloudflared.exe`) — those work identically across all three shells.
 
 ## Timeout guidelines
 
