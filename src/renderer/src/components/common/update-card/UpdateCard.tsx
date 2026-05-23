@@ -16,11 +16,20 @@ export function UpdateCard(): React.JSX.Element | null {
 
   useEffect(() => {
     if (status?.config?.updates?.enabled === false) return
+    let cancelled = false
+    void window.api.updater.getReady().then((event) => {
+      if (cancelled || !event) return
+      cachedUpdate = event
+      setUpdate((prev) => prev ?? event)
+    })
     const unsub = window.api.updater.onReady((event) => {
       cachedUpdate = event
       setUpdate(event)
     })
-    return unsub
+    return () => {
+      cancelled = true
+      unsub()
+    }
   }, [status?.config?.updates?.enabled])
 
   const handleInstall = useCallback(() => {

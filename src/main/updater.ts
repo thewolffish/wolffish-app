@@ -36,6 +36,8 @@ function broadcast<T>(channel: string, payload: T): void {
   }
 }
 
+let lastReady: UpdateReadyEvent | null = null
+
 export function initUpdater(): void {
   ipcMain.handle('updater:check', async () => {
     if (is.dev) return { ok: true, version: null }
@@ -52,6 +54,7 @@ export function initUpdater(): void {
   })
 
   ipcMain.handle('updater:getVersion', () => app.getVersion())
+  ipcMain.handle('updater:getReady', () => lastReady)
 
   if (is.dev) return
 
@@ -92,10 +95,12 @@ export function initUpdater(): void {
     wlog.separator('Download Complete')
     wlog.info(tag, `version  v${info.version}`)
     wlog.info(tag, `file     ${info.downloadedFile}`)
-    broadcast<UpdateReadyEvent>('updater:ready', {
+    const event: UpdateReadyEvent = {
       version: info.version,
       releaseNotes: extractReleaseNotes(info)
-    })
+    }
+    lastReady = event
+    broadcast<UpdateReadyEvent>('updater:ready', event)
   })
 
   autoUpdater.on('error', (err) => {
