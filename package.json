@@ -1,7 +1,7 @@
 {
   "name": "wolffish-app",
   "version": "1.0.80",
-  "description": "Bite through anything. Your brain. Your machine. No leash. 🐟",
+  "description": "Wolffish is a personal AI agent that runs on your machine with full system access. It thinks, acts, and learns — entirely local.",
   "main": "./out/main/index.js",
   "author": "Younes Alturkey <younes@wolffi.sh>",
   "homepage": "https://wolffi.sh",
