@@ -93,5 +93,8 @@
     "react-dom": "^19.2.1",
     "typescript": "^5.9.3",
     "vite": "^7.2.6"
+  },
+  "overrides": {
+    "phantomjs-prebuilt": "npm:empty-npm-package@1.0.0"
   }
 }
