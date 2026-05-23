@@ -1,4 +1,12 @@
-## v1.0.80 — 2026-05-23 `Latest`
+## v1.0.82 — 2026-05-23 `Latest`
+
+### Sidebar Navigation
+
+The chat navigation buttons (workspace, heartbeat, history, settings) have moved from a horizontal toolbar into a collapsible sidebar on the left edge. Click the toggle icon to switch between icon-only and icon-with-label modes — the preference is persisted across restarts. This replaces the previous platform-split layout where macOS used a floating title-bar strip and Windows/Linux used an inline header row. All three platforms now share the same sidebar.
+
+---
+
+## v1.0.80 — 2026-05-23
 
 ### New Conversation Clears Context Meter
 

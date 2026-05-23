@@ -1,6 +1,7 @@
 import { ActiveModelChip } from '@components/common/active-model-chip/ActiveModelChip'
 import { ApprovalCard } from '@components/common/approval-card/ApprovalCard'
 import { AttachmentList } from '@components/common/attachment-list/AttachmentList'
+import { Sidebar } from '@components/common/sidebar/Sidebar'
 import { AudioPlayer } from '@components/common/audio-player/AudioPlayer'
 import { ContextMeter } from '@components/common/context-meter/ContextMeter'
 import { HeartbeatActiveOverlay } from '@components/common/heartbeat-active-overlay/HeartbeatActiveOverlay'
@@ -13,7 +14,6 @@ import { CopyButton } from '@components/core/CopyButton'
 import { Markdown } from '@components/core/Markdown'
 import { OllamaLogo, TelegramLogo, WhatsAppLogo } from '@components/core/ProviderLogos'
 import { useToast } from '@components/core/toast/useToast'
-import { Tooltip } from '@components/core/Tooltip'
 import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
 import type {
@@ -55,11 +55,6 @@ import {
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
-
-// On macOS the OS draws traffic lights in our chrome (titleBarStyle: 'hiddenInset'),
-// so we float the action buttons into that strip. On Windows/Linux the OS still
-// draws a full title bar above the renderer, so the buttons stay in-flow below it.
-const IS_MAC = /mac/i.test(navigator.userAgent)
 
 type ToolResultSegment = Extract<Segment, { kind: 'tool_result' }>
 
@@ -971,78 +966,16 @@ export function Chat(): React.JSX.Element {
           {t('chat.dropToAttach')}
         </div>
       )}
-      <header
-        dir="ltr"
-        className={cn(
-          'flex items-center gap-1',
-          IS_MAC ? 'fixed top-0 right-0 z-50 h-9 px-2 [-webkit-app-region:drag]' : 'px-4 py-2'
-        )}
-      >
-        {currentModel && (
-          <>
-            <Tooltip content={t('chat.workspace')}>
-              <button
-                type="button"
-                onClick={() => goTo('viewer')}
-                disabled={streaming}
-                aria-label={t('chat.workspace')}
-                className={cn(
-                  'text-muted hover:text-fg flex cursor-pointer items-center justify-center rounded-lg p-1.5',
-                  'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-                  'disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-muted'
-                )}
-              >
-                <FileEditIcon size={14} />
-              </button>
-            </Tooltip>
-            <Tooltip content={t('chat.heartbeat')}>
-              <button
-                type="button"
-                onClick={() => goTo('heartbeat')}
-                disabled={streaming}
-                aria-label={t('chat.heartbeat')}
-                className={cn(
-                  'text-muted hover:text-fg flex cursor-pointer items-center justify-center rounded-lg p-1.5',
-                  'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-                  'disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-muted'
-                )}
-              >
-                <HeartCheckIcon size={14} />
-              </button>
-            </Tooltip>
-            <Tooltip content={t('chat.history')}>
-              <button
-                type="button"
-                onClick={() => goTo('history')}
-                disabled={streaming}
-                aria-label={t('chat.history')}
-                className={cn(
-                  'text-muted hover:text-fg flex cursor-pointer items-center justify-center rounded-lg p-1.5',
-                  'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-                  'disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-muted'
-                )}
-              >
-                <Clock01Icon size={14} />
-              </button>
-            </Tooltip>
-            <Tooltip content={t('chat.settings')} align="end">
-              <button
-                type="button"
-                onClick={() => goTo('settings')}
-                disabled={streaming}
-                aria-label={t('chat.settings')}
-                className={cn(
-                  'text-muted hover:text-fg flex cursor-pointer items-center justify-center rounded-lg p-1.5',
-                  'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-                  'disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-muted'
-                )}
-              >
-                <Settings02Icon size={14} />
-              </button>
-            </Tooltip>
-          </>
-        )}
-      </header>
+      {currentModel && (
+        <Sidebar
+          items={[
+            { key: 'viewer', icon: FileEditIcon, label: t('chat.workspace'), onClick: () => goTo('viewer'), disabled: streaming },
+            { key: 'heartbeat', icon: HeartCheckIcon, label: t('chat.heartbeat'), onClick: () => goTo('heartbeat'), disabled: streaming },
+            { key: 'history', icon: Clock01Icon, label: t('chat.history'), onClick: () => goTo('history'), disabled: streaming },
+            { key: 'settings', icon: Settings02Icon, label: t('chat.settings'), onClick: () => goTo('settings'), disabled: streaming }
+          ]}
+        />
+      )}
 
       <div ref={scrollerRef} className="relative flex-1 overflow-y-auto px-6 py-8">
         <div className="pointer-events-none absolute inset-x-0 top-0 z-10 px-6 pt-2">

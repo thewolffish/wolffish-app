@@ -132,6 +132,7 @@ export type WorkspaceConfig = {
     channel?: string
     service?: string
     hippocampusTab?: string
+    sidebarCollapsed?: string
   }
   locale: Locale
   theme: ThemeSource
