@@ -36,7 +36,7 @@ export function Sidebar({ items, className }: SidebarProps): React.JSX.Element {
   return (
     <aside
       className={cn(
-        'fixed top-0 z-30 flex h-full flex-col items-center overflow-x-hidden overflow-y-auto pt-12 transition-[width] duration-200',
+        'fixed top-0 z-30 flex h-full flex-col items-center overflow-x-hidden overflow-y-auto pt-4 transition-[width] duration-200',
         isRtl ? 'right-0' : 'left-0',
         collapsed ? 'w-12 gap-1 px-1.5' : 'w-44 gap-1.5 px-3',
         className
