@@ -45,7 +45,7 @@ export function Sidebar({ items, className }: SidebarProps): React.JSX.Element {
       <div
         aria-hidden
         className={cn(
-          'pointer-events-none absolute top-10 bottom-18 w-px bg-border/40',
+          'pointer-events-none absolute top-0 bottom-18 w-px bg-border/40',
           isRtl ? 'inset-s-0' : 'inset-e-0'
         )}
       />
