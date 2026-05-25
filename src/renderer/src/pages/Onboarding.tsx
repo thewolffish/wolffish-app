@@ -16,7 +16,6 @@ export function Onboarding(): React.JSX.Element {
   const ArrowIcon = isRtl ? ArrowLeft02Icon : ArrowRight02Icon
 
   const isReentry = !!status?.onboardingCompleted
-  const hasModel = !!status?.config?.llm.local.model
 
   const onContinue = async (): Promise<void> => {
     if (!isReentry) {
@@ -24,8 +23,7 @@ export function Onboarding(): React.JSX.Element {
       goTo('ollama-setup')
       return
     }
-    // Re-entered from settings — return to wherever makes sense.
-    goTo(hasModel ? 'chat' : 'ollama-setup')
+    goTo('chat')
   }
 
   return (

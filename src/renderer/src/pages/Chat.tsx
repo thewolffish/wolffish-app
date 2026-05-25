@@ -1,11 +1,11 @@
 import { ActiveModelChip } from '@components/common/active-model-chip/ActiveModelChip'
 import { ApprovalCard } from '@components/common/approval-card/ApprovalCard'
 import { AttachmentList } from '@components/common/attachment-list/AttachmentList'
-import { Sidebar } from '@components/common/sidebar/Sidebar'
 import { AudioPlayer } from '@components/common/audio-player/AudioPlayer'
 import { ContextMeter } from '@components/common/context-meter/ContextMeter'
 import { HeartbeatActiveOverlay } from '@components/common/heartbeat-active-overlay/HeartbeatActiveOverlay'
 import { ProviderErrorCard } from '@components/common/provider-error-card/ProviderErrorCard'
+import { Sidebar } from '@components/common/sidebar/Sidebar'
 import { ToolCard } from '@components/common/tool-card/ToolCard'
 import { TurnFooter } from '@components/common/turn-footer/TurnFooter'
 import { UpdateCard } from '@components/common/update-card/UpdateCard'
@@ -29,6 +29,7 @@ import {
   type ChatMessage,
   type ToolTiming
 } from '@providers/flow/useFlow'
+import { preselectSettingsTab } from '@pages/settings/Settings'
 import { useLocale } from '@providers/locale/useLocale'
 import { useTheme } from '@providers/theme/useTheme'
 import iconTransparent from '@resources/images/icon_transparent.png'
@@ -77,6 +78,10 @@ export function Chat(): React.JSX.Element {
   const currentModel = status?.config?.llm.local.model ?? null
   const showAnalytics = status?.config?.showChatAnalytics ?? true
   const localOnly = status?.config?.llm.localOnly ?? false
+  const hasCloudProvider = (status?.config?.llm.providers ?? []).some(
+    (p) => p.apiKey && p.apiKey.length > 0
+  )
+  const hasAnyModel = !!currentModel || hasCloudProvider
   const [savingMode, setSavingMode] = useState(false)
 
   const [heartbeatActive, setHeartbeatActive] = useState(false)
@@ -93,6 +98,17 @@ export function Chat(): React.JSX.Element {
       offEnded()
     }
   }, [])
+
+  useEffect(() => {
+    void refreshStatus()
+  }, [refreshStatus])
+
+  useEffect(() => {
+    const off = window.api.provider.onUpdated(() => {
+      void refreshStatus()
+    })
+    return off
+  }, [refreshStatus])
 
   const onModeChange = useCallback(
     async (next: boolean) => {
@@ -966,16 +982,38 @@ export function Chat(): React.JSX.Element {
           {t('chat.dropToAttach')}
         </div>
       )}
-      {currentModel && (
-        <Sidebar
-          items={[
-            { key: 'viewer', icon: FileEditIcon, label: t('chat.workspace'), onClick: () => goTo('viewer'), disabled: streaming },
-            { key: 'heartbeat', icon: HeartCheckIcon, label: t('chat.heartbeat'), onClick: () => goTo('heartbeat'), disabled: streaming },
-            { key: 'history', icon: Clock01Icon, label: t('chat.history'), onClick: () => goTo('history'), disabled: streaming },
-            { key: 'settings', icon: Settings02Icon, label: t('chat.settings'), onClick: () => goTo('settings'), disabled: streaming }
-          ]}
-        />
-      )}
+      <Sidebar
+        items={[
+          {
+            key: 'viewer',
+            icon: FileEditIcon,
+            label: t('chat.workspace'),
+            onClick: () => goTo('viewer'),
+            disabled: streaming
+          },
+          {
+            key: 'heartbeat',
+            icon: HeartCheckIcon,
+            label: t('chat.heartbeat'),
+            onClick: () => goTo('heartbeat'),
+            disabled: streaming
+          },
+          {
+            key: 'history',
+            icon: Clock01Icon,
+            label: t('chat.history'),
+            onClick: () => goTo('history'),
+            disabled: streaming
+          },
+          {
+            key: 'settings',
+            icon: Settings02Icon,
+            label: t('chat.settings'),
+            onClick: () => goTo('settings'),
+            disabled: streaming
+          }
+        ]}
+      />
 
       <div ref={scrollerRef} className="relative flex-1 overflow-y-auto px-6 py-8">
         <div className="pointer-events-none absolute inset-x-0 top-0 z-10 px-6 pt-2">
@@ -1002,6 +1040,30 @@ export function Chat(): React.JSX.Element {
                 <h2 className="text-2xl font-semibold tracking-tight">{t('chat.empty.title')}</h2>
                 <p className="text-muted text-sm leading-relaxed">{t('chat.empty.subtitle')}</p>
               </div>
+              {!hasAnyModel && (
+                <div
+                  className={cn(
+                    'border-border bg-surface text-muted',
+                    'mt-2 flex w-full max-w-sm items-center gap-2.5 rounded-xl border px-4 py-3 text-xs leading-relaxed'
+                  )}
+                >
+                  <Settings02Icon size={14} className="shrink-0" aria-hidden />
+                  <p className="flex-1">
+                    {t('chat.noModel.notice')}
+                    <br />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        preselectSettingsTab('model')
+                        goTo('settings')
+                      }}
+                      className="text-primary hover:underline cursor-pointer font-medium"
+                    >
+                      {t('chat.noModel.settingsLink')}
+                    </button>
+                  </p>
+                </div>
+              )}
             </div>
           )}
           {messages.map((m) => (
@@ -1014,6 +1076,30 @@ export function Chat(): React.JSX.Element {
               onRetry={onRetry}
             />
           ))}
+          {hasMessages && !hasAnyModel && (
+            <div
+              className={cn(
+                'border-border bg-surface text-muted',
+                'flex items-center gap-2.5 rounded-xl border px-4 py-3 text-xs leading-relaxed self-start'
+              )}
+            >
+              <Settings02Icon size={14} className="shrink-0" aria-hidden />
+              <p className="flex-1">
+                {t('chat.noModel.notice')}
+                <br />
+                <button
+                  type="button"
+                  onClick={() => {
+                    preselectSettingsTab('model')
+                    goTo('settings')
+                  }}
+                  className="text-primary hover:underline cursor-pointer font-medium"
+                >
+                  {t('chat.noModel.settingsLink')}
+                </button>
+              </p>
+            </div>
+          )}
         </div>
       </div>
 
@@ -1241,7 +1327,8 @@ export function Chat(): React.JSX.Element {
                 <button
                   type="submit"
                   disabled={
-                    !streaming && draft.trim().length === 0 && pendingAttachments.length === 0
+                    !hasAnyModel ||
+                    (!streaming && draft.trim().length === 0 && pendingAttachments.length === 0)
                   }
                   aria-label={streaming ? t('chat.stop') : t('chat.send')}
                   className={cn(
@@ -1347,6 +1434,7 @@ export function Chat(): React.JSX.Element {
                 isDark={isDark}
                 onChange={setDraft}
                 className="flex-1 overflow-auto"
+                placeholder={t('chat.placeholder')}
               />
             </div>
           </div>,

@@ -1,4 +1,16 @@
-## v1.0.82 — 2026-05-23 `Latest`
+## v1.0.88 — 2026-05-25 `Latest`
+
+### Ollama Is Now Optional
+
+The app no longer blocks you at the Ollama setup screen if Ollama isn't installed or running. You land directly in the chat, and a small notice tells you no model is configured with a link to Settings → Models. The send button is disabled until a local model or cloud provider is available. A "Skip for now" link on the Ollama setup page lets you bypass it at any time.
+
+### Code Editor Placeholder
+
+The chat input now shows placeholder text when empty, using CodeMirror's built-in placeholder extension.
+
+---
+
+## v1.0.82 — 2026-05-23
 
 ### Sidebar Navigation
 

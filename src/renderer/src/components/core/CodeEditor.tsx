@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { Compartment, EditorState } from '@codemirror/state'
-import { EditorView, keymap, lineNumbers, highlightActiveLine } from '@codemirror/view'
+import {
+  EditorView,
+  keymap,
+  lineNumbers,
+  highlightActiveLine,
+  placeholder as cmPlaceholder
+} from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import {
   bracketMatching,
@@ -24,6 +30,7 @@ export type CodeEditorProps = {
   readOnly?: boolean
   onChange?: (value: string) => void
   className?: string
+  placeholder?: string
 }
 
 const baseTheme = EditorView.theme({
@@ -66,6 +73,10 @@ const baseTheme = EditorView.theme({
   },
   '&.cm-focused': {
     outline: 'none'
+  },
+  '.cm-placeholder': {
+    color: 'var(--color-muted)',
+    fontStyle: 'italic'
   }
 })
 
@@ -104,7 +115,8 @@ export function CodeEditor({
   isDark,
   readOnly = false,
   onChange,
-  className
+  className,
+  placeholder
 }: CodeEditorProps): React.JSX.Element {
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -147,6 +159,7 @@ export function CodeEditor({
         ]),
         keymap.of([...defaultKeymap, ...historyKeymap]),
         baseTheme,
+        ...(placeholder ? [cmPlaceholder(placeholder)] : []),
         EditorView.theme({}, { dark: isDark }),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) {

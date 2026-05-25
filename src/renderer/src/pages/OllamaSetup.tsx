@@ -5,7 +5,7 @@ import {
   ArrowRight02Icon,
   CheckmarkCircle02Icon,
   Download04Icon,
-  PlayCircleIcon,
+  StartUp01Icon,
   Radar01Icon,
   RefreshIcon
 } from 'hugeicons-react'
@@ -166,16 +166,16 @@ export function OllamaSetup(): React.JSX.Element {
             <div className="flex flex-col gap-4">
               <p className="text-fg text-sm leading-relaxed">{t('ollamaSetup.notRunningHint')}</p>
               <Button size="lg" disabled={starting} onClick={() => void onStart()}>
-                <PlayCircleIcon size={18} />
+                <StartUp01Icon size={18} />
                 <span>{starting ? t('ollamaSetup.starting') : t('ollamaSetup.openOllama')}</span>
               </Button>
               <Button
-                size="md"
+                size="lg"
                 variant="outline"
                 disabled={checking}
                 onClick={() => void onDetectClick()}
               >
-                <RefreshIcon size={16} className={checking ? 'animate-spin' : ''} />
+                <RefreshIcon size={18} className={checking ? 'animate-spin' : ''} />
                 <span>{t('ollamaSetup.detectButton')}</span>
               </Button>
               {polling && reachable === false && (
@@ -192,12 +192,12 @@ export function OllamaSetup(): React.JSX.Element {
                 <span>{t('ollamaSetup.download')}</span>
               </Button>
               <Button
-                size="md"
+                size="lg"
                 variant="outline"
                 disabled={checking}
                 onClick={() => void onDetectClick()}
               >
-                <RefreshIcon size={16} className={checking ? 'animate-spin' : ''} />
+                <RefreshIcon size={18} className={checking ? 'animate-spin' : ''} />
                 <span>{t('ollamaSetup.detectButton')}</span>
               </Button>
               {polling && reachable === false && (
@@ -224,6 +224,16 @@ export function OllamaSetup(): React.JSX.Element {
             <span>{t('ollamaSetup.continue')}</span>
             <ArrowIcon size={18} />
           </Button>
+        )}
+
+        {reachable !== true && knowState && (
+          <button
+            type="button"
+            onClick={() => goTo(returnTo ?? 'chat', null)}
+            className="text-muted hover:text-fg cursor-pointer text-sm underline underline-offset-2 transition-colors self-center"
+          >
+            {t('ollamaSetup.skip')}
+          </button>
         )}
       </div>
     </main>

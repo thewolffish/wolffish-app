@@ -72,6 +72,7 @@
     "detected": "Ollama is running",
     "detectedHint": "Wolffish can now talk to it.",
     "continue": "Continue",
+    "skip": "Skip for now",
     "toast": {
       "notDetected": "Ollama not detected. Install it or start it, then try again.",
       "installedNotRunning": "Ollama is installed but not running. Open it and try again."
@@ -271,6 +272,11 @@
         "openai": "OpenAI"
       },
       "cloudBadge": "Cloud API",
+      "ollamaNotAvailable": {
+        "subtitle": "Ollama is not running or not installed.",
+        "description": "Install or start Ollama to browse and download local models.",
+        "setup": "Set up Ollama"
+      },
       "cloud": {
         "title": "{{provider}}",
         "subtitle": "Used when reachable. Falls back to your local model.",
@@ -919,6 +925,10 @@
     "empty": {
       "title": "Wolffish is ready",
       "subtitle": "Ask anything. I bite through anything."
+    },
+    "noModel": {
+      "notice": "No local model or cloud provider configured.",
+      "settingsLink": "Go to Settings → Models"
     },
     "thinking": "Thinking…",
     "awaitingPermission": "Awaiting permission…",

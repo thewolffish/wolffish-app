@@ -58,9 +58,10 @@ export function FlowProvider({ children }: { children: ReactNode }): React.JSX.E
       return { screen: 'welcome', status: s }
     }
 
-    // 3. Ollama not reachable → setup screen
+    // 3. Ollama not reachable → chat (Ollama is optional; in-chat notice
+    //    guides the user to configure a model if nothing is available).
     if (!ollama.reachable) {
-      return { screen: 'ollama-setup', status: s }
+      return { screen: 'chat', status: s }
     }
 
     // 4. Ollama reachable, no model → picker

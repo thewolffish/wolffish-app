@@ -59,7 +59,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import { useTranslation } from 'react-i18next'
 import type { IconType } from 'react-icons'
 
-type TabKey =
+export type TabKey =
   | 'appearance'
   | 'model'
   | 'channels'
@@ -104,6 +104,21 @@ type SettingsSnapshot = {
 
 let memo: SettingsSnapshot | null = null
 
+/**
+ * One-shot tab override consumed on the very next Settings mount.
+ * Completely bypasses the memo / persisted-state chain so it's
+ * guaranteed to win regardless of caching.
+ */
+let nextTab: TabKey | null = null
+
+/**
+ * Force the next Settings mount to open on `tab` (e.g. `'model'`).
+ * Call this right before `goTo('settings')`.
+ */
+export function preselectSettingsTab(tab: TabKey): void {
+  nextTab = tab
+}
+
 function restoreSnapshot(
   cfg: { lastSettingsState?: Record<string, string> } | null
 ): SettingsSnapshot {
@@ -142,7 +157,14 @@ export function Settings(): React.JSX.Element {
 
   const [snapshot] = useState(() => restoreSnapshot(status?.config ?? null))
 
-  const [active, setActiveRaw] = useState<TabKey>(snapshot.tab)
+  const [active, setActiveRaw] = useState<TabKey>(() => {
+    if (nextTab) {
+      const t = nextTab
+      nextTab = null
+      return t
+    }
+    return snapshot.tab
+  })
   const [provider, setProviderRaw] = useState<Provider>(snapshot.provider)
   const [channel, setChannelRaw] = useState<Channel>(snapshot.channel)
   const [service, setServiceRaw] = useState<Service>(snapshot.service)
@@ -184,6 +206,18 @@ export function Settings(): React.JSX.Element {
   // doesn't need a capability folder, so it's always visible.
   // Probe the cerebellum once on mount and filter the Services
   // sub-tabs to whatever's actually present.
+  const [ollamaReachable, setOllamaReachable] = useState<boolean | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    void window.api.ollama.detect().then((r) => {
+      if (!cancelled) setOllamaReachable(r.reachable)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   const [loadedCapabilities, setLoadedCapabilities] = useState<Set<string> | null>(null)
 
   useEffect(() => {
@@ -460,7 +494,11 @@ export function Settings(): React.JSX.Element {
           <DataPanel />
         </TabPanel>
         <TabPanel active={active === 'model' && provider === 'ollama'}>
-          <ModelPicker />
+          {ollamaReachable === false ? (
+            <OllamaNotAvailableNotice goTo={goTo} t={t} />
+          ) : (
+            <ModelPicker />
+          )}
         </TabPanel>
         <TabPanel active={active === 'model' && provider === 'anthropic'}>
           <CloudProviderPanel provider="anthropic" />
@@ -553,6 +591,46 @@ const SERVICE_ICONS: Record<Service, React.ComponentType<{ size?: number }>> = {
   tts: VolumeHighIcon,
   stt: Mic01Icon,
   computerUse: ComputerIcon
+}
+
+function OllamaNotAvailableNotice({
+  goTo,
+  t
+}: {
+  goTo: (screen: 'ollama-setup', returnTo: 'settings') => void
+  t: (k: string) => string
+}): React.JSX.Element {
+  return (
+    <div className="flex min-h-full w-full items-start justify-center px-6 py-10">
+      <div className="flex w-full max-w-2xl flex-col gap-6">
+        <header className="flex flex-col gap-2">
+          <h1 className="text-fg text-2xl font-semibold tracking-tight">
+            {t('settings.model.providers.ollama')}
+          </h1>
+          <p className="text-muted text-sm leading-relaxed">
+            {t('settings.model.ollamaNotAvailable.subtitle')}
+          </p>
+        </header>
+        <section className="border-border bg-surface flex flex-col items-center gap-4 rounded-2xl border p-8 text-center">
+          <OllamaLogo size={36} className="text-muted" />
+          <p className="text-fg text-sm leading-relaxed">
+            {t('settings.model.ollamaNotAvailable.description')}
+          </p>
+          <button
+            type="button"
+            onClick={() => goTo('ollama-setup', 'settings')}
+            className={cn(
+              'bg-primary text-primary-fg cursor-pointer rounded-lg px-5 py-2 text-sm font-medium',
+              'hover:brightness-110',
+              'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
+            )}
+          >
+            {t('settings.model.ollamaNotAvailable.setup')}
+          </button>
+        </section>
+      </div>
+    </div>
+  )
 }
 
 function AppearancePanel(): React.JSX.Element {

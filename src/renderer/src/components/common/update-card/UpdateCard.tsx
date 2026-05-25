@@ -68,20 +68,6 @@ export function UpdateCard(): React.JSX.Element | null {
       <div className="flex shrink-0 items-center gap-1.5">
         <button
           type="button"
-          onClick={handleInstall}
-          disabled={installing}
-          className={cn(
-            'bg-primary text-primary-fg flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-medium shadow-sm transition-colors',
-            'hover:bg-primary/90',
-            'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-            installing ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
-          )}
-        >
-          <span>{t('update.install', 'Update')}</span>
-        </button>
-
-        <button
-          type="button"
           onClick={() => setDismissed(true)}
           disabled={installing}
           aria-label={t('common.close', 'Close')}
@@ -93,6 +79,20 @@ export function UpdateCard(): React.JSX.Element | null {
           )}
         >
           <Cancel01Icon size={14} />
+        </button>
+
+        <button
+          type="button"
+          onClick={handleInstall}
+          disabled={installing}
+          className={cn(
+            'bg-primary text-primary-fg flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-medium shadow-sm transition-colors',
+            'hover:bg-primary/90',
+            'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+            installing ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
+          )}
+        >
+          <span>{t('update.install', 'Update')}</span>
         </button>
       </div>
     </div>
