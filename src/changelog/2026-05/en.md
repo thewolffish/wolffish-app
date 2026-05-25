@@ -1,4 +1,16 @@
-## v1.0.88 — 2026-05-25 `Latest`
+## v1.0.89 — 2026-05-25 `Latest`
+
+### DeepSeek Billing Fix
+
+The 16.6% billing offset (calibrated for Anthropic) is no longer applied to DeepSeek usage. DeepSeek costs now reflect the raw token math.
+
+### DeepSeek Promoted in Settings
+
+DeepSeek now appears above Anthropic and OpenAI in the provider list.
+
+---
+
+## v1.0.88 — 2026-05-25
 
 ### Ollama Is Now Optional
 

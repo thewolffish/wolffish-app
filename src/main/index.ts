@@ -243,6 +243,26 @@ async function fetchProviderModels(
       return { ok: true, models }
     }
 
+    if (id === 'deepseek') {
+      const res = await fetch('https://api.deepseek.com/models', {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${apiKey}` }
+      })
+      if (!res.ok) {
+        const text = await res.text().catch(() => '')
+        return { ok: false, ...classifyHttpError(res.status, text) }
+      }
+      const body = (await res.json()) as {
+        data?: Array<{ id: string; created?: number }>
+      }
+      const models = (body.data ?? [])
+        .filter((m) => isDeepSeekChatModel(m.id))
+        .slice()
+        .sort((a, b) => (b.created ?? 0) - (a.created ?? 0))
+        .map((m) => m.id)
+      return { ok: true, models }
+    }
+
     const res = await fetch('https://api.openai.com/v1/models', {
       method: 'GET',
       headers: { Authorization: `Bearer ${apiKey}` }
@@ -276,6 +296,10 @@ function isOpenAIChatModel(id: string): boolean {
   }
   if (/^o\d/.test(id)) return true
   return false
+}
+
+function isDeepSeekChatModel(id: string): boolean {
+  return id.startsWith('deepseek-')
 }
 
 /**

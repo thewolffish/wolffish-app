@@ -14,6 +14,7 @@ export type SelectProps<T extends string> = {
   onChange: (value: T) => void
   label?: string
   disabled?: boolean
+  placeholder?: string
   className?: string
   id?: string
   /** Max height of the dropdown list in pixels. Beyond this, the list scrolls. */
@@ -26,6 +27,7 @@ export function Select<T extends string>({
   onChange,
   label,
   disabled = false,
+  placeholder,
   className,
   id,
   maxHeight = 300
@@ -90,7 +92,9 @@ export function Select<T extends string>({
             {selected?.icon && (
               <span className="text-muted flex shrink-0 items-center">{selected.icon}</span>
             )}
-            <span className="truncate">{selected?.label}</span>
+            <span className={cn('truncate', !selected && placeholder && 'text-muted')}>
+              {selected?.label ?? placeholder}
+            </span>
           </span>
           <ArrowDown01Icon
             size={16}

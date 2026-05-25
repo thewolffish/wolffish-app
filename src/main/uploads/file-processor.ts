@@ -14,7 +14,7 @@ export type ProcessedAttachment = {
 }
 
 export type FileProcessorOptions = {
-  provider: 'anthropic' | 'openai' | 'local'
+  provider: 'anthropic' | 'openai' | 'deepseek' | 'local'
   supportsVision: boolean
 }
 

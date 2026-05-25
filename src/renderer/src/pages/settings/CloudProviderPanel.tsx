@@ -1,6 +1,6 @@
 import { Button } from '@components/core/Button'
 import { Input } from '@components/core/Input'
-import { AnthropicLogo, OpenAILogo } from '@components/core/ProviderLogos'
+import { AnthropicLogo, DeepSeekLogo, OpenAILogo } from '@components/core/ProviderLogos'
 import { Select, type SelectOption } from '@components/core/Select'
 import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn'
@@ -19,9 +19,10 @@ import type { IconType } from 'react-icons'
 type ProviderId = CloudProviderConfig['id']
 type Status = 'untested' | 'testing' | 'invalid'
 
-const PROVIDER_LOGOS: Record<ProviderId, IconType> = {
+const PROVIDER_LOGOS: Record<ProviderId, IconType | React.ComponentType<{ size?: number; className?: string }>> = {
   anthropic: AnthropicLogo,
-  openai: OpenAILogo
+  openai: OpenAILogo,
+  deepseek: DeepSeekLogo
 }
 
 export function CloudProviderPanel({ provider }: { provider: ProviderId }): React.JSX.Element {
@@ -334,34 +335,28 @@ export function CloudProviderPanel({ provider }: { provider: ProviderId }): Reac
             </div>
           </div>
 
-          {hasModels && model !== null ? (
-            <Select<string>
-              label={t('settings.model.cloud.model')}
-              value={model}
-              options={modelOptions}
-              disabled={saving}
-              onChange={(next) => void onSelectModel(next)}
-            />
-          ) : (
-            <p className="text-muted text-xs leading-relaxed">
-              {t('settings.model.cloud.modelHint')}
-            </p>
-          )}
+          <Select<string>
+            label={t('settings.model.cloud.model')}
+            value={model ?? ''}
+            options={modelOptions}
+            disabled={saving || !hasModels}
+            placeholder={t('settings.model.cloud.modelHint')}
+            onChange={(next) => void onSelectModel(next)}
+          />
 
-          {showPriority && currentPosition !== null && (
-            <div className="flex flex-col gap-1.5">
-              <Select<string>
-                label={t('settings.model.cloud.priority')}
-                value={String(currentPosition)}
-                options={priorityOptions}
-                disabled={saving}
-                onChange={(next) => void onPriorityChange(next)}
-              />
-              <p className="text-muted text-xs leading-relaxed">
-                {t('settings.model.cloud.priorityDescription')}
-              </p>
-            </div>
-          )}
+          <div className="flex flex-col gap-1.5">
+            <Select<string>
+              label={t('settings.model.cloud.priority')}
+              value={currentPosition !== null ? String(currentPosition) : ''}
+              options={priorityOptions}
+              disabled={saving || !showPriority}
+              placeholder={t('settings.model.cloud.priorityHint')}
+              onChange={(next) => void onPriorityChange(next)}
+            />
+            <p className="text-muted text-xs leading-relaxed">
+              {t('settings.model.cloud.priorityDescription')}
+            </p>
+          </div>
 
           <StatusLine status={status} error={error} hasModels={hasModels} />
 

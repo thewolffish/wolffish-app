@@ -250,7 +250,7 @@ export class Agent {
   private async processHistoryAttachments(history: ChatMessage[]): Promise<ChatMessage[]> {
     const provider = this.thalamus.getActiveProvider()
     const providerKey: FileProcessorOptions['provider'] =
-      provider === 'anthropic' ? 'anthropic' : provider === 'openai' ? 'openai' : 'local'
+      provider === 'anthropic' ? 'anthropic' : provider === 'openai' ? 'openai' : provider === 'deepseek' ? 'deepseek' : 'local'
     const supportsVision = providerKey !== 'local' || (await this.thalamus.localSupportsVision())
 
     const out: ChatMessage[] = []

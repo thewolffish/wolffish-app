@@ -541,7 +541,7 @@ export class Brainstem {
               kind: 'daily',
               cron: dailyCron,
               label: 'Daily compaction',
-              body: ''
+              body: 'heartbeat.overlay.compactionDaily'
             },
             () => this.runCompaction(undefined, 'compaction-daily').then(() => undefined)
           )
@@ -562,7 +562,7 @@ export class Brainstem {
               kind: 'weekly',
               cron: weeklyCron,
               label: 'Weekly consolidation',
-              body: ''
+              body: 'heartbeat.overlay.compactionWeekly'
             },
             () => this.runWeeklyReview('compaction-weekly')
           )

@@ -12,10 +12,18 @@ import { UpdateCard } from '@components/common/update-card/UpdateCard'
 import { CodeEditor } from '@components/core/CodeEditor'
 import { CopyButton } from '@components/core/CopyButton'
 import { Markdown } from '@components/core/Markdown'
-import { OllamaLogo, TelegramLogo, WhatsAppLogo } from '@components/core/ProviderLogos'
+import {
+  AnthropicLogo,
+  DeepSeekLogo,
+  OllamaLogo,
+  OpenAILogo,
+  TelegramLogo,
+  WhatsAppLogo
+} from '@components/core/ProviderLogos'
 import { useToast } from '@components/core/toast/useToast'
 import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
+import { preselectSettingsTab } from '@pages/settings/Settings'
 import type {
   ConversationChannel,
   ConversationFile,
@@ -29,7 +37,6 @@ import {
   type ChatMessage,
   type ToolTiming
 } from '@providers/flow/useFlow'
-import { preselectSettingsTab } from '@pages/settings/Settings'
 import { useLocale } from '@providers/locale/useLocale'
 import { useTheme } from '@providers/theme/useTheme'
 import iconTransparent from '@resources/images/icon_transparent.png'
@@ -78,9 +85,21 @@ export function Chat(): React.JSX.Element {
   const currentModel = status?.config?.llm.local.model ?? null
   const showAnalytics = status?.config?.showChatAnalytics ?? true
   const localOnly = status?.config?.llm.localOnly ?? false
-  const hasCloudProvider = (status?.config?.llm.providers ?? []).some(
-    (p) => p.apiKey && p.apiKey.length > 0
+  const cloudProviders = useMemo(
+    () => status?.config?.llm.providers ?? [],
+    [status?.config?.llm.providers]
   )
+  const cloudPriority = status?.config?.llm.cloudPriority
+  const hasCloudProvider = cloudProviders.some((p) => p.apiKey && p.apiKey.length > 0)
+  const activeCloudProvider = useMemo(() => {
+    const withKey = cloudProviders.filter((p) => p.apiKey && p.apiKey.length > 0)
+    if (withKey.length === 0) return null
+    if (cloudPriority && cloudPriority.length > 0) {
+      const first = cloudPriority.find((id) => withKey.some((p) => p.id === id))
+      if (first) return first
+    }
+    return withKey[0].id
+  }, [cloudProviders, cloudPriority])
   const hasAnyModel = !!currentModel || hasCloudProvider
   const [savingMode, setSavingMode] = useState(false)
 
@@ -411,6 +430,10 @@ export function Chat(): React.JSX.Element {
 
       conversationRef.current.messages = convMessages
       conversationRef.current.updatedAt = Date.now()
+      conversationRef.current.contextMeter =
+        inputTokens != null && contextBudget != null
+          ? { inputTokens, contextBudget }
+          : (conversationRef.current.contextMeter ?? null)
       await window.api.conversation.save(conversationRef.current)
 
       if (!titleGeneratedRef.current && convMessages.some((m) => m.role === 'user')) {
@@ -423,7 +446,7 @@ export function Chat(): React.JSX.Element {
         }
       }
     },
-    [currentModel, setActiveConversationId]
+    [currentModel, setActiveConversationId, inputTokens, contextBudget]
   )
 
   useEffect(() => {
@@ -440,6 +463,13 @@ export function Chat(): React.JSX.Element {
         if (!conv || activeConversationId !== targetId) return
         conversationRef.current = conv
         titleGeneratedRef.current = conv.title !== 'Untitled'
+        if (conv.contextMeter) {
+          setInputTokens(conv.contextMeter.inputTokens)
+          setContextBudget(conv.contextMeter.contextBudget)
+        } else {
+          setInputTokens(null)
+          setContextBudget(null)
+        }
         const raw = conv.workingFolder
         const folders = Array.isArray(raw) ? raw : typeof raw === 'string' ? [raw] : []
         setStoredFolders(folders)
@@ -1186,6 +1216,7 @@ export function Chat(): React.JSX.Element {
                 value={localOnly}
                 onChange={onModeChange}
                 disabled={savingMode || streaming}
+                activeCloudProvider={activeCloudProvider}
               />
             </div>
             <button
@@ -1801,23 +1832,37 @@ function StatusBar({
   )
 }
 
+const CLOUD_PROVIDER_LOGOS: Record<string, React.ComponentType<{ size?: number }>> = {
+  anthropic: AnthropicLogo,
+  openai: OpenAILogo,
+  deepseek: DeepSeekLogo
+}
+
 function ModeToggle({
   value,
   onChange,
-  disabled
+  disabled,
+  activeCloudProvider
 }: {
   value: boolean
   onChange: (next: boolean) => void
   disabled: boolean
+  activeCloudProvider: string | null
 }): React.JSX.Element {
   const { t } = useTranslation()
+
+  const cloudIcon = (activeCloudProvider && CLOUD_PROVIDER_LOGOS[activeCloudProvider]) || CloudIcon
+  const cloudLabel = activeCloudProvider
+    ? t(`settings.model.providers.${activeCloudProvider}`)
+    : t('chat.modeToggle.cloud')
+
   const modes: {
     key: 'local' | 'cloud'
     label: string
     Icon: React.ComponentType<{ size?: number }>
   }[] = [
     { key: 'local', label: t('chat.modeToggle.local'), Icon: OllamaLogo },
-    { key: 'cloud', label: t('chat.modeToggle.cloud'), Icon: CloudIcon }
+    { key: 'cloud', label: cloudLabel, Icon: cloudIcon }
   ]
   const current: 'local' | 'cloud' = value ? 'local' : 'cloud'
   return (
@@ -1838,7 +1883,7 @@ function ModeToggle({
             aria-selected={active}
             onClick={() => onChange(m.key === 'local')}
             className={cn(
-              'flex w-14 cursor-pointer flex-col items-center gap-0.5 rounded-md px-1.5 py-1',
+              'flex w-18 cursor-pointer flex-col items-center gap-0.5 rounded-md px-1.5 py-1',
               'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
               active
                 ? 'bg-primary text-primary-fg'
@@ -1847,7 +1892,9 @@ function ModeToggle({
             )}
           >
             <Icon size={14} />
-            <span className="text-[10px] leading-tight font-medium">{m.label}</span>
+            <span className="max-w-full truncate text-[10px] leading-tight font-medium">
+              {m.label}
+            </span>
           </button>
         )
       })}

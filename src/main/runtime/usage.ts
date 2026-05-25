@@ -103,6 +103,15 @@ const OPENAI_PRICING: Record<string, ModelPricing> = {
   'o4-mini': { input: 1.1 / 1e6, output: 4.4 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 }
 }
 
+// https://api-docs.deepseek.com/quick_start/pricing
+// DeepSeek auto-caches at ~2% of input rate; no write premium.
+const DEEPSEEK_PRICING: Record<string, ModelPricing> = {
+  'deepseek-v4-pro': { input: 0.435 / 1e6, output: 0.87 / 1e6, cacheWrite: 1.0, cacheRead: 0.02 },
+  'deepseek-v4-flash': { input: 0.14 / 1e6, output: 0.28 / 1e6, cacheWrite: 1.0, cacheRead: 0.02 },
+  'deepseek-chat': { input: 0.27 / 1e6, output: 1.1 / 1e6, cacheWrite: 1.0, cacheRead: 0.02 },
+  'deepseek-reasoner': { input: 0.55 / 1e6, output: 2.19 / 1e6, cacheWrite: 1.0, cacheRead: 0.02 }
+}
+
 const LOCAL_EQUIVALENT_PRICING: ModelPricing = {
   input: 0,
   output: 0,
@@ -206,7 +215,7 @@ export class Usage {
     }
 
     const providers: ProviderUsageSummary[] = []
-    for (const pid of ['local', 'anthropic', 'openai'] as ProviderId[]) {
+    for (const pid of ['local', 'anthropic', 'openai', 'deepseek'] as ProviderId[]) {
       const bucket = byProvider.get(pid)
       if (!bucket) {
         providers.push({
@@ -403,7 +412,8 @@ export class Usage {
     const providerFiles: Array<{ file: string; provider: ProviderId }> = [
       { file: 'ollama.md', provider: 'local' },
       { file: 'anthropic.md', provider: 'anthropic' },
-      { file: 'openai.md', provider: 'openai' }
+      { file: 'openai.md', provider: 'openai' },
+      { file: 'deepseek.md', provider: 'deepseek' }
     ]
 
     for (const { file, provider } of providerFiles) {
@@ -472,7 +482,12 @@ export function calculateCost(
       inputTokens * LOCAL_EQUIVALENT_PRICING.input + outputTokens * LOCAL_EQUIVALENT_PRICING.output
     )
   }
-  const table = provider === 'anthropic' ? ANTHROPIC_PRICING : OPENAI_PRICING
+  const table =
+    provider === 'anthropic'
+      ? ANTHROPIC_PRICING
+      : provider === 'deepseek'
+        ? DEEPSEEK_PRICING
+        : OPENAI_PRICING
   const pricing = findPricing(model, table)
   // Fact-based: published per-token rates applied to reported token counts
   const raw =
@@ -480,8 +495,8 @@ export function calculateCost(
     (cacheCreationTokens ?? 0) * pricing.input * pricing.cacheWrite +
     (cacheReadTokens ?? 0) * pricing.input * pricing.cacheRead +
     outputTokens * pricing.output
-  // Offset: empirical gap between token math and actual dashboard billing
-  return raw * (1 + CLOUD_BILLING_OFFSET)
+  const offset = provider === 'anthropic' || provider === 'openai' ? CLOUD_BILLING_OFFSET : 0
+  return raw * (1 + offset)
 }
 
 function findPricing(model: string, table: Record<string, ModelPricing>): ModelPricing {
@@ -543,6 +558,7 @@ function formatTime(d: Date): string {
 function providerLabel(provider: ProviderId): string {
   if (provider === 'local') return 'Ollama'
   if (provider === 'anthropic') return 'Anthropic'
+  if (provider === 'deepseek') return 'DeepSeek'
   return 'OpenAI'
 }
 

@@ -18,7 +18,7 @@ export type LocalModelConfig = {
 }
 
 export type CloudProviderConfig = {
-  id: 'anthropic' | 'openai'
+  id: 'anthropic' | 'openai' | 'deepseek'
   model: string
   apiKey: string
   // Cached from the provider's /v1/models endpoint. Refreshed on app

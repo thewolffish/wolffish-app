@@ -2,6 +2,7 @@ import { ActivityHeatmap } from '@components/charts/activity-heatmap/ActivityHea
 import {
   AnthropicLogo,
   BraveLogo,
+  DeepSeekLogo,
   OllamaLogo,
   OpenAILogo
 } from '@components/core/ProviderLogos'
@@ -30,7 +31,7 @@ import { useTranslation } from 'react-i18next'
 
 type IconComp = React.ComponentType<{ size?: number; className?: string }>
 
-type ProviderId = 'local' | 'anthropic' | 'openai'
+type ProviderId = 'local' | 'anthropic' | 'openai' | 'deepseek'
 
 const TIME_RANGES: UsageTimeRange[] = [
   'today',
@@ -44,7 +45,8 @@ const TIME_RANGES: UsageTimeRange[] = [
 const PROVIDER_ICONS: Record<ProviderId, React.ComponentType<{ size: number }>> = {
   local: OllamaLogo,
   anthropic: AnthropicLogo,
-  openai: OpenAILogo
+  openai: OpenAILogo,
+  deepseek: DeepSeekLogo
 }
 
 export function UsagePanel(): React.JSX.Element {

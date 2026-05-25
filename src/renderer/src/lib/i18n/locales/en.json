@@ -269,7 +269,8 @@
       "providers": {
         "ollama": "Ollama",
         "anthropic": "Anthropic",
-        "openai": "OpenAI"
+        "openai": "OpenAI",
+        "deepseek": "DeepSeek"
       },
       "cloudBadge": "Cloud API",
       "ollamaNotAvailable": {
@@ -287,6 +288,7 @@
         "model": "Model",
         "modelHint": "Add a key and test the connection below.",
         "priority": "Fallback Order",
+        "priorityHint": "Configure multiple providers to set priority.",
         "priorityDescription": "Determines which cloud provider is tried first when multiple are configured.",
         "priorityOptions": {
           "1": "1st",
@@ -843,6 +845,7 @@
         "local": "Ollama",
         "anthropic": "Anthropic",
         "openai": "OpenAI",
+        "deepseek": "DeepSeek",
         "brave": "Brave Search"
       },
       "tokens": "tokens",
@@ -1077,7 +1080,9 @@
       "startedAt": "Started at {{time}}",
       "activity": "Activity",
       "waiting": "Waiting for output…",
-      "blocked": "Chat is paused while a heartbeat job is running."
+      "blocked": "Chat is paused while a heartbeat job is running.",
+      "compactionDaily": "Summarize today's episodes and promote key facts to long-term knowledge.",
+      "compactionWeekly": "Consolidate the past week's episodes into a digest."
     }
   },
   "history": {

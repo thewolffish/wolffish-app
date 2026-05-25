@@ -19,7 +19,9 @@ export function HeartbeatActiveOverlay(): React.JSX.Element | null {
       if (cancelled) return
       setRunningJob(job)
     })
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   useEffect(() => {
@@ -83,9 +85,11 @@ export function HeartbeatActiveOverlay(): React.JSX.Element | null {
           </div>
         </div>
 
-        <pre className="text-muted bg-surface border-border w-full rounded-lg border px-3 py-2 text-[11px] leading-relaxed whitespace-pre-wrap max-h-16 overflow-hidden">
-          {runningJob.body}
-        </pre>
+        {runningJob.body ? (
+          <pre className="text-muted bg-surface border-border w-full rounded-lg border px-3 py-2 text-[11px] leading-relaxed whitespace-pre-wrap max-h-16 overflow-hidden">
+            {t(runningJob.body)}
+          </pre>
+        ) : null}
 
         <div className="border-border bg-surface/50 w-full rounded-lg border">
           <div className="text-muted border-border border-b px-3 py-1.5 text-[10px] font-medium uppercase tracking-wide">
@@ -120,9 +124,7 @@ export function HeartbeatActiveOverlay(): React.JSX.Element | null {
           </div>
         </div>
 
-        <p className="text-muted/50 text-center text-[11px]">
-          {t('heartbeat.overlay.blocked')}
-        </p>
+        <p className="text-muted/50 text-center text-[11px]">{t('heartbeat.overlay.blocked')}</p>
       </div>
     </main>
   )
@@ -153,11 +155,7 @@ function LogKindDot({
   })()
   return (
     <span
-      className={cn(
-        'mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full',
-        color,
-        active && 'animate-pulse'
-      )}
+      className={cn('mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full', color, active && 'animate-pulse')}
     />
   )
 }

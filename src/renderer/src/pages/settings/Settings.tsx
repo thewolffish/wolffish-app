@@ -3,6 +3,7 @@ import { ThemeSelector } from '@components/common/theme-selector/ThemeSelector'
 import {
   AnthropicLogo,
   BraveLogo,
+  DeepSeekLogo,
   GoogleLogo,
   NotionLogo,
   OllamaLogo,
@@ -506,6 +507,9 @@ export function Settings(): React.JSX.Element {
         <TabPanel active={active === 'model' && provider === 'openai'}>
           <CloudProviderPanel provider="openai" />
         </TabPanel>
+        <TabPanel active={active === 'model' && provider === 'deepseek'}>
+          <CloudProviderPanel provider="deepseek" />
+        </TabPanel>
         <TabPanel active={active === 'services' && effectiveService === 'tts' && ttsAvailable}>
           <TextToSpeechPanel />
         </TabPanel>
@@ -560,13 +564,14 @@ function TabPanel({
   return <>{children}</>
 }
 
-type Provider = 'ollama' | 'anthropic' | 'openai'
-const PROVIDERS: Provider[] = ['ollama', 'anthropic', 'openai']
+type Provider = 'ollama' | 'anthropic' | 'openai' | 'deepseek'
+const PROVIDERS: Provider[] = ['ollama', 'deepseek', 'anthropic', 'openai']
 
-const PROVIDER_ICONS: Record<Provider, IconType> = {
+const PROVIDER_ICONS: Record<Provider, IconType | React.ComponentType<{ size?: number; className?: string }>> = {
   ollama: OllamaLogo,
   anthropic: AnthropicLogo,
-  openai: OpenAILogo
+  openai: OpenAILogo,
+  deepseek: DeepSeekLogo
 }
 
 type Channel = 'telegram' | 'whatsapp'

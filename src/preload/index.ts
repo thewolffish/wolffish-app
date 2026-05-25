@@ -42,7 +42,7 @@ export type LocalModelConfig = {
 }
 
 export type CloudProviderConfig = {
-  id: 'anthropic' | 'openai'
+  id: 'anthropic' | 'openai' | 'deepseek'
   model: string
   apiKey: string
   models?: string[]
@@ -219,6 +219,7 @@ export type ConversationFile = {
   channel?: ConversationChannel
   sealed?: boolean
   workingFolder?: string[] | null
+  contextMeter?: { inputTokens: number; contextBudget: number } | null
 }
 
 export type ConversationMeta = {
@@ -451,7 +452,7 @@ export type ViewerTreeNode =
 export type UsageTimeRange = 'today' | 'this_month' | '3_months' | '6_months' | 'ytd' | 'all_time'
 
 export type UsageProviderSummary = {
-  provider: 'anthropic' | 'openai' | 'local'
+  provider: 'anthropic' | 'openai' | 'deepseek' | 'local'
   totalInputTokens: number
   totalOutputTokens: number
   totalCost: number

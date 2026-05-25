@@ -1,5 +1,6 @@
 import type { Corpus } from '@main/runtime/corpus'
 import { AnthropicProvider } from '@main/runtime/providers/anthropic'
+import { DeepSeekProvider } from '@main/runtime/providers/deepseek'
 import { LocalProvider } from '@main/runtime/providers/local'
 import { OpenAIProvider } from '@main/runtime/providers/openai'
 import { net } from 'electron'
@@ -33,7 +34,7 @@ export type ChatMessage =
       images?: ToolResultImage[]
     }
 
-export type ProviderId = 'anthropic' | 'openai' | 'local'
+export type ProviderId = 'anthropic' | 'openai' | 'deepseek' | 'local'
 
 export type ToolDefinition = {
   name: string
@@ -100,7 +101,7 @@ export type StreamChunk =
   | { type: 'no_provider_available'; info: NoProviderAvailableInfo }
 
 export type CloudProviderConfig = {
-  id: 'anthropic' | 'openai'
+  id: 'anthropic' | 'openai' | 'deepseek'
   model: string
   apiKey: string
   models?: string[]
@@ -134,6 +135,7 @@ const RETRY_DELAYS_MS = [5_000, 15_000, 30_000, 60_000, 90_000]
 const PROVIDER_LOGO: Record<ProviderId, string> = {
   anthropic: 'anthropic',
   openai: 'openai',
+  deepseek: 'deepseek',
   local: 'ollama'
 }
 
@@ -577,6 +579,12 @@ export class Thalamus {
           model: cfg.model,
           provider: new OpenAIProvider(cfg.apiKey, cfg.model)
         })
+      } else if (id === 'deepseek') {
+        out.push({
+          id: 'deepseek',
+          model: cfg.model,
+          provider: new DeepSeekProvider(cfg.apiKey, cfg.model)
+        })
       }
     }
     if (this.local.isReady) {
@@ -696,6 +704,8 @@ function contextWindowForModel(model: string): number {
   if (m.includes('3-5-sonnet') || m.includes('3.5-sonnet')) return 200_000
   if (m.includes('3-5-haiku') || m.includes('3.5-haiku')) return 200_000
   if (m.includes('opus') || m.includes('sonnet') || m.includes('haiku')) return 200_000
+  // DeepSeek
+  if (m.includes('deepseek-v4')) return 1_000_000
   // OpenAI
   if (m.includes('gpt-5.4') || m.includes('gpt-5.5')) return 1_000_000
   if (m.includes('gpt-5')) return 400_000
