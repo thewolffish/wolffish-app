@@ -85,7 +85,7 @@ export type ToolError = {
 }
 
 const PERMISSION_RE =
-  /permission denied|access denied|need sudo|not permitted|not authorized|EACCES|EPERM|requires admin|requires root|operation not permitted|insufficient privileges|Failed to get sources|assistive access|HTTP 401\b|HTTP 403\b|HTTP 451\b|\bForbidden\b|\bUnauthorized\b/i
+  /permission denied|access denied|need sudo|not permitted|not authorized|EACCES|EPERM|requires admin|requires root|operation not permitted|insufficient privileges|Failed to get sources|assistive access|HTTP 401\b|HTTP 403\b|HTTP 451\b|\bForbidden\b|\bUnauthorized\b|a terminal is required|no tty present/i
 // Windows cmd.exe and PowerShell both emit "syntax is incorrect" when a
 // command line is malformed (typically unresolved %ENV% expansion or
 // quoting errors). Treat the same way as EINVAL — retrying the exact
@@ -111,8 +111,44 @@ const TIMEOUT_RE = /timed out|timeout|SIGTERM/i
  * surface the error to the LLM. Network/timeout errors are worth retrying
  * since they often resolve on their own.
  */
-export function classifyError(error: string): ToolError {
+export function classifyError(error: string, exitCode?: number | null): ToolError {
   const message = error || 'unknown error'
+
+  // Exit-code classification runs first — more reliable than text matching
+  // when stderr was suppressed (2>/dev/null) and the diagnostic is dominated
+  // by successful stdout from earlier commands in a && chain.
+  if (exitCode != null) {
+    // 127: command not found (POSIX sh, bash, zsh — universal across Unix)
+    // 9009: "is not recognized as an internal or external command" (Windows cmd.exe)
+    if (exitCode === 127 || exitCode === 9009) {
+      return { message, retryable: false, category: 'not_found' }
+    }
+    // macOS: launchctl returns 113 for "service not loaded" — deterministic.
+    // Linux: 113 can mean EHOSTUNREACH (transient) — leave to text matching.
+    if (exitCode === 113 && process.platform === 'darwin') {
+      return { message, retryable: false, category: 'not_found' }
+    }
+    // 126: command found but not executable (POSIX)
+    if (exitCode === 126) {
+      return { message, retryable: false, category: 'permission' }
+    }
+    // 5: access denied (Windows only — on Unix exit code 5 is tool-specific
+    // and means different things: curl uses it for proxy errors, wget for
+    // SSL failures. Only Windows reliably maps 5 to ACCESS_DENIED.)
+    if (exitCode === 5 && process.platform === 'win32') {
+      return { message, retryable: false, category: 'permission' }
+    }
+    // 128+N: killed by signal N (POSIX). Non-retryable unless the signal
+    // could be a timeout (SIGALRM=14, SIGTERM=15) — those fall through to
+    // the TIMEOUT_RE regex below.
+    if (exitCode > 128 && exitCode <= 165) {
+      const signal = exitCode - 128
+      if (signal !== 14 && signal !== 15) {
+        return { message, retryable: false, category: 'unknown' }
+      }
+    }
+  }
+
   if (PERMISSION_RE.test(message)) {
     return { message, retryable: false, category: 'permission' }
   }
@@ -279,7 +315,7 @@ export class Motor {
         attempt
       })
 
-      const classified = classifyError(step.error)
+      const classified = classifyError(step.error, result.exitCode)
       if (!classified.retryable) {
         // Deterministic failure — same call, same args, same wall. Stop now
         // instead of burning two more retries on identical permission /
@@ -288,6 +324,36 @@ export class Motor {
         step.finishedAt = Date.now()
         task.updatedAt = Date.now()
         const errorPart = `tool failed (${classified.category}, non-retryable): ${classified.message}`
+        const finalMessage = failureOutput ? `${errorPart}\n${failureOutput}` : errorPart
+        step.error = finalMessage
+        await this.writeTranscript(task)
+        return { ok: false, output: finalMessage, attempts: attempt }
+      }
+
+      // Partial success with an unclassified error — useful output was
+      // produced before failure, and the error doesn't match any known
+      // transient pattern (network, timeout). Surface immediately so the
+      // LLM sees the data instead of retrying a deterministic chain.
+      if (result.partial && classified.category === 'unknown') {
+        step.status = 'failed'
+        step.finishedAt = Date.now()
+        task.updatedAt = Date.now()
+        const errorPart = `partial failure (non-retryable): ${classified.message}`
+        const finalMessage = failureOutput ? `${errorPart}\n${failureOutput}` : errorPart
+        step.error = finalMessage
+        await this.writeTranscript(task)
+        return { ok: false, output: finalMessage, attempts: attempt }
+      }
+
+      // Unknown errors get a shorter leash — local commands are almost
+      // always deterministic, so 10 retries with 60s plateau wastes
+      // minutes on the same failure. Network and timeout categories
+      // keep the full budget since those are genuinely transient.
+      if (classified.category === 'unknown' && attempt >= 3) {
+        step.status = 'failed'
+        step.finishedAt = Date.now()
+        task.updatedAt = Date.now()
+        const errorPart = `tool failed after ${attempt} attempts (${classified.category}): ${classified.message}`
         const finalMessage = failureOutput ? `${errorPart}\n${failureOutput}` : errorPart
         step.error = finalMessage
         await this.writeTranscript(task)

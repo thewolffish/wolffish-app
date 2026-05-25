@@ -206,9 +206,12 @@ function execForeground({ command, cwd, shell, timeoutMs }) {
       if (code === 0) {
         finish({ success: true, output: output || '(no output)' })
       } else {
-        const diagnostic = output.slice(0, 500)
+        const diagnostic = buildDiagnostic(stdout, stderr, command)
+        const partial = stdout.trim().length > 100
         finish({
           success: false,
+          exitCode: code,
+          partial,
           error: diagnostic
             ? `Command exited with code ${code}: ${diagnostic}`
             : `Command exited with code ${code}`,
@@ -224,6 +227,38 @@ function combine(out, err) {
   if (out) parts.push(out.trim())
   if (err) parts.push(err.trim())
   return parts.join('\n').trim()
+}
+
+// Elevated-privilege commands (sudo, doas, etc.) fail deterministically in
+// non-interactive shells because there is no TTY for the password prompt.
+// Cross-platform: sudo/doas/pkexec on Unix, gsudo/runas on Windows.
+const ELEVATION_RE = /(?:^|\s|&&|\|\||;)\s*(?:sudo|doas|pkexec|gsudo|runas)\s/i
+
+function buildDiagnostic(stdout, stderr, command) {
+  const err = stderr.trim()
+  const out = stdout.trim()
+
+  // When an elevation command fails and stderr was suppressed (2>/dev/null)
+  // with minimal stdout (rules out chains where sudo succeeded but a later
+  // command produced output before failing), inject "operation not permitted"
+  // so the Motor's permission-error regex catches it.
+  if (!err && ELEVATION_RE.test(command) && out.length < 200) {
+    return `operation not permitted (non-interactive shell, elevation required)\n${out}`
+  }
+
+  // Stderr almost always carries the real error message ("command not found",
+  // "permission denied", etc.). Lead with it so the Motor's regex classifiers
+  // see the signal, then append a prefix of stdout for context.
+  if (err) {
+    const errPart = err.slice(0, 300)
+    const outPart = out.slice(0, 200)
+    return outPart ? `${errPart}\n---\n${outPart}` : errPart
+  }
+
+  // No stderr (suppressed or truly empty). Take head + tail of stdout so
+  // error text at the end of a && chain is visible to the classifier.
+  if (out.length <= 500) return out
+  return `${out.slice(0, 250)}\n…\n${out.slice(-250)}`
 }
 
 // Risk inference for shell_exec descriptions. The cerebellum's amygdala

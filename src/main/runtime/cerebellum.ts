@@ -108,6 +108,8 @@ export type ToolExecutionResult = {
   output?: string
   error?: string
   images?: ToolResultImage[]
+  exitCode?: number | null
+  partial?: boolean
 }
 
 export type RiskLevel = 'low' | 'medium' | 'high'
