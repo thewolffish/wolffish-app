@@ -528,7 +528,7 @@ export class Agent {
           }
 
           if (level === 'confirm' || level === 'destructive') {
-            if (turn.bypassApproval) {
+            if (turn.bypassApproval || this.amygdala.isBypassingPermissions()) {
               this.corpus.emit('safety.autoApproved', {
                 id: `auto_${Date.now().toString(36)}`,
                 tool: call.name,
