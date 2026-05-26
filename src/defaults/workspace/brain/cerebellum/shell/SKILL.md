@@ -18,7 +18,7 @@ triggers:
   - wget
 tools:
   - name: shell_exec
-    description: Run a shell command and return its output. Default cwd is the user home directory. No default timeout — commands run until they exit. Set background=true for long-lived processes (dev servers, watchers).
+    description: Run a shell command and return its output. Default cwd is the user home directory. No default timeout — commands run until they exit. Elevation commands (sudo, doas) are handled automatically via native OS password dialog — no TTY needed. Set background=true for long-lived processes (dev servers, watchers).
     parameters:
       command:
         type: string
@@ -41,7 +41,7 @@ danger_patterns:
     reason: Recursive force delete
   - pattern: 'sudo\s+'
     level: destructive
-    reason: Privilege escalation
+    reason: Privilege escalation — user will see native OS password dialog
   - pattern: 'mkfs'
     level: block
     reason: Format disk
@@ -86,6 +86,8 @@ confirm_patterns:
   - **Unix:** `/bin/sh -c`
   - **Windows:** PowerShell 7+ (`pwsh`) if installed, else Windows PowerShell 5.1 (`powershell.exe`), else `cmd.exe`. Check the `<device>` block in your system prompt to see which one is active — it's reported as `shell:`.
 - Timeout: none by default — commands run until they exit. You may pass an explicit timeout if you want fast failure on a command you expect to finish quickly.
+- Elevation: `sudo` and `doas` commands are **fully supported**. The plugin detects them, pops a native OS password dialog (macOS: system dialog via osascript, Linux: zenity or kdialog), caches the credential for ~5 minutes, and injects the `-A` flag so no TTY is needed. The user sees one password prompt per session, not per command.
+- stdin: set to `/dev/null` (EOF) so commands that unexpectedly wait for input fail fast instead of hanging.
 - Returns combined stdout+stderr; truncated past ~100 KB
 
 ## Writing commands for the active shell
@@ -116,6 +118,33 @@ There is no enforced floor or default. You decide based on the command:
   `curl`, `git fetch`, `git push`.
 - **Use background mode** for processes that never exit on their own
   (dev servers, watchers, daemons). Timeout is irrelevant here.
+
+## Elevation commands (sudo, doas, etc.)
+
+`sudo` and `doas` commands **work normally** — no special handling needed
+from your side. The plugin automatically:
+
+1. Detects elevation keywords in the command
+2. Pops a native OS password dialog (macOS system dialog, Linux zenity/kdialog)
+3. Caches the credential for ~5 minutes (one prompt per session, not per command)
+4. Injects the `-A` flag so sudo uses the dialog instead of a TTY
+5. Runs the original command with the cached credential
+
+If the user cancels the dialog or no GUI tool is available, the plugin
+returns a non-retryable error immediately — it never hangs.
+
+On Windows, sudo does not exist. If a task requires admin privileges on
+Windows (modifying system files, changing firewall rules, installing
+system-wide services, editing the registry, etc.), do NOT use `sudo`,
+`gsudo`, or `runas` in the command. Instead:
+
+1. Tell the user: "This task requires administrator privileges. Please
+   close Wolffish and relaunch it by right-clicking → Run as Administrator,
+   then try this task again."
+2. Do NOT retry the command or attempt workarounds — the user must restart
+   Wolffish with elevated privileges first.
+3. Once Wolffish is running as admin, all commands automatically have full
+   privileges — just run them normally without any elevation prefix.
 
 ## Long-lived processes (dev servers, watchers, daemons)
 

@@ -1,6 +1,6 @@
 import { execFile, spawn } from 'node:child_process'
-import { access, constants } from 'node:fs/promises'
-import { homedir } from 'node:os'
+import { access, chmod, constants, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 
@@ -8,8 +8,6 @@ const execFileP = promisify(execFile)
 
 const MAX_OUTPUT_BYTES = 100_000
 
-// Node's child_process treats `~` as a literal directory name, so a cwd
-// like "~/Desktop" makes spawn fail with ENOENT. Expand it ourselves.
 function resolveCwd(input) {
   const raw = typeof input === 'string' ? input.trim() : ''
   if (!raw || raw === '~') return homedir()
@@ -17,41 +15,25 @@ function resolveCwd(input) {
   return raw
 }
 
-// Probe the host once for the best available shell. On Windows the
-// historical default (`cmd.exe`) makes the model's PowerShell-style
-// commands (Start-Process, etc.) deterministically fail; meanwhile the
-// `<device>` block in the system prompt reports `shell: powershell`
-// based on PSModulePath, so the model is being told to write PS syntax
-// against a cmd interpreter. We resolve that by probing PATH for a real
-// PowerShell binary and using it when present. Falls back to cmd.exe if
-// neither pwsh nor powershell.exe is on PATH, so headless / minimal
-// Windows containers still work.
-//
-// Cached so we don't spawn `where` on every shell_exec call. Unix path
-// is unchanged — `/bin/sh` is universal there.
+// ---------------------------------------------------------------------------
+// Shell detection (cached)
+// ---------------------------------------------------------------------------
+
 let shellPromise = null
 
 async function probeWindowsShell() {
-  // Order: PowerShell 7+ (cross-platform, supports `&&` chains),
-  // then Windows PowerShell 5.1 (built-in everywhere since Win7),
-  // then cmd.exe (last-resort, always exists).
   const candidates = [
     { name: 'pwsh', args: ['-NoProfile', '-NonInteractive', '-Command'] },
     { name: 'powershell', args: ['-NoProfile', '-NonInteractive', '-Command'] }
   ]
   for (const c of candidates) {
     try {
-      // `where` succeeds (exit 0) iff the binary is resolvable on PATH.
-      // No version pinning, no absolute paths — works on any Windows
-      // edition that has PowerShell installed (which is all of them
-      // since 2009).
       await execFileP('where', [c.name], { windowsHide: true })
       return { bin: c.name, args: c.args }
     } catch {
-      // not on PATH; try the next
+      // not on PATH
     }
   }
-  // Last resort. cmd.exe is guaranteed to exist on every Windows host.
   return { bin: 'cmd.exe', args: ['/c'] }
 }
 
@@ -64,6 +46,194 @@ function detectShell() {
   shellPromise = probeWindowsShell().catch(() => ({ bin: 'cmd.exe', args: ['/c'] }))
   return shellPromise
 }
+
+// ---------------------------------------------------------------------------
+// Elevation detection
+// ---------------------------------------------------------------------------
+
+// Matches sudo, doas, pkexec, gsudo, runas anywhere in a command — at the
+// start, after &&, after ||, after ;, or after whitespace.
+const ELEVATION_RE = /(?:^|\s|&&|\|\||;)\s*(?:sudo|doas|pkexec|gsudo|runas)\s/i
+
+// Narrower regex that captures the elevation keyword so we can rewrite it.
+// Used to inject the -A flag into sudo/doas invocations.
+const SUDO_INJECT_RE = /(?<=^|\s|&&|\|\||;)(\s*)(sudo|doas)(\s)/gi
+
+// ---------------------------------------------------------------------------
+// Cross-platform askpass: native OS password dialog
+// ---------------------------------------------------------------------------
+
+// Cached state so the user sees at most one password dialog per ~5 min window.
+// After a successful prime, subsequent sudo calls within the cache window
+// succeed silently. The askpass helper stays on disk until cleanup.
+let askpassState = null // { askpassPath, tmpDir, env, primedAt }
+
+async function cleanupAskpass() {
+  if (!askpassState) return
+  const { tmpDir } = askpassState
+  askpassState = null
+  if (tmpDir) await rm(tmpDir, { recursive: true, force: true }).catch(() => {})
+}
+
+// Returns the shell script body for the askpass helper on the current platform.
+// The script must print the password to stdout and exit 0 on success, or
+// exit non-zero on cancellation.
+async function buildAskpassScript(message) {
+  const escaped = (message || 'Wolffish needs admin access to run this command.').replace(
+    /"/g,
+    '\\"'
+  )
+
+  if (process.platform === 'darwin') {
+    return `#!/bin/bash
+set -e
+osascript \\
+  -e 'tell application "System Events" to activate' \\
+  -e 'display dialog "${escaped}" default answer "" with hidden answer with title "Wolffish" buttons {"Cancel", "Authorize"} default button "Authorize"' \\
+  -e 'text returned of result' 2>/dev/null
+`
+  }
+
+  if (process.platform === 'linux') {
+    // Probe for a GUI password tool. Wolffish is an Electron app so a
+    // desktop environment is always present.
+    const tools = [
+      { cmd: 'zenity', args: () => `zenity --password --title="Wolffish" --text="${escaped}" 2>/dev/null` },
+      { cmd: 'kdialog', args: () => `kdialog --password "${escaped}" --title "Wolffish" 2>/dev/null` },
+      { cmd: 'ssh-askpass', args: () => `SSH_ASKPASS_REQUIRE=force ssh-askpass "${escaped}" 2>/dev/null` }
+    ]
+
+    for (const tool of tools) {
+      try {
+        await execFileP('which', [tool.cmd])
+        return `#!/bin/bash\nset -e\n${tool.args()}\n`
+      } catch {
+        // not available
+      }
+    }
+
+    return null // no GUI tool found
+  }
+
+  // Windows: sudo doesn't exist natively. Return null to trigger the
+  // fast-fail path.
+  return null
+}
+
+// Run a command and collect its output. Same pattern as the package-manager
+// plugin's runSpawn — non-blocking, Promise-based.
+function runCollect(cmd, args, env = process.env) {
+  return new Promise((resolve) => {
+    let child
+    try {
+      child = spawn(cmd, args, { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
+    } catch (err) {
+      resolve({ code: -1, stdout: '', stderr: err?.message ?? String(err) })
+      return
+    }
+    let stdout = ''
+    let stderr = ''
+    child.stdout?.on('data', (c) => { stdout += c.toString().slice(0, 10_000) })
+    child.stderr?.on('data', (c) => { stderr += c.toString().slice(0, 10_000) })
+    child.on('close', (code) => resolve({ code: code ?? -1, stdout, stderr }))
+    child.on('error', (err) => resolve({ code: -1, stdout, stderr: err?.message ?? String(err) }))
+  })
+}
+
+/**
+ * Ensure sudo credentials are cached. Shows a native OS password dialog
+ * on the first call; subsequent calls within ~5 minutes are free.
+ *
+ * Returns { ok, env, error?, cancelled? }.
+ * On success, `env` contains SUDO_ASKPASS pointing at the helper script.
+ * The caller passes this env to the spawned command.
+ */
+async function ensureElevation() {
+  // The askpass helper lives for the entire Wolffish session. We create it
+  // once and reuse it. Since every sudo command gets the -A flag injected,
+  // sudo itself will call the helper whenever its OS-level cache expires —
+  // we don't need to proactively re-prime. The user sees a native password
+  // dialog only when the OS actually needs credentials (controlled by
+  // sudoers timestamp_timeout, typically 5–15 min, configurable by the user).
+  if (askpassState) {
+    return { ok: true, env: askpassState.env }
+  }
+
+  const script = await buildAskpassScript()
+  if (!script) {
+    if (process.platform === 'win32') {
+      return {
+        ok: false,
+        error:
+          'operation not permitted (elevation required). ' +
+          'Windows does not use sudo. Run this command in an elevated terminal (Run as Administrator), ' +
+          'or ask the user to execute it manually.'
+      }
+    }
+    return {
+      ok: false,
+      error:
+        'operation not permitted (elevation required). ' +
+        'No GUI password tool found (tried zenity, kdialog, ssh-askpass). ' +
+        'Install zenity (`apt install zenity`) or ask the user to run the command in their terminal.'
+    }
+  }
+
+  const tmpDir = await mkdtemp(path.join(tmpdir(), 'wolffish-askpass-'))
+  const askpassPath = path.join(tmpDir, 'askpass.sh')
+
+  try {
+    await writeFile(askpassPath, script, 'utf8')
+    await chmod(askpassPath, 0o700)
+  } catch (err) {
+    await rm(tmpDir, { recursive: true, force: true }).catch(() => {})
+    return { ok: false, error: `failed to create askpass helper: ${err?.message ?? String(err)}` }
+  }
+
+  const env = { ...process.env, SUDO_ASKPASS: askpassPath }
+
+  // Prime sudo's credential cache on first use so the user sees the dialog
+  // now rather than mid-command. After this, sudo re-prompts via the askpass
+  // helper automatically when the OS cache expires.
+  const auth = await runCollect('sudo', ['-A', '-v'], env)
+
+  if (auth.code !== 0) {
+    await rm(tmpDir, { recursive: true, force: true }).catch(() => {})
+    const detail = (auth.stderr || '').trim()
+    if (!detail || /cancel/i.test(detail)) {
+      return {
+        ok: false,
+        cancelled: true,
+        error:
+          'operation not permitted (user cancelled the password dialog). ' +
+          'Admin access is required to run this command. Try again when ready, ' +
+          'or ask the user to run it in their terminal.'
+      }
+    }
+    return {
+      ok: false,
+      error: `operation not permitted (sudo authentication failed): ${detail.slice(0, 300)}`
+    }
+  }
+
+  askpassState = { askpassPath, tmpDir, env }
+  return { ok: true, env }
+}
+
+/**
+ * Rewrite a command so that bare `sudo` / `doas` invocations include the
+ * -A flag, forcing them to use the SUDO_ASKPASS helper instead of a TTY.
+ * This handles chained commands like `sudo cmd1 && sudo cmd2`.
+ */
+function injectAskpassFlag(command) {
+  return command.replace(SUDO_INJECT_RE, (_, ws, keyword, trail) => {
+    return `${ws}${keyword} -A${trail}`
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Tool definitions
+// ---------------------------------------------------------------------------
 
 const toolDefinitions = [
   {
@@ -90,21 +260,32 @@ const toolDefinitions = [
   }
 ]
 
+// ---------------------------------------------------------------------------
+// Output helpers
+// ---------------------------------------------------------------------------
+
 function clamp(buf, chunk) {
   if (buf.length >= MAX_OUTPUT_BYTES) return buf
   const room = MAX_OUTPUT_BYTES - buf.length
   return buf + chunk.toString().slice(0, room)
 }
 
+function combine(out, err) {
+  const parts = []
+  if (out) parts.push(out.trim())
+  if (err) parts.push(err.trim())
+  return parts.join('\n').trim()
+}
+
+// ---------------------------------------------------------------------------
+// Core execution
+// ---------------------------------------------------------------------------
+
 async function execShell(args) {
   const command = String(args?.command ?? '').trim()
   if (!command) return { success: false, error: 'empty command' }
 
   const cwd = resolveCwd(args?.cwd)
-  // Without this, an invalid cwd (a path the model invented from training
-  // data, a typo, or a stale memory) makes spawn fail with a misleading
-  // "spawn /bin/sh ENOENT" — the ENOENT is for the cwd, not the shell
-  // binary. Reject up front with a clear message so the model can retry.
   try {
     await access(cwd, constants.F_OK)
   } catch {
@@ -112,33 +293,48 @@ async function execShell(args) {
   }
 
   const shell = await detectShell()
+  const needsElevation = ELEVATION_RE.test(command)
+
+  // --- Elevation handling ---
+  // When the command contains sudo/doas/pkexec, we:
+  // 1. Prime the credential cache via a native OS password dialog
+  // 2. Inject the -A flag so sudo uses the askpass helper (not a TTY)
+  // 3. Pass SUDO_ASKPASS in the environment
+  // This guarantees the command never hangs waiting for terminal input.
+  let execEnv = process.env
+  let execCommand = command
+
+  if (needsElevation) {
+    const elevation = await ensureElevation()
+    if (!elevation.ok) {
+      return { success: false, error: elevation.error }
+    }
+    execEnv = elevation.env
+    execCommand = injectAskpassFlag(command)
+
+    // Refresh the OS credential cache right before execution so the timer
+    // resets. This is silent (no dialog) as long as the cache hasn't already
+    // expired. If it has, sudo calls the askpass helper automatically.
+    await runCollect('sudo', ['-A', '-v'], execEnv)
+  }
 
   if (args?.background === true) {
-    return execBackground({ command, cwd, shell })
+    return execBackground({ command: execCommand, cwd, shell, env: execEnv })
   }
 
   const timeoutMs =
     typeof args?.timeout === 'number' && args.timeout > 0 ? args.timeout : 0
 
-  return execForeground({ command, cwd, shell, timeoutMs })
+  return execForeground({ command: execCommand, cwd, shell, timeoutMs, env: execEnv })
 }
 
-// detached + ignored stdio + unref is the load-bearing triple: detached makes
-// the child its own process group leader so it survives Node's exit; ignored
-// stdio means the child has no pipes to inherit (so the foreground 'close'
-// event isn't blocked by descendants holding fd 1/2 open); unref tells Node's
-// event loop not to wait for this child. Without all three, the tool hangs
-// indefinitely even though the user asked for background launch.
-function execBackground({ command, cwd, shell }) {
+function execBackground({ command, cwd, shell, env }) {
   try {
     const child = spawn(shell.bin, [...shell.args, command], {
       cwd,
-      env: process.env,
+      env,
       detached: true,
       stdio: 'ignore',
-      // windowsHide keeps PowerShell/cmd from briefly flashing a console
-      // window when Wolffish runs as a packaged Electron app — invisible
-      // on Unix.
       windowsHide: true
     })
     const pid = child.pid
@@ -152,13 +348,17 @@ function execBackground({ command, cwd, shell }) {
   }
 }
 
-function execForeground({ command, cwd, shell, timeoutMs }) {
+function execForeground({ command, cwd, shell, timeoutMs, env }) {
   return new Promise((resolve) => {
     let child
     try {
       child = spawn(shell.bin, [...shell.args, command], {
         cwd,
-        env: process.env,
+        env,
+        // stdin is 'ignore' so processes that unexpectedly block on input
+        // get EOF immediately instead of hanging forever. stdout/stderr are
+        // piped for capture.
+        stdio: ['ignore', 'pipe', 'pipe'],
         windowsHide: true
       })
     } catch (err) {
@@ -222,49 +422,32 @@ function execForeground({ command, cwd, shell, timeoutMs }) {
   })
 }
 
-function combine(out, err) {
-  const parts = []
-  if (out) parts.push(out.trim())
-  if (err) parts.push(err.trim())
-  return parts.join('\n').trim()
-}
-
-// Elevated-privilege commands (sudo, doas, etc.) fail deterministically in
-// non-interactive shells because there is no TTY for the password prompt.
-// Cross-platform: sudo/doas/pkexec on Unix, gsudo/runas on Windows.
-const ELEVATION_RE = /(?:^|\s|&&|\|\||;)\s*(?:sudo|doas|pkexec|gsudo|runas)\s/i
+// ---------------------------------------------------------------------------
+// Diagnostics
+// ---------------------------------------------------------------------------
 
 function buildDiagnostic(stdout, stderr, command) {
   const err = stderr.trim()
   const out = stdout.trim()
 
-  // When an elevation command fails and stderr was suppressed (2>/dev/null)
-  // with minimal stdout (rules out chains where sudo succeeded but a later
-  // command produced output before failing), inject "operation not permitted"
-  // so the Motor's permission-error regex catches it.
   if (!err && ELEVATION_RE.test(command) && out.length < 200) {
     return `operation not permitted (non-interactive shell, elevation required)\n${out}`
   }
 
-  // Stderr almost always carries the real error message ("command not found",
-  // "permission denied", etc.). Lead with it so the Motor's regex classifiers
-  // see the signal, then append a prefix of stdout for context.
   if (err) {
     const errPart = err.slice(0, 300)
     const outPart = out.slice(0, 200)
     return outPart ? `${errPart}\n---\n${outPart}` : errPart
   }
 
-  // No stderr (suppressed or truly empty). Take head + tail of stdout so
-  // error text at the end of a && chain is visible to the classifier.
   if (out.length <= 500) return out
   return `${out.slice(0, 250)}\n…\n${out.slice(-250)}`
 }
 
-// Risk inference for shell_exec descriptions. The cerebellum's amygdala
-// also runs its own classification for blocking/confirmation; this is just
-// for the colored dot on the approval card so the user can read severity
-// at a glance.
+// ---------------------------------------------------------------------------
+// Risk descriptions (for the approval card UI)
+// ---------------------------------------------------------------------------
+
 const HIGH_RISK_RE =
   /\brm\s+(-rf|--recursive)|\bmkfs|\bdd\s+if=|chmod\s+777|curl[^|]*\|\s*(bash|sh|zsh)|:\(\)\s*\{\s*:\|:|shutdown|sudo\s+|git\s+push\s+.*--force|npm\s+publish/i
 const MEDIUM_RISK_RE = /\b(npm|pip|brew|apt|dnf|cargo|gem)\s+install\b|git\s+push\b|docker\s+rm\b|rm\s+/i
@@ -275,8 +458,6 @@ function describeShellAction(command) {
   if (HIGH_RISK_RE.test(cmd)) risk = 'high'
   else if (MEDIUM_RISK_RE.test(cmd)) risk = 'medium'
 
-  // Tiny one-liners describing common verbs. Falls back to a generic
-  // "Run shell command" when the command is unfamiliar — never empty.
   const verbMap = [
     [/^ls\b/, 'List files'],
     [/^pwd\b/, 'Print working directory'],
@@ -314,7 +495,7 @@ function describeShellAction(command) {
   if (/^rm\s+(-rf|--recursive)/.test(cmd)) {
     impact = 'Permanently deletes files. This cannot be undone.'
   } else if (/sudo\s+/.test(cmd)) {
-    impact = 'Runs with elevated privileges.'
+    impact = 'Runs with elevated privileges (will prompt for your password via system dialog).'
   } else if (/git\s+push\s+.*--force/.test(cmd)) {
     impact = 'Force-pushes the branch — may overwrite remote history.'
   }
@@ -328,6 +509,10 @@ function describeShellAction(command) {
   if (impact) out.impact = impact
   return out
 }
+
+// ---------------------------------------------------------------------------
+// Plugin export
+// ---------------------------------------------------------------------------
 
 const plugin = {
   name: 'shell',
