@@ -633,7 +633,14 @@ export class Thalamus {
     payload: K extends 'llm.request'
       ? { provider: string; model: string }
       : K extends 'llm.response'
-        ? { provider: string; inputTokens: number; outputTokens: number; durationMs: number }
+        ? {
+            provider: string
+            inputTokens: number
+            outputTokens: number
+            cacheCreationTokens: number
+            cacheReadTokens: number
+            durationMs: number
+          }
         : K extends 'llm.error'
           ? { provider: string; error: string }
           : K extends 'llm.fallback'
@@ -650,6 +657,8 @@ export class Thalamus {
           provider: string
           inputTokens: number
           outputTokens: number
+          cacheCreationTokens: number
+          cacheReadTokens: number
           durationMs: number
         }
       )
