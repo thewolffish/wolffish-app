@@ -1009,7 +1009,8 @@
       "tooltip": "{{used}} out of {{max}}"
     },
     "status": {
-      "tokenUsage": "↑{{input}} ↓{{output}} tokens",
+      "tokenUsage": "{{input}} in · {{output}} out",
+      "tokenUsageCached": "{{cached}} cached · {{input}} new · {{output}} out",
       "contextTokens": "{{count}} ctx",
       "elapsedSeconds": "{{seconds}}s",
       "elapsedMinutes": "{{minutes}}m {{seconds}}s"

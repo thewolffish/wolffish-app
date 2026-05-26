@@ -179,10 +179,11 @@ export function Chat(): React.JSX.Element {
     model: string | null
   }>({ supportsVision: true, model: null })
   const [dragActive, setDragActive] = useState(false)
-  const [, setContextTokens] = useState<number | null>(null)
+  const [contextTokens, setContextTokens] = useState<number | null>(null)
   const [contextBudget, setContextBudget] = useState<number | null>(null)
   const [inputTokens, setInputTokens] = useState<number | null>(null)
   const [outputTokens, setOutputTokens] = useState<number | null>(null)
+  const [cacheReadTokens, setCacheReadTokens] = useState<number | null>(null)
   const [turnStartedAt, setTurnStartedAt] = useState<number | null>(null)
   // Set when the turn finishes; freezes the elapsed-time display until
   // the next message is sent. Stays visible between turns so the user
@@ -196,6 +197,7 @@ export function Chat(): React.JSX.Element {
     setContextBudget(null)
     setInputTokens(null)
     setOutputTokens(null)
+    setCacheReadTokens(null)
     setTurnStartedAt(null)
     setTurnEndedAt(null)
   }, [
@@ -205,6 +207,7 @@ export function Chat(): React.JSX.Element {
     setContextBudget,
     setInputTokens,
     setOutputTokens,
+    setCacheReadTokens,
     setTurnStartedAt,
     setTurnEndedAt
   ])
@@ -431,8 +434,8 @@ export function Chat(): React.JSX.Element {
       conversationRef.current.messages = convMessages
       conversationRef.current.updatedAt = Date.now()
       conversationRef.current.contextMeter =
-        inputTokens != null && contextBudget != null
-          ? { inputTokens, contextBudget }
+        contextTokens != null && contextBudget != null
+          ? { contextTokens, contextBudget }
           : (conversationRef.current.contextMeter ?? null)
       await window.api.conversation.save(conversationRef.current)
 
@@ -446,7 +449,7 @@ export function Chat(): React.JSX.Element {
         }
       }
     },
-    [currentModel, setActiveConversationId, inputTokens, contextBudget]
+    [currentModel, setActiveConversationId, contextTokens, contextBudget]
   )
 
   useEffect(() => {
@@ -464,10 +467,10 @@ export function Chat(): React.JSX.Element {
         conversationRef.current = conv
         titleGeneratedRef.current = conv.title !== 'Untitled'
         if (conv.contextMeter) {
-          setInputTokens(conv.contextMeter.inputTokens)
+          setContextTokens(conv.contextMeter.contextTokens)
           setContextBudget(conv.contextMeter.contextBudget)
         } else {
-          setInputTokens(null)
+          setContextTokens(null)
           setContextBudget(null)
         }
         const raw = conv.workingFolder
@@ -517,8 +520,12 @@ export function Chat(): React.JSX.Element {
         setContextTokens(payload.tokenCount)
         if (typeof payload.tokenBudget === 'number') setContextBudget(payload.tokenBudget)
       } else if (type === 'llm.response') {
-        if (typeof payload.inputTokens === 'number') setInputTokens(payload.inputTokens)
-        if (typeof payload.outputTokens === 'number') setOutputTokens(payload.outputTokens)
+        if (typeof payload.inputTokens === 'number')
+          setInputTokens((prev) => (prev ?? 0) + payload.inputTokens)
+        if (typeof payload.outputTokens === 'number')
+          setOutputTokens((prev) => (prev ?? 0) + payload.outputTokens)
+        if (typeof payload.cacheReadTokens === 'number')
+          setCacheReadTokens((prev) => (prev ?? 0) + payload.cacheReadTokens)
       }
     })
     const offApprovalRequest = window.api.chat.onApprovalRequest((event) => {
@@ -655,6 +662,9 @@ export function Chat(): React.JSX.Element {
       setStreaming(true)
       setTurnStartedAt(Date.now())
       setTurnEndedAt(null)
+      setInputTokens(0)
+      setOutputTokens(0)
+      setCacheReadTokens(0)
 
       const response = await window.api.chat.send({ history, conversationId })
       pendingTurnIdRef.current = response.turnId
@@ -772,6 +782,9 @@ export function Chat(): React.JSX.Element {
       setStreaming(true)
       setTurnStartedAt(Date.now())
       setTurnEndedAt(null)
+      setInputTokens(0)
+      setOutputTokens(0)
+      setCacheReadTokens(0)
 
       const response = await window.api.chat.send({ history, conversationId })
       pendingTurnIdRef.current = response.turnId
@@ -1375,7 +1388,7 @@ export function Chat(): React.JSX.Element {
                 </button>
                 {showAnalytics && (
                   <ContextMeter
-                    used={inputTokens ?? 0}
+                    used={contextTokens ?? 0}
                     budget={contextBudget ?? 0}
                     locale={locale}
                   />
@@ -1439,6 +1452,7 @@ export function Chat(): React.JSX.Element {
                 <StatusBar
                   inputTokens={inputTokens}
                   outputTokens={outputTokens}
+                  cacheReadTokens={cacheReadTokens}
                   turnStartedAt={turnStartedAt}
                   turnEndedAt={turnEndedAt}
                   locale={locale}
@@ -1785,12 +1799,14 @@ function PendingAttachmentChip({
 function StatusBar({
   inputTokens,
   outputTokens,
+  cacheReadTokens,
   turnStartedAt,
   turnEndedAt,
   locale
 }: {
   inputTokens: number | null
   outputTokens: number | null
+  cacheReadTokens: number | null
   turnStartedAt: number | null
   turnEndedAt: number | null
   locale: string
@@ -1805,12 +1821,19 @@ function StatusBar({
   }, [turnStartedAt, turnEndedAt])
 
   const elapsedMs = turnStartedAt === null ? 0 : Math.max(0, (turnEndedAt ?? now) - turnStartedAt)
+  const hasCacheTokens = (cacheReadTokens ?? 0) > 0
   const parts: string[] = [
     formatElapsed(elapsedMs, t),
-    t('chat.status.tokenUsage', {
-      input: formatTokensCompact(inputTokens ?? 0, locale),
-      output: formatTokensCompact(outputTokens ?? 0, locale)
-    })
+    hasCacheTokens
+      ? t('chat.status.tokenUsageCached', {
+          cached: formatTokensCompact(cacheReadTokens ?? 0, locale),
+          input: formatTokensCompact(inputTokens ?? 0, locale),
+          output: formatTokensCompact(outputTokens ?? 0, locale)
+        })
+      : t('chat.status.tokenUsage', {
+          input: formatTokensCompact(inputTokens ?? 0, locale),
+          output: formatTokensCompact(outputTokens ?? 0, locale)
+        })
   ]
 
   return (
@@ -2009,11 +2032,12 @@ function stripErrors(messages: ChatMessage[]): ChatMessage[] {
 function textHistory(
   messages: ChatMessage[],
   workspaceRoot: string | null
-): Array<{ role: 'user' | 'assistant'; content: string; attachments?: MessageAttachment[] }> {
+): Array<{ role: 'user' | 'assistant'; content: string; attachments?: MessageAttachment[]; reasoningContent?: string }> {
   const out: Array<{
     role: 'user' | 'assistant'
     content: string
     attachments?: MessageAttachment[]
+    reasoningContent?: string
   }> = []
   for (const m of messages) {
     if (isUser(m)) {
@@ -2026,7 +2050,17 @@ function textHistory(
       out.push(entry)
     } else if (isAssistant(m) && m.status === 'complete') {
       const text = collectText(m.segments)
-      if (text.length > 0) out.push({ role: 'assistant', content: text })
+      if (text.length > 0) {
+        const turnEnd = m.segments.find((s) => s.kind === 'turn_end')
+        const entry: { role: 'assistant'; content: string; reasoningContent?: string } = {
+          role: 'assistant',
+          content: text
+        }
+        if (turnEnd && 'reasoningContent' in turnEnd && turnEnd.reasoningContent) {
+          entry.reasoningContent = turnEnd.reasoningContent as string
+        }
+        out.push(entry)
+      }
     }
   }
   return out

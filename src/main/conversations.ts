@@ -68,7 +68,7 @@ export type ConversationFile = {
   channel?: ConversationChannel
   sealed?: boolean
   workingFolder?: string[] | null
-  contextMeter?: { inputTokens: number; contextBudget: number } | null
+  contextMeter?: { contextTokens: number; contextBudget: number } | null
 }
 
 export type ConversationMeta = {

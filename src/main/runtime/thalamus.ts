@@ -24,7 +24,7 @@ export type ToolResultImage = {
 export type ChatMessage =
   | { role: 'system'; content: string }
   | { role: 'user'; content: string | UserContentBlock[] }
-  | { role: 'assistant'; content: string; toolUses?: ToolUse[] }
+  | { role: 'assistant'; content: string; toolUses?: ToolUse[]; reasoningContent?: string }
   | {
       role: 'tool'
       toolUseId: string
@@ -86,6 +86,7 @@ export type FallbackOptions = {
 
 export type StreamChunk =
   | { type: 'text'; text: string }
+  | { type: 'reasoning'; text: string }
   | { type: 'tool_call'; id: string; name: string; args: Record<string, unknown> }
   | { type: 'turn_meta'; stopReason: StopReason; usage?: StreamUsage }
   | { type: 'error'; message: string; recoverable: boolean }
@@ -455,6 +456,8 @@ export class Thalamus {
       let textEmitted = false
       let inputTokens = 0
       let outputTokens = 0
+      let cacheCreationTokens = 0
+      let cacheReadTokens = 0
 
       try {
         for await (const chunk of entry.provider.stream(options)) {
@@ -463,13 +466,22 @@ export class Thalamus {
           } else if (chunk.type === 'turn_meta' && chunk.usage) {
             inputTokens = chunk.usage.inputTokens
             outputTokens = chunk.usage.outputTokens
+            cacheCreationTokens = chunk.usage.cacheCreationTokens ?? 0
+            cacheReadTokens = chunk.usage.cacheReadTokens ?? 0
           }
           yield chunk
         }
 
         this.markHealthy(entry.id)
         const durationMs = Date.now() - startedAt
-        this.emit('llm.response', { provider: entry.id, inputTokens, outputTokens, durationMs })
+        this.emit('llm.response', {
+          provider: entry.id,
+          inputTokens,
+          outputTokens,
+          cacheCreationTokens,
+          cacheReadTokens,
+          durationMs
+        })
         return { kind: 'success' }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)

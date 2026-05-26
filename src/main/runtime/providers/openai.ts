@@ -122,6 +122,9 @@ export class OpenAIProvider {
       const delta = choice.delta
 
       if (delta) {
+        if (typeof delta.reasoning_content === 'string' && delta.reasoning_content.length > 0) {
+          yield { type: 'reasoning', text: delta.reasoning_content }
+        }
         if (typeof delta.content === 'string' && delta.content.length > 0) {
           yield { type: 'text', text: delta.content }
         }
@@ -183,6 +186,7 @@ function mapFinishReason(s: string): StopReason {
 type OpenAIEvent = {
   choices?: Array<{
     delta?: {
+      reasoning_content?: string
       content?: string
       tool_calls?: Array<{
         index?: number

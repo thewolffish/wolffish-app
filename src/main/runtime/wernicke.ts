@@ -68,6 +68,7 @@ export class Wernicke {
    */
   async parse(stream: AsyncGenerator<StreamChunk>): Promise<ParsedResponse> {
     let text = ''
+    let reasoning = ''
     const toolCalls: ToolCall[] = []
     let inputTokens = 0
     let outputTokens = 0
@@ -79,6 +80,8 @@ export class Wernicke {
     for await (const chunk of stream) {
       if (chunk.type === 'text') {
         text += chunk.text
+      } else if (chunk.type === 'reasoning') {
+        reasoning += chunk.text
       } else if (chunk.type === 'tool_call') {
         toolCalls.push({ id: chunk.id, name: chunk.name, args: chunk.args })
       } else if (chunk.type === 'turn_meta') {
@@ -107,7 +110,10 @@ export class Wernicke {
       }
     }
 
-    const { visible, thinking } = extractThinking(text)
+    const { visible, thinking: inlineThinking } = extractThinking(text)
+
+    const thinkingParts = [reasoning.trim(), inlineThinking?.trim()].filter(Boolean)
+    const thinking = thinkingParts.length > 0 ? thinkingParts.join('\n') : undefined
 
     const result: ParsedResponse = {
       text: visible,

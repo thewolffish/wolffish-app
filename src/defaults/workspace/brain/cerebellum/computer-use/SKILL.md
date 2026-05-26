@@ -190,4 +190,4 @@ Example: You see a button at local (200, 300) on a display with bounds (3648, 0)
 
 ## Coordinate System
 
-Coordinates are in screen pixels. The primary display's top-left is (0,0). X increases rightward, Y increases downward. Other displays are offset by their bounds position (e.g. a display to the right of a 1728px-wide primary starts at x=1728 or x=3456 depending on scaling). Screenshots are resized for the model but coordinates in your actions refer to the original screen resolution reported in the screenshot output. **Always read the offset note in the screenshot output before clicking.**
+Use the image pixel coordinates from the screenshot — top-left is (0,0), X increases rightward, Y increases downward. The screenshot output tells you the valid range (e.g. x 0–1280, y 0–827). Coordinates are automatically translated to screen position, so never use screen resolution values — always use coordinates within the image dimensions. On multi-display setups, the display offset is also applied automatically after each screenshot.

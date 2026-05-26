@@ -68,6 +68,7 @@ export type Segment =
       stopReason: SegmentTurnEndReason
       iterationCount: number
       providerError?: NoProviderAvailableInfo
+      reasoningContent?: string
     }
   | { kind: 'separator'; turnId: string; segmentId: string }
 
@@ -279,7 +280,8 @@ export class Broca {
     turnId: string,
     stopReason: SegmentTurnEndReason,
     iterationCount: number,
-    providerError?: NoProviderAvailableInfo
+    providerError?: NoProviderAvailableInfo,
+    reasoningContent?: string
   ): void {
     if (this.turnId !== turnId || !this.sink) return
     if (this.turnEnded) return
@@ -292,6 +294,7 @@ export class Broca {
       iterationCount
     }
     if (providerError) segment.providerError = providerError
+    if (reasoningContent) segment.reasoningContent = reasoningContent
     this.emit(segment)
   }
 

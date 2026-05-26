@@ -250,7 +250,13 @@ export class Agent {
   private async processHistoryAttachments(history: ChatMessage[]): Promise<ChatMessage[]> {
     const provider = this.thalamus.getActiveProvider()
     const providerKey: FileProcessorOptions['provider'] =
-      provider === 'anthropic' ? 'anthropic' : provider === 'openai' ? 'openai' : provider === 'deepseek' ? 'deepseek' : 'local'
+      provider === 'anthropic'
+        ? 'anthropic'
+        : provider === 'openai'
+          ? 'openai'
+          : provider === 'deepseek'
+            ? 'deepseek'
+            : 'local'
     const supportsVision = providerKey !== 'local' || (await this.thalamus.localSupportsVision())
 
     const out: ChatMessage[] = []
@@ -308,6 +314,7 @@ export class Agent {
     let iterationCount = 0
     let stopReason: SegmentTurnEndReason | 'canceled' = 'end_turn'
     let lastAssistantText = ''
+    let lastReasoningContent: string | undefined
     let noProviderAvailable: NoProviderAvailableInfo | null = null
     let fallbackState: { mode: FallbackMode; reason: string; cloudProvider: string } | null = null
     const turnTools: TurnToolCall[] = []
@@ -420,6 +427,8 @@ export class Agent {
           throw new Error(parsed.error)
         }
 
+        if (parsed.thinking) lastReasoningContent = parsed.thinking
+
         if (parsed.toolCalls.length === 0) {
           lastAssistantText = parsed.text
           stopReason = mapProviderStopReason(parsed.stopReason)
@@ -437,7 +446,9 @@ export class Agent {
           name: tc.name,
           args: tc.args
         }))
-        messages.push({ role: 'assistant', content: parsed.text, toolUses })
+        const assistantMsg: ChatMessage = { role: 'assistant', content: parsed.text, toolUses }
+        if (parsed.thinking) assistantMsg.reasoningContent = parsed.thinking
+        messages.push(assistantMsg)
 
         let aborted = false
         for (const call of parsed.toolCalls) {
@@ -686,7 +697,13 @@ export class Agent {
           .catch(() => undefined)
       }
 
-      broca.emitTurnEnd(turn.turnId, segmentReasonFor(stopReason), iterationCount)
+      broca.emitTurnEnd(
+        turn.turnId,
+        segmentReasonFor(stopReason),
+        iterationCount,
+        undefined,
+        lastReasoningContent
+      )
 
       return {
         stopReason,

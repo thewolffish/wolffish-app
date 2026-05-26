@@ -32,6 +32,8 @@ export type CorpusEvents = {
     provider: string
     inputTokens: number
     outputTokens: number
+    cacheCreationTokens: number
+    cacheReadTokens: number
     durationMs: number
   }
   'llm.error': { provider: string; error: string }

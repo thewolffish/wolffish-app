@@ -10,6 +10,7 @@ let workspaceRoot = ''
 let getConversationId = () => null
 let screenshotCounter = 0
 let lastScreenshotMapping = null
+let lastScreenshotSize = null
 
 const DEFAULT_MAX_WIDTH = 1280
 const DEFAULT_FORMAT = 'jpeg'
@@ -110,6 +111,15 @@ function requirePermissions() {
   return null
 }
 
+function validateCoordinates(x, y) {
+  if (!lastScreenshotSize) return null
+  const { width, height } = lastScreenshotSize
+  if (x < 0 || x > width || y < 0 || y > height) {
+    return `Coordinates (${x}, ${y}) are outside the screenshot bounds. Valid range: x 0–${width}, y 0–${height}. Use the image pixel coordinates from the screenshot, not screen coordinates.`
+  }
+  return null
+}
+
 function scaleToScreen(x, y) {
   if (!lastScreenshotMapping) return { x, y }
   const { scale, offsetX, offsetY } = lastScreenshotMapping
@@ -160,11 +170,14 @@ async function takeScreenshot(args) {
       pipeline = pipeline.resize({ width: maxWidth, withoutEnlargement: true })
     }
 
+    const finalImageHeight = Math.round(nativeHeight * (finalImageWidth / nativeWidth))
+
     lastScreenshotMapping = {
       scale: display.size.width / finalImageWidth,
       offsetX: display.bounds.x,
       offsetY: display.bounds.y
     }
+    lastScreenshotSize = { width: finalImageWidth, height: finalImageHeight }
 
     let buffer, mediaType
     if (format === 'png') {
@@ -196,10 +209,9 @@ async function takeScreenshot(args) {
     }
 
     const pathLine = savedPath ? `\n${savedPath}` : ''
-    const finalImageHeight = Math.round(nativeHeight * (finalImageWidth / nativeWidth))
     return {
       success: true,
-      output: `Screenshot captured (${finalImageWidth}x${finalImageHeight}, ${format})${displayInfo}. Use image pixel coordinates when clicking — they are automatically scaled to screen position (${display.size.width}x${display.size.height}, scale ${display.scaleFactor}x).${pathLine}`,
+      output: `Screenshot captured (${finalImageWidth}x${finalImageHeight}, ${format})${displayInfo}. Click coordinates must be within this image: x 0–${finalImageWidth}, y 0–${finalImageHeight}. Coordinates are automatically translated to screen position.${pathLine}`,
       images: [{ mediaType, data: base64 }]
     }
   } catch (err) {
@@ -231,6 +243,9 @@ async function mouseMove(args) {
     return { success: false, error: 'x and y coordinates are required (finite numbers)' }
   }
 
+  const boundsError = validateCoordinates(x, y)
+  if (boundsError) return { success: false, error: boundsError }
+
   try {
     const scaled = scaleToScreen(x, y)
     await nutMouse.move(nutStraightTo(new nutPoint(scaled.x, scaled.y)))
@@ -259,6 +274,11 @@ async function mouseClick(args) {
       break
     default:
       button = nutButton.LEFT
+  }
+
+  if (x !== null && y !== null && Number.isFinite(x) && Number.isFinite(y)) {
+    const boundsError = validateCoordinates(x, y)
+    if (boundsError) return { success: false, error: boundsError }
   }
 
   try {

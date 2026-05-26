@@ -972,7 +972,8 @@
       "tooltip": "{{used}} من {{max}}"
     },
     "status": {
-      "tokenUsage": "↑{{input}} ↓{{output}} توكن",
+      "tokenUsage": "{{input}} وارد · {{output}} صادر",
+      "tokenUsageCached": "{{cached}} مخزن · {{input}} جديد · {{output}} صادر",
       "contextTokens": "{{count}} سياق",
       "elapsedSeconds": "{{seconds}} ث",
       "elapsedMinutes": "{{minutes}} د {{seconds}} ث"

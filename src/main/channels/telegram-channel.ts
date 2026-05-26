@@ -1251,7 +1251,14 @@ export class TelegramChannel {
       // PDFs, and docs into native content blocks (same rules the
       // in-app channel uses).
       const history: ChatHistoryMessage[] = conversation.messages.map((m) => {
-        if (m.role !== 'user') return { role: m.role, content: m.content }
+        if (m.role !== 'user') {
+          const turnEnd = m.segments?.find((s) => s.kind === 'turn_end')
+          const entry: ChatHistoryMessage = { role: m.role, content: m.content }
+          if (turnEnd && 'reasoningContent' in turnEnd && turnEnd.reasoningContent) {
+            entry.reasoningContent = turnEnd.reasoningContent as string
+          }
+          return entry
+        }
         if (m.voicePrompt) return { role: 'user', content: `<voice_note>\n${m.content}` }
         const atts = m.attachments ?? []
         const entry: ChatHistoryMessage = {

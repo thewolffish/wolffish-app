@@ -95,6 +95,9 @@ export class DeepSeekProvider {
       const delta = choice.delta
 
       if (delta) {
+        if (typeof delta.reasoning_content === 'string' && delta.reasoning_content.length > 0) {
+          yield { type: 'reasoning', text: delta.reasoning_content }
+        }
         if (typeof delta.content === 'string' && delta.content.length > 0) {
           yield { type: 'text', text: delta.content }
         }
@@ -156,6 +159,7 @@ function mapFinishReason(s: string): StopReason {
 type DeepSeekEvent = {
   choices?: Array<{
     delta?: {
+      reasoning_content?: string
       content?: string
       tool_calls?: Array<{
         index?: number
@@ -221,7 +225,7 @@ function toMessages(messages: ChatMessage[]): Array<Record<string, unknown>> {
       continue
     }
     if (m.toolUses && m.toolUses.length > 0) {
-      out.push({
+      const msg: Record<string, unknown> = {
         role: 'assistant',
         content: m.content && m.content.length > 0 ? m.content : null,
         tool_calls: m.toolUses.map((use) => ({
@@ -232,9 +236,13 @@ function toMessages(messages: ChatMessage[]): Array<Record<string, unknown>> {
             arguments: JSON.stringify(use.args)
           }
         }))
-      })
+      }
+      if (m.reasoningContent) msg.reasoning_content = m.reasoningContent
+      out.push(msg)
     } else {
-      out.push({ role: 'assistant', content: m.content })
+      const msg: Record<string, unknown> = { role: 'assistant', content: m.content }
+      if (m.reasoningContent) msg.reasoning_content = m.reasoningContent
+      out.push(msg)
     }
   }
   return out

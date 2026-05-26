@@ -219,7 +219,7 @@ export type ConversationFile = {
   channel?: ConversationChannel
   sealed?: boolean
   workingFolder?: string[] | null
-  contextMeter?: { inputTokens: number; contextBudget: number } | null
+  contextMeter?: { contextTokens: number; contextBudget: number } | null
 }
 
 export type ConversationMeta = {
@@ -242,6 +242,7 @@ export type ChatHistoryMessage = {
   role: 'user' | 'assistant'
   content: string
   attachments?: ChatHistoryAttachment[]
+  reasoningContent?: string
 }
 export type ChatDoneEvent = { turnId: string }
 export type ChatErrorEvent = { turnId: string; error: string }
