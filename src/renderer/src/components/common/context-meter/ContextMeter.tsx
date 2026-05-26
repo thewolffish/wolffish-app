@@ -92,10 +92,7 @@ export function ContextMeter({
             strokeLinecap="round"
           />
         </svg>
-        <span
-          className="absolute text-[10px] font-semibold leading-none"
-          style={{ color }}
-        >
+        <span className="absolute text-[10px] font-semibold leading-none" style={{ color }}>
           {percent}%
         </span>
       </span>

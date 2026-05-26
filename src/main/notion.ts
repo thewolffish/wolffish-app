@@ -88,7 +88,11 @@ class NotionService {
       return { ok: false, kind: 'unknown', message }
     }
 
-    let json: { name?: string; person?: { email?: string }; bot?: { owner?: { user?: { person?: { email?: string } } } } }
+    let json: {
+      name?: string
+      person?: { email?: string }
+      bot?: { owner?: { user?: { person?: { email?: string } } } }
+    }
     try {
       json = (await response.json()) as typeof json
     } catch (err) {

@@ -12,7 +12,12 @@ type WhisperModel = {
 const MODELS: WhisperModel[] = [
   { id: 'tiny', size: '~75 MB', speed: 'Fastest', description: 'Quick previews of long audio' },
   { id: 'base', size: '~150 MB', speed: 'Fast', description: 'Default for most transcription' },
-  { id: 'small', size: '~500 MB', speed: 'Moderate', description: 'Better accuracy when it matters' },
+  {
+    id: 'small',
+    size: '~500 MB',
+    speed: 'Moderate',
+    description: 'Better accuracy when it matters'
+  },
   { id: 'medium', size: '~1.5 GB', speed: 'Slow', description: 'High-stakes transcription' },
   { id: 'large', size: '~3 GB', speed: 'Very slow', description: 'Research-grade accuracy' }
 ]

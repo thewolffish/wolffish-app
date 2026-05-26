@@ -19,7 +19,10 @@ import type { IconType } from 'react-icons'
 type ProviderId = CloudProviderConfig['id']
 type Status = 'untested' | 'testing' | 'invalid'
 
-const PROVIDER_LOGOS: Record<ProviderId, IconType | React.ComponentType<{ size?: number; className?: string }>> = {
+const PROVIDER_LOGOS: Record<
+  ProviderId,
+  IconType | React.ComponentType<{ size?: number; className?: string }>
+> = {
   anthropic: AnthropicLogo,
   openai: OpenAILogo,
   deepseek: DeepSeekLogo

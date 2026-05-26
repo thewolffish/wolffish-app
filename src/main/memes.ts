@@ -4,12 +4,7 @@ const GIPHY_API = 'https://api.giphy.com/v1/gifs'
 const IMGFLIP_API = 'https://api.imgflip.com'
 const TEST_TIMEOUT_MS = 10_000
 
-export type MemesErrorKind =
-  | 'missing_key'
-  | 'invalid_key'
-  | 'rate_limit'
-  | 'network'
-  | 'unknown'
+export type MemesErrorKind = 'missing_key' | 'invalid_key' | 'rate_limit' | 'network' | 'unknown'
 
 export type MemesStatus = {
   memegen: 'available'
@@ -21,9 +16,7 @@ export type MemesStatus = {
   imgflipError: string | null
 }
 
-export type MemesTestResult =
-  | { ok: true }
-  | { ok: false; kind: MemesErrorKind; message?: string }
+export type MemesTestResult = { ok: true } | { ok: false; kind: MemesErrorKind; message?: string }
 
 class MemesService {
   private lastGiphyError: { kind: MemesErrorKind; message: string | null } | null = null
@@ -119,8 +112,9 @@ class MemesService {
       }
       const json = (await response.json()) as { success: boolean; error_message?: string }
       if (!json.success) {
-        const isAuth = json.error_message?.toLowerCase().includes('password')
-          || json.error_message?.toLowerCase().includes('username')
+        const isAuth =
+          json.error_message?.toLowerCase().includes('password') ||
+          json.error_message?.toLowerCase().includes('username')
         this.lastImgflipError = {
           kind: isAuth ? 'invalid_key' : 'unknown',
           message: json.error_message ?? null

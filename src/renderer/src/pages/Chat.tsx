@@ -23,7 +23,7 @@ import {
 import { useToast } from '@components/core/toast/useToast'
 import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
-import { preselectSettingsTab } from '@pages/settings/Settings'
+import { preselectSettingsTab } from '@pages/settings/settingsNav'
 import type {
   ConversationChannel,
   ConversationFile,
@@ -516,16 +516,26 @@ export function Chat(): React.JSX.Element {
     })
     const offTurnEvent = window.api.chat.onTurnEvent(({ turnId, type, payload }) => {
       if (pendingTurnIdRef.current !== turnId) return
-      if (type === 'context.built' && typeof payload.tokenCount === 'number') {
-        setContextTokens(payload.tokenCount)
+      if (type === 'context.built') {
         if (typeof payload.tokenBudget === 'number') setContextBudget(payload.tokenBudget)
       } else if (type === 'llm.response') {
-        if (typeof payload.inputTokens === 'number')
-          setInputTokens((prev) => (prev ?? 0) + payload.inputTokens)
-        if (typeof payload.outputTokens === 'number')
-          setOutputTokens((prev) => (prev ?? 0) + payload.outputTokens)
-        if (typeof payload.cacheReadTokens === 'number')
-          setCacheReadTokens((prev) => (prev ?? 0) + payload.cacheReadTokens)
+        const uncached = typeof payload.inputTokens === 'number' ? payload.inputTokens : 0
+        const cacheRead = typeof payload.cacheReadTokens === 'number' ? payload.cacheReadTokens : 0
+        const cacheCreated =
+          typeof payload.cacheCreationTokens === 'number' ? payload.cacheCreationTokens : 0
+        setContextTokens(uncached + cacheRead + cacheCreated)
+        if (typeof payload.inputTokens === 'number') {
+          const v = payload.inputTokens
+          setInputTokens((prev) => (prev ?? 0) + v)
+        }
+        if (typeof payload.outputTokens === 'number') {
+          const v = payload.outputTokens
+          setOutputTokens((prev) => (prev ?? 0) + v)
+        }
+        if (typeof payload.cacheReadTokens === 'number') {
+          const v = payload.cacheReadTokens
+          setCacheReadTokens((prev) => (prev ?? 0) + v)
+        }
       }
     })
     const offApprovalRequest = window.api.chat.onApprovalRequest((event) => {
@@ -2032,7 +2042,12 @@ function stripErrors(messages: ChatMessage[]): ChatMessage[] {
 function textHistory(
   messages: ChatMessage[],
   workspaceRoot: string | null
-): Array<{ role: 'user' | 'assistant'; content: string; attachments?: MessageAttachment[]; reasoningContent?: string }> {
+): Array<{
+  role: 'user' | 'assistant'
+  content: string
+  attachments?: MessageAttachment[]
+  reasoningContent?: string
+}> {
   const out: Array<{
     role: 'user' | 'assistant'
     content: string

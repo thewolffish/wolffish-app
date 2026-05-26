@@ -57,10 +57,7 @@ export async function getConversationIdForJid(jid: string): Promise<string | nul
   return map.get(jid) ?? null
 }
 
-export async function setConversationIdForJid(
-  jid: string,
-  conversationId: string
-): Promise<void> {
+export async function setConversationIdForJid(jid: string, conversationId: string): Promise<void> {
   const map = await load()
   map.set(jid, conversationId)
   await persist(map)

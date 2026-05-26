@@ -6,7 +6,13 @@ import { cn } from '@lib/utils/cn'
 import type { ConversationMeta, PersistedApproval } from '@preload/index'
 import { useFlow, type ApprovalCardState } from '@providers/flow/useFlow'
 import { useLocale } from '@providers/locale/useLocale'
-import { Activity04Icon, ArrowLeft02Icon, ArrowRight02Icon, BubbleChatIcon, Delete01Icon } from 'hugeicons-react'
+import {
+  Activity04Icon,
+  ArrowLeft02Icon,
+  ArrowRight02Icon,
+  BubbleChatIcon,
+  Delete01Icon
+} from 'hugeicons-react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 

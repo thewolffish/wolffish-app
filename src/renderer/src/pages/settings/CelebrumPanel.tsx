@@ -62,9 +62,7 @@ export function CelebrumPanel(): React.JSX.Element {
                 </Badge>
               )}
             </div>
-            <p className="text-muted text-sm leading-relaxed">
-              {t('settings.cellebrum.subtitle')}
-            </p>
+            <p className="text-muted text-sm leading-relaxed">{t('settings.cellebrum.subtitle')}</p>
           </div>
           <button
             type="button"
@@ -199,9 +197,7 @@ function CapabilityRow({
         </div>
       </div>
 
-      {cap.description && (
-        <p className="text-muted text-xs leading-relaxed">{cap.description}</p>
-      )}
+      {cap.description && <p className="text-muted text-xs leading-relaxed">{cap.description}</p>}
 
       <div className="flex flex-wrap items-center gap-2">
         {cap.hasPlugin && (
@@ -221,9 +217,7 @@ function CapabilityRow({
         )}
       </div>
 
-      {cap.error && (
-        <p className="text-xs text-red-500">{cap.error}</p>
-      )}
+      {cap.error && <p className="text-xs text-red-500">{cap.error}</p>}
     </div>
   )
 }

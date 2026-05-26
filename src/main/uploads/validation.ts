@@ -10,7 +10,15 @@ export const MAX_AUDIO_BYTES = 512 * 1024 * 1024 // 512 MB
 const ALLOWED_IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp'])
 const ALLOWED_PDF_EXTS = new Set(['.pdf'])
 const ALLOWED_DOCUMENT_EXTS = new Set([
-  '.docx', '.xlsx', '.xls', '.csv', '.tsv', '.txt', '.md', '.json', '.pptx'
+  '.docx',
+  '.xlsx',
+  '.xls',
+  '.csv',
+  '.tsv',
+  '.txt',
+  '.md',
+  '.json',
+  '.pptx'
 ])
 const ALLOWED_AUDIO_EXTS = new Set(['.mp3', '.wav', '.ogg', '.m4a', '.flac', '.webm'])
 const VIDEO_EXTS = new Set(['.mp4', '.mov', '.avi', '.mkv', '.m4v', '.wmv', '.flv'])
@@ -37,11 +45,16 @@ export function categorizeFile(fileName: string): FileCategory {
 
 export function getMaxBytesForCategory(category: FileCategory): number {
   switch (category) {
-    case 'image': return MAX_IMAGE_BYTES
-    case 'pdf': return MAX_PDF_BYTES
-    case 'document': return MAX_DOCUMENT_BYTES
-    case 'audio': return MAX_AUDIO_BYTES
-    default: return 0
+    case 'image':
+      return MAX_IMAGE_BYTES
+    case 'pdf':
+      return MAX_PDF_BYTES
+    case 'document':
+      return MAX_DOCUMENT_BYTES
+    case 'audio':
+      return MAX_AUDIO_BYTES
+    default:
+      return 0
   }
 }
 
@@ -55,8 +68,10 @@ export function validateFile(
 
   if (category === 'video') return { code: 'video_not_allowed' }
   if (category === 'unknown') return { code: 'type_not_supported' }
-  if (currentFileCount >= MAX_FILES_PER_MESSAGE) return { code: 'max_files_reached', max: MAX_FILES_PER_MESSAGE }
-  if (currentTotalBytes + sizeBytes > MAX_TOTAL_BYTES) return { code: 'total_size_exceeded', maxBytes: MAX_TOTAL_BYTES }
+  if (currentFileCount >= MAX_FILES_PER_MESSAGE)
+    return { code: 'max_files_reached', max: MAX_FILES_PER_MESSAGE }
+  if (currentTotalBytes + sizeBytes > MAX_TOTAL_BYTES)
+    return { code: 'total_size_exceeded', maxBytes: MAX_TOTAL_BYTES }
 
   const maxForType = getMaxBytesForCategory(category)
   if (sizeBytes > maxForType) return { code: 'file_too_large', maxBytes: maxForType }
@@ -70,11 +85,7 @@ export function isVisionModel(modelName: string): boolean {
 }
 
 export function getAllowedExtensions(supportsVision: boolean): string[] {
-  const exts: string[] = [
-    ...ALLOWED_DOCUMENT_EXTS,
-    ...ALLOWED_AUDIO_EXTS,
-    ...ALLOWED_PDF_EXTS
-  ]
+  const exts: string[] = [...ALLOWED_DOCUMENT_EXTS, ...ALLOWED_AUDIO_EXTS, ...ALLOWED_PDF_EXTS]
   if (supportsVision) {
     exts.push(...ALLOWED_IMAGE_EXTS)
   }

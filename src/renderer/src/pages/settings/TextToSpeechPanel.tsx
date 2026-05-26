@@ -112,7 +112,11 @@ export function TextToSpeechPanel(): React.JSX.Element {
     const text = sampleTexts[langPrefix] ?? sampleTexts.en
 
     const utter = new SpeechSynthesisUtterance(text)
-    utter.lang = selectedVoice.id.replace(/Neural$/, '').split('-').slice(0, 2).join('-')
+    utter.lang = selectedVoice.id
+      .replace(/Neural$/, '')
+      .split('-')
+      .slice(0, 2)
+      .join('-')
     const speedEntry = SPEEDS.find((s) => s.value === speed)
     utter.rate = speedEntry?.rate ?? 1
 
@@ -193,7 +197,10 @@ export function TextToSpeechPanel(): React.JSX.Element {
           <h2 className="text-fg text-sm font-medium">{t('settings.services.tts.voicesTitle')}</h2>
           <div className="divide-border/40 divide-y">
             {VOICES.map((v) => (
-              <div key={v.id} className="flex items-center justify-between py-2 first:pt-0 last:pb-0">
+              <div
+                key={v.id}
+                className="flex items-center justify-between py-2 first:pt-0 last:pb-0"
+              >
                 <div className="flex flex-col">
                   <span className="text-fg text-sm">{v.label}</span>
                   <span className="text-muted text-xs">{v.lang}</span>

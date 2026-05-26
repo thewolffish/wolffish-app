@@ -19,12 +19,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 import type { Cerebellum } from '@main/runtime/cerebellum'
-import type {
-  Corpus,
-  CorpusEvent,
-  CorpusEvents,
-  CorpusUnsubscribe
-} from '@main/runtime/corpus'
+import type { Corpus, CorpusEvent, CorpusEvents, CorpusUnsubscribe } from '@main/runtime/corpus'
 import type { Device } from '@main/runtime/device'
 import type { ProviderId, Thalamus } from '@main/runtime/thalamus'
 

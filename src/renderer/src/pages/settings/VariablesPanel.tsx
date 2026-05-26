@@ -1,6 +1,6 @@
 import { cn } from '@lib/utils/cn'
 import type { Variable } from '@preload/index'
-import { useCallback, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Add01Icon, Delete02Icon, ViewIcon, ViewOffIcon } from 'hugeicons-react'
 
@@ -17,15 +17,18 @@ export function VariablesPanel(): React.JSX.Element {
   const [editingIndex, setEditingIndex] = useState<number | null>(null)
   const [editingValue, setEditingValue] = useState('')
 
-  const load = useCallback(async () => {
-    const list = await window.api.variables.list()
-    setVariables(list)
-    setLoaded(true)
-  }, [])
-
   useEffect(() => {
-    load()
-  }, [load])
+    let stale = false
+    window.api.variables.list().then((list) => {
+      if (!stale) {
+        setVariables(list)
+        setLoaded(true)
+      }
+    })
+    return () => {
+      stale = true
+    }
+  }, [])
 
   const persist = async (next: Variable[]): Promise<void> => {
     setSaving(true)
@@ -108,7 +111,8 @@ export function VariablesPanel(): React.JSX.Element {
     }
   }
 
-  const duplicateName = editName.trim().length > 0 && variables.some((v) => v.name === editName.trim())
+  const duplicateName =
+    editName.trim().length > 0 && variables.some((v) => v.name === editName.trim())
 
   if (!loaded) {
     return (
@@ -185,11 +189,7 @@ export function VariablesPanel(): React.JSX.Element {
                           : t('settings.variables.reveal')
                       }
                     >
-                      {revealedIndices.has(i) ? (
-                        <ViewOffIcon size={14} />
-                      ) : (
-                        <ViewIcon size={14} />
-                      )}
+                      {revealedIndices.has(i) ? <ViewOffIcon size={14} /> : <ViewIcon size={14} />}
                     </button>
                   )}
                   <button
@@ -262,9 +262,7 @@ export function VariablesPanel(): React.JSX.Element {
                     <button
                       type="button"
                       onClick={addVariable}
-                      disabled={
-                        saving || !editName.trim() || !editValue.trim() || duplicateName
-                      }
+                      disabled={saving || !editName.trim() || !editValue.trim() || duplicateName}
                       className={cn(
                         'bg-primary text-primary-fg rounded-lg px-3 py-1.5 text-xs font-medium shadow-sm cursor-pointer',
                         'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',

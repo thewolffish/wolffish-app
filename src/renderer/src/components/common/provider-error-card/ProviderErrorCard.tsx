@@ -1,9 +1,4 @@
-import {
-  AnthropicLogo,
-  DeepSeekLogo,
-  OllamaLogo,
-  OpenAILogo
-} from '@components/core/ProviderLogos'
+import { AnthropicLogo, DeepSeekLogo, OllamaLogo, OpenAILogo } from '@components/core/ProviderLogos'
 import { cn } from '@lib/utils/cn'
 import { CloudIcon, Refresh01Icon } from 'hugeicons-react'
 import { useTranslation } from 'react-i18next'

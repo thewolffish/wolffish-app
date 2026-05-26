@@ -65,10 +65,7 @@ export function CopyButton({
         >
           {t('chat.copied')}
         </span>
-        <span
-          aria-hidden={copied}
-          className={cn('col-start-1 row-start-1', copied && 'invisible')}
-        >
+        <span aria-hidden={copied} className={cn('col-start-1 row-start-1', copied && 'invisible')}>
           {t('chat.copy')}
         </span>
       </span>

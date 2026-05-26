@@ -297,7 +297,7 @@ export function WhatsAppPanel(): React.JSX.Element {
                   <p className="text-muted text-sm">
                     {status.status === 'qr' && qrCode
                       ? t('settings.services.whatsapp.scanQr')
-                      : (status.error || t('settings.services.whatsapp.connectDescription'))}
+                      : status.error || t('settings.services.whatsapp.connectDescription')}
                   </p>
                   <div className="rounded-lg bg-white p-4">
                     {status.status === 'qr' && qrCode ? (

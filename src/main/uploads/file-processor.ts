@@ -19,7 +19,17 @@ export type FileProcessorOptions = {
 }
 
 const IMAGE_MIMES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp'])
-const DOCUMENT_EXTS = new Set(['.docx', '.xlsx', '.xls', '.csv', '.tsv', '.txt', '.md', '.json', '.pptx'])
+const DOCUMENT_EXTS = new Set([
+  '.docx',
+  '.xlsx',
+  '.xls',
+  '.csv',
+  '.tsv',
+  '.txt',
+  '.md',
+  '.json',
+  '.pptx'
+])
 
 export async function processAttachment(
   relativePath: string,

@@ -98,8 +98,20 @@ export type CorpusEvents = {
   'index.reindexed': { filesCount: number; durationMs: number }
 
   'brainstem.jobStarted': { job: string; type: string; label: string; timestamp: string }
-  'brainstem.jobCompleted': { job: string; type: string; label: string; timestamp: string; durationMs: number }
-  'brainstem.jobFailed': { job: string; type: string; label: string; timestamp: string; error: string }
+  'brainstem.jobCompleted': {
+    job: string
+    type: string
+    label: string
+    timestamp: string
+    durationMs: number
+  }
+  'brainstem.jobFailed': {
+    job: string
+    type: string
+    label: string
+    timestamp: string
+    error: string
+  }
   'brainstem.jobSkipped': { job: string; label: string; reason: string }
   'brainstem.schedulerReloaded': { jobs: number; timestamp: string }
 
@@ -132,7 +144,10 @@ export type CorpusEvents = {
 
   'telegram.started': { allowedUserCount: number }
   'telegram.stopped': { reason?: string }
-  'telegram.error': { kind: 'token' | 'network' | 'rate_limit' | 'send' | 'unknown'; message: string }
+  'telegram.error': {
+    kind: 'token' | 'network' | 'rate_limit' | 'send' | 'unknown'
+    message: string
+  }
   'telegram.media.received': {
     chatId: number
     userId: number

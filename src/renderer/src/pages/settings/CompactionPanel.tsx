@@ -40,7 +40,10 @@ export function CompactionPanel(): React.JSX.Element {
       const cfg = await window.api.runtime.getCompactionConfig()
       setConfig(cfg)
       setNow(Date.now())
-      toast.show({ tone: 'success', message: t('settings.hippocampus.compaction.resyncSuccessToast') })
+      toast.show({
+        tone: 'success',
+        message: t('settings.hippocampus.compaction.resyncSuccessToast')
+      })
     } catch {
       toast.show({ tone: 'error', message: t('settings.hippocampus.compaction.resyncErrorToast') })
     } finally {

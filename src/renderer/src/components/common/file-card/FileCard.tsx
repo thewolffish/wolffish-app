@@ -27,12 +27,7 @@ export function FileCard({
     return <DeletedFile fileName={fileName} />
   }
   return (
-    <ActiveFile
-      filePath={filePath}
-      fileName={fileName}
-      sizeBytes={sizeBytes}
-      mimeType={mimeType}
-    />
+    <ActiveFile filePath={filePath} fileName={fileName} sizeBytes={sizeBytes} mimeType={mimeType} />
   )
 }
 

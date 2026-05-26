@@ -60,18 +60,8 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import { useTranslation } from 'react-i18next'
 import type { IconType } from 'react-icons'
 
-export type TabKey =
-  | 'appearance'
-  | 'model'
-  | 'channels'
-  | 'services'
-  | 'updates'
-  | 'wolffish'
-  | 'variables'
-  | 'cellebrum'
-  | 'hippocampus'
-  | 'usage'
-  | 'data'
+import { consumeNextTab, type TabKey } from './settingsNav'
+export type { TabKey } from './settingsNav'
 
 type Tab = {
   key: TabKey
@@ -105,21 +95,6 @@ type SettingsSnapshot = {
 
 let memo: SettingsSnapshot | null = null
 
-/**
- * One-shot tab override consumed on the very next Settings mount.
- * Completely bypasses the memo / persisted-state chain so it's
- * guaranteed to win regardless of caching.
- */
-let nextTab: TabKey | null = null
-
-/**
- * Force the next Settings mount to open on `tab` (e.g. `'model'`).
- * Call this right before `goTo('settings')`.
- */
-export function preselectSettingsTab(tab: TabKey): void {
-  nextTab = tab
-}
-
 function restoreSnapshot(
   cfg: { lastSettingsState?: Record<string, string> } | null
 ): SettingsSnapshot {
@@ -132,9 +107,7 @@ function restoreSnapshot(
         ? (s.provider as Provider)
         : 'ollama',
     channel:
-      s?.channel && CHANNELS.includes(s.channel as Channel)
-        ? (s.channel as Channel)
-        : 'telegram',
+      s?.channel && CHANNELS.includes(s.channel as Channel) ? (s.channel as Channel) : 'telegram',
     service: s?.service ? (s.service as Service) : 'brave',
     hippocampusTab:
       s?.hippocampusTab && HIPPOCAMPUS_TABS.includes(s.hippocampusTab as HippocampusTab)
@@ -159,47 +132,57 @@ export function Settings(): React.JSX.Element {
   const [snapshot] = useState(() => restoreSnapshot(status?.config ?? null))
 
   const [active, setActiveRaw] = useState<TabKey>(() => {
-    if (nextTab) {
-      const t = nextTab
-      nextTab = null
-      return t
-    }
-    return snapshot.tab
+    return consumeNextTab() ?? snapshot.tab
   })
   const [provider, setProviderRaw] = useState<Provider>(snapshot.provider)
   const [channel, setChannelRaw] = useState<Channel>(snapshot.channel)
   const [service, setServiceRaw] = useState<Service>(snapshot.service)
   const [hippocampusTab, setHippocampusTabRaw] = useState<HippocampusTab>(snapshot.hippocampusTab)
 
-  const setActive = useCallback((key: TabKey) => {
-    setActiveRaw(key)
-    memo = { ...(memo ?? snapshot), tab: key }
-    persistField('tab', key)
-  }, [snapshot])
+  const setActive = useCallback(
+    (key: TabKey) => {
+      setActiveRaw(key)
+      memo = { ...(memo ?? snapshot), tab: key }
+      persistField('tab', key)
+    },
+    [snapshot]
+  )
 
-  const setProvider = useCallback((p: Provider) => {
-    setProviderRaw(p)
-    memo = { ...(memo ?? snapshot), provider: p }
-    persistField('provider', p)
-  }, [snapshot])
+  const setProvider = useCallback(
+    (p: Provider) => {
+      setProviderRaw(p)
+      memo = { ...(memo ?? snapshot), provider: p }
+      persistField('provider', p)
+    },
+    [snapshot]
+  )
 
-  const setChannel = useCallback((ch: Channel) => {
-    setChannelRaw(ch)
-    memo = { ...(memo ?? snapshot), channel: ch }
-    persistField('channel', ch)
-  }, [snapshot])
+  const setChannel = useCallback(
+    (ch: Channel) => {
+      setChannelRaw(ch)
+      memo = { ...(memo ?? snapshot), channel: ch }
+      persistField('channel', ch)
+    },
+    [snapshot]
+  )
 
-  const setService = useCallback((s: Service) => {
-    setServiceRaw(s)
-    memo = { ...(memo ?? snapshot), service: s }
-    persistField('service', s)
-  }, [snapshot])
+  const setService = useCallback(
+    (s: Service) => {
+      setServiceRaw(s)
+      memo = { ...(memo ?? snapshot), service: s }
+      persistField('service', s)
+    },
+    [snapshot]
+  )
 
-  const setHippocampusTab = useCallback((ht: HippocampusTab) => {
-    setHippocampusTabRaw(ht)
-    memo = { ...(memo ?? snapshot), hippocampusTab: ht }
-    persistField('hippocampusTab', ht)
-  }, [snapshot])
+  const setHippocampusTab = useCallback(
+    (ht: HippocampusTab) => {
+      setHippocampusTabRaw(ht)
+      memo = { ...(memo ?? snapshot), hippocampusTab: ht }
+      persistField('hippocampusTab', ht)
+    },
+    [snapshot]
+  )
 
   // The TTS and STT panels only make sense when their cerebellum
   // capabilities are loaded — without the plugin folders, the saved
@@ -567,7 +550,10 @@ function TabPanel({
 type Provider = 'ollama' | 'anthropic' | 'openai' | 'deepseek'
 const PROVIDERS: Provider[] = ['ollama', 'deepseek', 'anthropic', 'openai']
 
-const PROVIDER_ICONS: Record<Provider, IconType | React.ComponentType<{ size?: number; className?: string }>> = {
+const PROVIDER_ICONS: Record<
+  Provider,
+  IconType | React.ComponentType<{ size?: number; className?: string }>
+> = {
   ollama: OllamaLogo,
   anthropic: AnthropicLogo,
   openai: OpenAILogo,
