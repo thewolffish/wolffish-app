@@ -127,6 +127,17 @@ const toolDefinitions = [
   }
 ]
 
+function parseJsonParam(value, name) {
+  if (value == null) return undefined
+  if (typeof value === 'object') return value
+  if (typeof value === 'string') {
+    try { return JSON.parse(value) } catch {
+      throw new Error(`Invalid JSON in ${name} parameter`)
+    }
+  }
+  throw new Error(`Expected object or JSON string for ${name}, got ${typeof value}`)
+}
+
 function resolvePath(input) {
   if (!input || typeof input !== 'string') throw new Error('path is required')
   if (input === '~') return os.homedir()
@@ -247,14 +258,14 @@ async function pdfCreate(args) {
   const outputPath = resolvePath(args.output_path)
   let content, options
   try {
-    content = JSON.parse(args.content)
-  } catch {
-    return { success: false, error: 'Invalid JSON in content parameter' }
+    content = parseJsonParam(args.content, 'content')
+  } catch (err) {
+    return { success: false, error: err.message }
   }
   try {
-    options = args.options ? JSON.parse(args.options) : {}
-  } catch {
-    return { success: false, error: 'Invalid JSON in options parameter' }
+    options = args.options ? parseJsonParam(args.options, 'options') : {}
+  } catch (err) {
+    return { success: false, error: err.message }
   }
 
   try {
@@ -487,14 +498,14 @@ async function pdfCreate(args) {
 async function pdfMerge(args) {
   let paths, pageRanges
   try {
-    paths = JSON.parse(args.paths)
-  } catch {
-    return { success: false, error: 'Invalid JSON in paths parameter' }
+    paths = parseJsonParam(args.paths, 'paths')
+  } catch (err) {
+    return { success: false, error: err.message }
   }
   try {
-    pageRanges = args.page_ranges ? JSON.parse(args.page_ranges) : null
-  } catch {
-    return { success: false, error: 'Invalid JSON in page_ranges parameter' }
+    pageRanges = args.page_ranges ? parseJsonParam(args.page_ranges, 'page_ranges') : null
+  } catch (err) {
+    return { success: false, error: err.message }
   }
 
   const outputPath = resolvePath(args.output_path)
@@ -544,9 +555,9 @@ async function pdfSplit(args) {
   const outputDir = resolvePath(args.output_dir)
   let ranges
   try {
-    ranges = JSON.parse(args.ranges)
-  } catch {
-    return { success: false, error: 'Invalid JSON in ranges parameter' }
+    ranges = parseJsonParam(args.ranges, 'ranges')
+  } catch (err) {
+    return { success: false, error: err.message }
   }
 
   try {
@@ -585,9 +596,9 @@ async function pdfModify(args) {
   const outputPath = resolvePath(args.output_path)
   let modifications
   try {
-    modifications = JSON.parse(args.modifications)
-  } catch {
-    return { success: false, error: 'Invalid JSON in modifications parameter' }
+    modifications = parseJsonParam(args.modifications, 'modifications')
+  } catch (err) {
+    return { success: false, error: err.message }
   }
 
   try {
@@ -715,9 +726,9 @@ async function pdfForm(args) {
 
       let fields
       try {
-        fields = JSON.parse(args.fields)
-      } catch {
-        return { success: false, error: 'Invalid JSON in fields parameter' }
+        fields = parseJsonParam(args.fields, 'fields')
+      } catch (err) {
+        return { success: false, error: err.message }
       }
 
       for (const [name, value] of Object.entries(fields)) {

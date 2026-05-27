@@ -145,6 +145,17 @@ const toolDefinitions = [
   }
 ]
 
+function parseJsonParam(value, name) {
+  if (value == null) return undefined
+  if (typeof value === 'object') return value
+  if (typeof value === 'string') {
+    try { return JSON.parse(value) } catch {
+      throw new Error(`Invalid JSON in ${name} parameter`)
+    }
+  }
+  throw new Error(`Expected object or JSON string for ${name}, got ${typeof value}`)
+}
+
 function resolvePath(input) {
   if (!input || typeof input !== 'string') throw new Error('path is required')
   if (input === '~') return os.homedir()
@@ -277,14 +288,14 @@ async function documentCreate(args) {
   const outputPath = resolvePath(args.output_path)
   let content, options
   try {
-    content = JSON.parse(args.content)
-  } catch {
-    return { success: false, error: 'Invalid JSON in content parameter' }
+    content = parseJsonParam(args.content, 'content')
+  } catch (err) {
+    return { success: false, error: err.message }
   }
   try {
-    options = args.options ? JSON.parse(args.options) : {}
-  } catch {
-    return { success: false, error: 'Invalid JSON in options parameter' }
+    options = args.options ? parseJsonParam(args.options, 'options') : {}
+  } catch (err) {
+    return { success: false, error: err.message }
   }
 
   try {
@@ -499,9 +510,9 @@ async function documentModify(args) {
   const outputPath = resolvePath(args.output_path)
   let operations
   try {
-    operations = JSON.parse(args.operations)
-  } catch {
-    return { success: false, error: 'Invalid JSON in operations parameter' }
+    operations = parseJsonParam(args.operations, 'operations')
+  } catch (err) {
+    return { success: false, error: err.message }
   }
 
   try {
@@ -565,12 +576,12 @@ async function documentTemplate(args) {
   const outputPath = resolvePath(args.output_path)
   let data, options
   try {
-    data = JSON.parse(args.data)
-  } catch {
-    return { success: false, error: 'Invalid JSON in data parameter' }
+    data = parseJsonParam(args.data, 'data')
+  } catch (err) {
+    return { success: false, error: err.message }
   }
   try {
-    options = args.options ? JSON.parse(args.options) : {}
+    options = args.options ? parseJsonParam(args.options, 'options') : {}
   } catch {
     options = {}
   }
@@ -713,9 +724,9 @@ async function documentConvert(args) {
 async function documentMerge(args) {
   let paths
   try {
-    paths = JSON.parse(args.paths)
-  } catch {
-    return { success: false, error: 'Invalid JSON in paths parameter' }
+    paths = parseJsonParam(args.paths, 'paths')
+  } catch (err) {
+    return { success: false, error: err.message }
   }
   const outputPath = resolvePath(args.output_path)
   const pageBreak = args.page_break_between !== 'false'
@@ -864,9 +875,9 @@ async function documentMetadata(args) {
 
       let metadata
       try {
-        metadata = JSON.parse(args.metadata)
-      } catch {
-        return { success: false, error: 'Invalid JSON in metadata parameter' }
+        metadata = parseJsonParam(args.metadata, 'metadata')
+      } catch (err) {
+        return { success: false, error: err.message }
       }
 
       let coreXml = zip.readAsText('docProps/core.xml') || ''

@@ -143,6 +143,17 @@ const toolDefinitions = [
   }
 ]
 
+function parseJsonParam(value, name) {
+  if (value == null) return undefined
+  if (typeof value === 'object') return value
+  if (typeof value === 'string') {
+    try { return JSON.parse(value) } catch {
+      throw new Error(`Invalid JSON in ${name} parameter`)
+    }
+  }
+  throw new Error(`Expected object or JSON string for ${name}, got ${typeof value}`)
+}
+
 function resolvePath(input) {
   if (!input || typeof input !== 'string') throw new Error('path is required')
   if (input === '~') return os.homedir()
@@ -325,9 +336,9 @@ async function spreadsheetCreate(args) {
   const outputPath = resolvePath(args.output_path)
   let sheets
   try {
-    sheets = JSON.parse(args.sheets)
-  } catch {
-    return { success: false, error: 'Invalid JSON in sheets parameter' }
+    sheets = parseJsonParam(args.sheets, 'sheets')
+  } catch (err) {
+    return { success: false, error: err.message }
   }
 
   const ext = getExt(outputPath)
@@ -394,9 +405,9 @@ async function spreadsheetModify(args) {
   const outputPath = resolvePath(args.output_path)
   let operations
   try {
-    operations = JSON.parse(args.operations)
-  } catch {
-    return { success: false, error: 'Invalid JSON in operations parameter' }
+    operations = parseJsonParam(args.operations, 'operations')
+  } catch (err) {
+    return { success: false, error: err.message }
   }
 
   try {
@@ -489,9 +500,9 @@ async function spreadsheetFormula(args) {
   const outputPath = resolvePath(args.output_path)
   let formulas
   try {
-    formulas = JSON.parse(args.formulas)
-  } catch {
-    return { success: false, error: 'Invalid JSON in formulas parameter' }
+    formulas = parseJsonParam(args.formulas, 'formulas')
+  } catch (err) {
+    return { success: false, error: err.message }
   }
 
   try {
@@ -523,9 +534,9 @@ async function spreadsheetChart(args) {
   const outputPath = resolvePath(args.output_path)
   let chartDef
   try {
-    chartDef = JSON.parse(args.chart)
-  } catch {
-    return { success: false, error: 'Invalid JSON in chart parameter' }
+    chartDef = parseJsonParam(args.chart, 'chart')
+  } catch (err) {
+    return { success: false, error: err.message }
   }
 
   try {
@@ -568,9 +579,9 @@ async function spreadsheetStyle(args) {
   const outputPath = resolvePath(args.output_path)
   let styles
   try {
-    styles = JSON.parse(args.styles)
-  } catch {
-    return { success: false, error: 'Invalid JSON in styles parameter' }
+    styles = parseJsonParam(args.styles, 'styles')
+  } catch (err) {
+    return { success: false, error: err.message }
   }
 
   try {
@@ -659,9 +670,9 @@ async function spreadsheetConvert(args) {
   const outputPath = resolvePath(args.output_path)
   let options = {}
   try {
-    if (args.options) options = JSON.parse(args.options)
-  } catch {
-    return { success: false, error: 'Invalid JSON in options parameter' }
+    if (args.options) options = parseJsonParam(args.options, 'options')
+  } catch (err) {
+    return { success: false, error: err.message }
   }
 
   const srcExt = getExt(filePath)
@@ -738,9 +749,9 @@ async function spreadsheetAnalyze(args) {
   const filePath = resolvePath(args.path)
   let targetColumns
   try {
-    if (args.columns) targetColumns = JSON.parse(args.columns)
-  } catch {
-    return { success: false, error: 'Invalid JSON in columns parameter' }
+    if (args.columns) targetColumns = parseJsonParam(args.columns, 'columns')
+  } catch (err) {
+    return { success: false, error: err.message }
   }
 
   try {
@@ -822,14 +833,14 @@ async function spreadsheetFilter(args) {
   const filePath = resolvePath(args.path)
   let filters, sort
   try {
-    filters = JSON.parse(args.filters)
-  } catch {
-    return { success: false, error: 'Invalid JSON in filters parameter' }
+    filters = parseJsonParam(args.filters, 'filters')
+  } catch (err) {
+    return { success: false, error: err.message }
   }
   try {
-    sort = args.sort ? JSON.parse(args.sort) : null
-  } catch {
-    return { success: false, error: 'Invalid JSON in sort parameter' }
+    sort = args.sort ? parseJsonParam(args.sort, 'sort') : null
+  } catch (err) {
+    return { success: false, error: err.message }
   }
 
   try {
@@ -929,11 +940,11 @@ async function spreadsheetPivot(args) {
   const outputPath = resolvePath(args.output_path)
   let rowFields, colFields, valueAggs
   try {
-    rowFields = JSON.parse(args.rows)
-    colFields = JSON.parse(args.columns)
-    valueAggs = JSON.parse(args.values)
-  } catch {
-    return { success: false, error: 'Invalid JSON in rows, columns, or values parameter' }
+    rowFields = parseJsonParam(args.rows, 'rows')
+    colFields = parseJsonParam(args.columns, 'columns')
+    valueAggs = parseJsonParam(args.values, 'values')
+  } catch (err) {
+    return { success: false, error: err.message }
   }
 
   try {
