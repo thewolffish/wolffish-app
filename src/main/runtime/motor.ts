@@ -345,11 +345,13 @@ export class Motor {
         return { ok: false, output: finalMessage, attempts: attempt }
       }
 
-      // Unknown errors get a shorter leash — local commands are almost
-      // always deterministic, so 10 retries with 60s plateau wastes
-      // minutes on the same failure. Network and timeout categories
-      // keep the full budget since those are genuinely transient.
-      if (classified.category === 'unknown' && attempt >= 3) {
+      // Unknown and timeout errors get a shorter leash — local commands
+      // are almost always deterministic, and timeout doublings snowball
+      // fast (30s → 60s → 120s already burns 3.5 min of wall time).
+      if (
+        (classified.category === 'unknown' || classified.category === 'timeout') &&
+        attempt >= 3
+      ) {
         step.status = 'failed'
         step.finishedAt = Date.now()
         task.updatedAt = Date.now()

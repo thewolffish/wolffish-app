@@ -18,7 +18,7 @@ triggers:
   - wget
 tools:
   - name: shell_exec
-    description: Run a shell command and return its output. Default cwd is the user home directory. No default timeout — commands run until they exit. Elevation commands (sudo, doas) are handled automatically via native OS password dialog — no TTY needed. Set background=true for long-lived processes (dev servers, watchers).
+    description: Run a shell command and return its output. Default cwd is the user home directory. Commands run until they exit — only set a timeout when you have a good reason to expect fast completion. Elevation commands (sudo, doas) are handled automatically via native OS password dialog — no TTY needed. Set background=true for long-lived processes (dev servers, watchers).
     parameters:
       command:
         type: string
@@ -30,7 +30,7 @@ tools:
       timeout:
         type: number
         required: false
-        description: Optional timeout in ms. If omitted, the command runs until it exits naturally. Use short timeouts (5000–15000) for quick checks where you want fast failure, or omit for commands with unpredictable duration. Ignored when background is true.
+        description: Optional timeout in ms. Default is no timeout — commands run until they exit. Only set this when you have a good reason to expect fast completion. Ignored when background is true.
       background:
         type: boolean
         required: false
@@ -104,20 +104,16 @@ If you're unsure which dialect a command needs, prefer external `.exe` invocatio
 
 ## Timeout guidelines
 
-There is no enforced floor or default. You decide based on the command:
+**Default: no timeout.** Let commands run until they finish. Long
+execution is normal in an agentic workflow — nothing is wasted while the
+device runs a command, and most things self-terminate anyway.
 
-- **Omit timeout entirely** for commands with unpredictable duration:
-  installs (`npm install`, `pip install`, `brew install`), builds
-  (`npm run build`, `cargo build`, `tsc`), large git operations,
-  test suites, media processing. Let them run to completion.
-- **Short timeout (5000–15000 ms)** for instant checks where you want
-  fast failure: `which ffmpeg`, `node -v`, `git --version`, `ls`.
-  If these don't finish in seconds, something is wrong.
-- **Medium timeout (30000–60000 ms)** for network-dependent commands
-  where you don't want to wait forever on a dead connection:
-  `curl`, `git fetch`, `git push`.
-- **Use background mode** for processes that never exit on their own
-  (dev servers, watchers, daemons). Timeout is irrelevant here.
+Only set a timeout when you have a really good reason — when you know
+for a fact the command should finish quickly and hanging would mean
+something is wrong. For most commands, just let them run.
+
+For processes that never exit on their own (dev servers, watchers,
+daemons), use `background: true` — timeout is irrelevant.
 
 ## Elevation commands (sudo, doas, etc.)
 

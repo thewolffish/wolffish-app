@@ -247,7 +247,7 @@ const toolDefinitions = [
         timeout: {
           type: 'number',
           description:
-            'Optional timeout in ms. If omitted, the command runs until it exits naturally. Use short timeouts (5000–15000) for quick checks, longer ones for builds/installs, or omit entirely for commands with unpredictable duration. Ignored when background is true.'
+            'Optional timeout in ms. Default: omit and let the command run until it exits. Only set this when you have a good reason to expect fast completion. Ignored when background is true.'
         },
         background: {
           type: 'boolean',
