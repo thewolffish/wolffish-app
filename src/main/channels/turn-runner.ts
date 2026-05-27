@@ -71,11 +71,16 @@ export type TurnHandle = {
 export class TurnRunner {
   private chain: Promise<void> = Promise.resolve()
   private blockCredentials: boolean = false
+  private locale: 'en' | 'ar' = 'en'
 
   constructor(private readonly agent: Agent) {}
 
   setBlockCredentials(value: boolean): void {
     this.blockCredentials = value
+  }
+
+  setLocale(value: 'en' | 'ar'): void {
+    this.locale = value
   }
 
   send(opts: TurnSendOptions): TurnHandle {
@@ -156,7 +161,7 @@ export class TurnRunner {
         sink.onDone()
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
-        sink.onError(message)
+        sink.onError(humanizeProviderError(message, this.locale))
       } finally {
         for (const off of offs) off()
         if (turnRouter.getActive() === sink) {
@@ -170,6 +175,58 @@ export class TurnRunner {
 
     return { turnId, controller, done }
   }
+}
+
+type ErrorKey = 'invalidKey' | 'modelNotFound' | 'rateLimited' | 'serverError' | 'offline'
+
+const ERROR_MESSAGES: Record<ErrorKey, Record<'en' | 'ar', string>> = {
+  invalidKey: {
+    en: 'The model API key appears to be invalid or expired. Update it in Settings.',
+    ar: 'يبدو أن مفتاح API للنموذج غير صالح أو منتهي الصلاحية. حدّثه من الإعدادات.'
+  },
+  modelNotFound: {
+    en: 'The configured model was not found. It may have been renamed or retired by the provider.',
+    ar: 'لم يُعثر على النموذج المحدد. ربما تم تغيير اسمه أو إيقافه من قبل المزوّد.'
+  },
+  rateLimited: {
+    en: 'Rate-limited by the model provider. Try again in a moment.',
+    ar: 'تم تقييد الطلبات من المزوّد. حاول مجدداً بعد قليل.'
+  },
+  serverError: {
+    en: 'The model provider is temporarily unavailable. Try again shortly.',
+    ar: 'مزوّد النموذج غير متاح مؤقتاً. حاول مجدداً بعد قليل.'
+  },
+  offline: {
+    en: 'You appear to be offline. Check your internet connection.',
+    ar: 'يبدو أنك غير متصل بالإنترنت. تحقق من اتصالك.'
+  }
+}
+
+function humanizeProviderError(raw: string, locale: 'en' | 'ar'): string {
+  // Reason-key strings from thalamus STATUS_REASON_LABEL (no_provider_available path)
+  if (raw === 'authentication failed' || raw === 'forbidden') return ERROR_MESSAGES.invalidKey[locale]
+  if (raw === 'model not found') return ERROR_MESSAGES.modelNotFound[locale]
+  if (raw === 'rate-limited') return ERROR_MESSAGES.rateLimited[locale]
+  if (raw === 'unavailable' || raw === 'server error' || raw === 'gateway error' || raw === 'timeout' || raw === 'overloaded') {
+    return ERROR_MESSAGES.serverError[locale]
+  }
+  if (raw === 'offline') return ERROR_MESSAGES.offline[locale]
+
+  // Raw HTTP errors from committed-error path (provider threw mid-stream)
+  if (/HTTP\s+40[13]/i.test(raw)) {
+    const provider = extractProviderName(raw)
+    const base = ERROR_MESSAGES.invalidKey[locale]
+    return provider ? `${provider}: ${base}` : base
+  }
+  if (/HTTP\s+404/i.test(raw)) return ERROR_MESSAGES.modelNotFound[locale]
+  if (/HTTP\s+429/i.test(raw)) return ERROR_MESSAGES.rateLimited[locale]
+  if (/HTTP\s+5\d\d/i.test(raw) || /overloaded/i.test(raw)) return ERROR_MESSAGES.serverError[locale]
+  return raw
+}
+
+function extractProviderName(error: string): string | null {
+  const match = /^(anthropic|openai|deepseek)\b/i.exec(error)
+  return match ? match[1].charAt(0).toUpperCase() + match[1].slice(1).toLowerCase() : null
 }
 
 function generateTurnId(): string {

@@ -823,12 +823,14 @@ export function Chat(): React.JSX.Element {
     void window.api.chat.cancel()
   }, [])
 
-  const onRetry = useCallback(() => {
+  const onRetryBase = useCallback(() => {
     if (streaming) return
     const last = lastUserContent(messages)
     if (!last) return
     void sendContent(last)
   }, [messages, streaming, sendContent])
+
+  const onRetry = isTelegramConversation || isWhatsAppConversation ? undefined : onRetryBase
 
   /**
    * Save each source (filesystem path or in-memory File) into the active
@@ -1510,7 +1512,7 @@ function ChatItem({
   t: (k: string, opts?: Record<string, unknown>) => string
   awaitingApproval: boolean
   onApprovalDecision: (id: string, decision: 'approved' | 'denied') => void
-  onRetry: () => void
+  onRetry?: () => void
 }): React.JSX.Element {
   if (message.role === 'user') {
     return (
@@ -1579,7 +1581,7 @@ function AssistantBubble({
   t: (k: string) => string
   awaitingApproval: boolean
   onApprovalDecision: (id: string, decision: 'approved' | 'denied') => void
-  onRetry: () => void
+  onRetry?: () => void
 }): React.JSX.Element {
   const isStreaming = message.status === 'streaming'
   const isError = message.status === 'error'
@@ -1595,6 +1597,17 @@ function AssistantBubble({
   const showCopy = !isStreaming && !isError && fullText.length > 0
 
   if (isError && message.error) {
+    const providerSeg = message.segments.find(
+      (s): s is Extract<Segment, { kind: 'turn_end' }> =>
+        s.kind === 'turn_end' && s.stopReason === 'no_provider_available' && !!s.providerError
+    )
+    if (providerSeg?.providerError) {
+      return (
+        <div className="flex flex-col gap-1 items-start">
+          <ProviderErrorCard payload={providerSeg.providerError} onRetry={onRetry} />
+        </div>
+      )
+    }
     return (
       <div className="flex flex-col gap-1 items-start">
         <div className="bg-surface border-border text-muted max-w-[85%] rounded-2xl border px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap wrap-break-word">
@@ -1634,7 +1647,7 @@ function renderSegments(
   approvals: Record<string, ApprovalCardState> | undefined,
   toolTimings: Record<string, ToolTiming> | undefined,
   onApprovalDecision: (id: string, decision: 'approved' | 'denied') => void,
-  onRetry: () => void
+  onRetry?: () => void
 ): RenderResult {
   const blocks: ReactNode[] = []
   let textBuffer = ''

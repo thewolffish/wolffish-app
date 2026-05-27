@@ -22,6 +22,42 @@ export type NoProviderAvailablePayload = {
   totalDurationMs: number
 }
 
+function descriptionKeyFor(errorReason: string, statusCode: number | null): string {
+  if (
+    statusCode === 401 ||
+    statusCode === 403 ||
+    errorReason === 'authentication failed' ||
+    errorReason === 'forbidden'
+  ) {
+    return 'errors.provider.invalidKey'
+  }
+  if (statusCode === 404 || errorReason === 'model not found') {
+    return 'errors.provider.modelNotFound'
+  }
+  if (statusCode === 429 || errorReason === 'rate-limited') {
+    return 'errors.provider.rateLimited'
+  }
+  if (errorReason === 'offline') {
+    return 'errors.provider.offline'
+  }
+  if (statusCode !== null && statusCode >= 500) {
+    return 'errors.provider.serverError'
+  }
+  return 'errors.provider.noProviderDescription'
+}
+
+function titleKeyFor(errorReason: string, statusCode: number | null): string {
+  if (
+    statusCode === 401 ||
+    statusCode === 403 ||
+    errorReason === 'authentication failed' ||
+    errorReason === 'forbidden'
+  ) {
+    return 'errors.provider.invalidKeyTitle'
+  }
+  return 'errors.provider.noProviderTitle'
+}
+
 /**
  * Shown only when cloud cascades exhaust AND no local model is
  * configured — the genuine "you have no LLM available" state. Every
@@ -38,6 +74,8 @@ export function ProviderErrorCard({
 }): React.JSX.Element {
   const { t } = useTranslation()
   const Logo = LOGO[payload.providerLogo as Logo] ?? CloudIcon
+  const title = t(titleKeyFor(payload.errorReason, payload.statusCode))
+  const description = t(descriptionKeyFor(payload.errorReason, payload.statusCode))
 
   return (
     <div
@@ -52,9 +90,9 @@ export function ProviderErrorCard({
       <div className="flex items-center gap-3">
         <Logo size={18} className="shrink-0" aria-hidden />
         <p className="flex-1 text-xs">
-          <span className="font-medium">{t('errors.provider.noProviderTitle')}</span>
+          <span className="font-medium">{title}</span>
           {' — '}
-          <span className="opacity-80">{t('errors.provider.noProviderDescription')}</span>
+          <span className="opacity-80">{description}</span>
         </p>
         {onRetry && (
           <button

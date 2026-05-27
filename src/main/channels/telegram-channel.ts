@@ -211,6 +211,13 @@ type ActiveTurn = {
    * Cleared on flush (chip sent) or at turn_end (chip dropped).
    */
   pendingActiveModel: string | null
+  /**
+   * Promise chain that serializes renderSegment calls. Each call
+   * chains onto the previous one so concurrent fire-and-forget
+   * invocations execute in arrival order — prevents text segments
+   * from interleaving when an earlier segment yields at an await.
+   */
+  renderChain: Promise<void>
 }
 
 /**
@@ -1298,7 +1305,8 @@ export class TelegramChannel {
             done: null,
             typingTimer: null,
             toolCallNames: new Map(),
-            pendingActiveModel: null
+            pendingActiveModel: null,
+            renderChain: Promise.resolve()
           }
           this.activeByChat.set(chatId, active)
           // Hand off from the pre-turn heartbeat — the turn timer below
@@ -1438,7 +1446,12 @@ export class TelegramChannel {
       turnId,
       conversationId,
       onSegment: (segment) => {
-        void this.renderSegment(chatId, segment)
+        const active = this.activeByChat.get(chatId)
+        if (active) {
+          active.renderChain = active.renderChain.then(() =>
+            this.renderSegment(chatId, segment)
+          )
+        }
       },
       onTurnEvent: <E extends keyof CorpusEvents>(type: E, payload: CorpusEvents[E]): void => {
         const active = this.activeByChat.get(chatId)
@@ -1450,7 +1463,12 @@ export class TelegramChannel {
       },
       onApprovalRequest: (req) => this.handleApprovalRequest(chatId, req),
       onDone: () => {
-        void this.flushFinalText(chatId)
+        const active = this.activeByChat.get(chatId)
+        if (active) {
+          active.renderChain = active.renderChain.then(() => this.flushFinalText(chatId))
+        } else {
+          void this.flushFinalText(chatId)
+        }
       },
       onError: (error) => {
         void this.safeSend(chatId, `⚠️ ${truncateForTelegram(error)}`)

@@ -561,6 +561,7 @@ app.whenReady().then(async () => {
   thalamus.setLocalOnly(cfg?.llm.localOnly ?? false)
   agent.amygdala.setBypassPermissions(cfg?.safety?.bypassPermissions ?? false)
   turnRunner.setBlockCredentials(cfg?.safety?.blockCredentials ?? false)
+  turnRunner.setLocale(cfg?.locale ?? 'en')
   agent.cerebellum.setDisabled(cfg?.disabledCapabilities ?? [])
 
   // Compaction schedule from config. Brainstem.init() will call
@@ -624,6 +625,7 @@ app.whenReady().then(async () => {
   })
   ipcMain.handle('locale:set', async (_e, locale: Locale) => {
     await persistLocale(locale)
+    turnRunner.setLocale(locale)
     return locale
   })
 
