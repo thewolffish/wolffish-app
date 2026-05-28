@@ -951,6 +951,22 @@
       "videoNotAllowed": "Video files are not supported",
       "visionNotSupported": "{{model}} doesn't support image uploads"
     },
+    "pdfViewer": {
+      "loading": "Loading PDF…",
+      "deleted": "PDF file was deleted",
+      "openExternal": "Open in default viewer",
+      "download": "Download"
+    },
+    "fileCard": {
+      "deleted": "File was deleted",
+      "download": "Download"
+    },
+    "docxViewer": {
+      "loading": "Loading document…"
+    },
+    "spreadsheetViewer": {
+      "loading": "Loading spreadsheet…"
+    },
     "voice": {
       "record": "Record voice message",
       "noMic": "No microphone available",

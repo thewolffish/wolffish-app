@@ -914,6 +914,22 @@
       "videoNotAllowed": "ملفات الفيديو غير مدعومة",
       "visionNotSupported": "{{model}} لا يدعم رفع الصور"
     },
+    "pdfViewer": {
+      "loading": "جارٍ تحميل الملف…",
+      "deleted": "تم حذف ملف PDF",
+      "openExternal": "فتح في العارض الافتراضي",
+      "download": "تنزيل"
+    },
+    "fileCard": {
+      "deleted": "تم حذف الملف",
+      "download": "تنزيل"
+    },
+    "docxViewer": {
+      "loading": "جارٍ تحميل المستند…"
+    },
+    "spreadsheetViewer": {
+      "loading": "جارٍ تحميل الجدول…"
+    },
     "voice": {
       "record": "تسجيل رسالة ��وتية",
       "noMic": "لا يوجد ميكروفون متاح",

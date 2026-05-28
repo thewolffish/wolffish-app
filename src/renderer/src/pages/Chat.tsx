@@ -1,7 +1,11 @@
 import { ActiveModelChip } from '@components/common/active-model-chip/ActiveModelChip'
+import { PdfViewer } from '@components/common/pdf-viewer/PdfViewer'
 import { ApprovalCard } from '@components/common/approval-card/ApprovalCard'
 import { AttachmentList } from '@components/common/attachment-list/AttachmentList'
 import { AudioPlayer } from '@components/common/audio-player/AudioPlayer'
+import { DocxViewer } from '@components/common/docx-viewer/DocxViewer'
+import { FileCard } from '@components/common/file-card/FileCard'
+import { SpreadsheetViewer } from '@components/common/spreadsheet-viewer/SpreadsheetViewer'
 import { ContextMeter } from '@components/common/context-meter/ContextMeter'
 import { HeartbeatActiveOverlay } from '@components/common/heartbeat-active-overlay/HeartbeatActiveOverlay'
 import { ProviderErrorCard } from '@components/common/provider-error-card/ProviderErrorCard'
@@ -1739,6 +1743,57 @@ function renderSegments(
           </div>
         )
       }
+
+      const docResults = extractToolResultDocuments(result)
+      if (docResults) {
+        for (let di = 0; di < docResults.length; di++) {
+          const doc = docResults[di]
+          const fileName = doc.path.split('/').pop() ?? 'document'
+          const ext = fileName.split('.').pop()?.toLowerCase() ?? ''
+          if (ext === 'pdf') {
+            blocks.push(
+              <PdfViewer
+                key={`doc_${seg.segmentId}_${di}`}
+                filePath={doc.path}
+                fileExists={true}
+                fileName={fileName}
+                sizeBytes={doc.size}
+              />
+            )
+          } else if (ext === 'doc' || ext === 'docx') {
+            blocks.push(
+              <DocxViewer
+                key={`doc_${seg.segmentId}_${di}`}
+                filePath={doc.path}
+                fileExists={true}
+                fileName={fileName}
+                sizeBytes={doc.size}
+              />
+            )
+          } else if (ext === 'xlsx' || ext === 'xls' || ext === 'csv') {
+            blocks.push(
+              <SpreadsheetViewer
+                key={`doc_${seg.segmentId}_${di}`}
+                filePath={doc.path}
+                fileExists={true}
+                fileName={fileName}
+                sizeBytes={doc.size}
+              />
+            )
+          } else {
+            blocks.push(
+              <FileCard
+                key={`doc_${seg.segmentId}_${di}`}
+                filePath={doc.path}
+                fileExists={true}
+                fileName={fileName}
+                sizeBytes={doc.size}
+                mimeType={docMimeType(ext)}
+              />
+            )
+          }
+        }
+      }
     } else if (seg.kind === 'tool_result') {
       // Already rendered alongside its tool_call.
       continue
@@ -1956,6 +2011,22 @@ function findResult(segments: Segment[], toolCallId: string): ToolResultSegment 
 }
 
 const IMAGE_EXTS_RE = /\.(?:png|jpe?g|gif|webp)$/i
+const DOCUMENT_EXTS_RE = /\.(?:pdf|docx?|xlsx?|pptx?|csv)$/i
+
+const DOC_MIME_MAP: Record<string, string> = {
+  pdf: 'application/pdf',
+  doc: 'application/msword',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xls: 'application/vnd.ms-excel',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  ppt: 'application/vnd.ms-powerpoint',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  csv: 'text/csv'
+}
+
+function docMimeType(ext: string): string {
+  return DOC_MIME_MAP[ext] ?? 'application/octet-stream'
+}
 
 function extractToolResultImage(result?: ToolResultSegment): string | null {
   if (!result?.output || result.status !== 'success') return null
@@ -1972,6 +2043,35 @@ function extractToolResultImage(result?: ToolResultSegment): string | null {
   const m = output.match(/(\/[^\s",:)]+\.(?:png|jpe?g|gif|webp))\b/i)
   if (m) return m[1]
   return null
+}
+
+function extractToolResultDocuments(
+  result?: ToolResultSegment
+): { path: string; size: number }[] | null {
+  if (!result?.output || result.status !== 'success') return null
+  const output = result.output.trim()
+  const docs: { path: string; size: number }[] = []
+  const seen = new Set<string>()
+
+  try {
+    const parsed = JSON.parse(output)
+    if (typeof parsed?.path === 'string' && DOCUMENT_EXTS_RE.test(parsed.path)) {
+      seen.add(parsed.path)
+      docs.push({ path: parsed.path, size: parsed.size ?? 0 })
+    }
+    if (Array.isArray(parsed?.files)) {
+      for (const f of parsed.files) {
+        if (typeof f?.path === 'string' && DOCUMENT_EXTS_RE.test(f.path) && !seen.has(f.path)) {
+          seen.add(f.path)
+          docs.push({ path: f.path, size: f.size ?? 0 })
+        }
+      }
+    }
+  } catch {
+    /* not JSON */
+  }
+
+  return docs.length > 0 ? docs : null
 }
 
 function collectText(segments: Segment[]): string {

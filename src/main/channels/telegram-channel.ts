@@ -641,6 +641,15 @@ export class TelegramChannel {
         await this.agent.motor.stopTask(active.taskId).catch(() => undefined)
       }
       await this.safeSend(chatId, '⏹ Stopping…')
+      const deadline = Date.now() + 10_000
+      while (this.activeByChat.has(chatId) && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 100))
+      }
+      if (this.activeByChat.has(chatId)) {
+        await this.safeSend(chatId, '⏹ Attempted to stop, but the task may still be winding down.')
+      } else {
+        await this.safeSend(chatId, '⏹ Stopped.')
+      }
       return
     }
 
@@ -1448,9 +1457,7 @@ export class TelegramChannel {
       onSegment: (segment) => {
         const active = this.activeByChat.get(chatId)
         if (active) {
-          active.renderChain = active.renderChain.then(() =>
-            this.renderSegment(chatId, segment)
-          )
+          active.renderChain = active.renderChain.then(() => this.renderSegment(chatId, segment))
         }
       },
       onTurnEvent: <E extends keyof CorpusEvents>(type: E, payload: CorpusEvents[E]): void => {
@@ -1553,6 +1560,15 @@ export class TelegramChannel {
         return
       }
 
+      const docPaths = extractDocumentPaths(output)
+      if (docPaths.length > 0) {
+        await this.sendHtml(chatId, heading)
+        for (const docPath of docPaths) {
+          await this.sendDocumentFile(chatId, docPath)
+        }
+        return
+      }
+
       if (output.length === 0) {
         await this.sendHtml(chatId, heading)
         return
@@ -1635,6 +1651,18 @@ export class TelegramChannel {
       }
     } catch {
       // best-effort — file may not exist or bot may have dropped
+    }
+  }
+
+  private async sendDocumentFile(chatId: number, filePath: string): Promise<void> {
+    if (!this.bot) return
+    try {
+      const buffer = await fs.readFile(filePath)
+      const file = new InputFile(buffer, path.basename(filePath))
+      const sent = await this.bot.api.sendDocument(chatId, file)
+      this.trackMessageId(chatId, sent.message_id)
+    } catch {
+      // best-effort
     }
   }
 
@@ -2044,6 +2072,7 @@ function parseVoiceToolOutput(output: string): { filePath: string; fileName: str
 }
 
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp'])
+const DOCUMENT_EXTS = new Set(['.pdf', '.docx', '.xlsx', '.pptx', '.doc', '.xls', '.csv'])
 
 function extractWolffishMediaPaths(output: string): string[] {
   const paths: string[] = []
@@ -2099,6 +2128,42 @@ function stripWolffishMediaMarkdown(text: string): string {
     .replace(/!\[[^\]]*\]\(wolffish-media:\/\/[^\s)]+\)/g, '')
     .replace(/(Saved to|Screenshot saved[^.]*) ~?\/[^\s"]+\.(?:png|jpe?g|gif|webp)/gi, '')
     .trim()
+}
+
+function extractDocumentPaths(output: string): string[] {
+  const paths: string[] = []
+  const seen = new Set<string>()
+  const home = os.homedir()
+
+  function addIfDocument(p: string): void {
+    const abs = p.startsWith('~/') ? path.join(home, p.slice(2)) : p
+    if (!seen.has(abs) && DOCUMENT_EXTS.has(path.extname(abs).toLowerCase())) {
+      seen.add(abs)
+      paths.push(abs)
+    }
+  }
+
+  try {
+    const parsed = JSON.parse(output)
+    if (parsed?.path && typeof parsed.path === 'string') {
+      addIfDocument(parsed.path)
+    }
+    if (Array.isArray(parsed?.files)) {
+      for (const f of parsed.files) {
+        if (f?.path && typeof f.path === 'string') addIfDocument(f.path)
+      }
+    }
+  } catch {
+    /* not JSON */
+  }
+
+  const absRegex = /(\/[^\s",:)]+\.(?:pdf|docx?|xlsx?|pptx?|csv))\b/gi
+  let match: RegExpExecArray | null
+  while ((match = absRegex.exec(output)) !== null) {
+    addIfDocument(match[1])
+  }
+
+  return paths
 }
 
 // Re-exported so the IPC layer can include attachment data when

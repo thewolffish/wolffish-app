@@ -546,6 +546,15 @@ export class WhatsAppChannel {
         await this.agent.motor.stopTask(active.taskId).catch(() => undefined)
       }
       await this.safeSend(jid, 'Stopping...')
+      const deadline = Date.now() + 10_000
+      while (this.activeByJid.has(jid) && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 100))
+      }
+      if (this.activeByJid.has(jid)) {
+        await this.safeSend(jid, 'Attempted to stop, but the task may still be winding down.')
+      } else {
+        await this.safeSend(jid, 'Stopped.')
+      }
       return
     }
 
@@ -967,6 +976,15 @@ export class WhatsAppChannel {
         return
       }
 
+      const docPaths = extractDocumentPaths(output)
+      if (docPaths.length > 0) {
+        await this.safeSend(jid, heading)
+        for (const docPath of docPaths) {
+          await this.sendDocumentFile(jid, docPath)
+        }
+        return
+      }
+
       if (output.length === 0) {
         await this.safeSend(jid, heading)
         return
@@ -1149,6 +1167,37 @@ export class WhatsAppChannel {
     }
   }
 
+  private async sendDocumentFile(jid: string, filePath: string): Promise<void> {
+    if (!this.sock) return
+    const resolved = path.resolve(filePath)
+    try {
+      await fs.access(resolved)
+      const buffer = await fs.readFile(resolved)
+      const ext = path.extname(resolved).toLowerCase()
+      const MIME: Record<string, string> = {
+        '.pdf': 'application/pdf',
+        '.doc': 'application/msword',
+        '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        '.xls': 'application/vnd.ms-excel',
+        '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        '.ppt': 'application/vnd.ms-powerpoint',
+        '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        '.csv': 'text/csv'
+      }
+      const mimetype = MIME[ext] ?? 'application/octet-stream'
+      const sent = await this.sock.sendMessage(jid, {
+        document: buffer,
+        mimetype,
+        fileName: path.basename(resolved)
+      })
+      if (sent?.key.id) {
+        this.sentIds.add(sent.key.id)
+      }
+    } catch {
+      // best-effort
+    }
+  }
+
   // --- Auth state management ---
 
   private async hasAuthCredentials(): Promise<boolean> {
@@ -1240,6 +1289,7 @@ function parseSelectionNumber(text: string): number | null {
 }
 
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp'])
+const DOCUMENT_EXTS = new Set(['.pdf', '.docx', '.xlsx', '.pptx', '.doc', '.xls', '.csv'])
 
 function extractWolffishMediaPaths(output: string): string[] {
   const paths: string[] = []
@@ -1295,6 +1345,42 @@ function stripWolffishMediaMarkdown(text: string): string {
     .replace(/!\[[^\]]*\]\(wolffish-media:\/\/[^\s)]+\)/g, '')
     .replace(/(Saved to|Screenshot saved[^.]*) ~?\/[^\s"]+\.(?:png|jpe?g|gif|webp)/gi, '')
     .trim()
+}
+
+function extractDocumentPaths(output: string): string[] {
+  const paths: string[] = []
+  const seen = new Set<string>()
+  const home = os.homedir()
+
+  function addIfDocument(p: string): void {
+    const abs = p.startsWith('~/') ? path.join(home, p.slice(2)) : p
+    if (!seen.has(abs) && DOCUMENT_EXTS.has(path.extname(abs).toLowerCase())) {
+      seen.add(abs)
+      paths.push(abs)
+    }
+  }
+
+  try {
+    const parsed = JSON.parse(output)
+    if (parsed?.path && typeof parsed.path === 'string') {
+      addIfDocument(parsed.path)
+    }
+    if (Array.isArray(parsed?.files)) {
+      for (const f of parsed.files) {
+        if (f?.path && typeof f.path === 'string') addIfDocument(f.path)
+      }
+    }
+  } catch {
+    /* not JSON */
+  }
+
+  const absRegex = /(\/[^\s",:)]+\.(?:pdf|docx?|xlsx?|pptx?|csv))\b/gi
+  let match: RegExpExecArray | null
+  while ((match = absRegex.exec(output)) !== null) {
+    addIfDocument(match[1])
+  }
+
+  return paths
 }
 
 const WHATSAPP_MESSAGE_LIMIT = 4096

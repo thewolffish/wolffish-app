@@ -116,8 +116,8 @@ function conversationUploadsDir(conversationId: string): string {
 }
 
 /**
- * Resolve a workspace-relative upload path back to an absolute path on
- * disk. Refuses anything that escapes `workspace/uploads/` so a malformed
+ * Resolve a workspace-relative path back to an absolute path on disk.
+ * Refuses anything that escapes the workspace root so a malformed
  * relativePath can't read arbitrary files via IPC.
  */
 export function resolveUploadPath(relativePath: string): string | null {
@@ -125,8 +125,7 @@ export function resolveUploadPath(relativePath: string): string | null {
   if (relativePath.includes('..')) return null
   const root = workspaceRoot()
   const abs = path.resolve(root, relativePath)
-  const uploadsRoot = uploadsDir()
-  if (!abs.startsWith(uploadsRoot + path.sep) && abs !== uploadsRoot) return null
+  if (!abs.startsWith(root + path.sep) && abs !== root) return null
   return abs
 }
 

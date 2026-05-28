@@ -2,6 +2,7 @@ import { cn } from '@lib/utils/cn'
 import { formatBytes } from '@lib/utils/format'
 import { Download01Icon, File01Icon } from 'hugeicons-react'
 import { useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 
 export type FileCardProps = {
   filePath: string
@@ -32,6 +33,7 @@ export function FileCard({
 }
 
 function DeletedFile({ fileName }: { fileName: string }): React.JSX.Element {
+  const { t } = useTranslation()
   return (
     <div
       className={cn(
@@ -46,7 +48,7 @@ function DeletedFile({ fileName }: { fileName: string }): React.JSX.Element {
         <span className="text-muted truncate text-sm font-medium" title={fileName}>
           {fileName}
         </span>
-        <span className="text-muted text-xs italic">File was deleted</span>
+        <span className="text-muted text-xs italic">{t('chat.fileCard.deleted')}</span>
       </div>
     </div>
   )
@@ -63,6 +65,7 @@ function ActiveFile({
   sizeBytes: number
   mimeType: string
 }): React.JSX.Element {
+  const { t } = useTranslation()
   const download = useCallback(async () => {
     try {
       await window.api.upload.download(filePath)
@@ -92,7 +95,7 @@ function ActiveFile({
       <button
         type="button"
         onClick={download}
-        title="Download"
+        title={t('chat.fileCard.download')}
         className={cn(
           'text-muted hover:text-fg flex shrink-0 cursor-pointer items-center justify-center rounded p-1',
           'focus-visible:ring-2 focus-visible:ring-accent'

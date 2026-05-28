@@ -2,6 +2,7 @@ import { useUploadBlob } from '@hooks/use-upload-blob/useUploadBlob'
 import { cn } from '@lib/utils/cn'
 import { Download01Icon, LinkSquare02Icon, Pdf02Icon } from 'hugeicons-react'
 import { useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 
 export type PdfViewerProps = {
   filePath: string
@@ -19,6 +20,7 @@ export function PdfViewer({ filePath, fileExists, fileName }: PdfViewerProps): R
 }
 
 function DeletedPdf({ fileName }: { fileName: string }): React.JSX.Element {
+  const { t } = useTranslation()
   return (
     <div
       className={cn(
@@ -33,7 +35,7 @@ function DeletedPdf({ fileName }: { fileName: string }): React.JSX.Element {
         <span className="text-muted truncate text-sm font-medium" title={fileName}>
           {fileName}
         </span>
-        <span className="text-muted text-xs italic">PDF file was deleted</span>
+        <span className="text-muted text-xs italic">{t('chat.pdfViewer.deleted')}</span>
       </div>
     </div>
   )
@@ -46,6 +48,7 @@ function ActivePdf({
   filePath: string
   fileName: string
 }): React.JSX.Element {
+  const { t } = useTranslation()
   const { url, error } = useUploadBlob(filePath, 'application/pdf')
 
   const openExternal = useCallback(async () => {
@@ -79,7 +82,7 @@ function ActivePdf({
         <iframe src={url} title={fileName} className="h-[400px] w-full border-0" />
       ) : (
         <div className="flex h-[400px] w-full items-center justify-center">
-          <span className="text-muted text-xs">Loading PDF…</span>
+          <span className="text-muted text-xs">{t('chat.pdfViewer.loading')}</span>
         </div>
       )}
       <div className="flex items-center gap-2 px-3 py-2">
@@ -93,7 +96,7 @@ function ActivePdf({
         <button
           type="button"
           onClick={openExternal}
-          title="Open in default viewer"
+          title={t('chat.pdfViewer.openExternal')}
           className={cn(
             'text-muted hover:text-fg flex shrink-0 cursor-pointer items-center justify-center rounded p-1',
             'focus-visible:ring-2 focus-visible:ring-accent'
@@ -104,7 +107,7 @@ function ActivePdf({
         <button
           type="button"
           onClick={download}
-          title="Download"
+          title={t('chat.pdfViewer.download')}
           className={cn(
             'text-muted hover:text-fg flex shrink-0 cursor-pointer items-center justify-center rounded p-1',
             'focus-visible:ring-2 focus-visible:ring-accent'
