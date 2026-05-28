@@ -70,8 +70,14 @@ function unwrapDdgUrl(url) {
   return url
 }
 
-async function fetchWithTimeout(url, options) {
-  return fetch(url, options)
+async function fetchWithTimeout(url, options, timeoutMs = 30_000) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await fetch(url, { ...options, signal: controller.signal })
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 // Search providers — both scrape DuckDuckGo via different endpoints. They are

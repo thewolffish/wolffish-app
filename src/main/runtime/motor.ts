@@ -345,11 +345,13 @@ export class Motor {
         return { ok: false, output: finalMessage, attempts: attempt }
       }
 
-      // Unknown and timeout errors get a shorter leash — local commands
-      // are almost always deterministic, and timeout doublings snowball
-      // fast (30s → 60s → 120s already burns 3.5 min of wall time).
+      // Unknown, timeout, and network errors get a shorter leash — 3
+      // attempts is enough to distinguish a transient blip from a dead
+      // endpoint, and backoff beyond that just burns wall time.
       if (
-        (classified.category === 'unknown' || classified.category === 'timeout') &&
+        (classified.category === 'unknown' ||
+          classified.category === 'timeout' ||
+          classified.category === 'network') &&
         attempt >= 3
       ) {
         step.status = 'failed'
