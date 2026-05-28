@@ -952,7 +952,7 @@
       "visionNotSupported": "{{model}} doesn't support image uploads"
     },
     "pdfViewer": {
-      "loading": "Loading PDF…",
+      "loading": "Loading PDF",
       "deleted": "PDF file was deleted",
       "openExternal": "Open in default viewer",
       "download": "Download"
@@ -962,10 +962,10 @@
       "download": "Download"
     },
     "docxViewer": {
-      "loading": "Loading document…"
+      "loading": "Loading document"
     },
     "spreadsheetViewer": {
-      "loading": "Loading spreadsheet…"
+      "loading": "Loading spreadsheet"
     },
     "voice": {
       "record": "Record voice message",

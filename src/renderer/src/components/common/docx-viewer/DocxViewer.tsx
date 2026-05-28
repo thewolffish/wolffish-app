@@ -11,11 +11,7 @@ export type DocxViewerProps = {
   sizeBytes: number
 }
 
-export function DocxViewer({
-  filePath,
-  fileExists,
-  fileName
-}: DocxViewerProps): React.JSX.Element {
+export function DocxViewer({ filePath, fileExists, fileName }: DocxViewerProps): React.JSX.Element {
   if (!fileExists) return <Deleted fileName={fileName} />
   return <Active filePath={filePath} fileName={fileName} />
 }
@@ -42,13 +38,7 @@ function Deleted({ fileName }: { fileName: string }): React.JSX.Element {
   )
 }
 
-function Active({
-  filePath,
-  fileName
-}: {
-  filePath: string
-  fileName: string
-}): React.JSX.Element {
+function Active({ filePath, fileName }: { filePath: string; fileName: string }): React.JSX.Element {
   const { t } = useTranslation()
   const [html, setHtml] = useState<string | null>(null)
   const [error, setError] = useState(false)
@@ -72,13 +62,17 @@ function Active({
   const openExternal = useCallback(async () => {
     try {
       await window.api.upload.openExternal(filePath)
-    } catch {}
+    } catch {
+      // best-effort
+    }
   }, [filePath])
 
   const download = useCallback(async () => {
     try {
       await window.api.upload.download(filePath)
-    } catch {}
+    } catch {
+      // best-effort
+    }
   }, [filePath])
 
   if (error) return <Deleted fileName={fileName} />
@@ -97,14 +91,10 @@ function Active({
         />
       ) : (
         <div className="flex h-[200px] w-full items-center justify-center">
-          <span className="text-muted text-xs">{t('chat.docxViewer.loading')}</span>
+          <span className="text-muted animate-pulse text-xs">{t('chat.docxViewer.loading')}</span>
         </div>
       )}
-      <Footer
-        fileName={fileName}
-        onOpenExternal={openExternal}
-        onDownload={download}
-      />
+      <Footer fileName={fileName} onOpenExternal={openExternal} onDownload={download} />
     </div>
   )
 }
@@ -122,10 +112,7 @@ function Footer({
   return (
     <div className="flex items-center gap-2 px-3 py-2">
       <File01Icon size={14} className="text-muted shrink-0" />
-      <span
-        className="text-muted min-w-0 flex-1 truncate text-[11px] font-medium"
-        title={fileName}
-      >
+      <span className="text-muted min-w-0 flex-1 truncate text-[11px] font-medium" title={fileName}>
         {fileName}
       </span>
       <button

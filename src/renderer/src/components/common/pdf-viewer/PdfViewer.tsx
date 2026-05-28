@@ -82,7 +82,7 @@ function ActivePdf({
         <iframe src={url} title={fileName} className="h-[400px] w-full border-0" />
       ) : (
         <div className="flex h-[400px] w-full items-center justify-center">
-          <span className="text-muted text-xs">{t('chat.pdfViewer.loading')}</span>
+          <span className="text-muted animate-pulse text-xs">{t('chat.pdfViewer.loading')}</span>
         </div>
       )}
       <div className="flex items-center gap-2 px-3 py-2">

@@ -1,6 +1,6 @@
 import { cn } from '@lib/utils/cn'
 import { Download01Icon, File01Icon, LinkSquare02Icon } from 'hugeicons-react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import * as XLSX from 'xlsx'
 
@@ -42,15 +42,8 @@ function Deleted({ fileName }: { fileName: string }): React.JSX.Element {
   )
 }
 
-function Active({
-  filePath,
-  fileName
-}: {
-  filePath: string
-  fileName: string
-}): React.JSX.Element {
+function Active({ filePath, fileName }: { filePath: string; fileName: string }): React.JSX.Element {
   const { t } = useTranslation()
-  const [html, setHtml] = useState<string | null>(null)
   const [sheetNames, setSheetNames] = useState<string[]>([])
   const [activeSheet, setActiveSheet] = useState(0)
   const [workbook, setWorkbook] = useState<XLSX.WorkBook | null>(null)
@@ -65,8 +58,6 @@ function Active({
         if (cancelled) return
         setWorkbook(wb)
         setSheetNames(wb.SheetNames)
-        const sheet = wb.Sheets[wb.SheetNames[0]]
-        if (sheet) setHtml(XLSX.utils.sheet_to_html(sheet))
       } catch {
         if (!cancelled) setError(true)
       }
@@ -76,23 +67,27 @@ function Active({
     }
   }, [filePath])
 
-  useEffect(() => {
-    if (!workbook) return
+  const html = useMemo(() => {
+    if (!workbook) return null
     const name = workbook.SheetNames[activeSheet]
     const sheet = name ? workbook.Sheets[name] : undefined
-    if (sheet) setHtml(XLSX.utils.sheet_to_html(sheet))
-  }, [activeSheet, workbook])
+    return sheet ? XLSX.utils.sheet_to_html(sheet) : null
+  }, [workbook, activeSheet])
 
   const openExternal = useCallback(async () => {
     try {
       await window.api.upload.openExternal(filePath)
-    } catch {}
+    } catch {
+      // best-effort
+    }
   }, [filePath])
 
   const download = useCallback(async () => {
     try {
       await window.api.upload.download(filePath)
-    } catch {}
+    } catch {
+      // best-effort
+    }
   }, [filePath])
 
   if (error) return <Deleted fileName={fileName} />
@@ -111,7 +106,9 @@ function Active({
         />
       ) : (
         <div className="flex h-[200px] w-full items-center justify-center">
-          <span className="text-muted text-xs">{t('chat.spreadsheetViewer.loading')}</span>
+          <span className="text-muted animate-pulse text-xs">
+            {t('chat.spreadsheetViewer.loading')}
+          </span>
         </div>
       )}
       {sheetNames.length > 1 && (
@@ -151,10 +148,7 @@ function Footer({
   return (
     <div className="flex items-center gap-2 px-3 py-2">
       <File01Icon size={14} className="text-muted shrink-0" />
-      <span
-        className="text-muted min-w-0 flex-1 truncate text-[11px] font-medium"
-        title={fileName}
-      >
+      <span className="text-muted min-w-0 flex-1 truncate text-[11px] font-medium" title={fileName}>
         {fileName}
       </span>
       <button

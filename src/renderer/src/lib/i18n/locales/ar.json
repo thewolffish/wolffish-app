@@ -915,7 +915,7 @@
       "visionNotSupported": "{{model}} لا يدعم رفع الصور"
     },
     "pdfViewer": {
-      "loading": "جارٍ تحميل الملف…",
+      "loading": "جارٍ تحميل الملف",
       "deleted": "تم حذف ملف PDF",
       "openExternal": "فتح في العارض الافتراضي",
       "download": "تنزيل"
@@ -925,10 +925,10 @@
       "download": "تنزيل"
     },
     "docxViewer": {
-      "loading": "جارٍ تحميل المستند…"
+      "loading": "جارٍ تحميل المستند"
     },
     "spreadsheetViewer": {
-      "loading": "جارٍ تحميل الجدول…"
+      "loading": "جارٍ تحميل الجدول"
     },
     "voice": {
       "record": "تسجيل رسالة ��وتية",
