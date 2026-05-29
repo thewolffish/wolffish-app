@@ -1,4 +1,12 @@
-## v1.0.89 — 2026-05-25 `Latest`
+## v1.0.100 — 2026-05-29 `Latest`
+
+### Close to Tray
+
+Clicking the close button no longer quits the app — it hides the window to the system tray instead. A tray icon sits in the menu bar (macOS) or system tray (Windows/Linux) with options to show the window or quit. Double-clicking the tray icon restores the window. On macOS, the tray icon follows Apple's template image guidelines and adapts to the menu bar theme automatically. To actually quit, right-click the tray icon and choose Quit, or use the standard keyboard shortcut (Cmd+Q / Alt+F4).
+
+---
+
+## v1.0.89 — 2026-05-25
 
 ### DeepSeek Billing Fix
 

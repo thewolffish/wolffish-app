@@ -144,16 +144,22 @@ import {
 } from '@main/workspace/workspace'
 import dockIcon from '@resources/icons/icons/1024x1024.png?asset'
 import icon from '@resources/icons/icons/512x512.png?asset'
+import trayIconMac from '@resources/icons/icons/trayTemplate.png?asset'
+import trayIconMac2x from '@resources/icons/icons/trayTemplate@2x.png?asset'
+import trayIconDefault from '@resources/images/icon_transparent.png?asset'
 import {
   app,
   BrowserWindow,
   dialog,
   ipcMain,
+  Menu,
+  nativeImage,
   nativeTheme,
   net,
   protocol,
   shell,
-  systemPreferences
+  systemPreferences,
+  Tray
 } from 'electron'
 import { execFileSync } from 'node:child_process'
 import os from 'node:os'
@@ -366,6 +372,78 @@ function backgroundColor(): string {
   return nativeTheme.shouldUseDarkColors ? '#0d1117' : '#f0f4f8'
 }
 
+let tray: Tray | null = null
+
+function createTray(locale: Locale = 'en'): void {
+  if (tray) return
+  const isAr = locale === 'ar'
+  let img: Electron.NativeImage
+  if (process.platform === 'darwin') {
+    const img1x = nativeImage.createFromPath(trayIconMac)
+    const img2x = nativeImage.createFromPath(trayIconMac2x)
+    img = nativeImage.createEmpty()
+    img.addRepresentation({ scaleFactor: 1, width: 22, height: 22, buffer: img1x.toPNG() })
+    img.addRepresentation({ scaleFactor: 2, width: 44, height: 44, buffer: img2x.toPNG() })
+    img.setTemplateImage(true)
+  } else {
+    img = nativeImage.createFromPath(trayIconDefault).resize({ width: 18, height: 18 })
+  }
+  tray = new Tray(img)
+  tray.setToolTip('Wolffish')
+  const contextMenu = Menu.buildFromTemplate([
+    {
+      label: isAr ? 'إظهار وولف فيش' : 'Show Wolffish',
+      click: () => {
+        const win = BrowserWindow.getAllWindows()[0]
+        if (win) {
+          win.show()
+          showDock()
+        } else {
+          createWindow()
+          showDock()
+        }
+      }
+    },
+    { type: 'separator' },
+    {
+      label: isAr ? 'إغلاق' : 'Quit',
+      click: () => {
+        isQuittingFromTray = true
+        app.quit()
+      }
+    }
+  ])
+  tray.setContextMenu(contextMenu)
+
+  // On macOS, setContextMenu handles both left and right click — no extra
+  // handler needed. On Windows/Linux, right-click opens the menu but
+  // left-click fires 'click' — wire it up so a single click restores the
+  // window (standard tray behavior on those platforms).
+  const restoreWindow = (): void => {
+    const win = BrowserWindow.getAllWindows()[0]
+    if (win) {
+      win.show()
+      showDock()
+    } else {
+      createWindow()
+      showDock()
+    }
+  }
+  if (process.platform !== 'darwin') {
+    tray.on('click', restoreWindow)
+  }
+  tray.on('double-click', restoreWindow)
+}
+
+function showDock(): void {
+  if (process.platform !== 'darwin') return
+  void app.dock?.show().then(() => {
+    if (is.dev) app.dock?.setIcon(dockIcon)
+  })
+}
+
+let isQuittingFromTray = false
+
 function createWindow(): BrowserWindow {
   const mainWindow = new BrowserWindow({
     width: 1280,
@@ -387,24 +465,23 @@ function createWindow(): BrowserWindow {
 
   mainWindow.on('ready-to-show', () => mainWindow.show())
 
-  // On Windows/Linux clicking the title-bar X destroys the window before
-  // before-quit ever fires, so the renderer can't show the closing
-  // overlay. Intercept here, broadcast the overlay event, and let
-  // drainAndQuit close things down naturally once background work
-  // finishes. macOS keeps its native "close = hide app, Cmd+Q = quit"
-  // behavior — before-quit is the right hook there.
   mainWindow.on('close', (event) => {
-    if (process.platform === 'darwin') return
-    if (quitInProgress) {
-      event.preventDefault()
+    if (isQuittingFromTray || isShuttingDown) {
+      if (quitInProgress) {
+        event.preventDefault()
+        return
+      }
+      if (hasInflightWork()) {
+        event.preventDefault()
+        quitInProgress = true
+        broadcast('app:closingPending', { tasks: pendingBackgroundTasks })
+        void drainAndQuit()
+      }
       return
     }
-    if (isShuttingDown) return
-    if (!hasInflightWork()) return
     event.preventDefault()
-    quitInProgress = true
-    broadcast('app:closingPending', { tasks: pendingBackgroundTasks })
-    void drainAndQuit()
+    mainWindow.hide()
+    if (process.platform === 'darwin') app.dock?.hide()
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
@@ -1945,14 +2022,23 @@ app.whenReady().then(async () => {
     return net.fetch(`file://${absolutePath}`)
   })
 
+  createTray(cfg?.locale ?? 'en')
   createWindow()
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    const win = BrowserWindow.getAllWindows()[0]
+    if (win) {
+      win.show()
+      showDock()
+    } else {
+      createWindow()
+      showDock()
+    }
   })
 })
 
 app.on('before-quit', (event) => {
+  isQuittingFromTray = true
   if (quitInProgress) {
     event.preventDefault()
     return
@@ -1974,7 +2060,7 @@ app.on('will-quit', () => {
 })
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit()
+  // Keep the app alive in the tray on all platforms
 })
 
 function nextCronMs(expr: string, nowMs: number): number | null {
