@@ -465,6 +465,10 @@ function createWindow(): BrowserWindow {
 
   mainWindow.on('ready-to-show', () => mainWindow.show())
 
+  mainWindow.on('show', () => {
+    mainWindow.webContents.executeJavaScript('document.activeElement?.blur()').catch(() => {})
+  })
+
   mainWindow.on('close', (event) => {
     if (isQuittingFromTray || isShuttingDown) {
       if (quitInProgress) {
