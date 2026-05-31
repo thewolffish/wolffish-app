@@ -16,9 +16,11 @@ import { UpdateCard } from '@components/common/update-card/UpdateCard'
 import { CodeEditor } from '@components/core/CodeEditor'
 import { CopyButton } from '@components/core/CopyButton'
 import { Markdown } from '@components/core/Markdown'
+import { Tooltip } from '@components/core/Tooltip'
 import {
   AnthropicLogo,
   DeepSeekLogo,
+  MimoLogo,
   OllamaLogo,
   OpenAILogo,
   TelegramLogo,
@@ -402,7 +404,8 @@ export function Chat(): React.JSX.Element {
       const convMessages = msgs
         .filter((m) => {
           if (isUser(m)) return true
-          if (isAssistant(m) && m.status === 'complete') return m.segments.length > 0
+          if (isAssistant(m) && (m.status === 'complete' || m.status === 'error'))
+            return m.segments.length > 0
           return false
         })
         .map((m) => {
@@ -516,6 +519,7 @@ export function Chat(): React.JSX.Element {
       pendingTurnIdRef.current = null
       setStreaming(false)
       setTurnEndedAt(Date.now())
+      shouldPersistRef.current = true
       setMessages((prev) => markError(prev, turnId, error))
     })
     const offTurnEvent = window.api.chat.onTurnEvent(({ turnId, type, payload }) => {
@@ -1246,6 +1250,10 @@ export function Chat(): React.JSX.Element {
                 onChange={onModeChange}
                 disabled={savingMode || streaming}
                 activeCloudProvider={activeCloudProvider}
+                cloudModel={
+                  cloudProviders.find((p) => p.id === activeCloudProvider)?.model ?? null
+                }
+                localModel={currentModel}
               />
             </div>
             <button
@@ -1936,19 +1944,24 @@ function StatusBar({
 const CLOUD_PROVIDER_LOGOS: Record<string, React.ComponentType<{ size?: number }>> = {
   anthropic: AnthropicLogo,
   openai: OpenAILogo,
-  deepseek: DeepSeekLogo
+  deepseek: DeepSeekLogo,
+  mimo: MimoLogo
 }
 
 function ModeToggle({
   value,
   onChange,
   disabled,
-  activeCloudProvider
+  activeCloudProvider,
+  cloudModel,
+  localModel
 }: {
   value: boolean
   onChange: (next: boolean) => void
   disabled: boolean
   activeCloudProvider: string | null
+  cloudModel: string | null
+  localModel: string | null
 }): React.JSX.Element {
   const { t } = useTranslation()
 
@@ -1956,14 +1969,24 @@ function ModeToggle({
   const cloudLabel = activeCloudProvider
     ? t(`settings.model.providers.${activeCloudProvider}`)
     : t('chat.modeToggle.cloud')
-
   const modes: {
     key: 'local' | 'cloud'
     label: string
+    tooltip: string
     Icon: React.ComponentType<{ size?: number }>
   }[] = [
-    { key: 'local', label: t('chat.modeToggle.local'), Icon: OllamaLogo },
-    { key: 'cloud', label: cloudLabel, Icon: cloudIcon }
+    {
+      key: 'local',
+      label: t('chat.modeToggle.local'),
+      tooltip: localModel ?? t('chat.modeToggle.noModel'),
+      Icon: OllamaLogo
+    },
+    {
+      key: 'cloud',
+      label: cloudLabel,
+      tooltip: cloudModel ?? t('chat.modeToggle.noModel'),
+      Icon: cloudIcon
+    }
   ]
   const current: 'local' | 'cloud' = value ? 'local' : 'cloud'
   return (
@@ -1975,9 +1998,8 @@ function ModeToggle({
       {modes.map((m) => {
         const active = m.key === current
         const Icon = m.Icon
-        return (
+        const btn = (
           <button
-            key={m.key}
             role="tab"
             type="button"
             disabled={disabled}
@@ -1997,6 +2019,11 @@ function ModeToggle({
               {m.label}
             </span>
           </button>
+        )
+        return (
+          <Tooltip key={m.key} content={m.tooltip} side="top">
+            {btn}
+          </Tooltip>
         )
       })}
     </div>

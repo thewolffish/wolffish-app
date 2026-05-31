@@ -6,6 +6,7 @@ export type SelectOption<T extends string> = {
   value: T
   label: string
   icon?: ReactNode
+  disabled?: boolean
 }
 
 export type SelectProps<T extends string> = {
@@ -118,19 +119,24 @@ export function Select<T extends string>({
           >
             {options.map((option) => {
               const isSelected = option.value === value
+              const isDisabled = option.disabled === true
               return (
                 <li
                   key={option.value}
                   role="option"
                   aria-selected={isSelected}
+                  aria-disabled={isDisabled || undefined}
                   onClick={() => {
+                    if (isDisabled) return
                     onChange(option.value)
                     setOpen(false)
                     buttonRef.current?.focus()
                   }}
                   className={cn(
-                    'flex cursor-pointer items-center justify-between gap-2 px-3 py-2 text-sm',
-                    'hover:bg-border/50',
+                    'flex items-center justify-between gap-2 px-3 py-2 text-sm',
+                    isDisabled
+                      ? 'cursor-not-allowed opacity-40'
+                      : cn('cursor-pointer hover:bg-border/50'),
                     isSelected && 'text-primary font-medium'
                   )}
                 >

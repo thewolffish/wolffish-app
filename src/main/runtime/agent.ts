@@ -256,7 +256,9 @@ export class Agent {
           ? 'openai'
           : provider === 'deepseek'
             ? 'deepseek'
-            : 'local'
+            : provider === 'mimo'
+              ? 'mimo'
+              : 'local'
     const supportsVision = providerKey !== 'local' || (await this.thalamus.localSupportsVision())
 
     const out: ChatMessage[] = []

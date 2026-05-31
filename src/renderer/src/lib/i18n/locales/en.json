@@ -79,8 +79,8 @@
     }
   },
   "modelPicker": {
-    "title": "Pick your Wolffish model",
-    "tagline": "Wolffish model downloads once and is local forever.",
+    "title": "Pick your Ollama model",
+    "tagline": "Ollama model downloads once and is local forever.",
     "specs": {
       "os": "OS",
       "cpu": "Cores",
@@ -270,7 +270,15 @@
         "ollama": "Ollama",
         "anthropic": "Anthropic",
         "openai": "OpenAI",
-        "deepseek": "DeepSeek"
+        "deepseek": "DeepSeek",
+        "mimo": "Xiaomi Mimo",
+        "descriptions": {
+          "mimo": "Xiaomi's cloud AI — affordable frontier models with strong multilingual support",
+          "deepseek": "Open-weight reasoning powerhouse — frontier performance at a fraction of the cost",
+          "anthropic": "Claude — safety-focused frontier models with exceptional long-context reasoning",
+          "openai": "GPT and o-series — the industry-standard frontier model family",
+          "ollama": "Open-weight models running locally — private, offline, no API key needed"
+        }
       },
       "cloudBadge": "Cloud API",
       "ollamaNotAvailable": {
@@ -295,6 +303,7 @@
           "2": "2nd",
           "3": "3rd"
         },
+        "platform": "Platform",
         "test": "Save",
         "save": "Save",
         "saving": "Saving…",
@@ -846,6 +855,7 @@
         "anthropic": "Anthropic",
         "openai": "OpenAI",
         "deepseek": "DeepSeek",
+        "mimo": "Xiaomi Mimo",
         "brave": "Brave Search"
       },
       "tokens": "tokens",
@@ -1034,7 +1044,8 @@
     "modeToggle": {
       "ariaLabel": "Provider mode",
       "local": "Local",
-      "cloud": "Cloud"
+      "cloud": "Cloud",
+      "noModel": "No model selected"
     },
     "newChatShort": "New",
     "approval": {

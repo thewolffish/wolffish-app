@@ -36,7 +36,7 @@ export function Sidebar({ items, className }: SidebarProps): React.JSX.Element {
   return (
     <aside
       className={cn(
-        'fixed top-0 z-30 flex h-full flex-col items-center overflow-x-hidden overflow-y-auto pt-8 transition-[width] duration-200',
+        'pointer-events-none fixed top-0 z-30 flex h-full flex-col items-center overflow-x-hidden overflow-y-auto pt-8 transition-[width] duration-200',
         isRtl ? 'right-0' : 'left-0',
         collapsed ? 'w-12 gap-1 px-1.5' : 'w-44 gap-1.5 px-3',
         className
@@ -54,7 +54,7 @@ export function Sidebar({ items, className }: SidebarProps): React.JSX.Element {
         onClick={toggle}
         aria-label="Toggle sidebar"
         className={cn(
-          'text-muted hover:text-fg flex shrink-0 cursor-pointer items-center rounded-lg p-2',
+          'pointer-events-auto text-muted hover:text-fg flex shrink-0 cursor-pointer items-center rounded-lg p-2',
           'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
           !collapsed && 'self-start'
         )}
@@ -62,7 +62,7 @@ export function Sidebar({ items, className }: SidebarProps): React.JSX.Element {
         <SidebarLeftIcon size={16} />
       </button>
       {items.length > 0 && (
-        <nav className="flex w-full flex-col gap-1">
+        <nav className="pointer-events-auto flex w-full flex-col gap-1">
           {items.map((item) => {
             const Icon = item.icon
             return (

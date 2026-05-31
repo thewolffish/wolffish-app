@@ -5,6 +5,7 @@ import {
   BraveLogo,
   DeepSeekLogo,
   GoogleLogo,
+  MimoLogo,
   NotionLogo,
   OllamaLogo,
   OpenAILogo,
@@ -257,7 +258,7 @@ export function Settings(): React.JSX.Element {
   const computerUseAvailable = visibleServices.includes('computerUse')
 
   return (
-    <main className="bg-bg flex h-full w-full pt-10">
+    <main className={cn('bg-bg flex h-full w-full', navigator.platform.startsWith('Win') ? 'pt-5' : 'pt-10')}>
       <aside className="flex w-56 shrink-0 flex-col gap-2 overflow-y-auto p-3">
         <button
           type="button"
@@ -493,6 +494,9 @@ export function Settings(): React.JSX.Element {
         <TabPanel active={active === 'model' && provider === 'deepseek'}>
           <CloudProviderPanel provider="deepseek" />
         </TabPanel>
+        <TabPanel active={active === 'model' && provider === 'mimo'}>
+          <CloudProviderPanel provider="mimo" />
+        </TabPanel>
         <TabPanel active={active === 'services' && effectiveService === 'tts' && ttsAvailable}>
           <TextToSpeechPanel />
         </TabPanel>
@@ -547,8 +551,8 @@ function TabPanel({
   return <>{children}</>
 }
 
-type Provider = 'ollama' | 'anthropic' | 'openai' | 'deepseek'
-const PROVIDERS: Provider[] = ['ollama', 'deepseek', 'anthropic', 'openai']
+type Provider = 'ollama' | 'anthropic' | 'openai' | 'deepseek' | 'mimo'
+const PROVIDERS: Provider[] = ['mimo', 'deepseek', 'anthropic', 'openai', 'ollama']
 
 const PROVIDER_ICONS: Record<
   Provider,
@@ -557,7 +561,8 @@ const PROVIDER_ICONS: Record<
   ollama: OllamaLogo,
   anthropic: AnthropicLogo,
   openai: OpenAILogo,
-  deepseek: DeepSeekLogo
+  deepseek: DeepSeekLogo,
+  mimo: MimoLogo
 }
 
 type Channel = 'telegram' | 'whatsapp'

@@ -231,30 +231,53 @@ export function createConversation(model: string | null): ConversationFile {
   }
 }
 
-const MAX_TITLE_WORDS = 5
+const MAX_TITLE_WORDS = 8
+
+const FILLER_RE = [
+  /^(hey|hi|hello|yo|so|ok|okay)\s*[,.]?\s*/i,
+  /^(can|could|would) you (please\s+)?/i,
+  /^(i need|i want|i'd like|i would like) (you )?to\s+/i,
+  /^(i'm trying|i am trying) to\s+/i,
+  /^(please|pls)\s+/i
+]
+
+function stripFiller(s: string): string {
+  let out = s
+  for (const re of FILLER_RE) out = out.replace(re, '')
+  return out.trim() || s
+}
 
 export function generateTitle(conv: ConversationFile): string {
   const userMsg = conv.messages.find((m) => m.role === 'user')
   if (!userMsg) return 'Untitled'
 
-  const text = userMsg.content.trim()
-  if (!text) return 'Untitled'
+  const raw = userMsg.content.trim()
+  if (!raw) return 'Untitled'
 
+  const text = raw.replace(/^```[\s\S]*?```\s*/g, '').trim() || raw
   const doc = nlp(text)
+  const first = (doc.sentences().first().text() || text).trim()
+  const stripped = stripFiller(first).replace(/[?.!]+$/, '').trim()
 
-  const topics = doc.topics().out('array') as string[]
+  const words = stripped.split(/\s+/)
+  if (words.length <= MAX_TITLE_WORDS) {
+    return cap(stripped)
+  }
+
+  const topicDoc = nlp(stripped)
+  const topics = topicDoc.topics().out('array') as string[]
   if (topics.length > 0) {
     return cap(topics.slice(0, MAX_TITLE_WORDS).join(' '))
   }
 
-  const nouns = doc.nouns().out('array') as string[]
+  const nouns = topicDoc.nouns().out('array') as string[]
   if (nouns.length > 0) {
     return cap(nouns.slice(0, MAX_TITLE_WORDS).join(' '))
   }
 
-  const words = text.split(/\s+/)
   return cap(words.slice(0, MAX_TITLE_WORDS).join(' '))
 }
+
 
 function cap(s: string): string {
   const t = s.replace(/\s+/g, ' ').trim()

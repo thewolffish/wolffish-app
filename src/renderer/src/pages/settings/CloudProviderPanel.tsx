@@ -1,6 +1,6 @@
 import { Button } from '@components/core/Button'
 import { Input } from '@components/core/Input'
-import { AnthropicLogo, DeepSeekLogo, OpenAILogo } from '@components/core/ProviderLogos'
+import { AnthropicLogo, DeepSeekLogo, MimoLogo, OpenAILogo } from '@components/core/ProviderLogos'
 import { Select, type SelectOption } from '@components/core/Select'
 import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn'
@@ -9,6 +9,7 @@ import {
   AlertCircleIcon,
   CheckmarkCircle02Icon,
   EyeIcon,
+  LinkSquare02Icon,
   Loading02Icon,
   ViewOffIcon
 } from 'hugeicons-react'
@@ -25,7 +26,15 @@ const PROVIDER_LOGOS: Record<
 > = {
   anthropic: AnthropicLogo,
   openai: OpenAILogo,
-  deepseek: DeepSeekLogo
+  deepseek: DeepSeekLogo,
+  mimo: MimoLogo
+}
+
+const PROVIDER_URLS: Record<ProviderId, string> = {
+  anthropic: 'https://console.anthropic.com',
+  openai: 'https://platform.openai.com',
+  deepseek: 'https://platform.deepseek.com',
+  mimo: 'https://platform.xiaomimimo.com'
 }
 
 export function CloudProviderPanel({ provider }: { provider: ProviderId }): React.JSX.Element {
@@ -230,7 +239,12 @@ export function CloudProviderPanel({ provider }: { provider: ProviderId }): Reac
   }
 
   const modelOptions: readonly SelectOption<string>[] = useMemo(
-    () => models.map((m) => ({ value: m, label: m })),
+    () =>
+      models.map((m) => ({
+        value: m,
+        label: m,
+        disabled: /tts|voiceclone|voicedesign/.test(m)
+      })),
     [models]
   )
 
@@ -277,13 +291,29 @@ export function CloudProviderPanel({ provider }: { provider: ProviderId }): Reac
     <div className="flex min-h-full w-full items-start justify-center px-6 py-10">
       <div className="flex w-full max-w-2xl flex-col gap-6">
         <header className="flex flex-col gap-2">
-          <div className="flex items-center gap-3">
-            <Logo size={24} className="text-fg shrink-0" />
-            <h1 className="text-fg text-2xl font-semibold tracking-tight">
-              {t('settings.model.cloud.title', { provider: providerLabel })}
-            </h1>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Logo size={24} className="text-fg shrink-0" />
+              <h1 className="text-fg text-2xl font-semibold tracking-tight">
+                {t('settings.model.cloud.title', { provider: providerLabel })}
+              </h1>
+            </div>
+            <a
+              href={PROVIDER_URLS[provider]}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={cn(
+                'text-muted hover:text-fg flex items-center gap-1.5 text-xs',
+                'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg rounded-md px-1.5 py-1'
+              )}
+            >
+              <span>{t('settings.model.cloud.platform')}</span>
+              <LinkSquare02Icon size={13} className="shrink-0" />
+            </a>
           </div>
-          <p className="text-muted text-sm leading-relaxed">{t('settings.model.cloud.subtitle')}</p>
+          <p className="text-muted text-sm leading-relaxed">
+            {t(`settings.model.providers.descriptions.${provider}`)}
+          </p>
         </header>
 
         {keyInvalid && (

@@ -1,4 +1,10 @@
-import { AnthropicLogo, DeepSeekLogo, OllamaLogo, OpenAILogo } from '@components/core/ProviderLogos'
+import {
+  AnthropicLogo,
+  DeepSeekLogo,
+  MimoLogo,
+  OllamaLogo,
+  OpenAILogo
+} from '@components/core/ProviderLogos'
 import { cn } from '@lib/utils/cn'
 import { CloudIcon } from 'hugeicons-react'
 import type { IconType } from 'react-icons'
@@ -8,6 +14,7 @@ const LOGOS: Record<string, IconType | React.ComponentType<{ size?: number; clas
     anthropic: AnthropicLogo,
     openai: OpenAILogo,
     deepseek: DeepSeekLogo,
+    mimo: MimoLogo,
     local: OllamaLogo,
     ollama: OllamaLogo
   }

@@ -112,6 +112,17 @@ const DEEPSEEK_PRICING: Record<string, ModelPricing> = {
   'deepseek-reasoner': { input: 0.55 / 1e6, output: 2.19 / 1e6, cacheWrite: 1.0, cacheRead: 0.02 }
 }
 
+// https://platform.xiaomimimo.com/docs/en-US/pricing (overseas USD)
+// Input rates are for the ≤256K tier; the 256K-1M tier is ~5× higher but
+// most Wolffish turns stay under 256K. Cache write is free (limited time).
+const MIMO_PRICING: Record<string, ModelPricing> = {
+  'mimo-v2.5-pro': { input: 0.20 / 1e6, output: 2.0 / 1e6, cacheWrite: 0, cacheRead: 15.0 },
+  'mimo-v2-pro': { input: 0.20 / 1e6, output: 2.0 / 1e6, cacheWrite: 0, cacheRead: 15.0 },
+  'mimo-v2.5': { input: 0.08 / 1e6, output: 0.80 / 1e6, cacheWrite: 0, cacheRead: 25.0 },
+  'mimo-v2-omni': { input: 0.08 / 1e6, output: 0.80 / 1e6, cacheWrite: 0, cacheRead: 25.0 },
+  'mimo-v2-flash': { input: 0.01 / 1e6, output: 0.30 / 1e6, cacheWrite: 0, cacheRead: 0 }
+}
+
 const LOCAL_EQUIVALENT_PRICING: ModelPricing = {
   input: 0,
   output: 0,
@@ -215,7 +226,7 @@ export class Usage {
     }
 
     const providers: ProviderUsageSummary[] = []
-    for (const pid of ['local', 'anthropic', 'openai', 'deepseek'] as ProviderId[]) {
+    for (const pid of ['local', 'anthropic', 'openai', 'deepseek', 'mimo'] as ProviderId[]) {
       const bucket = byProvider.get(pid)
       if (!bucket) {
         providers.push({
@@ -413,7 +424,8 @@ export class Usage {
       { file: 'ollama.md', provider: 'local' },
       { file: 'anthropic.md', provider: 'anthropic' },
       { file: 'openai.md', provider: 'openai' },
-      { file: 'deepseek.md', provider: 'deepseek' }
+      { file: 'deepseek.md', provider: 'deepseek' },
+      { file: 'mimo.md', provider: 'mimo' }
     ]
 
     for (const { file, provider } of providerFiles) {
@@ -487,7 +499,9 @@ export function calculateCost(
       ? ANTHROPIC_PRICING
       : provider === 'deepseek'
         ? DEEPSEEK_PRICING
-        : OPENAI_PRICING
+        : provider === 'mimo'
+          ? MIMO_PRICING
+          : OPENAI_PRICING
   const pricing = findPricing(model, table)
   // Fact-based: published per-token rates applied to reported token counts
   const raw =
@@ -559,6 +573,7 @@ function providerLabel(provider: ProviderId): string {
   if (provider === 'local') return 'Ollama'
   if (provider === 'anthropic') return 'Anthropic'
   if (provider === 'deepseek') return 'DeepSeek'
+  if (provider === 'mimo') return 'Xiaomi Mimo'
   return 'OpenAI'
 }
 

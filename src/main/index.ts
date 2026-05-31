@@ -269,6 +269,25 @@ async function fetchProviderModels(
       return { ok: true, models }
     }
 
+    if (id === 'mimo') {
+      const res = await fetch('https://api.xiaomimimo.com/v1/models', {
+        method: 'GET',
+        headers: { 'api-key': apiKey }
+      })
+      if (!res.ok) {
+        const text = await res.text().catch(() => '')
+        return { ok: false, ...classifyHttpError(res.status, text) }
+      }
+      const body = (await res.json()) as {
+        data?: Array<{ id: string; created?: number }>
+      }
+      const models = (body.data ?? [])
+        .slice()
+        .sort((a, b) => (b.created ?? 0) - (a.created ?? 0))
+        .map((m) => m.id)
+      return { ok: true, models }
+    }
+
     const res = await fetch('https://api.openai.com/v1/models', {
       method: 'GET',
       headers: { Authorization: `Bearer ${apiKey}` }

@@ -2,6 +2,7 @@ import type { Corpus } from '@main/runtime/corpus'
 import { AnthropicProvider } from '@main/runtime/providers/anthropic'
 import { DeepSeekProvider } from '@main/runtime/providers/deepseek'
 import { LocalProvider } from '@main/runtime/providers/local'
+import { MimoProvider } from '@main/runtime/providers/mimo'
 import { OpenAIProvider } from '@main/runtime/providers/openai'
 import { net } from 'electron'
 
@@ -34,7 +35,7 @@ export type ChatMessage =
       images?: ToolResultImage[]
     }
 
-export type ProviderId = 'anthropic' | 'openai' | 'deepseek' | 'local'
+export type ProviderId = 'anthropic' | 'openai' | 'deepseek' | 'mimo' | 'local'
 
 export type ToolDefinition = {
   name: string
@@ -102,7 +103,7 @@ export type StreamChunk =
   | { type: 'no_provider_available'; info: NoProviderAvailableInfo }
 
 export type CloudProviderConfig = {
-  id: 'anthropic' | 'openai' | 'deepseek'
+  id: 'anthropic' | 'openai' | 'deepseek' | 'mimo'
   model: string
   apiKey: string
   models?: string[]
@@ -137,6 +138,7 @@ const PROVIDER_LOGO: Record<ProviderId, string> = {
   anthropic: 'anthropic',
   openai: 'openai',
   deepseek: 'deepseek',
+  mimo: 'mimo',
   local: 'ollama'
 }
 
@@ -597,6 +599,12 @@ export class Thalamus {
           model: cfg.model,
           provider: new DeepSeekProvider(cfg.apiKey, cfg.model)
         })
+      } else if (id === 'mimo') {
+        out.push({
+          id: 'mimo',
+          model: cfg.model,
+          provider: new MimoProvider(cfg.apiKey, cfg.model)
+        })
       }
     }
     if (this.local.isReady) {
@@ -727,6 +735,10 @@ function contextWindowForModel(model: string): number {
   if (m.includes('opus') || m.includes('sonnet') || m.includes('haiku')) return 200_000
   // DeepSeek
   if (m.includes('deepseek-v4')) return 1_000_000
+  // Xiaomi Mimo
+  if (m.includes('mimo-v2.5')) return 1_000_000
+  if (m.includes('mimo-v2')) return 256_000
+  if (m.includes('mimo')) return 256_000
   // OpenAI
   if (m.includes('gpt-5.4') || m.includes('gpt-5.5')) return 1_000_000
   if (m.includes('gpt-5')) return 400_000
