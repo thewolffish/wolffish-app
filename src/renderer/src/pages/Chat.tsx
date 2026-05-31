@@ -1250,9 +1250,7 @@ export function Chat(): React.JSX.Element {
                 onChange={onModeChange}
                 disabled={savingMode || streaming}
                 activeCloudProvider={activeCloudProvider}
-                cloudModel={
-                  cloudProviders.find((p) => p.id === activeCloudProvider)?.model ?? null
-                }
+                cloudModel={cloudProviders.find((p) => p.id === activeCloudProvider)?.model ?? null}
                 localModel={currentModel}
               />
             </div>
