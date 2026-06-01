@@ -288,6 +288,26 @@ async function fetchProviderModels(
       return { ok: true, models }
     }
 
+    if (id === 'kimi') {
+      const res = await fetch('https://api.moonshot.ai/v1/models', {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${apiKey}` }
+      })
+      if (!res.ok) {
+        const text = await res.text().catch(() => '')
+        return { ok: false, ...classifyHttpError(res.status, text) }
+      }
+      const body = (await res.json()) as {
+        data?: Array<{ id: string; created?: number }>
+      }
+      const models = (body.data ?? [])
+        .filter((m) => isKimiChatModel(m.id))
+        .slice()
+        .sort((a, b) => (b.created ?? 0) - (a.created ?? 0))
+        .map((m) => m.id)
+      return { ok: true, models }
+    }
+
     const res = await fetch('https://api.openai.com/v1/models', {
       method: 'GET',
       headers: { Authorization: `Bearer ${apiKey}` }
@@ -315,8 +335,9 @@ async function fetchProviderModels(
 // Filter to chat-completion-capable models — gpt-* and the o-series
 // reasoning models. Exclude obvious non-chat variants (audio/realtime/tts).
 function isOpenAIChatModel(id: string): boolean {
+  if (id.startsWith('gpt-image-') || id.startsWith('chatgpt-image')) return false
   if (id.startsWith('gpt-') || id.startsWith('chatgpt-')) {
-    if (/-(audio|tts|whisper|search|realtime|transcribe)/.test(id)) return false
+    if (/-(audio|tts|whisper|search|realtime|transcribe|instruct)/.test(id)) return false
     return true
   }
   if (/^o\d/.test(id)) return true
@@ -325,6 +346,14 @@ function isOpenAIChatModel(id: string): boolean {
 
 function isDeepSeekChatModel(id: string): boolean {
   return id.startsWith('deepseek-')
+}
+
+function isKimiChatModel(id: string): boolean {
+  if (id.startsWith('kimi-') || id.startsWith('moonshot-v1-')) {
+    if (/-(tts|asr|embedding|whisper)/.test(id)) return false
+    return true
+  }
+  return false
 }
 
 /**

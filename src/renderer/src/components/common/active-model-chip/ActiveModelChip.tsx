@@ -1,6 +1,7 @@
 import {
   AnthropicLogo,
   DeepSeekLogo,
+  KimiLogo,
   MimoLogo,
   OllamaLogo,
   OpenAILogo
@@ -15,6 +16,7 @@ const LOGOS: Record<string, IconType | React.ComponentType<{ size?: number; clas
     openai: OpenAILogo,
     deepseek: DeepSeekLogo,
     mimo: MimoLogo,
+    kimi: KimiLogo,
     local: OllamaLogo,
     ollama: OllamaLogo
   }

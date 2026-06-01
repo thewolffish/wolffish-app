@@ -73,6 +73,7 @@ type ModelPricing = {
 
 // https://docs.anthropic.com/en/docs/about-claude/models#model-comparison-table
 const ANTHROPIC_PRICING: Record<string, ModelPricing> = {
+  'claude-opus-4-8': { input: 5 / 1e6, output: 25 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 },
   'claude-opus-4-7': { input: 5 / 1e6, output: 25 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 },
   'claude-opus-4-6': { input: 5 / 1e6, output: 25 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 },
   'claude-opus-4-5': { input: 5 / 1e6, output: 25 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 },
@@ -88,9 +89,16 @@ const ANTHROPIC_PRICING: Record<string, ModelPricing> = {
   'claude-3-haiku': { input: 0.25 / 1e6, output: 1.25 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 }
 }
 
-// https://platform.openai.com/docs/pricing
-// OpenAI auto-caches prefixes at 50% input discount; no write premium.
+// https://developers.openai.com/api/docs/pricing
+// OpenAI auto-caches prefixes; no write premium. Pro models have no cached tier.
 const OPENAI_PRICING: Record<string, ModelPricing> = {
+  'gpt-5.5-pro': { input: 30 / 1e6, output: 180 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
+  'gpt-5.5': { input: 5 / 1e6, output: 30 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 },
+  'gpt-5.4-pro': { input: 30 / 1e6, output: 180 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
+  'gpt-5.4': { input: 2.5 / 1e6, output: 15 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 },
+  'gpt-5.4-mini': { input: 0.75 / 1e6, output: 4.5 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 },
+  'gpt-5.4-nano': { input: 0.20 / 1e6, output: 1.25 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 },
+  'gpt-5': { input: 2.5 / 1e6, output: 10 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
   'gpt-4o': { input: 2.5 / 1e6, output: 10 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
   'gpt-4o-mini': { input: 0.15 / 1e6, output: 0.6 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
   'gpt-4-turbo': { input: 10 / 1e6, output: 30 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
@@ -121,6 +129,17 @@ const MIMO_PRICING: Record<string, ModelPricing> = {
   'mimo-v2.5': { input: 0.08 / 1e6, output: 0.80 / 1e6, cacheWrite: 0, cacheRead: 25.0 },
   'mimo-v2-omni': { input: 0.08 / 1e6, output: 0.80 / 1e6, cacheWrite: 0, cacheRead: 25.0 },
   'mimo-v2-flash': { input: 0.01 / 1e6, output: 0.30 / 1e6, cacheWrite: 0, cacheRead: 0 }
+}
+
+// https://platform.kimi.ai/docs/pricing
+// Cache read multiplier = cache_hit_rate / cache_miss_rate (auto-caching, no write premium).
+const KIMI_PRICING: Record<string, ModelPricing> = {
+  'kimi-k2.6': { input: 0.95 / 1e6, output: 4.0 / 1e6, cacheWrite: 1.0, cacheRead: 0.16 / 0.95 },
+  'kimi-k2.5': { input: 0.60 / 1e6, output: 3.0 / 1e6, cacheWrite: 1.0, cacheRead: 0.10 / 0.60 },
+  'moonshot-v1-128k': { input: 2.0 / 1e6, output: 5.0 / 1e6, cacheWrite: 0, cacheRead: 0 },
+  'moonshot-v1-32k': { input: 1.0 / 1e6, output: 3.0 / 1e6, cacheWrite: 0, cacheRead: 0 },
+  'moonshot-v1-8k': { input: 0.20 / 1e6, output: 2.0 / 1e6, cacheWrite: 0, cacheRead: 0 },
+  'moonshot-v1-auto': { input: 1.0 / 1e6, output: 3.0 / 1e6, cacheWrite: 0, cacheRead: 0 }
 }
 
 const LOCAL_EQUIVALENT_PRICING: ModelPricing = {
@@ -226,7 +245,7 @@ export class Usage {
     }
 
     const providers: ProviderUsageSummary[] = []
-    for (const pid of ['local', 'anthropic', 'openai', 'deepseek', 'mimo'] as ProviderId[]) {
+    for (const pid of ['local', 'anthropic', 'openai', 'deepseek', 'mimo', 'kimi'] as ProviderId[]) {
       const bucket = byProvider.get(pid)
       if (!bucket) {
         providers.push({
@@ -425,7 +444,8 @@ export class Usage {
       { file: 'anthropic.md', provider: 'anthropic' },
       { file: 'openai.md', provider: 'openai' },
       { file: 'deepseek.md', provider: 'deepseek' },
-      { file: 'mimo.md', provider: 'mimo' }
+      { file: 'mimo.md', provider: 'mimo' },
+      { file: 'kimi.md', provider: 'kimi' }
     ]
 
     for (const { file, provider } of providerFiles) {
@@ -501,7 +521,9 @@ export function calculateCost(
         ? DEEPSEEK_PRICING
         : provider === 'mimo'
           ? MIMO_PRICING
-          : OPENAI_PRICING
+          : provider === 'kimi'
+            ? KIMI_PRICING
+            : OPENAI_PRICING
   const pricing = findPricing(model, table)
   // Fact-based: published per-token rates applied to reported token counts
   const raw =
@@ -574,6 +596,7 @@ function providerLabel(provider: ProviderId): string {
   if (provider === 'anthropic') return 'Anthropic'
   if (provider === 'deepseek') return 'DeepSeek'
   if (provider === 'mimo') return 'Xiaomi Mimo'
+  if (provider === 'kimi') return 'Kimi'
   return 'OpenAI'
 }
 

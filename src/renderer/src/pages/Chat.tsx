@@ -21,6 +21,7 @@ import { Tooltip } from '@components/core/Tooltip'
 import {
   AnthropicLogo,
   DeepSeekLogo,
+  KimiLogo,
   MimoLogo,
   OllamaLogo,
   OpenAILogo,
@@ -2000,7 +2001,8 @@ const CLOUD_PROVIDER_LOGOS: Record<string, React.ComponentType<{ size?: number }
   anthropic: AnthropicLogo,
   openai: OpenAILogo,
   deepseek: DeepSeekLogo,
-  mimo: MimoLogo
+  mimo: MimoLogo,
+  kimi: KimiLogo
 }
 
 function ModeToggle({

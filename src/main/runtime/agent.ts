@@ -258,7 +258,9 @@ export class Agent {
             ? 'deepseek'
             : provider === 'mimo'
               ? 'mimo'
-              : 'local'
+              : provider === 'kimi'
+                ? 'kimi'
+                : 'local'
     const supportsVision = providerKey !== 'local' || (await this.thalamus.localSupportsVision())
 
     const out: ChatMessage[] = []

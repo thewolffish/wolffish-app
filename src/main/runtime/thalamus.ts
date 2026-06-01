@@ -2,6 +2,7 @@ import type { Corpus } from '@main/runtime/corpus'
 import { AnthropicProvider } from '@main/runtime/providers/anthropic'
 import { DeepSeekProvider } from '@main/runtime/providers/deepseek'
 import { LocalProvider } from '@main/runtime/providers/local'
+import { KimiProvider } from '@main/runtime/providers/kimi'
 import { MimoProvider } from '@main/runtime/providers/mimo'
 import { OpenAIProvider } from '@main/runtime/providers/openai'
 import { net } from 'electron'
@@ -35,7 +36,7 @@ export type ChatMessage =
       images?: ToolResultImage[]
     }
 
-export type ProviderId = 'anthropic' | 'openai' | 'deepseek' | 'mimo' | 'local'
+export type ProviderId = 'anthropic' | 'openai' | 'deepseek' | 'mimo' | 'kimi' | 'local'
 
 export type ToolDefinition = {
   name: string
@@ -103,7 +104,7 @@ export type StreamChunk =
   | { type: 'no_provider_available'; info: NoProviderAvailableInfo }
 
 export type CloudProviderConfig = {
-  id: 'anthropic' | 'openai' | 'deepseek' | 'mimo'
+  id: 'anthropic' | 'openai' | 'deepseek' | 'mimo' | 'kimi'
   model: string
   apiKey: string
   models?: string[]
@@ -139,6 +140,7 @@ const PROVIDER_LOGO: Record<ProviderId, string> = {
   openai: 'openai',
   deepseek: 'deepseek',
   mimo: 'mimo',
+  kimi: 'kimi',
   local: 'ollama'
 }
 
@@ -605,6 +607,12 @@ export class Thalamus {
           model: cfg.model,
           provider: new MimoProvider(cfg.apiKey, cfg.model)
         })
+      } else if (id === 'kimi') {
+        out.push({
+          id: 'kimi',
+          model: cfg.model,
+          provider: new KimiProvider(cfg.apiKey, cfg.model)
+        })
       }
     }
     if (this.local.isReady) {
@@ -722,8 +730,8 @@ function reasonKeyFor(statusCode: number | null): string {
 
 function contextWindowForModel(model: string): number {
   const m = model.toLowerCase()
-  // Claude 4.6+ — Opus 4.6/4.7 and Sonnet 4.6 have 1M windows
-  if (m.includes('opus-4-7') || m.includes('opus-4-6')) return 1_000_000
+  // Claude 4.6+ — Opus 4.6/4.7/4.8 and Sonnet 4.6 have 1M windows
+  if (m.includes('opus-4-8') || m.includes('opus-4-7') || m.includes('opus-4-6')) return 1_000_000
   if (m.includes('sonnet-4-6')) return 1_000_000
   // Claude 4.0–4.5 and Haiku — 200k
   if (m.includes('opus-4') || m.includes('sonnet-4')) return 200_000
@@ -739,6 +747,12 @@ function contextWindowForModel(model: string): number {
   if (m.includes('mimo-v2.5')) return 1_000_000
   if (m.includes('mimo-v2')) return 256_000
   if (m.includes('mimo')) return 256_000
+  // Kimi / Moonshot
+  if (m.includes('kimi-k2')) return 262_144
+  if (m.includes('moonshot-v1-128k')) return 131_072
+  if (m.includes('moonshot-v1-32k')) return 32_768
+  if (m.includes('moonshot-v1-8k')) return 8_192
+  if (m.includes('moonshot')) return 131_072
   // OpenAI
   if (m.includes('gpt-5.4') || m.includes('gpt-5.5')) return 1_000_000
   if (m.includes('gpt-5')) return 400_000

@@ -5,6 +5,7 @@ import {
   BraveLogo,
   DeepSeekLogo,
   GoogleLogo,
+  KimiLogo,
   MimoLogo,
   NotionLogo,
   OllamaLogo,
@@ -497,6 +498,9 @@ export function Settings(): React.JSX.Element {
         <TabPanel active={active === 'model' && provider === 'mimo'}>
           <CloudProviderPanel provider="mimo" />
         </TabPanel>
+        <TabPanel active={active === 'model' && provider === 'kimi'}>
+          <CloudProviderPanel provider="kimi" />
+        </TabPanel>
         <TabPanel active={active === 'services' && effectiveService === 'tts' && ttsAvailable}>
           <TextToSpeechPanel />
         </TabPanel>
@@ -551,8 +555,8 @@ function TabPanel({
   return <>{children}</>
 }
 
-type Provider = 'ollama' | 'anthropic' | 'openai' | 'deepseek' | 'mimo'
-const PROVIDERS: Provider[] = ['mimo', 'deepseek', 'anthropic', 'openai', 'ollama']
+type Provider = 'ollama' | 'anthropic' | 'openai' | 'deepseek' | 'mimo' | 'kimi'
+const PROVIDERS: Provider[] = ['mimo', 'deepseek', 'kimi', 'anthropic', 'openai', 'ollama']
 
 const PROVIDER_ICONS: Record<
   Provider,
@@ -562,7 +566,8 @@ const PROVIDER_ICONS: Record<
   anthropic: AnthropicLogo,
   openai: OpenAILogo,
   deepseek: DeepSeekLogo,
-  mimo: MimoLogo
+  mimo: MimoLogo,
+  kimi: KimiLogo
 }
 
 type Channel = 'telegram' | 'whatsapp'

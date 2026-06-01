@@ -54,7 +54,8 @@ export function ContextMeter({
 }: ContextMeterProps): React.JSX.Element | null {
   const { t } = useTranslation()
   const percent = budget > 0 ? Math.min(Math.round((used / budget) * 100), 100) : 0
-  const color = getColor(percent)
+  const useBorderColor = percent === 0
+  const color = useBorderColor ? undefined : getColor(percent)
 
   const strokeWidth = 2.5
   const cornerRadius = 8
@@ -85,14 +86,18 @@ export function ContextMeter({
           <path
             d={d}
             fill="none"
-            stroke={color}
+            stroke={useBorderColor ? 'currentColor' : color}
             strokeWidth={strokeWidth}
             strokeDasharray={totalLength}
             strokeDashoffset={offset}
             strokeLinecap="round"
+            className={useBorderColor ? 'text-border' : undefined}
           />
         </svg>
-        <span className="absolute text-[10px] font-semibold leading-none" style={{ color }}>
+        <span
+          className={`absolute text-[10px] font-semibold leading-none ${useBorderColor ? 'text-border' : ''}`}
+          style={useBorderColor ? undefined : { color }}
+        >
           {percent}%
         </span>
       </span>

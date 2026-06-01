@@ -42,7 +42,7 @@ export type LocalModelConfig = {
 }
 
 export type CloudProviderConfig = {
-  id: 'anthropic' | 'openai' | 'deepseek' | 'mimo'
+  id: 'anthropic' | 'openai' | 'deepseek' | 'mimo' | 'kimi'
   model: string
   apiKey: string
   models?: string[]
@@ -453,7 +453,7 @@ export type ViewerTreeNode =
 export type UsageTimeRange = 'today' | 'this_month' | '3_months' | '6_months' | 'ytd' | 'all_time'
 
 export type UsageProviderSummary = {
-  provider: 'anthropic' | 'openai' | 'deepseek' | 'mimo' | 'local'
+  provider: 'anthropic' | 'openai' | 'deepseek' | 'mimo' | 'kimi' | 'local'
   totalInputTokens: number
   totalOutputTokens: number
   totalCost: number

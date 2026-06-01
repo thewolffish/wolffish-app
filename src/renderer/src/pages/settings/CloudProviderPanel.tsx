@@ -1,6 +1,6 @@
 import { Button } from '@components/core/Button'
 import { Input } from '@components/core/Input'
-import { AnthropicLogo, DeepSeekLogo, MimoLogo, OpenAILogo } from '@components/core/ProviderLogos'
+import { AnthropicLogo, DeepSeekLogo, KimiLogo, MimoLogo, OpenAILogo } from '@components/core/ProviderLogos'
 import { Select, type SelectOption } from '@components/core/Select'
 import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn'
@@ -27,14 +27,73 @@ const PROVIDER_LOGOS: Record<
   anthropic: AnthropicLogo,
   openai: OpenAILogo,
   deepseek: DeepSeekLogo,
-  mimo: MimoLogo
+  mimo: MimoLogo,
+  kimi: KimiLogo
 }
 
 const PROVIDER_URLS: Record<ProviderId, string> = {
   anthropic: 'https://console.anthropic.com',
   openai: 'https://platform.openai.com',
   deepseek: 'https://platform.deepseek.com',
-  mimo: 'https://platform.xiaomimimo.com'
+  mimo: 'https://platform.xiaomimimo.com',
+  kimi: 'https://platform.moonshot.ai'
+}
+
+type BadgeKind = 'frontier' | 'vision' | 'reasoning' | 'code' | 'fast' | 'voice'
+
+type ModelSpec = {
+  name: string
+  context: string
+  input: string
+  output: string
+  cached: string | null
+  badges?: BadgeKind[]
+}
+
+const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
+  anthropic: [
+    { name: 'claude-opus-4-8', context: '1M', input: '$5.00', output: '$25.00', cached: '$0.50', badges: ['frontier'] },
+    { name: 'claude-opus-4-7', context: '1M', input: '$5.00', output: '$25.00', cached: '$0.50' },
+    { name: 'claude-sonnet-4-6', context: '1M', input: '$3.00', output: '$15.00', cached: '$0.30' },
+    { name: 'claude-opus-4-6', context: '1M', input: '$5.00', output: '$25.00', cached: '$0.50' },
+    { name: 'claude-opus-4-5-20251101', context: '200K', input: '$5.00', output: '$25.00', cached: '$0.50' },
+    { name: 'claude-sonnet-4-5-20250929', context: '200K', input: '$3.00', output: '$15.00', cached: '$0.30' },
+    { name: 'claude-haiku-4-5-20251001', context: '200K', input: '$1.00', output: '$5.00', cached: '$0.10', badges: ['fast'] },
+    { name: 'claude-opus-4-1-20250805', context: '200K', input: '$15.00', output: '$75.00', cached: '$1.50' }
+  ],
+  openai: [
+    { name: 'gpt-5.5-pro', context: '1M', input: '$30.00', output: '$180.00', cached: null, badges: ['frontier'] },
+    { name: 'gpt-5.5', context: '1M', input: '$5.00', output: '$30.00', cached: '$0.50' },
+    { name: 'gpt-5.4', context: '1M', input: '$2.50', output: '$15.00', cached: '$0.25' },
+    { name: 'gpt-5.4-mini', context: '1M', input: '$0.75', output: '$4.50', cached: '$0.08', badges: ['fast'] },
+    { name: 'gpt-5.4-nano', context: '1M', input: '$0.20', output: '$1.25', cached: '$0.02', badges: ['fast'] }
+  ],
+  deepseek: [
+    { name: 'deepseek-v4-pro', context: '1M', input: '$0.44', output: '$0.87', cached: '$0.01', badges: ['frontier'] },
+    { name: 'deepseek-v4-flash', context: '1M', input: '$0.14', output: '$0.28', cached: '$0.003', badges: ['fast'] }
+  ],
+  mimo: [
+    { name: 'mimo-v2.5-pro', context: '1M', input: '$0.20', output: '$2.00', cached: 'Free', badges: ['frontier'] },
+    { name: 'mimo-v2.5', context: '1M', input: '$0.08', output: '$0.80', cached: 'Free' },
+    { name: 'mimo-v2-pro', context: '256K', input: '$0.20', output: '$2.00', cached: 'Free' },
+    { name: 'mimo-v2-omni', context: '256K', input: '$0.08', output: '$0.80', cached: 'Free', badges: ['vision'] },
+    { name: 'mimo-v2-flash', context: '256K', input: '$0.01', output: '$0.30', cached: null, badges: ['fast'] },
+    { name: 'mimo-v2.5-tts', context: '—', input: '—', output: '—', cached: null, badges: ['voice'] },
+    { name: 'mimo-v2.5-tts-voiceclone', context: '—', input: '—', output: '—', cached: null, badges: ['voice'] },
+    { name: 'mimo-v2.5-tts-voicedesign', context: '—', input: '—', output: '—', cached: null, badges: ['voice'] },
+    { name: 'mimo-v2-tts', context: '—', input: '—', output: '—', cached: null, badges: ['voice'] }
+  ],
+  kimi: [
+    { name: 'kimi-k2.6', context: '256K', input: '$0.95', output: '$4.00', cached: '$0.16', badges: ['frontier', 'vision', 'reasoning'] },
+    { name: 'kimi-k2.5', context: '256K', input: '$0.60', output: '$3.00', cached: '$0.10', badges: ['vision', 'reasoning'] },
+    { name: 'moonshot-v1-auto', context: '128K', input: '$1.00', output: '$3.00', cached: null },
+    { name: 'moonshot-v1-128k-vision-preview', context: '128K', input: '$2.00', output: '$5.00', cached: null, badges: ['vision'] },
+    { name: 'moonshot-v1-128k', context: '128K', input: '$2.00', output: '$5.00', cached: null },
+    { name: 'moonshot-v1-32k-vision-preview', context: '32K', input: '$1.00', output: '$3.00', cached: null, badges: ['vision'] },
+    { name: 'moonshot-v1-32k', context: '32K', input: '$1.00', output: '$3.00', cached: null },
+    { name: 'moonshot-v1-8k-vision-preview', context: '8K', input: '$0.20', output: '$2.00', cached: null, badges: ['vision'] },
+    { name: 'moonshot-v1-8k', context: '8K', input: '$0.20', output: '$2.00', cached: null }
+  ]
 }
 
 export function CloudProviderPanel({ provider }: { provider: ProviderId }): React.JSX.Element {
@@ -410,8 +469,89 @@ export function CloudProviderPanel({ provider }: { provider: ProviderId }): Reac
             )}
           </div>
         </section>
+
+        <ModelBreakdown specs={MODEL_SPECS[provider]} />
       </div>
     </div>
+  )
+}
+
+const BADGE_STYLES: Record<BadgeKind, string> = {
+  frontier: 'bg-accent/15 text-accent',
+  vision: 'bg-blue-500/15 text-blue-600 dark:text-blue-400',
+  reasoning: 'bg-purple-500/15 text-purple-600 dark:text-purple-400',
+  code: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400',
+  fast: 'bg-amber-500/15 text-amber-600 dark:text-amber-400',
+  voice: 'bg-pink-500/15 text-pink-600 dark:text-pink-400'
+}
+
+function ModelBreakdown({ specs }: { specs: ModelSpec[] }): React.JSX.Element {
+  const { t } = useTranslation()
+  const isFrontier = (m: ModelSpec): boolean => !!m.badges?.includes('frontier')
+  return (
+    <section className="bg-surface border-border flex flex-col gap-3 rounded-2xl border p-6">
+      <h2 className="text-fg text-sm font-semibold">{t('settings.model.cloud.modelsBreakdown')}</h2>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="text-muted border-border border-b">
+              <th className="pb-2 pe-3 text-start font-medium">{t('settings.model.cloud.breakdown.model')}</th>
+              <th className="pb-2 px-3 text-end font-medium">{t('settings.model.cloud.breakdown.context')}</th>
+              <th className="pb-2 px-3 text-end font-medium">{t('settings.model.cloud.breakdown.input')}</th>
+              <th className="pb-2 px-3 text-end font-medium">{t('settings.model.cloud.breakdown.output')}</th>
+              <th className="pb-2 ps-3 text-end font-medium">{t('settings.model.cloud.breakdown.cached')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {specs.map((m) => (
+              <tr
+                key={m.name}
+                className={cn(
+                  'border-border border-b last:border-b-0',
+                  isFrontier(m) && 'bg-accent/5'
+                )}
+              >
+                <td className="py-2 pe-3 text-start">
+                  <span className="flex flex-wrap items-center gap-1.5">
+                    <span className={cn('text-fg', isFrontier(m) && 'font-medium')}>
+                      {m.name}
+                    </span>
+                    {m.badges?.map((badge) => (
+                      <span
+                        key={badge}
+                        className={cn(
+                          'inline-flex shrink-0 items-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold leading-none',
+                          BADGE_STYLES[badge]
+                        )}
+                      >
+                        {t(`settings.model.cloud.breakdown.badges.${badge}`)}
+                      </span>
+                    ))}
+                  </span>
+                </td>
+                <td className="py-2 px-3 text-end text-muted tabular-nums">{m.context}</td>
+                <td className="py-2 px-3 text-end text-muted tabular-nums">{m.input}</td>
+                <td className="py-2 px-3 text-end text-muted tabular-nums">{m.output}</td>
+                <td className="py-2 ps-3 text-end tabular-nums">
+                  {m.cached === null ? (
+                    <span className="text-muted/50">{'—'}</span>
+                  ) : m.cached === 'Free' ? (
+                    <span className="text-emerald-600 dark:text-emerald-400 font-medium">
+                      {t('settings.model.cloud.breakdown.free')}
+                    </span>
+                  ) : (
+                    <span className="text-muted">{m.cached}</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-muted/70 text-[10px] leading-relaxed">
+        {t('settings.model.cloud.breakdown.disclaimer')}
+      </p>
+    </section>
   )
 }
 
