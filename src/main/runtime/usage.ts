@@ -97,7 +97,7 @@ const OPENAI_PRICING: Record<string, ModelPricing> = {
   'gpt-5.4-pro': { input: 30 / 1e6, output: 180 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
   'gpt-5.4': { input: 2.5 / 1e6, output: 15 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 },
   'gpt-5.4-mini': { input: 0.75 / 1e6, output: 4.5 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 },
-  'gpt-5.4-nano': { input: 0.20 / 1e6, output: 1.25 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 },
+  'gpt-5.4-nano': { input: 0.2 / 1e6, output: 1.25 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 },
   'gpt-5': { input: 2.5 / 1e6, output: 10 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
   'gpt-4o': { input: 2.5 / 1e6, output: 10 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
   'gpt-4o-mini': { input: 0.15 / 1e6, output: 0.6 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
@@ -124,21 +124,21 @@ const DEEPSEEK_PRICING: Record<string, ModelPricing> = {
 // Input rates are for the ≤256K tier; the 256K-1M tier is ~5× higher but
 // most Wolffish turns stay under 256K. Cache write is free (limited time).
 const MIMO_PRICING: Record<string, ModelPricing> = {
-  'mimo-v2.5-pro': { input: 0.20 / 1e6, output: 2.0 / 1e6, cacheWrite: 0, cacheRead: 15.0 },
-  'mimo-v2-pro': { input: 0.20 / 1e6, output: 2.0 / 1e6, cacheWrite: 0, cacheRead: 15.0 },
-  'mimo-v2.5': { input: 0.08 / 1e6, output: 0.80 / 1e6, cacheWrite: 0, cacheRead: 25.0 },
-  'mimo-v2-omni': { input: 0.08 / 1e6, output: 0.80 / 1e6, cacheWrite: 0, cacheRead: 25.0 },
-  'mimo-v2-flash': { input: 0.01 / 1e6, output: 0.30 / 1e6, cacheWrite: 0, cacheRead: 0 }
+  'mimo-v2.5-pro': { input: 0.2 / 1e6, output: 2.0 / 1e6, cacheWrite: 0, cacheRead: 15.0 },
+  'mimo-v2-pro': { input: 0.2 / 1e6, output: 2.0 / 1e6, cacheWrite: 0, cacheRead: 15.0 },
+  'mimo-v2.5': { input: 0.08 / 1e6, output: 0.8 / 1e6, cacheWrite: 0, cacheRead: 25.0 },
+  'mimo-v2-omni': { input: 0.08 / 1e6, output: 0.8 / 1e6, cacheWrite: 0, cacheRead: 25.0 },
+  'mimo-v2-flash': { input: 0.01 / 1e6, output: 0.3 / 1e6, cacheWrite: 0, cacheRead: 0 }
 }
 
 // https://platform.kimi.ai/docs/pricing
 // Cache read multiplier = cache_hit_rate / cache_miss_rate (auto-caching, no write premium).
 const KIMI_PRICING: Record<string, ModelPricing> = {
   'kimi-k2.6': { input: 0.95 / 1e6, output: 4.0 / 1e6, cacheWrite: 1.0, cacheRead: 0.16 / 0.95 },
-  'kimi-k2.5': { input: 0.60 / 1e6, output: 3.0 / 1e6, cacheWrite: 1.0, cacheRead: 0.10 / 0.60 },
+  'kimi-k2.5': { input: 0.6 / 1e6, output: 3.0 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 / 0.6 },
   'moonshot-v1-128k': { input: 2.0 / 1e6, output: 5.0 / 1e6, cacheWrite: 0, cacheRead: 0 },
   'moonshot-v1-32k': { input: 1.0 / 1e6, output: 3.0 / 1e6, cacheWrite: 0, cacheRead: 0 },
-  'moonshot-v1-8k': { input: 0.20 / 1e6, output: 2.0 / 1e6, cacheWrite: 0, cacheRead: 0 },
+  'moonshot-v1-8k': { input: 0.2 / 1e6, output: 2.0 / 1e6, cacheWrite: 0, cacheRead: 0 },
   'moonshot-v1-auto': { input: 1.0 / 1e6, output: 3.0 / 1e6, cacheWrite: 0, cacheRead: 0 }
 }
 
@@ -245,7 +245,14 @@ export class Usage {
     }
 
     const providers: ProviderUsageSummary[] = []
-    for (const pid of ['local', 'anthropic', 'openai', 'deepseek', 'mimo', 'kimi'] as ProviderId[]) {
+    for (const pid of [
+      'local',
+      'anthropic',
+      'openai',
+      'deepseek',
+      'mimo',
+      'kimi'
+    ] as ProviderId[]) {
       const bucket = byProvider.get(pid)
       if (!bucket) {
         providers.push({

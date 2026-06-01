@@ -67,9 +67,19 @@ function prettyJson(content: string): string {
 function languageFor(name: string): CodeLanguage | null {
   if (name.endsWith('.json')) return 'json'
   if (name.endsWith('.md') || name.endsWith('.mdx')) return 'markdown'
-  if (name.endsWith('.js') || name.endsWith('.mjs') || name.endsWith('.cjs') || name.endsWith('.jsx'))
+  if (
+    name.endsWith('.js') ||
+    name.endsWith('.mjs') ||
+    name.endsWith('.cjs') ||
+    name.endsWith('.jsx')
+  )
     return 'javascript'
-  if (name.endsWith('.ts') || name.endsWith('.tsx') || name.endsWith('.mts') || name.endsWith('.cts'))
+  if (
+    name.endsWith('.ts') ||
+    name.endsWith('.tsx') ||
+    name.endsWith('.mts') ||
+    name.endsWith('.cts')
+  )
     return 'typescript'
   if (name.endsWith('.txt') || name.endsWith('.log')) return 'markdown'
   if (name.endsWith('.css') || name.endsWith('.scss') || name.endsWith('.less')) return 'css'

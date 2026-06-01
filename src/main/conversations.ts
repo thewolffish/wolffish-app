@@ -257,7 +257,9 @@ export function generateTitle(conv: ConversationFile): string {
   const text = raw.replace(/^```[\s\S]*?```\s*/g, '').trim() || raw
   const doc = nlp(text)
   const first = (doc.sentences().first().text() || text).trim()
-  const stripped = stripFiller(first).replace(/[?.!]+$/, '').trim()
+  const stripped = stripFiller(first)
+    .replace(/[?.!]+$/, '')
+    .trim()
 
   const words = stripped.split(/\s+/)
   if (words.length <= MAX_TITLE_WORDS) {
@@ -277,7 +279,6 @@ export function generateTitle(conv: ConversationFile): string {
 
   return cap(words.slice(0, MAX_TITLE_WORDS).join(' '))
 }
-
 
 function cap(s: string): string {
   const t = s.replace(/\s+/g, ' ').trim()

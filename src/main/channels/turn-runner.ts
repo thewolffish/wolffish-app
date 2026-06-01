@@ -204,10 +204,17 @@ const ERROR_MESSAGES: Record<ErrorKey, Record<'en' | 'ar', string>> = {
 
 function humanizeProviderError(raw: string, locale: 'en' | 'ar'): string {
   // Reason-key strings from thalamus STATUS_REASON_LABEL (no_provider_available path)
-  if (raw === 'authentication failed' || raw === 'forbidden') return ERROR_MESSAGES.invalidKey[locale]
+  if (raw === 'authentication failed' || raw === 'forbidden')
+    return ERROR_MESSAGES.invalidKey[locale]
   if (raw === 'model not found') return ERROR_MESSAGES.modelNotFound[locale]
   if (raw === 'rate-limited') return ERROR_MESSAGES.rateLimited[locale]
-  if (raw === 'unavailable' || raw === 'server error' || raw === 'gateway error' || raw === 'timeout' || raw === 'overloaded') {
+  if (
+    raw === 'unavailable' ||
+    raw === 'server error' ||
+    raw === 'gateway error' ||
+    raw === 'timeout' ||
+    raw === 'overloaded'
+  ) {
     return ERROR_MESSAGES.serverError[locale]
   }
   if (raw === 'offline') return ERROR_MESSAGES.offline[locale]
@@ -220,7 +227,8 @@ function humanizeProviderError(raw: string, locale: 'en' | 'ar'): string {
   }
   if (/HTTP\s+404/i.test(raw)) return ERROR_MESSAGES.modelNotFound[locale]
   if (/HTTP\s+429/i.test(raw)) return ERROR_MESSAGES.rateLimited[locale]
-  if (/HTTP\s+5\d\d/i.test(raw) || /overloaded/i.test(raw)) return ERROR_MESSAGES.serverError[locale]
+  if (/HTTP\s+5\d\d/i.test(raw) || /overloaded/i.test(raw))
+    return ERROR_MESSAGES.serverError[locale]
   return raw
 }
 

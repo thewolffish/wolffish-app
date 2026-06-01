@@ -1539,7 +1539,6 @@ function ChatItem({
   return (
     <AssistantBubble
       message={message}
-      t={t}
       awaitingApproval={awaitingApproval}
       onApprovalDecision={onApprovalDecision}
       onRetry={onRetry}
@@ -1584,30 +1583,29 @@ function UserBubble({
 
 function AssistantBubble({
   message,
-  t,
   awaitingApproval,
   onApprovalDecision,
   onRetry
 }: {
   message: AssistantMessage
-  t: (k: string) => string
   awaitingApproval: boolean
   onApprovalDecision: (id: string, decision: 'approved' | 'denied') => void
   onRetry?: () => void
 }): React.JSX.Element {
+  const { t } = useTranslation()
   const isStreaming = message.status === 'streaming'
   const isError = message.status === 'error'
-  const thinkingWords = useMemo(() => {
+  const [typedText, setTypedText] = useState('')
+  const wordsRef = useRef<string[]>([])
+
+  useEffect(() => {
     const words = [...(t('chat.thinkingWords', { returnObjects: true }) as string[])]
     for (let i = words.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1))
       ;[words[i], words[j]] = [words[j], words[i]]
     }
-    return words
+    wordsRef.current = words
   }, [t])
-  const [typedText, setTypedText] = useState('')
-  const wordsRef = useRef(thinkingWords)
-  wordsRef.current = thinkingWords
 
   useEffect(() => {
     if (!isStreaming) return
@@ -1628,7 +1626,8 @@ function AssistantBubble({
           wait = 0
         }
       } else {
-        if (++wait >= 40) { // 2s hold then next word
+        if (++wait >= 40) {
+          // 2s hold then next word
           wordIdx = (wordIdx + 1) % words.length
           charIdx = 0
           phase = 'typing'

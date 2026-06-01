@@ -259,7 +259,12 @@ export function Settings(): React.JSX.Element {
   const computerUseAvailable = visibleServices.includes('computerUse')
 
   return (
-    <main className={cn('bg-bg flex h-full w-full', navigator.platform.startsWith('Win') ? 'pt-5' : 'pt-10')}>
+    <main
+      className={cn(
+        'bg-bg flex h-full w-full',
+        navigator.platform.startsWith('Win') ? 'pt-5' : 'pt-10'
+      )}
+    >
       <aside className="flex w-56 shrink-0 flex-col gap-2 overflow-y-auto p-3">
         <button
           type="button"
