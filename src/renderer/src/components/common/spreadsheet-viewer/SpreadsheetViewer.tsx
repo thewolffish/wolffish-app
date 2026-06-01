@@ -101,7 +101,7 @@ function Active({ filePath, fileName }: { filePath: string; fileName: string }):
     >
       {html !== null ? (
         <div
-          className="spreadsheet-preview max-h-[400px] overflow-auto bg-white p-0 text-xs text-black"
+          className="spreadsheet-preview bg-bg text-fg max-h-[400px] overflow-auto p-4 text-xs"
           dangerouslySetInnerHTML={{ __html: html }}
         />
       ) : (

@@ -675,7 +675,10 @@ app.whenReady().then(async () => {
   // Uses Electron's built-in app.setLoginItemSettings which handles
   // macOS (SMAppService / Launch Services), Windows (registry), and
   // Linux (XDG autostart .desktop file).
-  if (cfg?.launchAtStartup !== false) {
+  // Skip in dev mode — registering the dev binary as a login item
+  // causes the Electron debug menu to appear on restart instead of
+  // the production app.
+  if (!is.dev && cfg?.launchAtStartup !== false) {
     app.setLoginItemSettings({ openAtLogin: true })
   }
 

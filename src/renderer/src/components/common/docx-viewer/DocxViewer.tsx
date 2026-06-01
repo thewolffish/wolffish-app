@@ -86,7 +86,7 @@ function Active({ filePath, fileName }: { filePath: string; fileName: string }):
     >
       {html !== null ? (
         <div
-          className="max-h-[400px] overflow-auto bg-white p-4 text-sm text-black"
+          className="bg-bg text-fg max-h-[400px] overflow-auto p-4 text-sm"
           dangerouslySetInnerHTML={{ __html: html }}
         />
       ) : (

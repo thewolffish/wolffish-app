@@ -19,9 +19,23 @@ import { tags as t } from '@lezer/highlight'
 import { markdown } from '@codemirror/lang-markdown'
 import { javascript } from '@codemirror/lang-javascript'
 import { json, jsonParseLinter } from '@codemirror/lang-json'
+import { css } from '@codemirror/lang-css'
+import { html } from '@codemirror/lang-html'
 import { lintGutter, linter } from '@codemirror/lint'
 
-export type CodeLanguage = 'markdown' | 'json' | 'javascript'
+export type CodeLanguage =
+  | 'markdown'
+  | 'json'
+  | 'javascript'
+  | 'typescript'
+  | 'css'
+  | 'html'
+  | 'xml'
+  | 'yaml'
+  | 'shell'
+  | 'python'
+  | 'sql'
+  | 'graphql'
 
 export type CodeEditorProps = {
   value: string
@@ -100,13 +114,21 @@ const lightHighlight = HighlightStyle.define([
 ])
 
 function languageExtension(language: CodeLanguage): readonly unknown[] {
-  if (language === 'json') {
-    return [json(), linter(jsonParseLinter()), lintGutter()]
+  switch (language) {
+    case 'json':
+      return [json(), linter(jsonParseLinter()), lintGutter()]
+    case 'javascript':
+      return [javascript({ jsx: true })]
+    case 'typescript':
+      return [javascript({ jsx: true, typescript: true })]
+    case 'css':
+      return [css()]
+    case 'html':
+    case 'xml':
+      return [html()]
+    default:
+      return [markdown()]
   }
-  if (language === 'javascript') {
-    return [javascript()]
-  }
-  return [markdown()]
 }
 
 export function CodeEditor({

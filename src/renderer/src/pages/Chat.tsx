@@ -1,4 +1,5 @@
 import { ActiveModelChip } from '@components/common/active-model-chip/ActiveModelChip'
+import { CodeFileViewer } from '@components/common/code-file-viewer/CodeFileViewer'
 import { PdfViewer } from '@components/common/pdf-viewer/PdfViewer'
 import { ApprovalCard } from '@components/common/approval-card/ApprovalCard'
 import { AttachmentList } from '@components/common/attachment-list/AttachmentList'
@@ -1308,26 +1309,26 @@ export function Chat(): React.JSX.Element {
                     </div>
                     <div dir="ltr" className="space-y-1.5">
                       {workingFolders.map((folder) => (
-                        <div key={folder} className="flex items-center gap-1.5">
-                          <div className="min-w-0 flex-1">
-                            <div className="truncate text-xs" title={folder}>
-                              {folder.split('/').pop()}
-                            </div>
+                        <div key={folder} className="space-y-0.5">
+                          <div className="truncate text-xs" title={folder}>
+                            {folder.split('/').pop()}
+                          </div>
+                          <div className="flex items-center gap-1">
                             <code
-                              className="border-border bg-bg text-muted mt-0.5 block max-w-[220px] truncate rounded border px-1 py-0.5 font-mono text-[9px]"
+                              className="border-border bg-bg text-muted block min-w-0 flex-1 truncate rounded border px-1 py-0.5 font-mono text-[9px]"
                               title={folder}
                             >
                               {folder}
                             </code>
+                            <button
+                              type="button"
+                              onClick={() => void removeWorkingFolder(folder)}
+                              className="text-muted/40 hover:text-red-500 shrink-0 cursor-pointer transition-colors"
+                              title="Remove"
+                            >
+                              <Delete02Icon size={12} />
+                            </button>
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => void removeWorkingFolder(folder)}
-                            className="text-muted/40 hover:text-red-500 shrink-0 cursor-pointer transition-colors"
-                            title="Remove"
-                          >
-                            <Delete02Icon size={12} />
-                          </button>
                         </div>
                       ))}
                     </div>
@@ -1595,6 +1596,47 @@ function AssistantBubble({
 }): React.JSX.Element {
   const isStreaming = message.status === 'streaming'
   const isError = message.status === 'error'
+  const thinkingWords = useMemo(() => {
+    const words = [...(t('chat.thinkingWords', { returnObjects: true }) as string[])]
+    for (let i = words.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1))
+      ;[words[i], words[j]] = [words[j], words[i]]
+    }
+    return words
+  }, [t])
+  const [typedText, setTypedText] = useState('')
+  const wordsRef = useRef(thinkingWords)
+  wordsRef.current = thinkingWords
+
+  useEffect(() => {
+    if (!isStreaming) return
+    let wordIdx = 0
+    let charIdx = 0
+    let wait = 0
+    let phase: 'typing' | 'pause' = 'typing'
+
+    const id = setInterval(() => {
+      const words = wordsRef.current
+      const c = [...words[wordIdx % words.length]]
+
+      if (phase === 'typing') {
+        charIdx++
+        setTypedText(c.slice(0, charIdx).join(''))
+        if (charIdx >= c.length) {
+          phase = 'pause'
+          wait = 0
+        }
+      } else {
+        if (++wait >= 40) { // 2s hold then next word
+          wordIdx = (wordIdx + 1) % words.length
+          charIdx = 0
+          phase = 'typing'
+        }
+      }
+    }, 50)
+
+    return () => clearInterval(id)
+  }, [isStreaming])
   const renderable = renderSegments(
     message.segments,
     message.approvals,
@@ -1631,8 +1673,12 @@ function AssistantBubble({
     <div className="flex w-full flex-col gap-2 items-start">
       {showThinking ? (
         <div className="bg-surface border-border text-fg max-w-[85%] rounded-2xl border px-4 py-2.5 text-sm leading-relaxed wrap-break-word">
-          <span className="text-muted animate-pulse italic">
-            {t(awaitingApproval ? 'chat.awaitingPermission' : 'chat.thinking')}
+          <span className="text-muted italic">
+            {awaitingApproval ? (
+              <span className="animate-pulse">{t('chat.awaitingPermission')}</span>
+            ) : (
+              <span className="animate-pulse">{typedText}…</span>
+            )}
           </span>
         </div>
       ) : (
@@ -1710,7 +1756,7 @@ function renderSegments(
 
       const voiceData = result?.status === 'success' ? parseVoiceResult(result.output) : null
 
-      const imagePath = extractToolResultImage(result)
+      const codeFile = extractToolResultCodeFile(seg, result)
 
       if (voiceData) {
         blocks.push(<ToolCard key={seg.segmentId} call={seg} result={result} timing={timing} />)
@@ -1739,64 +1785,75 @@ function renderSegments(
         blocks.push(<ToolCard key={seg.segmentId} call={seg} result={result} timing={timing} />)
       }
 
-      if (imagePath) {
-        const src = imagePath.startsWith('wolffish-media://')
-          ? imagePath
-          : `wolffish-media://${imagePath.replace(/^.*?\.wolffish\/workspace\//, '')}`
+      if (codeFile) {
         blocks.push(
-          <div key={`img_${seg.segmentId}`} className="self-start max-w-[85%]">
-            <img src={src} alt="Tool result" className="max-w-full rounded-xl" loading="lazy" />
-          </div>
+          <CodeFileViewer
+            key={`code_${seg.segmentId}`}
+            content={codeFile.content}
+            fileName={codeFile.fileName}
+          />
         )
-      }
+      } else {
+        const imagePath = extractToolResultImage(result)
+        if (imagePath) {
+          const src = imagePath.startsWith('wolffish-media://')
+            ? imagePath
+            : `wolffish-media://${imagePath.replace(/^.*?\.wolffish\/workspace\//, '')}`
+          blocks.push(
+            <div key={`img_${seg.segmentId}`} className="self-start max-w-[85%]">
+              <img src={src} alt="Tool result" className="max-w-full rounded-xl" loading="lazy" />
+            </div>
+          )
+        }
 
-      const docResults = extractToolResultDocuments(result)
-      if (docResults) {
-        for (let di = 0; di < docResults.length; di++) {
-          const doc = docResults[di]
-          const fileName = doc.path.split('/').pop() ?? 'document'
-          const ext = fileName.split('.').pop()?.toLowerCase() ?? ''
-          if (ext === 'pdf') {
-            blocks.push(
-              <PdfViewer
-                key={`doc_${seg.segmentId}_${di}`}
-                filePath={doc.path}
-                fileExists={true}
-                fileName={fileName}
-                sizeBytes={doc.size}
-              />
-            )
-          } else if (ext === 'doc' || ext === 'docx') {
-            blocks.push(
-              <DocxViewer
-                key={`doc_${seg.segmentId}_${di}`}
-                filePath={doc.path}
-                fileExists={true}
-                fileName={fileName}
-                sizeBytes={doc.size}
-              />
-            )
-          } else if (ext === 'xlsx' || ext === 'xls' || ext === 'csv') {
-            blocks.push(
-              <SpreadsheetViewer
-                key={`doc_${seg.segmentId}_${di}`}
-                filePath={doc.path}
-                fileExists={true}
-                fileName={fileName}
-                sizeBytes={doc.size}
-              />
-            )
-          } else {
-            blocks.push(
-              <FileCard
-                key={`doc_${seg.segmentId}_${di}`}
-                filePath={doc.path}
-                fileExists={true}
-                fileName={fileName}
-                sizeBytes={doc.size}
-                mimeType={docMimeType(ext)}
-              />
-            )
+        const docResults = extractToolResultDocuments(result)
+        if (docResults) {
+          for (let di = 0; di < docResults.length; di++) {
+            const doc = docResults[di]
+            const fileName = doc.path.split('/').pop() ?? 'document'
+            const ext = fileName.split('.').pop()?.toLowerCase() ?? ''
+            if (ext === 'pdf') {
+              blocks.push(
+                <PdfViewer
+                  key={`doc_${seg.segmentId}_${di}`}
+                  filePath={doc.path}
+                  fileExists={true}
+                  fileName={fileName}
+                  sizeBytes={doc.size}
+                />
+              )
+            } else if (ext === 'docx') {
+              blocks.push(
+                <DocxViewer
+                  key={`doc_${seg.segmentId}_${di}`}
+                  filePath={doc.path}
+                  fileExists={true}
+                  fileName={fileName}
+                  sizeBytes={doc.size}
+                />
+              )
+            } else if (ext === 'xlsx' || ext === 'xls' || ext === 'csv') {
+              blocks.push(
+                <SpreadsheetViewer
+                  key={`doc_${seg.segmentId}_${di}`}
+                  filePath={doc.path}
+                  fileExists={true}
+                  fileName={fileName}
+                  sizeBytes={doc.size}
+                />
+              )
+            } else {
+              blocks.push(
+                <FileCard
+                  key={`doc_${seg.segmentId}_${di}`}
+                  filePath={doc.path}
+                  fileExists={true}
+                  fileName={fileName}
+                  sizeBytes={doc.size}
+                  mimeType={docMimeType(ext)}
+                />
+              )
+            }
           }
         }
       }
@@ -2037,6 +2094,8 @@ function findResult(segments: Segment[], toolCallId: string): ToolResultSegment 
 
 const IMAGE_EXTS_RE = /\.(?:png|jpe?g|gif|webp)$/i
 const DOCUMENT_EXTS_RE = /\.(?:pdf|docx?|xlsx?|pptx?|csv)$/i
+const CODE_EXTS_RE =
+  /\.(?:js|jsx|mjs|cjs|ts|tsx|vue|svelte|py|rb|rs|go|java|kt|kts|swift|c|cpp|h|hpp|cs|css|scss|less|sass|html|htm|xml|json|yaml|yml|toml|ini|conf|env|sh|bash|zsh|fish|bat|cmd|ps1|sql|graphql|gql|md|mdx|txt|log|php|lua|r|pl|dart|scala|groovy|proto|zig|ex|exs|erl|hs|clj|ml|dockerfile|makefile)$/i
 
 const DOC_MIME_MAP: Record<string, string> = {
   pdf: 'application/pdf',
@@ -2051,6 +2110,21 @@ const DOC_MIME_MAP: Record<string, string> = {
 
 function docMimeType(ext: string): string {
   return DOC_MIME_MAP[ext] ?? 'application/octet-stream'
+}
+
+type ToolCallSegment = Extract<Segment, { kind: 'tool_call' }>
+
+function extractToolResultCodeFile(
+  call: ToolCallSegment,
+  result?: ToolResultSegment
+): { fileName: string; content: string } | null {
+  if (!result?.output || result.status !== 'success') return null
+  const argsPath = typeof call.args?.path === 'string' ? call.args.path : null
+  if (!argsPath || !CODE_EXTS_RE.test(argsPath)) return null
+  return {
+    fileName: argsPath.split('/').pop() ?? 'file',
+    content: result.output
+  }
 }
 
 function extractToolResultImage(result?: ToolResultSegment): string | null {

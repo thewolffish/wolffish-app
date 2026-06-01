@@ -10,6 +10,8 @@ import type { ViewerTreeNode } from '@preload/index'
 import { useFlow } from '@providers/flow/useFlow'
 import { useLocale } from '@providers/locale/useLocale'
 import { useTheme } from '@providers/theme/useTheme'
+import mammoth from 'mammoth'
+import * as XLSX from 'xlsx'
 import {
   ArrowDown01Icon,
   ArrowLeft02Icon,
@@ -17,6 +19,7 @@ import {
   ArrowRight02Icon,
   DashboardSpeed01Icon,
   Download01Icon,
+  File01Icon,
   File02Icon,
   FloppyDiskIcon,
   Folder01Icon,
@@ -32,7 +35,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 type ViewMode = 'edit' | 'preview'
-type MediaType = 'image' | 'video' | 'audio' | 'pdf'
+type MediaType = 'image' | 'video' | 'audio' | 'pdf' | 'docx' | 'spreadsheet'
 
 function isReadOnlyPath(relativePath: string): boolean {
   if (relativePath.startsWith('logs/')) return true
@@ -63,9 +66,20 @@ function prettyJson(content: string): string {
 
 function languageFor(name: string): CodeLanguage | null {
   if (name.endsWith('.json')) return 'json'
-  if (name.endsWith('.md')) return 'markdown'
-  if (name.endsWith('.mjs') || name.endsWith('.js')) return 'javascript'
+  if (name.endsWith('.md') || name.endsWith('.mdx')) return 'markdown'
+  if (name.endsWith('.js') || name.endsWith('.mjs') || name.endsWith('.cjs') || name.endsWith('.jsx'))
+    return 'javascript'
+  if (name.endsWith('.ts') || name.endsWith('.tsx') || name.endsWith('.mts') || name.endsWith('.cts'))
+    return 'typescript'
   if (name.endsWith('.txt') || name.endsWith('.log')) return 'markdown'
+  if (name.endsWith('.css') || name.endsWith('.scss') || name.endsWith('.less')) return 'css'
+  if (name.endsWith('.html') || name.endsWith('.htm')) return 'html'
+  if (name.endsWith('.xml') || name.endsWith('.svg')) return 'xml'
+  if (name.endsWith('.yaml') || name.endsWith('.yml')) return 'yaml'
+  if (name.endsWith('.sh') || name.endsWith('.bash') || name.endsWith('.zsh')) return 'shell'
+  if (name.endsWith('.py')) return 'python'
+  if (name.endsWith('.sql')) return 'sql'
+  if (name.endsWith('.graphql') || name.endsWith('.gql')) return 'graphql'
   return null
 }
 
@@ -90,7 +104,11 @@ const MEDIA_EXTENSIONS: Record<string, MediaType> = {
   aac: 'audio',
   m4a: 'audio',
   flac: 'audio',
-  pdf: 'pdf'
+  pdf: 'pdf',
+  docx: 'docx',
+  xls: 'spreadsheet',
+  xlsx: 'spreadsheet',
+  csv: 'spreadsheet'
 }
 
 const MIME_MAP: Record<string, string> = {
@@ -114,7 +132,11 @@ const MIME_MAP: Record<string, string> = {
   aac: 'audio/aac',
   m4a: 'audio/mp4',
   flac: 'audio/flac',
-  pdf: 'application/pdf'
+  pdf: 'application/pdf',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xls: 'application/vnd.ms-excel',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  csv: 'text/csv'
 }
 
 function detectMediaType(name: string): MediaType | null {
@@ -251,7 +273,6 @@ export function ViewerPage(): React.JSX.Element {
 
   const loadFile = useCallback(async (relativePath: string): Promise<void> => {
     const id = ++loadCounter.current
-    setFileError(null)
     try {
       const isMedia = detectMediaType(relativePath) !== null
       const [content, statInfo] = await Promise.all([
@@ -259,6 +280,7 @@ export function ViewerPage(): React.JSX.Element {
         window.api.viewer.stat(relativePath)
       ])
       if (loadCounter.current !== id) return
+      setFileError(null)
       setSelectedPath(relativePath)
       setOriginalContent(content)
       setEditorContent(content)
@@ -409,28 +431,34 @@ export function ViewerPage(): React.JSX.Element {
                       {t('workspace.readOnly')}
                     </Badge>
                   )}
-                  {mediaType && (
-                    <IconButton label="Download" onClick={() => void handleDownload()}>
-                      <Download01Icon size={16} />
-                    </IconButton>
-                  )}
-                  {!mediaType && (
-                    <button
-                      type="button"
-                      onClick={() => void handleResync()}
-                      disabled={resyncing}
-                      aria-label={t('workspace.resync')}
-                      className={cn(
-                        'inline-flex items-center gap-1 rounded-md text-xs cursor-pointer transition-colors',
-                        'text-muted hover:text-fg px-1.5 py-0.5',
-                        'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-                        'disabled:cursor-not-allowed disabled:opacity-40'
-                      )}
-                    >
-                      <Refresh01Icon size={14} />
-                      <span>{t('workspace.resync')}</span>
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    onClick={() => void handleDownload()}
+                    aria-label={t('workspace.download')}
+                    className={cn(
+                      'inline-flex items-center gap-1 rounded-md text-xs cursor-pointer transition-colors',
+                      'text-muted hover:text-fg px-1.5 py-0.5',
+                      'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
+                    )}
+                  >
+                    <Download01Icon size={14} />
+                    <span>{t('workspace.download')}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleResync()}
+                    disabled={resyncing}
+                    aria-label={t('workspace.resync')}
+                    className={cn(
+                      'inline-flex items-center gap-1 rounded-md text-xs cursor-pointer transition-colors',
+                      'text-muted hover:text-fg px-1.5 py-0.5',
+                      'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+                      'disabled:cursor-not-allowed disabled:opacity-40'
+                    )}
+                  >
+                    <Refresh01Icon size={14} />
+                    <span>{t('workspace.resync')}</span>
+                  </button>
                   {!mediaType && <CopyButton text={editorContent} variant="inline" />}
                   {!mediaType && (
                     <ViewModeToggle value={viewMode} onChange={setViewMode} readOnly={readOnly} />
@@ -515,6 +543,10 @@ function WorkspaceMediaViewer({
       )
     case 'pdf':
       return <WorkspacePdf relativePath={relativePath} fileName={fileName} />
+    case 'docx':
+      return <WorkspaceDocx relativePath={relativePath} fileName={fileName} />
+    case 'spreadsheet':
+      return <WorkspaceSpreadsheet relativePath={relativePath} fileName={fileName} />
   }
 }
 
@@ -558,9 +590,7 @@ function WorkspaceImage({
             </button>
           </div>
         ) : (
-          <div className="flex flex-1 items-center justify-center">
-            <span className="text-muted text-xs">Loading image…</span>
-          </div>
+          <div className="flex-1" />
         )}
       </div>
       {url && (
@@ -614,9 +644,7 @@ function WorkspaceVideo({
           </video>
         </div>
       ) : (
-        <div className="flex flex-1 items-center justify-center">
-          <span className="text-muted text-xs">Loading video…</span>
-        </div>
+        <div className="flex-1" />
       )}
     </div>
   )
@@ -814,8 +842,134 @@ function WorkspacePdf({
       {url ? (
         <iframe src={url} title={fileName} className="h-full w-full border-0" />
       ) : (
-        <div className="flex flex-1 items-center justify-center">
-          <span className="text-muted text-xs">Loading PDF…</span>
+        <div className="flex-1" />
+      )}
+    </div>
+  )
+}
+
+function WorkspaceDocx({
+  relativePath
+}: {
+  relativePath: string
+  fileName: string
+}): React.JSX.Element {
+  const { t } = useTranslation()
+  const [html, setHtml] = useState<string | null>(null)
+  const [error, setError] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const buffer: ArrayBuffer = await window.api.viewer.readBinaryFile(relativePath)
+        const result = await mammoth.convertToHtml({ arrayBuffer: buffer })
+        if (!cancelled) setHtml(result.value)
+      } catch {
+        if (!cancelled) setError(true)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [relativePath])
+
+  if (error) {
+    return (
+      <div className="flex min-h-full flex-1 flex-col items-center justify-center gap-2 p-6">
+        <File01Icon size={32} className="text-muted" />
+        <span className="text-muted text-sm italic">{t('workspace.unsupported')}</span>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      {html !== null ? (
+        <div
+          className="bg-surface text-fg flex-1 overflow-auto p-6 text-sm"
+          dangerouslySetInnerHTML={{ __html: html }}
+        />
+      ) : (
+        <div className="flex-1" />
+      )}
+    </div>
+  )
+}
+
+function WorkspaceSpreadsheet({
+  relativePath
+}: {
+  relativePath: string
+  fileName: string
+}): React.JSX.Element {
+  const { t } = useTranslation()
+  const [sheetNames, setSheetNames] = useState<string[]>([])
+  const [activeSheet, setActiveSheet] = useState(0)
+  const [workbook, setWorkbook] = useState<XLSX.WorkBook | null>(null)
+  const [error, setError] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const buffer: ArrayBuffer = await window.api.viewer.readBinaryFile(relativePath)
+        const wb = XLSX.read(new Uint8Array(buffer), { type: 'array' })
+        if (cancelled) return
+        setWorkbook(wb)
+        setSheetNames(wb.SheetNames)
+      } catch {
+        if (!cancelled) setError(true)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [relativePath])
+
+  const html = useMemo(() => {
+    if (!workbook) return null
+    const name = workbook.SheetNames[activeSheet]
+    const sheet = name ? workbook.Sheets[name] : undefined
+    return sheet ? XLSX.utils.sheet_to_html(sheet) : null
+  }, [workbook, activeSheet])
+
+  if (error) {
+    return (
+      <div className="flex min-h-full flex-1 flex-col items-center justify-center gap-2 p-6">
+        <File01Icon size={32} className="text-muted" />
+        <span className="text-muted text-sm italic">{t('workspace.unsupported')}</span>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      {html !== null ? (
+        <div
+          className="spreadsheet-preview bg-surface text-fg flex-1 overflow-auto p-4 text-xs"
+          dangerouslySetInnerHTML={{ __html: html }}
+        />
+      ) : (
+        <div className="flex-1" />
+      )}
+      {sheetNames.length > 1 && (
+        <div className="border-border flex gap-1 overflow-x-auto border-t px-2 py-1">
+          {sheetNames.map((name, idx) => (
+            <button
+              key={name}
+              type="button"
+              onClick={() => setActiveSheet(idx)}
+              className={cn(
+                'shrink-0 rounded px-2 py-0.5 text-[11px]',
+                idx === activeSheet
+                  ? 'bg-primary/10 text-primary font-medium'
+                  : 'text-muted hover:text-fg cursor-pointer'
+              )}
+            >
+              {name}
+            </button>
+          ))}
         </div>
       )}
     </div>
