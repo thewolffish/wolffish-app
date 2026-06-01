@@ -167,6 +167,7 @@ export type WorkspaceConfig = {
   // The actual OS registration is checked at runtime via
   // app.getLoginItemSettings() — this field stores the user's intent.
   launchAtStartup?: boolean
+  ollamaModelsFolder?: string
   llm: {
     local: LocalModelConfig
     providers: CloudProviderConfig[]

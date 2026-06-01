@@ -161,7 +161,22 @@
       "generic": "Something went wrong. Try to restart the app."
     },
     "backToChat": "Back to chat",
-    "reinstallOllama": "Need to reinstall Ollama?"
+    "reinstallOllama": "Need to reinstall Ollama?",
+    "available": "Available",
+    "availableDescription": "Models already downloaded on your machine, ready to use.",
+    "modelsFolder": "Models folder",
+    "modelsFolderDescription": "Scan this folder for downloaded Ollama models.",
+    "chooseFolder": "Choose folder",
+    "noAvailableModels": "No models found in this folder.",
+    "useAvailable": "Use this model",
+    "availableDetail": {
+      "family": "Family",
+      "params": "Parameters",
+      "quantization": "Quantization",
+      "format": "Format",
+      "size": "Size",
+      "unknown": "Unknown"
+    }
   },
   "settings": {
     "tabs": {

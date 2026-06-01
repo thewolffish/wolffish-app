@@ -33,11 +33,14 @@ import { acquireLock, releaseLockSync } from '@main/lockfile'
 import { memesService, type MemesStatus, type MemesTestResult } from '@main/memes'
 import { notionService, type NotionStatus, type NotionTestResult } from '@main/notion'
 import {
+  defaultModelsFolder,
   detect as detectOllama,
+  enrichWithDetails,
   isOllamaInstalled,
   listTags,
   platformInstallUrl,
   pullModel,
+  scanModelManifests,
   startOllama,
   type OllamaPullStatus
 } from '@main/ollama'
@@ -1796,6 +1799,34 @@ app.whenReady().then(async () => {
     } catch {
       return []
     }
+  })
+
+  ipcMain.handle('ollama:scanAvailable', async () => {
+    const cfg = await readConfig()
+    const folder = cfg?.ollamaModelsFolder || defaultModelsFolder()
+    const scanned = await scanModelManifests(folder)
+    return enrichWithDetails(scanned)
+  })
+
+  ipcMain.handle('ollama:getModelsFolder', async () => {
+    const cfg = await readConfig()
+    return cfg?.ollamaModelsFolder || defaultModelsFolder()
+  })
+
+  ipcMain.handle('ollama:setModelsFolder', async (_e, folder: string) => {
+    await patchConfig((c) => ({ ...c, ollamaModelsFolder: folder }))
+    return { ok: true as const, folder }
+  })
+
+  ipcMain.handle('ollama:pickModelsFolder', async () => {
+    const mainWin = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+    if (!mainWin) return null
+    const result = await dialog.showOpenDialog(mainWin, {
+      title: 'Select Ollama models folder',
+      properties: ['openDirectory']
+    })
+    if (result.canceled || result.filePaths.length === 0) return null
+    return result.filePaths[0]
   })
 
   // Model selection — pulls (if needed) and persists. Streams progress to

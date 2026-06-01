@@ -108,6 +108,7 @@ export type WeekStartsOn = 0 | 1
 export type WorkspaceConfig = {
   version: 1
   launchAtStartup?: boolean
+  ollamaModelsFolder?: string
   llm: {
     local: LocalModelConfig
     providers: CloudProviderConfig[]
@@ -363,12 +364,27 @@ export type CompactionConfig = {
   weeklyHour: number
 }
 
+export type OllamaModelDetail = {
+  name: string
+  tag: string
+  fullName: string
+  sizeBytes: number
+  family: string | null
+  parameterSize: string | null
+  quantization: string | null
+  format: string | null
+}
+
 export type OllamaApi = {
   detect: () => Promise<{ reachable: boolean; installed: boolean }>
   installUrl: () => Promise<string>
   openInstallPage: () => Promise<{ opened: boolean }>
   start: () => Promise<{ ok: boolean; error?: string }>
   listInstalled: () => Promise<OllamaTag[]>
+  scanAvailable: () => Promise<OllamaModelDetail[]>
+  getModelsFolder: () => Promise<string>
+  setModelsFolder: (folder: string) => Promise<{ ok: true; folder: string }>
+  pickModelsFolder: () => Promise<string | null>
 }
 
 export type ModelCapabilities = {
@@ -1013,7 +1029,11 @@ const api: WolffishApi = {
     installUrl: () => ipcRenderer.invoke('ollama:installUrl'),
     openInstallPage: () => ipcRenderer.invoke('ollama:openInstallPage'),
     start: () => ipcRenderer.invoke('ollama:start'),
-    listInstalled: () => ipcRenderer.invoke('ollama:listInstalled')
+    listInstalled: () => ipcRenderer.invoke('ollama:listInstalled'),
+    scanAvailable: () => ipcRenderer.invoke('ollama:scanAvailable'),
+    getModelsFolder: () => ipcRenderer.invoke('ollama:getModelsFolder'),
+    setModelsFolder: (folder) => ipcRenderer.invoke('ollama:setModelsFolder', folder),
+    pickModelsFolder: () => ipcRenderer.invoke('ollama:pickModelsFolder')
   },
   model: {
     select: (modelName) => ipcRenderer.invoke('model:select', modelName),

@@ -4,7 +4,13 @@ import { useOnline } from '@hooks/use-online/useOnline'
 import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
 import { formatBytes, formatDurationL, formatGB, ltrIsolate } from '@lib/utils/format'
-import type { ModelEntry, ModelFamily, OllamaTag, SystemInfo } from '@preload/index'
+import type {
+  ModelEntry,
+  ModelFamily,
+  OllamaModelDetail,
+  OllamaTag,
+  SystemInfo
+} from '@preload/index'
 import { useFlow } from '@providers/flow/useFlow'
 import { useLocale } from '@providers/locale/useLocale'
 import {
@@ -12,6 +18,7 @@ import {
   ArrowRight02Icon,
   ComputerIcon,
   CpuIcon,
+  FolderOpenIcon,
   HardDriveIcon,
   RamMemoryIcon,
   Tick02Icon
@@ -145,6 +152,9 @@ export function ModelPicker(): React.JSX.Element {
   const [catalog, setCatalog] = useState<readonly ModelEntry[]>([])
   const [installed, setInstalled] = useState<OllamaTag[]>([])
   const [catalogLoading, setCatalogLoading] = useState(true)
+  const [availableModels, setAvailableModels] = useState<OllamaModelDetail[]>([])
+  const [modelsFolder, setModelsFolder] = useState<string>('')
+  const [showAvailable, setShowAvailable] = useState(false)
   const [family, setFamily] = useState<ModelFamily>('gemma')
   const [selected, setSelected] = useState<string | null>(null)
   const [phase, setPhase] = useState<PullPhase>('idle')
@@ -169,20 +179,26 @@ export function ModelPicker(): React.JSX.Element {
     void Promise.all([
       window.api.system.getInfo(),
       window.api.workspace.getModelCatalog(),
-      window.api.ollama.listInstalled()
+      window.api.ollama.listInstalled(),
+      window.api.ollama.scanAvailable(),
+      window.api.ollama.getModelsFolder()
     ])
-      .then(([info, entries, tags]) => {
+      .then(([info, entries, tags, scanned, folder]) => {
         if (cancelled) return
         setSystem(info)
         setCatalog(entries)
         setInstalled(tags)
+        setAvailableModels(scanned)
+        setModelsFolder(folder)
 
-        // If a model is already selected, default the family to its family.
+        const hasAvailable = scanned.length > 0
+        if (hasAvailable) setShowAvailable(true)
+
         const currentEntry = currentModel
           ? entries.find((e) => e.ollamaName === currentModel)
           : undefined
         const initialFamily = currentEntry?.family ?? 'gemma'
-        setFamily(initialFamily)
+        if (!hasAvailable) setFamily(initialFamily)
         setSelected(
           currentModel ??
             defaultModelForFamily(entries, initialFamily, info.totalRamBytes, restrictModels)
@@ -361,7 +377,8 @@ export function ModelPicker(): React.JSX.Element {
 
   const ramGB = formatGB(system.totalRamBytes)
   const diskGB = system.freeDiskBytes != null ? formatGB(system.freeDiskBytes) : null
-  const isInstalled = (name: string): boolean => installed.some((t) => t.name === name)
+  const isInstalled = (name: string): boolean =>
+    installed.some((t) => t.name === name) || availableModels.some((m) => m.fullName === name)
   // 50-60% of total RAM is the safe ceiling per the rule of thumb in the
   // Ollama community: anything bigger leaves no room for KV cache, the OS,
   // and the app itself, and Ollama starts offloading layers to CPU at huge
@@ -385,6 +402,16 @@ export function ModelPicker(): React.JSX.Element {
     (online || alreadyHave) &&
     (selectedFits || alreadyHave) &&
     (selectedFitsOnDisk || alreadyHave)
+
+  const onPickFolder = async (): Promise<void> => {
+    const folder = await window.api.ollama.pickModelsFolder()
+    if (!folder) return
+    await window.api.ollama.setModelsFolder(folder)
+    setModelsFolder(folder)
+    const models = await window.api.ollama.scanAvailable()
+    setAvailableModels(models)
+    if (models.length > 0) setShowAvailable(true)
+  }
 
   const onInstall = async (): Promise<void> => {
     if (!selected) return
@@ -451,121 +478,147 @@ export function ModelPicker(): React.JSX.Element {
             </div>
           )}
 
+          <ModelsFolderCard folder={modelsFolder} onPickFolder={onPickFolder} t={t} />
+
           <FamilyToggle
             family={family}
             setFamily={switchFamily}
             catalog={catalog}
             t={t}
             disabled={phase === 'pulling'}
+            showAvailable={showAvailable}
+            setShowAvailable={setShowAvailable}
+            availableCount={availableModels.length}
           />
 
-          <section ref={scrollRef} className="flex max-h-136 flex-col gap-3 overflow-y-auto">
-            {catalogLoading && filtered.length === 0 && (
-              <div className="bg-surface border-border text-muted animate-pulse rounded-2xl border p-5 text-center text-sm">
-                {t('modelPicker.loadingCatalog')}
-              </div>
-            )}
-            {!catalogLoading && filtered.length === 0 && (
-              <div className="bg-surface border-border text-muted rounded-2xl border p-5 text-center text-sm">
-                {t('modelPicker.catalogUnavailable')}
-              </div>
-            )}
-            {filtered.map((entry) => {
-              const fits = fitsInRam(entry)
-              const fitsDisk = fitsOnDisk(entry)
-              const isSelected = selected === entry.ollamaName
-              const isCurrent = entry.ollamaName === currentModel
-              const installedAlready = isInstalled(entry.ollamaName)
-              const blocked = (!fits || !fitsDisk) && !installedAlready
-              const disabled = phase === 'pulling' || blocked
-              return (
-                <button
-                  key={entry.ollamaName}
-                  data-model={entry.ollamaName}
-                  type="button"
-                  disabled={disabled}
-                  onClick={() => !disabled && setSelected(entry.ollamaName)}
-                  aria-pressed={isSelected}
-                  className={cn(
-                    'bg-surface border-border flex items-start gap-4 rounded-2xl border p-5 text-start',
-                    'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-                    !disabled
-                      ? 'cursor-pointer hover:border-muted'
-                      : 'cursor-not-allowed opacity-50',
-                    isSelected && !disabled && 'border-primary ring-primary/20 ring-2'
-                  )}
-                >
-                  <div
-                    aria-hidden
+          {showAvailable ? (
+            <section ref={scrollRef} className="flex max-h-136 flex-col gap-3 overflow-y-auto">
+              {availableModels.length === 0 && (
+                <div className="bg-surface border-border text-muted rounded-2xl border p-5 text-center text-sm">
+                  {t('modelPicker.noAvailableModels')}
+                </div>
+              )}
+              {availableModels.map((model) => (
+                <AvailableModelCard
+                  key={model.fullName}
+                  model={model}
+                  isSelected={selected === model.fullName}
+                  isCurrent={model.fullName === currentModel}
+                  disabled={phase === 'pulling'}
+                  onSelect={() => setSelected(model.fullName)}
+                  t={t}
+                />
+              ))}
+            </section>
+          ) : (
+            <section ref={scrollRef} className="flex max-h-136 flex-col gap-3 overflow-y-auto">
+              {catalogLoading && filtered.length === 0 && (
+                <div className="bg-surface border-border text-muted animate-pulse rounded-2xl border p-5 text-center text-sm">
+                  {t('modelPicker.loadingCatalog')}
+                </div>
+              )}
+              {!catalogLoading && filtered.length === 0 && (
+                <div className="bg-surface border-border text-muted rounded-2xl border p-5 text-center text-sm">
+                  {t('modelPicker.catalogUnavailable')}
+                </div>
+              )}
+              {filtered.map((entry) => {
+                const fits = fitsInRam(entry)
+                const fitsDisk = fitsOnDisk(entry)
+                const isSelected = selected === entry.ollamaName
+                const isCurrent = entry.ollamaName === currentModel
+                const installedAlready = isInstalled(entry.ollamaName)
+                const blocked = (!fits || !fitsDisk) && !installedAlready
+                const disabled = phase === 'pulling' || blocked
+                return (
+                  <button
+                    key={entry.ollamaName}
+                    data-model={entry.ollamaName}
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => !disabled && setSelected(entry.ollamaName)}
+                    aria-pressed={isSelected}
                     className={cn(
-                      'mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border',
-                      isSelected && !disabled
-                        ? 'border-primary bg-primary text-primary-fg'
-                        : 'border-border bg-bg'
+                      'bg-surface border-border flex items-start gap-4 rounded-2xl border p-5 text-start',
+                      'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+                      !disabled
+                        ? 'cursor-pointer hover:border-muted'
+                        : 'cursor-not-allowed opacity-50',
+                      isSelected && !disabled && 'border-primary'
                     )}
                   >
-                    {isSelected && !disabled && <Tick02Icon size={12} />}
-                  </div>
-                  <div className="flex min-w-0 flex-1 flex-col gap-1">
-                    <div className="flex items-baseline justify-between gap-3">
-                      <span className="flex items-baseline gap-2">
-                        <span className="text-fg text-base font-semibold">
-                          {entry.ollamaName.split(':')[0]}
-                        </span>
-                        {entry.ollamaName.split(':')[0] === LATEST_SERIES[entry.family] && (
-                          <span className="bg-primary/10 text-primary rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide">
-                            {t('modelPicker.latest')}
-                          </span>
-                        )}
-                        {(MODEL_TAGS[entry.ollamaName.split(':')[0]] ?? []).map((tag) => (
-                          <span
-                            key={tag}
-                            className="bg-fg/5 text-muted rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
-                          >
-                            {t(`modelPicker.tags.${tag}`)}
-                          </span>
-                        ))}
-                      </span>
-                      <span className="text-muted shrink-0 text-xs">
-                        {t(`modelPicker.modelSize.${entry.sizeKey}`)}
-                      </span>
-                    </div>
-                    <p className="text-muted text-sm leading-relaxed">
-                      {t(`modelPicker.modelDescription.${entry.sizeKey}`)}
-                    </p>
-                    <p
+                    <div
+                      aria-hidden
                       className={cn(
-                        'text-xs',
-                        fits ? 'text-muted' : 'text-amber-700 dark:text-amber-400'
+                        'mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border',
+                        isSelected && !disabled
+                          ? 'border-primary bg-primary text-primary-fg'
+                          : 'border-border bg-bg'
                       )}
                     >
-                      {t('modelPicker.approxRam', {
-                        ram: ltrIsolate(`${formatGB(entry.ramBytes)} GB`)
-                      })}
-                      {entry.paramsBillions != null &&
-                        ` · ${ltrIsolate(t('modelPicker.params', { value: formatParamsValue(entry.paramsBillions) }))}`}
-                      {entry.releaseDate &&
-                        ` · ${ltrIsolate(formatReleaseDate(entry.releaseDate, locale))}`}
-                      {!fits && ` · ${t('modelPicker.tooBig')}`}
-                    </p>
-                    {isCurrent && installedAlready ? (
-                      <p className="text-emerald-600 dark:text-emerald-400 text-xs font-medium">
-                        {t('modelPicker.current')}
+                      {isSelected && !disabled && <Tick02Icon size={12} />}
+                    </div>
+                    <div className="flex min-w-0 flex-1 flex-col gap-1">
+                      <div className="flex items-baseline justify-between gap-3">
+                        <span className="flex items-baseline gap-2">
+                          <span className="text-fg text-base font-semibold">
+                            {entry.ollamaName.split(':')[0]}
+                          </span>
+                          {entry.ollamaName.split(':')[0] === LATEST_SERIES[entry.family] && (
+                            <span className="bg-primary/10 text-primary rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide">
+                              {t('modelPicker.latest')}
+                            </span>
+                          )}
+                          {(MODEL_TAGS[entry.ollamaName.split(':')[0]] ?? []).map((tag) => (
+                            <span
+                              key={tag}
+                              className="bg-fg/5 text-muted rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
+                            >
+                              {t(`modelPicker.tags.${tag}`)}
+                            </span>
+                          ))}
+                        </span>
+                        <span className="text-muted shrink-0 text-xs">
+                          {t(`modelPicker.modelSize.${entry.sizeKey}`)}
+                        </span>
+                      </div>
+                      <p className="text-muted text-sm leading-relaxed">
+                        {t(`modelPicker.modelDescription.${entry.sizeKey}`)}
                       </p>
-                    ) : installedAlready ? (
-                      <p className="text-emerald-600 dark:text-emerald-400 text-xs font-medium">
-                        {t('modelPicker.alreadyInstalled')}
+                      <p
+                        className={cn(
+                          'text-xs',
+                          fits ? 'text-muted' : 'text-amber-700 dark:text-amber-400'
+                        )}
+                      >
+                        {t('modelPicker.approxRam', {
+                          ram: ltrIsolate(`${formatGB(entry.ramBytes)} GB`)
+                        })}
+                        {entry.paramsBillions != null &&
+                          ` · ${ltrIsolate(t('modelPicker.params', { value: formatParamsValue(entry.paramsBillions) }))}`}
+                        {entry.releaseDate &&
+                          ` · ${ltrIsolate(formatReleaseDate(entry.releaseDate, locale))}`}
+                        {!fits && ` · ${t('modelPicker.tooBig')}`}
                       </p>
-                    ) : recommended === entry.ollamaName ? (
-                      <p className="text-emerald-600 dark:text-emerald-400 text-xs font-medium">
-                        {t('modelPicker.recommended')}
-                      </p>
-                    ) : null}
-                  </div>
-                </button>
-              )
-            })}
-          </section>
+                      {isCurrent && installedAlready ? (
+                        <p className="text-emerald-600 dark:text-emerald-400 text-xs font-medium">
+                          {t('modelPicker.current')}
+                        </p>
+                      ) : installedAlready ? (
+                        <p className="text-emerald-600 dark:text-emerald-400 text-xs font-medium">
+                          {t('modelPicker.alreadyInstalled')}
+                        </p>
+                      ) : recommended === entry.ollamaName ? (
+                        <p className="text-emerald-600 dark:text-emerald-400 text-xs font-medium">
+                          {t('modelPicker.recommended')}
+                        </p>
+                      ) : null}
+                    </div>
+                  </button>
+                )
+              })}
+            </section>
+          )}
 
           {phase === 'pulling' && (
             <section className="bg-surface border-border flex flex-col gap-3 rounded-2xl border p-5">
@@ -728,18 +781,172 @@ function Spec({
   )
 }
 
+function ModelsFolderCard({
+  folder,
+  onPickFolder,
+  t
+}: {
+  folder: string
+  onPickFolder: () => void
+  t: (k: string) => string
+}): React.JSX.Element {
+  const [copied, setCopied] = useState(false)
+  const onCopy = (): void => {
+    if (!folder || copied) return
+    void navigator.clipboard.writeText(folder)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 3000)
+  }
+  return (
+    <section className="bg-surface border-border flex flex-col gap-3 rounded-2xl border p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-fg flex items-center gap-2 text-sm font-medium">
+          <FolderOpenIcon size={16} className="text-muted shrink-0" />
+          {t('modelPicker.modelsFolder')}
+        </div>
+        <button
+          type="button"
+          onClick={onPickFolder}
+          className="text-primary hover:text-primary/80 shrink-0 cursor-pointer text-sm font-medium"
+        >
+          {t('modelPicker.chooseFolder')}
+        </button>
+      </div>
+      {folder && (
+        <div className="bg-bg flex w-full items-center gap-2 rounded-lg px-3 py-2">
+          <code className="text-muted min-w-0 flex-1 truncate text-xs">{folder}</code>
+          <button
+            type="button"
+            disabled={copied}
+            onClick={onCopy}
+            className={cn(
+              'shrink-0',
+              copied ? 'text-muted' : 'text-muted hover:text-fg cursor-pointer'
+            )}
+            aria-label="Copy path"
+          >
+            {copied ? (
+              <Tick02Icon size={14} />
+            ) : (
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+              </svg>
+            )}
+          </button>
+        </div>
+      )}
+    </section>
+  )
+}
+
+function AvailableModelCard({
+  model,
+  isSelected,
+  isCurrent,
+  disabled,
+  onSelect,
+  t
+}: {
+  model: OllamaModelDetail
+  isSelected: boolean
+  isCurrent: boolean
+  disabled: boolean
+  onSelect: () => void
+  t: (k: string, v?: Record<string, unknown>) => string
+}): React.JSX.Element {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onSelect}
+      aria-pressed={isSelected}
+      className={cn(
+        'bg-surface border-border flex items-start gap-4 rounded-2xl border p-5 text-start',
+        'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+        !disabled ? 'cursor-pointer hover:border-muted' : 'cursor-not-allowed opacity-50',
+        isSelected && !disabled && 'border-primary'
+      )}
+    >
+      <div
+        aria-hidden
+        className={cn(
+          'mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border',
+          isSelected && !disabled
+            ? 'border-primary bg-primary text-primary-fg'
+            : 'border-border bg-bg'
+        )}
+      >
+        {isSelected && !disabled && <Tick02Icon size={12} />}
+      </div>
+      <div className="flex min-w-0 flex-1 flex-col gap-1">
+        <div className="flex items-baseline justify-between gap-3">
+          <span className="text-fg text-base font-semibold">{model.fullName}</span>
+          <span className="text-muted shrink-0 text-xs">{formatBytes(model.sizeBytes)}</span>
+        </div>
+        <div className="text-muted flex flex-wrap gap-x-4 gap-y-1 text-xs">
+          {model.family && (
+            <span>
+              {t('modelPicker.availableDetail.family')}: {model.family}
+            </span>
+          )}
+          {model.parameterSize && (
+            <span>
+              {t('modelPicker.availableDetail.params')}: {model.parameterSize}
+            </span>
+          )}
+          {model.quantization && (
+            <span>
+              {t('modelPicker.availableDetail.quantization')}: {model.quantization}
+            </span>
+          )}
+          {model.format && (
+            <span>
+              {t('modelPicker.availableDetail.format')}: {model.format}
+            </span>
+          )}
+        </div>
+        {isCurrent ? (
+          <p className="text-emerald-600 dark:text-emerald-400 text-xs font-medium">
+            {t('modelPicker.current')}
+          </p>
+        ) : (
+          <p className="text-emerald-600 dark:text-emerald-400 text-xs font-medium">
+            {t('modelPicker.alreadyInstalled')}
+          </p>
+        )}
+      </div>
+    </button>
+  )
+}
+
 function FamilyToggle({
   family,
   setFamily,
   catalog,
   t,
-  disabled
+  disabled,
+  showAvailable,
+  setShowAvailable,
+  availableCount
 }: {
   family: ModelFamily
   setFamily: (f: ModelFamily) => void
   catalog: readonly ModelEntry[]
   t: (k: string) => string
   disabled: boolean
+  showAvailable: boolean
+  setShowAvailable: (v: boolean) => void
+  availableCount: number
 }): React.JSX.Element {
   const visible = FAMILY_ORDER.filter((f) => catalog.some((m) => m.family === f))
   return (
@@ -747,8 +954,28 @@ function FamilyToggle({
       role="tablist"
       className="bg-surface border-border inline-flex w-full self-center rounded-full border p-1"
     >
+      {availableCount > 0 && (
+        <button
+          key="available"
+          role="tab"
+          type="button"
+          disabled={disabled}
+          aria-selected={showAvailable}
+          onClick={() => setShowAvailable(true)}
+          className={cn(
+            'flex-1 rounded-full px-4 py-1.5 text-sm font-medium',
+            'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+            showAvailable
+              ? 'bg-primary text-primary-fg'
+              : 'text-muted hover:text-fg cursor-pointer',
+            disabled && 'cursor-not-allowed opacity-60'
+          )}
+        >
+          {t('modelPicker.available')}
+        </button>
+      )}
       {visible.map((f) => {
-        const active = family === f
+        const active = family === f && !showAvailable
         return (
           <button
             key={f}
@@ -756,13 +983,14 @@ function FamilyToggle({
             type="button"
             disabled={disabled}
             aria-selected={active}
-            onClick={() => setFamily(f)}
+            onClick={() => {
+              setShowAvailable(false)
+              setFamily(f)
+            }}
             className={cn(
-              'flex-1 rounded-full px-4 py-1.5 text-sm font-medium transition-colors',
+              'flex-1 rounded-full px-4 py-1.5 text-sm font-medium',
               'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-              active
-                ? 'bg-primary text-primary-fg shadow-sm'
-                : 'text-muted hover:text-fg cursor-pointer',
+              active ? 'bg-primary text-primary-fg' : 'text-muted hover:text-fg cursor-pointer',
               disabled && 'cursor-not-allowed opacity-60'
             )}
           >

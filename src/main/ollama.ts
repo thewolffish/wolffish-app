@@ -1,6 +1,7 @@
-import { request, type IncomingMessage } from 'node:http'
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
+import fs from 'node:fs/promises'
+import { request, type IncomingMessage } from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 import { URL } from 'node:url'
@@ -397,4 +398,132 @@ export function startOllama(): { ok: boolean; error?: string } {
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Filesystem-based model scanning — detect models even when Ollama is offline
+// ---------------------------------------------------------------------------
+
+export type ScannedOllamaModel = {
+  name: string
+  tag: string
+  fullName: string
+  sizeBytes: number
+}
+
+export type OllamaModelDetail = ScannedOllamaModel & {
+  family: string | null
+  parameterSize: string | null
+  quantization: string | null
+  format: string | null
+}
+
+export function defaultModelsFolder(): string {
+  const env = process.env.OLLAMA_MODELS
+  if (env) return env
+  const platform = process.platform
+  if (platform === 'darwin' || platform === 'linux') {
+    return path.join(os.homedir(), '.ollama', 'models')
+  }
+  return path.join(os.homedir(), '.ollama', 'models')
+}
+
+export async function scanModelManifests(folder: string): Promise<ScannedOllamaModel[]> {
+  const libraryDir = path.join(folder, 'manifests', 'registry.ollama.ai', 'library')
+  try {
+    await fs.access(libraryDir)
+  } catch {
+    return []
+  }
+
+  const results: ScannedOllamaModel[] = []
+  let modelDirs: string[]
+  try {
+    modelDirs = await fs.readdir(libraryDir)
+  } catch {
+    return []
+  }
+
+  for (const modelName of modelDirs) {
+    const modelPath = path.join(libraryDir, modelName)
+    let stat
+    try {
+      stat = await fs.stat(modelPath)
+    } catch {
+      continue
+    }
+    if (!stat.isDirectory()) continue
+
+    let tags: string[]
+    try {
+      tags = await fs.readdir(modelPath)
+    } catch {
+      continue
+    }
+
+    for (const tag of tags) {
+      const manifestPath = path.join(modelPath, tag)
+      let manifestStat
+      try {
+        manifestStat = await fs.stat(manifestPath)
+      } catch {
+        continue
+      }
+      if (!manifestStat.isFile()) continue
+
+      try {
+        const raw = await fs.readFile(manifestPath, 'utf8')
+        const manifest = JSON.parse(raw) as {
+          layers?: Array<{ size?: number }>
+        }
+        const sizeBytes = (manifest.layers ?? []).reduce(
+          (sum, l) => sum + (typeof l.size === 'number' ? l.size : 0),
+          0
+        )
+        const fullName = `${modelName}:${tag}`
+        results.push({ name: modelName, tag, fullName, sizeBytes })
+      } catch {
+        // corrupt manifest, skip
+      }
+    }
+  }
+
+  return results
+}
+
+export async function enrichWithDetails(
+  models: ScannedOllamaModel[],
+  endpoint: string = DEFAULT_ENDPOINT
+): Promise<OllamaModelDetail[]> {
+  const reachable = await detect(endpoint)
+  if (!reachable) {
+    return models.map((m) => ({
+      ...m,
+      family: null,
+      parameterSize: null,
+      quantization: null,
+      format: null
+    }))
+  }
+
+  return Promise.all(
+    models.map(async (m) => {
+      const info = await showModel(m.fullName, endpoint)
+      const details = info?.details as
+        | {
+            family?: string
+            parameter_size?: string
+            quantization_level?: string
+            format?: string
+          }
+        | undefined
+      return {
+        ...m,
+        family: details?.family ?? null,
+        parameterSize: details?.parameter_size ?? null,
+        quantization: details?.quantization_level ?? null,
+        format: details?.format ?? null
+      }
+    })
+  )
 }

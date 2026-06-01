@@ -161,7 +161,22 @@
       "generic": "حدث خطأ. حاول إعادة تشغيل التطبيق."
     },
     "backToChat": "العودة إلى المحادثة",
-    "reinstallOllama": "هل تريد إعادة تثبيت أولاما؟"
+    "reinstallOllama": "هل تريد إعادة تثبيت أولاما؟",
+    "available": "المتاحة",
+    "availableDescription": "نماذج مُنزّلة على جهازك، جاهزة للاستخدام.",
+    "modelsFolder": "مجلد النماذج",
+    "modelsFolderDescription": "نفحص هذا المجلد بحثاً عن نماذج أولاما المُنزّلة.",
+    "chooseFolder": "اختر مجلداً",
+    "noAvailableModels": "لم نجد نماذج في هذا المجلد.",
+    "useAvailable": "استخدم هذا النموذج",
+    "availableDetail": {
+      "family": "العائلة",
+      "params": "المعاملات",
+      "quantization": "التكميم",
+      "format": "الصيغة",
+      "size": "الحجم",
+      "unknown": "غير معروف"
+    }
   },
   "settings": {
     "tabs": {
