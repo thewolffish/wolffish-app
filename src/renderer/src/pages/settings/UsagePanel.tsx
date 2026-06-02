@@ -4,6 +4,7 @@ import {
   BraveLogo,
   DeepSeekLogo,
   KimiLogo,
+  MiniMaxLogo,
   MimoLogo,
   OllamaLogo,
   OpenAILogo
@@ -33,7 +34,7 @@ import { useTranslation } from 'react-i18next'
 
 type IconComp = React.ComponentType<{ size?: number; className?: string }>
 
-type ProviderId = 'local' | 'anthropic' | 'openai' | 'deepseek' | 'mimo' | 'kimi'
+type ProviderId = 'local' | 'anthropic' | 'openai' | 'deepseek' | 'mimo' | 'kimi' | 'minimax'
 
 const TIME_RANGES: UsageTimeRange[] = [
   'today',
@@ -50,7 +51,8 @@ const PROVIDER_ICONS: Record<ProviderId, React.ComponentType<{ size: number }>> 
   openai: OpenAILogo,
   deepseek: DeepSeekLogo,
   mimo: MimoLogo,
-  kimi: KimiLogo
+  kimi: KimiLogo,
+  minimax: MiniMaxLogo
 }
 
 export function UsagePanel(): React.JSX.Element {

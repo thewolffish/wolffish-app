@@ -260,7 +260,9 @@ export class Agent {
               ? 'mimo'
               : provider === 'kimi'
                 ? 'kimi'
-                : 'local'
+                : provider === 'minimax'
+                  ? 'minimax'
+                  : 'local'
     const supportsVision = providerKey !== 'local' || (await this.thalamus.localSupportsVision())
 
     const out: ChatMessage[] = []

@@ -291,6 +291,26 @@ async function fetchProviderModels(
       return { ok: true, models }
     }
 
+    if (id === 'minimax') {
+      const res = await fetch('https://api.minimaxi.chat/v1/models', {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${apiKey}` }
+      })
+      if (!res.ok) {
+        const text = await res.text().catch(() => '')
+        return { ok: false, ...classifyHttpError(res.status, text) }
+      }
+      const body = (await res.json()) as {
+        data?: Array<{ id: string; created?: number }>
+      }
+      const models = (body.data ?? [])
+        .filter((m) => isMiniMaxChatModel(m.id))
+        .slice()
+        .sort((a, b) => (b.created ?? 0) - (a.created ?? 0))
+        .map((m) => m.id)
+      return { ok: true, models }
+    }
+
     if (id === 'kimi') {
       const res = await fetch('https://api.moonshot.ai/v1/models', {
         method: 'GET',
@@ -349,6 +369,10 @@ function isOpenAIChatModel(id: string): boolean {
 
 function isDeepSeekChatModel(id: string): boolean {
   return id.startsWith('deepseek-')
+}
+
+function isMiniMaxChatModel(id: string): boolean {
+  return id.startsWith('MiniMax-M')
 }
 
 function isKimiChatModel(id: string): boolean {

@@ -233,7 +233,7 @@ function humanizeProviderError(raw: string, locale: 'en' | 'ar'): string {
 }
 
 function extractProviderName(error: string): string | null {
-  const match = /^(anthropic|openai|deepseek|mimo|kimi)\b/i.exec(error)
+  const match = /^(anthropic|openai|deepseek|mimo|kimi|minimax)\b/i.exec(error)
   return match ? match[1].charAt(0).toUpperCase() + match[1].slice(1).toLowerCase() : null
 }
 

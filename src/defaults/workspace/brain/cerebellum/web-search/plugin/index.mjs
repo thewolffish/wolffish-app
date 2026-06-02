@@ -11,6 +11,15 @@ const BRAVE_SEARCH_ENDPOINT = 'https://api.search.brave.com/res/v1/web/search'
 // users see config changes take effect without restarting the app.
 let workspaceRoot = null
 
+// DDG rate-limit guard — enforce a minimum gap between consecutive scrapes.
+const DDG_MIN_GAP_MS = 10_000
+let lastDdgSearchAt = 0
+
+function ddgThrottle() {
+  const wait = DDG_MIN_GAP_MS - (Date.now() - lastDdgSearchAt)
+  if (wait > 0) return new Promise((r) => setTimeout(r, wait))
+}
+
 // Real browser UA — DDG rate-limits requests with bot-looking UAs.
 const BROWSER_UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
@@ -260,10 +269,13 @@ async function executeSearch(args) {
   if (!provider) {
     for (const p of PROVIDERS) {
       try {
+        await ddgThrottle()
         results = await runProvider(p, query, maxResults)
+        lastDdgSearchAt = Date.now()
         provider = p.name
         break
       } catch (err) {
+        lastDdgSearchAt = Date.now()
         errors.push(`${p.name}: ${err?.message ?? err}`)
       }
     }

@@ -4,6 +4,7 @@ import {
   AnthropicLogo,
   DeepSeekLogo,
   KimiLogo,
+  MiniMaxLogo,
   MimoLogo,
   OpenAILogo
 } from '@components/core/ProviderLogos'
@@ -34,7 +35,8 @@ const PROVIDER_LOGOS: Record<
   openai: OpenAILogo,
   deepseek: DeepSeekLogo,
   mimo: MimoLogo,
-  kimi: KimiLogo
+  kimi: KimiLogo,
+  minimax: MiniMaxLogo
 }
 
 const PROVIDER_URLS: Record<ProviderId, string> = {
@@ -42,7 +44,8 @@ const PROVIDER_URLS: Record<ProviderId, string> = {
   openai: 'https://platform.openai.com',
   deepseek: 'https://platform.deepseek.com',
   mimo: 'https://platform.xiaomimimo.com',
-  kimi: 'https://platform.moonshot.ai'
+  kimi: 'https://platform.moonshot.ai',
+  minimax: 'https://platform.minimax.io'
 }
 
 type BadgeKind = 'frontier' | 'vision' | 'reasoning' | 'code' | 'fast' | 'voice'
@@ -243,6 +246,16 @@ const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       badges: ['vision']
     },
     { name: 'moonshot-v1-8k', context: '8K', input: '$0.20', output: '$2.00', cached: null }
+  ],
+  minimax: [
+    { name: 'MiniMax-M3', context: '1M', input: '$0.30', output: '$1.20', cached: '$0.06', badges: ['frontier', 'reasoning'] },
+    { name: 'MiniMax-M2.7', context: '200K', input: '$0.30', output: '$1.20', cached: '$0.06', badges: ['reasoning'] },
+    { name: 'MiniMax-M2.7-highspeed', context: '200K', input: '$0.60', output: '$2.40', cached: '$0.06', badges: ['fast'] },
+    { name: 'MiniMax-M2.5', context: '200K', input: '$0.30', output: '$1.20', cached: '$0.03', badges: ['code'] },
+    { name: 'MiniMax-M2.5-highspeed', context: '200K', input: '$0.60', output: '$2.40', cached: '$0.03', badges: ['code', 'fast'] },
+    { name: 'MiniMax-M2.1', context: '200K', input: '$0.30', output: '$1.20', cached: '$0.03', badges: ['reasoning'] },
+    { name: 'MiniMax-M2.1-highspeed', context: '200K', input: '$0.60', output: '$2.40', cached: '$0.03', badges: ['fast'] },
+    { name: 'MiniMax-M2', context: '200K', input: '$0.30', output: '$1.20', cached: '$0.03' }
   ]
 }
 

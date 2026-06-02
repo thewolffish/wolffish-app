@@ -3,6 +3,7 @@ import { AnthropicProvider } from '@main/runtime/providers/anthropic'
 import { DeepSeekProvider } from '@main/runtime/providers/deepseek'
 import { LocalProvider } from '@main/runtime/providers/local'
 import { KimiProvider } from '@main/runtime/providers/kimi'
+import { MiniMaxProvider } from '@main/runtime/providers/minimax'
 import { MimoProvider } from '@main/runtime/providers/mimo'
 import { OpenAIProvider } from '@main/runtime/providers/openai'
 import { net } from 'electron'
@@ -36,7 +37,7 @@ export type ChatMessage =
       images?: ToolResultImage[]
     }
 
-export type ProviderId = 'anthropic' | 'openai' | 'deepseek' | 'mimo' | 'kimi' | 'local'
+export type ProviderId = 'anthropic' | 'openai' | 'deepseek' | 'mimo' | 'kimi' | 'minimax' | 'local'
 
 export type ToolDefinition = {
   name: string
@@ -104,7 +105,7 @@ export type StreamChunk =
   | { type: 'no_provider_available'; info: NoProviderAvailableInfo }
 
 export type CloudProviderConfig = {
-  id: 'anthropic' | 'openai' | 'deepseek' | 'mimo' | 'kimi'
+  id: 'anthropic' | 'openai' | 'deepseek' | 'mimo' | 'kimi' | 'minimax'
   model: string
   apiKey: string
   models?: string[]
@@ -141,6 +142,7 @@ const PROVIDER_LOGO: Record<ProviderId, string> = {
   deepseek: 'deepseek',
   mimo: 'mimo',
   kimi: 'kimi',
+  minimax: 'minimax',
   local: 'ollama'
 }
 
@@ -613,6 +615,12 @@ export class Thalamus {
           model: cfg.model,
           provider: new KimiProvider(cfg.apiKey, cfg.model)
         })
+      } else if (id === 'minimax') {
+        out.push({
+          id: 'minimax',
+          model: cfg.model,
+          provider: new MiniMaxProvider(cfg.apiKey, cfg.model)
+        })
       }
     }
     if (this.local.isReady) {
@@ -753,6 +761,9 @@ function contextWindowForModel(model: string): number {
   if (m.includes('moonshot-v1-32k')) return 32_768
   if (m.includes('moonshot-v1-8k')) return 8_192
   if (m.includes('moonshot')) return 131_072
+  // MiniMax
+  if (m.includes('minimax-m3')) return 1_000_000
+  if (m.includes('minimax-m2')) return 200_000
   // OpenAI
   if (m.includes('gpt-5.4') || m.includes('gpt-5.5')) return 1_000_000
   if (m.includes('gpt-5')) return 400_000

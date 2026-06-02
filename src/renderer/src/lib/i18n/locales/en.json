@@ -288,7 +288,9 @@
         "deepseek": "DeepSeek",
         "mimo": "Xiaomi Mimo",
         "kimi": "Kimi",
+        "minimax": "MiniMax",
         "descriptions": {
+          "minimax": "MiniMax's frontier models — strong reasoning and code with competitive pricing",
           "kimi": "Moonshot AI's flagship models — powerful reasoning with long-context support",
           "mimo": "Xiaomi's cloud AI — affordable frontier models with strong multilingual support",
           "deepseek": "Open-weight reasoning powerhouse — frontier performance at a fraction of the cost",
@@ -899,6 +901,7 @@
         "deepseek": "DeepSeek",
         "mimo": "Xiaomi Mimo",
         "kimi": "Kimi",
+        "minimax": "MiniMax",
         "brave": "Brave Search"
       },
       "tokens": "tokens",

@@ -2,6 +2,7 @@ import {
   AnthropicLogo,
   DeepSeekLogo,
   KimiLogo,
+  MiniMaxLogo,
   MimoLogo,
   OllamaLogo,
   OpenAILogo
@@ -11,7 +12,7 @@ import { CloudIcon, Refresh01Icon } from 'hugeicons-react'
 import { useTranslation } from 'react-i18next'
 import type { IconType } from 'react-icons'
 
-type Logo = 'anthropic' | 'openai' | 'deepseek' | 'mimo' | 'kimi' | 'ollama'
+type Logo = 'anthropic' | 'openai' | 'deepseek' | 'mimo' | 'kimi' | 'minimax' | 'ollama'
 
 const LOGO: Record<Logo, IconType | React.ComponentType<{ size?: number; className?: string }>> = {
   anthropic: AnthropicLogo,
@@ -19,6 +20,7 @@ const LOGO: Record<Logo, IconType | React.ComponentType<{ size?: number; classNa
   deepseek: DeepSeekLogo,
   mimo: MimoLogo,
   kimi: KimiLogo,
+  minimax: MiniMaxLogo,
   ollama: OllamaLogo
 }
 

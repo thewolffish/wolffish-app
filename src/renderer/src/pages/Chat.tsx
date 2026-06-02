@@ -22,6 +22,7 @@ import {
   AnthropicLogo,
   DeepSeekLogo,
   KimiLogo,
+  MiniMaxLogo,
   MimoLogo,
   OllamaLogo,
   OpenAILogo,
@@ -2001,7 +2002,8 @@ const CLOUD_PROVIDER_LOGOS: Record<string, React.ComponentType<{ size?: number }
   openai: OpenAILogo,
   deepseek: DeepSeekLogo,
   mimo: MimoLogo,
-  kimi: KimiLogo
+  kimi: KimiLogo,
+  minimax: MiniMaxLogo
 }
 
 function ModeToggle({

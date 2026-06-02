@@ -142,6 +142,19 @@ const KIMI_PRICING: Record<string, ModelPricing> = {
   'moonshot-v1-auto': { input: 1.0 / 1e6, output: 3.0 / 1e6, cacheWrite: 0, cacheRead: 0 }
 }
 
+// https://platform.minimax.io/docs/guides/pricing-paygo.md
+// Promotional rates shown; cache read is a fraction of input.
+const MINIMAX_PRICING: Record<string, ModelPricing> = {
+  'MiniMax-M3': { input: 0.30 / 1e6, output: 1.20 / 1e6, cacheWrite: 1.0, cacheRead: 0.20 },
+  'MiniMax-M2.7': { input: 0.30 / 1e6, output: 1.20 / 1e6, cacheWrite: 1.25, cacheRead: 0.20 },
+  'MiniMax-M2.7-highspeed': { input: 0.60 / 1e6, output: 2.40 / 1e6, cacheWrite: 1.0, cacheRead: 0.10 },
+  'MiniMax-M2.5': { input: 0.30 / 1e6, output: 1.20 / 1e6, cacheWrite: 1.25, cacheRead: 0.10 },
+  'MiniMax-M2.5-highspeed': { input: 0.60 / 1e6, output: 2.40 / 1e6, cacheWrite: 1.0, cacheRead: 0.05 },
+  'MiniMax-M2.1': { input: 0.30 / 1e6, output: 1.20 / 1e6, cacheWrite: 1.25, cacheRead: 0.10 },
+  'MiniMax-M2.1-highspeed': { input: 0.60 / 1e6, output: 2.40 / 1e6, cacheWrite: 1.0, cacheRead: 0.05 },
+  'MiniMax-M2': { input: 0.30 / 1e6, output: 1.20 / 1e6, cacheWrite: 1.25, cacheRead: 0.10 }
+}
+
 const LOCAL_EQUIVALENT_PRICING: ModelPricing = {
   input: 0,
   output: 0,
@@ -251,7 +264,8 @@ export class Usage {
       'openai',
       'deepseek',
       'mimo',
-      'kimi'
+      'kimi',
+      'minimax'
     ] as ProviderId[]) {
       const bucket = byProvider.get(pid)
       if (!bucket) {
@@ -452,7 +466,8 @@ export class Usage {
       { file: 'openai.md', provider: 'openai' },
       { file: 'deepseek.md', provider: 'deepseek' },
       { file: 'mimo.md', provider: 'mimo' },
-      { file: 'kimi.md', provider: 'kimi' }
+      { file: 'kimi.md', provider: 'kimi' },
+      { file: 'minimax.md', provider: 'minimax' }
     ]
 
     for (const { file, provider } of providerFiles) {
@@ -530,7 +545,9 @@ export function calculateCost(
           ? MIMO_PRICING
           : provider === 'kimi'
             ? KIMI_PRICING
-            : OPENAI_PRICING
+            : provider === 'minimax'
+              ? MINIMAX_PRICING
+              : OPENAI_PRICING
   const pricing = findPricing(model, table)
   // Fact-based: published per-token rates applied to reported token counts
   const raw =
@@ -604,6 +621,7 @@ function providerLabel(provider: ProviderId): string {
   if (provider === 'deepseek') return 'DeepSeek'
   if (provider === 'mimo') return 'Xiaomi Mimo'
   if (provider === 'kimi') return 'Kimi'
+  if (provider === 'minimax') return 'MiniMax'
   return 'OpenAI'
 }
 

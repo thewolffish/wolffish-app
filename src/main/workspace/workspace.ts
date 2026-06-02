@@ -18,7 +18,7 @@ export type LocalModelConfig = {
 }
 
 export type CloudProviderConfig = {
-  id: 'anthropic' | 'openai' | 'deepseek' | 'mimo' | 'kimi'
+  id: 'anthropic' | 'openai' | 'deepseek' | 'mimo' | 'kimi' | 'minimax'
   model: string
   apiKey: string
   // Cached from the provider's /v1/models endpoint. Refreshed on app
@@ -675,7 +675,8 @@ async function ensureUsageStructure(): Promise<void> {
     { file: 'anthropic.md', header: '# Anthropic' },
     { file: 'openai.md', header: '# OpenAI' },
     { file: 'mimo.md', header: '# Xiaomi Mimo' },
-    { file: 'kimi.md', header: '# Kimi' }
+    { file: 'kimi.md', header: '# Kimi' },
+    { file: 'minimax.md', header: '# MiniMax' }
   ]
   for (const { file, header } of providerFiles) {
     const filepath = path.join(providersDir, file)
