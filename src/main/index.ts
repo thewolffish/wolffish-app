@@ -3,10 +3,11 @@ process.noDeprecation = true
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import { braveService, type BraveStatus, type BraveTestResult } from '@main/brave'
 import { turnRouter } from '@main/channels/channel'
-import { ElectronChannel } from '@main/channels/electron-channel'
-import { TelegramChannel } from '@main/channels/telegram-channel'
+import { ElectronChannel } from '@main/channels/electron/channel'
+import { ExtensionServer } from '@main/channels/extension/server'
+import { TelegramChannel } from '@main/channels/telegram/channel'
 import { TurnRunner } from '@main/channels/turn-runner'
-import { WhatsAppChannel } from '@main/channels/whatsapp-channel'
+import { WhatsAppChannel } from '@main/channels/whatsapp/channel'
 import {
   countConversationsSince,
   createConversation,
@@ -88,6 +89,7 @@ import {
   factoryReset,
   getBraveConfig,
   getCompactionConfig,
+  getBrowserExtensionConfig,
   getComputerUseConfig,
   getGitHubConfig,
   getGoogleConfig,
@@ -108,6 +110,7 @@ import {
   setBypassPermissions as persistBypassPermissions,
   setCloudPriority as persistCloudPriority,
   setCompactionConfig as persistCompactionConfig,
+  setBrowserExtensionConfig as persistBrowserExtensionConfig,
   setComputerUseConfig as persistComputerUseConfig,
   setGitHubConfig as persistGitHubConfig,
   setGoogleConfig as persistGoogleConfig,
@@ -130,8 +133,10 @@ import {
   removeCloudProvider,
   selectLocalModel,
   setCloudProvider,
+  extensionFolderPath,
   workspaceRoot,
   type BraveConfig,
+  type BrowserExtensionConfig,
   type ComputerUseConfig,
   type GitHubConfig,
   type GoogleConfig,
@@ -433,6 +438,7 @@ const turnRunner = new TurnRunner(agent)
 const electronChannel = new ElectronChannel(agent, turnRunner)
 const telegramChannel = new TelegramChannel(agent, turnRunner, localProvider)
 const whatsappChannel = new WhatsAppChannel(agent, turnRunner, localProvider)
+const extensionServer = new ExtensionServer(agent)
 
 agent.amygdala.setApprovalBridge((req) => turnRouter.dispatchApproval(req))
 
@@ -600,6 +606,7 @@ async function shutdownGracefully(): Promise<void> {
   whatsappChannel.abort()
   await telegramChannel.stop('app shutdown').catch(() => undefined)
   await whatsappChannel.stop('app shutdown').catch(() => undefined)
+  await extensionServer.stop().catch(() => undefined)
   await agent.stop().catch(() => undefined)
 }
 
@@ -748,6 +755,21 @@ app.whenReady().then(async () => {
     void whatsappChannel
       .start(cfg.whatsapp)
       .catch((err) => console.error('whatsapp start failed:', err))
+  }
+
+  {
+    const extCfg = cfg?.browserExtension ?? { port: 23151 }
+    extensionServer.setStatusChangeHandler((status) => {
+      for (const w of BrowserWindow.getAllWindows()) {
+        w.webContents.send('extension:statusChange', status)
+      }
+    })
+    void extensionServer
+      .start({ port: extCfg.port })
+      .catch((err) => console.error('extension server start failed:', err))
+    agent.corpus.on('conversation.changed', (payload) => {
+      extensionServer.setConversationId(payload.conversationId)
+    })
   }
 
   const lock = await acquireLock(lockfilePath())
@@ -1141,6 +1163,74 @@ app.whenReady().then(async () => {
       return { platform, accessibility: true, screenRecording: true, hint: null }
     }
   )
+
+  // Browser Extension — WebSocket server for the Wolffish browser extension.
+  ipcMain.handle(
+    'browserExtension:getConfig',
+    (): Promise<BrowserExtensionConfig> => getBrowserExtensionConfig()
+  )
+
+  ipcMain.handle(
+    'browserExtension:setConfig',
+    async (
+      _e,
+      patch: Partial<BrowserExtensionConfig>
+    ): Promise<{ ok: true; config: BrowserExtensionConfig }> => {
+      const updated = await persistBrowserExtensionConfig(patch)
+      const next = updated.browserExtension ?? { port: 23151 }
+      if (patch.port !== undefined) {
+        extensionServer.sendPortUpdate(next.port)
+        await extensionServer.stop()
+        await extensionServer.start({ port: next.port })
+      }
+      return { ok: true as const, config: next }
+    }
+  )
+
+  ipcMain.handle(
+    'browserExtension:status',
+    () => extensionServer.getStatus()
+  )
+
+  ipcMain.handle('browserExtension:openExtensionFolder', () => {
+    shell.showItemInFolder(extensionFolderPath())
+  })
+
+  ipcMain.handle('browserExtension:getExtensionPath', () => {
+    return extensionFolderPath()
+  })
+
+  ipcMain.handle('browserExtension:updateExtension', async () => {
+    await extensionServer.requestReload()
+    return { ok: true }
+  })
+
+  ipcMain.handle('browserExtension:testConnection', () => extensionServer.runTestScenario())
+
+  ipcMain.handle('browserExtension:openExtensionsPage', () => {
+    const url = 'chrome://extensions'
+    if (process.platform === 'darwin') {
+      const browsers = ['Google Chrome', 'Brave Browser', 'Chromium']
+      for (const browser of browsers) {
+        try {
+          execFileSync('open', ['-a', browser, url], { stdio: 'ignore' })
+          return
+        } catch {
+          continue
+        }
+      }
+    } else if (process.platform === 'win32') {
+      try {
+        execFileSync('cmd', ['/c', 'start', '', url], { stdio: 'ignore' })
+        return
+      } catch { /* fallthrough */ }
+    } else {
+      try {
+        execFileSync('xdg-open', [url], { stdio: 'ignore' })
+        return
+      } catch { /* fallthrough */ }
+    }
+  })
 
   // Google Workspace (gogcli) — credential storage and OAuth are
   // delegated to the gog binary. We only persist safe public metadata

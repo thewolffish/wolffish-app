@@ -3,8 +3,8 @@ import type { ApprovalDecision, ApprovalRequest } from '@main/runtime/amygdala'
 import type { CorpusEvents } from '@main/runtime/corpus'
 import type { ChatHistoryMessage } from '@preload/index'
 import type { WebContents } from 'electron'
-import type { TurnSink } from './channel'
-import type { TurnRunner } from './turn-runner'
+import type { TurnSink } from '@main/channels/channel'
+import type { TurnRunner } from '@main/channels/turn-runner'
 
 /**
  * The Electron renderer channel. Wraps the existing chat:* IPC surface

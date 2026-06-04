@@ -20,6 +20,7 @@ import { BravePanel } from '@pages/settings/BravePanel'
 import { CelebrumPanel } from '@pages/settings/CelebrumPanel'
 import { CloudProviderPanel } from '@pages/settings/CloudProviderPanel'
 import { CompactionPanel } from '@pages/settings/CompactionPanel'
+import { BrowserExtensionPanel } from '@pages/settings/BrowserExtensionPanel'
 import { ComputerUsePanel } from '@pages/settings/ComputerUsePanel'
 import { DataPanel } from '@pages/settings/DataPanel'
 import { GitHubPanel } from '@pages/settings/GitHubPanel'
@@ -47,6 +48,7 @@ import {
   BrainIcon,
   BubbleChatIcon,
   CloudIcon,
+  BrowserIcon,
   ComputerIcon,
   Database02Icon,
   DnaIcon,
@@ -231,8 +233,8 @@ export function Settings(): React.JSX.Element {
     // Brave and Google are always visible — Brave only gates the
     // web-search plugin, and Google depends on an external binary (gog)
     // rather than a cerebellum capability folder.
-    if (!caps) return ['brave', 'google']
-    const out: Service[] = ['brave', 'google']
+    if (!caps) return ['browserExtension', 'brave', 'google']
+    const out: Service[] = ['browserExtension', 'brave', 'google']
     if (caps.has('memes')) out.push('memes')
     if (caps.has('notion')) out.push('notion')
     if (caps.has('github')) out.push('github')
@@ -522,6 +524,9 @@ export function Settings(): React.JSX.Element {
         <TabPanel active={active === 'channels' && channel === 'whatsapp'}>
           <WhatsAppPanel />
         </TabPanel>
+        <TabPanel active={active === 'services' && effectiveService === 'browserExtension'}>
+          <BrowserExtensionPanel />
+        </TabPanel>
         <TabPanel active={active === 'services' && effectiveService === 'brave'}>
           <BravePanel />
         </TabPanel>
@@ -591,9 +596,19 @@ const CHANNEL_ICONS: Record<Channel, React.ComponentType<{ size?: number }>> = {
 type HippocampusTab = 'compaction'
 const HIPPOCAMPUS_TABS: HippocampusTab[] = ['compaction']
 
-type Service = 'brave' | 'notion' | 'github' | 'google' | 'memes' | 'tts' | 'stt' | 'computerUse'
+type Service =
+  | 'browserExtension'
+  | 'brave'
+  | 'notion'
+  | 'github'
+  | 'google'
+  | 'memes'
+  | 'tts'
+  | 'stt'
+  | 'computerUse'
 
 const SERVICE_ICONS: Record<Service, React.ComponentType<{ size?: number }>> = {
+  browserExtension: BrowserIcon,
   brave: BraveLogo,
   notion: NotionLogo,
   github: GithubIcon,

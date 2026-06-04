@@ -2,7 +2,7 @@ import type { Agent } from '@main/runtime/agent'
 import type { CorpusEvent } from '@main/runtime/corpus'
 import { CREDENTIAL_BLOCKED_REPLY, detectSensitiveData } from '@main/runtime/sensitiveDataFilter'
 import type { ChatHistoryMessage } from '@preload/index'
-import { turnRouter, type TurnSink } from './channel'
+import { turnRouter, type TurnSink } from '@main/channels/channel'
 
 /**
  * Corpus events relayed to the channel as turn events. Same set the

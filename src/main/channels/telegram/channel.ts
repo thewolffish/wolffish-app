@@ -34,17 +34,17 @@ import { Bot, GrammyError, HttpError, InputFile, type Context as BotContext } fr
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import type { TurnSink } from './channel'
-import { getConversationIdForChat, setConversationIdForChat } from './telegram-conversations'
-import { bidiMark, escapeHtml, markdownToPlain, markdownToTelegramHtml } from './telegram-format'
+import type { TurnSink } from '@main/channels/channel'
+import { getConversationIdForChat, setConversationIdForChat } from '@main/channels/telegram/conversations'
+import { bidiMark, escapeHtml, markdownToPlain, markdownToTelegramHtml } from '@main/channels/telegram/format'
 import {
   flushMessageIds,
   loadMessageIds,
   recordMessageId,
   takeMessageIdsForChat
-} from './telegram-messages'
-import { buildTelegramCapability, TELEGRAM_CAPABILITY_NAME } from './telegram-tools'
-import type { TurnRunner } from './turn-runner'
+} from '@main/channels/telegram/messages'
+import { buildTelegramCapability, TELEGRAM_CAPABILITY_NAME } from '@main/channels/telegram/tools'
+import type { TurnRunner } from '@main/channels/turn-runner'
 
 /**
  * Maximum bytes per Telegram message. The spec is 4096; we cap one

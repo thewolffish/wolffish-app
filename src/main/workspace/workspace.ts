@@ -143,6 +143,10 @@ export type ComputerUseConfig = {
   screenshotFormat: 'jpeg' | 'png'
 }
 
+export type BrowserExtensionConfig = {
+  port: number
+}
+
 export type Variable = {
   name: string
   value: string
@@ -232,6 +236,7 @@ export type WorkspaceConfig = {
   // works without any config, Imgflip and Giphy need credentials.
   memes?: MemesConfig
   computerUse?: ComputerUseConfig
+  browserExtension?: BrowserExtensionConfig
   compaction?: CompactionConfig
   updates?: UpdatesConfig
   lastSettingsState?: {
@@ -426,6 +431,8 @@ export async function ensureWorkspace(): Promise<void> {
   await ensureFilesDirectory()
   await ensureScreenshotsDirectory()
   await ensureLogsDirectory()
+  await ensureExtensionLogsDirectory()
+  await ensureBundledExtension()
 }
 
 async function ensureBundledCapabilities(): Promise<void> {
@@ -1152,5 +1159,83 @@ export async function setComputerUseConfig(
       screenshotFormat: patch.screenshotFormat ?? current.screenshotFormat
     }
     return { ...c, computerUse: next }
+  })
+}
+
+// ─── Browser Extension ──────────────────────────────────────────────────
+
+const DEFAULT_BROWSER_EXTENSION_CONFIG: BrowserExtensionConfig = {
+  port: 23151
+}
+
+export async function getBrowserExtensionConfig(): Promise<BrowserExtensionConfig> {
+  const config = await readConfig()
+  const stored = config?.browserExtension
+  if (!stored) return DEFAULT_BROWSER_EXTENSION_CONFIG
+  return { port: stored.port ?? 23151 }
+}
+
+export async function setBrowserExtensionConfig(
+  patch: Partial<BrowserExtensionConfig>
+): Promise<WorkspaceConfig> {
+  return patchConfig((c) => {
+    const current = c.browserExtension ?? DEFAULT_BROWSER_EXTENSION_CONFIG
+    return { ...c, browserExtension: { port: patch.port ?? current.port } }
+  })
+}
+
+export function extensionFolderPath(): string {
+  return path.join(WORKSPACE_ROOT, 'extension')
+}
+
+async function ensureExtensionLogsDirectory(): Promise<void> {
+  await fs.mkdir(path.join(WORKSPACE_ROOT, 'logs', 'extension'), { recursive: true })
+}
+
+/**
+ * Read the version from a manifest.json file. Returns null if unreadable.
+ */
+async function readManifestVersion(manifestPath: string): Promise<string | null> {
+  try {
+    const raw = await fs.readFile(manifestPath, 'utf8')
+    const manifest = JSON.parse(raw) as { version?: string }
+    return manifest.version ?? null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Version of the extension bundled with the app binary. This is the
+ * source of truth — on every launch the runtime extension folder is
+ * synced to this version.
+ */
+export async function getBundledExtensionVersion(): Promise<string | null> {
+  return readManifestVersion(path.join(defaultsWorkspacePath(), 'extension', 'manifest.json'))
+}
+
+/**
+ * Version of the extension currently in the runtime workspace folder
+ * (~/.wolffish/workspace/extension/). May lag behind the bundled
+ * version until the next app launch syncs them.
+ */
+export async function getRuntimeExtensionVersion(): Promise<string | null> {
+  return readManifestVersion(path.join(WORKSPACE_ROOT, 'extension', 'manifest.json'))
+}
+
+/**
+ * Sync bundled extension files to the runtime workspace. Called on
+ * every app launch so plugin bug fixes shipped with an app upgrade
+ * reach the user automatically. Returns true if files were updated
+ * (bundled version differs from runtime version).
+ */
+async function ensureBundledExtension(): Promise<void> {
+  const source = path.join(defaultsWorkspacePath(), 'extension')
+  if (!existsSync(source)) return
+  const target = path.join(WORKSPACE_ROOT, 'extension')
+  await fs.cp(source, target, {
+    recursive: true,
+    force: true,
+    filter: (src) => !src.endsWith('.DS_Store')
   })
 }

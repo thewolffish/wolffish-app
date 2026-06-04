@@ -126,6 +126,7 @@ export type WorkspaceConfig = {
   stt?: SttConfig
   tts?: TtsConfig
   computerUse?: ComputerUseConfig
+  browserExtension?: BrowserExtensionConfig
   updates?: UpdatesConfig
   lastSettingsState?: {
     tab?: string
@@ -878,6 +879,33 @@ export type ComputerUseApi = {
   checkPermissions: () => Promise<ComputerUsePermissions>
 }
 
+export type BrowserExtensionConfig = {
+  port: number
+}
+
+export type ExtensionConnectionStatus = 'stopped' | 'listening' | 'connected' | 'error'
+
+export type ExtensionServerStatus = {
+  status: ExtensionConnectionStatus
+  error: string | null
+  extensionVersion: string | null
+  port: number
+}
+
+export type BrowserExtensionApi = {
+  getConfig: () => Promise<BrowserExtensionConfig>
+  setConfig: (
+    patch: Partial<BrowserExtensionConfig>
+  ) => Promise<{ ok: true; config: BrowserExtensionConfig }>
+  status: () => Promise<ExtensionServerStatus>
+  openExtensionFolder: () => Promise<void>
+  getExtensionPath: () => Promise<string>
+  updateExtension: () => Promise<{ ok: true }>
+  testConnection: () => Promise<{ ok: boolean; steps: number; passed: number; error?: string }>
+  openExtensionsPage: () => Promise<void>
+  onStatusChange: (callback: (status: ExtensionServerStatus) => void) => () => void
+}
+
 export type UpdateAvailableEvent = {
   version: string
   releaseNotes: string | null
@@ -995,6 +1023,7 @@ export type WolffishApi = {
   stt: SttApi
   tts: TtsApi
   computerUse: ComputerUseApi
+  browserExtension: BrowserExtensionApi
   updater: UpdaterApi
 }
 
@@ -1222,6 +1251,17 @@ const api: WolffishApi = {
     getConfig: () => ipcRenderer.invoke('computerUse:getConfig'),
     setConfig: (patch) => ipcRenderer.invoke('computerUse:setConfig', patch),
     checkPermissions: () => ipcRenderer.invoke('computerUse:checkPermissions')
+  },
+  browserExtension: {
+    getConfig: () => ipcRenderer.invoke('browserExtension:getConfig'),
+    setConfig: (patch) => ipcRenderer.invoke('browserExtension:setConfig', patch),
+    status: () => ipcRenderer.invoke('browserExtension:status'),
+    openExtensionFolder: () => ipcRenderer.invoke('browserExtension:openExtensionFolder'),
+    getExtensionPath: () => ipcRenderer.invoke('browserExtension:getExtensionPath'),
+    updateExtension: () => ipcRenderer.invoke('browserExtension:updateExtension'),
+    testConnection: () => ipcRenderer.invoke('browserExtension:testConnection'),
+    openExtensionsPage: () => ipcRenderer.invoke('browserExtension:openExtensionsPage'),
+    onStatusChange: (listener) => subscribe('extension:statusChange', listener)
   },
   updater: {
     install: () => ipcRenderer.invoke('updater:install'),

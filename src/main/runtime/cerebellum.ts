@@ -210,6 +210,7 @@ export class Cerebellum {
    */
   setCurrentConversationId(id: string | null): void {
     this.currentConversationId = id
+    this.options.corpus?.emit('conversation.changed', { conversationId: id })
   }
 
   getCurrentConversationId(): string | null {
