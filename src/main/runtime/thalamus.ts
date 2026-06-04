@@ -45,11 +45,14 @@ export type ToolDefinition = {
   parameters: Record<string, unknown>
 }
 
+export type ThinkingMode = 'none' | 'basic' | 'extended' | 'max' | 'fast' | 'budget'
+
 export type ProviderStreamOptions = {
   system: string
   messages: ChatMessage[]
   tools?: ToolDefinition[]
   signal?: AbortSignal
+  thinkingMode?: ThinkingMode
   /**
    * Invoked by thalamus on a cloud→local fallback transition within a
    * single stream call. Lets the caller (the agent) supply a system

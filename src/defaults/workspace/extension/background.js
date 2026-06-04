@@ -1404,23 +1404,17 @@ const handleWolffishEvent = (e) => {
     return;
   }
 };
-api.runtime.onMessage.addListener(
-  (e, s, t) => {
-    if (e.type === "get_connection_status") {
-      const n = ws && ws.readyState === WebSocket.OPEN ? "connected" : ws && ws.readyState === WebSocket.CONNECTING ? "connecting" : "disconnected";
-      n !== connectionStatus && (connectionStatus = n), t({ status: connectionStatus, port: connectionPort });
-      return;
-    }
-    if (e.type === "get_events")
-      return sendToServer({ type: "get_conversations" }), t({
-        events: cachedEvents,
-        conversations: cachedConversations,
-        activeConversation: activeConversationId
-      }), !0;
-    if (e.type === "get_conversation_events" && e.conversationId)
-      return sendToServer({ type: "get_conversation_events", conversationId: e.conversationId }), t({ events: cachedEvents }), !0;
+api.runtime.onMessage.addListener((e, s, t) => {
+  if (e.type === "get_connection_status") {
+    const n = ws && ws.readyState === WebSocket.OPEN ? "connected" : ws && ws.readyState === WebSocket.CONNECTING ? "connecting" : "disconnected";
+    return n !== connectionStatus && (connectionStatus = n), t({ status: connectionStatus, port: connectionPort }), !0;
   }
-);
+  return e.type === "get_events" ? (sendToServer({ type: "get_conversations" }), t({
+    events: cachedEvents,
+    conversations: cachedConversations,
+    activeConversation: activeConversationId
+  }), !0) : e.type === "get_conversation_events" && e.conversationId ? (sendToServer({ type: "get_conversation_events", conversationId: e.conversationId }), t({ events: cachedEvents }), !0) : !1;
+});
 const startConnection = async () => {
   connectionPort = (await wolffishConnectionStorage.get().catch(() => ({ port: DEFAULT_PORT }))).port, connectWebSocket(connectionPort);
 };

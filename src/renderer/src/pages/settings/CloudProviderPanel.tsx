@@ -57,6 +57,8 @@ type ModelSpec = {
   output: string
   cached: string | null
   badges?: BadgeKind[]
+  /** Thinking mode keys available for this model (translation keys under chat.thinkingMode). */
+  modes?: string[]
 }
 
 const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
@@ -155,17 +157,35 @@ const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       input: '$0.20',
       output: '$2.00',
       cached: 'Free',
-      badges: ['frontier']
+      badges: ['frontier', 'reasoning'],
+      modes: ['none', 'basic']
     },
-    { name: 'mimo-v2.5', context: '1M', input: '$0.08', output: '$0.80', cached: 'Free' },
-    { name: 'mimo-v2-pro', context: '256K', input: '$0.20', output: '$2.00', cached: 'Free' },
+    {
+      name: 'mimo-v2.5',
+      context: '1M',
+      input: '$0.08',
+      output: '$0.80',
+      cached: 'Free',
+      badges: ['reasoning'],
+      modes: ['none', 'basic']
+    },
+    {
+      name: 'mimo-v2-pro',
+      context: '256K',
+      input: '$0.20',
+      output: '$2.00',
+      cached: 'Free',
+      badges: ['reasoning'],
+      modes: ['none', 'basic']
+    },
     {
       name: 'mimo-v2-omni',
       context: '256K',
       input: '$0.08',
       output: '$0.80',
       cached: 'Free',
-      badges: ['vision']
+      badges: ['vision', 'reasoning'],
+      modes: ['none', 'basic']
     },
     {
       name: 'mimo-v2-flash',
@@ -173,7 +193,8 @@ const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       input: '$0.01',
       output: '$0.30',
       cached: null,
-      badges: ['fast']
+      badges: ['fast', 'reasoning'],
+      modes: ['none', 'basic']
     },
     {
       name: 'mimo-v2.5-tts',
@@ -658,20 +679,23 @@ function ModelBreakdown({ specs }: { specs: ModelSpec[] }): React.JSX.Element {
         <table className="w-full text-xs">
           <thead>
             <tr className="text-muted border-border border-b">
-              <th className="pb-2 pe-3 text-start font-medium">
+              <th className="whitespace-nowrap pb-2 pe-3 text-start font-medium">
                 {t('settings.model.cloud.breakdown.model')}
               </th>
-              <th className="pb-2 px-3 text-end font-medium">
+              <th className="whitespace-nowrap pb-2 px-3 text-end font-medium">
                 {t('settings.model.cloud.breakdown.context')}
               </th>
-              <th className="pb-2 px-3 text-end font-medium">
+              <th className="whitespace-nowrap pb-2 px-3 text-end font-medium">
                 {t('settings.model.cloud.breakdown.input')}
               </th>
-              <th className="pb-2 px-3 text-end font-medium">
+              <th className="whitespace-nowrap pb-2 px-3 text-end font-medium">
                 {t('settings.model.cloud.breakdown.output')}
               </th>
-              <th className="pb-2 ps-3 text-end font-medium">
+              <th className="whitespace-nowrap pb-2 px-3 text-end font-medium">
                 {t('settings.model.cloud.breakdown.cached')}
+              </th>
+              <th className="whitespace-nowrap pb-2 ps-3 text-end font-medium">
+                {t('settings.model.cloud.breakdown.modes')}
               </th>
             </tr>
           </thead>
@@ -684,8 +708,8 @@ function ModelBreakdown({ specs }: { specs: ModelSpec[] }): React.JSX.Element {
                   isFrontier(m) && 'bg-accent/5'
                 )}
               >
-                <td className="py-2 pe-3 text-start">
-                  <span className="flex flex-wrap items-center gap-1.5">
+                <td className="min-w-56 py-2 pe-3 text-start">
+                  <span className="flex flex-nowrap items-center gap-1.5">
                     <span className={cn('text-fg', isFrontier(m) && 'font-medium')}>{m.name}</span>
                     {m.badges?.map((badge) => (
                       <span
@@ -703,7 +727,7 @@ function ModelBreakdown({ specs }: { specs: ModelSpec[] }): React.JSX.Element {
                 <td className="py-2 px-3 text-end text-muted tabular-nums">{m.context}</td>
                 <td className="py-2 px-3 text-end text-muted tabular-nums">{m.input}</td>
                 <td className="py-2 px-3 text-end text-muted tabular-nums">{m.output}</td>
-                <td className="py-2 ps-3 text-end tabular-nums">
+                <td className="py-2 px-3 text-end tabular-nums">
                   {m.cached === null ? (
                     <span className="text-muted/50">{'—'}</span>
                   ) : m.cached === 'Free' ? (
@@ -712,6 +736,22 @@ function ModelBreakdown({ specs }: { specs: ModelSpec[] }): React.JSX.Element {
                     </span>
                   ) : (
                     <span className="text-muted">{m.cached}</span>
+                  )}
+                </td>
+                <td className="py-2 ps-3 text-end">
+                  {m.modes && m.modes.length > 0 ? (
+                    <span className="flex flex-wrap items-center justify-end gap-1">
+                      {m.modes.map((mode) => (
+                        <span
+                          key={mode}
+                          className="inline-flex shrink-0 items-center rounded-full bg-border/40 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-muted"
+                        >
+                          {t(`chat.thinkingMode.${mode}`)}
+                        </span>
+                      ))}
+                    </span>
+                  ) : (
+                    <span className="text-muted/50">{'—'}</span>
                   )}
                 </td>
               </tr>

@@ -115,41 +115,44 @@ export function Chat(): React.JSX.Element {
   }, [cloudProviders, cloudPriority])
   const hasAnyModel = !!currentModel || hasCloudProvider
   const [savingMode, setSavingMode] = useState(false)
-  const [thinkingMode, setThinkingMode] = useState('none')
+  const [thinkingMode, setThinkingMode] = useState('basic')
 
-  // Phase 2 will derive options per provider/model from API docs.
-  // For now, always show the full set so the UI can be reviewed.
-  const thinkingModeOptions = useMemo<ThinkingModeOption[]>(
-    () => [
-      {
-        value: 'none',
-        labelKey: 'chat.thinkingMode.none',
-        tooltipKey: 'chat.thinkingMode.noneTooltip'
-      },
-      {
-        value: 'basic',
-        labelKey: 'chat.thinkingMode.basic',
-        tooltipKey: 'chat.thinkingMode.basicTooltip'
-      },
-      {
-        value: 'extended',
-        labelKey: 'chat.thinkingMode.extended',
-        tooltipKey: 'chat.thinkingMode.extendedTooltip'
-      },
-      {
-        value: 'max',
-        labelKey: 'chat.thinkingMode.max',
-        tooltipKey: 'chat.thinkingMode.maxTooltip'
-      }
-    ],
-    []
-  )
+  const thinkingModeOptions = useMemo<ThinkingModeOption[]>(() => {
+    if (localOnly) return []
+
+    const provider = activeCloudProvider
+    const model = cloudProviders.find((p) => p.id === activeCloudProvider)?.model ?? null
+
+    if (!provider || !model) return []
+
+    const none: ThinkingModeOption = {
+      value: 'none',
+      labelKey: 'chat.thinkingMode.none',
+      tooltipKey: 'chat.thinkingMode.noneTooltip'
+    }
+    const basic: ThinkingModeOption = {
+      value: 'basic',
+      labelKey: 'chat.thinkingMode.basic',
+      tooltipKey: 'chat.thinkingMode.basicTooltip'
+    }
+
+    // ── MiMo: binary toggle (enabled / disabled) on all chat models ──
+    if (provider === 'mimo') {
+      const isTts = /tts|voiceclone|voicedesign|asr/.test(model)
+      if (isTts) return []
+      return [none, basic]
+    }
+
+    return []
+  }, [localOnly, activeCloudProvider, cloudProviders])
 
   useEffect(() => {
     if (thinkingModeOptions.length === 0) {
-      setThinkingMode('none')
+      setThinkingMode('basic')
     } else if (!thinkingModeOptions.some((o) => o.value === thinkingMode)) {
-      setThinkingMode(thinkingModeOptions[0].value)
+      // Default to 'basic' (thinking on) when available, otherwise first option
+      const preferred = thinkingModeOptions.find((o) => o.value === 'basic')
+      setThinkingMode(preferred?.value ?? thinkingModeOptions[0].value)
     }
   }, [thinkingModeOptions, thinkingMode])
 
@@ -728,7 +731,7 @@ export function Chat(): React.JSX.Element {
       setOutputTokens(0)
       setCacheReadTokens(0)
 
-      const response = await window.api.chat.send({ history, conversationId })
+      const response = await window.api.chat.send({ history, conversationId, thinkingMode: thinkingMode as import('@preload/index').ThinkingMode })
       pendingTurnIdRef.current = response.turnId
       if (!response.ok && response.error) {
         pendingTurnIdRef.current = null
@@ -848,7 +851,7 @@ export function Chat(): React.JSX.Element {
       setOutputTokens(0)
       setCacheReadTokens(0)
 
-      const response = await window.api.chat.send({ history, conversationId })
+      const response = await window.api.chat.send({ history, conversationId, thinkingMode: thinkingMode as import('@preload/index').ThinkingMode })
       pendingTurnIdRef.current = response.turnId
       if (!response.ok && response.error) {
         pendingTurnIdRef.current = null

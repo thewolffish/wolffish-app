@@ -36,6 +36,11 @@ export class MimoProvider {
       stream: true,
       stream_options: { include_usage: true }
     }
+
+    // MiMo thinking: enabled by default, disable only when explicitly set to 'none'
+    const mode = options.thinkingMode ?? 'basic'
+    body.thinking = { type: mode === 'none' ? 'disabled' : 'enabled' }
+
     if (options.tools && options.tools.length > 0) {
       body.tools = options.tools.map(toTool)
     }

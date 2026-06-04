@@ -75,6 +75,7 @@ export type AgentTurnOptions = {
    * Used by autonomous heartbeat jobs that cannot prompt a human.
    */
   bypassApproval?: boolean
+  thinkingMode?: 'none' | 'basic' | 'extended' | 'max' | 'fast' | 'budget'
 }
 
 export type AgentTurnResult = {
@@ -388,7 +389,8 @@ export class Agent {
           messages,
           tools: iterationTools.length > 0 ? iterationTools : undefined,
           signal: turn.signal,
-          buildFallback
+          buildFallback,
+          thinkingMode: turn.thinkingMode
         })
         const teed = broca.streamSegments(stream)
         const tracked = captureUsage(teed, (provider, model, usage) => {

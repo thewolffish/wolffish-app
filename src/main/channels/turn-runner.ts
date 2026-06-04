@@ -29,6 +29,7 @@ export const TURN_RELAYED_EVENTS: CorpusEvent[] = [
 export type TurnSendOptions = {
   history: ChatHistoryMessage[]
   conversationId?: string | null
+  thinkingMode?: 'none' | 'basic' | 'extended' | 'max' | 'fast' | 'budget'
   /**
    * External controller. Lets channels tie cancellation to a parent
    * lifecycle (e.g. closing the renderer window aborts every pending
@@ -156,7 +157,8 @@ export class TurnRunner {
           turnId,
           conversationId: opts.conversationId ?? null,
           signal: controller.signal,
-          onSegment: (segment) => sink.onSegment(segment)
+          onSegment: (segment) => sink.onSegment(segment),
+          thinkingMode: opts.thinkingMode
         })
         sink.onDone()
       } catch (err) {

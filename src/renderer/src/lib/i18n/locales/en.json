@@ -336,6 +336,7 @@
           "input": "Input / 1M",
           "output": "Output / 1M",
           "cached": "Cached / 1M",
+          "modes": "Modes",
           "free": "Free",
           "badges": {
             "frontier": "Frontier",

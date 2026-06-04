@@ -336,6 +336,7 @@
           "input": "الإدخال / 1M",
           "output": "الإخراج / 1M",
           "cached": "المخزن / 1M",
+          "modes": "الأوضاع",
           "free": "مجاني",
           "badges": {
             "frontier": "رائد",

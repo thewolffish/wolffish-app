@@ -4,7 +4,7 @@ import type { CorpusEvents } from '@main/runtime/corpus'
 import type { ChatHistoryMessage } from '@preload/index'
 import type { WebContents } from 'electron'
 import type { TurnSink } from '@main/channels/channel'
-import type { TurnRunner } from '@main/channels/turn-runner'
+import type { TurnRunner, TurnSendOptions } from '@main/channels/turn-runner'
 
 /**
  * The Electron renderer channel. Wraps the existing chat:* IPC surface
@@ -36,13 +36,14 @@ export class ElectronChannel {
   /** chat:send IPC handler. Returns the turnId synchronously. */
   send(
     sender: WebContents,
-    payload: { history: ChatHistoryMessage[]; conversationId?: string | null }
+    payload: { history: ChatHistoryMessage[]; conversationId?: string | null; thinkingMode?: string }
   ): { turnId: string; ok: true } {
     if (this.activeController) this.activeController.abort()
 
     const handle = this.runner.send({
       history: payload.history,
       conversationId: payload.conversationId ?? null,
+      thinkingMode: (payload.thinkingMode as TurnSendOptions['thinkingMode']) ?? undefined,
       makeSink: ({ turnId, conversationId }) => this.createSink(turnId, conversationId, sender),
       onTurnStarted: ({ turnId, controller }) => {
         this.activeController = controller

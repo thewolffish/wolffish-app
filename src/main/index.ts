@@ -2182,6 +2182,7 @@ app.whenReady().then(async () => {
       payload: {
         history: Array<{ role: 'user' | 'assistant'; content: string }>
         conversationId?: string | null
+        thinkingMode?: string
       }
     ) => electronChannel.send(e.sender, payload)
   )

@@ -439,10 +439,13 @@ export type ProviderApi = {
   onUpdated: (listener: (event: ProviderUpdatedEvent) => void) => () => void
 }
 
+export type ThinkingMode = 'none' | 'basic' | 'extended' | 'max' | 'fast' | 'budget'
+
 export type ChatApi = {
   send: (payload: {
     history: ChatHistoryMessage[]
     conversationId?: string | null
+    thinkingMode?: ThinkingMode
   }) => Promise<{ turnId: string; ok: boolean; error?: string }>
   cancel: () => Promise<{ canceled: boolean }>
   respondApproval: (payload: { id: string; decision: ApprovalDecision }) => Promise<{ ok: boolean }>
