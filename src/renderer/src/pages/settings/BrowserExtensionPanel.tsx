@@ -1,4 +1,5 @@
 import { Button } from '@components/core/Button'
+import { Tooltip } from '@components/core/Tooltip'
 import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn'
 import type {
@@ -33,66 +34,66 @@ const STATUS_DOT_COLORS: Record<ExtensionConnectionStatus, string> = {
 const ACTIONS = [
   {
     categoryKey: 'navigation',
-    tools: ['browser_navigate', 'browser_back', 'browser_forward', 'browser_reload']
+    tools: ['ext_navigate', 'ext_back', 'ext_forward', 'ext_reload']
   },
   {
     categoryKey: 'interaction',
     tools: [
-      'browser_click',
-      'browser_type',
-      'browser_select',
-      'browser_hover',
-      'browser_scroll',
-      'browser_focus',
-      'browser_keypress',
-      'browser_drag_drop',
-      'browser_file_upload'
+      'ext_click',
+      'ext_type',
+      'ext_select',
+      'ext_hover',
+      'ext_scroll',
+      'ext_focus',
+      'ext_keypress',
+      'ext_drag_drop',
+      'ext_file_upload'
     ]
   },
   {
     categoryKey: 'reading',
     tools: [
-      'browser_read_page',
-      'browser_query_selector',
-      'browser_get_attribute',
-      'browser_get_value',
-      'browser_get_url',
-      'browser_get_page_info'
+      'ext_read_page',
+      'ext_query_selector',
+      'ext_get_attribute',
+      'ext_get_value',
+      'ext_get_url',
+      'ext_get_page_info'
     ]
   },
   {
     categoryKey: 'tabs',
     tools: [
-      'browser_tabs_list',
-      'browser_tab_open',
-      'browser_tab_close',
-      'browser_tab_switch',
-      'browser_windows_list',
-      'browser_window_open',
-      'browser_window_resize'
+      'ext_tabs_list',
+      'ext_tab_open',
+      'ext_tab_close',
+      'ext_tab_switch',
+      'ext_windows_list',
+      'ext_window_open',
+      'ext_window_resize'
     ]
   },
-  { categoryKey: 'capture', tools: ['browser_screenshot', 'browser_pdf', 'browser_download'] },
+  { categoryKey: 'capture', tools: ['ext_screenshot', 'ext_pdf', 'ext_download'] },
   {
     categoryKey: 'data',
     tools: [
-      'browser_cookies_get',
-      'browser_cookies_set',
-      'browser_cookies_remove',
-      'browser_storage_get',
-      'browser_storage_set',
-      'browser_clipboard_read',
-      'browser_clipboard_write'
+      'ext_cookies_get',
+      'ext_cookies_set',
+      'ext_cookies_remove',
+      'ext_storage_get',
+      'ext_storage_set',
+      'ext_clipboard_read',
+      'ext_clipboard_write'
     ]
   },
   {
     categoryKey: 'advanced',
     tools: [
-      'browser_execute_js',
-      'browser_wait_for',
-      'browser_wait_for_navigation',
-      'browser_wait_for_network_idle',
-      'browser_notify'
+      'ext_execute_js',
+      'ext_wait_for',
+      'ext_wait_for_navigation',
+      'ext_wait_for_network_idle',
+      'ext_notify'
     ]
   }
 ]
@@ -212,6 +213,18 @@ export function BrowserExtensionPanel(): React.JSX.Element {
     }
   }, [t, toast])
 
+  const handleScreenshotSave = useCallback(
+    async (patch: { screenshotMaxWidth?: number; screenshotFormat?: 'jpeg' | 'png' }) => {
+      try {
+        const result = await window.api.browserExtension.setConfig(patch)
+        setConfig(result.config)
+      } catch {
+        // best-effort
+      }
+    },
+    []
+  )
+
   const handleCopyPath = useCallback(() => {
     if (!extensionPath || copied) return
     void navigator.clipboard.writeText(extensionPath)
@@ -287,10 +300,10 @@ export function BrowserExtensionPanel(): React.JSX.Element {
               </button>
             </div>
             <div className="flex flex-wrap items-center gap-2 pt-1">
+              <BrowserBadge name="Chromium" supported icon={chromiumIcon} />
               <BrowserBadge name="Chrome" supported icon={chromeIcon} />
               <BrowserBadge name="Brave" supported icon={braveIcon} />
               <BrowserBadge name="Edge" supported icon={edgeIcon} />
-              <BrowserBadge name="Chromium" supported icon={chromiumIcon} />
               <BrowserBadge name="Safari" supported={false} icon={safariIcon} />
               <BrowserBadge name="Firefox" supported={false} icon={firefoxIcon} />
             </div>
@@ -442,6 +455,63 @@ export function BrowserExtensionPanel(): React.JSX.Element {
           </section>
         )}
 
+        {/* Screenshot Settings */}
+        {config && (
+          <section className="bg-surface border-border flex flex-col gap-5 rounded-2xl border p-6">
+            <div className="flex flex-col gap-2">
+              <label className="text-fg text-sm font-medium">
+                {t('settings.services.browserExtension.resolutionLabel')}
+              </label>
+              <p className="text-muted text-xs">
+                {t('settings.services.browserExtension.resolutionHint')}
+              </p>
+              <div className="flex gap-2">
+                {[640, 960, 1280, 1920].map((w) => (
+                  <button
+                    key={w}
+                    type="button"
+                    onClick={() => handleScreenshotSave({ screenshotMaxWidth: w })}
+                    className={cn(
+                      'rounded-lg border px-3 py-1.5 text-sm cursor-pointer transition-colors',
+                      config.screenshotMaxWidth === w
+                        ? 'bg-primary text-primary-fg border-primary'
+                        : 'border-border text-muted hover:bg-border/40 hover:text-fg'
+                    )}
+                  >
+                    {w}px
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <label className="text-fg text-sm font-medium">
+                {t('settings.services.browserExtension.formatLabel')}
+              </label>
+              <p className="text-muted text-xs">
+                {t('settings.services.browserExtension.formatHint')}
+              </p>
+              <div className="flex gap-2">
+                {(['jpeg', 'png'] as const).map((fmt) => (
+                  <button
+                    key={fmt}
+                    type="button"
+                    onClick={() => handleScreenshotSave({ screenshotFormat: fmt })}
+                    className={cn(
+                      'rounded-lg border px-3 py-1.5 text-sm cursor-pointer transition-colors uppercase',
+                      config.screenshotFormat === fmt
+                        ? 'bg-primary text-primary-fg border-primary'
+                        : 'border-border text-muted hover:bg-border/40 hover:text-fg'
+                    )}
+                  >
+                    {fmt}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </section>
+        )}
+
         {/* Actions Table */}
         <section className="bg-surface border-border flex flex-col rounded-2xl border">
           <div className="p-5 pb-3">
@@ -493,17 +563,26 @@ function BrowserBadge({
   supported: boolean
   icon: string
 }): React.JSX.Element {
+  const { t } = useTranslation()
   return (
-    <span
-      className={cn(
-        'inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-medium ring-1',
+    <Tooltip
+      content={
         supported
-          ? 'bg-emerald-500/10 text-emerald-600 ring-emerald-500/20 dark:text-emerald-400'
-          : 'bg-border/30 text-muted ring-border/50 line-through opacity-50'
-      )}
+          ? t('settings.services.browserExtension.supported')
+          : t('settings.services.browserExtension.notSupported')
+      }
     >
-      <img src={icon} alt={name} className={cn('h-3.5 w-3.5', !supported && 'grayscale')} />
-      {name}
-    </span>
+      <span
+        className={cn(
+          'inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-medium ring-1 cursor-default select-none',
+          supported
+            ? 'bg-emerald-500/10 text-emerald-600 ring-emerald-500/20 dark:text-emerald-400'
+            : 'bg-border/30 text-muted ring-border/50 line-through opacity-50'
+        )}
+      >
+        <img src={icon} alt={name} className={cn('h-3.5 w-3.5', !supported && 'grayscale')} />
+        {name}
+      </span>
+    </Tooltip>
   )
 }

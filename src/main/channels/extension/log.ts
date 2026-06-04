@@ -3,6 +3,8 @@ import { appendFile, mkdir, readFile, readdir } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
+const CONVERSATIONS_DIR = join(homedir(), '.wolffish', 'workspace', 'brain', 'conversations')
+
 const LOGS_DIR = join(homedir(), '.wolffish', 'workspace', 'logs', 'extension')
 let ready: Promise<void> | null = null
 
@@ -209,8 +211,21 @@ export async function readEvents(conversationId: string): Promise<ExtensionEvent
 
 export interface ConversationSummary {
   conversationId: string
+  title: string
   eventCount: number
   lastTimestamp: number
+}
+
+async function lookupTitle(conversationId: string): Promise<string> {
+  try {
+    const safe = (conversationId ?? '').replace(/[^A-Za-z0-9._-]/g, '_')
+    const filePath = join(CONVERSATIONS_DIR, `conv-${safe}.json`)
+    const raw = await readFile(filePath, 'utf8')
+    const conv = JSON.parse(raw) as { title?: string }
+    return conv.title || conversationId
+  } catch {
+    return conversationId
+  }
 }
 
 export async function listConversations(): Promise<ConversationSummary[]> {
@@ -226,8 +241,10 @@ export async function listConversations(): Promise<ConversationSummary[]> {
         const lines = raw.split('\n').filter(Boolean)
         if (lines.length === 0) continue
         const last = JSON.parse(lines[lines.length - 1]) as ExtensionEvent
+        const title = await lookupTitle(conversationId)
         summaries.push({
           conversationId,
+          title,
           eventCount: lines.length,
           lastTimestamp: last.timestamp
         })

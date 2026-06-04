@@ -881,6 +881,9 @@ export type ComputerUseApi = {
 
 export type BrowserExtensionConfig = {
   port: number
+  screenshotMaxWidth: number
+  screenshotFormat: 'jpeg' | 'png'
+  screenshotQuality: number
 }
 
 export type ExtensionConnectionStatus = 'stopped' | 'listening' | 'connected' | 'error'

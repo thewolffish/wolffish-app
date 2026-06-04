@@ -438,7 +438,7 @@ const turnRunner = new TurnRunner(agent)
 const electronChannel = new ElectronChannel(agent, turnRunner)
 const telegramChannel = new TelegramChannel(agent, turnRunner, localProvider)
 const whatsappChannel = new WhatsAppChannel(agent, turnRunner, localProvider)
-const extensionServer = new ExtensionServer(agent)
+const extensionServer = new ExtensionServer()
 
 agent.amygdala.setApprovalBridge((req) => turnRouter.dispatchApproval(req))
 
@@ -1176,8 +1176,8 @@ app.whenReady().then(async () => {
       _e,
       patch: Partial<BrowserExtensionConfig>
     ): Promise<{ ok: true; config: BrowserExtensionConfig }> => {
-      const updated = await persistBrowserExtensionConfig(patch)
-      const next = updated.browserExtension ?? { port: 23151 }
+      await persistBrowserExtensionConfig(patch)
+      const next = await getBrowserExtensionConfig()
       if (patch.port !== undefined) {
         extensionServer.sendPortUpdate(next.port)
         await extensionServer.stop()

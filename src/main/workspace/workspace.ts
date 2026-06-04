@@ -145,6 +145,9 @@ export type ComputerUseConfig = {
 
 export type BrowserExtensionConfig = {
   port: number
+  screenshotMaxWidth: number
+  screenshotFormat: 'jpeg' | 'png'
+  screenshotQuality: number
 }
 
 export type Variable = {
@@ -1165,22 +1168,38 @@ export async function setComputerUseConfig(
 // ─── Browser Extension ──────────────────────────────────────────────────
 
 const DEFAULT_BROWSER_EXTENSION_CONFIG: BrowserExtensionConfig = {
-  port: 23151
+  port: 23151,
+  screenshotMaxWidth: 1280,
+  screenshotFormat: 'jpeg',
+  screenshotQuality: 80
 }
 
 export async function getBrowserExtensionConfig(): Promise<BrowserExtensionConfig> {
   const config = await readConfig()
   const stored = config?.browserExtension
   if (!stored) return DEFAULT_BROWSER_EXTENSION_CONFIG
-  return { port: stored.port ?? 23151 }
+  return {
+    port: stored.port ?? 23151,
+    screenshotMaxWidth: stored.screenshotMaxWidth ?? 1280,
+    screenshotFormat: stored.screenshotFormat ?? 'jpeg',
+    screenshotQuality: stored.screenshotQuality ?? 80
+  }
 }
 
 export async function setBrowserExtensionConfig(
   patch: Partial<BrowserExtensionConfig>
 ): Promise<WorkspaceConfig> {
   return patchConfig((c) => {
-    const current = c.browserExtension ?? DEFAULT_BROWSER_EXTENSION_CONFIG
-    return { ...c, browserExtension: { port: patch.port ?? current.port } }
+    const current = { ...DEFAULT_BROWSER_EXTENSION_CONFIG, ...c.browserExtension }
+    return {
+      ...c,
+      browserExtension: {
+        port: patch.port ?? current.port,
+        screenshotMaxWidth: patch.screenshotMaxWidth ?? current.screenshotMaxWidth,
+        screenshotFormat: patch.screenshotFormat ?? current.screenshotFormat,
+        screenshotQuality: patch.screenshotQuality ?? current.screenshotQuality
+      }
+    }
   })
 }
 

@@ -694,7 +694,7 @@ function requireBrowserPolyfill() {
           }
           const f = (r) => r && typeof r == "object" && typeof r.then == "function", m = (r, o) => (...c) => {
             a.runtime.lastError ? r.reject(new Error(a.runtime.lastError.message)) : o.singleCallbackArg || c.length <= 1 && o.singleCallbackArg !== !1 ? r.resolve(c[0]) : r.resolve(c);
-          }, _ = (r) => r == 1 ? "argument" : "arguments", p = (r, o) => function(d, ...E) {
+          }, _ = (r) => r == 1 ? "argument" : "arguments", b = (r, o) => function(d, ...E) {
             if (E.length < o.minArgs)
               throw new Error(`Expected at least ${o.minArgs} ${_(o.minArgs)} for ${r}(), got ${E.length}`);
             if (E.length > o.maxArgs)
@@ -735,7 +735,7 @@ function requireBrowserPolyfill() {
                   if (typeof o[l] == "function")
                     R = v(r, r[l], o[l]);
                   else if (O(c, l)) {
-                    let x = p(l, c[l]);
+                    let x = b(l, c[l]);
                     R = v(r, r[l], x);
                   } else
                     R = R.bind(r);
@@ -777,7 +777,7 @@ function requireBrowserPolyfill() {
             removeListener(o, c) {
               o.removeListener(r.get(c));
             }
-          }), B = new A((r) => typeof r != "function" ? r : function(c) {
+          }), y = new A((r) => typeof r != "function" ? r : function(c) {
             const d = W(c, {}, {
               getContent: {
                 minArgs: 0,
@@ -787,8 +787,8 @@ function requireBrowserPolyfill() {
             r(d);
           }), u = new A((r) => typeof r != "function" ? r : function(c, d, E) {
             let h = !1, w, l = new Promise((I) => {
-              w = function(b) {
-                h = !0, I(b);
+              w = function(p) {
+                h = !0, I(p);
               };
             }), S;
             try {
@@ -800,16 +800,16 @@ function requireBrowserPolyfill() {
             if (S !== !0 && !R && !h)
               return !1;
             const x = (I) => {
-              I.then((b) => {
-                E(b);
-              }, (b) => {
+              I.then((p) => {
+                E(p);
+              }, (p) => {
                 let N;
-                b && (b instanceof Error || typeof b.message == "string") ? N = b.message : N = "An unexpected error occurred", E({
+                p && (p instanceof Error || typeof p.message == "string") ? N = p.message : N = "An unexpected error occurred", E({
                   __mozWebExtensionPolyfillReject__: !0,
                   message: N
                 });
-              }).catch((b) => {
-                console.error("Failed to send onMessage rejected reply", b);
+              }).catch((p) => {
+                console.error("Failed to send onMessage rejected reply", p);
               });
             };
             return x(R ? S : l), !0;
@@ -833,7 +833,7 @@ function requireBrowserPolyfill() {
           }, L = {
             devtools: {
               network: {
-                onRequestFinished: C(B)
+                onRequestFinished: C(y)
               }
             },
             runtime: {
@@ -850,7 +850,7 @@ function requireBrowserPolyfill() {
                 maxArgs: 3
               })
             }
-          }, y = {
+          }, B = {
             clear: {
               minArgs: 1,
               maxArgs: 1
@@ -866,13 +866,13 @@ function requireBrowserPolyfill() {
           };
           return g.privacy = {
             network: {
-              "*": y
+              "*": B
             },
             services: {
-              "*": y
+              "*": B
             },
             websites: {
-              "*": y
+              "*": B
             }
           }, W(a, L, g);
         };
@@ -1015,8 +1015,8 @@ const DEFAULT_PORT = 23151, LOG_PREFIX = "[Wolffish]", HEARTBEAT_INTERVAL_MS = 1
   })), await new Promise((n, i) => {
     var A, f;
     const a = setTimeout(() => i(new Error("Content script injection timed out")), 5e3), g = (m) => {
-      var _, p;
-      (m == null ? void 0 : m.source) === "content-script" && "type" in m.payload && m.payload.type === "pong" && (clearTimeout(a), (p = (_ = api$1 == null ? void 0 : api$1.runtime) == null ? void 0 : _.onMessage) == null || p.removeListener(g), n());
+      var _, b;
+      (m == null ? void 0 : m.source) === "content-script" && "type" in m.payload && m.payload.type === "pong" && (clearTimeout(a), (b = (_ = api$1 == null ? void 0 : api$1.runtime) == null ? void 0 : _.onMessage) == null || b.removeListener(g), n());
     };
     (f = (A = api$1 == null ? void 0 : api$1.runtime) == null ? void 0 : A.onMessage) == null || f.addListener(g);
   }));
@@ -1052,9 +1052,9 @@ const checkStoragePermission = (e) => {
   if (chrome$1 && !chrome$1.storage[e])
     throw new Error(`"storage" permission in manifest.ts: "storage ${e}" isn't defined`);
 }, createStorage = (e, s, t) => {
-  var C, B;
+  var C, y;
   let n = null, i = !1, a = [];
-  const g = (t == null ? void 0 : t.storageEnum) ?? StorageEnum.Local, A = ((C = t == null ? void 0 : t.serialization) == null ? void 0 : C.serialize) ?? ((u) => u), f = ((B = t == null ? void 0 : t.serialization) == null ? void 0 : B.deserialize) ?? ((u) => u);
+  const g = (t == null ? void 0 : t.storageEnum) ?? StorageEnum.Local, A = ((C = t == null ? void 0 : t.serialization) == null ? void 0 : C.serialize) ?? ((u) => u), f = ((y = t == null ? void 0 : t.serialization) == null ? void 0 : y.deserialize) ?? ((u) => u);
   globalSessionAccessLevelFlag === !1 && g === StorageEnum.Session && (t == null ? void 0 : t.sessionAccessForContentScripts) === !0 && (checkStoragePermission(g), chrome$1 == null || chrome$1.storage[g].setAccessLevel({
     accessLevel: SessionAccessLevelEnum.ExtensionPagesAndContentScripts
   }).catch((u) => {
@@ -1066,7 +1066,7 @@ const checkStoragePermission = (e) => {
     return u ? f(u[e]) ?? s : s;
   }, _ = async (u) => {
     i || (n = await m()), n = await updateCache(u, n), await (chrome$1 == null ? void 0 : chrome$1.storage[g].set({ [e]: A(n) })), O();
-  }, p = (u) => (a = [...a, u], () => {
+  }, b = (u) => (a = [...a, u], () => {
     a = a.filter((T) => T !== u);
   }), v = () => n, O = () => {
     a.forEach((u) => u());
@@ -1082,7 +1082,7 @@ const checkStoragePermission = (e) => {
     get: m,
     set: _,
     getSnapshot: v,
-    subscribe: p
+    subscribe: b
   };
 }, storage = createStorage("wolffish-connection-config", { port: 23151 }, {
   storageEnum: StorageEnum.Local
@@ -1227,8 +1227,8 @@ const connectWebSocket = async (e) => {
 }, handleScreenshot = async (e) => {
   const { format: s, quality: t, fullPage: n, selector: i } = e;
   if (i || n) {
-    const p = await resolveTabId(e);
-    return await ensureContentScriptInjected(p), (await sendToContentScript(p, {
+    const b = await resolveTabId(e);
+    return await ensureContentScriptInjected(b), (await sendToContentScript(b, {
       source: "service-worker",
       target: "content-script",
       payload: {
@@ -1397,6 +1397,12 @@ const handleWolffishEvent = (e) => {
     });
     return;
   }
+  if (e.event === "conversation_events") {
+    const s = e.data;
+    api.runtime.sendMessage({ payload: { event: "conversation_events", data: s } }).catch(() => {
+    });
+    return;
+  }
 };
 api.runtime.onMessage.addListener(
   (e, s, t) => {
@@ -1406,13 +1412,13 @@ api.runtime.onMessage.addListener(
       return;
     }
     if (e.type === "get_events")
-      return t({
+      return sendToServer({ type: "get_conversations" }), t({
         events: cachedEvents,
         conversations: cachedConversations,
         activeConversation: activeConversationId
       }), !0;
     if (e.type === "get_conversation_events" && e.conversationId)
-      return t({ events: cachedEvents }), !0;
+      return sendToServer({ type: "get_conversation_events", conversationId: e.conversationId }), t({ events: cachedEvents }), !0;
   }
 );
 const startConnection = async () => {

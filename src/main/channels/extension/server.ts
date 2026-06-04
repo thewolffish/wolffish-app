@@ -4,10 +4,9 @@ import {
   readEvents,
   type ExtensionEvent
 } from '@main/channels/extension/log'
-import { buildExtensionCapability, EXTENSION_CAPABILITY_NAME } from '@main/channels/extension/tools'
-import type { Agent } from '@main/runtime/agent'
+import { saveConversation, createConversation } from '@main/conversations'
 import { wlog } from '@main/workspace/logger'
-import { getRuntimeExtensionVersion } from '@main/workspace/workspace'
+import { getBrowserExtensionConfig, getRuntimeExtensionVersion } from '@main/workspace/workspace'
 import { randomUUID } from 'node:crypto'
 import { appendFile, mkdir } from 'node:fs/promises'
 import { homedir } from 'node:os'
@@ -91,7 +90,7 @@ export class ExtensionServer {
   private currentPort = 23151
   private onStatusChange: ((status: ExtensionServerStatus) => void) | null = null
 
-  constructor(private agent: Agent) {}
+  constructor() {}
 
   setStatusChangeHandler(handler: (status: ExtensionServerStatus) => void): void {
     this.onStatusChange = handler
@@ -163,7 +162,7 @@ export class ExtensionServer {
       this.client = null
     }
 
-    this.unregisterCapability()
+    this.clearBridge()
 
     if (this.wss) {
       await new Promise<void>((resolve) => {
@@ -242,13 +241,24 @@ export class ExtensionServer {
 
     void debug('INFO', 'running test scenario')
     const saved = this.currentConversationId
-    this.currentConversationId = this.currentConversationId ?? '_test'
+    const testId = `test-${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')}`
+    this.currentConversationId = testId
+
+    // Create a conversation file so the side panel shows a proper title
+    try {
+      const conv = createConversation(null)
+      conv.id = testId
+      conv.title = 'Extension Test'
+      await saveConversation(conv)
+    } catch {
+      // best-effort
+    }
+
+    // Push events_sync so the extension shows this conversation as active
+    void this.pushEventsSync(testId)
 
     const steps: Array<{ type: string; params: Record<string, unknown> }> = [
-      {
-        type: 'browser_navigate',
-        params: { url: 'https://wolffi.sh/extension', waitUntil: 'load' }
-      },
+      { type: 'browser_tab_open', params: { url: 'https://wolffi.sh/extension', active: true } },
       { type: 'browser_get_url', params: {} },
       { type: 'browser_tabs_list', params: {} },
       { type: 'browser_cookies_get', params: { domain: 'wolffi.sh' } },
@@ -330,7 +340,7 @@ export class ExtensionServer {
       wlog.info(TAG, 'New connection replacing existing client')
       this.client.close()
       this.rejectAllPending('Replaced by new connection')
-      this.unregisterCapability()
+      this.clearBridge()
     }
 
     this.client = ws
@@ -338,7 +348,7 @@ export class ExtensionServer {
     this.status = 'connected'
     this.statusError = null
     this.startHeartbeat()
-    this.registerCapability()
+    this.exposeBridge()
     this.broadcastStatus()
     wlog.info(TAG, 'Extension connected')
     void debug('INFO', `handleConnection complete — readyState=${ws.readyState}`)
@@ -362,7 +372,7 @@ export class ExtensionServer {
         this.extensionVersion = null
         this.stopHeartbeat()
         this.rejectAllPending('Extension disconnected')
-        this.unregisterCapability()
+        this.clearBridge()
         this.broadcastStatus()
         wlog.info(TAG, 'Extension disconnected')
         void debug('INFO', 'cleanup complete after disconnect')
@@ -393,6 +403,16 @@ export class ExtensionServer {
     if (msg.type === 'ping') {
       this.lastPing = Date.now()
       this.sendRaw({ type: 'pong' })
+      return
+    }
+
+    if (msg.type === 'get_conversations') {
+      void this.pushConversationsList()
+      return
+    }
+
+    if (msg.type === 'get_conversation_events' && typeof msg.conversationId === 'string') {
+      void this.pushConversationEvents(msg.conversationId as string)
       return
     }
 
@@ -433,6 +453,38 @@ export class ExtensionServer {
         event: 'events_sync',
         data: { conversationId, events }
       })
+      const conversations = await listConversations()
+      this.sendRaw({
+        type: 'event',
+        event: 'conversations_list',
+        data: conversations
+      })
+    } catch {
+      // best-effort
+    }
+  }
+
+  private async pushConversationsList(): Promise<void> {
+    try {
+      const conversations = await listConversations()
+      this.sendRaw({
+        type: 'event',
+        event: 'conversations_list',
+        data: conversations
+      })
+    } catch {
+      // best-effort
+    }
+  }
+
+  private async pushConversationEvents(conversationId: string): Promise<void> {
+    try {
+      const events = await readEvents(conversationId)
+      this.sendRaw({
+        type: 'event',
+        event: 'conversation_events',
+        data: { conversationId, events }
+      })
     } catch {
       // best-effort
     }
@@ -446,22 +498,18 @@ export class ExtensionServer {
     })
   }
 
-  private registerCapability(): void {
-    try {
-      const { capability, plugin } = buildExtensionCapability({
-        sendCommand: (type, params) => this.sendCommand(type, params),
-        isConnected: () => this.isConnected()
-      })
-      this.agent.cerebellum.registerInProcessCapability(capability, plugin)
-      wlog.info(TAG, 'Registered browser-extension capability')
-      void debug('INFO', 'capability registered')
-    } catch (err) {
-      void debug('ERROR', `registerCapability failed: ${err instanceof Error ? err.message : err}`)
+  private exposeBridge(): void {
+    ;(globalThis as Record<string, unknown>).__wolffishExtensionBridge = {
+      sendCommand: (type: string, params: Record<string, unknown>) => this.sendCommand(type, params),
+      isConnected: () => this.isConnected(),
+      getStatus: () => this.getStatus(),
+      getConfig: () => getBrowserExtensionConfig()
     }
+    void debug('INFO', 'bridge exposed on globalThis')
   }
 
-  private unregisterCapability(): void {
-    this.agent.cerebellum.unregisterInProcessCapability(EXTENSION_CAPABILITY_NAME)
+  private clearBridge(): void {
+    ;(globalThis as Record<string, unknown>).__wolffishExtensionBridge = null
   }
 
   private startHeartbeat(): void {
