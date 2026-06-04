@@ -882,7 +882,7 @@
         "step1Link": "chrome://extensions",
         "step1Toast": "Attempted to open chrome://extensions",
         "step2": "Enable \"Developer mode\" (top-right toggle)",
-        "step3": "Click \"Load unpacked\" and select the extension folder below",
+        "step3": "Click \"Load unpacked\" and select — or drag & drop — the extension folder below",
         "step4": "The extension will connect automatically to Wolffish",
         "waitingForConnection": "Server is running — install the extension and it will connect automatically.",
         "testBtn": "Test connection",
@@ -1236,6 +1236,21 @@
       "local": "Local",
       "cloud": "Cloud",
       "noModel": "No model selected"
+    },
+    "thinkingMode": {
+      "ariaLabel": "Thinking mode",
+      "none": "Normal",
+      "noneTooltip": "Standard response without extended thinking",
+      "basic": "Think",
+      "basicTooltip": "Enable basic thinking",
+      "extended": "Deep",
+      "extendedTooltip": "Enable extended deep thinking",
+      "max": "Max",
+      "maxTooltip": "Maximum thinking depth and detail",
+      "fast": "Fast",
+      "fastTooltip": "Quick responses with minimal thinking",
+      "budget": "Budget",
+      "budgetTooltip": "Cost-optimized thinking mode"
     },
     "newChatShort": "New",
     "approval": {

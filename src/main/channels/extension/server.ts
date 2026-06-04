@@ -4,7 +4,6 @@ import {
   readEvents,
   type ExtensionEvent
 } from '@main/channels/extension/log'
-import { saveConversation, createConversation } from '@main/conversations'
 import { wlog } from '@main/workspace/logger'
 import { getBrowserExtensionConfig, getRuntimeExtensionVersion } from '@main/workspace/workspace'
 import { randomUUID } from 'node:crypto'
@@ -243,16 +242,6 @@ export class ExtensionServer {
     const saved = this.currentConversationId
     const testId = `test-${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')}`
     this.currentConversationId = testId
-
-    // Create a conversation file so the side panel shows a proper title
-    try {
-      const conv = createConversation(null)
-      conv.id = testId
-      conv.title = 'Extension Test'
-      await saveConversation(conv)
-    } catch {
-      // best-effort
-    }
 
     // Push events_sync so the extension shows this conversation as active
     void this.pushEventsSync(testId)

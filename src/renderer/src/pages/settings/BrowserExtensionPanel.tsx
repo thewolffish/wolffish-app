@@ -310,55 +310,6 @@ export function BrowserExtensionPanel(): React.JSX.Element {
           </section>
         )}
 
-        {/* Installation Guide (shown when never connected this session) */}
-        {showInstallGuide && (
-          <section className="bg-surface border-border flex flex-col gap-4 rounded-2xl border p-6">
-            <h2 className="text-fg text-sm font-semibold">
-              {t('settings.services.browserExtension.installTitle')}
-            </h2>
-            <ol className="text-muted flex flex-col gap-3 text-sm leading-relaxed">
-              {[1, 2, 3, 4].map((step) => (
-                <li key={step} className="flex items-start gap-3">
-                  <span
-                    className={cn(
-                      'flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xs font-bold',
-                      'bg-primary/15 text-primary'
-                    )}
-                  >
-                    {step}
-                  </span>
-                  <span>
-                    {t(`settings.services.browserExtension.step${step}`)}
-                    {step === 1 && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          window.api.browserExtension.openExtensionsPage()
-                          toast.show({
-                            message: t('settings.services.browserExtension.step1Toast'),
-                            tone: 'success'
-                          })
-                        }}
-                        className="text-primary hover:text-primary/80 cursor-pointer underline"
-                      >
-                        {t('settings.services.browserExtension.step1Link')}
-                      </button>
-                    )}
-                  </span>
-                </li>
-              ))}
-            </ol>
-            {isListening && (
-              <div className="flex items-center gap-2">
-                <span className="inline-block h-2 w-2 shrink-0 rounded-full bg-green-500 animate-pulse" />
-                <p className="text-green-500 text-xs animate-pulse">
-                  {t('settings.services.browserExtension.waitingForConnection')}
-                </p>
-              </div>
-            )}
-          </section>
-        )}
-
         {/* Connection Status */}
         {status && (
           <section className="bg-surface border-border flex flex-col gap-4 rounded-2xl border p-6">
@@ -509,6 +460,55 @@ export function BrowserExtensionPanel(): React.JSX.Element {
                 ))}
               </div>
             </div>
+          </section>
+        )}
+
+        {/* Installation Guide (shown when never connected this session) */}
+        {showInstallGuide && (
+          <section className="bg-surface border-border flex flex-col gap-4 rounded-2xl border p-6">
+            <h2 className="text-fg text-sm font-semibold">
+              {t('settings.services.browserExtension.installTitle')}
+            </h2>
+            <ol className="text-muted flex flex-col gap-3 text-sm leading-relaxed">
+              {[1, 2, 3, 4].map((step) => (
+                <li key={step} className="flex items-start gap-3">
+                  <span
+                    className={cn(
+                      'flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xs font-bold',
+                      'bg-primary/15 text-primary'
+                    )}
+                  >
+                    {step}
+                  </span>
+                  <span>
+                    {t(`settings.services.browserExtension.step${step}`)}
+                    {step === 1 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          window.api.browserExtension.openExtensionsPage()
+                          toast.show({
+                            message: t('settings.services.browserExtension.step1Toast'),
+                            tone: 'success'
+                          })
+                        }}
+                        className="text-primary hover:text-primary/80 cursor-pointer underline"
+                      >
+                        {t('settings.services.browserExtension.step1Link')}
+                      </button>
+                    )}
+                  </span>
+                </li>
+              ))}
+            </ol>
+            {isListening && (
+              <div className="flex items-center gap-2">
+                <span className="inline-block h-2 w-2 shrink-0 rounded-full bg-green-500 animate-pulse" />
+                <p className="text-green-500 text-xs animate-pulse">
+                  {t('settings.services.browserExtension.waitingForConnection')}
+                </p>
+              </div>
+            )}
           </section>
         )}
 

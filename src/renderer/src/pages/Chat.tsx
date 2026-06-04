@@ -1,4 +1,8 @@
 import { ActiveModelChip } from '@components/common/active-model-chip/ActiveModelChip'
+import {
+  ThinkingModeSelect,
+  type ThinkingModeOption
+} from '@components/common/thinking-mode-select/ThinkingModeSelect'
 import { CodeFileViewer } from '@components/common/code-file-viewer/CodeFileViewer'
 import { PdfViewer } from '@components/common/pdf-viewer/PdfViewer'
 import { ApprovalCard } from '@components/common/approval-card/ApprovalCard'
@@ -111,6 +115,43 @@ export function Chat(): React.JSX.Element {
   }, [cloudProviders, cloudPriority])
   const hasAnyModel = !!currentModel || hasCloudProvider
   const [savingMode, setSavingMode] = useState(false)
+  const [thinkingMode, setThinkingMode] = useState('none')
+
+  // Phase 2 will derive options per provider/model from API docs.
+  // For now, always show the full set so the UI can be reviewed.
+  const thinkingModeOptions = useMemo<ThinkingModeOption[]>(
+    () => [
+      {
+        value: 'none',
+        labelKey: 'chat.thinkingMode.none',
+        tooltipKey: 'chat.thinkingMode.noneTooltip'
+      },
+      {
+        value: 'basic',
+        labelKey: 'chat.thinkingMode.basic',
+        tooltipKey: 'chat.thinkingMode.basicTooltip'
+      },
+      {
+        value: 'extended',
+        labelKey: 'chat.thinkingMode.extended',
+        tooltipKey: 'chat.thinkingMode.extendedTooltip'
+      },
+      {
+        value: 'max',
+        labelKey: 'chat.thinkingMode.max',
+        tooltipKey: 'chat.thinkingMode.maxTooltip'
+      }
+    ],
+    []
+  )
+
+  useEffect(() => {
+    if (thinkingModeOptions.length === 0) {
+      setThinkingMode('none')
+    } else if (!thinkingModeOptions.some((o) => o.value === thinkingMode)) {
+      setThinkingMode(thinkingModeOptions[0].value)
+    }
+  }, [thinkingModeOptions, thinkingMode])
 
   const [heartbeatActive, setHeartbeatActive] = useState(false)
   useEffect(() => {
@@ -1256,6 +1297,14 @@ export function Chat(): React.JSX.Element {
                 cloudModel={cloudProviders.find((p) => p.id === activeCloudProvider)?.model ?? null}
                 localModel={currentModel}
               />
+              {thinkingModeOptions.length > 0 && (
+                <ThinkingModeSelect
+                  value={thinkingMode}
+                  options={thinkingModeOptions}
+                  onChange={setThinkingMode}
+                  disabled={savingMode || streaming}
+                />
+              )}
             </div>
             <button
               type="button"
