@@ -1,6 +1,7 @@
 import {
   listConversations,
   logEvent,
+  lookupTitle,
   readEvents,
   type ExtensionEvent
 } from '@main/channels/extension/log'
@@ -436,11 +437,14 @@ export class ExtensionServer {
 
   private async pushEventsSync(conversationId: string): Promise<void> {
     try {
-      const events = await readEvents(conversationId)
+      const [events, title] = await Promise.all([
+        readEvents(conversationId),
+        lookupTitle(conversationId)
+      ])
       this.sendRaw({
         type: 'event',
         event: 'events_sync',
-        data: { conversationId, events }
+        data: { conversationId, title, events }
       })
       const conversations = await listConversations()
       this.sendRaw({

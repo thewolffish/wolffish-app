@@ -218,7 +218,7 @@ export interface ConversationSummary {
   lastTimestamp: number
 }
 
-async function lookupTitle(conversationId: string): Promise<string> {
+export async function lookupTitle(conversationId: string): Promise<string> {
   if (conversationId.startsWith('test-') || conversationId === '_test') {
     return 'extensionTest'
   }

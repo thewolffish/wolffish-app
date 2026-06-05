@@ -355,6 +355,7 @@ export function Chat(): React.JSX.Element {
   const pendingTurnIdRef = useRef<string | null>(null)
   const conversationRef = useRef<ConversationFile | null>(null)
   const titleGeneratedRef = useRef(false)
+  const modelContextWindowRef = useRef<number | null>(null)
   // Tracks the last working-folder value we communicated to the model
   // per conversation. Lets us emit a one-shot "cleared" notice on the
   // transition from set→null so the model stops referring to the old
@@ -526,6 +527,7 @@ export function Chat(): React.JSX.Element {
     void window.api.model.capabilities().then((caps) => {
       if (cancelled) return
       setModelVisionSupport({ supportsVision: caps.supportsVision, model: caps.model })
+      modelContextWindowRef.current = caps.contextWindow
     })
     return () => {
       cancelled = true
@@ -609,7 +611,8 @@ export function Chat(): React.JSX.Element {
         titleGeneratedRef.current = conv.title !== 'Untitled'
         if (conv.contextMeter) {
           setContextTokens(conv.contextMeter.contextTokens)
-          setContextBudget(conv.contextMeter.contextBudget)
+          const cw = modelContextWindowRef.current
+          setContextBudget(cw && cw > 8_000 ? cw : conv.contextMeter.contextBudget)
         } else {
           setContextTokens(null)
           setContextBudget(null)

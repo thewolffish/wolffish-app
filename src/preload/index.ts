@@ -396,6 +396,7 @@ export type ModelCapabilities = {
   provider: string | null
   model: string | null
   supportsVision: boolean
+  contextWindow: number
 }
 
 export type ModelApi = {
