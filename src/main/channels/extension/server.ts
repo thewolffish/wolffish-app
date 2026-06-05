@@ -87,10 +87,9 @@ export class ExtensionServer {
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null
   private extensionVersion: string | null = null
   private currentConversationId: string | null = null
+  private syncedConversationId: string | null = null
   private currentPort = 23151
   private onStatusChange: ((status: ExtensionServerStatus) => void) | null = null
-
-  constructor() {}
 
   setStatusChangeHandler(handler: (status: ExtensionServerStatus) => void): void {
     this.onStatusChange = handler
@@ -194,9 +193,6 @@ export class ExtensionServer {
 
   setConversationId(id: string | null): void {
     this.currentConversationId = id
-    if (this.isConnected() && id) {
-      void this.pushEventsSync(id)
-    }
   }
 
   async sendCommand(
@@ -212,6 +208,10 @@ export class ExtensionServer {
     const command: WolffishCommand = { id, type, params }
 
     if (this.currentConversationId) {
+      if (this.currentConversationId !== this.syncedConversationId) {
+        this.syncedConversationId = this.currentConversationId
+        void this.pushEventsSync(this.currentConversationId)
+      }
       const event = await logEvent(this.currentConversationId, type, params)
       this.pushEventLogged(event)
     }
@@ -493,7 +493,8 @@ export class ExtensionServer {
 
   private exposeBridge(): void {
     ;(globalThis as Record<string, unknown>).__wolffishExtensionBridge = {
-      sendCommand: (type: string, params: Record<string, unknown>) => this.sendCommand(type, params),
+      sendCommand: (type: string, params: Record<string, unknown>) =>
+        this.sendCommand(type, params),
       isConnected: () => this.isConnected(),
       getStatus: () => this.getStatus(),
       getConfig: () => getBrowserExtensionConfig()
