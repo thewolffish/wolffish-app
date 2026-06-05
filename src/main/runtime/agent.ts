@@ -736,7 +736,15 @@ export class Agent {
   private filterToolsForProvider(tools: ToolDefinition[], message: string): ToolDefinition[] {
     const provider = this.thalamus.getActiveProvider()
     const limit =
-      provider === 'openai' ? 128 : provider === 'xai' ? 200 : null
+      provider === 'openai'
+        ? 128
+        : provider === 'xai'
+          ? 200
+          : provider === 'qwen'
+            ? 20
+            : provider === 'stepfun'
+              ? 128
+              : null
     if (limit === null || tools.length <= limit) {
       return tools
     }

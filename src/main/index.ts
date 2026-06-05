@@ -337,6 +337,49 @@ async function fetchProviderModels(
       return { ok: true, models }
     }
 
+    if (id === 'qwen') {
+      const res = await fetch(
+        'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/models',
+        {
+          method: 'GET',
+          headers: { Authorization: `Bearer ${apiKey}` }
+        }
+      )
+      if (!res.ok) {
+        const text = await res.text().catch(() => '')
+        return { ok: false, ...classifyHttpError(res.status, text) }
+      }
+      const body = (await res.json()) as {
+        data?: Array<{ id: string; created?: number }>
+      }
+      const models = (body.data ?? [])
+        .filter((m) => isQwenChatModel(m.id))
+        .slice()
+        .sort((a, b) => (b.created ?? 0) - (a.created ?? 0))
+        .map((m) => m.id)
+      return { ok: true, models }
+    }
+
+    if (id === 'stepfun') {
+      const res = await fetch('https://api.stepfun.ai/v1/models', {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${apiKey}` }
+      })
+      if (!res.ok) {
+        const text = await res.text().catch(() => '')
+        return { ok: false, ...classifyHttpError(res.status, text) }
+      }
+      const body = (await res.json()) as {
+        data?: Array<{ id: string; created?: number }>
+      }
+      const models = (body.data ?? [])
+        .filter((m) => isStepfunChatModel(m.id))
+        .slice()
+        .sort((a, b) => (b.created ?? 0) - (a.created ?? 0))
+        .map((m) => m.id)
+      return { ok: true, models }
+    }
+
     if (id === 'xai') {
       const res = await fetch('https://api.x.ai/v1/models', {
         method: 'GET',
@@ -399,6 +442,33 @@ function isDeepSeekChatModel(id: string): boolean {
 
 function isMiniMaxChatModel(id: string): boolean {
   return id.startsWith('MiniMax-M')
+}
+
+function isStepfunChatModel(id: string): boolean {
+  if (id.startsWith('step-')) {
+    if (/-(image|tts|asr|embed)/.test(id)) return false
+    return true
+  }
+  return false
+}
+
+function isQwenChatModel(id: string): boolean {
+  // Include qwen chat/reasoning models, exclude image/video/audio/embedding/translate/asr/tts/omni-realtime
+  if (/^(qwen|qwq|qvq)/.test(id)) {
+    if (
+      /-(image|tts|asr|realtime|embed|livetranslate|captioner|ocr|character)/.test(id) ||
+      /^(wan|z-image|text-embedding|ccai|tongyi)/.test(id) ||
+      id.startsWith('qwen-image') ||
+      id.startsWith('qwen-vl-ocr') ||
+      id.startsWith('qwen-mt') ||
+      id.startsWith('qwen-omni') ||
+      id.startsWith('qwen3-omni') ||
+      id.startsWith('qwen3.5-omni')
+    )
+      return false
+    return true
+  }
+  return false
 }
 
 function isXAIChatModel(id: string): boolean {

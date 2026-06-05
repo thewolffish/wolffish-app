@@ -6,6 +6,8 @@ import { KimiProvider } from '@main/runtime/providers/kimi'
 import { MiniMaxProvider } from '@main/runtime/providers/minimax'
 import { MimoProvider } from '@main/runtime/providers/mimo'
 import { OpenAIProvider } from '@main/runtime/providers/openai'
+import { QwenProvider } from '@main/runtime/providers/qwen'
+import { StepfunProvider } from '@main/runtime/providers/stepfun'
 import { XAIProvider } from '@main/runtime/providers/xai'
 import { net } from 'electron'
 
@@ -38,7 +40,7 @@ export type ChatMessage =
       images?: ToolResultImage[]
     }
 
-export type ProviderId = 'anthropic' | 'openai' | 'deepseek' | 'mimo' | 'kimi' | 'minimax' | 'xai' | 'local'
+export type ProviderId = 'anthropic' | 'openai' | 'deepseek' | 'mimo' | 'kimi' | 'minimax' | 'xai' | 'qwen' | 'stepfun' | 'local'
 
 export type ToolDefinition = {
   name: string
@@ -110,7 +112,7 @@ export type StreamChunk =
   | { type: 'no_provider_available'; info: NoProviderAvailableInfo }
 
 export type CloudProviderConfig = {
-  id: 'anthropic' | 'openai' | 'deepseek' | 'mimo' | 'kimi' | 'minimax' | 'xai'
+  id: 'anthropic' | 'openai' | 'deepseek' | 'mimo' | 'kimi' | 'minimax' | 'xai' | 'qwen' | 'stepfun'
   model: string
   apiKey: string
   models?: string[]
@@ -149,6 +151,8 @@ const PROVIDER_LOGO: Record<ProviderId, string> = {
   kimi: 'kimi',
   minimax: 'minimax',
   xai: 'xai',
+  qwen: 'qwen',
+  stepfun: 'stepfun',
   local: 'ollama'
 }
 
@@ -640,6 +644,18 @@ export class Thalamus {
           model: cfg.model,
           provider: new XAIProvider(cfg.apiKey, cfg.model)
         })
+      } else if (id === 'qwen') {
+        out.push({
+          id: 'qwen',
+          model: cfg.model,
+          provider: new QwenProvider(cfg.apiKey, cfg.model)
+        })
+      } else if (id === 'stepfun') {
+        out.push({
+          id: 'stepfun',
+          model: cfg.model,
+          provider: new StepfunProvider(cfg.apiKey, cfg.model)
+        })
       }
     }
     if (this.local.isReady) {
@@ -795,6 +811,20 @@ function contextWindowForModel(model: string): number {
   // MiniMax
   if (m.includes('minimax-m3')) return 1_000_000
   if (m.includes('minimax-m2')) return 200_000
+  // Qwen Cloud
+  if (m.includes('qwen3.7-max') || m.includes('qwen3.7-plus')) return 1_000_000
+  if (m.includes('qwen3.6')) return 1_000_000
+  if (m.includes('qwen3.5-plus') || m.includes('qwen3.5-flash')) return 1_000_000
+  if (m.includes('qwen3-max') || m.includes('qwen3-coder')) return 131_072
+  if (m.includes('qwen-max') || m.includes('qwen-plus')) return 131_072
+  if (m.includes('qwen-turbo') || m.includes('qwen-flash')) return 131_072
+  // Stepfun
+  if (m.includes('step-3')) return 128_000
+  if (m.includes('step-2-16k')) return 16_000
+  if (m.includes('step-2')) return 128_000
+  if (m.includes('step-1-200k')) return 200_000
+  if (m.includes('step-1-128k')) return 128_000
+  if (m.includes('step-1')) return 64_000
   // xAI / Grok
   if (m.includes('grok-4.3') || m.includes('grok-4.20')) return 1_000_000
   if (m.includes('grok-build')) return 256_000

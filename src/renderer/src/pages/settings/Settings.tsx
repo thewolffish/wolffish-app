@@ -12,7 +12,9 @@ import {
   OllamaLogo,
   OpenAILogo,
   TelegramLogo,
-  XAILogo
+  XAILogo,
+  QwenLogo,
+  StepfunLogo
 } from '@components/core/ProviderLogos'
 import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
@@ -516,6 +518,12 @@ export function Settings(): React.JSX.Element {
         <TabPanel active={active === 'model' && provider === 'xai'}>
           <CloudProviderPanel provider="xai" />
         </TabPanel>
+        <TabPanel active={active === 'model' && provider === 'qwen'}>
+          <CloudProviderPanel provider="qwen" />
+        </TabPanel>
+        <TabPanel active={active === 'model' && provider === 'stepfun'}>
+          <CloudProviderPanel provider="stepfun" />
+        </TabPanel>
         <TabPanel active={active === 'services' && effectiveService === 'tts' && ttsAvailable}>
           <TextToSpeechPanel />
         </TabPanel>
@@ -573,8 +581,8 @@ function TabPanel({
   return <>{children}</>
 }
 
-type Provider = 'ollama' | 'anthropic' | 'openai' | 'deepseek' | 'mimo' | 'kimi' | 'minimax' | 'xai'
-const PROVIDERS: Provider[] = ['mimo', 'deepseek', 'kimi', 'minimax', 'anthropic', 'xai', 'openai', 'ollama']
+type Provider = 'ollama' | 'anthropic' | 'openai' | 'deepseek' | 'mimo' | 'kimi' | 'minimax' | 'xai' | 'qwen' | 'stepfun'
+const PROVIDERS: Provider[] = ['qwen', 'mimo', 'deepseek', 'kimi', 'minimax', 'stepfun', 'anthropic', 'xai', 'openai', 'ollama']
 
 const PROVIDER_ICONS: Record<
   Provider,
@@ -587,7 +595,9 @@ const PROVIDER_ICONS: Record<
   mimo: MimoLogo,
   kimi: KimiLogo,
   minimax: MiniMaxLogo,
-  xai: XAILogo
+  xai: XAILogo,
+  qwen: QwenLogo,
+  stepfun: StepfunLogo
 }
 
 type Channel = 'telegram' | 'whatsapp'

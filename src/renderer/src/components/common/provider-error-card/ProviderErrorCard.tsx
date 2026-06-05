@@ -6,14 +6,16 @@ import {
   MimoLogo,
   OllamaLogo,
   OpenAILogo,
-  XAILogo
+  XAILogo,
+  QwenLogo,
+  StepfunLogo
 } from '@components/core/ProviderLogos'
 import { cn } from '@lib/utils/cn'
 import { CloudIcon } from 'hugeicons-react'
 import { useTranslation } from 'react-i18next'
 import type { IconType } from 'react-icons'
 
-type Logo = 'anthropic' | 'openai' | 'deepseek' | 'mimo' | 'kimi' | 'minimax' | 'xai' | 'ollama'
+type Logo = 'anthropic' | 'openai' | 'deepseek' | 'mimo' | 'kimi' | 'minimax' | 'xai' | 'qwen' | 'stepfun' | 'ollama'
 
 const LOGO: Record<Logo, IconType | React.ComponentType<{ size?: number; className?: string }>> = {
   anthropic: AnthropicLogo,
@@ -23,6 +25,8 @@ const LOGO: Record<Logo, IconType | React.ComponentType<{ size?: number; classNa
   kimi: KimiLogo,
   minimax: MiniMaxLogo,
   xai: XAILogo,
+  qwen: QwenLogo,
+  stepfun: StepfunLogo,
   ollama: OllamaLogo
 }
 

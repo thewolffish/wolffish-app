@@ -32,7 +32,9 @@ import {
   OpenAILogo,
   TelegramLogo,
   WhatsAppLogo,
-  XAILogo
+  XAILogo,
+  QwenLogo,
+  StepfunLogo
 } from '@components/core/ProviderLogos'
 import { useToast } from '@components/core/toast/useToast'
 import { RTL_LOCALES } from '@lib/i18n'
@@ -204,6 +206,12 @@ export function Chat(): React.JSX.Element {
     // ── MiniMax: only M3 can toggle, M2.x always thinks ──
     if (provider === 'minimax') {
       if (model === 'MiniMax-M3') return [none, high]
+      return []
+    }
+
+    // ── Qwen: thinking on qwen3+ and qwq models ──
+    if (provider === 'qwen') {
+      if (/^(qwen3|qwq|qvq)/i.test(model)) return [none, high, max]
       return []
     }
 
@@ -784,13 +792,15 @@ export function Chat(): React.JSX.Element {
         id: cryptoId(),
         role: 'user',
         content: trimmed,
+        timestamp: Date.now(),
         ...(attachments.length > 0 ? { attachments } : {})
       }
       const assistantPlaceholder: AssistantMessage = {
         id: cryptoId(),
         role: 'assistant',
         segments: [],
-        status: 'streaming'
+        status: 'streaming',
+        timestamp: Date.now()
       }
       // Prepend an attachment summary so the LLM knows what files came
       // along with this turn even though it can't read them. Tools like
@@ -877,6 +887,7 @@ export function Chat(): React.JSX.Element {
       // instant the user clicks send, and the transcript fills in
       // when whisper returns.
       const userMsgId = cryptoId()
+      const userTs = Date.now()
       setMessages((prev) => [
         ...prev,
         {
@@ -884,7 +895,8 @@ export function Chat(): React.JSX.Element {
           role: 'user',
           content: '',
           attachments: [attachment],
-          transcribing: true
+          transcribing: true,
+          timestamp: userTs
         }
       ])
 
@@ -932,7 +944,8 @@ export function Chat(): React.JSX.Element {
         id: cryptoId(),
         role: 'assistant',
         segments: [],
-        status: 'streaming'
+        status: 'streaming',
+        timestamp: Date.now()
       }
       setMessages((prev) => [...prev, assistantPlaceholder])
       setStreaming(true)
@@ -1658,6 +1671,30 @@ export function Chat(): React.JSX.Element {
   )
 }
 
+function relativeTime(ts: number): string {
+  const diff = Date.now() - ts
+  const s = Math.floor(diff / 1000)
+  if (s < 5) return 'just now'
+  if (s < 60) return `${s}s ago`
+  const m = Math.floor(s / 60)
+  if (m < 60) return `${m}m ago`
+  const h = Math.floor(m / 60)
+  if (h < 24) return `${h}h ago`
+  const d = Math.floor(h / 24)
+  return `${d}d ago`
+}
+
+function useRelativeTime(ts: number | undefined): string | null {
+  const [label, setLabel] = useState<string | null>(() => (ts ? relativeTime(ts) : null))
+  useEffect(() => {
+    if (!ts) return
+    setLabel(relativeTime(ts))
+    const id = setInterval(() => setLabel(relativeTime(ts)), 30_000)
+    return () => clearInterval(id)
+  }, [ts])
+  return label
+}
+
 function ChatItem({
   message,
   t,
@@ -1677,6 +1714,7 @@ function ChatItem({
         content={message.content}
         attachments={message.attachments}
         transcribing={message.transcribing}
+        timestamp={message.timestamp}
         t={t}
       />
     )
@@ -1695,15 +1733,19 @@ function UserBubble({
   content,
   attachments,
   transcribing,
+  timestamp,
   t
 }: {
   content: string
   attachments?: MessageAttachment[]
   transcribing?: boolean
+  timestamp?: number
   t: (k: string, opts?: Record<string, unknown>) => string
 }): React.JSX.Element {
   const hasContent = content.length > 0
   const hasAttachments = !!attachments && attachments.length > 0
+  const timeLabel = useRelativeTime(timestamp)
+  const showFooter = !transcribing && hasContent
   return (
     <div className="flex w-full flex-col gap-1.5 items-end">
       {transcribing ? (
@@ -1720,6 +1762,17 @@ function UserBubble({
       {hasAttachments && (
         <div className="flex w-full flex-col items-end gap-2">
           <AttachmentList attachments={attachments!} align="end" />
+        </div>
+      )}
+      {showFooter && (
+        <div className="flex items-center gap-1.5">
+          <CopyButton text={content} variant="inline" ariaLabelKey="chat.copyMessage" className="px-2" />
+          {timeLabel && (
+            <span className="inline-flex items-center gap-1 text-[11px] text-muted">
+              <Clock01Icon size={14} />
+              {timeLabel}
+            </span>
+          )}
         </div>
       )}
     </div>
@@ -1792,6 +1845,7 @@ function AssistantBubble({
   const showThinking = isStreaming && renderable.empty
   const fullText = useMemo(() => collectText(message.segments), [message.segments])
   const showCopy = !isStreaming && !isError && fullText.length > 0
+  const timeLabel = useRelativeTime(message.timestamp)
 
   if (isError && message.error) {
     const providerSeg = message.segments.find(
@@ -1830,12 +1884,20 @@ function AssistantBubble({
         renderable.blocks
       )}
       {showCopy && (
-        <CopyButton
-          text={fullText}
-          variant="inline"
-          ariaLabelKey="chat.copyMessage"
-          className="px-2"
-        />
+        <div className="flex items-center gap-1.5">
+          <CopyButton
+            text={fullText}
+            variant="inline"
+            ariaLabelKey="chat.copyMessage"
+            className="px-2"
+          />
+          {timeLabel && (
+            <span className="inline-flex items-center gap-1 text-[11px] text-muted">
+              <Clock01Icon size={14} />
+              {timeLabel}
+            </span>
+          )}
+        </div>
       )}
     </div>
   )
@@ -2148,7 +2210,9 @@ const CLOUD_PROVIDER_LOGOS: Record<string, React.ComponentType<{ size?: number }
   mimo: MimoLogo,
   kimi: KimiLogo,
   minimax: MiniMaxLogo,
-  xai: XAILogo
+  xai: XAILogo,
+  qwen: QwenLogo,
+  stepfun: StepfunLogo
 }
 
 function ModeToggle({

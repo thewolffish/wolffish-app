@@ -290,7 +290,11 @@
         "kimi": "Kimi",
         "minimax": "MiniMax",
         "xai": "xAI",
+        "qwen": "Qwen",
+        "stepfun": "Stepfun",
         "descriptions": {
+          "stepfun": "Step — frontier reasoning models with built-in thinking and vision support",
+          "qwen": "Alibaba's Qwen models — powerful reasoning and coding with long-context support",
           "xai": "Grok — xAI's frontier reasoning models with vision and live web search",
           "minimax": "MiniMax's frontier models — strong reasoning and code with competitive pricing",
           "kimi": "Moonshot AI's flagship models — powerful reasoning with long-context support",
@@ -1018,6 +1022,8 @@
         "kimi": "Kimi",
         "minimax": "MiniMax",
         "xai": "xAI",
+        "qwen": "Qwen",
+        "stepfun": "Stepfun",
         "brave": "Brave Search"
       },
       "tokens": "tokens",

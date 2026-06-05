@@ -155,6 +155,38 @@ const MINIMAX_PRICING: Record<string, ModelPricing> = {
   'MiniMax-M2': { input: 0.30 / 1e6, output: 1.20 / 1e6, cacheWrite: 1.25, cacheRead: 0.10 }
 }
 
+// https://help.aliyun.com/zh/model-studio/billing (DashScope international pricing)
+// Prices in USD per million tokens. Cache multiplier ≈ input discount fraction.
+const QWEN_PRICING: Record<string, ModelPricing> = {
+  'qwen3.7-max': { input: 2.5 / 1e6, output: 7.5 / 1e6, cacheWrite: 1.0, cacheRead: 0.25 / 2.5 },
+  'qwen3.7-plus': { input: 0.40 / 1e6, output: 1.6 / 1e6, cacheWrite: 1.0, cacheRead: 0.064 / 0.40 },
+  'qwen3.6-max': { input: 1.3 / 1e6, output: 7.8 / 1e6, cacheWrite: 1.0, cacheRead: 0.10 },
+  'qwen3.6-plus': { input: 0.40 / 1e6, output: 1.6 / 1e6, cacheWrite: 1.0, cacheRead: 0.10 },
+  'qwen3.6-flash': { input: 0.25 / 1e6, output: 1.5 / 1e6, cacheWrite: 1.0, cacheRead: 0.10 },
+  'qwen3.5-plus': { input: 0.40 / 1e6, output: 1.6 / 1e6, cacheWrite: 1.0, cacheRead: 0.10 },
+  'qwen3.5-flash': { input: 0.06 / 1e6, output: 0.24 / 1e6, cacheWrite: 1.0, cacheRead: 0.10 },
+  'qwen3-max': { input: 1.6 / 1e6, output: 6.4 / 1e6, cacheWrite: 1.0, cacheRead: 0.10 },
+  'qwen3-coder': { input: 0.40 / 1e6, output: 1.6 / 1e6, cacheWrite: 1.0, cacheRead: 0.10 },
+  'qwen-max': { input: 1.6 / 1e6, output: 6.4 / 1e6, cacheWrite: 1.0, cacheRead: 0.10 },
+  'qwen-plus': { input: 0.40 / 1e6, output: 1.6 / 1e6, cacheWrite: 1.0, cacheRead: 0.10 },
+  'qwen-turbo': { input: 0.30 / 1e6, output: 0.60 / 1e6, cacheWrite: 1.0, cacheRead: 0.10 },
+  'qwen-flash': { input: 0.06 / 1e6, output: 0.24 / 1e6, cacheWrite: 1.0, cacheRead: 0.10 },
+  'qwq-plus': { input: 0.40 / 1e6, output: 1.6 / 1e6, cacheWrite: 1.0, cacheRead: 0.10 },
+  'qvq-max': { input: 1.6 / 1e6, output: 6.4 / 1e6, cacheWrite: 1.0, cacheRead: 0.10 }
+}
+
+// https://platform.stepfun.ai/docs/en/pricing
+// Stepfun prices in RMB, converted at ~7.2 CNY/USD.
+const STEPFUN_PRICING: Record<string, ModelPricing> = {
+  'step-3.7-flash': { input: 0.83 / 1e6, output: 6.94 / 1e6, cacheWrite: 1.0, cacheRead: 0.10 },
+  'step-3.5-flash': { input: 0.83 / 1e6, output: 6.94 / 1e6, cacheWrite: 1.0, cacheRead: 0.10 },
+  'step-2-16k': { input: 1.39 / 1e6, output: 16.67 / 1e6, cacheWrite: 1.0, cacheRead: 0.50 },
+  'step-2': { input: 5.56 / 1e6, output: 27.78 / 1e6, cacheWrite: 1.0, cacheRead: 0.50 },
+  'step-1-200k': { input: 3.33 / 1e6, output: 13.89 / 1e6, cacheWrite: 1.0, cacheRead: 0.50 },
+  'step-1-128k': { input: 3.33 / 1e6, output: 13.89 / 1e6, cacheWrite: 1.0, cacheRead: 0.50 },
+  'step-1': { input: 1.25 / 1e6, output: 8.33 / 1e6, cacheWrite: 1.0, cacheRead: 0.50 }
+}
+
 // https://docs.x.ai/docs/pricing
 // xAI auto-caches; no write premium. Reasoning tokens billed at output rate.
 const XAI_PRICING: Record<string, ModelPricing> = {
@@ -173,22 +205,6 @@ const LOCAL_EQUIVALENT_PRICING: ModelPricing = {
   cacheWrite: 1.0,
   cacheRead: 1.0
 }
-
-// Empirical billing offset for cloud API cost estimation.
-//
-// Published per-token rates under-predict actual dashboard charges by ~16.6%.
-// The gap comes from request-level rounding, cache-tier auto-promotion on
-// long-running agentic loops, and internal token-accounting differences the
-// stream usage object doesn't surface.
-//
-// Calibration (2026-05-20 heartbeat, claude-opus-4-6):
-//   raw token math = $38.28   (in:60269 out:8920 cw:5895367 cr:1816295)
-//   Anthropic dashboard = $44.62
-//   ratio = 44.62 / 38.28 = 1.1657 → rounded to 1.166 (errs +$0.02 above)
-//
-// Applied on top of the fact-based token calculation so the UI never
-// under-reports spending.
-const CLOUD_BILLING_OFFSET = 0.166
 
 const BRAVE_COST_PER_QUERY = 0.005
 
@@ -278,7 +294,9 @@ export class Usage {
       'mimo',
       'kimi',
       'minimax',
-      'xai'
+      'xai',
+      'qwen',
+      'stepfun'
     ] as ProviderId[]) {
       const bucket = byProvider.get(pid)
       if (!bucket) {
@@ -481,7 +499,9 @@ export class Usage {
       { file: 'mimo.md', provider: 'mimo' },
       { file: 'kimi.md', provider: 'kimi' },
       { file: 'minimax.md', provider: 'minimax' },
-      { file: 'xai.md', provider: 'xai' }
+      { file: 'xai.md', provider: 'xai' },
+      { file: 'qwen.md', provider: 'qwen' },
+      { file: 'stepfun.md', provider: 'stepfun' }
     ]
 
     for (const { file, provider } of providerFiles) {
@@ -563,16 +583,18 @@ export function calculateCost(
               ? MINIMAX_PRICING
               : provider === 'xai'
                 ? XAI_PRICING
-                : OPENAI_PRICING
+                : provider === 'qwen'
+                  ? QWEN_PRICING
+                  : provider === 'stepfun'
+                    ? STEPFUN_PRICING
+                    : OPENAI_PRICING
   const pricing = findPricing(model, table)
-  // Fact-based: published per-token rates applied to reported token counts
-  const raw =
+  return (
     inputTokens * pricing.input +
     (cacheCreationTokens ?? 0) * pricing.input * pricing.cacheWrite +
     (cacheReadTokens ?? 0) * pricing.input * pricing.cacheRead +
     outputTokens * pricing.output
-  const offset = provider === 'anthropic' || provider === 'openai' ? CLOUD_BILLING_OFFSET : 0
-  return raw * (1 + offset)
+  )
 }
 
 function findPricing(model: string, table: Record<string, ModelPricing>): ModelPricing {
@@ -639,6 +661,8 @@ function providerLabel(provider: ProviderId): string {
   if (provider === 'kimi') return 'Kimi'
   if (provider === 'minimax') return 'MiniMax'
   if (provider === 'xai') return 'xAI'
+  if (provider === 'qwen') return 'Qwen'
+  if (provider === 'stepfun') return 'Stepfun'
   return 'OpenAI'
 }
 

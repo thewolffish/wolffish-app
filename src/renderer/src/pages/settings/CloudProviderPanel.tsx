@@ -7,6 +7,8 @@ import {
   MiniMaxLogo,
   MimoLogo,
   OpenAILogo,
+  QwenLogo,
+  StepfunLogo,
   XAILogo
 } from '@components/core/ProviderLogos'
 import { Select, type SelectOption } from '@components/core/Select'
@@ -38,7 +40,9 @@ const PROVIDER_LOGOS: Record<
   mimo: MimoLogo,
   kimi: KimiLogo,
   minimax: MiniMaxLogo,
-  xai: XAILogo
+  xai: XAILogo,
+  qwen: QwenLogo,
+  stepfun: StepfunLogo
 }
 
 const PROVIDER_URLS: Record<ProviderId, string> = {
@@ -48,7 +52,9 @@ const PROVIDER_URLS: Record<ProviderId, string> = {
   mimo: 'https://platform.xiaomimimo.com',
   kimi: 'https://platform.moonshot.ai',
   minimax: 'https://platform.minimax.io',
-  xai: 'https://console.x.ai'
+  xai: 'https://console.x.ai',
+  qwen: 'https://www.qwencloud.com',
+  stepfun: 'https://platform.stepfun.ai'
 }
 
 type BadgeKind = 'frontier' | 'vision' | 'reasoning' | 'code' | 'fast' | 'voice'
@@ -381,6 +387,114 @@ const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       cached: null,
       badges: ['fast', 'reasoning'],
       modes: ['none', 'high']
+    }
+  ],
+  qwen: [
+    {
+      name: 'qwen3.7-max',
+      context: '1M',
+      input: '$2.50',
+      output: '$7.50',
+      cached: '$0.25',
+      badges: ['frontier', 'reasoning'],
+      modes: ['none', 'high', 'max']
+    },
+    {
+      name: 'qwen3.7-plus',
+      context: '1M',
+      input: '$0.40',
+      output: '$1.60',
+      cached: '$0.064',
+      badges: ['reasoning'],
+      modes: ['none', 'high', 'max']
+    },
+    {
+      name: 'qwen3.6-plus',
+      context: '1M',
+      input: '$0.40',
+      output: '$1.60',
+      cached: '$0.04',
+      badges: ['reasoning'],
+      modes: ['none', 'high', 'max']
+    },
+    {
+      name: 'qwen3.6-flash',
+      context: '1M',
+      input: '$0.25',
+      output: '$1.50',
+      cached: '$0.025',
+      badges: ['fast', 'reasoning'],
+      modes: ['none', 'high', 'max']
+    },
+    {
+      name: 'qwen3.5-plus',
+      context: '1M',
+      input: '$0.40',
+      output: '$1.60',
+      cached: '$0.04',
+      badges: ['reasoning'],
+      modes: ['none', 'high', 'max']
+    },
+    {
+      name: 'qwen3.5-flash',
+      context: '1M',
+      input: '$0.06',
+      output: '$0.24',
+      cached: '$0.006',
+      badges: ['fast', 'reasoning'],
+      modes: ['none', 'high', 'max']
+    },
+    {
+      name: 'qwen3-max',
+      context: '131K',
+      input: '$1.60',
+      output: '$6.40',
+      cached: '$0.40',
+      badges: ['reasoning'],
+      modes: ['none', 'high', 'max']
+    },
+    {
+      name: 'qwen3-coder-plus',
+      context: '131K',
+      input: '$0.40',
+      output: '$1.60',
+      cached: '$0.04',
+      badges: ['code', 'reasoning'],
+      modes: ['none', 'high', 'max']
+    },
+    {
+      name: 'qwen-max',
+      context: '131K',
+      input: '$1.60',
+      output: '$6.40',
+      cached: '$0.16',
+      badges: ['reasoning']
+    },
+    {
+      name: 'qwen-plus',
+      context: '131K',
+      input: '$0.40',
+      output: '$1.60',
+      cached: '$0.04',
+      badges: ['fast']
+    }
+  ],
+  stepfun: [
+    {
+      name: 'step-3.7-flash',
+      context: '128K',
+      input: '$0.83',
+      output: '$6.94',
+      cached: null,
+      badges: ['frontier', 'reasoning']
+    },
+    {
+      name: 'step-3.5-flash',
+      context: '128K',
+      input: '$0.83',
+      output: '$6.94',
+      cached: null,
+      badges: ['fast', 'reasoning']
     }
   ]
 }
