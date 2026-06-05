@@ -206,6 +206,12 @@ export function Chat(): React.JSX.Element {
       return []
     }
 
+    // ── OpenAI: reasoning_effort on GPT-5.x models ──
+    if (provider === 'openai') {
+      if (/^gpt-5/i.test(model)) return [none, high, max]
+      return []
+    }
+
     return []
   }, [localOnly, activeCloudProvider, activeCloudModel])
 

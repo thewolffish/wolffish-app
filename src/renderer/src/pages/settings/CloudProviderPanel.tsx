@@ -143,17 +143,35 @@ const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       input: '$30.00',
       output: '$180.00',
       cached: null,
-      badges: ['frontier']
+      badges: ['frontier', 'reasoning'],
+      modes: ['none', 'high', 'max']
     },
-    { name: 'gpt-5.5', context: '1M', input: '$5.00', output: '$30.00', cached: '$0.50' },
-    { name: 'gpt-5.4', context: '1M', input: '$2.50', output: '$15.00', cached: '$0.25' },
+    {
+      name: 'gpt-5.5',
+      context: '1M',
+      input: '$5.00',
+      output: '$30.00',
+      cached: '$0.50',
+      badges: ['reasoning'],
+      modes: ['none', 'high', 'max']
+    },
+    {
+      name: 'gpt-5.4',
+      context: '1M',
+      input: '$2.50',
+      output: '$15.00',
+      cached: '$0.25',
+      badges: ['reasoning'],
+      modes: ['none', 'high', 'max']
+    },
     {
       name: 'gpt-5.4-mini',
       context: '1M',
       input: '$0.75',
       output: '$4.50',
       cached: '$0.08',
-      badges: ['fast']
+      badges: ['fast', 'reasoning'],
+      modes: ['none', 'high', 'max']
     },
     {
       name: 'gpt-5.4-nano',
@@ -161,7 +179,8 @@ const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       input: '$0.20',
       output: '$1.25',
       cached: '$0.02',
-      badges: ['fast']
+      badges: ['fast', 'reasoning'],
+      modes: ['none', 'high', 'max']
     }
   ],
   deepseek: [
@@ -522,7 +541,9 @@ export function CloudProviderPanel({ provider }: { provider: ProviderId }): Reac
       models.map((m) => ({
         value: m,
         label: m,
-        disabled: /tts|voiceclone|voicedesign/.test(m)
+        disabled:
+          /tts|voiceclone|voicedesign/.test(m) ||
+          /^(gpt-5[\d.]*-(pro|codex)|o\d+-pro)/.test(m)
       })),
     [models]
   )
