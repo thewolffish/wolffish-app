@@ -273,7 +273,7 @@ const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
     { name: 'moonshot-v1-8k', context: '8K', input: '$0.20', output: '$2.00', cached: null }
   ],
   minimax: [
-    { name: 'MiniMax-M3', context: '1M', input: '$0.30', output: '$1.20', cached: '$0.06', badges: ['frontier', 'reasoning'] },
+    { name: 'MiniMax-M3', context: '1M', input: '$0.30', output: '$1.20', cached: '$0.06', badges: ['frontier', 'reasoning'], modes: ['none', 'high'] },
     { name: 'MiniMax-M2.7', context: '200K', input: '$0.30', output: '$1.20', cached: '$0.06', badges: ['reasoning'] },
     { name: 'MiniMax-M2.7-highspeed', context: '200K', input: '$0.60', output: '$2.40', cached: '$0.06', badges: ['fast'] },
     { name: 'MiniMax-M2.5', context: '200K', input: '$0.30', output: '$1.20', cached: '$0.03', badges: ['code'] },

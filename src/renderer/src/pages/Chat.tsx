@@ -188,6 +188,12 @@ export function Chat(): React.JSX.Element {
       return []
     }
 
+    // ── MiniMax: only M3 can toggle, M2.x always thinks ──
+    if (provider === 'minimax') {
+      if (model === 'MiniMax-M3') return [none, high]
+      return []
+    }
+
     return []
   }, [localOnly, activeCloudProvider, activeCloudModel])
 

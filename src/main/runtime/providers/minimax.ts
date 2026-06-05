@@ -36,6 +36,16 @@ export class MiniMaxProvider {
       stream: true,
       stream_options: { include_usage: true }
     }
+
+    // MiniMax thinking: only M3 can disable; M2.x always thinks (param ignored).
+    // 'adaptive' = model decides depth (default), 'disabled' = no thinking.
+    const mode = options.thinkingMode ?? 'basic'
+    if (mode === 'none') {
+      body.thinking = { type: 'disabled' }
+    } else {
+      body.thinking = { type: 'adaptive' }
+    }
+
     if (options.tools && options.tools.length > 0) {
       body.tools = options.tools.map(toTool)
     }
