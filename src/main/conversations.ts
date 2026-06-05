@@ -1,9 +1,9 @@
+import type { Segment, SegmentTurnEndReason } from '@main/runtime/broca'
+import { workspaceRoot } from '@main/workspace/workspace'
+import type { PersistedApproval, PersistedToolTiming } from '@preload/index'
+import nlp from 'compromise'
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { workspaceRoot } from '@main/workspace/workspace'
-import nlp from 'compromise'
-import type { Segment, SegmentTurnEndReason } from '@main/runtime/broca'
-import type { PersistedApproval, PersistedToolTiming } from '@preload/index'
 
 export type MessageAttachmentType = 'audio' | 'video' | 'image' | 'pdf' | 'other'
 
@@ -239,13 +239,100 @@ const FILLER_RE = [
   /^(can|could|would) you (please\s+)?/i,
   /^(i need|i want|i'd like|i would like) (you )?to\s+/i,
   /^(i'm trying|i am trying) to\s+/i,
-  /^(please|pls)\s+/i
+  /^(please|pls)\s+/i,
+  /^tell me (about\s+)?/i,
+  /^(show|explain|describe) (me\s+)?/i
 ]
+
+const NOISE_RE =
+  /\b(right now|right away|at the moment|for me|for now|just|actually|basically|simply|really|literally)\b/gi
+
+const BREAK_WORDS = new Set([
+  'that',
+  'which',
+  'who',
+  'whom',
+  'where',
+  'when',
+  'while',
+  'because',
+  'since',
+  'if',
+  'although',
+  'unless',
+  'after',
+  'before',
+  'and',
+  'but',
+  'or',
+  'so',
+  'yet',
+  'with',
+  'without',
+  'about',
+  'from',
+  'for',
+  'into'
+])
+
+const DANGLING = new Set([
+  'of',
+  'to',
+  'in',
+  'on',
+  'at',
+  'by',
+  'for',
+  'with',
+  'from',
+  'a',
+  'an',
+  'the'
+])
 
 function stripFiller(s: string): string {
   let out = s
   for (const re of FILLER_RE) out = out.replace(re, '')
   return out.trim() || s
+}
+
+function stripNoise(s: string): string {
+  const out = s
+    .replace(NOISE_RE, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+  return out || s
+}
+
+function stripTrailingRepeat(s: string): string {
+  const words = s.split(/\s+/)
+  if (words.length < 4) return s
+  const head = words[0].toLowerCase()
+  for (let i = words.length - 1; i > words.length / 2; i--) {
+    if (words[i].toLowerCase() === head) {
+      return words.slice(0, i).join(' ')
+    }
+  }
+  return s
+}
+
+function smartTruncate(s: string, max: number): string {
+  const words = s.split(/\s+/)
+  if (words.length <= max) return s
+
+  const half = Math.ceil(max / 2)
+
+  for (let i = max; i >= half; i--) {
+    if (BREAK_WORDS.has(words[i]?.toLowerCase())) {
+      let cut = i
+      while (cut > half && DANGLING.has(words[cut - 1]?.toLowerCase())) cut--
+      if (cut >= half) return words.slice(0, cut).join(' ')
+    }
+  }
+
+  let end = max
+  while (end > half && DANGLING.has(words[end - 1]?.toLowerCase())) end--
+  return words.slice(0, end).join(' ')
 }
 
 export function generateTitle(conv: ConversationFile): string {
@@ -258,27 +345,19 @@ export function generateTitle(conv: ConversationFile): string {
   const text = raw.replace(/^```[\s\S]*?```\s*/g, '').trim() || raw
   const doc = nlp(text)
   const first = (doc.sentences().first().text() || text).trim()
-  const stripped = stripFiller(first)
+
+  let stripped = stripFiller(first)
     .replace(/[?.!]+$/, '')
     .trim()
+  stripped = stripNoise(stripped)
+  stripped = stripTrailingRepeat(stripped)
 
   const words = stripped.split(/\s+/)
   if (words.length <= MAX_TITLE_WORDS) {
     return cap(stripped)
   }
 
-  const topicDoc = nlp(stripped)
-  const topics = topicDoc.topics().out('array') as string[]
-  if (topics.length > 0) {
-    return cap(topics.slice(0, MAX_TITLE_WORDS).join(' '))
-  }
-
-  const nouns = topicDoc.nouns().out('array') as string[]
-  if (nouns.length > 0) {
-    return cap(nouns.slice(0, MAX_TITLE_WORDS).join(' '))
-  }
-
-  return cap(words.slice(0, MAX_TITLE_WORDS).join(' '))
+  return cap(smartTruncate(stripped, MAX_TITLE_WORDS))
 }
 
 function cap(s: string): string {
