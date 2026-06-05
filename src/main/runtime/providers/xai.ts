@@ -1,4 +1,3 @@
-import type { Corpus } from '@main/runtime/corpus'
 import type {
   ChatMessage,
   ProviderStreamOptions,
@@ -8,45 +7,32 @@ import type {
   UserContentBlock
 } from '@main/runtime/thalamus'
 
-const OPENAI_ENDPOINT = 'https://api.openai.com/v1/chat/completions'
+const XAI_ENDPOINT = 'https://api.x.ai/v1/chat/completions'
 
-// Per-model output ceilings — the highest value the API accepts for each
-// family. Cost is irrelevant; we never want a reply truncated by a
-// conservative cap.
 function maxTokensFor(model: string): number {
   const m = model.toLowerCase()
-  if (m.startsWith('gpt-5')) return 128000
-  if (m.startsWith('gpt-4.1')) return 32768
-  if (m.startsWith('gpt-4o')) return 16384
-  if (m.startsWith('o4')) return 100000
-  if (m.startsWith('o3')) return 100000
-  if (m.startsWith('o1-mini')) return 65536
-  if (m.startsWith('o1')) return 32768
-  if (m.startsWith('gpt-4-turbo')) return 4096
-  if (m.startsWith('gpt-4')) return 8192
-  if (m.startsWith('gpt-3.5')) return 4096
-  return 16384
+  if (m.includes('grok-4')) return 131072
+  if (m.includes('grok-build')) return 131072
+  if (m.includes('grok-3-mini')) return 131072
+  if (m.includes('grok-3')) return 131072
+  return 131072
 }
 
-// Reasoning models (o-series, gpt-5) require `max_completion_tokens` and
-// reject the legacy `max_tokens` field. Older chat models still take
-// `max_tokens`. Detection is by model-name prefix.
 function isReasoningModel(model: string): boolean {
-  return /^(o1|o3|o4|gpt-5)/i.test(model)
+  return /^grok-(3-mini|4|build)/i.test(model)
 }
 
-export class OpenAIProvider {
+export class XAIProvider {
   constructor(
     private apiKey: string,
     private model: string,
-    private endpoint: string = OPENAI_ENDPOINT,
-    private corpus: Corpus | null = null
+    private endpoint: string = XAI_ENDPOINT
   ) {}
 
   async *stream(options: ProviderStreamOptions): AsyncGenerator<StreamChunk> {
     const messages = [
       { role: 'system' as const, content: options.system } as Record<string, unknown>,
-      ...toOpenAIMessages(options.messages)
+      ...toXAIMessages(options.messages)
     ]
 
     const maxOutput = maxTokensFor(this.model)
@@ -54,36 +40,26 @@ export class OpenAIProvider {
       model: this.model,
       messages,
       stream: true,
-      // Ask OpenAI to append a final usage chunk so we can populate
-      // turn_meta with API-reported token counts instead of guessing.
       stream_options: { include_usage: true }
     }
+
     if (isReasoningModel(this.model)) {
       body.max_completion_tokens = maxOutput
 
-      // OpenAI reasoning: reasoning_effort controls depth.
-      // 'none' disables reasoning, 'high' is standard, 'xhigh' is maximum.
       const mode = options.thinkingMode ?? 'basic'
       if (mode === 'none') {
         body.reasoning_effort = 'none'
       } else if (mode === 'max') {
-        body.reasoning_effort = 'xhigh'
-      } else {
         body.reasoning_effort = 'high'
+      } else {
+        body.reasoning_effort = 'low'
       }
     } else {
       body.max_tokens = maxOutput
     }
-    if (options.tools && options.tools.length > 0) {
-      body.tools = options.tools.map(toOpenAITool)
-    }
 
-    if (body.tools && body.reasoning_effort) {
-      delete body.reasoning_effort
-      this.corpus?.emit('llm.reasoning_effort.stripped', {
-        model: this.model,
-        reason: 'tools present'
-      })
+    if (options.tools && options.tools.length > 0) {
+      body.tools = options.tools.map(toXAITool)
     }
 
     const response = await fetch(this.endpoint, {
@@ -98,7 +74,7 @@ export class OpenAIProvider {
 
     if (!response.ok || !response.body) {
       const text = await response.text().catch(() => '')
-      throw new Error(`openai chat failed: HTTP ${response.status} ${text}`.trim())
+      throw new Error(`xai chat failed: HTTP ${response.status} ${text}`.trim())
     }
 
     type ToolBuffer = { id: string; name: string; argsBuffer: string }
@@ -112,14 +88,14 @@ export class OpenAIProvider {
       if (!event.data) continue
       if (event.data === '[DONE]') break
 
-      let parsed: OpenAIEvent
+      let parsed: XAIEvent
       try {
-        parsed = JSON.parse(event.data) as OpenAIEvent
+        parsed = JSON.parse(event.data) as XAIEvent
       } catch (err) {
         const detail = err instanceof Error ? err.message : String(err)
         yield {
           type: 'error',
-          message: `openai stream parse failed: ${detail}`,
+          message: `xai stream parse failed: ${detail}`,
           recoverable: false
         }
         return
@@ -129,12 +105,10 @@ export class OpenAIProvider {
         if (typeof parsed.usage.prompt_tokens === 'number') inputTokens = parsed.usage.prompt_tokens
         if (typeof parsed.usage.completion_tokens === 'number')
           outputTokens = parsed.usage.completion_tokens
-        // OpenAI reports cached tokens inside prompt_tokens (inclusive).
-        // Separate them so the cost formula can apply the 50% discount.
         const cached = parsed.usage.prompt_tokens_details?.cached_tokens
         if (typeof cached === 'number' && cached > 0) {
           cacheReadTokens = cached
-          inputTokens = inputTokens - cached // uncached only, matching Anthropic convention
+          inputTokens = inputTokens - cached
         }
       }
 
@@ -204,7 +178,7 @@ function mapFinishReason(s: string): StopReason {
   }
 }
 
-type OpenAIEvent = {
+type XAIEvent = {
   choices?: Array<{
     delta?: {
       reasoning_content?: string
@@ -225,7 +199,7 @@ type OpenAIEvent = {
   }
 }
 
-function toOpenAITool(tool: ToolDefinition): Record<string, unknown> {
+function toXAITool(tool: ToolDefinition): Record<string, unknown> {
   return {
     type: 'function',
     function: {
@@ -236,7 +210,7 @@ function toOpenAITool(tool: ToolDefinition): Record<string, unknown> {
   }
 }
 
-function userContentToOpenAI(content: string | UserContentBlock[]): string | unknown[] {
+function userContentToXAI(content: string | UserContentBlock[]): string | unknown[] {
   if (typeof content === 'string') return content
   const parts: unknown[] = []
   for (const block of content) {
@@ -247,14 +221,6 @@ function userContentToOpenAI(content: string | UserContentBlock[]): string | unk
         type: 'image_url',
         image_url: { url: `data:${block.mediaType};base64,${block.data}` }
       })
-    } else if (block.type === 'document') {
-      parts.push({
-        type: 'file',
-        file: {
-          filename: 'document.pdf',
-          file_data: `data:${block.mediaType};base64,${block.data}`
-        }
-      })
     }
   }
   if (parts.length === 1 && (content[0] as UserContentBlock).type === 'text') {
@@ -263,33 +229,20 @@ function userContentToOpenAI(content: string | UserContentBlock[]): string | unk
   return parts
 }
 
-function toOpenAIMessages(messages: ChatMessage[]): Array<Record<string, unknown>> {
+function toXAIMessages(messages: ChatMessage[]): Array<Record<string, unknown>> {
   const out: Array<Record<string, unknown>> = []
   for (const m of messages) {
     if (m.role === 'system') continue
     if (m.role === 'tool') {
-      let content: string | unknown[]
-      if (m.images && m.images.length > 0) {
-        const parts: unknown[] = [{ type: 'text', text: m.content }]
-        for (const img of m.images) {
-          parts.push({
-            type: 'image_url',
-            image_url: { url: `data:${img.mediaType};base64,${img.data}` }
-          })
-        }
-        content = parts
-      } else {
-        content = m.content
-      }
       out.push({
         role: 'tool',
         tool_call_id: m.toolUseId,
-        content
+        content: m.content
       })
       continue
     }
     if (m.role === 'user') {
-      out.push({ role: 'user', content: userContentToOpenAI(m.content) })
+      out.push({ role: 'user', content: userContentToXAI(m.content) })
       continue
     }
     if (m.toolUses && m.toolUses.length > 0) {

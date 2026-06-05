@@ -6,7 +6,8 @@ import {
   KimiLogo,
   MiniMaxLogo,
   MimoLogo,
-  OpenAILogo
+  OpenAILogo,
+  XAILogo
 } from '@components/core/ProviderLogos'
 import { Select, type SelectOption } from '@components/core/Select'
 import { useToast } from '@components/core/toast/useToast'
@@ -36,7 +37,8 @@ const PROVIDER_LOGOS: Record<
   deepseek: DeepSeekLogo,
   mimo: MimoLogo,
   kimi: KimiLogo,
-  minimax: MiniMaxLogo
+  minimax: MiniMaxLogo,
+  xai: XAILogo
 }
 
 const PROVIDER_URLS: Record<ProviderId, string> = {
@@ -45,7 +47,8 @@ const PROVIDER_URLS: Record<ProviderId, string> = {
   deepseek: 'https://platform.deepseek.com',
   mimo: 'https://platform.xiaomimimo.com',
   kimi: 'https://platform.moonshot.ai',
-  minimax: 'https://platform.minimax.io'
+  minimax: 'https://platform.minimax.io',
+  xai: 'https://console.x.ai'
 }
 
 type BadgeKind = 'frontier' | 'vision' | 'reasoning' | 'code' | 'fast' | 'voice'
@@ -332,6 +335,53 @@ const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
     { name: 'MiniMax-M2.1', context: '200K', input: '$0.30', output: '$1.20', cached: '$0.03', badges: ['reasoning'] },
     { name: 'MiniMax-M2.1-highspeed', context: '200K', input: '$0.60', output: '$2.40', cached: '$0.03', badges: ['fast'] },
     { name: 'MiniMax-M2', context: '200K', input: '$0.30', output: '$1.20', cached: '$0.03' }
+  ],
+  xai: [
+    {
+      name: 'grok-4.3',
+      context: '1M',
+      input: '$1.25',
+      output: '$2.50',
+      cached: null,
+      badges: ['frontier', 'vision', 'reasoning'],
+      modes: ['none', 'high', 'max']
+    },
+    {
+      name: 'grok-build-0.1',
+      context: '256K',
+      input: '$1.00',
+      output: '$2.00',
+      cached: null,
+      badges: ['code', 'reasoning'],
+      modes: ['none', 'high', 'max']
+    },
+    {
+      name: 'grok-4',
+      context: '256K',
+      input: '$3.00',
+      output: '$15.00',
+      cached: null,
+      badges: ['reasoning'],
+      modes: ['none', 'high']
+    },
+    {
+      name: 'grok-3',
+      context: '131K',
+      input: '$2.00',
+      output: '$10.00',
+      cached: null,
+      badges: ['reasoning'],
+      modes: ['none', 'high']
+    },
+    {
+      name: 'grok-3-mini',
+      context: '131K',
+      input: '$0.30',
+      output: '$0.50',
+      cached: null,
+      badges: ['fast', 'reasoning'],
+      modes: ['none', 'high']
+    }
   ]
 }
 
@@ -468,7 +518,11 @@ export function CloudProviderPanel({ provider }: { provider: ProviderId }): Reac
     // Auto-save with the freshly fetched models. Keep the
     // prior selection if the new catalogue still has it; otherwise fall
     // back to the newest model.
-    const modelToSave = model && result.models.includes(model) ? model : result.models[0]
+    const firstSelectable =
+      result.models.find((m) => !isModelDisabled(m) && !isDateSnapshot(m)) ??
+      result.models.find((m) => !isModelDisabled(m)) ??
+      result.models[0]
+    const modelToSave = model && result.models.includes(model) ? model : firstSelectable
     setSaving(true)
     try {
       await window.api.provider.save({
@@ -541,9 +595,7 @@ export function CloudProviderPanel({ provider }: { provider: ProviderId }): Reac
       models.map((m) => ({
         value: m,
         label: m,
-        disabled:
-          /tts|voiceclone|voicedesign/.test(m) ||
-          /^(gpt-5[\d.]*-(pro|codex)|o\d+-pro)/.test(m)
+        disabled: isModelDisabled(m)
       })),
     [models]
   )
@@ -864,6 +916,15 @@ function StatusLine({
       <span>{t('settings.model.cloud.status.untested')}</span>
     </p>
   )
+}
+
+function isModelDisabled(id: string): boolean {
+  return /tts|voiceclone|voicedesign/.test(id) || /^(gpt-5[\d.]*-(pro|codex)|o\d+-pro)/.test(id)
+}
+
+/** Prefer the undated base model (e.g. "gpt-5.5" over "gpt-5.5-2026-04-23"). */
+function isDateSnapshot(id: string): boolean {
+  return /\d{4}-\d{2}-\d{2}$/.test(id)
 }
 
 function formatTestError(

@@ -42,7 +42,7 @@ export type LocalModelConfig = {
 }
 
 export type CloudProviderConfig = {
-  id: 'anthropic' | 'openai' | 'deepseek' | 'mimo' | 'kimi' | 'minimax'
+  id: 'anthropic' | 'openai' | 'deepseek' | 'mimo' | 'kimi' | 'minimax' | 'xai'
   model: string
   apiKey: string
   models?: string[]
@@ -206,6 +206,7 @@ export type ConversationMessage = {
   approvals?: Record<string, PersistedApproval>
   toolTimings?: Record<string, PersistedToolTiming>
   stopReason?: SegmentTurnEndReason
+  error?: string
   attachments?: MessageAttachment[]
   /** Set when this user message is a Telegram voice transcript — the audio attachment must not be exposed to the LLM. */
   voicePrompt?: boolean
@@ -476,7 +477,7 @@ export type ViewerTreeNode =
 export type UsageTimeRange = 'today' | 'this_month' | '3_months' | '6_months' | 'ytd' | 'all_time'
 
 export type UsageProviderSummary = {
-  provider: 'anthropic' | 'openai' | 'deepseek' | 'mimo' | 'kimi' | 'minimax' | 'local'
+  provider: 'anthropic' | 'openai' | 'deepseek' | 'mimo' | 'kimi' | 'minimax' | 'xai' | 'local'
   totalInputTokens: number
   totalOutputTokens: number
   totalCost: number

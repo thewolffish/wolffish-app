@@ -32,6 +32,7 @@ import {
   type StopReason,
   type StreamChunk,
   type StreamUsage,
+  type ToolDefinition,
   type ToolUse,
   type UserContentBlock
 } from '@main/runtime/thalamus'
@@ -361,6 +362,7 @@ export class Agent {
           providerContext
         )
         const iterationTools = this.prefrontal.selectTools(providerContext)
+        const filteredTools = this.filterToolsForProvider(iterationTools, userContent)
 
         // Cloud→local transitions happen mid-stream inside thalamus, so
         // the iter-1 fallback prompt has to be rebuilt from there.
@@ -387,7 +389,7 @@ export class Agent {
         const stream = this.thalamus.stream({
           system: systemPrompt,
           messages,
-          tools: iterationTools.length > 0 ? iterationTools : undefined,
+          tools: filteredTools.length > 0 ? filteredTools : undefined,
           signal: turn.signal,
           buildFallback,
           thinkingMode: turn.thinkingMode
@@ -729,6 +731,64 @@ export class Agent {
       broca.endTurn()
       this.cerebellum.setCurrentConversationId(null)
     }
+  }
+
+  private filterToolsForProvider(tools: ToolDefinition[], message: string): ToolDefinition[] {
+    const provider = this.thalamus.getActiveProvider()
+    const limit =
+      provider === 'openai' ? 128 : provider === 'xai' ? 200 : null
+    if (limit === null || tools.length <= limit) {
+      return tools
+    }
+
+    const capToolMap = new Map<string, ToolDefinition[]>()
+    const orphaned: ToolDefinition[] = []
+    for (const tool of tools) {
+      const capName = this.cerebellum.getToolCapability(tool.name)
+      if (!capName) {
+        orphaned.push(tool)
+        continue
+      }
+      const list = capToolMap.get(capName) ?? []
+      list.push(tool)
+      capToolMap.set(capName, list)
+    }
+
+    const capMap = new Map(this.cerebellum.getCapabilities().map((c) => [c.name, c]))
+
+    const scored: Array<{ name: string; score: number; tools: ToolDefinition[] }> = []
+    for (const [capName, capTools] of capToolMap) {
+      const cap = capMap.get(capName)
+      const content = cap
+        ? [cap.name, cap.description, ...cap.triggers.keywords].join(' ')
+        : capName
+      scored.push({ name: capName, score: this.ras.scoreRelevance(message, content), tools: capTools })
+    }
+
+    scored.sort((a, b) => b.score - a.score || a.tools.length - b.tools.length)
+
+    const kept: ToolDefinition[] = [...orphaned]
+    const dropped: string[] = []
+    let remaining = limit - orphaned.length
+
+    for (const entry of scored) {
+      if (entry.tools.length <= remaining) {
+        kept.push(...entry.tools)
+        remaining -= entry.tools.length
+      } else {
+        dropped.push(entry.name)
+      }
+    }
+
+    if (dropped.length > 0) {
+      this.corpus.emit('tools.filtered', {
+        total: tools.length,
+        kept: kept.length,
+        dropped
+      })
+    }
+
+    return kept
   }
 
   async processAutonomous(opts: AutonomousTurnOptions): Promise<AutonomousTurnResult> {

@@ -155,6 +155,18 @@ const MINIMAX_PRICING: Record<string, ModelPricing> = {
   'MiniMax-M2': { input: 0.30 / 1e6, output: 1.20 / 1e6, cacheWrite: 1.25, cacheRead: 0.10 }
 }
 
+// https://docs.x.ai/docs/pricing
+// xAI auto-caches; no write premium. Reasoning tokens billed at output rate.
+const XAI_PRICING: Record<string, ModelPricing> = {
+  'grok-4.3': { input: 1.25 / 1e6, output: 2.5 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
+  'grok-4.20': { input: 1.25 / 1e6, output: 2.5 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
+  'grok-build': { input: 1.0 / 1e6, output: 2.0 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
+  'grok-4': { input: 3 / 1e6, output: 15 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
+  'grok-3': { input: 2 / 1e6, output: 10 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
+  'grok-3-mini': { input: 0.30 / 1e6, output: 0.50 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
+  'grok-2': { input: 2 / 1e6, output: 10 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 }
+}
+
 const LOCAL_EQUIVALENT_PRICING: ModelPricing = {
   input: 0,
   output: 0,
@@ -265,7 +277,8 @@ export class Usage {
       'deepseek',
       'mimo',
       'kimi',
-      'minimax'
+      'minimax',
+      'xai'
     ] as ProviderId[]) {
       const bucket = byProvider.get(pid)
       if (!bucket) {
@@ -467,7 +480,8 @@ export class Usage {
       { file: 'deepseek.md', provider: 'deepseek' },
       { file: 'mimo.md', provider: 'mimo' },
       { file: 'kimi.md', provider: 'kimi' },
-      { file: 'minimax.md', provider: 'minimax' }
+      { file: 'minimax.md', provider: 'minimax' },
+      { file: 'xai.md', provider: 'xai' }
     ]
 
     for (const { file, provider } of providerFiles) {
@@ -547,7 +561,9 @@ export function calculateCost(
             ? KIMI_PRICING
             : provider === 'minimax'
               ? MINIMAX_PRICING
-              : OPENAI_PRICING
+              : provider === 'xai'
+                ? XAI_PRICING
+                : OPENAI_PRICING
   const pricing = findPricing(model, table)
   // Fact-based: published per-token rates applied to reported token counts
   const raw =
@@ -622,6 +638,7 @@ function providerLabel(provider: ProviderId): string {
   if (provider === 'mimo') return 'Xiaomi Mimo'
   if (provider === 'kimi') return 'Kimi'
   if (provider === 'minimax') return 'MiniMax'
+  if (provider === 'xai') return 'xAI'
   return 'OpenAI'
 }
 

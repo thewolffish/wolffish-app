@@ -4,7 +4,7 @@ import { TelegramLogo, WhatsAppLogo } from '@components/core/ProviderLogos'
 import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
 import type { ConversationMeta, PersistedApproval } from '@preload/index'
-import { useFlow, type ApprovalCardState } from '@providers/flow/useFlow'
+import { useFlow, type ApprovalCardState, type AssistantStatus } from '@providers/flow/useFlow'
 import { useLocale } from '@providers/locale/useLocale'
 import {
   Activity04Icon,
@@ -56,6 +56,7 @@ export function History(): React.JSX.Element {
               id: msgId,
               role: 'user' as const,
               content: m.content,
+              timestamp: m.timestamp,
               ...(m.attachments && m.attachments.length > 0 ? { attachments: m.attachments } : {})
             }
           }
@@ -75,14 +76,17 @@ export function History(): React.JSX.Element {
                 ])
               ) as Record<string, ApprovalCardState>)
             : undefined
+          const isError = !!m.error
           return {
             id: msgId,
             role: 'assistant' as const,
             segments,
             approvals,
             toolTimings: m.toolTimings,
-            status: 'complete' as const,
-            stopReason: m.stopReason
+            status: (isError ? 'error' : 'complete') as AssistantStatus,
+            stopReason: m.stopReason,
+            ...(isError ? { error: m.error } : {}),
+            timestamp: m.timestamp
           }
         })
       )

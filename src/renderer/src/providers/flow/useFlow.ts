@@ -64,6 +64,7 @@ export type UserMessage = {
   /** Set while a voice recording is being transcribed, so the bubble
    * can render an animated placeholder until the transcript arrives. */
   transcribing?: boolean
+  timestamp?: number
 }
 
 export type ToolTiming = {
@@ -93,6 +94,7 @@ export type AssistantMessage = {
   status: AssistantStatus
   stopReason?: SegmentTurnEndReason
   error?: string
+  timestamp?: number
 }
 
 export type ChatMessage = UserMessage | AssistantMessage

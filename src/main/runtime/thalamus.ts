@@ -6,6 +6,7 @@ import { KimiProvider } from '@main/runtime/providers/kimi'
 import { MiniMaxProvider } from '@main/runtime/providers/minimax'
 import { MimoProvider } from '@main/runtime/providers/mimo'
 import { OpenAIProvider } from '@main/runtime/providers/openai'
+import { XAIProvider } from '@main/runtime/providers/xai'
 import { net } from 'electron'
 
 export type ToolUse = {
@@ -37,7 +38,7 @@ export type ChatMessage =
       images?: ToolResultImage[]
     }
 
-export type ProviderId = 'anthropic' | 'openai' | 'deepseek' | 'mimo' | 'kimi' | 'minimax' | 'local'
+export type ProviderId = 'anthropic' | 'openai' | 'deepseek' | 'mimo' | 'kimi' | 'minimax' | 'xai' | 'local'
 
 export type ToolDefinition = {
   name: string
@@ -79,6 +80,7 @@ export type NoProviderAvailableInfo = {
   providerLogo: string
   statusCode: number | null
   errorReason: string
+  errorDetail: string | null
   retriesAttempted: number
   totalDurationMs: number
 }
@@ -108,7 +110,7 @@ export type StreamChunk =
   | { type: 'no_provider_available'; info: NoProviderAvailableInfo }
 
 export type CloudProviderConfig = {
-  id: 'anthropic' | 'openai' | 'deepseek' | 'mimo' | 'kimi' | 'minimax'
+  id: 'anthropic' | 'openai' | 'deepseek' | 'mimo' | 'kimi' | 'minimax' | 'xai'
   model: string
   apiKey: string
   models?: string[]
@@ -146,6 +148,7 @@ const PROVIDER_LOGO: Record<ProviderId, string> = {
   mimo: 'mimo',
   kimi: 'kimi',
   minimax: 'minimax',
+  xai: 'xai',
   local: 'ollama'
 }
 
@@ -154,6 +157,7 @@ const PROVIDER_LOGO: Record<ProviderId, string> = {
 // nothing translates them — they're plain-text hints the model can
 // quote or paraphrase when explaining the situation to the user.
 const STATUS_REASON_LABEL: Record<number, string> = {
+  400: 'bad request',
   401: 'authentication failed',
   403: 'forbidden',
   404: 'model not found',
@@ -172,6 +176,7 @@ type ProviderFailure = {
   statusCode: number | null
   errorClass: ErrorClass
   reasonKey: string
+  rawMessage: string | null
   retries: number
   durationMs: number
 }
@@ -399,6 +404,7 @@ export class Thalamus {
       statusCode: null,
       errorClass: 'unknown' as ErrorClass,
       reasonKey: 'unavailable',
+      rawMessage: null,
       retries: 0,
       durationMs: 0
     }
@@ -409,6 +415,7 @@ export class Thalamus {
         providerLogo: PROVIDER_LOGO[failure.provider],
         statusCode: failure.statusCode,
         errorReason: failure.reasonKey,
+        errorDetail: failure.rawMessage,
         retriesAttempted: failure.retries,
         totalDurationMs: failure.durationMs
       }
@@ -438,6 +445,7 @@ export class Thalamus {
             statusCode: null,
             errorClass: 'unknown',
             reasonKey: 'unavailable',
+            rawMessage: null,
             retries: attempt,
             durationMs: Date.now() - overallStartedAt
           }
@@ -453,6 +461,7 @@ export class Thalamus {
             statusCode: null,
             errorClass: 'offline',
             reasonKey: 'offline',
+            rawMessage: null,
             retries: attempt,
             durationMs: Date.now() - overallStartedAt
           }
@@ -512,6 +521,7 @@ export class Thalamus {
           statusCode: classified.statusCode,
           errorClass: classified.errorClass,
           reasonKey: reasonKeyFor(classified.statusCode),
+          rawMessage: extractProviderDetail(message),
           retries: attempt,
           durationMs: Date.now() - overallStartedAt
         }
@@ -598,7 +608,7 @@ export class Thalamus {
         out.push({
           id: 'openai',
           model: cfg.model,
-          provider: new OpenAIProvider(cfg.apiKey, cfg.model)
+          provider: new OpenAIProvider(cfg.apiKey, cfg.model, undefined, this.corpus)
         })
       } else if (id === 'deepseek') {
         out.push({
@@ -623,6 +633,12 @@ export class Thalamus {
           id: 'minimax',
           model: cfg.model,
           provider: new MiniMaxProvider(cfg.apiKey, cfg.model)
+        })
+      } else if (id === 'xai') {
+        out.push({
+          id: 'xai',
+          model: cfg.model,
+          provider: new XAIProvider(cfg.apiKey, cfg.model)
         })
       }
     }
@@ -739,6 +755,18 @@ function reasonKeyFor(statusCode: number | null): string {
   return 'unavailable'
 }
 
+function extractProviderDetail(raw: string): string | null {
+  const jsonStart = raw.indexOf('{')
+  if (jsonStart === -1) return null
+  try {
+    const parsed = JSON.parse(raw.slice(jsonStart))
+    const msg = parsed?.error?.message ?? parsed?.message
+    return typeof msg === 'string' ? msg : null
+  } catch {
+    return null
+  }
+}
+
 function contextWindowForModel(model: string): number {
   const m = model.toLowerCase()
   // Claude 4.6+ — Opus 4.6/4.7/4.8 and Sonnet 4.6 have 1M windows
@@ -767,6 +795,12 @@ function contextWindowForModel(model: string): number {
   // MiniMax
   if (m.includes('minimax-m3')) return 1_000_000
   if (m.includes('minimax-m2')) return 200_000
+  // xAI / Grok
+  if (m.includes('grok-4.3') || m.includes('grok-4.20')) return 1_000_000
+  if (m.includes('grok-build')) return 256_000
+  if (m.includes('grok-4')) return 256_000
+  if (m.includes('grok-3')) return 131_072
+  if (m.includes('grok-2')) return 131_072
   // OpenAI
   if (m.includes('gpt-5.4') || m.includes('gpt-5.5')) return 1_000_000
   if (m.includes('gpt-5')) return 400_000

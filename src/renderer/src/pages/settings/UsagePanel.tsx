@@ -7,7 +7,8 @@ import {
   MiniMaxLogo,
   MimoLogo,
   OllamaLogo,
-  OpenAILogo
+  OpenAILogo,
+  XAILogo
 } from '@components/core/ProviderLogos'
 import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn'
@@ -34,7 +35,7 @@ import { useTranslation } from 'react-i18next'
 
 type IconComp = React.ComponentType<{ size?: number; className?: string }>
 
-type ProviderId = 'local' | 'anthropic' | 'openai' | 'deepseek' | 'mimo' | 'kimi' | 'minimax'
+type ProviderId = 'local' | 'anthropic' | 'openai' | 'deepseek' | 'mimo' | 'kimi' | 'minimax' | 'xai'
 
 const TIME_RANGES: UsageTimeRange[] = [
   'today',
@@ -52,7 +53,8 @@ const PROVIDER_ICONS: Record<ProviderId, React.ComponentType<{ size: number }>> 
   deepseek: DeepSeekLogo,
   mimo: MimoLogo,
   kimi: KimiLogo,
-  minimax: MiniMaxLogo
+  minimax: MiniMaxLogo,
+  xai: XAILogo
 }
 
 export function UsagePanel(): React.JSX.Element {

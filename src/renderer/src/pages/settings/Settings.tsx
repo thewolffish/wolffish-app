@@ -11,7 +11,8 @@ import {
   NotionLogo,
   OllamaLogo,
   OpenAILogo,
-  TelegramLogo
+  TelegramLogo,
+  XAILogo
 } from '@components/core/ProviderLogos'
 import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
@@ -512,6 +513,9 @@ export function Settings(): React.JSX.Element {
         <TabPanel active={active === 'model' && provider === 'minimax'}>
           <CloudProviderPanel provider="minimax" />
         </TabPanel>
+        <TabPanel active={active === 'model' && provider === 'xai'}>
+          <CloudProviderPanel provider="xai" />
+        </TabPanel>
         <TabPanel active={active === 'services' && effectiveService === 'tts' && ttsAvailable}>
           <TextToSpeechPanel />
         </TabPanel>
@@ -569,8 +573,8 @@ function TabPanel({
   return <>{children}</>
 }
 
-type Provider = 'ollama' | 'anthropic' | 'openai' | 'deepseek' | 'mimo' | 'kimi' | 'minimax'
-const PROVIDERS: Provider[] = ['mimo', 'deepseek', 'kimi', 'minimax', 'anthropic', 'openai', 'ollama']
+type Provider = 'ollama' | 'anthropic' | 'openai' | 'deepseek' | 'mimo' | 'kimi' | 'minimax' | 'xai'
+const PROVIDERS: Provider[] = ['mimo', 'deepseek', 'kimi', 'minimax', 'anthropic', 'xai', 'openai', 'ollama']
 
 const PROVIDER_ICONS: Record<
   Provider,
@@ -582,7 +586,8 @@ const PROVIDER_ICONS: Record<
   deepseek: DeepSeekLogo,
   mimo: MimoLogo,
   kimi: KimiLogo,
-  minimax: MiniMaxLogo
+  minimax: MiniMaxLogo,
+  xai: XAILogo
 }
 
 type Channel = 'telegram' | 'whatsapp'

@@ -27,6 +27,8 @@ export type CorpusEvents = {
 
   'context.built': { tokenCount: number; tokenBudget: number; sectionsIncluded: string[] }
 
+  'tools.filtered': { total: number; kept: number; dropped: string[] }
+
   'llm.request': { provider: string; model: string }
   'llm.response': {
     provider: string
@@ -39,6 +41,7 @@ export type CorpusEvents = {
   'llm.error': { provider: string; error: string }
   'llm.fallback': { from: string; to: string; reason: string }
   'llm.retry': { provider: string; attempt: number; delayMs: number; errorClass: string }
+  'llm.reasoning_effort.stripped': { model: string; reason: string }
 
   'tool.called': { taskId: string; tool: string; args: Record<string, unknown> }
   'tool.completed': { taskId: string; tool: string; durationMs: number }

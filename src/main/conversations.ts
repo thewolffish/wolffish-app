@@ -48,6 +48,7 @@ export type ConversationMessage = {
   approvals?: Record<string, PersistedApproval>
   toolTimings?: Record<string, PersistedToolTiming>
   stopReason?: SegmentTurnEndReason
+  error?: string
 }
 
 /**

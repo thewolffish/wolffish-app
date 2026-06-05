@@ -31,7 +31,8 @@ import {
   OllamaLogo,
   OpenAILogo,
   TelegramLogo,
-  WhatsAppLogo
+  WhatsAppLogo,
+  XAILogo
 } from '@components/core/ProviderLogos'
 import { useToast } from '@components/core/toast/useToast'
 import { RTL_LOCALES } from '@lib/i18n'
@@ -203,6 +204,13 @@ export function Chat(): React.JSX.Element {
     // ── MiniMax: only M3 can toggle, M2.x always thinks ──
     if (provider === 'minimax') {
       if (model === 'MiniMax-M3') return [none, high]
+      return []
+    }
+
+    // ── xAI: reasoning_effort on grok-4.3, grok-build, grok-3-mini ──
+    if (provider === 'xai') {
+      if (/^grok-(4\.3|4\.20|build)/i.test(model)) return [none, high, max]
+      if (/^grok-(3|4)/i.test(model)) return [none, high]
       return []
     }
 
@@ -520,8 +528,8 @@ export function Chat(): React.JSX.Element {
       const convMessages = msgs
         .filter((m) => {
           if (isUser(m)) return true
-          if (isAssistant(m) && (m.status === 'complete' || m.status === 'error'))
-            return m.segments.length > 0
+          if (isAssistant(m) && m.status === 'error') return true
+          if (isAssistant(m) && m.status === 'complete') return m.segments.length > 0
           return false
         })
         .map((m) => {
@@ -541,6 +549,7 @@ export function Chat(): React.JSX.Element {
             approvals: am.approvals,
             toolTimings: am.toolTimings,
             stopReason: am.stopReason,
+            ...(am.status === 'error' && am.error ? { error: am.error } : {}),
             timestamp: Date.now()
           }
         })
@@ -613,6 +622,18 @@ export function Chat(): React.JSX.Element {
   useEffect(() => {
     if (shouldPersistRef.current) {
       shouldPersistRef.current = false
+      void persistConversation(messages)
+    }
+  }, [messages, persistConversation])
+
+  const persistedErrorIdsRef = useRef(new Set<string>())
+  useEffect(() => {
+    const unpersisted = messages.find(
+      (m): m is AssistantMessage =>
+        isAssistant(m) && m.status === 'error' && !persistedErrorIdsRef.current.has(m.id)
+    )
+    if (unpersisted && conversationRef.current) {
+      persistedErrorIdsRef.current.add(unpersisted.id)
       void persistConversation(messages)
     }
   }, [messages, persistConversation])
@@ -792,7 +813,7 @@ export function Chat(): React.JSX.Element {
       if (attachments.length > 0) currentEntry.attachments = attachments
       const history = textHistory(messages, workspaceRoot).concat(currentEntry)
 
-      setMessages((prev) => [...stripErrors(prev), userMessage, assistantPlaceholder])
+      setMessages((prev) => [...prev, userMessage, assistantPlaceholder])
       setStreaming(true)
       setTurnStartedAt(Date.now())
       setTurnEndedAt(null)
@@ -806,6 +827,7 @@ export function Chat(): React.JSX.Element {
         pendingTurnIdRef.current = null
         setStreaming(false)
         setTurnEndedAt(Date.now())
+        shouldPersistRef.current = true
         setMessages((prev) => markError(prev, response.turnId, response.error ?? 'unknown error'))
       }
     },
@@ -856,7 +878,7 @@ export function Chat(): React.JSX.Element {
       // when whisper returns.
       const userMsgId = cryptoId()
       setMessages((prev) => [
-        ...stripErrors(prev),
+        ...prev,
         {
           id: userMsgId,
           role: 'user',
@@ -926,6 +948,7 @@ export function Chat(): React.JSX.Element {
         pendingTurnIdRef.current = null
         setStreaming(false)
         setTurnEndedAt(Date.now())
+        shouldPersistRef.current = true
         setMessages((prev) => markError(prev, response.turnId, response.error ?? 'unknown error'))
       }
     } catch {
@@ -1778,7 +1801,7 @@ function AssistantBubble({
     if (providerSeg?.providerError) {
       return (
         <div className="flex flex-col gap-1 items-start">
-          <ProviderErrorCard payload={providerSeg.providerError} onRetry={onRetry} />
+          <ProviderErrorCard payload={providerSeg.providerError} />
         </div>
       )
     }
@@ -2124,7 +2147,8 @@ const CLOUD_PROVIDER_LOGOS: Record<string, React.ComponentType<{ size?: number }
   deepseek: DeepSeekLogo,
   mimo: MimoLogo,
   kimi: KimiLogo,
-  minimax: MiniMaxLogo
+  minimax: MiniMaxLogo,
+  xai: XAILogo
 }
 
 function ModeToggle({
@@ -2369,10 +2393,6 @@ function markError(messages: ChatMessage[], turnId: string, error: string): Chat
     }
   }
   return out
-}
-
-function stripErrors(messages: ChatMessage[]): ChatMessage[] {
-  return messages.filter((m) => !(isAssistant(m) && m.status === 'error'))
 }
 
 function textHistory(

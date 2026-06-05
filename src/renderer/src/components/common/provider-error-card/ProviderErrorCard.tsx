@@ -5,14 +5,15 @@ import {
   MiniMaxLogo,
   MimoLogo,
   OllamaLogo,
-  OpenAILogo
+  OpenAILogo,
+  XAILogo
 } from '@components/core/ProviderLogos'
 import { cn } from '@lib/utils/cn'
-import { CloudIcon, Refresh01Icon } from 'hugeicons-react'
+import { CloudIcon } from 'hugeicons-react'
 import { useTranslation } from 'react-i18next'
 import type { IconType } from 'react-icons'
 
-type Logo = 'anthropic' | 'openai' | 'deepseek' | 'mimo' | 'kimi' | 'minimax' | 'ollama'
+type Logo = 'anthropic' | 'openai' | 'deepseek' | 'mimo' | 'kimi' | 'minimax' | 'xai' | 'ollama'
 
 const LOGO: Record<Logo, IconType | React.ComponentType<{ size?: number; className?: string }>> = {
   anthropic: AnthropicLogo,
@@ -21,6 +22,7 @@ const LOGO: Record<Logo, IconType | React.ComponentType<{ size?: number; classNa
   mimo: MimoLogo,
   kimi: KimiLogo,
   minimax: MiniMaxLogo,
+  xai: XAILogo,
   ollama: OllamaLogo
 }
 
@@ -29,6 +31,7 @@ export type NoProviderAvailablePayload = {
   providerLogo: string
   statusCode: number | null
   errorReason: string
+  errorDetail: string | null
   retriesAttempted: number
   totalDurationMs: number
 }
@@ -48,6 +51,9 @@ function descriptionKeyFor(errorReason: string, statusCode: number | null): stri
   if (statusCode === 429 || errorReason === 'rate-limited') {
     return 'errors.provider.rateLimited'
   }
+  if (statusCode === 400 || errorReason === 'bad request') {
+    return 'errors.provider.badRequest'
+  }
   if (errorReason === 'offline') {
     return 'errors.provider.offline'
   }
@@ -66,6 +72,9 @@ function titleKeyFor(errorReason: string, statusCode: number | null): string {
   ) {
     return 'errors.provider.invalidKeyTitle'
   }
+  if (statusCode === 400 || errorReason === 'bad request') {
+    return 'errors.provider.badRequestTitle'
+  }
   return 'errors.provider.noProviderTitle'
 }
 
@@ -77,11 +86,9 @@ function titleKeyFor(errorReason: string, statusCode: number | null): string {
  * structural UI.
  */
 export function ProviderErrorCard({
-  payload,
-  onRetry
+  payload
 }: {
   payload: NoProviderAvailablePayload
-  onRetry?: () => void
 }): React.JSX.Element {
   const { t } = useTranslation()
   const Logo = LOGO[payload.providerLogo as Logo] ?? CloudIcon
@@ -100,26 +107,18 @@ export function ProviderErrorCard({
     >
       <div className="flex items-center gap-3">
         <Logo size={18} className="shrink-0" aria-hidden />
-        <p className="flex-1 text-xs">
-          <span className="font-medium">{title}</span>
-          {' — '}
-          <span className="opacity-80">{description}</span>
-        </p>
-        {onRetry && (
-          <button
-            type="button"
-            onClick={onRetry}
-            className={cn(
-              'inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs font-medium',
-              'border-red-300 hover:bg-red-100 dark:border-red-700 dark:hover:bg-red-900/60',
-              'cursor-pointer border bg-transparent',
-              'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
-            )}
-          >
-            <Refresh01Icon size={12} />
-            <span>{t('chat.providerError.retry')}</span>
-          </button>
-        )}
+        <div className="flex-1 text-xs">
+          <p>
+            <span className="font-medium">{title}</span>
+            {' — '}
+            <span className="opacity-80">{description}</span>
+          </p>
+          {payload.errorDetail && (
+            <p className="mt-1 opacity-60 font-mono text-[11px] leading-tight">
+              {payload.errorDetail}
+            </p>
+          )}
+        </div>
       </div>
     </div>
   )

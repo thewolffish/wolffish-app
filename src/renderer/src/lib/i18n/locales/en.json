@@ -289,7 +289,9 @@
         "mimo": "Xiaomi Mimo",
         "kimi": "Kimi",
         "minimax": "MiniMax",
+        "xai": "xAI",
         "descriptions": {
+          "xai": "Grok — xAI's frontier reasoning models with vision and live web search",
           "minimax": "MiniMax's frontier models — strong reasoning and code with competitive pricing",
           "kimi": "Moonshot AI's flagship models — powerful reasoning with long-context support",
           "mimo": "Xiaomi's cloud AI — affordable frontier models with strong multilingual support",
@@ -1015,6 +1017,7 @@
         "mimo": "Xiaomi Mimo",
         "kimi": "Kimi",
         "minimax": "MiniMax",
+        "xai": "xAI",
         "brave": "Brave Search"
       },
       "tokens": "tokens",
@@ -1343,6 +1346,8 @@
       "noProviderDescription": "No provider available — check settings or retry.",
       "invalidKeyTitle": "API key invalid",
       "invalidKey": "API key invalid or expired — update in settings.",
+      "badRequestTitle": "Request rejected",
+      "badRequest": "The provider rejected the request — try a different model or check your configuration.",
       "modelNotFound": "Model not found — may be renamed or retired.",
       "rateLimited": "Rate-limited — try again shortly.",
       "offline": "You're offline — check your connection.",

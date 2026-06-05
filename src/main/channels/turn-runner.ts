@@ -1,8 +1,8 @@
+import { turnRouter, type TurnSink } from '@main/channels/channel'
 import type { Agent } from '@main/runtime/agent'
 import type { CorpusEvent } from '@main/runtime/corpus'
 import { CREDENTIAL_BLOCKED_REPLY, detectSensitiveData } from '@main/runtime/sensitiveDataFilter'
 import type { ChatHistoryMessage } from '@preload/index'
-import { turnRouter, type TurnSink } from '@main/channels/channel'
 
 /**
  * Corpus events relayed to the channel as turn events. Same set the
@@ -179,7 +179,13 @@ export class TurnRunner {
   }
 }
 
-type ErrorKey = 'invalidKey' | 'modelNotFound' | 'rateLimited' | 'serverError' | 'offline'
+type ErrorKey =
+  | 'invalidKey'
+  | 'modelNotFound'
+  | 'rateLimited'
+  | 'serverError'
+  | 'offline'
+  | 'badRequest'
 
 const ERROR_MESSAGES: Record<ErrorKey, Record<'en' | 'ar', string>> = {
   invalidKey: {
@@ -201,6 +207,10 @@ const ERROR_MESSAGES: Record<ErrorKey, Record<'en' | 'ar', string>> = {
   offline: {
     en: 'You appear to be offline. Check your internet connection.',
     ar: 'يبدو أنك غير متصل بالإنترنت. تحقق من اتصالك.'
+  },
+  badRequest: {
+    en: 'The provider rejected the request. Try a different model or check your configuration.',
+    ar: 'رفض المزوّد الطلب. جرّب نموذجاً آخر أو تحقق من الإعدادات.'
   }
 }
 
@@ -210,6 +220,7 @@ function humanizeProviderError(raw: string, locale: 'en' | 'ar'): string {
     return ERROR_MESSAGES.invalidKey[locale]
   if (raw === 'model not found') return ERROR_MESSAGES.modelNotFound[locale]
   if (raw === 'rate-limited') return ERROR_MESSAGES.rateLimited[locale]
+  if (raw === 'bad request') return ERROR_MESSAGES.badRequest[locale]
   if (
     raw === 'unavailable' ||
     raw === 'server error' ||
@@ -222,6 +233,11 @@ function humanizeProviderError(raw: string, locale: 'en' | 'ar'): string {
   if (raw === 'offline') return ERROR_MESSAGES.offline[locale]
 
   // Raw HTTP errors from committed-error path (provider threw mid-stream)
+  if (/HTTP\s+400/i.test(raw)) {
+    const provider = extractProviderName(raw)
+    const base = ERROR_MESSAGES.badRequest[locale]
+    return provider ? `${provider}: ${base}` : base
+  }
   if (/HTTP\s+40[13]/i.test(raw)) {
     const provider = extractProviderName(raw)
     const base = ERROR_MESSAGES.invalidKey[locale]
