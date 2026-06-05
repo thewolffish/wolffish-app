@@ -11,7 +11,8 @@ import {
   StepfunLogo
 } from '@components/core/ProviderLogos'
 import { cn } from '@lib/utils/cn'
-import { CloudIcon } from 'hugeicons-react'
+import { CloudIcon, Copy01Icon, Tick02Icon } from 'hugeicons-react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { IconType } from 'react-icons'
 
@@ -82,19 +83,53 @@ function titleKeyFor(errorReason: string, statusCode: number | null): string {
   return 'errors.provider.noProviderTitle'
 }
 
-/**
- * Shown only when cloud cascades exhaust AND no local model is
- * configured — the genuine "you have no LLM available" state. Every
- * other failure path now lets the local model speak for itself, so
- * this is the lone surface that's still rendered as code-written
- * structural UI.
- */
-export function ProviderErrorCard({
-  payload
-}: {
-  payload: NoProviderAvailablePayload
-}): React.JSX.Element {
+function ErrorDetailBlock({ text }: { text: string }): React.JSX.Element {
+  const [copied, setCopied] = useState(false)
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => { if (timer.current) clearTimeout(timer.current) }, [])
+
+  const onCopy = async (): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(true)
+      if (timer.current) clearTimeout(timer.current)
+      timer.current = setTimeout(() => setCopied(false), 1500)
+    } catch { /* clipboard may be unavailable */ }
+  }
+
+  return (
+    <div className="group/detail relative mt-2">
+      <pre
+        dir="ltr"
+        className={cn(
+          'rounded-lg p-2 text-[11px] leading-tight font-mono',
+          'bg-red-100/80 dark:bg-red-950/60',
+          'overflow-x-auto whitespace-pre-wrap break-all',
+          'text-left'
+        )}
+      >
+        {text}
+      </pre>
+      <button
+        type="button"
+        onClick={() => void onCopy()}
+        className={cn(
+          'absolute bottom-1.5 right-1.5 p-1 rounded-md cursor-pointer',
+          'bg-red-200/80 text-red-700 hover:bg-red-300/80',
+          'dark:bg-red-800/80 dark:text-red-200 dark:hover:bg-red-700/80',
+          'opacity-0 group-hover/detail:opacity-100 transition-opacity',
+          copied && 'opacity-100'
+        )}
+      >
+        {copied ? <Tick02Icon size={12} /> : <Copy01Icon size={12} />}
+      </button>
+    </div>
+  )
+}
+
+function SingleErrorCard({ payload }: { payload: NoProviderAvailablePayload }): React.JSX.Element {
   const { t } = useTranslation()
+  const [showDetail, setShowDetail] = useState(false)
   const Logo = LOGO[payload.providerLogo as Logo] ?? CloudIcon
   const title = t(titleKeyFor(payload.errorReason, payload.statusCode))
   const description = t(descriptionKeyFor(payload.errorReason, payload.statusCode))
@@ -106,24 +141,45 @@ export function ProviderErrorCard({
       className={cn(
         'border-red-300 bg-red-50 text-red-900',
         'dark:border-red-700 dark:bg-red-900/40 dark:text-red-100',
-        'w-full max-w-[85%] self-start rounded-2xl border px-4 py-3 text-sm'
+        'w-full rounded-2xl border px-4 py-3 text-sm'
       )}
     >
       <div className="flex items-center gap-3">
         <Logo size={18} className="shrink-0" aria-hidden />
         <div className="flex-1 text-xs">
-          <p>
-            <span className="font-medium">{title}</span>
-            {' — '}
-            <span className="opacity-80">{description}</span>
-          </p>
+          <p className="font-medium">{title}</p>
+          <p className="opacity-80">{description}</p>
           {payload.errorDetail && (
-            <p className="mt-1 opacity-60 font-mono text-[11px] leading-tight">
-              {payload.errorDetail}
-            </p>
+            <button
+              type="button"
+              onClick={() => setShowDetail((v) => !v)}
+              className={cn(
+                'mt-1 text-[11px] underline underline-offset-2 opacity-60',
+                'hover:opacity-90 transition-opacity'
+              )}
+            >
+              {t('errors.provider.viewDetails')}
+            </button>
           )}
         </div>
       </div>
+      {showDetail && payload.errorDetail && (
+        <ErrorDetailBlock text={payload.errorDetail} />
+      )}
+    </div>
+  )
+}
+
+export function ProviderErrorCards({
+  failures
+}: {
+  failures: NoProviderAvailablePayload[]
+}): React.JSX.Element {
+  return (
+    <div className="flex w-full max-w-[85%] flex-col gap-2 self-start">
+      {failures.map((f, i) => (
+        <SingleErrorCard key={`${f.provider}-${i}`} payload={f} />
+      ))}
     </div>
   )
 }

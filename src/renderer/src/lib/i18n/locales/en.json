@@ -1357,7 +1357,8 @@
       "modelNotFound": "Model not found — may be renamed or retired.",
       "rateLimited": "Rate-limited — try again shortly.",
       "offline": "You're offline — check your connection.",
-      "serverError": "Provider temporarily unavailable — retry shortly."
+      "serverError": "Provider temporarily unavailable — retry shortly.",
+      "viewDetails": "View details"
     }
   }
 }

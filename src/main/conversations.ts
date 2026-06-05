@@ -1,4 +1,5 @@
 import type { Segment, SegmentTurnEndReason } from '@main/runtime/broca'
+import type { NoProviderAvailableInfo } from '@main/runtime/thalamus'
 import { workspaceRoot } from '@main/workspace/workspace'
 import type { PersistedApproval, PersistedToolTiming } from '@preload/index'
 import nlp from 'compromise'
@@ -189,9 +190,31 @@ export async function listConversations(): Promise<ConversationMeta[]> {
 export async function loadConversation(id: string): Promise<ConversationFile | null> {
   try {
     const raw = await fs.readFile(filePathForId(id), 'utf8')
-    return JSON.parse(raw) as ConversationFile
+    const conv = JSON.parse(raw) as ConversationFile
+    migrateSegments(conv)
+    return conv
   } catch {
     return null
+  }
+}
+
+/**
+ * Normalize legacy segment shapes so the renderer never needs to
+ * check for old field names.
+ *
+ * - `providerError` (singular object) → `providerErrors` (array)
+ */
+function migrateSegments(conv: ConversationFile): void {
+  for (const msg of conv.messages) {
+    if (!msg.segments) continue
+    for (const seg of msg.segments) {
+      if (seg.kind !== 'turn_end') continue
+      const raw = seg as Record<string, unknown>
+      if (raw.providerError && !seg.providerErrors) {
+        seg.providerErrors = [raw.providerError as NoProviderAvailableInfo]
+        delete raw.providerError
+      }
+    }
   }
 }
 

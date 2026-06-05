@@ -8,7 +8,7 @@ import { DocxViewer } from '@components/common/docx-viewer/DocxViewer'
 import { FileCard } from '@components/common/file-card/FileCard'
 import { HeartbeatActiveOverlay } from '@components/common/heartbeat-active-overlay/HeartbeatActiveOverlay'
 import { PdfViewer } from '@components/common/pdf-viewer/PdfViewer'
-import { ProviderErrorCard } from '@components/common/provider-error-card/ProviderErrorCard'
+import { ProviderErrorCards } from '@components/common/provider-error-card/ProviderErrorCard'
 import { Sidebar } from '@components/common/sidebar/Sidebar'
 import { SpreadsheetViewer } from '@components/common/spreadsheet-viewer/SpreadsheetViewer'
 import {
@@ -1856,12 +1856,12 @@ function AssistantBubble({
   if (isError && message.error) {
     const providerSeg = message.segments.find(
       (s): s is Extract<Segment, { kind: 'turn_end' }> =>
-        s.kind === 'turn_end' && s.stopReason === 'no_provider_available' && !!s.providerError
+        s.kind === 'turn_end' && s.stopReason === 'no_provider_available' && !!s.providerErrors?.length
     )
-    if (providerSeg?.providerError) {
+    if (providerSeg?.providerErrors?.length) {
       return (
         <div className="flex flex-col gap-1 items-start">
-          <ProviderErrorCard payload={providerSeg.providerError} />
+          <ProviderErrorCards failures={providerSeg.providerErrors} />
         </div>
       )
     }
@@ -2092,8 +2092,8 @@ function renderSegments(
       blocks.push(<ActiveModelChip key={seg.segmentId} provider={seg.to} model={seg.model} />)
     } else if (seg.kind === 'turn_end') {
       flushText()
-      if (seg.stopReason === 'no_provider_available' && seg.providerError) {
-        blocks.push(<ProviderErrorCard key={seg.segmentId} payload={seg.providerError} />)
+      if (seg.stopReason === 'no_provider_available' && seg.providerErrors?.length) {
+        blocks.push(<ProviderErrorCards key={seg.segmentId} failures={seg.providerErrors} />)
       } else if (seg.stopReason === 'error') {
         blocks.push(<TurnFooter key={seg.segmentId} stopReason={seg.stopReason} />)
       }

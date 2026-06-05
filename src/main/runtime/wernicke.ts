@@ -42,7 +42,7 @@ export type ParsedResponse = {
   outputTokens: number
   stopReason: StopReason
   error?: string
-  noProviderAvailable?: NoProviderAvailableInfo
+  noProviderAvailable?: NoProviderAvailableInfo[]
   providerChange?: ProviderChange
 }
 
@@ -74,7 +74,7 @@ export class Wernicke {
     let outputTokens = 0
     let stopReason: StopReason = 'unknown'
     let error: string | undefined
-    let noProviderAvailable: NoProviderAvailableInfo | undefined
+    let noProviderAvailable: NoProviderAvailableInfo[] | undefined
     let providerChange: ProviderChange | undefined
 
     for await (const chunk of stream) {
@@ -93,11 +93,11 @@ export class Wernicke {
       } else if (chunk.type === 'error') {
         error = chunk.message
       } else if (chunk.type === 'no_provider_available') {
-        noProviderAvailable = chunk.info
+        noProviderAvailable = chunk.failures
         // Set error so the agent's existing throw-on-error path triggers
         // and the catch handler can promote this into a turn_end with
         // stopReason='no_provider_available'.
-        error = chunk.info.errorReason
+        error = chunk.failures.map((f) => f.errorReason).join('; ')
       } else if (chunk.type === 'provider_change') {
         // Capture so the agent can update its fallback state for
         // subsequent iterations of the tool-use loop in this turn.

@@ -323,7 +323,7 @@ export class Agent {
     let stopReason: SegmentTurnEndReason | 'canceled' = 'end_turn'
     let lastAssistantText = ''
     let lastReasoningContent: string | undefined
-    let noProviderAvailable: NoProviderAvailableInfo | null = null
+    let noProviderAvailable: NoProviderAvailableInfo[] | null = null
     let fallbackState: { mode: FallbackMode; reason: string; cloudProvider: string } | null = null
     const turnTools: TurnToolCall[] = []
     let turnUsage: StreamUsage = { inputTokens: 0, outputTokens: 0 }

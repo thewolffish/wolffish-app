@@ -109,7 +109,7 @@ export type StreamChunk =
       reason: string
       mode: FallbackMode
     }
-  | { type: 'no_provider_available'; info: NoProviderAvailableInfo }
+  | { type: 'no_provider_available'; failures: NoProviderAvailableInfo[] }
 
 export type CloudProviderConfig = {
   id: 'anthropic' | 'openai' | 'deepseek' | 'mimo' | 'kimi' | 'minimax' | 'xai' | 'qwen' | 'stepfun'
@@ -341,7 +341,7 @@ export class Thalamus {
       yield { type: 'active_model', provider: head.id, model: head.model }
     }
 
-    let lastFailure: ProviderFailure | null = null
+    const allFailures: ProviderFailure[] = []
 
     // 1. Cloud providers, each with their own retry budget.
     for (const entry of cloudEntries) {
@@ -351,12 +351,13 @@ export class Thalamus {
         yield { type: 'error', message: result.message, recoverable: false }
         return
       }
-      lastFailure = result.failure
+      allFailures.push(result.failure)
       // Hard or transient-exhausted: try the next cloud provider.
     }
 
     // 2. Cloud exhausted. Fall to local if one exists — the toggle now
     //    controls the *mode*, not whether the fallback engages.
+    const lastCloudFailure = allFailures[allFailures.length - 1] ?? null
     if (localEntry) {
       const mode = this.getFallbackMode()
       // Only announce a provider change when cloud was actually attempted
@@ -366,18 +367,18 @@ export class Thalamus {
       // claim a fallback from cloud, and surfaces fall-channels (like
       // Telegram, which renders both chunks sequentially) end up showing
       // the model name twice.
-      if (lastFailure) {
+      if (lastCloudFailure) {
         this.emit('llm.fallback', {
-          from: lastFailure.provider,
+          from: lastCloudFailure.provider,
           to: localEntry.id,
-          reason: lastFailure.reasonKey
+          reason: lastCloudFailure.reasonKey
         })
         yield {
           type: 'provider_change',
-          from: lastFailure.provider,
+          from: lastCloudFailure.provider,
           to: localEntry.id,
           model: localEntry.model,
-          reason: lastFailure.reasonKey,
+          reason: lastCloudFailure.reasonKey,
           mode
         }
       }
@@ -396,34 +397,35 @@ export class Thalamus {
         yield { type: 'error', message: result.message, recoverable: false }
         return
       }
-      lastFailure = result.failure
+      allFailures.push(result.failure)
     }
 
-    // 3. No local model and cloud exhausted. This is the only case
-    //    where we surface a structured error card — the user genuinely
-    //    has no LLM available right now.
-    const fallbackProvider: ProviderId = cloudEntries[0]?.id ?? localEntry?.id ?? 'local'
-    const failure = lastFailure ?? {
-      provider: fallbackProvider,
-      statusCode: null,
-      errorClass: 'unknown' as ErrorClass,
-      reasonKey: 'unavailable',
-      rawMessage: null,
-      retries: 0,
-      durationMs: 0
-    }
-    yield {
-      type: 'no_provider_available',
-      info: {
-        provider: failure.provider,
-        providerLogo: PROVIDER_LOGO[failure.provider],
-        statusCode: failure.statusCode,
-        errorReason: failure.reasonKey,
-        errorDetail: failure.rawMessage,
-        retriesAttempted: failure.retries,
-        totalDurationMs: failure.durationMs
-      }
-    }
+    // 3. Every provider exhausted. Surface a structured error card per
+    //    failed provider so the user sees exactly what went wrong with
+    //    each one — not just the last.
+    const failures: NoProviderAvailableInfo[] =
+      allFailures.length > 0
+        ? allFailures.map((f) => ({
+            provider: f.provider,
+            providerLogo: PROVIDER_LOGO[f.provider],
+            statusCode: f.statusCode,
+            errorReason: f.reasonKey,
+            errorDetail: f.rawMessage,
+            retriesAttempted: f.retries,
+            totalDurationMs: f.durationMs
+          }))
+        : [
+            {
+              provider: cloudEntries[0]?.id ?? localEntry?.id ?? 'local',
+              providerLogo: PROVIDER_LOGO[cloudEntries[0]?.id ?? localEntry?.id ?? 'local'],
+              statusCode: null,
+              errorReason: 'unavailable',
+              errorDetail: null,
+              retriesAttempted: 0,
+              totalDurationMs: 0
+            }
+          ]
+    yield { type: 'no_provider_available', failures }
   }
 
   private async *streamOnce(
