@@ -1,42 +1,42 @@
 import { ActiveModelChip } from '@components/common/active-model-chip/ActiveModelChip'
+import { ApprovalCard } from '@components/common/approval-card/ApprovalCard'
+import { AttachmentList } from '@components/common/attachment-list/AttachmentList'
+import { AudioPlayer } from '@components/common/audio-player/AudioPlayer'
+import { CodeFileViewer } from '@components/common/code-file-viewer/CodeFileViewer'
+import { ContextMeter } from '@components/common/context-meter/ContextMeter'
+import { DocxViewer } from '@components/common/docx-viewer/DocxViewer'
+import { FileCard } from '@components/common/file-card/FileCard'
+import { HeartbeatActiveOverlay } from '@components/common/heartbeat-active-overlay/HeartbeatActiveOverlay'
+import { PdfViewer } from '@components/common/pdf-viewer/PdfViewer'
+import { ProviderErrorCard } from '@components/common/provider-error-card/ProviderErrorCard'
+import { Sidebar } from '@components/common/sidebar/Sidebar'
+import { SpreadsheetViewer } from '@components/common/spreadsheet-viewer/SpreadsheetViewer'
 import {
   ThinkingModeSelect,
   type ThinkingModeOption
 } from '@components/common/thinking-mode-select/ThinkingModeSelect'
-import { CodeFileViewer } from '@components/common/code-file-viewer/CodeFileViewer'
-import { PdfViewer } from '@components/common/pdf-viewer/PdfViewer'
-import { ApprovalCard } from '@components/common/approval-card/ApprovalCard'
-import { AttachmentList } from '@components/common/attachment-list/AttachmentList'
-import { AudioPlayer } from '@components/common/audio-player/AudioPlayer'
-import { DocxViewer } from '@components/common/docx-viewer/DocxViewer'
-import { FileCard } from '@components/common/file-card/FileCard'
-import { SpreadsheetViewer } from '@components/common/spreadsheet-viewer/SpreadsheetViewer'
-import { ContextMeter } from '@components/common/context-meter/ContextMeter'
-import { HeartbeatActiveOverlay } from '@components/common/heartbeat-active-overlay/HeartbeatActiveOverlay'
-import { ProviderErrorCard } from '@components/common/provider-error-card/ProviderErrorCard'
-import { Sidebar } from '@components/common/sidebar/Sidebar'
 import { ToolCard } from '@components/common/tool-card/ToolCard'
 import { TurnFooter } from '@components/common/turn-footer/TurnFooter'
 import { UpdateCard } from '@components/common/update-card/UpdateCard'
 import { CodeEditor } from '@components/core/CodeEditor'
 import { CopyButton } from '@components/core/CopyButton'
 import { Markdown } from '@components/core/Markdown'
-import { Tooltip } from '@components/core/Tooltip'
 import {
   AnthropicLogo,
   DeepSeekLogo,
   KimiLogo,
-  MiniMaxLogo,
   MimoLogo,
+  MiniMaxLogo,
   OllamaLogo,
   OpenAILogo,
+  QwenLogo,
+  StepfunLogo,
   TelegramLogo,
   WhatsAppLogo,
-  XAILogo,
-  QwenLogo,
-  StepfunLogo
+  XAILogo
 } from '@components/core/ProviderLogos'
 import { useToast } from '@components/core/toast/useToast'
+import { Tooltip } from '@components/core/Tooltip'
 import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
 import { preselectSettingsTab } from '@pages/settings/settingsNav'
@@ -44,7 +44,8 @@ import type {
   ConversationChannel,
   ConversationFile,
   MessageAttachment,
-  Segment
+  Segment,
+  ThinkingMode
 } from '@preload/index'
 import {
   useFlow,
@@ -123,21 +124,17 @@ export function Chat(): React.JSX.Element {
     [cloudProviders, activeCloudProvider]
   )
   const persistedThinkingModes = status?.config?.llm.thinkingModes
-  const [thinkingMode, setThinkingModeState] = useState('basic')
+  const thinkingMode = useMemo(
+    () => (activeCloudModel ? (persistedThinkingModes?.[activeCloudModel] ?? 'basic') : 'basic'),
+    [activeCloudModel, persistedThinkingModes]
+  )
 
-  // Read persisted thinking mode when model changes, fall back to 'basic'
-  useEffect(() => {
-    if (activeCloudModel) {
-      setThinkingModeState(persistedThinkingModes?.[activeCloudModel] ?? 'basic')
-    }
-  }, [activeCloudModel, persistedThinkingModes])
-
-  // Persist + update local state
+  // Persist via API — the source of truth is persistedThinkingModes, which
+  // updates reactively through status once the write completes.
   const setThinkingMode = useCallback(
     (mode: string) => {
-      setThinkingModeState(mode)
       if (activeCloudModel) {
-        void window.api.runtime.setThinkingMode(activeCloudModel, mode)
+        void window.api.runtime.setThinkingMode(activeCloudModel, mode as ThinkingMode)
       }
     },
     [activeCloudModel]
@@ -155,11 +152,6 @@ export function Chat(): React.JSX.Element {
       value: 'none',
       labelKey: 'chat.thinkingMode.none',
       tooltipKey: 'chat.thinkingMode.noneTooltip'
-    }
-    const basic: ThinkingModeOption = {
-      value: 'basic',
-      labelKey: 'chat.thinkingMode.basic',
-      tooltipKey: 'chat.thinkingMode.basicTooltip'
     }
     const max: ThinkingModeOption = {
       value: 'max',
@@ -239,7 +231,7 @@ export function Chat(): React.JSX.Element {
       const preferred = thinkingModeOptions.find((o) => o.value === 'basic')
       setThinkingMode(preferred?.value ?? thinkingModeOptions[0].value)
     }
-  }, [thinkingModeOptions, thinkingMode])
+  }, [thinkingModeOptions, thinkingMode, setThinkingMode])
 
   const [heartbeatActive, setHeartbeatActive] = useState(false)
   useEffect(() => {
@@ -831,7 +823,11 @@ export function Chat(): React.JSX.Element {
       setOutputTokens(0)
       setCacheReadTokens(0)
 
-      const response = await window.api.chat.send({ history, conversationId, thinkingMode: thinkingMode as import('@preload/index').ThinkingMode })
+      const response = await window.api.chat.send({
+        history,
+        conversationId,
+        thinkingMode: thinkingMode as import('@preload/index').ThinkingMode
+      })
       pendingTurnIdRef.current = response.turnId
       if (!response.ok && response.error) {
         pendingTurnIdRef.current = null
@@ -841,7 +837,15 @@ export function Chat(): React.JSX.Element {
         setMessages((prev) => markError(prev, response.turnId, response.error ?? 'unknown error'))
       }
     },
-    [streaming, messages, setMessages, ensureConversationId, status?.rootPath, workingFolders]
+    [
+      streaming,
+      messages,
+      setMessages,
+      ensureConversationId,
+      status?.rootPath,
+      workingFolders,
+      thinkingMode
+    ]
   )
 
   const send = useCallback(async () => {
@@ -955,7 +959,11 @@ export function Chat(): React.JSX.Element {
       setOutputTokens(0)
       setCacheReadTokens(0)
 
-      const response = await window.api.chat.send({ history, conversationId, thinkingMode: thinkingMode as import('@preload/index').ThinkingMode })
+      const response = await window.api.chat.send({
+        history,
+        conversationId,
+        thinkingMode: thinkingMode as import('@preload/index').ThinkingMode
+      })
       pendingTurnIdRef.current = response.turnId
       if (!response.ok && response.error) {
         pendingTurnIdRef.current = null
@@ -976,21 +984,13 @@ export function Chat(): React.JSX.Element {
     messages,
     setMessages,
     status,
-    workingFolders
+    workingFolders,
+    thinkingMode
   ])
 
   const stop = useCallback(() => {
     void window.api.chat.cancel()
   }, [])
-
-  const onRetryBase = useCallback(() => {
-    if (streaming) return
-    const last = lastUserContent(messages)
-    if (!last) return
-    void sendContent(last)
-  }, [messages, streaming, sendContent])
-
-  const onRetry = isTelegramConversation || isWhatsAppConversation ? undefined : onRetryBase
 
   /**
    * Save each source (filesystem path or in-memory File) into the active
@@ -1288,7 +1288,6 @@ export function Chat(): React.JSX.Element {
               t={t}
               awaitingApproval={awaitingApproval}
               onApprovalDecision={respondApproval}
-              onRetry={onRetry}
             />
           ))}
           {hasMessages && !hasAnyModel && (
@@ -1685,28 +1684,25 @@ function relativeTime(ts: number): string {
 }
 
 function useRelativeTime(ts: number | undefined): string | null {
-  const [label, setLabel] = useState<string | null>(() => (ts ? relativeTime(ts) : null))
+  const [, setTick] = useState(0)
   useEffect(() => {
     if (!ts) return
-    setLabel(relativeTime(ts))
-    const id = setInterval(() => setLabel(relativeTime(ts)), 30_000)
+    const id = setInterval(() => setTick((t) => t + 1), 30_000)
     return () => clearInterval(id)
   }, [ts])
-  return label
+  return ts ? relativeTime(ts) : null
 }
 
 function ChatItem({
   message,
   t,
   awaitingApproval,
-  onApprovalDecision,
-  onRetry
+  onApprovalDecision
 }: {
   message: ChatMessage
   t: (k: string, opts?: Record<string, unknown>) => string
   awaitingApproval: boolean
   onApprovalDecision: (id: string, decision: 'approved' | 'denied') => void
-  onRetry?: () => void
 }): React.JSX.Element {
   if (message.role === 'user') {
     return (
@@ -1724,7 +1720,6 @@ function ChatItem({
       message={message}
       awaitingApproval={awaitingApproval}
       onApprovalDecision={onApprovalDecision}
-      onRetry={onRetry}
     />
   )
 }
@@ -1766,7 +1761,12 @@ function UserBubble({
       )}
       {showFooter && (
         <div className="flex items-center gap-1.5">
-          <CopyButton text={content} variant="inline" ariaLabelKey="chat.copyMessage" className="px-2" />
+          <CopyButton
+            text={content}
+            variant="inline"
+            ariaLabelKey="chat.copyMessage"
+            className="px-2"
+          />
           {timeLabel && (
             <span className="inline-flex items-center gap-1 text-[11px] text-muted">
               <Clock01Icon size={14} />
@@ -1782,13 +1782,11 @@ function UserBubble({
 function AssistantBubble({
   message,
   awaitingApproval,
-  onApprovalDecision,
-  onRetry
+  onApprovalDecision
 }: {
   message: AssistantMessage
   awaitingApproval: boolean
   onApprovalDecision: (id: string, decision: 'approved' | 'denied') => void
-  onRetry?: () => void
 }): React.JSX.Element {
   const { t } = useTranslation()
   const isStreaming = message.status === 'streaming'
@@ -1839,8 +1837,7 @@ function AssistantBubble({
     message.segments,
     message.approvals,
     message.toolTimings,
-    onApprovalDecision,
-    onRetry
+    onApprovalDecision
   )
   const showThinking = isStreaming && renderable.empty
   const fullText = useMemo(() => collectText(message.segments), [message.segments])
@@ -1909,8 +1906,7 @@ function renderSegments(
   segments: Segment[],
   approvals: Record<string, ApprovalCardState> | undefined,
   toolTimings: Record<string, ToolTiming> | undefined,
-  onApprovalDecision: (id: string, decision: 'approved' | 'denied') => void,
-  onRetry?: () => void
+  onApprovalDecision: (id: string, decision: 'approved' | 'denied') => void
 ): RenderResult {
   const blocks: ReactNode[] = []
   let textBuffer = ''
@@ -2088,9 +2084,7 @@ function renderSegments(
     } else if (seg.kind === 'turn_end') {
       flushText()
       if (seg.stopReason === 'no_provider_available' && seg.providerError) {
-        blocks.push(
-          <ProviderErrorCard key={seg.segmentId} payload={seg.providerError} onRetry={onRetry} />
-        )
+        blocks.push(<ProviderErrorCard key={seg.segmentId} payload={seg.providerError} />)
       } else if (seg.stopReason === 'error') {
         blocks.push(<TurnFooter key={seg.segmentId} stopReason={seg.stopReason} />)
       }
@@ -2499,14 +2493,6 @@ function textHistory(
     }
   }
   return out
-}
-
-function lastUserContent(messages: ChatMessage[]): string | null {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i]
-    if (isUser(m)) return m.content
-  }
-  return null
 }
 
 function attachApproval(messages: ChatMessage[], approval: ApprovalCardState): ChatMessage[] {
