@@ -271,7 +271,7 @@ export function Settings(): React.JSX.Element {
         navigator.platform.startsWith('Win') ? 'pt-5' : 'pt-10'
       )}
     >
-      <aside className="flex w-56 shrink-0 flex-col gap-2 overflow-y-auto p-3">
+      <aside className="flex w-56 min-w-56 shrink-0 flex-col gap-2 overflow-y-auto p-3">
         <button
           type="button"
           onClick={() => goTo('chat')}
@@ -296,7 +296,7 @@ export function Settings(): React.JSX.Element {
                   aria-selected={isActive}
                   onClick={() => setActive(tab.key)}
                   className={cn(
-                    'flex items-center gap-2 rounded-lg px-3 py-2 text-start text-sm cursor-pointer',
+                    'flex items-center gap-2 rounded-lg px-3 py-2 text-start text-sm cursor-pointer whitespace-nowrap',
                     'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
                     isActive
                       ? 'bg-primary text-primary-fg shadow-sm'
@@ -330,7 +330,7 @@ export function Settings(): React.JSX.Element {
                               tabIndex={isActive ? 0 : -1}
                               onClick={() => setProvider(p)}
                               className={cn(
-                                'flex items-center gap-2 rounded-lg px-3 py-1.5 text-start text-sm cursor-pointer',
+                                'flex items-center gap-2 rounded-lg px-3 py-1.5 text-start text-sm cursor-pointer whitespace-nowrap',
                                 'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
                                 subActive
                                   ? 'bg-border/50 text-fg font-medium'
@@ -373,7 +373,7 @@ export function Settings(): React.JSX.Element {
                               tabIndex={isActive ? 0 : -1}
                               onClick={() => setChannel(ch)}
                               className={cn(
-                                'flex items-center gap-2 rounded-lg px-3 py-1.5 text-start text-sm cursor-pointer',
+                                'flex items-center gap-2 rounded-lg px-3 py-1.5 text-start text-sm cursor-pointer whitespace-nowrap',
                                 'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
                                 subActive
                                   ? 'bg-border/50 text-fg font-medium'
@@ -409,7 +409,7 @@ export function Settings(): React.JSX.Element {
                               tabIndex={isActive ? 0 : -1}
                               onClick={() => setService(s)}
                               className={cn(
-                                'flex items-center gap-2 rounded-lg px-3 py-1.5 text-start text-sm cursor-pointer',
+                                'flex items-center gap-2 rounded-lg px-3 py-1.5 text-start text-sm cursor-pointer whitespace-nowrap',
                                 'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
                                 subActive
                                   ? 'bg-border/50 text-fg font-medium'
@@ -444,7 +444,7 @@ export function Settings(): React.JSX.Element {
                               tabIndex={isActive ? 0 : -1}
                               onClick={() => setHippocampusTab(ht)}
                               className={cn(
-                                'flex items-center gap-2 rounded-lg px-3 py-1.5 text-start text-sm cursor-pointer',
+                                'flex items-center gap-2 rounded-lg px-3 py-1.5 text-start text-sm cursor-pointer whitespace-nowrap',
                                 'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
                                 subActive
                                   ? 'bg-border/50 text-fg font-medium'
