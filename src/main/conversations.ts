@@ -198,7 +198,10 @@ export async function loadConversation(id: string): Promise<ConversationFile | n
 export async function saveConversation(conv: ConversationFile): Promise<void> {
   const dir = conversationsDir()
   await fs.mkdir(dir, { recursive: true })
-  await fs.writeFile(filePathForId(conv.id), JSON.stringify(conv, null, 2), 'utf8')
+  const target = filePathForId(conv.id)
+  const tmp = `${target}.tmp`
+  await fs.writeFile(tmp, JSON.stringify(conv, null, 2), 'utf8')
+  await fs.rename(tmp, target)
 }
 
 export async function deleteConversation(id: string): Promise<void> {

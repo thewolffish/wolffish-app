@@ -77,7 +77,16 @@ import {
   Settings02Icon,
   StopCircleIcon
 } from 'hugeicons-react'
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode
+} from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 
@@ -619,22 +628,22 @@ export function Chat(): React.JSX.Element {
 
   const shouldPersistRef = useRef(false)
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (shouldPersistRef.current) {
       shouldPersistRef.current = false
-      void persistConversation(messages)
+      void persistConversation(messages).catch(() => undefined)
     }
   }, [messages, persistConversation])
 
   const persistedErrorIdsRef = useRef(new Set<string>())
-  useEffect(() => {
+  useLayoutEffect(() => {
     const unpersisted = messages.find(
       (m): m is AssistantMessage =>
         isAssistant(m) && m.status === 'error' && !persistedErrorIdsRef.current.has(m.id)
     )
     if (unpersisted && conversationRef.current) {
       persistedErrorIdsRef.current.add(unpersisted.id)
-      void persistConversation(messages)
+      void persistConversation(messages).catch(() => undefined)
     }
   }, [messages, persistConversation])
 
