@@ -1,4 +1,12 @@
 import { Boom } from '@hapi/boom'
+import type { TurnSink } from '@main/channels/channel'
+import type { TurnRunner } from '@main/channels/turn-runner'
+import {
+  getConversationIdForJid,
+  setConversationIdForJid
+} from '@main/channels/whatsapp/conversations'
+import { extractTextBody, shouldProcessMessage } from '@main/channels/whatsapp/messages'
+import { buildWhatsAppCapability, WHATSAPP_CAPABILITY_NAME } from '@main/channels/whatsapp/tools'
 import {
   createConversation,
   deleteConversation,
@@ -41,11 +49,6 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import pino from 'pino'
-import type { TurnSink } from '@main/channels/channel'
-import type { TurnRunner } from '@main/channels/turn-runner'
-import { getConversationIdForJid, setConversationIdForJid } from '@main/channels/whatsapp/conversations'
-import { extractTextBody, shouldProcessMessage } from '@main/channels/whatsapp/messages'
-import { buildWhatsAppCapability, WHATSAPP_CAPABILITY_NAME } from '@main/channels/whatsapp/tools'
 
 export type WhatsAppConnectionStatus = 'disconnected' | 'connecting' | 'qr' | 'connected' | 'error'
 
@@ -157,6 +160,7 @@ export class WhatsAppChannel {
     for (const turn of this.activeByJid.values()) {
       turn.controller.abort()
     }
+    this.activeByJid.clear()
   }
 
   updateAllowedPhoneNumbers(numbers: string[]): void {

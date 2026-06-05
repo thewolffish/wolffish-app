@@ -1,10 +1,10 @@
+import type { TurnSink } from '@main/channels/channel'
+import type { TurnRunner, TurnSendOptions } from '@main/channels/turn-runner'
 import type { Agent } from '@main/runtime/agent'
 import type { ApprovalDecision, ApprovalRequest } from '@main/runtime/amygdala'
 import type { CorpusEvents } from '@main/runtime/corpus'
 import type { ChatHistoryMessage } from '@preload/index'
 import type { WebContents } from 'electron'
-import type { TurnSink } from '@main/channels/channel'
-import type { TurnRunner, TurnSendOptions } from '@main/channels/turn-runner'
 
 /**
  * The Electron renderer channel. Wraps the existing chat:* IPC surface
@@ -36,7 +36,11 @@ export class ElectronChannel {
   /** chat:send IPC handler. Returns the turnId synchronously. */
   send(
     sender: WebContents,
-    payload: { history: ChatHistoryMessage[]; conversationId?: string | null; thinkingMode?: string }
+    payload: {
+      history: ChatHistoryMessage[]
+      conversationId?: string | null
+      thinkingMode?: string
+    }
   ): { turnId: string; ok: true } {
     if (this.activeController) this.activeController.abort()
 
@@ -98,6 +102,9 @@ export class ElectronChannel {
   /** Force-stop everything (called from app shutdown). */
   abort(): void {
     this.activeController?.abort()
+    this.activeController = null
+    this.activeTurnId = null
+    this.activeTaskId = null
   }
 
   private createSink(turnId: string, conversationId: string | null, sender: WebContents): TurnSink {

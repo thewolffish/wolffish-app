@@ -86,10 +86,11 @@ import {
   bundledCapabilityNames,
   clearLocalModel,
   ensureWorkspace,
+  extensionFolderPath,
   factoryReset,
   getBraveConfig,
-  getCompactionConfig,
   getBrowserExtensionConfig,
+  getCompactionConfig,
   getComputerUseConfig,
   getGitHubConfig,
   getGoogleConfig,
@@ -107,10 +108,10 @@ import {
   setAllowLocalFallback as persistAllowLocalFallback,
   setBlockCredentials as persistBlockCredentials,
   setBraveConfig as persistBraveConfig,
+  setBrowserExtensionConfig as persistBrowserExtensionConfig,
   setBypassPermissions as persistBypassPermissions,
   setCloudPriority as persistCloudPriority,
   setCompactionConfig as persistCompactionConfig,
-  setBrowserExtensionConfig as persistBrowserExtensionConfig,
   setComputerUseConfig as persistComputerUseConfig,
   setGitHubConfig as persistGitHubConfig,
   setGoogleConfig as persistGoogleConfig,
@@ -120,11 +121,11 @@ import {
   setMemesConfig as persistMemesConfig,
   setNotionConfig as persistNotionConfig,
   setRestrictPowerfulModels as persistRestrictPowerfulModels,
-  setThinkingMode as persistThinkingMode,
   setShowChatAnalytics as persistShowChatAnalytics,
   setSttConfig as persistSttConfig,
   setTelegramConfig as persistTelegramConfig,
   setTheme as persistTheme,
+  setThinkingMode as persistThinkingMode,
   setTtsConfig as persistTtsConfig,
   setVariables as persistVariables,
   setWeekStartsOn as persistWeekStartsOn,
@@ -134,7 +135,6 @@ import {
   removeCloudProvider,
   selectLocalModel,
   setCloudProvider,
-  extensionFolderPath,
   workspaceRoot,
   type BraveConfig,
   type BrowserExtensionConfig,
@@ -338,13 +338,10 @@ async function fetchProviderModels(
     }
 
     if (id === 'qwen') {
-      const res = await fetch(
-        'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/models',
-        {
-          method: 'GET',
-          headers: { Authorization: `Bearer ${apiKey}` }
-        }
-      )
+      const res = await fetch('https://dashscope-intl.aliyuncs.com/compatible-mode/v1/models', {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${apiKey}` }
+      })
       if (!res.ok) {
         const text = await res.text().catch(() => '')
         return { ok: false, ...classifyHttpError(res.status, text) }
@@ -1289,10 +1286,7 @@ app.whenReady().then(async () => {
     }
   )
 
-  ipcMain.handle(
-    'browserExtension:status',
-    () => extensionServer.getStatus()
-  )
+  ipcMain.handle('browserExtension:status', () => extensionServer.getStatus())
 
   ipcMain.handle('browserExtension:openExtensionFolder', () => {
     shell.showItemInFolder(extensionFolderPath())
@@ -1325,12 +1319,16 @@ app.whenReady().then(async () => {
       try {
         execFileSync('cmd', ['/c', 'start', '', url], { stdio: 'ignore' })
         return
-      } catch { /* fallthrough */ }
+      } catch {
+        /* fallthrough */
+      }
     } else {
       try {
         execFileSync('xdg-open', [url], { stdio: 'ignore' })
         return
-      } catch { /* fallthrough */ }
+      } catch {
+        /* fallthrough */
+      }
     }
   })
 
@@ -1861,7 +1859,11 @@ app.whenReady().then(async () => {
   ipcMain.handle('updater:install', async () => {
     if (is.dev) return
     await stampPreUpdateVersion()
-    await shutdownGracefully()
+    // Don't await — shutdownGracefully sets isShuttingDown synchronously
+    // (which the close handler needs), but the async cleanup (bot stop,
+    // WebSocket teardown, etc.) can hang on Windows and block the install.
+    // quitAndInstall force-quits the process anyway.
+    void shutdownGracefully()
     quitInProgress = false
     installUpdate()
   })
