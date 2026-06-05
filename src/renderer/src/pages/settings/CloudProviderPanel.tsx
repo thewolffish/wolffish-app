@@ -69,24 +69,53 @@ const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       input: '$5.00',
       output: '$25.00',
       cached: '$0.50',
-      badges: ['frontier']
+      badges: ['frontier', 'reasoning'],
+      modes: ['none', 'high', 'max']
     },
-    { name: 'claude-opus-4-7', context: '1M', input: '$5.00', output: '$25.00', cached: '$0.50' },
-    { name: 'claude-sonnet-4-6', context: '1M', input: '$3.00', output: '$15.00', cached: '$0.30' },
-    { name: 'claude-opus-4-6', context: '1M', input: '$5.00', output: '$25.00', cached: '$0.50' },
+    {
+      name: 'claude-opus-4-7',
+      context: '1M',
+      input: '$5.00',
+      output: '$25.00',
+      cached: '$0.50',
+      badges: ['reasoning'],
+      modes: ['none', 'high', 'max']
+    },
+    {
+      name: 'claude-sonnet-4-6',
+      context: '1M',
+      input: '$3.00',
+      output: '$15.00',
+      cached: '$0.30',
+      badges: ['reasoning'],
+      modes: ['none', 'high', 'max']
+    },
+    {
+      name: 'claude-opus-4-6',
+      context: '1M',
+      input: '$5.00',
+      output: '$25.00',
+      cached: '$0.50',
+      badges: ['reasoning'],
+      modes: ['none', 'high', 'max']
+    },
     {
       name: 'claude-opus-4-5-20251101',
       context: '200K',
       input: '$5.00',
       output: '$25.00',
-      cached: '$0.50'
+      cached: '$0.50',
+      badges: ['reasoning'],
+      modes: ['none', 'high']
     },
     {
       name: 'claude-sonnet-4-5-20250929',
       context: '200K',
       input: '$3.00',
       output: '$15.00',
-      cached: '$0.30'
+      cached: '$0.30',
+      badges: ['reasoning'],
+      modes: ['none', 'high']
     },
     {
       name: 'claude-haiku-4-5-20251001',
@@ -94,14 +123,17 @@ const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       input: '$1.00',
       output: '$5.00',
       cached: '$0.10',
-      badges: ['fast']
+      badges: ['fast', 'reasoning'],
+      modes: ['none', 'high']
     },
     {
       name: 'claude-opus-4-1-20250805',
       context: '200K',
       input: '$15.00',
       output: '$75.00',
-      cached: '$1.50'
+      cached: '$1.50',
+      badges: ['reasoning'],
+      modes: ['none', 'high']
     }
   ],
   openai: [

@@ -43,6 +43,33 @@ export class AnthropicProvider {
       messages: toAnthropicMessages(options.messages),
       stream: true
     }
+
+    // Anthropic thinking modes:
+    // - 4-8/4-7/4-6: adaptive (model decides depth) or disabled
+    // - 4-5/4-1/haiku: enabled + budget_tokens or disabled
+    const mode = options.thinkingMode ?? 'basic'
+    const m = this.model.toLowerCase()
+    const supportsAdaptive =
+      m.includes('opus-4-8') ||
+      m.includes('opus-4-7') ||
+      m.includes('sonnet-4-6') ||
+      m.includes('opus-4-6')
+
+    if (mode === 'none') {
+      body.thinking = { type: 'disabled' }
+    } else if (supportsAdaptive) {
+      body.thinking = { type: 'adaptive' }
+      if (mode === 'max') {
+        body.output_config = { effort: 'max' }
+      }
+    } else {
+      // 4-5 / 4-1 / haiku: manual thinking with budget
+      const budget = mode === 'max'
+        ? Math.min(32768, this.maxTokens - 1024)
+        : Math.min(10240, this.maxTokens - 1024)
+      body.thinking = { type: 'enabled', budget_tokens: budget }
+    }
+
     if (options.tools && options.tools.length > 0) {
       const tools = options.tools.map(toAnthropicTool)
       ;(tools[tools.length - 1] as Record<string, unknown>).cache_control = { type: 'ephemeral' }
@@ -111,7 +138,9 @@ export class AnthropicProvider {
       }
 
       if (parsed.type === 'content_block_delta' && parsed.delta) {
-        if (parsed.delta.type === 'text_delta' && typeof parsed.delta.text === 'string') {
+        if (parsed.delta.type === 'thinking_delta' && typeof parsed.delta.thinking === 'string') {
+          yield { type: 'reasoning', text: parsed.delta.thinking }
+        } else if (parsed.delta.type === 'text_delta' && typeof parsed.delta.text === 'string') {
           yield { type: 'text', text: parsed.delta.text }
         } else if (
           parsed.delta.type === 'input_json_delta' &&
@@ -167,6 +196,7 @@ type AnthropicEvent = {
   delta?: {
     type?: string
     text?: string
+    thinking?: string
     partial_json?: string
     stop_reason?: string
     stop_sequence?: string | null

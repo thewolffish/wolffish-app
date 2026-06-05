@@ -170,6 +170,18 @@ export function Chat(): React.JSX.Element {
       tooltipKey: 'chat.thinkingMode.highTooltip'
     }
 
+    // ── Anthropic: adaptive on 4-6+, manual on 4-5/4-1 ──
+    if (provider === 'anthropic') {
+      const ml = model.toLowerCase()
+      const is46Plus =
+        ml.includes('opus-4-8') ||
+        ml.includes('opus-4-7') ||
+        ml.includes('sonnet-4-6') ||
+        ml.includes('opus-4-6')
+      if (is46Plus) return [none, high, max]
+      return [none, high]
+    }
+
     // ── MiMo: binary toggle (enabled / disabled) on all chat models ──
     if (provider === 'mimo') {
       const isTts = /tts|voiceclone|voicedesign|asr/.test(model)
