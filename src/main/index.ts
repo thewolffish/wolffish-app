@@ -2148,17 +2148,20 @@ app.whenReady().then(async () => {
       provider: string | null
       model: string | null
       supportsVision: boolean
+      contextWindow: number
     }> => {
+      const contextWindow = agent.thalamus.getActiveContextWindow()
       const provider = agent.thalamus.getActiveProvider()
-      if (!provider) return { provider: null, model: null, supportsVision: false }
+      if (!provider)
+        return { provider: null, model: null, supportsVision: false, contextWindow }
       if (provider === 'local') {
         const model = agent.thalamus.getLocalModelName()
         const supportsVision = await agent.thalamus.localSupportsVision()
-        return { provider, model, supportsVision }
+        return { provider, model, supportsVision, contextWindow }
       }
       const cloudProviders = agent.thalamus.getCloudProviders()
       const active = cloudProviders.find((p) => p.id === provider)
-      return { provider, model: active?.model ?? null, supportsVision: true }
+      return { provider, model: active?.model ?? null, supportsVision: true, contextWindow }
     }
   )
 
