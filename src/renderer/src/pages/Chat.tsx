@@ -115,13 +115,36 @@ export function Chat(): React.JSX.Element {
   }, [cloudProviders, cloudPriority])
   const hasAnyModel = !!currentModel || hasCloudProvider
   const [savingMode, setSavingMode] = useState(false)
-  const [thinkingMode, setThinkingMode] = useState('basic')
+  const activeCloudModel = useMemo(
+    () => cloudProviders.find((p) => p.id === activeCloudProvider)?.model ?? null,
+    [cloudProviders, activeCloudProvider]
+  )
+  const persistedThinkingModes = status?.config?.llm.thinkingModes
+  const [thinkingMode, setThinkingModeState] = useState('basic')
+
+  // Read persisted thinking mode when model changes, fall back to 'basic'
+  useEffect(() => {
+    if (activeCloudModel) {
+      setThinkingModeState(persistedThinkingModes?.[activeCloudModel] ?? 'basic')
+    }
+  }, [activeCloudModel, persistedThinkingModes])
+
+  // Persist + update local state
+  const setThinkingMode = useCallback(
+    (mode: string) => {
+      setThinkingModeState(mode)
+      if (activeCloudModel) {
+        void window.api.runtime.setThinkingMode(activeCloudModel, mode)
+      }
+    },
+    [activeCloudModel]
+  )
 
   const thinkingModeOptions = useMemo<ThinkingModeOption[]>(() => {
     if (localOnly) return []
 
     const provider = activeCloudProvider
-    const model = cloudProviders.find((p) => p.id === activeCloudProvider)?.model ?? null
+    const model = activeCloudModel
 
     if (!provider || !model) return []
 
@@ -135,16 +158,38 @@ export function Chat(): React.JSX.Element {
       labelKey: 'chat.thinkingMode.basic',
       tooltipKey: 'chat.thinkingMode.basicTooltip'
     }
+    const max: ThinkingModeOption = {
+      value: 'max',
+      labelKey: 'chat.thinkingMode.max',
+      tooltipKey: 'chat.thinkingMode.maxTooltip'
+    }
+
+    const high: ThinkingModeOption = {
+      value: 'basic',
+      labelKey: 'chat.thinkingMode.high',
+      tooltipKey: 'chat.thinkingMode.highTooltip'
+    }
 
     // ── MiMo: binary toggle (enabled / disabled) on all chat models ──
     if (provider === 'mimo') {
       const isTts = /tts|voiceclone|voicedesign|asr/.test(model)
       if (isTts) return []
-      return [none, basic]
+      return [none, high]
+    }
+
+    // ── DeepSeek: disabled / high / max on V4 models ──
+    if (provider === 'deepseek') {
+      return [none, high, max]
+    }
+
+    // ── Kimi: binary toggle on k2 models, no thinking on moonshot-v1 ──
+    if (provider === 'kimi') {
+      if (model.startsWith('kimi-k2')) return [none, high]
+      return []
     }
 
     return []
-  }, [localOnly, activeCloudProvider, cloudProviders])
+  }, [localOnly, activeCloudProvider, activeCloudModel])
 
   useEffect(() => {
     if (thinkingModeOptions.length === 0) {

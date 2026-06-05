@@ -116,6 +116,8 @@ export type WorkspaceConfig = {
     allowLocalFallback?: boolean
     localOnly?: boolean
     restrictPowerfulModels?: boolean
+    /** Per-model thinking mode. Key is model name, value is ThinkingMode. */
+    thinkingModes?: Record<string, ThinkingMode>
   }
   safety?: SafetyConfig
   showChatAnalytics?: boolean
@@ -352,6 +354,7 @@ export type RuntimeApi = {
   setShowChatAnalytics: (value: boolean) => Promise<{ value: boolean }>
   setLocalOnly: (value: boolean) => Promise<{ value: boolean }>
   setRestrictPowerfulModels: (value: boolean) => Promise<{ value: boolean }>
+  setThinkingMode: (model: string, mode: ThinkingMode) => Promise<void>
   setUpdatesEnabled: (value: boolean) => Promise<{ value: boolean }>
   setWeekStartsOn: (value: WeekStartsOn) => Promise<{ value: WeekStartsOn }>
   setLastSettingsState: (patch: Record<string, string>) => Promise<void>
@@ -1143,6 +1146,8 @@ const api: WolffishApi = {
     setLocalOnly: (value) => ipcRenderer.invoke('runtime:setLocalOnly', value),
     setRestrictPowerfulModels: (value) =>
       ipcRenderer.invoke('runtime:setRestrictPowerfulModels', value),
+    setThinkingMode: (model, mode) =>
+      ipcRenderer.invoke('runtime:setThinkingMode', model, mode),
     setUpdatesEnabled: (value) => ipcRenderer.invoke('runtime:setUpdatesEnabled', value),
     setWeekStartsOn: (value) => ipcRenderer.invoke('runtime:setWeekStartsOn', value),
     setLastSettingsState: (patch) => ipcRenderer.invoke('runtime:setLastSettingsState', patch),

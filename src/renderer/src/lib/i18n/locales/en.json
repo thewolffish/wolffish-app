@@ -1244,6 +1244,8 @@
       "noneTooltip": "Standard response without extended thinking",
       "basic": "Think",
       "basicTooltip": "Enable basic thinking",
+      "high": "High",
+      "highTooltip": "High reasoning effort",
       "extended": "Deep",
       "extendedTooltip": "Enable extended deep thinking",
       "max": "Max",

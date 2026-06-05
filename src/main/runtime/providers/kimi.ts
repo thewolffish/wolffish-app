@@ -37,6 +37,11 @@ export class KimiProvider {
       stream: true,
       stream_options: { include_usage: true }
     }
+
+    // Kimi thinking: enabled by default on k2 models, ignored on moonshot-v1.
+    const mode = options.thinkingMode ?? 'basic'
+    body.thinking = { type: mode === 'none' ? 'disabled' : 'enabled' }
+
     if (options.tools && options.tools.length > 0) {
       body.tools = options.tools.map(toTool)
     }

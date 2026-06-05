@@ -104,9 +104,9 @@ export function ThinkingModeSelect({
                 role="option"
                 aria-selected={isSelected}
                 onClick={() => {
-                  onChange(option.value)
                   setOpen(false)
                   buttonRef.current?.focus()
+                  onChange(option.value)
                 }}
                 className={cn(
                   'flex cursor-pointer items-center justify-between gap-3 whitespace-nowrap px-3 py-1.5 text-[11px]',

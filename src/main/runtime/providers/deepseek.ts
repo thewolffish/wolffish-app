@@ -36,6 +36,18 @@ export class DeepSeekProvider {
       stream: true,
       stream_options: { include_usage: true }
     }
+
+    // DeepSeek thinking: enabled with high effort by default.
+    // Supports 'high' and 'max' reasoning effort.
+    const mode = options.thinkingMode ?? 'basic'
+    if (mode === 'none') {
+      body.thinking = { type: 'disabled' }
+    } else if (mode === 'max') {
+      body.thinking = { type: 'enabled', reasoning_effort: 'max' }
+    } else {
+      body.thinking = { type: 'enabled', reasoning_effort: 'high' }
+    }
+
     if (options.tools && options.tools.length > 0) {
       body.tools = options.tools.map(toTool)
     }

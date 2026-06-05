@@ -197,6 +197,8 @@ export type WorkspaceConfig = {
     // limits — not recommended, as oversized models cause heavy swap
     // thrashing and degrade the entire system.
     restrictPowerfulModels?: boolean
+    // Per-model thinking mode. Key is model name, value is thinking mode string.
+    thinkingModes?: Record<string, string>
   }
   // Optional so configs written before this field shipped still parse.
   safety?: SafetyConfig
@@ -884,6 +886,16 @@ export async function setRestrictPowerfulModels(value: boolean): Promise<Workspa
   return patchConfig((c) => ({
     ...c,
     llm: { ...c.llm, restrictPowerfulModels: value }
+  }))
+}
+
+export async function setThinkingMode(model: string, mode: string): Promise<WorkspaceConfig> {
+  return patchConfig((c) => ({
+    ...c,
+    llm: {
+      ...c.llm,
+      thinkingModes: { ...c.llm.thinkingModes, [model]: mode }
+    }
   }))
 }
 

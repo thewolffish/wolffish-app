@@ -120,6 +120,7 @@ import {
   setMemesConfig as persistMemesConfig,
   setNotionConfig as persistNotionConfig,
   setRestrictPowerfulModels as persistRestrictPowerfulModels,
+  setThinkingMode as persistThinkingMode,
   setShowChatAnalytics as persistShowChatAnalytics,
   setSttConfig as persistSttConfig,
   setTelegramConfig as persistTelegramConfig,
@@ -840,6 +841,9 @@ app.whenReady().then(async () => {
   ipcMain.handle('runtime:setRestrictPowerfulModels', async (_e, value: boolean) => {
     await persistRestrictPowerfulModels(value)
     return { value }
+  })
+  ipcMain.handle('runtime:setThinkingMode', async (_e, model: string, mode: string) => {
+    await persistThinkingMode(model, mode)
   })
 
   ipcMain.handle('runtime:setLaunchAtStartup', async (_e, value: boolean) => {
