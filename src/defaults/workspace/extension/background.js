@@ -9,7 +9,7 @@ function requireBrowserPolyfill() {
       if (globalThis.browser && globalThis.browser.runtime && globalThis.browser.runtime.id)
         t.exports = globalThis.browser;
       else {
-        const n = "The message port closed before a response was received.", i = (a) => {
+        const n = "The message port closed before a response was received.", a = (i) => {
           const g = {
             alarms: {
               clear: {
@@ -685,126 +685,126 @@ function requireBrowserPolyfill() {
           if (Object.keys(g).length === 0)
             throw new Error("api-metadata.json has not been included in browser-polyfill");
           class A extends WeakMap {
-            constructor(o, c = void 0) {
-              super(c), this.createItem = o;
+            constructor(o, l = void 0) {
+              super(l), this.createItem = o;
             }
             get(o) {
               return this.has(o) || this.set(o, this.createItem(o)), super.get(o);
             }
           }
-          const f = (r) => r && typeof r == "object" && typeof r.then == "function", m = (r, o) => (...c) => {
-            a.runtime.lastError ? r.reject(new Error(a.runtime.lastError.message)) : o.singleCallbackArg || c.length <= 1 && o.singleCallbackArg !== !1 ? r.resolve(c[0]) : r.resolve(c);
-          }, _ = (r) => r == 1 ? "argument" : "arguments", b = (r, o) => function(d, ...E) {
-            if (E.length < o.minArgs)
-              throw new Error(`Expected at least ${o.minArgs} ${_(o.minArgs)} for ${r}(), got ${E.length}`);
-            if (E.length > o.maxArgs)
-              throw new Error(`Expected at most ${o.maxArgs} ${_(o.maxArgs)} for ${r}(), got ${E.length}`);
-            return new Promise((h, w) => {
+          const f = (r) => r && typeof r == "object" && typeof r.then == "function", m = (r, o) => (...l) => {
+            i.runtime.lastError ? r.reject(new Error(i.runtime.lastError.message)) : o.singleCallbackArg || l.length <= 1 && o.singleCallbackArg !== !1 ? r.resolve(l[0]) : r.resolve(l);
+          }, R = (r) => r == 1 ? "argument" : "arguments", b = (r, o) => function(d, ...h) {
+            if (h.length < o.minArgs)
+              throw new Error(`Expected at least ${o.minArgs} ${R(o.minArgs)} for ${r}(), got ${h.length}`);
+            if (h.length > o.maxArgs)
+              throw new Error(`Expected at most ${o.maxArgs} ${R(o.maxArgs)} for ${r}(), got ${h.length}`);
+            return new Promise((_, w) => {
               if (o.fallbackToNoCallback)
                 try {
-                  d[r](...E, m({
-                    resolve: h,
+                  d[r](...h, m({
+                    resolve: _,
                     reject: w
                   }, o));
-                } catch (l) {
-                  console.warn(`${r} API method doesn't seem to support the callback parameter, falling back to call it without a callback: `, l), d[r](...E), o.fallbackToNoCallback = !1, o.noCallback = !0, h();
+                } catch (c) {
+                  console.warn(`${r} API method doesn't seem to support the callback parameter, falling back to call it without a callback: `, c), d[r](...h), o.fallbackToNoCallback = !1, o.noCallback = !0, _();
                 }
-              else o.noCallback ? (d[r](...E), h()) : d[r](...E, m({
-                resolve: h,
+              else o.noCallback ? (d[r](...h), _()) : d[r](...h, m({
+                resolve: _,
                 reject: w
               }, o));
             });
-          }, v = (r, o, c) => new Proxy(o, {
-            apply(d, E, h) {
-              return c.call(E, r, ...h);
+          }, x = (r, o, l) => new Proxy(o, {
+            apply(d, h, _) {
+              return l.call(h, r, ..._);
             }
           });
           let O = Function.call.bind(Object.prototype.hasOwnProperty);
-          const W = (r, o = {}, c = {}) => {
-            let d = /* @__PURE__ */ Object.create(null), E = {
-              has(w, l) {
-                return l in r || l in d;
+          const C = (r, o = {}, l = {}) => {
+            let d = /* @__PURE__ */ Object.create(null), h = {
+              has(w, c) {
+                return c in r || c in d;
               },
-              get(w, l, S) {
-                if (l in d)
-                  return d[l];
-                if (!(l in r))
+              get(w, c, S) {
+                if (c in d)
+                  return d[c];
+                if (!(c in r))
                   return;
-                let R = r[l];
-                if (typeof R == "function")
-                  if (typeof o[l] == "function")
-                    R = v(r, r[l], o[l]);
-                  else if (O(c, l)) {
-                    let x = b(l, c[l]);
-                    R = v(r, r[l], x);
+                let E = r[c];
+                if (typeof E == "function")
+                  if (typeof o[c] == "function")
+                    E = x(r, r[c], o[c]);
+                  else if (O(l, c)) {
+                    let T = b(c, l[c]);
+                    E = x(r, r[c], T);
                   } else
-                    R = R.bind(r);
-                else if (typeof R == "object" && R !== null && (O(o, l) || O(c, l)))
-                  R = W(R, o[l], c[l]);
-                else if (O(c, "*"))
-                  R = W(R, o[l], c["*"]);
+                    E = E.bind(r);
+                else if (typeof E == "object" && E !== null && (O(o, c) || O(l, c)))
+                  E = C(E, o[c], l[c]);
+                else if (O(l, "*"))
+                  E = C(E, o[c], l["*"]);
                 else
-                  return Object.defineProperty(d, l, {
+                  return Object.defineProperty(d, c, {
                     configurable: !0,
                     enumerable: !0,
                     get() {
-                      return r[l];
+                      return r[c];
                     },
-                    set(x) {
-                      r[l] = x;
+                    set(T) {
+                      r[c] = T;
                     }
-                  }), R;
-                return d[l] = R, R;
+                  }), E;
+                return d[c] = E, E;
               },
-              set(w, l, S, R) {
-                return l in d ? d[l] = S : r[l] = S, !0;
+              set(w, c, S, E) {
+                return c in d ? d[c] = S : r[c] = S, !0;
               },
-              defineProperty(w, l, S) {
-                return Reflect.defineProperty(d, l, S);
+              defineProperty(w, c, S) {
+                return Reflect.defineProperty(d, c, S);
               },
-              deleteProperty(w, l) {
-                return Reflect.deleteProperty(d, l);
+              deleteProperty(w, c) {
+                return Reflect.deleteProperty(d, c);
               }
-            }, h = Object.create(r);
-            return new Proxy(h, E);
-          }, C = (r) => ({
-            addListener(o, c, ...d) {
-              o.addListener(r.get(c), ...d);
+            }, _ = Object.create(r);
+            return new Proxy(_, h);
+          }, v = (r) => ({
+            addListener(o, l, ...d) {
+              o.addListener(r.get(l), ...d);
             },
-            hasListener(o, c) {
-              return o.hasListener(r.get(c));
+            hasListener(o, l) {
+              return o.hasListener(r.get(l));
             },
-            removeListener(o, c) {
-              o.removeListener(r.get(c));
+            removeListener(o, l) {
+              o.removeListener(r.get(l));
             }
-          }), y = new A((r) => typeof r != "function" ? r : function(c) {
-            const d = W(c, {}, {
+          }), y = new A((r) => typeof r != "function" ? r : function(l) {
+            const d = C(l, {}, {
               getContent: {
                 minArgs: 0,
                 maxArgs: 0
               }
             });
             r(d);
-          }), u = new A((r) => typeof r != "function" ? r : function(c, d, E) {
-            let h = !1, w, l = new Promise((I) => {
+          }), u = new A((r) => typeof r != "function" ? r : function(l, d, h) {
+            let _ = !1, w, c = new Promise((I) => {
               w = function(p) {
-                h = !0, I(p);
+                _ = !0, I(p);
               };
             }), S;
             try {
-              S = r(c, d, w);
+              S = r(l, d, w);
             } catch (I) {
               S = Promise.reject(I);
             }
-            const R = S !== !0 && f(S);
-            if (S !== !0 && !R && !h)
+            const E = S !== !0 && f(S);
+            if (S !== !0 && !E && !_)
               return !1;
-            const x = (I) => {
+            const T = (I) => {
               I.then((p) => {
-                E(p);
+                h(p);
               }, (p) => {
                 let N;
-                p && (p instanceof Error || typeof p.message == "string") ? N = p.message : N = "An unexpected error occurred", E({
+                p && (p instanceof Error || typeof p.message == "string") ? N = p.message : N = "An unexpected error occurred", h({
                   __mozWebExtensionPolyfillReject__: !0,
                   message: N
                 });
@@ -812,33 +812,33 @@ function requireBrowserPolyfill() {
                 console.error("Failed to send onMessage rejected reply", p);
               });
             };
-            return x(R ? S : l), !0;
-          }), T = ({
+            return T(E ? S : c), !0;
+          }), W = ({
             reject: r,
             resolve: o
-          }, c) => {
-            a.runtime.lastError ? a.runtime.lastError.message === n ? o() : r(new Error(a.runtime.lastError.message)) : c && c.__mozWebExtensionPolyfillReject__ ? r(new Error(c.message)) : o(c);
-          }, P = (r, o, c, ...d) => {
+          }, l) => {
+            i.runtime.lastError ? i.runtime.lastError.message === n ? o() : r(new Error(i.runtime.lastError.message)) : l && l.__mozWebExtensionPolyfillReject__ ? r(new Error(l.message)) : o(l);
+          }, P = (r, o, l, ...d) => {
             if (d.length < o.minArgs)
-              throw new Error(`Expected at least ${o.minArgs} ${_(o.minArgs)} for ${r}(), got ${d.length}`);
+              throw new Error(`Expected at least ${o.minArgs} ${R(o.minArgs)} for ${r}(), got ${d.length}`);
             if (d.length > o.maxArgs)
-              throw new Error(`Expected at most ${o.maxArgs} ${_(o.maxArgs)} for ${r}(), got ${d.length}`);
-            return new Promise((E, h) => {
-              const w = T.bind(null, {
-                resolve: E,
-                reject: h
+              throw new Error(`Expected at most ${o.maxArgs} ${R(o.maxArgs)} for ${r}(), got ${d.length}`);
+            return new Promise((h, _) => {
+              const w = W.bind(null, {
+                resolve: h,
+                reject: _
               });
-              d.push(w), c.sendMessage(...d);
+              d.push(w), l.sendMessage(...d);
             });
           }, L = {
             devtools: {
               network: {
-                onRequestFinished: C(y)
+                onRequestFinished: v(y)
               }
             },
             runtime: {
-              onMessage: C(u),
-              onMessageExternal: C(u),
+              onMessage: v(u),
+              onMessageExternal: v(u),
               sendMessage: P.bind(null, "sendMessage", {
                 minArgs: 1,
                 maxArgs: 3
@@ -874,9 +874,9 @@ function requireBrowserPolyfill() {
             websites: {
               "*": B
             }
-          }, W(a, L, g);
+          }, C(i, L, g);
         };
-        t.exports = i(chrome);
+        t.exports = a(chrome);
       }
     });
   })(browserPolyfill$1)), browserPolyfill$1.exports;
@@ -1001,7 +1001,7 @@ const DEFAULT_PORT = 23151, LOG_PREFIX = "[Wolffish]", HEARTBEAT_INTERVAL_MS = 1
       payload: { type: "ping" }
     }, n = await Promise.race([
       (s = api$1 == null ? void 0 : api$1.tabs) == null ? void 0 : s.sendMessage(e, t),
-      new Promise((i, a) => setTimeout(() => a(new Error("timeout")), CONTENT_SCRIPT_PING_TIMEOUT_MS))
+      new Promise((a, i) => setTimeout(() => i(new Error("timeout")), CONTENT_SCRIPT_PING_TIMEOUT_MS))
     ]);
     return n && n.type === "pong";
   } catch {
@@ -1012,11 +1012,11 @@ const DEFAULT_PORT = 23151, LOG_PREFIX = "[Wolffish]", HEARTBEAT_INTERVAL_MS = 1
   await pingContentScript(e) || (await ((t = api$1 == null ? void 0 : api$1.scripting) == null ? void 0 : t.executeScript({
     target: { tabId: e },
     files: ["content/all.iife.js"]
-  })), await new Promise((n, i) => {
+  })), await new Promise((n, a) => {
     var A, f;
-    const a = setTimeout(() => i(new Error("Content script injection timed out")), 5e3), g = (m) => {
-      var _, b;
-      (m == null ? void 0 : m.source) === "content-script" && "type" in m.payload && m.payload.type === "pong" && (clearTimeout(a), (b = (_ = api$1 == null ? void 0 : api$1.runtime) == null ? void 0 : _.onMessage) == null || b.removeListener(g), n());
+    const i = setTimeout(() => a(new Error("Content script injection timed out")), 5e3), g = (m) => {
+      var R, b;
+      (m == null ? void 0 : m.source) === "content-script" && "type" in m.payload && m.payload.type === "pong" && (clearTimeout(i), (b = (R = api$1 == null ? void 0 : api$1.runtime) == null ? void 0 : R.onMessage) == null || b.removeListener(g), n());
     };
     (f = (A = api$1 == null ? void 0 : api$1.runtime) == null ? void 0 : A.onMessage) == null || f.addListener(g);
   }));
@@ -1041,9 +1041,9 @@ var SessionAccessLevelEnum;
   e.ExtensionPagesOnly = "TRUSTED_CONTEXTS", e.ExtensionPagesAndContentScripts = "TRUSTED_AND_UNTRUSTED_CONTEXTS";
 })(SessionAccessLevelEnum || (SessionAccessLevelEnum = {}));
 const chrome$1 = globalThis.chrome, updateCache = async (e, s) => {
-  const t = (i) => typeof i == "function", n = (i) => (
+  const t = (a) => typeof a == "function", n = (a) => (
     // Use ReturnType to infer the return type of the function and check if it's a Promise
-    i instanceof Promise
+    a instanceof Promise
   );
   return t(e) ? (n(e), e(s)) : e;
 };
@@ -1052,9 +1052,9 @@ const checkStoragePermission = (e) => {
   if (chrome$1 && !chrome$1.storage[e])
     throw new Error(`"storage" permission in manifest.ts: "storage ${e}" isn't defined`);
 }, createStorage = (e, s, t) => {
-  var C, y;
-  let n = null, i = !1, a = [];
-  const g = (t == null ? void 0 : t.storageEnum) ?? StorageEnum.Local, A = ((C = t == null ? void 0 : t.serialization) == null ? void 0 : C.serialize) ?? ((u) => u), f = ((y = t == null ? void 0 : t.serialization) == null ? void 0 : y.deserialize) ?? ((u) => u);
+  var v, y;
+  let n = null, a = !1, i = [];
+  const g = (t == null ? void 0 : t.storageEnum) ?? StorageEnum.Local, A = ((v = t == null ? void 0 : t.serialization) == null ? void 0 : v.serialize) ?? ((u) => u), f = ((y = t == null ? void 0 : t.serialization) == null ? void 0 : y.deserialize) ?? ((u) => u);
   globalSessionAccessLevelFlag === !1 && g === StorageEnum.Session && (t == null ? void 0 : t.sessionAccessForContentScripts) === !0 && (checkStoragePermission(g), chrome$1 == null || chrome$1.storage[g].setAccessLevel({
     accessLevel: SessionAccessLevelEnum.ExtensionPagesAndContentScripts
   }).catch((u) => {
@@ -1064,24 +1064,24 @@ const checkStoragePermission = (e) => {
     checkStoragePermission(g);
     const u = await (chrome$1 == null ? void 0 : chrome$1.storage[g].get([e]));
     return u ? f(u[e]) ?? s : s;
-  }, _ = async (u) => {
-    i || (n = await m()), n = await updateCache(u, n), await (chrome$1 == null ? void 0 : chrome$1.storage[g].set({ [e]: A(n) })), O();
-  }, b = (u) => (a = [...a, u], () => {
-    a = a.filter((T) => T !== u);
-  }), v = () => n, O = () => {
-    a.forEach((u) => u());
-  }, W = async (u) => {
+  }, R = async (u) => {
+    a || (n = await m()), n = await updateCache(u, n), await (chrome$1 == null ? void 0 : chrome$1.storage[g].set({ [e]: A(n) })), O();
+  }, b = (u) => (i = [...i, u], () => {
+    i = i.filter((W) => W !== u);
+  }), x = () => n, O = () => {
+    i.forEach((u) => u());
+  }, C = async (u) => {
     if (u[e] === void 0)
       return;
-    const T = f(u[e].newValue);
-    n !== T && (n = await updateCache(T, n), O());
+    const W = f(u[e].newValue);
+    n !== W && (n = await updateCache(W, n), O());
   };
   return m().then((u) => {
-    n = u, i = !0, O();
-  }), chrome$1 == null || chrome$1.storage[g].onChanged.addListener(W), {
+    n = u, a = !0, O();
+  }), chrome$1 == null || chrome$1.storage[g].onChanged.addListener(C), {
     get: m,
-    set: _,
-    getSnapshot: v,
+    set: R,
+    getSnapshot: x,
     subscribe: b
   };
 }, storage = createStorage("wolffish-connection-config", { port: 23151 }, {
@@ -1118,7 +1118,7 @@ const connectWebSocket = async (e) => {
   setStatus("connecting"), log(`Connecting to ws://localhost:${e}`), ws = new WebSocket(`ws://localhost:${e}`), ws.onopen = () => {
     setStatus("connected"), api.alarms.clear(RECONNECT_ALARM), startHeartbeat(), log("Connected");
     const s = api.runtime.getManifest();
-    sendToServer({ type: "extension_info", version: s.version });
+    sendToServer({ type: "extension_info", version: s.version }), sendToServer({ type: "get_conversations" });
   }, ws.onclose = () => {
     setStatus("disconnected"), stopHeartbeat(), log("Disconnected"), scheduleReconnect();
   }, ws.onerror = () => {
@@ -1144,19 +1144,19 @@ const connectWebSocket = async (e) => {
 }, handleNavigate = async (e) => {
   const { url: s, waitUntil: t } = e, n = await resolveTabId(e);
   if (t) {
-    const a = new Promise((g, A) => {
+    const i = new Promise((g, A) => {
       const f = setTimeout(() => {
         api.webNavigation.onCompleted.removeListener(m), A(new Error(`Navigation timed out waiting for '${t}'`));
-      }, COMMAND_TIMEOUT_MS), m = (_) => {
-        _.tabId === n && _.frameId === 0 && (clearTimeout(f), api.webNavigation.onCompleted.removeListener(m), g());
+      }, COMMAND_TIMEOUT_MS), m = (R) => {
+        R.tabId === n && R.frameId === 0 && (clearTimeout(f), api.webNavigation.onCompleted.removeListener(m), g());
       };
       api.webNavigation.onCompleted.addListener(m);
     });
-    await api.tabs.update(n, { url: s }), await a;
+    await api.tabs.update(n, { url: s }), await i;
   } else
     await api.tabs.update(n, { url: s });
-  const i = await api.tabs.get(n);
-  return { url: i.url || s, title: i.title || "", tabId: n };
+  const a = await api.tabs.get(n);
+  return { url: a.url || s, title: a.title || "", tabId: n };
 }, handleBack = async (e) => {
   const s = await resolveTabId(e);
   return await api.scripting.executeScript({
@@ -1175,13 +1175,13 @@ const connectWebSocket = async (e) => {
 }, handleTabsList = async (e) => {
   const { windowId: s } = e, t = s !== void 0 ? { windowId: s } : {};
   return {
-    tabs: (await api.tabs.query(t)).map((i) => ({
-      id: i.id,
-      url: i.url || "",
-      title: i.title || "",
-      active: i.active,
-      pinned: i.pinned,
-      windowId: i.windowId
+    tabs: (await api.tabs.query(t)).map((a) => ({
+      id: a.id,
+      url: a.url || "",
+      title: a.title || "",
+      active: a.active,
+      pinned: a.pinned,
+      windowId: a.windowId
     }))
   };
 }, handleTabOpen = async (e) => {
@@ -1202,8 +1202,8 @@ const connectWebSocket = async (e) => {
     throw new Error(`Failed to duplicate tab ${s}`);
   return { tabId: t.id };
 }, handleTabMove = async (e) => {
-  const { tabId: s, index: t, windowId: n } = e, i = { index: t };
-  return n !== void 0 && (i.windowId = n), await api.tabs.move(s, i), { success: !0 };
+  const { tabId: s, index: t, windowId: n } = e, a = { index: t };
+  return n !== void 0 && (a.windowId = n), await api.tabs.move(s, a), { success: !0 };
 }, handleWindowsList = async () => ({
   windows: (await api.windows.getAll({ populate: !0 })).map((s) => {
     var t;
@@ -1216,17 +1216,17 @@ const connectWebSocket = async (e) => {
     };
   })
 }), handleWindowOpen = async (e) => {
-  const { url: s, incognito: t, width: n, height: i } = e, a = {};
-  return s !== void 0 && (a.url = s), t !== void 0 && (a.incognito = t), n !== void 0 && (a.width = n), i !== void 0 && (a.height = i), { windowId: (await api.windows.create(a)).id };
+  const { url: s, incognito: t, width: n, height: a } = e, i = {};
+  return s !== void 0 && (i.url = s), t !== void 0 && (i.incognito = t), n !== void 0 && (i.width = n), a !== void 0 && (i.height = a), { windowId: (await api.windows.create(i)).id };
 }, handleWindowClose = async (e) => {
   const { windowId: s } = e;
   return await api.windows.remove(s), { success: !0 };
 }, handleWindowResize = async (e) => {
-  const { windowId: s, width: t, height: n, left: i, top: a, state: g } = e, A = {};
-  return t !== void 0 && (A.width = t), n !== void 0 && (A.height = n), i !== void 0 && (A.left = i), a !== void 0 && (A.top = a), g !== void 0 && (A.state = g), await api.windows.update(s, A), { success: !0 };
+  const { windowId: s, width: t, height: n, left: a, top: i, state: g } = e, A = {};
+  return t !== void 0 && (A.width = t), n !== void 0 && (A.height = n), a !== void 0 && (A.left = a), i !== void 0 && (A.top = i), g !== void 0 && (A.state = g), await api.windows.update(s, A), { success: !0 };
 }, handleScreenshot = async (e) => {
-  const { format: s, quality: t, fullPage: n, selector: i } = e;
-  if (i || n) {
+  const { format: s, quality: t, fullPage: n, selector: a } = e;
+  if (a || n) {
     const b = await resolveTabId(e);
     return await ensureContentScriptInjected(b), (await sendToContentScript(b, {
       source: "service-worker",
@@ -1238,13 +1238,13 @@ const connectWebSocket = async (e) => {
       }
     })).data;
   }
-  const a = s === "jpeg" ? "jpeg" : "png", g = { format: a };
-  a === "jpeg" && t !== void 0 && (g.quality = t);
-  const A = await api.tabs.captureVisibleTab(null, g), f = await resolveTabId(e), m = await api.tabs.get(f), _ = await api.windows.get(m.windowId);
+  const i = s === "jpeg" ? "jpeg" : "png", g = { format: i };
+  i === "jpeg" && t !== void 0 && (g.quality = t);
+  const A = await api.tabs.captureVisibleTab(null, g), f = await resolveTabId(e), m = await api.tabs.get(f), R = await api.windows.get(m.windowId);
   return {
     image: A,
-    width: _.width || 0,
-    height: _.height || 0
+    width: R.width || 0,
+    height: R.height || 0
   };
 }, handlePdf = async (e) => {
   if (isFirefox())
@@ -1260,19 +1260,19 @@ const connectWebSocket = async (e) => {
 }, handleCookiesGet = async (e) => {
   const { domain: s, name: t } = e, n = { domain: s };
   return t !== void 0 && (n.name = t), {
-    cookies: (await api.cookies.getAll(n)).map((a) => ({
-      name: a.name,
-      value: a.value,
-      domain: a.domain,
-      path: a.path,
-      expires: a.expirationDate || -1,
-      httpOnly: a.httpOnly,
-      secure: a.secure
+    cookies: (await api.cookies.getAll(n)).map((i) => ({
+      name: i.name,
+      value: i.value,
+      domain: i.domain,
+      path: i.path,
+      expires: i.expirationDate || -1,
+      httpOnly: i.httpOnly,
+      secure: i.secure
     }))
   };
 }, handleCookiesSet = async (e) => {
-  const { url: s, name: t, value: n, domain: i, path: a, expires: g, httpOnly: A, secure: f } = e, m = { url: s, name: t, value: n };
-  return i !== void 0 && (m.domain = i), a !== void 0 && (m.path = a), g !== void 0 && (m.expirationDate = g), A !== void 0 && (m.httpOnly = A), f !== void 0 && (m.secure = f), await api.cookies.set(m), { success: !0 };
+  const { url: s, name: t, value: n, domain: a, path: i, expires: g, httpOnly: A, secure: f } = e, m = { url: s, name: t, value: n };
+  return a !== void 0 && (m.domain = a), i !== void 0 && (m.path = i), g !== void 0 && (m.expirationDate = g), A !== void 0 && (m.httpOnly = A), f !== void 0 && (m.secure = f), await api.cookies.set(m), { success: !0 };
 }, handleCookiesRemove = async (e) => {
   const { url: s, name: t } = e;
   return await api.cookies.remove({ url: s, name: t }), { success: !0 };
@@ -1290,14 +1290,14 @@ const connectWebSocket = async (e) => {
   return { result: (e = results[0]) == null ? void 0 : e.result };
 }, handleWaitForNavigation = async (e) => {
   const { timeout: s } = e, t = await resolveTabId(e), n = s ?? COMMAND_TIMEOUT_MS;
-  return new Promise((i, a) => {
+  return new Promise((a, i) => {
     const g = setTimeout(() => {
-      api.webNavigation.onCompleted.removeListener(A), a(new Error(`waitForNavigation timed out after ${n}ms`));
+      api.webNavigation.onCompleted.removeListener(A), i(new Error(`waitForNavigation timed out after ${n}ms`));
     }, n), A = (f) => {
       f.tabId === t && f.frameId === 0 && (clearTimeout(g), api.webNavigation.onCompleted.removeListener(A), api.tabs.get(t).then((m) => {
-        i({ url: m.url || f.url, title: m.title || "" });
+        a({ url: m.url || f.url, title: m.title || "" });
       }).catch((m) => {
-        a(m);
+        i(m);
       }));
     };
     api.webNavigation.onCompleted.addListener(A);
@@ -1368,8 +1368,39 @@ const connectWebSocket = async (e) => {
     const t = s instanceof Error ? s.message : String(s), n = makeErrorResponse(e.id, t);
     log("→", e.type, "error:", n.error), sendResponseToServer(n);
   }
+}, CACHE_MAX_CONVERSATIONS = 50, CACHE_MAX_EVENTS = 500, cache = {
+  saveConversations(e) {
+    const s = e.slice(0, CACHE_MAX_CONVERSATIONS);
+    api.storage.local.set({ "wf:conversations": s }).catch(() => {
+    });
+  },
+  saveActive(e) {
+    api.storage.local.set({ "wf:active": e }).catch(() => {
+    });
+  },
+  saveEvents(e, s) {
+    const t = s.slice(0, CACHE_MAX_EVENTS);
+    api.storage.local.set({ [`wf:events:${e}`]: t }).catch(() => {
+    });
+  },
+  async loadAll() {
+    try {
+      const e = await api.storage.local.get(["wf:conversations", "wf:active"]), s = e["wf:conversations"] ?? [], t = e["wf:active"] ?? null;
+      let n = [];
+      return t && (n = (await api.storage.local.get([`wf:events:${t}`]))[`wf:events:${t}`] ?? []), { conversations: s, active: t, events: n };
+    } catch {
+      return { conversations: [], active: null, events: [] };
+    }
+  },
+  async loadEvents(e) {
+    try {
+      return (await api.storage.local.get([`wf:events:${e}`]))[`wf:events:${e}`] ?? [];
+    } catch {
+      return [];
+    }
+  }
 };
-let cachedEvents = [], cachedConversations = [], activeConversationId = null;
+let cachedEvents = [], cachedConversations = [], activeConversationId = null, cacheRestored = !1;
 const handleWolffishEvent = (e) => {
   if (e.event === "port_update") {
     const { port: s } = e.data;
@@ -1382,24 +1413,26 @@ const handleWolffishEvent = (e) => {
   }
   if (e.event === "events_sync") {
     const s = e.data;
-    activeConversationId = s.conversationId, cachedEvents = (s.events ?? []).slice().reverse(), api.runtime.sendMessage({ payload: { event: "events_sync", data: e.data } }).catch(() => {
+    activeConversationId = s.conversationId, cachedEvents = (s.events ?? []).slice().reverse(), cache.saveActive(activeConversationId), cache.saveEvents(activeConversationId, cachedEvents), api.runtime.sendMessage({ payload: { event: "events_sync", data: e.data } }).catch(() => {
     });
     return;
   }
   if (e.event === "event_logged") {
     const s = e.data;
-    cachedEvents.unshift(s), api.runtime.sendMessage({ payload: { event: "event_logged", data: s } }).catch(() => {
+    cachedEvents.unshift(s), activeConversationId && cache.saveEvents(activeConversationId, cachedEvents), api.runtime.sendMessage({ payload: { event: "event_logged", data: s } }).catch(() => {
     });
     return;
   }
   if (e.event === "conversations_list") {
-    cachedConversations = e.data, api.runtime.sendMessage({ payload: { event: "conversations_list", data: e.data } }).catch(() => {
+    cachedConversations = e.data, cache.saveConversations(cachedConversations), api.runtime.sendMessage({ payload: { event: "conversations_list", data: e.data } }).catch(() => {
     });
+    for (const s of cachedConversations)
+      sendToServer({ type: "get_conversation_events", conversationId: s.conversationId });
     return;
   }
   if (e.event === "conversation_events") {
     const s = e.data;
-    api.runtime.sendMessage({ payload: { event: "conversation_events", data: s } }).catch(() => {
+    cache.saveEvents(s.conversationId, (s.events ?? []).slice().reverse()), api.runtime.sendMessage({ payload: { event: "conversation_events", data: s } }).catch(() => {
     });
     return;
   }
@@ -1409,11 +1442,27 @@ api.runtime.onMessage.addListener((e, s, t) => {
     const n = ws && ws.readyState === WebSocket.OPEN ? "connected" : ws && ws.readyState === WebSocket.CONNECTING ? "connecting" : "disconnected";
     return n !== connectionStatus && (connectionStatus = n), t({ status: connectionStatus, port: connectionPort }), !0;
   }
-  return e.type === "get_events" ? (sendToServer({ type: "get_conversations" }), t({
-    events: cachedEvents,
-    conversations: cachedConversations,
-    activeConversation: activeConversationId
-  }), !0) : e.type === "get_conversation_events" && e.conversationId ? (sendToServer({ type: "get_conversation_events", conversationId: e.conversationId }), t({ events: cachedEvents }), !0) : !1;
+  if (e.type === "get_events")
+    return sendToServer({ type: "get_conversations" }), cachedConversations.length > 0 || activeConversationId ? t({
+      events: cachedEvents,
+      conversations: cachedConversations,
+      activeConversation: activeConversationId
+    }) : cache.loadAll().then((n) => {
+      cachedConversations = n.conversations, activeConversationId = n.active, cachedEvents = n.events, t({
+        events: cachedEvents,
+        conversations: cachedConversations,
+        activeConversation: activeConversationId
+      }), api.runtime.sendMessage({ payload: { event: "conversations_list", data: cachedConversations } }).catch(() => {
+      });
+    }), !0;
+  if (e.type === "get_conversation_events" && e.conversationId) {
+    const n = e.conversationId;
+    return sendToServer({ type: "get_conversation_events", conversationId: n }), cache.loadEvents(n).then((a) => {
+      cachedEvents = a, api.runtime.sendMessage({ payload: { event: "conversation_events", data: { conversationId: n, events: a } } }).catch(() => {
+      }), t({ events: a });
+    }), !0;
+  }
+  return !1;
 });
 const startConnection = async () => {
   connectionPort = (await wolffishConnectionStorage.get().catch(() => ({ port: DEFAULT_PORT }))).port, connectWebSocket(connectionPort);
@@ -1427,6 +1476,10 @@ api.runtime.onStartup.addListener(async () => {
 wolffishConnectionStorage.subscribe(() => {
   const e = wolffishConnectionStorage.getSnapshot();
   e && e.port !== connectionPort && (log(`Port changed to ${e.port}`), api.alarms.clear(RECONNECT_ALARM), connectWebSocket(e.port));
+});
+cache.loadAll().then((e) => {
+  cacheRestored || (cachedConversations = e.conversations, activeConversationId = e.active, cachedEvents = e.events, cacheRestored = !0, log(`Cache restored: ${e.conversations.length} conversations, ${e.events.length} events`));
+}).catch(() => {
 });
 startConnection().catch((e) => logError("Failed to start connection:", e));
 log("Service worker loaded");

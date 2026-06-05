@@ -23,7 +23,9 @@ export type ExtensionEventType =
   | 'cookie'
   | 'wait'
   | 'screenshot'
+  | 'scroll'
   | 'download'
+  | 'unknown'
 
 export interface ExtensionEvent {
   id: string
@@ -45,7 +47,7 @@ const COMMAND_EVENT_MAP: Record<string, ExtensionEventType> = {
   browser_type: 'type',
   browser_select: 'type',
   browser_keypress: 'type',
-  browser_scroll: 'type',
+  browser_scroll: 'scroll',
   browser_read_page: 'read',
   browser_query_selector: 'read',
   browser_get_attribute: 'read',
@@ -179,7 +181,7 @@ export async function logEvent(
   commandType: string,
   params: Record<string, unknown>
 ): Promise<ExtensionEvent> {
-  const eventType = COMMAND_EVENT_MAP[commandType] ?? 'read'
+  const eventType = COMMAND_EVENT_MAP[commandType] ?? 'unknown'
   const event: ExtensionEvent = {
     id: randomUUID(),
     type: eventType,
