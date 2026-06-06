@@ -1868,7 +1868,9 @@ function AssistantBubble({
   if (isError && message.error) {
     const providerSeg = message.segments.find(
       (s): s is Extract<Segment, { kind: 'turn_end' }> =>
-        s.kind === 'turn_end' && s.stopReason === 'no_provider_available' && !!s.providerErrors?.length
+        s.kind === 'turn_end' &&
+        s.stopReason === 'no_provider_available' &&
+        !!s.providerErrors?.length
     )
     if (providerSeg?.providerErrors?.length) {
       return (

@@ -48,29 +48,33 @@ export function Select<T extends string>({
   const listboxId = `${buttonId}-listbox`
   const labelId = `${buttonId}-label`
 
+  const close = (): void => {
+    setOpen(false)
+    setQuery('')
+  }
+
   const selected = options.find((o) => o.value === value) ?? options[0]
 
   const filtered = useMemo(() => {
     if (!searchable || !query) return options
     const q = query.toLowerCase()
-    return options.filter((o) => o.label.toLowerCase().includes(q) || o.value.toLowerCase().includes(q))
+    return options.filter(
+      (o) => o.label.toLowerCase().includes(q) || o.value.toLowerCase().includes(q)
+    )
   }, [options, query, searchable])
 
   useEffect(() => {
-    if (!open) {
-      setQuery('')
-      return
-    }
+    if (!open) return
     if (searchable) {
       requestAnimationFrame(() => searchRef.current?.focus())
     }
     const onPointerDown = (e: PointerEvent): void => {
       if (!rootRef.current) return
-      if (!rootRef.current.contains(e.target as Node)) setOpen(false)
+      if (!rootRef.current.contains(e.target as Node)) close()
     }
     const onKeyDown = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') {
-        setOpen(false)
+        close()
         buttonRef.current?.focus()
       }
     }
@@ -99,7 +103,7 @@ export function Select<T extends string>({
           aria-expanded={open}
           aria-controls={listboxId}
           aria-labelledby={label ? labelId : undefined}
-          onClick={() => setOpen((o) => !o)}
+          onClick={() => (open ? close() : setOpen(true))}
           className={cn(
             'bg-bg text-fg border-border hover:border-muted w-full',
             'flex h-10 items-center justify-between gap-2 rounded-lg border px-3 text-sm',
@@ -164,7 +168,7 @@ export function Select<T extends string>({
                     onClick={() => {
                       if (isDisabled) return
                       onChange(option.value)
-                      setOpen(false)
+                      close()
                       buttonRef.current?.focus()
                     }}
                     className={cn(

@@ -337,13 +337,63 @@ const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
     { name: 'moonshot-v1-8k', context: '8K', input: '$0.20', output: '$2.00', cached: null }
   ],
   minimax: [
-    { name: 'MiniMax-M3', context: '1M', input: '$0.30', output: '$1.20', cached: '$0.06', badges: ['frontier', 'reasoning'], modes: ['none', 'high'] },
-    { name: 'MiniMax-M2.7', context: '200K', input: '$0.30', output: '$1.20', cached: '$0.06', badges: ['reasoning'] },
-    { name: 'MiniMax-M2.7-highspeed', context: '200K', input: '$0.60', output: '$2.40', cached: '$0.06', badges: ['fast'] },
-    { name: 'MiniMax-M2.5', context: '200K', input: '$0.30', output: '$1.20', cached: '$0.03', badges: ['code'] },
-    { name: 'MiniMax-M2.5-highspeed', context: '200K', input: '$0.60', output: '$2.40', cached: '$0.03', badges: ['code', 'fast'] },
-    { name: 'MiniMax-M2.1', context: '200K', input: '$0.30', output: '$1.20', cached: '$0.03', badges: ['reasoning'] },
-    { name: 'MiniMax-M2.1-highspeed', context: '200K', input: '$0.60', output: '$2.40', cached: '$0.03', badges: ['fast'] },
+    {
+      name: 'MiniMax-M3',
+      context: '1M',
+      input: '$0.30',
+      output: '$1.20',
+      cached: '$0.06',
+      badges: ['frontier', 'reasoning'],
+      modes: ['none', 'high']
+    },
+    {
+      name: 'MiniMax-M2.7',
+      context: '200K',
+      input: '$0.30',
+      output: '$1.20',
+      cached: '$0.06',
+      badges: ['reasoning']
+    },
+    {
+      name: 'MiniMax-M2.7-highspeed',
+      context: '200K',
+      input: '$0.60',
+      output: '$2.40',
+      cached: '$0.06',
+      badges: ['fast']
+    },
+    {
+      name: 'MiniMax-M2.5',
+      context: '200K',
+      input: '$0.30',
+      output: '$1.20',
+      cached: '$0.03',
+      badges: ['code']
+    },
+    {
+      name: 'MiniMax-M2.5-highspeed',
+      context: '200K',
+      input: '$0.60',
+      output: '$2.40',
+      cached: '$0.03',
+      badges: ['code', 'fast']
+    },
+    {
+      name: 'MiniMax-M2.1',
+      context: '200K',
+      input: '$0.30',
+      output: '$1.20',
+      cached: '$0.03',
+      badges: ['reasoning']
+    },
+    {
+      name: 'MiniMax-M2.1-highspeed',
+      context: '200K',
+      input: '$0.60',
+      output: '$2.40',
+      cached: '$0.03',
+      badges: ['fast']
+    },
     { name: 'MiniMax-M2', context: '200K', input: '$0.30', output: '$1.20', cached: '$0.03' }
   ],
   xai: [
@@ -503,68 +553,420 @@ const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
   ],
   openrouter: [
     // ── Anthropic ──
-    { name: 'anthropic/claude-sonnet-4', context: '200K', input: '$3.00', output: '$15.00', cached: '$0.30', badges: ['frontier', 'reasoning'], modes: ['none', 'high', 'max'] },
-    { name: 'anthropic/claude-opus-4', context: '200K', input: '$15.00', output: '$75.00', cached: '$1.50', badges: ['frontier', 'reasoning'], modes: ['none', 'high', 'max'] },
-    { name: 'anthropic/claude-3.5-sonnet', context: '200K', input: '$3.00', output: '$15.00', cached: '$0.30', badges: ['reasoning'] },
-    { name: 'anthropic/claude-3.5-haiku', context: '200K', input: '$0.80', output: '$4.00', cached: '$0.08', badges: ['fast'] },
-    { name: 'anthropic/claude-3-opus', context: '200K', input: '$15.00', output: '$75.00', cached: '$1.50', badges: ['reasoning'] },
+    {
+      name: 'anthropic/claude-sonnet-4',
+      context: '200K',
+      input: '$3.00',
+      output: '$15.00',
+      cached: '$0.30',
+      badges: ['frontier', 'reasoning'],
+      modes: ['none', 'high', 'max']
+    },
+    {
+      name: 'anthropic/claude-opus-4',
+      context: '200K',
+      input: '$15.00',
+      output: '$75.00',
+      cached: '$1.50',
+      badges: ['frontier', 'reasoning'],
+      modes: ['none', 'high', 'max']
+    },
+    {
+      name: 'anthropic/claude-3.5-sonnet',
+      context: '200K',
+      input: '$3.00',
+      output: '$15.00',
+      cached: '$0.30',
+      badges: ['reasoning']
+    },
+    {
+      name: 'anthropic/claude-3.5-haiku',
+      context: '200K',
+      input: '$0.80',
+      output: '$4.00',
+      cached: '$0.08',
+      badges: ['fast']
+    },
+    {
+      name: 'anthropic/claude-3-opus',
+      context: '200K',
+      input: '$15.00',
+      output: '$75.00',
+      cached: '$1.50',
+      badges: ['reasoning']
+    },
     // ── OpenAI ──
-    { name: 'openai/gpt-4.1', context: '1M', input: '$2.00', output: '$8.00', cached: '$0.50', badges: ['reasoning'] },
-    { name: 'openai/gpt-4.1-mini', context: '1M', input: '$0.40', output: '$1.60', cached: '$0.10', badges: ['fast'] },
-    { name: 'openai/gpt-4.1-nano', context: '1M', input: '$0.10', output: '$0.40', cached: '$0.025', badges: ['fast'] },
-    { name: 'openai/o4-mini', context: '200K', input: '$1.10', output: '$4.40', cached: '$0.275', badges: ['reasoning'], modes: ['none', 'high', 'max'] },
-    { name: 'openai/o3-mini', context: '200K', input: '$1.10', output: '$4.40', cached: '$0.55', badges: ['reasoning'], modes: ['none', 'high', 'max'] },
-    { name: 'openai/gpt-4o', context: '128K', input: '$2.50', output: '$10.00', cached: '$1.25', badges: ['vision'] },
-    { name: 'openai/gpt-4o-mini', context: '128K', input: '$0.15', output: '$0.60', cached: '$0.075', badges: ['fast', 'vision'] },
-    { name: 'openai/chatgpt-4o-latest', context: '128K', input: '$5.00', output: '$15.00', cached: null, badges: ['vision'] },
+    {
+      name: 'openai/gpt-4.1',
+      context: '1M',
+      input: '$2.00',
+      output: '$8.00',
+      cached: '$0.50',
+      badges: ['reasoning']
+    },
+    {
+      name: 'openai/gpt-4.1-mini',
+      context: '1M',
+      input: '$0.40',
+      output: '$1.60',
+      cached: '$0.10',
+      badges: ['fast']
+    },
+    {
+      name: 'openai/gpt-4.1-nano',
+      context: '1M',
+      input: '$0.10',
+      output: '$0.40',
+      cached: '$0.025',
+      badges: ['fast']
+    },
+    {
+      name: 'openai/o4-mini',
+      context: '200K',
+      input: '$1.10',
+      output: '$4.40',
+      cached: '$0.275',
+      badges: ['reasoning'],
+      modes: ['none', 'high', 'max']
+    },
+    {
+      name: 'openai/o3-mini',
+      context: '200K',
+      input: '$1.10',
+      output: '$4.40',
+      cached: '$0.55',
+      badges: ['reasoning'],
+      modes: ['none', 'high', 'max']
+    },
+    {
+      name: 'openai/gpt-4o',
+      context: '128K',
+      input: '$2.50',
+      output: '$10.00',
+      cached: '$1.25',
+      badges: ['vision']
+    },
+    {
+      name: 'openai/gpt-4o-mini',
+      context: '128K',
+      input: '$0.15',
+      output: '$0.60',
+      cached: '$0.075',
+      badges: ['fast', 'vision']
+    },
+    {
+      name: 'openai/chatgpt-4o-latest',
+      context: '128K',
+      input: '$5.00',
+      output: '$15.00',
+      cached: null,
+      badges: ['vision']
+    },
     // ── Google ──
-    { name: 'google/gemini-2.5-pro-preview', context: '1M', input: '$1.25', output: '$10.00', cached: '$0.3125', badges: ['frontier', 'reasoning'], modes: ['none', 'high', 'max'] },
-    { name: 'google/gemini-2.5-flash-preview', context: '1M', input: '$0.15', output: '$0.60', cached: '$0.0375', badges: ['fast', 'reasoning'], modes: ['none', 'high'] },
-    { name: 'google/gemini-2.0-flash-001', context: '1M', input: '$0.10', output: '$0.40', cached: '$0.025', badges: ['fast', 'vision'] },
-    { name: 'google/gemini-2.0-flash-lite-001', context: '1M', input: '$0.075', output: '$0.30', cached: null, badges: ['fast'] },
-    { name: 'google/gemini-pro-1.5', context: '2M', input: '$1.25', output: '$5.00', cached: '$0.3125', badges: ['vision'] },
-    { name: 'google/gemini-flash-1.5', context: '1M', input: '$0.075', output: '$0.30', cached: '$0.01875', badges: ['fast', 'vision'] },
+    {
+      name: 'google/gemini-2.5-pro-preview',
+      context: '1M',
+      input: '$1.25',
+      output: '$10.00',
+      cached: '$0.3125',
+      badges: ['frontier', 'reasoning'],
+      modes: ['none', 'high', 'max']
+    },
+    {
+      name: 'google/gemini-2.5-flash-preview',
+      context: '1M',
+      input: '$0.15',
+      output: '$0.60',
+      cached: '$0.0375',
+      badges: ['fast', 'reasoning'],
+      modes: ['none', 'high']
+    },
+    {
+      name: 'google/gemini-2.0-flash-001',
+      context: '1M',
+      input: '$0.10',
+      output: '$0.40',
+      cached: '$0.025',
+      badges: ['fast', 'vision']
+    },
+    {
+      name: 'google/gemini-2.0-flash-lite-001',
+      context: '1M',
+      input: '$0.075',
+      output: '$0.30',
+      cached: null,
+      badges: ['fast']
+    },
+    {
+      name: 'google/gemini-pro-1.5',
+      context: '2M',
+      input: '$1.25',
+      output: '$5.00',
+      cached: '$0.3125',
+      badges: ['vision']
+    },
+    {
+      name: 'google/gemini-flash-1.5',
+      context: '1M',
+      input: '$0.075',
+      output: '$0.30',
+      cached: '$0.01875',
+      badges: ['fast', 'vision']
+    },
     // ── DeepSeek ──
-    { name: 'deepseek/deepseek-r1-0528', context: '128K', input: '$0.55', output: '$2.19', cached: '$0.14', badges: ['frontier', 'reasoning'], modes: ['none', 'high'] },
-    { name: 'deepseek/deepseek-r1', context: '128K', input: '$0.55', output: '$2.19', cached: '$0.14', badges: ['reasoning'], modes: ['none', 'high'] },
-    { name: 'deepseek/deepseek-chat-v3-0324', context: '128K', input: '$0.27', output: '$1.10', cached: '$0.07', badges: ['reasoning'] },
-    { name: 'deepseek/deepseek-chat', context: '64K', input: '$0.14', output: '$0.28', cached: '$0.014', badges: ['fast'] },
+    {
+      name: 'deepseek/deepseek-r1-0528',
+      context: '128K',
+      input: '$0.55',
+      output: '$2.19',
+      cached: '$0.14',
+      badges: ['frontier', 'reasoning'],
+      modes: ['none', 'high']
+    },
+    {
+      name: 'deepseek/deepseek-r1',
+      context: '128K',
+      input: '$0.55',
+      output: '$2.19',
+      cached: '$0.14',
+      badges: ['reasoning'],
+      modes: ['none', 'high']
+    },
+    {
+      name: 'deepseek/deepseek-chat-v3-0324',
+      context: '128K',
+      input: '$0.27',
+      output: '$1.10',
+      cached: '$0.07',
+      badges: ['reasoning']
+    },
+    {
+      name: 'deepseek/deepseek-chat',
+      context: '64K',
+      input: '$0.14',
+      output: '$0.28',
+      cached: '$0.014',
+      badges: ['fast']
+    },
     // ── Meta Llama ──
-    { name: 'meta-llama/llama-4-maverick', context: '1M', input: '$0.20', output: '$0.85', cached: null, badges: ['vision'] },
-    { name: 'meta-llama/llama-4-scout', context: '512K', input: '$0.11', output: '$0.34', cached: null, badges: ['fast', 'vision'] },
-    { name: 'meta-llama/llama-3.3-70b-instruct', context: '128K', input: '$0.12', output: '$0.30', cached: null, badges: ['reasoning'] },
-    { name: 'meta-llama/llama-3.1-405b-instruct', context: '128K', input: '$0.90', output: '$0.90', cached: null, badges: ['reasoning'] },
-    { name: 'meta-llama/llama-3.1-70b-instruct', context: '128K', input: '$0.12', output: '$0.30', cached: null },
-    { name: 'meta-llama/llama-3.1-8b-instruct', context: '128K', input: '$0.02', output: '$0.05', cached: null, badges: ['fast'] },
+    {
+      name: 'meta-llama/llama-4-maverick',
+      context: '1M',
+      input: '$0.20',
+      output: '$0.85',
+      cached: null,
+      badges: ['vision']
+    },
+    {
+      name: 'meta-llama/llama-4-scout',
+      context: '512K',
+      input: '$0.11',
+      output: '$0.34',
+      cached: null,
+      badges: ['fast', 'vision']
+    },
+    {
+      name: 'meta-llama/llama-3.3-70b-instruct',
+      context: '128K',
+      input: '$0.12',
+      output: '$0.30',
+      cached: null,
+      badges: ['reasoning']
+    },
+    {
+      name: 'meta-llama/llama-3.1-405b-instruct',
+      context: '128K',
+      input: '$0.90',
+      output: '$0.90',
+      cached: null,
+      badges: ['reasoning']
+    },
+    {
+      name: 'meta-llama/llama-3.1-70b-instruct',
+      context: '128K',
+      input: '$0.12',
+      output: '$0.30',
+      cached: null
+    },
+    {
+      name: 'meta-llama/llama-3.1-8b-instruct',
+      context: '128K',
+      input: '$0.02',
+      output: '$0.05',
+      cached: null,
+      badges: ['fast']
+    },
     // ── Mistral ──
-    { name: 'mistralai/mistral-large-2411', context: '128K', input: '$2.00', output: '$6.00', cached: null, badges: ['reasoning'] },
-    { name: 'mistralai/mistral-medium-3', context: '128K', input: '$0.40', output: '$2.00', cached: null },
-    { name: 'mistralai/mistral-small-3.1-24b-instruct', context: '128K', input: '$0.10', output: '$0.30', cached: null, badges: ['fast'] },
-    { name: 'mistralai/codestral-2501', context: '256K', input: '$0.30', output: '$0.90', cached: null, badges: ['code'] },
-    { name: 'mistralai/ministral-8b', context: '128K', input: '$0.10', output: '$0.10', cached: null, badges: ['fast'] },
+    {
+      name: 'mistralai/mistral-large-2411',
+      context: '128K',
+      input: '$2.00',
+      output: '$6.00',
+      cached: null,
+      badges: ['reasoning']
+    },
+    {
+      name: 'mistralai/mistral-medium-3',
+      context: '128K',
+      input: '$0.40',
+      output: '$2.00',
+      cached: null
+    },
+    {
+      name: 'mistralai/mistral-small-3.1-24b-instruct',
+      context: '128K',
+      input: '$0.10',
+      output: '$0.30',
+      cached: null,
+      badges: ['fast']
+    },
+    {
+      name: 'mistralai/codestral-2501',
+      context: '256K',
+      input: '$0.30',
+      output: '$0.90',
+      cached: null,
+      badges: ['code']
+    },
+    {
+      name: 'mistralai/ministral-8b',
+      context: '128K',
+      input: '$0.10',
+      output: '$0.10',
+      cached: null,
+      badges: ['fast']
+    },
     // ── Qwen ──
-    { name: 'qwen/qwq-32b', context: '128K', input: '$0.12', output: '$0.18', cached: null, badges: ['reasoning'], modes: ['none', 'high'] },
-    { name: 'qwen/qwen-2.5-72b-instruct', context: '128K', input: '$0.18', output: '$0.18', cached: null, badges: ['reasoning'] },
-    { name: 'qwen/qwen-2.5-coder-32b-instruct', context: '32K', input: '$0.07', output: '$0.16', cached: null, badges: ['code'] },
-    { name: 'qwen/qwen-2.5-vl-72b-instruct', context: '128K', input: '$0.18', output: '$0.18', cached: null, badges: ['vision'] },
+    {
+      name: 'qwen/qwq-32b',
+      context: '128K',
+      input: '$0.12',
+      output: '$0.18',
+      cached: null,
+      badges: ['reasoning'],
+      modes: ['none', 'high']
+    },
+    {
+      name: 'qwen/qwen-2.5-72b-instruct',
+      context: '128K',
+      input: '$0.18',
+      output: '$0.18',
+      cached: null,
+      badges: ['reasoning']
+    },
+    {
+      name: 'qwen/qwen-2.5-coder-32b-instruct',
+      context: '32K',
+      input: '$0.07',
+      output: '$0.16',
+      cached: null,
+      badges: ['code']
+    },
+    {
+      name: 'qwen/qwen-2.5-vl-72b-instruct',
+      context: '128K',
+      input: '$0.18',
+      output: '$0.18',
+      cached: null,
+      badges: ['vision']
+    },
     // ── xAI ──
-    { name: 'x-ai/grok-4.3', context: '256K', input: '$2.00', output: '$10.00', cached: null, badges: ['frontier', 'reasoning'], modes: ['none', 'high'] },
-    { name: 'x-ai/grok-3-beta', context: '131K', input: '$3.00', output: '$15.00', cached: null, badges: ['reasoning'], modes: ['none', 'high'] },
+    {
+      name: 'x-ai/grok-4.3',
+      context: '256K',
+      input: '$2.00',
+      output: '$10.00',
+      cached: null,
+      badges: ['frontier', 'reasoning'],
+      modes: ['none', 'high']
+    },
+    {
+      name: 'x-ai/grok-3-beta',
+      context: '131K',
+      input: '$3.00',
+      output: '$15.00',
+      cached: null,
+      badges: ['reasoning'],
+      modes: ['none', 'high']
+    },
     { name: 'x-ai/grok-2-1212', context: '131K', input: '$2.00', output: '$10.00', cached: null },
     // ── Cohere ──
-    { name: 'cohere/command-r-plus-08-2024', context: '128K', input: '$2.50', output: '$10.00', cached: null, badges: ['reasoning'] },
-    { name: 'cohere/command-r-08-2024', context: '128K', input: '$0.15', output: '$0.60', cached: null, badges: ['fast'] },
+    {
+      name: 'cohere/command-r-plus-08-2024',
+      context: '128K',
+      input: '$2.50',
+      output: '$10.00',
+      cached: null,
+      badges: ['reasoning']
+    },
+    {
+      name: 'cohere/command-r-08-2024',
+      context: '128K',
+      input: '$0.15',
+      output: '$0.60',
+      cached: null,
+      badges: ['fast']
+    },
     // ── Microsoft ──
-    { name: 'microsoft/phi-4', context: '16K', input: '$0.07', output: '$0.14', cached: null, badges: ['fast'] },
-    { name: 'microsoft/phi-4-multimodal-instruct', context: '128K', input: '$0.07', output: '$0.14', cached: null, badges: ['fast', 'vision'] },
+    {
+      name: 'microsoft/phi-4',
+      context: '16K',
+      input: '$0.07',
+      output: '$0.14',
+      cached: null,
+      badges: ['fast']
+    },
+    {
+      name: 'microsoft/phi-4-multimodal-instruct',
+      context: '128K',
+      input: '$0.07',
+      output: '$0.14',
+      cached: null,
+      badges: ['fast', 'vision']
+    },
     // ── Perplexity ──
-    { name: 'perplexity/sonar-pro', context: '200K', input: '$3.00', output: '$15.00', cached: null, badges: ['reasoning'] },
-    { name: 'perplexity/sonar', context: '128K', input: '$1.00', output: '$1.00', cached: null, badges: ['fast'] },
+    {
+      name: 'perplexity/sonar-pro',
+      context: '200K',
+      input: '$3.00',
+      output: '$15.00',
+      cached: null,
+      badges: ['reasoning']
+    },
+    {
+      name: 'perplexity/sonar',
+      context: '128K',
+      input: '$1.00',
+      output: '$1.00',
+      cached: null,
+      badges: ['fast']
+    },
     // ── Amazon ──
-    { name: 'amazon/nova-pro-v1', context: '300K', input: '$0.80', output: '$3.20', cached: null, badges: ['vision'] },
-    { name: 'amazon/nova-lite-v1', context: '300K', input: '$0.06', output: '$0.24', cached: null, badges: ['fast', 'vision'] },
+    {
+      name: 'amazon/nova-pro-v1',
+      context: '300K',
+      input: '$0.80',
+      output: '$3.20',
+      cached: null,
+      badges: ['vision']
+    },
+    {
+      name: 'amazon/nova-lite-v1',
+      context: '300K',
+      input: '$0.06',
+      output: '$0.24',
+      cached: null,
+      badges: ['fast', 'vision']
+    },
     // ── NousResearch ──
-    { name: 'nousresearch/hermes-3-llama-3.1-405b', context: '128K', input: '$0.90', output: '$0.90', cached: null, badges: ['reasoning'] }
+    {
+      name: 'nousresearch/hermes-3-llama-3.1-405b',
+      context: '128K',
+      input: '$0.90',
+      output: '$0.90',
+      cached: null,
+      badges: ['reasoning']
+    }
   ]
 }
 
@@ -1010,7 +1412,11 @@ export function CloudProviderPanel({ provider }: { provider: ProviderId }): Reac
         </section>
 
         <ModelBreakdown
-          specs={provider === 'openrouter' ? sortOpenRouterModels(MODEL_SPECS[provider]) : MODEL_SPECS[provider]}
+          specs={
+            provider === 'openrouter'
+              ? sortOpenRouterModels(MODEL_SPECS[provider])
+              : MODEL_SPECS[provider]
+          }
           provider={provider}
         />
       </div>
@@ -1027,7 +1433,13 @@ const BADGE_STYLES: Record<BadgeKind, string> = {
   voice: 'bg-pink-500/15 text-pink-600 dark:text-pink-400'
 }
 
-function ModelBreakdown({ specs, provider }: { specs: ModelSpec[]; provider: ProviderId }): React.JSX.Element {
+function ModelBreakdown({
+  specs,
+  provider
+}: {
+  specs: ModelSpec[]
+  provider: ProviderId
+}): React.JSX.Element {
   const { t } = useTranslation()
   const isFrontier = (m: ModelSpec): boolean => !!m.badges?.includes('frontier')
   return (
@@ -1121,7 +1533,9 @@ function ModelBreakdown({ specs, provider }: { specs: ModelSpec[]; provider: Pro
         <p className="text-muted flex items-center gap-1.5 text-xs">
           <InformationCircleIcon className="size-3.5 shrink-0" />
           <span>
-            <span dir="ltr" className="inline-block">{'200+'}</span>{' '}
+            <span dir="ltr" className="inline-block">
+              {'200+'}
+            </span>{' '}
             {t('settings.model.cloud.breakdown.moreModels')}{' '}
             <a
               href="https://openrouter.ai/models"

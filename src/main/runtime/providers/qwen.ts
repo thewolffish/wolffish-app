@@ -7,8 +7,7 @@ import type {
   UserContentBlock
 } from '@main/runtime/thalamus'
 
-const QWEN_ENDPOINT =
-  'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions'
+const QWEN_ENDPOINT = 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions'
 
 function maxTokensFor(model: string): number {
   const m = model.toLowerCase()

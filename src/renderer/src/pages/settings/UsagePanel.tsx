@@ -38,7 +38,18 @@ import { useTranslation } from 'react-i18next'
 
 type IconComp = React.ComponentType<{ size?: number; className?: string }>
 
-type ProviderId = 'local' | 'anthropic' | 'openai' | 'openrouter' | 'deepseek' | 'mimo' | 'kimi' | 'minimax' | 'xai' | 'qwen' | 'stepfun'
+type ProviderId =
+  | 'local'
+  | 'anthropic'
+  | 'openai'
+  | 'openrouter'
+  | 'deepseek'
+  | 'mimo'
+  | 'kimi'
+  | 'minimax'
+  | 'xai'
+  | 'qwen'
+  | 'stepfun'
 
 const TIME_RANGES: UsageTimeRange[] = [
   'today',

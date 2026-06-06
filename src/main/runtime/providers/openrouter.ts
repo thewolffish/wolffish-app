@@ -15,7 +15,8 @@ function maxTokensFor(model: string): number {
   if (m.includes('gpt-5')) return 128000
   if (m.includes('gpt-4o')) return 16384
   if (m.includes('gpt-4.1')) return 32768
-  if (m.includes('/o4') || m.includes('/o3') || m.startsWith('o4') || m.startsWith('o3')) return 100000
+  if (m.includes('/o4') || m.includes('/o3') || m.startsWith('o4') || m.startsWith('o3'))
+    return 100000
   if (m.includes('deepseek')) return 65536
   if (m.includes('grok')) return 131072
   if (m.includes('gemini')) return 65536

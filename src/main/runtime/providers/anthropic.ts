@@ -64,9 +64,10 @@ export class AnthropicProvider {
       }
     } else {
       // 4-5 / 4-1 / haiku: manual thinking with budget
-      const budget = mode === 'max'
-        ? Math.min(32768, this.maxTokens - 1024)
-        : Math.min(10240, this.maxTokens - 1024)
+      const budget =
+        mode === 'max'
+          ? Math.min(32768, this.maxTokens - 1024)
+          : Math.min(10240, this.maxTokens - 1024)
       body.thinking = { type: 'enabled', budget_tokens: budget }
     }
 

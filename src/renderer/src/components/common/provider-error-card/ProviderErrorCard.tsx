@@ -17,7 +17,18 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { IconType } from 'react-icons'
 
-type Logo = 'anthropic' | 'openai' | 'openrouter' | 'deepseek' | 'mimo' | 'kimi' | 'minimax' | 'xai' | 'qwen' | 'stepfun' | 'ollama'
+type Logo =
+  | 'anthropic'
+  | 'openai'
+  | 'openrouter'
+  | 'deepseek'
+  | 'mimo'
+  | 'kimi'
+  | 'minimax'
+  | 'xai'
+  | 'qwen'
+  | 'stepfun'
+  | 'ollama'
 
 const LOGO: Record<Logo, IconType | React.ComponentType<{ size?: number; className?: string }>> = {
   anthropic: AnthropicLogo,
@@ -88,7 +99,12 @@ function titleKeyFor(errorReason: string, statusCode: number | null): string {
 function ErrorDetailBlock({ text }: { text: string }): React.JSX.Element {
   const [copied, setCopied] = useState(false)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  useEffect(() => () => { if (timer.current) clearTimeout(timer.current) }, [])
+  useEffect(
+    () => () => {
+      if (timer.current) clearTimeout(timer.current)
+    },
+    []
+  )
 
   const onCopy = async (): Promise<void> => {
     try {
@@ -96,7 +112,9 @@ function ErrorDetailBlock({ text }: { text: string }): React.JSX.Element {
       setCopied(true)
       if (timer.current) clearTimeout(timer.current)
       timer.current = setTimeout(() => setCopied(false), 1500)
-    } catch { /* clipboard may be unavailable */ }
+    } catch {
+      /* clipboard may be unavailable */
+    }
   }
 
   return (
@@ -165,9 +183,7 @@ function SingleErrorCard({ payload }: { payload: NoProviderAvailablePayload }): 
           )}
         </div>
       </div>
-      {showDetail && payload.errorDetail && (
-        <ErrorDetailBlock text={payload.errorDetail} />
-      )}
+      {showDetail && payload.errorDetail && <ErrorDetailBlock text={payload.errorDetail} />}
     </div>
   )
 }

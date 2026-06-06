@@ -14,7 +14,15 @@ export type ProcessedAttachment = {
 }
 
 export type FileProcessorOptions = {
-  provider: 'anthropic' | 'openai' | 'openrouter' | 'deepseek' | 'mimo' | 'kimi' | 'minimax' | 'local'
+  provider:
+    | 'anthropic'
+    | 'openai'
+    | 'openrouter'
+    | 'deepseek'
+    | 'mimo'
+    | 'kimi'
+    | 'minimax'
+    | 'local'
   supportsVision: boolean
 }
 

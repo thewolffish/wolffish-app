@@ -145,46 +145,61 @@ const KIMI_PRICING: Record<string, ModelPricing> = {
 // https://platform.minimax.io/docs/guides/pricing-paygo.md
 // Promotional rates shown; cache read is a fraction of input.
 const MINIMAX_PRICING: Record<string, ModelPricing> = {
-  'MiniMax-M3': { input: 0.30 / 1e6, output: 1.20 / 1e6, cacheWrite: 1.0, cacheRead: 0.20 },
-  'MiniMax-M2.7': { input: 0.30 / 1e6, output: 1.20 / 1e6, cacheWrite: 1.25, cacheRead: 0.20 },
-  'MiniMax-M2.7-highspeed': { input: 0.60 / 1e6, output: 2.40 / 1e6, cacheWrite: 1.0, cacheRead: 0.10 },
-  'MiniMax-M2.5': { input: 0.30 / 1e6, output: 1.20 / 1e6, cacheWrite: 1.25, cacheRead: 0.10 },
-  'MiniMax-M2.5-highspeed': { input: 0.60 / 1e6, output: 2.40 / 1e6, cacheWrite: 1.0, cacheRead: 0.05 },
-  'MiniMax-M2.1': { input: 0.30 / 1e6, output: 1.20 / 1e6, cacheWrite: 1.25, cacheRead: 0.10 },
-  'MiniMax-M2.1-highspeed': { input: 0.60 / 1e6, output: 2.40 / 1e6, cacheWrite: 1.0, cacheRead: 0.05 },
-  'MiniMax-M2': { input: 0.30 / 1e6, output: 1.20 / 1e6, cacheWrite: 1.25, cacheRead: 0.10 }
+  'MiniMax-M3': { input: 0.3 / 1e6, output: 1.2 / 1e6, cacheWrite: 1.0, cacheRead: 0.2 },
+  'MiniMax-M2.7': { input: 0.3 / 1e6, output: 1.2 / 1e6, cacheWrite: 1.25, cacheRead: 0.2 },
+  'MiniMax-M2.7-highspeed': {
+    input: 0.6 / 1e6,
+    output: 2.4 / 1e6,
+    cacheWrite: 1.0,
+    cacheRead: 0.1
+  },
+  'MiniMax-M2.5': { input: 0.3 / 1e6, output: 1.2 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 },
+  'MiniMax-M2.5-highspeed': {
+    input: 0.6 / 1e6,
+    output: 2.4 / 1e6,
+    cacheWrite: 1.0,
+    cacheRead: 0.05
+  },
+  'MiniMax-M2.1': { input: 0.3 / 1e6, output: 1.2 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 },
+  'MiniMax-M2.1-highspeed': {
+    input: 0.6 / 1e6,
+    output: 2.4 / 1e6,
+    cacheWrite: 1.0,
+    cacheRead: 0.05
+  },
+  'MiniMax-M2': { input: 0.3 / 1e6, output: 1.2 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 }
 }
 
 // https://help.aliyun.com/zh/model-studio/billing (DashScope international pricing)
 // Prices in USD per million tokens. Cache multiplier ≈ input discount fraction.
 const QWEN_PRICING: Record<string, ModelPricing> = {
   'qwen3.7-max': { input: 2.5 / 1e6, output: 7.5 / 1e6, cacheWrite: 1.0, cacheRead: 0.25 / 2.5 },
-  'qwen3.7-plus': { input: 0.40 / 1e6, output: 1.6 / 1e6, cacheWrite: 1.0, cacheRead: 0.064 / 0.40 },
-  'qwen3.6-max': { input: 1.3 / 1e6, output: 7.8 / 1e6, cacheWrite: 1.0, cacheRead: 0.10 },
-  'qwen3.6-plus': { input: 0.40 / 1e6, output: 1.6 / 1e6, cacheWrite: 1.0, cacheRead: 0.10 },
-  'qwen3.6-flash': { input: 0.25 / 1e6, output: 1.5 / 1e6, cacheWrite: 1.0, cacheRead: 0.10 },
-  'qwen3.5-plus': { input: 0.40 / 1e6, output: 1.6 / 1e6, cacheWrite: 1.0, cacheRead: 0.10 },
-  'qwen3.5-flash': { input: 0.06 / 1e6, output: 0.24 / 1e6, cacheWrite: 1.0, cacheRead: 0.10 },
-  'qwen3-max': { input: 1.6 / 1e6, output: 6.4 / 1e6, cacheWrite: 1.0, cacheRead: 0.10 },
-  'qwen3-coder': { input: 0.40 / 1e6, output: 1.6 / 1e6, cacheWrite: 1.0, cacheRead: 0.10 },
-  'qwen-max': { input: 1.6 / 1e6, output: 6.4 / 1e6, cacheWrite: 1.0, cacheRead: 0.10 },
-  'qwen-plus': { input: 0.40 / 1e6, output: 1.6 / 1e6, cacheWrite: 1.0, cacheRead: 0.10 },
-  'qwen-turbo': { input: 0.30 / 1e6, output: 0.60 / 1e6, cacheWrite: 1.0, cacheRead: 0.10 },
-  'qwen-flash': { input: 0.06 / 1e6, output: 0.24 / 1e6, cacheWrite: 1.0, cacheRead: 0.10 },
-  'qwq-plus': { input: 0.40 / 1e6, output: 1.6 / 1e6, cacheWrite: 1.0, cacheRead: 0.10 },
-  'qvq-max': { input: 1.6 / 1e6, output: 6.4 / 1e6, cacheWrite: 1.0, cacheRead: 0.10 }
+  'qwen3.7-plus': { input: 0.4 / 1e6, output: 1.6 / 1e6, cacheWrite: 1.0, cacheRead: 0.064 / 0.4 },
+  'qwen3.6-max': { input: 1.3 / 1e6, output: 7.8 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 },
+  'qwen3.6-plus': { input: 0.4 / 1e6, output: 1.6 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 },
+  'qwen3.6-flash': { input: 0.25 / 1e6, output: 1.5 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 },
+  'qwen3.5-plus': { input: 0.4 / 1e6, output: 1.6 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 },
+  'qwen3.5-flash': { input: 0.06 / 1e6, output: 0.24 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 },
+  'qwen3-max': { input: 1.6 / 1e6, output: 6.4 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 },
+  'qwen3-coder': { input: 0.4 / 1e6, output: 1.6 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 },
+  'qwen-max': { input: 1.6 / 1e6, output: 6.4 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 },
+  'qwen-plus': { input: 0.4 / 1e6, output: 1.6 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 },
+  'qwen-turbo': { input: 0.3 / 1e6, output: 0.6 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 },
+  'qwen-flash': { input: 0.06 / 1e6, output: 0.24 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 },
+  'qwq-plus': { input: 0.4 / 1e6, output: 1.6 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 },
+  'qvq-max': { input: 1.6 / 1e6, output: 6.4 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 }
 }
 
 // https://platform.stepfun.ai/docs/en/pricing
 // Stepfun prices in RMB, converted at ~7.2 CNY/USD.
 const STEPFUN_PRICING: Record<string, ModelPricing> = {
-  'step-3.7-flash': { input: 0.83 / 1e6, output: 6.94 / 1e6, cacheWrite: 1.0, cacheRead: 0.10 },
-  'step-3.5-flash': { input: 0.83 / 1e6, output: 6.94 / 1e6, cacheWrite: 1.0, cacheRead: 0.10 },
-  'step-2-16k': { input: 1.39 / 1e6, output: 16.67 / 1e6, cacheWrite: 1.0, cacheRead: 0.50 },
-  'step-2': { input: 5.56 / 1e6, output: 27.78 / 1e6, cacheWrite: 1.0, cacheRead: 0.50 },
-  'step-1-200k': { input: 3.33 / 1e6, output: 13.89 / 1e6, cacheWrite: 1.0, cacheRead: 0.50 },
-  'step-1-128k': { input: 3.33 / 1e6, output: 13.89 / 1e6, cacheWrite: 1.0, cacheRead: 0.50 },
-  'step-1': { input: 1.25 / 1e6, output: 8.33 / 1e6, cacheWrite: 1.0, cacheRead: 0.50 }
+  'step-3.7-flash': { input: 0.83 / 1e6, output: 6.94 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 },
+  'step-3.5-flash': { input: 0.83 / 1e6, output: 6.94 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 },
+  'step-2-16k': { input: 1.39 / 1e6, output: 16.67 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
+  'step-2': { input: 5.56 / 1e6, output: 27.78 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
+  'step-1-200k': { input: 3.33 / 1e6, output: 13.89 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
+  'step-1-128k': { input: 3.33 / 1e6, output: 13.89 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
+  'step-1': { input: 1.25 / 1e6, output: 8.33 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 }
 }
 
 // https://docs.x.ai/docs/pricing
@@ -195,41 +210,111 @@ const XAI_PRICING: Record<string, ModelPricing> = {
   'grok-build': { input: 1.0 / 1e6, output: 2.0 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
   'grok-4': { input: 3 / 1e6, output: 15 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
   'grok-3': { input: 2 / 1e6, output: 10 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
-  'grok-3-mini': { input: 0.30 / 1e6, output: 0.50 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
+  'grok-3-mini': { input: 0.3 / 1e6, output: 0.5 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
   'grok-2': { input: 2 / 1e6, output: 10 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 }
 }
 
 const OPENROUTER_PRICING: Record<string, ModelPricing> = {
-  'anthropic/claude-sonnet-4': { input: 3 / 1e6, output: 15 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 },
-  'anthropic/claude-opus-4': { input: 15 / 1e6, output: 75 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 },
-  'anthropic/claude-3.5-sonnet': { input: 3 / 1e6, output: 15 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 },
-  'anthropic/claude-3.5-haiku': { input: 0.80 / 1e6, output: 4 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 },
-  'anthropic/claude-3-opus': { input: 15 / 1e6, output: 75 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 },
+  'anthropic/claude-sonnet-4': {
+    input: 3 / 1e6,
+    output: 15 / 1e6,
+    cacheWrite: 1.25,
+    cacheRead: 0.1
+  },
+  'anthropic/claude-opus-4': {
+    input: 15 / 1e6,
+    output: 75 / 1e6,
+    cacheWrite: 1.25,
+    cacheRead: 0.1
+  },
+  'anthropic/claude-3.5-sonnet': {
+    input: 3 / 1e6,
+    output: 15 / 1e6,
+    cacheWrite: 1.25,
+    cacheRead: 0.1
+  },
+  'anthropic/claude-3.5-haiku': {
+    input: 0.8 / 1e6,
+    output: 4 / 1e6,
+    cacheWrite: 1.25,
+    cacheRead: 0.1
+  },
+  'anthropic/claude-3-opus': {
+    input: 15 / 1e6,
+    output: 75 / 1e6,
+    cacheWrite: 1.25,
+    cacheRead: 0.1
+  },
   'openai/gpt-4.1': { input: 2 / 1e6, output: 8 / 1e6, cacheWrite: 1.0, cacheRead: 0.25 },
-  'openai/gpt-4.1-mini': { input: 0.40 / 1e6, output: 1.60 / 1e6, cacheWrite: 1.0, cacheRead: 0.25 },
-  'openai/gpt-4.1-nano': { input: 0.10 / 1e6, output: 0.40 / 1e6, cacheWrite: 1.0, cacheRead: 0.25 },
-  'openai/o4-mini': { input: 1.10 / 1e6, output: 4.40 / 1e6, cacheWrite: 1.0, cacheRead: 0.25 },
-  'openai/o3-mini': { input: 1.10 / 1e6, output: 4.40 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
-  'openai/gpt-4o': { input: 2.50 / 1e6, output: 10 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
-  'openai/gpt-4o-mini': { input: 0.15 / 1e6, output: 0.60 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
-  'google/gemini-2.5-pro': { input: 1.25 / 1e6, output: 10 / 1e6, cacheWrite: 1.0, cacheRead: 0.25 },
-  'google/gemini-2.5-flash': { input: 0.15 / 1e6, output: 0.60 / 1e6, cacheWrite: 1.0, cacheRead: 0.25 },
-  'google/gemini-2.0-flash': { input: 0.10 / 1e6, output: 0.40 / 1e6, cacheWrite: 1.0, cacheRead: 0.25 },
+  'openai/gpt-4.1-mini': { input: 0.4 / 1e6, output: 1.6 / 1e6, cacheWrite: 1.0, cacheRead: 0.25 },
+  'openai/gpt-4.1-nano': { input: 0.1 / 1e6, output: 0.4 / 1e6, cacheWrite: 1.0, cacheRead: 0.25 },
+  'openai/o4-mini': { input: 1.1 / 1e6, output: 4.4 / 1e6, cacheWrite: 1.0, cacheRead: 0.25 },
+  'openai/o3-mini': { input: 1.1 / 1e6, output: 4.4 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
+  'openai/gpt-4o': { input: 2.5 / 1e6, output: 10 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
+  'openai/gpt-4o-mini': { input: 0.15 / 1e6, output: 0.6 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
+  'google/gemini-2.5-pro': {
+    input: 1.25 / 1e6,
+    output: 10 / 1e6,
+    cacheWrite: 1.0,
+    cacheRead: 0.25
+  },
+  'google/gemini-2.5-flash': {
+    input: 0.15 / 1e6,
+    output: 0.6 / 1e6,
+    cacheWrite: 1.0,
+    cacheRead: 0.25
+  },
+  'google/gemini-2.0-flash': {
+    input: 0.1 / 1e6,
+    output: 0.4 / 1e6,
+    cacheWrite: 1.0,
+    cacheRead: 0.25
+  },
   'google/gemini-pro-1.5': { input: 1.25 / 1e6, output: 5 / 1e6, cacheWrite: 1.0, cacheRead: 0.25 },
-  'deepseek/deepseek-r1': { input: 0.55 / 1e6, output: 2.19 / 1e6, cacheWrite: 1.0, cacheRead: 0.25 },
-  'deepseek/deepseek-chat': { input: 0.14 / 1e6, output: 0.28 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 },
-  'meta-llama/llama-4-maverick': { input: 0.20 / 1e6, output: 0.85 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
-  'meta-llama/llama-4-scout': { input: 0.11 / 1e6, output: 0.34 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
-  'meta-llama/llama-3.3-70b': { input: 0.12 / 1e6, output: 0.30 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
-  'meta-llama/llama-3.1-405b': { input: 0.90 / 1e6, output: 0.90 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
+  'deepseek/deepseek-r1': {
+    input: 0.55 / 1e6,
+    output: 2.19 / 1e6,
+    cacheWrite: 1.0,
+    cacheRead: 0.25
+  },
+  'deepseek/deepseek-chat': {
+    input: 0.14 / 1e6,
+    output: 0.28 / 1e6,
+    cacheWrite: 1.0,
+    cacheRead: 0.1
+  },
+  'meta-llama/llama-4-maverick': {
+    input: 0.2 / 1e6,
+    output: 0.85 / 1e6,
+    cacheWrite: 1.0,
+    cacheRead: 1.0
+  },
+  'meta-llama/llama-4-scout': {
+    input: 0.11 / 1e6,
+    output: 0.34 / 1e6,
+    cacheWrite: 1.0,
+    cacheRead: 1.0
+  },
+  'meta-llama/llama-3.3-70b': {
+    input: 0.12 / 1e6,
+    output: 0.3 / 1e6,
+    cacheWrite: 1.0,
+    cacheRead: 1.0
+  },
+  'meta-llama/llama-3.1-405b': {
+    input: 0.9 / 1e6,
+    output: 0.9 / 1e6,
+    cacheWrite: 1.0,
+    cacheRead: 1.0
+  },
   'mistralai/mistral-large': { input: 2 / 1e6, output: 6 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
-  'mistralai/codestral': { input: 0.30 / 1e6, output: 0.90 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
+  'mistralai/codestral': { input: 0.3 / 1e6, output: 0.9 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
   'qwen/qwq-32b': { input: 0.12 / 1e6, output: 0.18 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
   'qwen/qwen-2.5-72b': { input: 0.18 / 1e6, output: 0.18 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
   'x-ai/grok-3-beta': { input: 3 / 1e6, output: 15 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
-  'x-ai/grok-3-mini-beta': { input: 0.30 / 1e6, output: 0.50 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
-  'cohere/command-r-plus': { input: 2.50 / 1e6, output: 10 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
-  'cohere/command-r': { input: 0.15 / 1e6, output: 0.60 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
+  'x-ai/grok-3-mini-beta': { input: 0.3 / 1e6, output: 0.5 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
+  'cohere/command-r-plus': { input: 2.5 / 1e6, output: 10 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
+  'cohere/command-r': { input: 0.15 / 1e6, output: 0.6 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
   'perplexity/sonar-pro': { input: 3 / 1e6, output: 15 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
   'perplexity/sonar': { input: 1 / 1e6, output: 1 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 }
 }

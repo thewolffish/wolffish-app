@@ -501,8 +501,14 @@ function isXAIChatModel(id: string): boolean {
 }
 
 function isOpenRouterChatModel(id: string): boolean {
-  if (/(-embed|-tts|-stt|-whisper|-vision-gen|-diffusion|-stable|flux|dall-e|midjourney)/.test(id)) return false
-  if (/^(anthropic\/|openai\/|google\/|meta-llama\/|deepseek\/|mistralai\/|qwen\/|x-ai\/|cohere\/|microsoft\/|perplexity\/|amazon\/|nousresearch\/|xiaomi\/|moonshotai\/|minimax\/|stepfun\/)/.test(id)) return true
+  if (/(-embed|-tts|-stt|-whisper|-vision-gen|-diffusion|-stable|flux|dall-e|midjourney)/.test(id))
+    return false
+  if (
+    /^(anthropic\/|openai\/|google\/|meta-llama\/|deepseek\/|mistralai\/|qwen\/|x-ai\/|cohere\/|microsoft\/|perplexity\/|amazon\/|nousresearch\/|xiaomi\/|moonshotai\/|minimax\/|stepfun\/)/.test(
+      id
+    )
+  )
+    return true
   return false
 }
 
@@ -2182,8 +2188,7 @@ app.whenReady().then(async () => {
     }> => {
       const contextWindow = agent.thalamus.getActiveContextWindow()
       const provider = agent.thalamus.getActiveProvider()
-      if (!provider)
-        return { provider: null, model: null, supportsVision: false, contextWindow }
+      if (!provider) return { provider: null, model: null, supportsVision: false, contextWindow }
       if (provider === 'local') {
         const model = agent.thalamus.getLocalModelName()
         const supportsVision = await agent.thalamus.localSupportsVision()
@@ -2233,7 +2238,11 @@ app.whenReady().then(async () => {
         const cfg = await readConfig()
         const existing = cfg?.llm.providers.find((p) => p.id === payload.id)
         if (existing) {
-          await setCloudProvider({ ...existing, models: result.models, reasoningModels: result.reasoningModels })
+          await setCloudProvider({
+            ...existing,
+            models: result.models,
+            reasoningModels: result.reasoningModels
+          })
           const next = await readConfig()
           if (next?.llm.providers) {
             thalamus.setCloudProviders(next.llm.providers)

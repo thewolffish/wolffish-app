@@ -41,7 +41,18 @@ export type ChatMessage =
       images?: ToolResultImage[]
     }
 
-export type ProviderId = 'anthropic' | 'openai' | 'openrouter' | 'deepseek' | 'mimo' | 'kimi' | 'minimax' | 'xai' | 'qwen' | 'stepfun' | 'local'
+export type ProviderId =
+  | 'anthropic'
+  | 'openai'
+  | 'openrouter'
+  | 'deepseek'
+  | 'mimo'
+  | 'kimi'
+  | 'minimax'
+  | 'xai'
+  | 'qwen'
+  | 'stepfun'
+  | 'local'
 
 export type ToolDefinition = {
   name: string
@@ -113,7 +124,17 @@ export type StreamChunk =
   | { type: 'no_provider_available'; failures: NoProviderAvailableInfo[] }
 
 export type CloudProviderConfig = {
-  id: 'anthropic' | 'openai' | 'openrouter' | 'deepseek' | 'mimo' | 'kimi' | 'minimax' | 'xai' | 'qwen' | 'stepfun'
+  id:
+    | 'anthropic'
+    | 'openai'
+    | 'openrouter'
+    | 'deepseek'
+    | 'mimo'
+    | 'kimi'
+    | 'minimax'
+    | 'xai'
+    | 'qwen'
+    | 'stepfun'
   model: string
   apiKey: string
   models?: string[]
