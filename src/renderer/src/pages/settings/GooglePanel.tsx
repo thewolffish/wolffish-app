@@ -4,7 +4,13 @@ import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn'
 import { getCachedGoogleSnapshot, prefetchGooglePanel } from '@pages/settings/googleSnapshot'
 import type { GoogleBinaryStatus, GoogleConfig, GoogleStatus } from '@preload/index'
-import { CheckmarkCircle02Icon, CloudUploadIcon, Copy01Icon, Delete02Icon } from 'hugeicons-react'
+import {
+  CheckmarkCircle02Icon,
+  CloudUploadIcon,
+  Copy01Icon,
+  Delete02Icon,
+  InformationCircleIcon
+} from 'hugeicons-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
 
@@ -331,6 +337,8 @@ export function GooglePanel(): React.JSX.Element {
           onCancel={() => void handleCancelAuth()}
           onRemove={(acc) => void handleRemove(acc)}
         />
+
+        {!credsDone && <OAuthGuide />}
 
         <StatusSection status={status} config={config} accounts={accounts} />
       </div>
@@ -683,6 +691,115 @@ function AuthSection({
             <Copy01Icon size={14} />
           </button>
         </div>
+      )}
+    </section>
+  )
+}
+
+const GUIDE_STEPS = [1, 2, 3, 4, 5, 6] as const
+
+function OAuthGuide(): React.JSX.Element {
+  const { t } = useTranslation()
+  const [expanded, setExpanded] = useState(true)
+  const creds = 'settings.services.google.credentials'
+
+  return (
+    <section className="bg-surface border-border flex flex-col gap-4 rounded-2xl border p-6">
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="flex items-center gap-2 cursor-pointer"
+      >
+        <h2 className="text-fg text-sm font-semibold">{t(`${creds}.guideTitle`)}</h2>
+        <span
+          className={cn(
+            'text-muted text-xs transition-transform',
+            expanded ? 'rotate-90' : 'rotate-0'
+          )}
+        >
+          ›
+        </span>
+      </button>
+
+      {expanded && (
+        <>
+          <p className="text-muted text-xs">{t(`${creds}.guidePrereq`)}</p>
+
+          <ol className="flex flex-col gap-3">
+            {GUIDE_STEPS.map((step) => (
+              <li key={step} className="flex items-start gap-3">
+                <span
+                  className={cn(
+                    'flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xs font-bold',
+                    'bg-primary/15 text-primary'
+                  )}
+                >
+                  {step}
+                </span>
+                <div className="flex flex-col gap-1">
+                  <span className="text-muted text-sm leading-relaxed">
+                    {step === 1 ? (
+                      <>
+                        {t(`${creds}.step1`)}
+                        <a
+                          href="https://console.cloud.google.com/projectcreate"
+                          target="_blank"
+                          rel="noreferrer"
+                          onClick={(e) => {
+                            e.preventDefault()
+                            window.open(
+                              'https://console.cloud.google.com/projectcreate',
+                              '_blank',
+                              'noopener,noreferrer'
+                            )
+                          }}
+                          className="text-primary hover:text-primary/80 underline"
+                        >
+                          {t(`${creds}.step1Link`)}
+                        </a>
+                        {t(`${creds}.step1Rest`)}
+                      </>
+                    ) : (
+                      t(`${creds}.step${step}`)
+                    )}
+                  </span>
+                  {step === 2 && (
+                    <div className="mt-1 flex flex-wrap gap-1.5">
+                      {(
+                        t(`${creds}.step2Apis`, {
+                          returnObjects: true,
+                          defaultValue: []
+                        }) as string[]
+                      ).map((api) => (
+                        <span
+                          key={api}
+                          className="bg-bg/60 border-border text-muted rounded border px-1.5 py-0.5 font-mono text-[11px]"
+                        >
+                          {api}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  <span className="text-muted/60 text-xs flex items-start gap-1.5">
+                    <CheckmarkCircle02Icon size={12} className="shrink-0 mt-0.5" />
+                    {t(`${creds}.step${step}Confirm`)}
+                  </span>
+                </div>
+              </li>
+            ))}
+          </ol>
+
+          <div className="bg-bg/40 border-border flex flex-col gap-1.5 rounded-md border px-3 py-2.5">
+            <div className="flex items-start gap-2 text-xs">
+              <InformationCircleIcon size={13} className="text-muted shrink-0 mt-0.5" />
+              <span className="text-muted">{t(`${creds}.guideTip1`)}</span>
+            </div>
+            <div className="flex items-start gap-2 text-xs">
+              <InformationCircleIcon size={13} className="text-muted shrink-0 mt-0.5" />
+              <span className="text-muted">{t(`${creds}.guideTip2`)}</span>
+            </div>
+          </div>
+        </>
       )}
     </section>
   )
