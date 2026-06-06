@@ -7,6 +7,39 @@ triggers:
   - cloudflared
   - expose
   - public url
+  - ngrok
+  - localhost tunnel
+  - port forward
+  - share locally
+  - public access
+  - reverse proxy
+  - external access
+  - webhook testing
+  - demo
+  - temporary url
+  - secure tunnel
+  - share my server
+  - make accessible
+  - share this port
+  - expose port
+  - expose service
+  - expose api
+  - public endpoint
+  - shareable link
+  - shareable url
+  - test webhook
+  - receive webhook
+  - callback url
+  - argo tunnel
+  - zero trust
+  - quick tunnel
+  - trycloudflare
+  - staging url
+  - preview url
+  - show externally
+  - access from outside
+  - access from phone
+  - access remotely
 requires:
   - package-manager
 packages:

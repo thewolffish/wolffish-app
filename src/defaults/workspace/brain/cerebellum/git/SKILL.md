@@ -14,6 +14,100 @@ triggers:
   - stash
   - rebase
   - blame
+  - clone
+  - checkout
+  - fetch
+  - remote
+  - origin
+  - upstream
+  - tag
+  - version
+  - log
+  - history
+  - cherry-pick
+  - squash
+  - amend
+  - reset
+  - revert
+  - conflict
+  - resolve
+  - staging
+  - unstage
+  - add
+  - status
+  - gitignore
+  - submodule
+  - worktree
+  - bisect
+  - reflog
+  - clean
+  - archive
+  - git init
+  - git clone
+  - git pull
+  - git push
+  - git commit
+  - git branch
+  - git merge
+  - git rebase
+  - git stash
+  - git diff
+  - git log
+  - git status
+  - git add
+  - git reset
+  - git checkout
+  - git switch
+  - git restore
+  - git tag
+  - git remote
+  - git fetch
+  - git blame
+  - git show
+  - git cherry-pick
+  - git revert
+  - git bisect
+  - git reflog
+  - git clean
+  - git worktree
+  - git submodule
+  - git config
+  - version control
+  - source control
+  - vcs
+  - scm
+  - repository
+  - working tree
+  - working directory
+  - staged changes
+  - unstaged changes
+  - untracked files
+  - tracked files
+  - head
+  - detached head
+  - fast forward
+  - three way merge
+  - merge conflict
+  - resolve conflict
+  - abort merge
+  - abort rebase
+  - interactive rebase
+  - force push
+  - force pull
+  - hard reset
+  - soft reset
+  - mixed reset
+  - create branch
+  - delete branch
+  - rename branch
+  - list branches
+  - current branch
+  - commit message
+  - commit hash
+  - commit history
+  - show changes
+  - what changed
+  - who changed
 requires:
   - shell
 ---

@@ -12,6 +12,54 @@ triggers:
   - stats
   - memory usage
   - how many
+  - diagnostics
+  - system info
+  - capabilities
+  - loaded
+  - active
+  - running
+  - wolffish
+  - self
+  - about
+  - version
+  - provider
+  - model
+  - configuration
+  - settings
+  - error rate
+  - success rate
+  - tool usage
+  - what can you do
+  - what tools
+  - how many tools
+  - how many capabilities
+  - list capabilities
+  - list tools
+  - available tools
+  - enabled
+  - disabled
+  - plugin
+  - installed
+  - which model
+  - which provider
+  - current model
+  - current provider
+  - api key
+  - token count
+  - context window
+  - latency
+  - response time
+  - are you working
+  - are you ok
+  - are you alive
+  - check yourself
+  - self test
+  - debug mode
+  - verbose
+  - log level
+  - tell me about yourself
+  - who are you
+  - what are you
 tools:
   - name: wolffish_status
     description: Get current Wolffish status including uptime, active provider, loaded capabilities, and system health

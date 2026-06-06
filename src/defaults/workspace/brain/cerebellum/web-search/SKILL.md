@@ -25,6 +25,71 @@ triggers:
   - fetch
   - page
   - site
+  - research
+  - information
+  - learn about
+  - tell me about
+  - explain
+  - find out
+  - look into
+  - check online
+  - weather
+  - price
+  - stock
+  - score
+  - result
+  - update
+  - trending
+  - wiki
+  - wikipedia
+  - tutorial
+  - guide
+  - reference
+  - manual
+  - blog
+  - forum
+  - stackoverflow
+  - api docs
+  - reddit
+  - quora
+  - medium
+  - github pages
+  - npm package
+  - pypi
+  - crate
+  - library
+  - framework
+  - changelog
+  - release notes
+  - announcement
+  - event
+  - conference
+  - compare
+  - versus
+  - vs
+  - best practices
+  - alternatives
+  - reviews
+  - ratings
+  - benchmark
+  - definition
+  - meaning
+  - translate
+  - convert
+  - calculate
+  - recipe
+  - address
+  - directions
+  - map
+  - location
+  - what happened
+  - when did
+  - where is
+  - why does
+  - can you find
+  - search for
+  - google it
+  - look this up
 tools:
   - name: web_search
     description: Search the web for information. Returns titles, snippets, and URLs.

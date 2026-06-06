@@ -45,6 +45,17 @@ import {
 } from '@main/uploads/file-processor'
 import { isInternalToolCall } from '@main/workspace/workspace'
 
+/**
+ * Maximum number of tools each provider API accepts per request.
+ * Only providers with a confirmed, documented limit are listed here.
+ * Providers not in this map have no known hard limit — all tools are
+ * sent through unfiltered.
+ */
+const PROVIDER_TOOL_LIMITS: Record<string, number> = {
+  openai: 128,
+  xai: 200
+}
+
 export type AgentOptions = {
   thalamus: Thalamus
   workspaceRoot: string
@@ -735,16 +746,7 @@ export class Agent {
 
   private filterToolsForProvider(tools: ToolDefinition[], message: string): ToolDefinition[] {
     const provider = this.thalamus.getActiveProvider()
-    const limit =
-      provider === 'openai'
-        ? 128
-        : provider === 'xai'
-          ? 200
-          : provider === 'qwen'
-            ? 20
-            : provider === 'stepfun'
-              ? 128
-              : null
+    const limit = PROVIDER_TOOL_LIMITS[provider ?? ''] ?? null
     if (limit === null || tools.length <= limit) {
       return tools
     }
@@ -768,9 +770,18 @@ export class Agent {
     for (const [capName, capTools] of capToolMap) {
       const cap = capMap.get(capName)
       const content = cap
-        ? [cap.name, cap.description, ...cap.triggers.keywords].join(' ')
+        ? [
+            cap.name,
+            cap.description,
+            ...cap.triggers.keywords,
+            ...cap.tools.map((t) => t.name + ' ' + t.description)
+          ].join(' ')
         : capName
-      scored.push({ name: capName, score: this.ras.scoreRelevance(message, content), tools: capTools })
+      scored.push({
+        name: capName,
+        score: this.ras.scoreRelevance(message, content),
+        tools: capTools
+      })
     }
 
     scored.sort((a, b) => b.score - a.score || a.tools.length - b.tools.length)
@@ -780,11 +791,26 @@ export class Agent {
     let remaining = limit - orphaned.length
 
     for (const entry of scored) {
+      if (remaining <= 0) {
+        dropped.push(entry.name)
+        continue
+      }
       if (entry.tools.length <= remaining) {
         kept.push(...entry.tools)
         remaining -= entry.tools.length
       } else {
-        dropped.push(entry.name)
+        // Partial inclusion: score individual tools and include the most
+        // relevant ones that still fit within the budget.
+        const toolScored = entry.tools
+          .map((t) => ({
+            tool: t,
+            score: this.ras.scoreRelevance(message, t.name + ' ' + t.description)
+          }))
+          .sort((a, b) => b.score - a.score)
+        const partial = toolScored.slice(0, remaining)
+        kept.push(...partial.map((p) => p.tool))
+        remaining -= partial.length
+        dropped.push(entry.name + '(partial)')
       }
     }
 

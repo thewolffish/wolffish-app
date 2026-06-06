@@ -3,6 +3,7 @@ name: filesystem
 description: Read, write, and edit files on the local system
 triggers:
   - file
+  - files
   - read
   - write
   - edit
@@ -14,6 +15,65 @@ triggers:
   - content
   - folder
   - directory
+  - rename
+  - move
+  - copy
+  - delete
+  - remove
+  - path
+  - text
+  - overwrite
+  - append
+  - list files
+  - show file
+  - update file
+  - change file
+  - what's in
+  - replace
+  - find and replace
+  - look at
+  - check file
+  - config
+  - configuration
+  - log
+  - document
+  - txt
+  - json
+  - yaml
+  - yml
+  - xml
+  - env
+  - dotfile
+  - gitignore
+  - readme
+  - makefile
+  - toml
+  - ini
+  - csv
+  - properties
+  - source code
+  - snippet
+  - template
+  - backup
+  - archive
+  - workspace
+  - project
+  - codebase
+  - cat
+  - head
+  - tail
+  - wc
+  - line count
+  - show contents
+  - print file
+  - what does this file say
+  - read the file
+  - write to file
+  - save to file
+  - create a file
+  - new file
+  - update config
+  - edit config
 tools:
   - name: file_read
     description: Read a file's text contents, optionally restricted to a line range.

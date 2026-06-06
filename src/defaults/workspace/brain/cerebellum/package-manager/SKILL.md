@@ -8,6 +8,53 @@ triggers:
   - winget
   - apt
   - dependency
+  - homebrew
+  - dnf
+  - yum
+  - pacman
+  - snap
+  - flatpak
+  - choco
+  - chocolatey
+  - uninstall
+  - upgrade
+  - update
+  - software
+  - tool
+  - binary
+  - setup
+  - prerequisite
+  - requirement
+  - system package
+  - os package
+  - cli tool
+  - command line tool
+  - missing command
+  - not found
+  - not installed
+  - install program
+  - install app
+  - install utility
+  - install library
+  - system library
+  - shared library
+  - lib
+  - pkg
+  - formula
+  - cask
+  - tap
+  - repository
+  - ppa
+  - add repository
+  - remove package
+  - purge
+  - autoremove
+  - list installed
+  - search package
+  - available updates
+  - outdated
+  - which version
+  - latest version
 requires: []
 tools:
   - name: pkg_check

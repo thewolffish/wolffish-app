@@ -8,6 +8,97 @@ triggers:
   - convert
   - transcode
   - compress
+  - encode
+  - decode
+  - mp4
+  - mkv
+  - avi
+  - mov
+  - webm
+  - mp3
+  - wav
+  - aac
+  - flac
+  - ogg
+  - trim
+  - cut
+  - clip
+  - merge video
+  - concat
+  - resize video
+  - scale
+  - bitrate
+  - codec
+  - h264
+  - h265
+  - hevc
+  - gif
+  - thumbnail
+  - extract audio
+  - extract frame
+  - subtitle
+  - watermark
+  - rotate
+  - crop
+  - filter
+  - resolution
+  - fps
+  - frame rate
+  - media
+  - multimedia
+  - screen recording
+  - stream
+  - mux
+  - demux
+  - remux
+  - container
+  - format
+  - aspect ratio
+  - 4k
+  - 1080p
+  - 720p
+  - 480p
+  - hdr
+  - sdr
+  - slow motion
+  - speed up
+  - time lapse
+  - reverse video
+  - loop video
+  - loop gif
+  - animated gif
+  - video to gif
+  - gif to video
+  - audio to video
+  - add music
+  - background music
+  - volume
+  - normalize audio
+  - noise reduction
+  - fade in
+  - fade out
+  - crossfade
+  - overlay
+  - picture in picture
+  - pip
+  - split screen
+  - side by side
+  - green screen
+  - chroma key
+  - stabilize
+  - denoise
+  - sharpen
+  - blur
+  - vignette
+  - color correction
+  - brightness
+  - contrast
+  - saturation
+  - convert video
+  - convert audio
+  - compress video
+  - reduce video size
+  - make smaller
 requires:
   - package-manager
 packages:

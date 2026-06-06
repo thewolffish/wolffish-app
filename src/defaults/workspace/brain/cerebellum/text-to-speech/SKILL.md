@@ -15,6 +15,58 @@ triggers:
   - talk
   - narrate
   - spoken
+  - pronounce
+  - recite
+  - announce
+  - dictate
+  - speech
+  - sound
+  - mp3
+  - audio file
+  - voice message
+  - voice note
+  - podcast
+  - audiobook
+  - read out loud
+  - tell me
+  - convert to audio
+  - generate audio
+  - generate voice
+  - synthesize
+  - text to audio
+  - make it speak
+  - play this
+  - listen to this
+  - listen to text
+  - vocal
+  - voiceover
+  - voice actor
+  - narrator
+  - announcer
+  - robot voice
+  - ai voice
+  - natural voice
+  - human voice
+  - male voice
+  - female voice
+  - accent
+  - pitch
+  - speed
+  - rate
+  - volume
+  - whisper
+  - shout
+  - intonation
+  - recording
+  - audio output
+  - sound file
+  - wav file
+  - save as audio
+  - export audio
+  - respond with voice
+  - say it out loud
+  - speak this text
+  - read it to me
 tools:
   - name: voice_generate
     description: Convert text to a voice memo (MP3). Returns the file path of the generated audio. The voice memo appears as an attachment alongside the text response.

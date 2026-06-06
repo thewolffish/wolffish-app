@@ -18,6 +18,58 @@ triggers:
   - recognize speech
   - subtitle
   - subtitles
+  - mp3
+  - wav
+  - m4a
+  - ogg
+  - flac
+  - aac
+  - wma
+  - recording
+  - podcast
+  - interview
+  - meeting recording
+  - voice note
+  - voice message
+  - voicemail
+  - caption
+  - transcript
+  - minutes
+  - speech recognition
+  - language detection
+  - audio file
+  - webm
+  - opus
+  - amr
+  - caf
+  - aiff
+  - lecture
+  - class recording
+  - call recording
+  - phone call
+  - conference call
+  - zoom recording
+  - teams recording
+  - google meet recording
+  - youtube audio
+  - song lyrics
+  - spoken word
+  - narration
+  - dialogue
+  - conversation
+  - foreign language
+  - translate audio
+  - what language
+  - how many speakers
+  - diarization
+  - speaker identification
+  - timestamp
+  - word level
+  - srt
+  - vtt
+  - convert speech
+  - audio transcription
+  - write down what they said
 tools:
   - name: stt_transcribe
     description: Transcribe an audio file at a given path. Use when the user provides an absolute path or any path outside the conversation's uploads folder. Returns text, detected language, and segment timestamps.

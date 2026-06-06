@@ -32,6 +32,84 @@ triggers:
   - compare
   - dispatch
   - topic
+  - clone
+  - commit
+  - push
+  - deploy
+  - pipeline
+  - build status
+  - check
+  - assignee
+  - assign
+  - tag
+  - version
+  - changelog
+  - open issue
+  - close issue
+  - create issue
+  - list issues
+  - list PRs
+  - merge PR
+  - approve
+  - request changes
+  - dependabot
+  - security
+  - vulnerability
+  - contributor
+  - readme
+  - license
+  - gitignore
+  - webhook
+  - secret
+  - environment
+  - pages
+  - discussion
+  - sponsorship
+  - git remote
+  - origin url
+  - upstream repo
+  - base branch
+  - head branch
+  - draft PR
+  - squash merge
+  - rebase merge
+  - auto merge
+  - branch protection
+  - required checks
+  - status check
+  - failing CI
+  - passing CI
+  - green build
+  - red build
+  - test failure
+  - code owner
+  - codeowners
+  - blame
+  - contributors
+  - insights
+  - traffic
+  - clones
+  - package
+  - registry
+  - artifact
+  - matrix
+  - runner
+  - self hosted
+  - github api
+  - octokit
+  - personal access token
+  - pat
+  - ssh key
+  - deploy key
+  - my repos
+  - my issues
+  - my PRs
+  - assigned to me
+  - review requested
+  - open PRs
+  - closed issues
+  - file changed
+  - lines changed
 requires:
   - shell
 tools:

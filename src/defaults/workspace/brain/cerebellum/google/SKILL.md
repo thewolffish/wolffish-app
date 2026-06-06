@@ -43,6 +43,78 @@ triggers:
   - sheets
   - spreadsheet
   - google sheets
+  - mail
+  - message
+  - reply
+  - draft
+  - label
+  - unread
+  - starred
+  - attachment
+  - invite
+  - attendee
+  - reminder
+  - due date
+  - workspace
+  - cloud storage
+  - shared drive
+  - my drive
+  - check email
+  - new email
+  - read email
+  - write email
+  - any mail
+  - upcoming
+  - next meeting
+  - free time
+  - busy
+  - availability
+  - add task
+  - what's on my calendar
+  - what meetings
+  - cc
+  - bcc
+  - subject
+  - recipient
+  - sender
+  - from address
+  - thread
+  - conversation
+  - newsletter
+  - promotion
+  - spam
+  - junk
+  - important
+  - priority
+  - flag
+  - snooze
+  - rsvp
+  - accept invite
+  - decline invite
+  - recurring
+  - weekly meeting
+  - daily standup
+  - all day event
+  - time zone
+  - agenda
+  - conference room
+  - zoom link
+  - google meet
+  - hangout
+  - shared document
+  - shared folder
+  - file sharing
+  - checklist
+  - subtask
+  - overdue
+  - pending tasks
+  - my tasks
+  - today's schedule
+  - tomorrow's meetings
+  - this week
+  - send a message
+  - reply to email
+  - respond to
 tools:
   - name: google_accounts
     description: List the Google accounts the user has authorized. Always call this first to get the exact account email(s) you must pass as `account` on every other google_* tool. There is no implicit "default" account — every other google_* call requires `account` explicitly.

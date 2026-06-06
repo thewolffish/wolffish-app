@@ -15,6 +15,79 @@ triggers:
   - table
   - task tracker
   - project management
+  - block
+  - property
+  - relation
+  - rollup
+  - filter
+  - sort
+  - view
+  - gallery
+  - list
+  - timeline
+  - calendar
+  - template
+  - backlink
+  - comment
+  - mention
+  - bookmark
+  - embed
+  - toggle
+  - callout
+  - heading
+  - bullet
+  - checkbox
+  - todo
+  - sprint
+  - roadmap
+  - docs
+  - meeting notes
+  - standup
+  - content
+  - notion page
+  - notion database
+  - notion workspace
+  - notion api
+  - create page
+  - update page
+  - delete page
+  - add block
+  - edit block
+  - search notion
+  - find in notion
+  - note taking
+  - notes
+  - journal
+  - daily log
+  - weekly review
+  - retro
+  - retrospective
+  - planning
+  - backlog
+  - epic
+  - user story
+  - acceptance criteria
+  - status
+  - priority
+  - assignee
+  - due date
+  - formula
+  - linked database
+  - synced block
+  - table of contents
+  - divider
+  - quote
+  - code block
+  - equation
+  - breadcrumb
+  - sub page
+  - nested page
+  - team wiki
+  - company wiki
+  - documentation
+  - onboarding
+  - runbook
+  - sop
 tools:
   - name: notion_search
     description: Search across all pages and databases the integration can access. Returns page/database titles, IDs, and snippets.

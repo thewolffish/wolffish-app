@@ -17,6 +17,68 @@ triggers:
   - computer use
   - automate
   - UI
+  - display
+  - monitor
+  - window
+  - application
+  - app
+  - cursor
+  - pointer
+  - drag
+  - drop
+  - button
+  - menu
+  - toolbar
+  - icon
+  - taskbar
+  - dock
+  - finder
+  - right click
+  - double click
+  - hotkey
+  - shortcut
+  - press key
+  - enter text
+  - what do you see
+  - show me
+  - look at screen
+  - visual
+  - GUI
+  - interface
+  - native app
+  - system tray
+  - notification center
+  - control panel
+  - system preferences
+  - spotlight
+  - launchpad
+  - activity monitor
+  - task manager
+  - file explorer
+  - terminal app
+  - text editor
+  - fullscreen
+  - minimize
+  - maximize
+  - resize window
+  - switch window
+  - alt tab
+  - cmd tab
+  - copy paste
+  - undo redo
+  - select all
+  - right click menu
+  - context menu
+  - pixel
+  - coordinate
+  - position
+  - what is on screen
+  - see my screen
+  - look at my screen
+  - interact with desktop
+  - control my computer
+  - click on
+  - move mouse to
 tools:
   - name: computer_screenshot
     description: Take a screenshot of the full screen. Returns the screenshot as an image the model can see. Always call this first to understand the current screen state before taking any action.

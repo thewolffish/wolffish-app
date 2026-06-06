@@ -19,6 +19,90 @@ triggers:
   - crawl
   - automate
   - headless
+  - chromium
+  - firefox
+  - webkit
+  - playwright
+  - site
+  - webpage
+  - link
+  - href
+  - submit
+  - button
+  - input
+  - dropdown
+  - select
+  - checkbox
+  - sign in
+  - sign up
+  - register
+  - fill form
+  - extract data
+  - extract text
+  - table
+  - hover
+  - scroll
+  - keyboard
+  - type
+  - credential
+  - password
+  - open website
+  - go to
+  - visit
+  - browse
+  - surf
+  - html
+  - dom
+  - element
+  - selector
+  - xpath
+  - css selector
+  - network
+  - request
+  - response
+  - pdf
+  - print page
+  - capture
+  - automation
+  - bot
+  - web scraping
+  - data extraction
+  - multi tab
+  - incognito
+  - private browsing
+  - user agent
+  - viewport
+  - responsive
+  - mobile view
+  - full page
+  - infinite scroll
+  - pagination
+  - next page
+  - wait for
+  - wait until
+  - load page
+  - page loaded
+  - ajax
+  - spa
+  - single page app
+  - iframe
+  - popup
+  - dialog
+  - alert
+  - confirm dialog
+  - file upload
+  - drag and drop
+  - copy text
+  - read text
+  - get text
+  - price tracker
+  - monitor website
+  - check availability
+  - test website
+  - debug website
+  - open browser
+  - launch browser
+  - close browser
 tools:
   - name: browser_launch
     description: Launch a browser instance and return a session_id. Defaults to headed Chromium at 1280x720.

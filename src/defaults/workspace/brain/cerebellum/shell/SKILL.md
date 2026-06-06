@@ -16,6 +16,93 @@ triggers:
   - brew
   - curl
   - wget
+  - zsh
+  - powershell
+  - cmd
+  - script
+  - process
+  - grep
+  - find
+  - ls
+  - mkdir
+  - chmod
+  - sudo
+  - ssh
+  - tar
+  - zip
+  - unzip
+  - python
+  - java
+  - go
+  - cargo
+  - yarn
+  - pnpm
+  - make
+  - cmake
+  - install
+  - compile
+  - build
+  - deploy
+  - test
+  - debug
+  - output
+  - background
+  - kill
+  - dev server
+  - start server
+  - port
+  - localhost
+  - cli
+  - console
+  - stdout
+  - stderr
+  - exit code
+  - return code
+  - environment variable
+  - env var
+  - which
+  - where
+  - PATH
+  - cron
+  - cronjob
+  - systemctl
+  - service
+  - daemon
+  - restart
+  - stop
+  - running
+  - pid
+  - top
+  - htop
+  - ps
+  - disk
+  - df
+  - du
+  - free
+  - uptime
+  - whoami
+  - hostname
+  - ifconfig
+  - ip address
+  - network
+  - ping
+  - traceroute
+  - nslookup
+  - dig
+  - scp
+  - rsync
+  - awk
+  - sed
+  - xargs
+  - tee
+  - nohup
+  - screen
+  - tmux
+  - run in terminal
+  - execute command
+  - run this
+  - run a command
+  - open terminal
 tools:
   - name: shell_exec
     description: Run a shell command and return its output. Default cwd is the user home directory. Commands run until they exit — only set a timeout when you have a good reason to expect fast completion. Elevation commands (sudo, doas) are handled automatically via native OS password dialog — no TTY needed. Set background=true for long-lived processes (dev servers, watchers).

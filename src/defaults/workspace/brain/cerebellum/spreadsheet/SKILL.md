@@ -20,6 +20,84 @@ triggers:
   - columns
   - rows
   - filter data
+  - xls
+  - worksheet
+  - cell
+  - range
+  - sum
+  - average
+  - count
+  - sort
+  - vlookup
+  - calculate
+  - computation
+  - statistics
+  - graph
+  - plot
+  - bar chart
+  - line chart
+  - pie chart
+  - data analysis
+  - report
+  - tabular
+  - matrix
+  - grid
+  - merge cells
+  - split cells
+  - conditional formatting
+  - budget
+  - financial
+  - accounting
+  - invoice
+  - inventory
+  - metrics
+  - dashboard
+  - revenue
+  - expense
+  - profit
+  - loss
+  - sales
+  - forecast
+  - projection
+  - trend
+  - growth
+  - percentage
+  - ratio
+  - margin
+  - kpi
+  - roi
+  - total
+  - subtotal
+  - grand total
+  - lookup
+  - hlookup
+  - index match
+  - countif
+  - sumif
+  - min
+  - max
+  - median
+  - variance
+  - std deviation
+  - histogram
+  - scatter plot
+  - heatmap
+  - sparkline
+  - data validation
+  - dropdown list
+  - freeze panes
+  - hide column
+  - hide row
+  - number format
+  - currency
+  - date format
+  - open spreadsheet
+  - read spreadsheet
+  - edit spreadsheet
+  - create spreadsheet
+  - parse csv
+  - load csv
+  - export excel
 tools:
   - name: spreadsheet_read
     description: Read any spreadsheet file (xlsx, csv, tsv) and return structured JSON data. Auto-detects format from extension.

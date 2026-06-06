@@ -10,6 +10,67 @@ triggers:
   - js
   - typescript
   - ts
+  - nodejs
+  - react
+  - vue
+  - angular
+  - express
+  - next
+  - vite
+  - webpack
+  - eslint
+  - prettier
+  - jest
+  - vitest
+  - mocha
+  - package.json
+  - node_modules
+  - yarn
+  - pnpm
+  - deno
+  - bun
+  - svelte
+  - nuxt
+  - remix
+  - astro
+  - gatsby
+  - electron
+  - tauri
+  - nestjs
+  - fastify
+  - koa
+  - hapi
+  - socket.io
+  - prisma
+  - sequelize
+  - mongoose
+  - typeorm
+  - drizzle
+  - zod
+  - tailwind
+  - postcss
+  - sass
+  - less
+  - storybook
+  - cypress
+  - playwright
+  - puppeteer
+  - rollup
+  - esbuild
+  - swc
+  - babel
+  - tsx
+  - jsx
+  - node version
+  - node runtime
+  - check node
+  - install node
+  - update node
+  - npm install
+  - npm run
+  - npm start
+  - npm test
+  - npm build
 requires:
   - package-manager
 packages:

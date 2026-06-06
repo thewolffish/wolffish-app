@@ -15,6 +15,64 @@ triggers:
   - pdf password
   - read pdf
   - create pdf
+  - acrobat
+  - portable document
+  - scan
+  - ocr
+  - convert to pdf
+  - save as pdf
+  - print to pdf
+  - sign pdf
+  - annotate
+  - bookmark
+  - page
+  - rotate
+  - crop
+  - stamp
+  - redact
+  - flatten
+  - optimize
+  - reduce size
+  - invoice
+  - receipt
+  - contract
+  - certificate
+  - form
+  - fillable
+  - digital signature
+  - e-sign
+  - esign
+  - pdf viewer
+  - open pdf
+  - view pdf
+  - print pdf
+  - export pdf
+  - pdf report
+  - pdf invoice
+  - scan to pdf
+  - photo to pdf
+  - image to pdf
+  - html to pdf
+  - word to pdf
+  - excel to pdf
+  - ppt to pdf
+  - extract pages
+  - delete pages
+  - rearrange pages
+  - page range
+  - odd pages
+  - even pages
+  - metadata
+  - author
+  - title
+  - subject
+  - keywords
+  - permissions
+  - copy protection
+  - print protection
+  - read only
+  - accessibility
+  - tagged pdf
 tools:
   - name: pdf_read
     description: Extract text, metadata, page count, and structure from a PDF file. Optionally restrict to specific pages.

@@ -6,24 +6,24 @@ import {
   DeepSeekLogo,
   GoogleLogo,
   KimiLogo,
-  MiniMaxLogo,
   MimoLogo,
+  MiniMaxLogo,
   NotionLogo,
   OllamaLogo,
   OpenAILogo,
-  TelegramLogo,
-  XAILogo,
   QwenLogo,
-  StepfunLogo
+  StepfunLogo,
+  TelegramLogo,
+  XAILogo
 } from '@components/core/ProviderLogos'
 import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
 import { ModelPicker } from '@pages/ModelPicker'
 import { BravePanel } from '@pages/settings/BravePanel'
+import { BrowserExtensionPanel } from '@pages/settings/BrowserExtensionPanel'
 import { CelebrumPanel } from '@pages/settings/CelebrumPanel'
 import { CloudProviderPanel } from '@pages/settings/CloudProviderPanel'
 import { CompactionPanel } from '@pages/settings/CompactionPanel'
-import { BrowserExtensionPanel } from '@pages/settings/BrowserExtensionPanel'
 import { ComputerUsePanel } from '@pages/settings/ComputerUsePanel'
 import { DataPanel } from '@pages/settings/DataPanel'
 import { GitHubPanel } from '@pages/settings/GitHubPanel'
@@ -49,9 +49,9 @@ import {
   ArrowRight02Icon,
   ArrowUp02Icon,
   BrainIcon,
+  BrowserIcon,
   BubbleChatIcon,
   CloudIcon,
-  BrowserIcon,
   ComputerIcon,
   Database02Icon,
   DnaIcon,
@@ -68,8 +68,8 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import { useTranslation } from 'react-i18next'
 import type { IconType } from 'react-icons'
 
-import { consumeNextTab, type TabKey } from './settingsNav'
-export type { TabKey } from './settingsNav'
+import { consumeNextTab, type TabKey } from '@pages/settings/settingsNav'
+export type { TabKey } from '@pages/settings/settingsNav'
 
 type Tab = {
   key: TabKey
@@ -581,8 +581,29 @@ function TabPanel({
   return <>{children}</>
 }
 
-type Provider = 'ollama' | 'anthropic' | 'openai' | 'deepseek' | 'mimo' | 'kimi' | 'minimax' | 'xai' | 'qwen' | 'stepfun'
-const PROVIDERS: Provider[] = ['qwen', 'mimo', 'deepseek', 'kimi', 'minimax', 'stepfun', 'anthropic', 'xai', 'openai', 'ollama']
+type Provider =
+  | 'ollama'
+  | 'anthropic'
+  | 'openai'
+  | 'deepseek'
+  | 'mimo'
+  | 'kimi'
+  | 'minimax'
+  | 'xai'
+  | 'qwen'
+  | 'stepfun'
+const PROVIDERS: Provider[] = [
+  'qwen',
+  'mimo',
+  'deepseek',
+  'kimi',
+  'minimax',
+  'stepfun',
+  'anthropic',
+  'xai',
+  'openai',
+  'ollama'
+]
 
 const PROVIDER_ICONS: Record<
   Provider,

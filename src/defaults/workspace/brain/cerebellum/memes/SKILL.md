@@ -18,6 +18,64 @@ triggers:
   - cheer up
   - frustrated
   - celebrate
+  - hilarious
+  - comedy
+  - rofl
+  - emoji
+  - sticker
+  - drake
+  - distracted boyfriend
+  - this is fine
+  - stonks
+  - doge
+  - pepe
+  - sarcasm
+  - irony
+  - send meme
+  - make meme
+  - create meme
+  - trending
+  - viral
+  - entertainment
+  - fun
+  - bored
+  - xd
+  - bruh
+  - oof
+  - rip
+  - facepalm
+  - shrug
+  - clap
+  - fire
+  - dead
+  - crying
+  - laughing
+  - wink
+  - smirk
+  - thumbs up
+  - mind blown
+  - surprised pikachu
+  - galaxy brain
+  - wojak
+  - chad
+  - npc
+  - copium
+  - based
+  - sus
+  - among us
+  - rickroll
+  - wholesome
+  - cringe
+  - relatable
+  - mood
+  - vibe
+  - show me a meme
+  - find a gif
+  - send a gif
+  - reaction gif
+  - make me laugh
+  - cheer me up
+  - something funny
 tools:
   - name: add_to_chat
     description: Insert the most recently generated meme or GIF into the chat as an inline image. No arguments needed. Always call this after meme_generate, gif_search, or gif_trending.

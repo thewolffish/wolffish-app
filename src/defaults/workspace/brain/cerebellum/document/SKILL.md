@@ -19,6 +19,73 @@ triggers:
   - merge documents
   - compare documents
   - extract text
+  - doc
+  - rtf
+  - html
+  - txt
+  - plain text
+  - rich text
+  - formatting
+  - heading
+  - paragraph
+  - header
+  - footer
+  - page number
+  - margin
+  - font
+  - style
+  - image
+  - figure
+  - contract
+  - proposal
+  - invoice
+  - resume
+  - cv
+  - cover letter
+  - manuscript
+  - essay
+  - thesis
+  - paper
+  - article
+  - newsletter
+  - brochure
+  - flyer
+  - write a letter
+  - write a report
+  - write a memo
+  - draft a document
+  - type up
+  - proofread
+  - spell check
+  - grammar
+  - outline
+  - summary
+  - abstract
+  - bibliography
+  - citation
+  - footnote
+  - endnote
+  - appendix
+  - glossary
+  - index
+  - watermark
+  - track changes
+  - revision
+  - version history
+  - export document
+  - print document
+  - page layout
+  - landscape
+  - portrait
+  - a4
+  - letter size
+  - docx to pdf
+  - sop
+  - handbook
+  - policy
+  - agreement
+  - nda
+  - terms
 tools:
   - name: document_read
     description: Read any document file and extract content as text, HTML, or Markdown. Supports docx, html, md, txt, rtf.

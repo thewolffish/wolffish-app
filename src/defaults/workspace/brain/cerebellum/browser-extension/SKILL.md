@@ -17,6 +17,69 @@ triggers:
   - form
   - download
   - scrape
+  - open page
+  - go to
+  - visit
+  - site
+  - website
+  - webpage
+  - link
+  - browse
+  - surf
+  - search
+  - fill
+  - submit
+  - button
+  - input
+  - type
+  - scroll
+  - reload
+  - refresh
+  - bookmark
+  - history
+  - javascript
+  - console
+  - inspect
+  - element
+  - selector
+  - dom
+  - html
+  - content
+  - extract
+  - read page
+  - capture
+  - new tab
+  - close tab
+  - switch tab
+  - my browser
+  - real browser
+  - actual browser
+  - connected browser
+  - active tab
+  - current tab
+  - current page
+  - open tabs
+  - window management
+  - browser window
+  - resize window
+  - full screen
+  - developer tools
+  - devtools
+  - network tab
+  - local storage
+  - session storage
+  - clear cache
+  - clear cookies
+  - notification
+  - popup
+  - in my browser
+  - on this page
+  - what's on the page
+  - copy from page
+  - read this page
+  - grab from page
+  - save this page
+  - print this page
 tools:
   # Navigation
   - name: ext_navigate
