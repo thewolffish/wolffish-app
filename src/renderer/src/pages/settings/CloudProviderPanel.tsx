@@ -7,6 +7,7 @@ import {
   MiniMaxLogo,
   MimoLogo,
   OpenAILogo,
+  OpenRouterLogo,
   QwenLogo,
   StepfunLogo,
   XAILogo
@@ -19,6 +20,7 @@ import {
   AlertCircleIcon,
   CheckmarkCircle02Icon,
   EyeIcon,
+  InformationCircleIcon,
   LinkSquare02Icon,
   Loading02Icon,
   ViewOffIcon
@@ -36,6 +38,7 @@ const PROVIDER_LOGOS: Record<
 > = {
   anthropic: AnthropicLogo,
   openai: OpenAILogo,
+  openrouter: OpenRouterLogo,
   deepseek: DeepSeekLogo,
   mimo: MimoLogo,
   kimi: KimiLogo,
@@ -48,6 +51,7 @@ const PROVIDER_LOGOS: Record<
 const PROVIDER_URLS: Record<ProviderId, string> = {
   anthropic: 'https://console.anthropic.com',
   openai: 'https://platform.openai.com',
+  openrouter: 'https://openrouter.ai',
   deepseek: 'https://platform.deepseek.com',
   mimo: 'https://platform.xiaomimimo.com',
   kimi: 'https://platform.moonshot.ai',
@@ -496,7 +500,132 @@ const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       cached: null,
       badges: ['fast', 'reasoning']
     }
+  ],
+  openrouter: [
+    // ── Anthropic ──
+    { name: 'anthropic/claude-sonnet-4', context: '200K', input: '$3.00', output: '$15.00', cached: '$0.30', badges: ['frontier', 'reasoning'], modes: ['none', 'high', 'max'] },
+    { name: 'anthropic/claude-opus-4', context: '200K', input: '$15.00', output: '$75.00', cached: '$1.50', badges: ['frontier', 'reasoning'], modes: ['none', 'high', 'max'] },
+    { name: 'anthropic/claude-3.5-sonnet', context: '200K', input: '$3.00', output: '$15.00', cached: '$0.30', badges: ['reasoning'] },
+    { name: 'anthropic/claude-3.5-haiku', context: '200K', input: '$0.80', output: '$4.00', cached: '$0.08', badges: ['fast'] },
+    { name: 'anthropic/claude-3-opus', context: '200K', input: '$15.00', output: '$75.00', cached: '$1.50', badges: ['reasoning'] },
+    // ── OpenAI ──
+    { name: 'openai/gpt-4.1', context: '1M', input: '$2.00', output: '$8.00', cached: '$0.50', badges: ['reasoning'] },
+    { name: 'openai/gpt-4.1-mini', context: '1M', input: '$0.40', output: '$1.60', cached: '$0.10', badges: ['fast'] },
+    { name: 'openai/gpt-4.1-nano', context: '1M', input: '$0.10', output: '$0.40', cached: '$0.025', badges: ['fast'] },
+    { name: 'openai/o4-mini', context: '200K', input: '$1.10', output: '$4.40', cached: '$0.275', badges: ['reasoning'], modes: ['none', 'high', 'max'] },
+    { name: 'openai/o3-mini', context: '200K', input: '$1.10', output: '$4.40', cached: '$0.55', badges: ['reasoning'], modes: ['none', 'high', 'max'] },
+    { name: 'openai/gpt-4o', context: '128K', input: '$2.50', output: '$10.00', cached: '$1.25', badges: ['vision'] },
+    { name: 'openai/gpt-4o-mini', context: '128K', input: '$0.15', output: '$0.60', cached: '$0.075', badges: ['fast', 'vision'] },
+    { name: 'openai/chatgpt-4o-latest', context: '128K', input: '$5.00', output: '$15.00', cached: null, badges: ['vision'] },
+    // ── Google ──
+    { name: 'google/gemini-2.5-pro-preview', context: '1M', input: '$1.25', output: '$10.00', cached: '$0.3125', badges: ['frontier', 'reasoning'], modes: ['none', 'high', 'max'] },
+    { name: 'google/gemini-2.5-flash-preview', context: '1M', input: '$0.15', output: '$0.60', cached: '$0.0375', badges: ['fast', 'reasoning'], modes: ['none', 'high'] },
+    { name: 'google/gemini-2.0-flash-001', context: '1M', input: '$0.10', output: '$0.40', cached: '$0.025', badges: ['fast', 'vision'] },
+    { name: 'google/gemini-2.0-flash-lite-001', context: '1M', input: '$0.075', output: '$0.30', cached: null, badges: ['fast'] },
+    { name: 'google/gemini-pro-1.5', context: '2M', input: '$1.25', output: '$5.00', cached: '$0.3125', badges: ['vision'] },
+    { name: 'google/gemini-flash-1.5', context: '1M', input: '$0.075', output: '$0.30', cached: '$0.01875', badges: ['fast', 'vision'] },
+    // ── DeepSeek ──
+    { name: 'deepseek/deepseek-r1-0528', context: '128K', input: '$0.55', output: '$2.19', cached: '$0.14', badges: ['frontier', 'reasoning'], modes: ['none', 'high'] },
+    { name: 'deepseek/deepseek-r1', context: '128K', input: '$0.55', output: '$2.19', cached: '$0.14', badges: ['reasoning'], modes: ['none', 'high'] },
+    { name: 'deepseek/deepseek-chat-v3-0324', context: '128K', input: '$0.27', output: '$1.10', cached: '$0.07', badges: ['reasoning'] },
+    { name: 'deepseek/deepseek-chat', context: '64K', input: '$0.14', output: '$0.28', cached: '$0.014', badges: ['fast'] },
+    // ── Meta Llama ──
+    { name: 'meta-llama/llama-4-maverick', context: '1M', input: '$0.20', output: '$0.85', cached: null, badges: ['vision'] },
+    { name: 'meta-llama/llama-4-scout', context: '512K', input: '$0.11', output: '$0.34', cached: null, badges: ['fast', 'vision'] },
+    { name: 'meta-llama/llama-3.3-70b-instruct', context: '128K', input: '$0.12', output: '$0.30', cached: null, badges: ['reasoning'] },
+    { name: 'meta-llama/llama-3.1-405b-instruct', context: '128K', input: '$0.90', output: '$0.90', cached: null, badges: ['reasoning'] },
+    { name: 'meta-llama/llama-3.1-70b-instruct', context: '128K', input: '$0.12', output: '$0.30', cached: null },
+    { name: 'meta-llama/llama-3.1-8b-instruct', context: '128K', input: '$0.02', output: '$0.05', cached: null, badges: ['fast'] },
+    // ── Mistral ──
+    { name: 'mistralai/mistral-large-2411', context: '128K', input: '$2.00', output: '$6.00', cached: null, badges: ['reasoning'] },
+    { name: 'mistralai/mistral-medium-3', context: '128K', input: '$0.40', output: '$2.00', cached: null },
+    { name: 'mistralai/mistral-small-3.1-24b-instruct', context: '128K', input: '$0.10', output: '$0.30', cached: null, badges: ['fast'] },
+    { name: 'mistralai/codestral-2501', context: '256K', input: '$0.30', output: '$0.90', cached: null, badges: ['code'] },
+    { name: 'mistralai/ministral-8b', context: '128K', input: '$0.10', output: '$0.10', cached: null, badges: ['fast'] },
+    // ── Qwen ──
+    { name: 'qwen/qwq-32b', context: '128K', input: '$0.12', output: '$0.18', cached: null, badges: ['reasoning'], modes: ['none', 'high'] },
+    { name: 'qwen/qwen-2.5-72b-instruct', context: '128K', input: '$0.18', output: '$0.18', cached: null, badges: ['reasoning'] },
+    { name: 'qwen/qwen-2.5-coder-32b-instruct', context: '32K', input: '$0.07', output: '$0.16', cached: null, badges: ['code'] },
+    { name: 'qwen/qwen-2.5-vl-72b-instruct', context: '128K', input: '$0.18', output: '$0.18', cached: null, badges: ['vision'] },
+    // ── xAI ──
+    { name: 'x-ai/grok-4.3', context: '256K', input: '$2.00', output: '$10.00', cached: null, badges: ['frontier', 'reasoning'], modes: ['none', 'high'] },
+    { name: 'x-ai/grok-3-beta', context: '131K', input: '$3.00', output: '$15.00', cached: null, badges: ['reasoning'], modes: ['none', 'high'] },
+    { name: 'x-ai/grok-2-1212', context: '131K', input: '$2.00', output: '$10.00', cached: null },
+    // ── Cohere ──
+    { name: 'cohere/command-r-plus-08-2024', context: '128K', input: '$2.50', output: '$10.00', cached: null, badges: ['reasoning'] },
+    { name: 'cohere/command-r-08-2024', context: '128K', input: '$0.15', output: '$0.60', cached: null, badges: ['fast'] },
+    // ── Microsoft ──
+    { name: 'microsoft/phi-4', context: '16K', input: '$0.07', output: '$0.14', cached: null, badges: ['fast'] },
+    { name: 'microsoft/phi-4-multimodal-instruct', context: '128K', input: '$0.07', output: '$0.14', cached: null, badges: ['fast', 'vision'] },
+    // ── Perplexity ──
+    { name: 'perplexity/sonar-pro', context: '200K', input: '$3.00', output: '$15.00', cached: null, badges: ['reasoning'] },
+    { name: 'perplexity/sonar', context: '128K', input: '$1.00', output: '$1.00', cached: null, badges: ['fast'] },
+    // ── Amazon ──
+    { name: 'amazon/nova-pro-v1', context: '300K', input: '$0.80', output: '$3.20', cached: null, badges: ['vision'] },
+    { name: 'amazon/nova-lite-v1', context: '300K', input: '$0.06', output: '$0.24', cached: null, badges: ['fast', 'vision'] },
+    // ── NousResearch ──
+    { name: 'nousresearch/hermes-3-llama-3.1-405b', context: '128K', input: '$0.90', output: '$0.90', cached: null, badges: ['reasoning'] }
   ]
+}
+
+// ── OpenRouter model sorting ──────────────────────────────────────────
+// Tier 0: US frontier labs, Tier 1: Chinese labs, Tier 2: everything else.
+// Tier 0: providers wolffish supports directly (sorted first)
+// Tier 1: other US frontier labs
+// Tier 2: other Chinese labs
+// Tier 3: European / rest (fallback for unknown slugs)
+const OPENROUTER_PROVIDER_TIER: Record<string, number> = {
+  anthropic: 0,
+  openai: 0,
+  deepseek: 0,
+  qwen: 0,
+  xiaomi: 0,
+  moonshotai: 0,
+  minimax: 0,
+  stepfun: 0,
+  google: 1,
+  'x-ai': 1,
+  'meta-llama': 1,
+  perplexity: 1,
+  amazon: 1,
+  mistralai: 2,
+  cohere: 2,
+  microsoft: 2,
+  nousresearch: 2
+}
+
+function openRouterProviderSlug(modelId: string): string {
+  const slash = modelId.indexOf('/')
+  return slash > 0 ? modelId.slice(0, slash) : ''
+}
+
+function sortOpenRouterModels<T extends { name: string; badges?: BadgeKind[] }>(items: T[]): T[] {
+  return items.slice().sort((a, b) => {
+    const slugA = openRouterProviderSlug(a.name)
+    const slugB = openRouterProviderSlug(b.name)
+    const tierA = OPENROUTER_PROVIDER_TIER[slugA] ?? 3
+    const tierB = OPENROUTER_PROVIDER_TIER[slugB] ?? 3
+    if (tierA !== tierB) return tierA - tierB
+    if (slugA !== slugB) return slugA.localeCompare(slugB)
+    const fA = a.badges?.includes('frontier') ? 0 : 1
+    const fB = b.badges?.includes('frontier') ? 0 : 1
+    return fA - fB
+  })
+}
+
+function sortOpenRouterModelIds(ids: readonly string[]): string[] {
+  return ids.slice().sort((a, b) => {
+    const disA = isModelDisabled(a) ? 1 : 0
+    const disB = isModelDisabled(b) ? 1 : 0
+    if (disA !== disB) return disA - disB
+    const slugA = openRouterProviderSlug(a)
+    const slugB = openRouterProviderSlug(b)
+    const tierA = OPENROUTER_PROVIDER_TIER[slugA] ?? 3
+    const tierB = OPENROUTER_PROVIDER_TIER[slugB] ?? 3
+    if (tierA !== tierB) return tierA - tierB
+    if (slugA !== slugB) return slugA.localeCompare(slugB)
+    return a.localeCompare(b)
+  })
 }
 
 export function CloudProviderPanel({ provider }: { provider: ProviderId }): React.JSX.Element {
@@ -591,10 +720,10 @@ export function CloudProviderPanel({ provider }: { provider: ProviderId }): Reac
   }, [provider])
 
   const trimmedKey = apiKey.trim()
-  const models = useMemo<readonly string[]>(
-    () => fetchedModels ?? stored?.models ?? [],
-    [fetchedModels, stored]
-  )
+  const models = useMemo<readonly string[]>(() => {
+    const raw = fetchedModels ?? stored?.models ?? []
+    return provider === 'openrouter' ? sortOpenRouterModelIds(raw) : raw
+  }, [fetchedModels, stored, provider])
   const hasModels = models.length > 0
   // Pre-filled saved key isn't a "new" key — only the user typing
   // something different counts as an edit.
@@ -643,7 +772,8 @@ export function CloudProviderPanel({ provider }: { provider: ProviderId }): Reac
         id: provider,
         model: modelToSave,
         apiKey: trimmedKey,
-        models: result.models
+        models: result.models,
+        reasoningModels: result.reasoningModels
       })
       const snap = await reloadStored()
       setStored(snap.match)
@@ -708,7 +838,7 @@ export function CloudProviderPanel({ provider }: { provider: ProviderId }): Reac
     () =>
       models.map((m) => ({
         value: m,
-        label: m,
+        label: isModelDisabled(m) ? `${m} — ${disabledReason(m)}` : m,
         disabled: isModelDisabled(m)
       })),
     [models]
@@ -841,6 +971,8 @@ export function CloudProviderPanel({ provider }: { provider: ProviderId }): Reac
             disabled={saving || !hasModels}
             placeholder={t('settings.model.cloud.modelHint')}
             onChange={(next) => void onSelectModel(next)}
+            searchable
+            searchPlaceholder={t('settings.model.cloud.searchModels')}
           />
 
           <div className="flex flex-col gap-1.5">
@@ -877,7 +1009,10 @@ export function CloudProviderPanel({ provider }: { provider: ProviderId }): Reac
           </div>
         </section>
 
-        <ModelBreakdown specs={MODEL_SPECS[provider]} />
+        <ModelBreakdown
+          specs={provider === 'openrouter' ? sortOpenRouterModels(MODEL_SPECS[provider]) : MODEL_SPECS[provider]}
+          provider={provider}
+        />
       </div>
     </div>
   )
@@ -892,7 +1027,7 @@ const BADGE_STYLES: Record<BadgeKind, string> = {
   voice: 'bg-pink-500/15 text-pink-600 dark:text-pink-400'
 }
 
-function ModelBreakdown({ specs }: { specs: ModelSpec[] }): React.JSX.Element {
+function ModelBreakdown({ specs, provider }: { specs: ModelSpec[]; provider: ProviderId }): React.JSX.Element {
   const { t } = useTranslation()
   const isFrontier = (m: ModelSpec): boolean => !!m.badges?.includes('frontier')
   return (
@@ -931,7 +1066,7 @@ function ModelBreakdown({ specs }: { specs: ModelSpec[] }): React.JSX.Element {
                   isFrontier(m) && 'bg-accent/5'
                 )}
               >
-                <td className="min-w-64 py-2 pe-3 text-start">
+                <td className="min-w-80 py-2 pe-3 text-start">
                   <span className="flex flex-nowrap items-center gap-1.5">
                     <span className={cn('text-fg', isFrontier(m) && 'font-medium')}>{m.name}</span>
                     {m.badges?.map((badge) => (
@@ -982,6 +1117,23 @@ function ModelBreakdown({ specs }: { specs: ModelSpec[] }): React.JSX.Element {
           </tbody>
         </table>
       </div>
+      {provider === 'openrouter' && (
+        <p className="text-muted flex items-center gap-1.5 text-xs">
+          <InformationCircleIcon className="size-3.5 shrink-0" />
+          <span>
+            <span dir="ltr" className="inline-block">{'200+'}</span>{' '}
+            {t('settings.model.cloud.breakdown.moreModels')}{' '}
+            <a
+              href="https://openrouter.ai/models"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-accent hover:underline"
+            >
+              openrouter.ai/models
+            </a>
+          </span>
+        </p>
+      )}
       <p className="text-muted/70 text-[10px] leading-relaxed">
         {t('settings.model.cloud.breakdown.disclaimer')}
       </p>
@@ -1033,7 +1185,16 @@ function StatusLine({
 }
 
 function isModelDisabled(id: string): boolean {
-  return /tts|voiceclone|voicedesign/.test(id) || /^(gpt-5[\d.]*-(pro|codex)|o\d+-pro)/.test(id)
+  if (/tts|voiceclone|voicedesign/.test(id)) return true
+  if (/^(gpt-5[\d.]*-(pro|codex)|o\d+-pro)/.test(id)) return true
+  if (/(-image|-audio|lyria)/i.test(id)) return true
+  return false
+}
+
+function disabledReason(id: string): string {
+  if (/-image/.test(id)) return 'image'
+  if (/(-audio|tts|voiceclone|voicedesign|lyria)/.test(id)) return 'audio'
+  return 'unsupported'
 }
 
 /** Prefer the undated base model (e.g. "gpt-5.5" over "gpt-5.5-2026-04-23"). */

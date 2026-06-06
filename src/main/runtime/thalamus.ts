@@ -7,6 +7,7 @@ import { MiniMaxProvider } from '@main/runtime/providers/minimax'
 import { MimoProvider } from '@main/runtime/providers/mimo'
 import { OpenAIProvider } from '@main/runtime/providers/openai'
 import { QwenProvider } from '@main/runtime/providers/qwen'
+import { OpenRouterProvider } from '@main/runtime/providers/openrouter'
 import { StepfunProvider } from '@main/runtime/providers/stepfun'
 import { XAIProvider } from '@main/runtime/providers/xai'
 import { net } from 'electron'
@@ -40,7 +41,7 @@ export type ChatMessage =
       images?: ToolResultImage[]
     }
 
-export type ProviderId = 'anthropic' | 'openai' | 'deepseek' | 'mimo' | 'kimi' | 'minimax' | 'xai' | 'qwen' | 'stepfun' | 'local'
+export type ProviderId = 'anthropic' | 'openai' | 'openrouter' | 'deepseek' | 'mimo' | 'kimi' | 'minimax' | 'xai' | 'qwen' | 'stepfun' | 'local'
 
 export type ToolDefinition = {
   name: string
@@ -112,10 +113,11 @@ export type StreamChunk =
   | { type: 'no_provider_available'; failures: NoProviderAvailableInfo[] }
 
 export type CloudProviderConfig = {
-  id: 'anthropic' | 'openai' | 'deepseek' | 'mimo' | 'kimi' | 'minimax' | 'xai' | 'qwen' | 'stepfun'
+  id: 'anthropic' | 'openai' | 'openrouter' | 'deepseek' | 'mimo' | 'kimi' | 'minimax' | 'xai' | 'qwen' | 'stepfun'
   model: string
   apiKey: string
   models?: string[]
+  reasoningModels?: string[]
 }
 
 export type ProviderHealth = {
@@ -146,6 +148,7 @@ const RETRY_DELAYS_MS = [5_000, 15_000, 30_000, 60_000, 90_000]
 const PROVIDER_LOGO: Record<ProviderId, string> = {
   anthropic: 'anthropic',
   openai: 'openai',
+  openrouter: 'openrouter',
   deepseek: 'deepseek',
   mimo: 'mimo',
   kimi: 'kimi',
@@ -658,6 +661,12 @@ export class Thalamus {
           model: cfg.model,
           provider: new StepfunProvider(cfg.apiKey, cfg.model)
         })
+      } else if (id === 'openrouter') {
+        out.push({
+          id: 'openrouter',
+          model: cfg.model,
+          provider: new OpenRouterProvider(cfg.apiKey, cfg.model, undefined, cfg.reasoningModels)
+        })
       }
     }
     if (this.local.isReady) {
@@ -827,6 +836,17 @@ function contextWindowForModel(model: string): number {
   if (m.includes('step-1-200k')) return 200_000
   if (m.includes('step-1-128k')) return 128_000
   if (m.includes('step-1')) return 64_000
+  // OpenRouter — model IDs are prefixed with provider slug (e.g. "anthropic/claude-…")
+  // so the checks above for bare model names won't match. Catch the common ones here.
+  if (m.includes('anthropic/claude')) return 200_000
+  if (m.includes('openai/gpt-5') || m.includes('openai/gpt-4.1')) return 1_000_000
+  if (m.includes('openai/gpt-4o')) return 128_000
+  if (m.includes('openai/o3') || m.includes('openai/o4')) return 200_000
+  if (m.includes('google/gemini-2')) return 1_000_000
+  if (m.includes('deepseek/deepseek')) return 128_000
+  if (m.includes('meta-llama/')) return 131_072
+  if (m.includes('mistralai/')) return 131_072
+  if (m.includes('qwen/')) return 131_072
   // xAI / Grok
   if (m.includes('grok-4.3') || m.includes('grok-4.20')) return 1_000_000
   if (m.includes('grok-build')) return 256_000

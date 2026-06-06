@@ -11,6 +11,7 @@ import {
   NotionLogo,
   OllamaLogo,
   OpenAILogo,
+  OpenRouterLogo,
   QwenLogo,
   StepfunLogo,
   TelegramLogo,
@@ -524,6 +525,9 @@ export function Settings(): React.JSX.Element {
         <TabPanel active={active === 'model' && provider === 'stepfun'}>
           <CloudProviderPanel provider="stepfun" />
         </TabPanel>
+        <TabPanel active={active === 'model' && provider === 'openrouter'}>
+          <CloudProviderPanel provider="openrouter" />
+        </TabPanel>
         <TabPanel active={active === 'services' && effectiveService === 'tts' && ttsAvailable}>
           <TextToSpeechPanel />
         </TabPanel>
@@ -585,6 +589,7 @@ type Provider =
   | 'ollama'
   | 'anthropic'
   | 'openai'
+  | 'openrouter'
   | 'deepseek'
   | 'mimo'
   | 'kimi'
@@ -602,6 +607,7 @@ const PROVIDERS: Provider[] = [
   'anthropic',
   'xai',
   'openai',
+  'openrouter',
   'ollama'
 ]
 
@@ -612,6 +618,7 @@ const PROVIDER_ICONS: Record<
   ollama: OllamaLogo,
   anthropic: AnthropicLogo,
   openai: OpenAILogo,
+  openrouter: OpenRouterLogo,
   deepseek: DeepSeekLogo,
   mimo: MimoLogo,
   kimi: KimiLogo,

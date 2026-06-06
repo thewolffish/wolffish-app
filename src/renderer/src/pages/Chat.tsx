@@ -29,6 +29,7 @@ import {
   MiniMaxLogo,
   OllamaLogo,
   OpenAILogo,
+  OpenRouterLogo,
   QwenLogo,
   StepfunLogo,
   TelegramLogo,
@@ -229,8 +230,16 @@ export function Chat(): React.JSX.Element {
       return []
     }
 
+    // ── OpenRouter: use reasoningModels from API metadata ──
+    if (provider === 'openrouter') {
+      const entry = cloudProviders.find((p) => p.id === 'openrouter')
+      const supportsReasoning = entry?.reasoningModels?.includes(model) ?? false
+      if (supportsReasoning) return [none, high, max]
+      return []
+    }
+
     return []
-  }, [localOnly, activeCloudProvider, activeCloudModel])
+  }, [localOnly, activeCloudProvider, activeCloudModel, cloudProviders])
 
   useEffect(() => {
     if (thinkingModeOptions.length === 0) {
@@ -2212,6 +2221,7 @@ function StatusBar({
 const CLOUD_PROVIDER_LOGOS: Record<string, React.ComponentType<{ size?: number }>> = {
   anthropic: AnthropicLogo,
   openai: OpenAILogo,
+  openrouter: OpenRouterLogo,
   deepseek: DeepSeekLogo,
   mimo: MimoLogo,
   kimi: KimiLogo,

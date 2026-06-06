@@ -42,7 +42,7 @@ export type LocalModelConfig = {
 }
 
 export type CloudProviderConfig = {
-  id: 'anthropic' | 'openai' | 'deepseek' | 'mimo' | 'kimi' | 'minimax' | 'xai' | 'qwen' | 'stepfun'
+  id: 'anthropic' | 'openai' | 'openrouter' | 'deepseek' | 'mimo' | 'kimi' | 'minimax' | 'xai' | 'qwen' | 'stepfun'
   model: string
   apiKey: string
   models?: string[]
@@ -414,6 +414,7 @@ export type ProviderListEntry = {
   model: string
   apiKey: string
   models?: string[]
+  reasoningModels?: string[]
 }
 
 export type ProviderTestErrorKind =
@@ -424,7 +425,7 @@ export type ProviderTestErrorKind =
   | 'generic'
 
 export type ProviderTestResult =
-  | { ok: true; models: string[] }
+  | { ok: true; models: string[]; reasoningModels?: string[] }
   | { ok: false; kind: ProviderTestErrorKind; message?: string }
 
 export type ProviderUpdatedEvent = { id: CloudProviderConfig['id'] }
@@ -437,6 +438,7 @@ export type ProviderApi = {
     model: string
     apiKey?: string
     models?: string[]
+    reasoningModels?: string[]
   }) => Promise<{ ok: true } | { ok: false; error: string }>
   remove: (id: CloudProviderConfig['id']) => Promise<{ ok: true }>
   getPriority: () => Promise<CloudProviderConfig['id'][]>
@@ -478,7 +480,7 @@ export type ViewerTreeNode =
 export type UsageTimeRange = 'today' | 'this_month' | '3_months' | '6_months' | 'ytd' | 'all_time'
 
 export type UsageProviderSummary = {
-  provider: 'anthropic' | 'openai' | 'deepseek' | 'mimo' | 'kimi' | 'minimax' | 'xai' | 'qwen' | 'stepfun' | 'local'
+  provider: 'anthropic' | 'openai' | 'openrouter' | 'deepseek' | 'mimo' | 'kimi' | 'minimax' | 'xai' | 'qwen' | 'stepfun' | 'local'
   totalInputTokens: number
   totalOutputTokens: number
   totalCost: number

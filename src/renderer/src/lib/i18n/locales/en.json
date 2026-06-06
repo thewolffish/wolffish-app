@@ -292,6 +292,7 @@
         "xai": "xAI",
         "qwen": "Qwen",
         "stepfun": "Stepfun",
+        "openrouter": "OpenRouter",
         "descriptions": {
           "stepfun": "Step — frontier reasoning models with built-in thinking and vision support",
           "qwen": "Alibaba's Qwen models — powerful reasoning and coding with long-context support",
@@ -302,6 +303,7 @@
           "deepseek": "Open-weight reasoning powerhouse — frontier performance at a fraction of the cost",
           "anthropic": "Claude — safety-focused frontier models with exceptional long-context reasoning",
           "openai": "GPT and o-series — the industry-standard frontier model family",
+          "openrouter": "Unified API gateway — access models from OpenAI, Anthropic, Google, Meta, and more with a single key",
           "ollama": "Open-weight models running locally — private, offline, no API key needed"
         }
       },
@@ -320,6 +322,7 @@
         "hideKey": "Hide key",
         "model": "Model",
         "modelHint": "Add a key and test the connection below.",
+        "searchModels": "Search for a model",
         "priority": "Fallback Order",
         "priorityHint": "Configure multiple providers to set priority.",
         "priorityDescription": "Determines which cloud provider is tried first when multiple are configured.",
@@ -352,7 +355,8 @@
             "fast": "Fast",
             "voice": "Voice"
           },
-          "disclaimer": "Prices are in USD per 1M tokens. Actual billing may vary."
+          "disclaimer": "Prices are in USD per 1M tokens. Actual billing may vary.",
+          "moreModels": "more models available at"
         },
         "platform": "Platform",
         "test": "Save",
@@ -1024,6 +1028,7 @@
         "xai": "xAI",
         "qwen": "Qwen",
         "stepfun": "Stepfun",
+        "openrouter": "OpenRouter",
         "brave": "Brave Search"
       },
       "tokens": "tokens",

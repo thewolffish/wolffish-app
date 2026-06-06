@@ -196,6 +196,7 @@ export type ProviderListEntry = {
   model: string
   apiKey: string
   models?: string[]
+  reasoningModels?: string[]
 }
 
 export type ProviderTestErrorKind =
@@ -206,7 +207,7 @@ export type ProviderTestErrorKind =
   | 'generic'
 
 export type ProviderTestResult =
-  | { ok: true; models: string[] }
+  | { ok: true; models: string[]; reasoningModels?: string[] }
   | { ok: false; kind: ProviderTestErrorKind; message?: string }
 
 function classifyHttpError(
@@ -397,6 +398,29 @@ async function fetchProviderModels(
       return { ok: true, models }
     }
 
+    if (id === 'openrouter') {
+      const res = await fetch('https://openrouter.ai/api/v1/models', {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${apiKey}` }
+      })
+      if (!res.ok) {
+        const text = await res.text().catch(() => '')
+        return { ok: false, ...classifyHttpError(res.status, text) }
+      }
+      const body = (await res.json()) as {
+        data?: Array<{ id: string; created?: number; supported_parameters?: string[] }>
+      }
+      const filtered = (body.data ?? [])
+        .filter((m) => isOpenRouterChatModel(m.id))
+        .slice()
+        .sort((a, b) => (b.created ?? 0) - (a.created ?? 0))
+      const models = filtered.map((m) => m.id)
+      const reasoningModels = filtered
+        .filter((m) => m.supported_parameters?.includes('reasoning'))
+        .map((m) => m.id)
+      return { ok: true, models, reasoningModels }
+    }
+
     const res = await fetch('https://api.openai.com/v1/models', {
       method: 'GET',
       headers: { Authorization: `Bearer ${apiKey}` }
@@ -476,6 +500,12 @@ function isXAIChatModel(id: string): boolean {
   return false
 }
 
+function isOpenRouterChatModel(id: string): boolean {
+  if (/(-embed|-tts|-stt|-whisper|-vision-gen|-diffusion|-stable|flux|dall-e|midjourney)/.test(id)) return false
+  if (/^(anthropic\/|openai\/|google\/|meta-llama\/|deepseek\/|mistralai\/|qwen\/|x-ai\/|cohere\/|microsoft\/|perplexity\/|amazon\/|nousresearch\/|xiaomi\/|moonshotai\/|minimax\/|stepfun\/)/.test(id)) return true
+  return false
+}
+
 function isKimiChatModel(id: string): boolean {
   if (id.startsWith('kimi-') || id.startsWith('moonshot-v1-')) {
     if (/-(tts|asr|embedding|whisper)/.test(id)) return false
@@ -496,7 +526,7 @@ async function refreshAllProviderModels(): Promise<void> {
     if (!p.apiKey) continue
     const result = await fetchProviderModels(p.id, p.apiKey)
     if (!result.ok) continue
-    await setCloudProvider({ ...p, models: result.models })
+    await setCloudProvider({ ...p, models: result.models, reasoningModels: result.reasoningModels })
     broadcast('provider:updated', { id: p.id })
   }
   // Re-seed the cascade so any new model selection downstream sees the
@@ -2176,7 +2206,8 @@ app.whenReady().then(async () => {
       id: p.id,
       model: p.model,
       apiKey: p.apiKey,
-      models: p.models
+      models: p.models,
+      reasoningModels: p.reasoningModels
     }))
   })
 
@@ -2202,7 +2233,7 @@ app.whenReady().then(async () => {
         const cfg = await readConfig()
         const existing = cfg?.llm.providers.find((p) => p.id === payload.id)
         if (existing) {
-          await setCloudProvider({ ...existing, models: result.models })
+          await setCloudProvider({ ...existing, models: result.models, reasoningModels: result.reasoningModels })
           const next = await readConfig()
           if (next?.llm.providers) {
             thalamus.setCloudProviders(next.llm.providers)
@@ -2227,6 +2258,7 @@ app.whenReady().then(async () => {
         model: string
         apiKey?: string
         models?: string[]
+        reasoningModels?: string[]
       }
     ): Promise<{ ok: true } | { ok: false; error: string }> => {
       const cfg = await readConfig()
@@ -2239,7 +2271,8 @@ app.whenReady().then(async () => {
         id: payload.id,
         model: payload.model,
         apiKey,
-        models: payload.models ?? existing?.models
+        models: payload.models ?? existing?.models,
+        reasoningModels: payload.reasoningModels ?? existing?.reasoningModels
       })
       thalamus.setCloudProviders(updated.llm.providers)
       thalamus.setCloudPriority(updated.llm.cloudPriority ?? updated.llm.providers.map((p) => p.id))

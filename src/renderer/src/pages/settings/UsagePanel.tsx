@@ -8,6 +8,7 @@ import {
   MimoLogo,
   OllamaLogo,
   OpenAILogo,
+  OpenRouterLogo,
   XAILogo,
   QwenLogo,
   StepfunLogo
@@ -37,7 +38,7 @@ import { useTranslation } from 'react-i18next'
 
 type IconComp = React.ComponentType<{ size?: number; className?: string }>
 
-type ProviderId = 'local' | 'anthropic' | 'openai' | 'deepseek' | 'mimo' | 'kimi' | 'minimax' | 'xai' | 'qwen' | 'stepfun'
+type ProviderId = 'local' | 'anthropic' | 'openai' | 'openrouter' | 'deepseek' | 'mimo' | 'kimi' | 'minimax' | 'xai' | 'qwen' | 'stepfun'
 
 const TIME_RANGES: UsageTimeRange[] = [
   'today',
@@ -52,6 +53,7 @@ const PROVIDER_ICONS: Record<ProviderId, React.ComponentType<{ size: number }>> 
   local: OllamaLogo,
   anthropic: AnthropicLogo,
   openai: OpenAILogo,
+  openrouter: OpenRouterLogo,
   deepseek: DeepSeekLogo,
   mimo: MimoLogo,
   kimi: KimiLogo,

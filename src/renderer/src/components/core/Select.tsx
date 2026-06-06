@@ -1,6 +1,6 @@
 import { cn } from '@lib/utils/cn'
 import { ArrowDown01Icon, Tick02Icon } from 'hugeicons-react'
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 
 export type SelectOption<T extends string> = {
   value: T
@@ -20,6 +20,9 @@ export type SelectProps<T extends string> = {
   id?: string
   /** Max height of the dropdown list in pixels. Beyond this, the list scrolls. */
   maxHeight?: number
+  /** Show a search input at the top of the dropdown to filter options. */
+  searchable?: boolean
+  searchPlaceholder?: string
 }
 
 export function Select<T extends string>({
@@ -31,11 +34,15 @@ export function Select<T extends string>({
   placeholder,
   className,
   id,
-  maxHeight = 300
+  maxHeight = 300,
+  searchable = false,
+  searchPlaceholder
 }: SelectProps<T>): React.JSX.Element {
   const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
   const rootRef = useRef<HTMLDivElement>(null)
   const buttonRef = useRef<HTMLButtonElement>(null)
+  const searchRef = useRef<HTMLInputElement>(null)
   const generatedId = useId()
   const buttonId = id ?? `select-${generatedId}`
   const listboxId = `${buttonId}-listbox`
@@ -43,8 +50,20 @@ export function Select<T extends string>({
 
   const selected = options.find((o) => o.value === value) ?? options[0]
 
+  const filtered = useMemo(() => {
+    if (!searchable || !query) return options
+    const q = query.toLowerCase()
+    return options.filter((o) => o.label.toLowerCase().includes(q) || o.value.toLowerCase().includes(q))
+  }, [options, query, searchable])
+
   useEffect(() => {
-    if (!open) return
+    if (!open) {
+      setQuery('')
+      return
+    }
+    if (searchable) {
+      requestAnimationFrame(() => searchRef.current?.focus())
+    }
     const onPointerDown = (e: PointerEvent): void => {
       if (!rootRef.current) return
       if (!rootRef.current.contains(e.target as Node)) setOpen(false)
@@ -61,7 +80,7 @@ export function Select<T extends string>({
       document.removeEventListener('pointerdown', onPointerDown)
       document.removeEventListener('keydown', onKeyDown)
     }
-  }, [open])
+  }, [open, searchable])
 
   return (
     <div ref={rootRef} className={cn('flex flex-col gap-1.5', className)}>
@@ -106,58 +125,78 @@ export function Select<T extends string>({
           />
         </button>
         {open && (
-          <ul
-            id={listboxId}
-            role="listbox"
-            aria-labelledby={label ? labelId : undefined}
-            style={{ maxHeight }}
+          <div
             className={cn(
-              'bg-bg border-border absolute z-20 mt-1.5 w-full overflow-y-auto',
-              'rounded-lg border shadow-lg',
-              'py-1'
+              'bg-bg border-border absolute z-20 mt-1.5 w-full',
+              'rounded-lg border shadow-lg'
             )}
           >
-            {options.map((option) => {
-              const isSelected = option.value === value
-              const isDisabled = option.disabled === true
-              return (
-                <li
-                  key={option.value}
-                  role="option"
-                  aria-selected={isSelected}
-                  aria-disabled={isDisabled || undefined}
-                  onClick={() => {
-                    if (isDisabled) return
-                    onChange(option.value)
-                    setOpen(false)
-                    buttonRef.current?.focus()
-                  }}
+            {searchable && (
+              <div className="border-border border-b px-2 py-1.5">
+                <input
+                  ref={searchRef}
+                  type="text"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder={searchPlaceholder ?? 'Search…'}
                   className={cn(
-                    'flex items-center justify-between gap-2 px-3 py-2 text-sm',
-                    isDisabled
-                      ? 'cursor-not-allowed opacity-40'
-                      : cn('cursor-pointer hover:bg-border/50'),
-                    isSelected && 'text-primary font-medium'
+                    'bg-transparent text-fg placeholder:text-muted/50 w-full text-sm outline-none'
                   )}
-                >
-                  <span className="flex min-w-0 items-center gap-2">
-                    {option.icon && (
-                      <span
-                        className={cn(
-                          'flex shrink-0 items-center',
-                          isSelected ? 'text-primary' : 'text-muted'
-                        )}
-                      >
-                        {option.icon}
-                      </span>
+                />
+              </div>
+            )}
+            <ul
+              id={listboxId}
+              role="listbox"
+              aria-labelledby={label ? labelId : undefined}
+              style={{ maxHeight }}
+              className="overflow-y-auto py-1"
+            >
+              {filtered.map((option) => {
+                const isSelected = option.value === value
+                const isDisabled = option.disabled === true
+                return (
+                  <li
+                    key={option.value}
+                    role="option"
+                    aria-selected={isSelected}
+                    aria-disabled={isDisabled || undefined}
+                    onClick={() => {
+                      if (isDisabled) return
+                      onChange(option.value)
+                      setOpen(false)
+                      buttonRef.current?.focus()
+                    }}
+                    className={cn(
+                      'flex items-center justify-between gap-2 px-3 py-2 text-sm',
+                      isDisabled
+                        ? 'cursor-not-allowed opacity-40'
+                        : cn('cursor-pointer hover:bg-border/50'),
+                      isSelected && 'text-primary font-medium'
                     )}
-                    <span className="truncate">{option.label}</span>
-                  </span>
-                  {isSelected && <Tick02Icon size={16} className="text-primary shrink-0" />}
-                </li>
-              )
-            })}
-          </ul>
+                  >
+                    <span className="flex min-w-0 items-center gap-2">
+                      {option.icon && (
+                        <span
+                          className={cn(
+                            'flex shrink-0 items-center',
+                            isSelected ? 'text-primary' : 'text-muted'
+                          )}
+                        >
+                          {option.icon}
+                        </span>
+                      )}
+                      <span className="truncate">{option.label}</span>
+                    </span>
+                    {isSelected && <Tick02Icon size={16} className="text-primary shrink-0" />}
+                  </li>
+                )
+              })}
+              {searchable && filtered.length === 0 && (
+                <li className="text-muted/50 px-3 py-2 text-sm">{'—'}</li>
+              )}
+            </ul>
+          </div>
         )}
       </div>
     </div>

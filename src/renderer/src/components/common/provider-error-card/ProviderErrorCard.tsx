@@ -6,6 +6,7 @@ import {
   MimoLogo,
   OllamaLogo,
   OpenAILogo,
+  OpenRouterLogo,
   XAILogo,
   QwenLogo,
   StepfunLogo
@@ -16,11 +17,12 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { IconType } from 'react-icons'
 
-type Logo = 'anthropic' | 'openai' | 'deepseek' | 'mimo' | 'kimi' | 'minimax' | 'xai' | 'qwen' | 'stepfun' | 'ollama'
+type Logo = 'anthropic' | 'openai' | 'openrouter' | 'deepseek' | 'mimo' | 'kimi' | 'minimax' | 'xai' | 'qwen' | 'stepfun' | 'ollama'
 
 const LOGO: Record<Logo, IconType | React.ComponentType<{ size?: number; className?: string }>> = {
   anthropic: AnthropicLogo,
   openai: OpenAILogo,
+  openrouter: OpenRouterLogo,
   deepseek: DeepSeekLogo,
   mimo: MimoLogo,
   kimi: KimiLogo,

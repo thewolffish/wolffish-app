@@ -199,6 +199,41 @@ const XAI_PRICING: Record<string, ModelPricing> = {
   'grok-2': { input: 2 / 1e6, output: 10 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 }
 }
 
+const OPENROUTER_PRICING: Record<string, ModelPricing> = {
+  'anthropic/claude-sonnet-4': { input: 3 / 1e6, output: 15 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 },
+  'anthropic/claude-opus-4': { input: 15 / 1e6, output: 75 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 },
+  'anthropic/claude-3.5-sonnet': { input: 3 / 1e6, output: 15 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 },
+  'anthropic/claude-3.5-haiku': { input: 0.80 / 1e6, output: 4 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 },
+  'anthropic/claude-3-opus': { input: 15 / 1e6, output: 75 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 },
+  'openai/gpt-4.1': { input: 2 / 1e6, output: 8 / 1e6, cacheWrite: 1.0, cacheRead: 0.25 },
+  'openai/gpt-4.1-mini': { input: 0.40 / 1e6, output: 1.60 / 1e6, cacheWrite: 1.0, cacheRead: 0.25 },
+  'openai/gpt-4.1-nano': { input: 0.10 / 1e6, output: 0.40 / 1e6, cacheWrite: 1.0, cacheRead: 0.25 },
+  'openai/o4-mini': { input: 1.10 / 1e6, output: 4.40 / 1e6, cacheWrite: 1.0, cacheRead: 0.25 },
+  'openai/o3-mini': { input: 1.10 / 1e6, output: 4.40 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
+  'openai/gpt-4o': { input: 2.50 / 1e6, output: 10 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
+  'openai/gpt-4o-mini': { input: 0.15 / 1e6, output: 0.60 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
+  'google/gemini-2.5-pro': { input: 1.25 / 1e6, output: 10 / 1e6, cacheWrite: 1.0, cacheRead: 0.25 },
+  'google/gemini-2.5-flash': { input: 0.15 / 1e6, output: 0.60 / 1e6, cacheWrite: 1.0, cacheRead: 0.25 },
+  'google/gemini-2.0-flash': { input: 0.10 / 1e6, output: 0.40 / 1e6, cacheWrite: 1.0, cacheRead: 0.25 },
+  'google/gemini-pro-1.5': { input: 1.25 / 1e6, output: 5 / 1e6, cacheWrite: 1.0, cacheRead: 0.25 },
+  'deepseek/deepseek-r1': { input: 0.55 / 1e6, output: 2.19 / 1e6, cacheWrite: 1.0, cacheRead: 0.25 },
+  'deepseek/deepseek-chat': { input: 0.14 / 1e6, output: 0.28 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 },
+  'meta-llama/llama-4-maverick': { input: 0.20 / 1e6, output: 0.85 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
+  'meta-llama/llama-4-scout': { input: 0.11 / 1e6, output: 0.34 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
+  'meta-llama/llama-3.3-70b': { input: 0.12 / 1e6, output: 0.30 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
+  'meta-llama/llama-3.1-405b': { input: 0.90 / 1e6, output: 0.90 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
+  'mistralai/mistral-large': { input: 2 / 1e6, output: 6 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
+  'mistralai/codestral': { input: 0.30 / 1e6, output: 0.90 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
+  'qwen/qwq-32b': { input: 0.12 / 1e6, output: 0.18 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
+  'qwen/qwen-2.5-72b': { input: 0.18 / 1e6, output: 0.18 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
+  'x-ai/grok-3-beta': { input: 3 / 1e6, output: 15 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
+  'x-ai/grok-3-mini-beta': { input: 0.30 / 1e6, output: 0.50 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
+  'cohere/command-r-plus': { input: 2.50 / 1e6, output: 10 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
+  'cohere/command-r': { input: 0.15 / 1e6, output: 0.60 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
+  'perplexity/sonar-pro': { input: 3 / 1e6, output: 15 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
+  'perplexity/sonar': { input: 1 / 1e6, output: 1 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 }
+}
+
 const LOCAL_EQUIVALENT_PRICING: ModelPricing = {
   input: 0,
   output: 0,
@@ -290,6 +325,7 @@ export class Usage {
       'local',
       'anthropic',
       'openai',
+      'openrouter',
       'deepseek',
       'mimo',
       'kimi',
@@ -501,7 +537,8 @@ export class Usage {
       { file: 'minimax.md', provider: 'minimax' },
       { file: 'xai.md', provider: 'xai' },
       { file: 'qwen.md', provider: 'qwen' },
-      { file: 'stepfun.md', provider: 'stepfun' }
+      { file: 'stepfun.md', provider: 'stepfun' },
+      { file: 'openrouter.md', provider: 'openrouter' }
     ]
 
     for (const { file, provider } of providerFiles) {
@@ -587,7 +624,9 @@ export function calculateCost(
                   ? QWEN_PRICING
                   : provider === 'stepfun'
                     ? STEPFUN_PRICING
-                    : OPENAI_PRICING
+                    : provider === 'openrouter'
+                      ? OPENROUTER_PRICING
+                      : OPENAI_PRICING
   const pricing = findPricing(model, table)
   return (
     inputTokens * pricing.input +
@@ -663,6 +702,7 @@ function providerLabel(provider: ProviderId): string {
   if (provider === 'xai') return 'xAI'
   if (provider === 'qwen') return 'Qwen'
   if (provider === 'stepfun') return 'Stepfun'
+  if (provider === 'openrouter') return 'OpenRouter'
   return 'OpenAI'
 }
 
