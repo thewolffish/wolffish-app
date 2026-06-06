@@ -2220,6 +2220,25 @@ function StatusBar({
   )
 }
 
+function CloudOffIcon({ size = 24 }: { size?: number }): React.JSX.Element {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.5}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M6.5 19h-1a4.5 4.5 0 0 1-.42-8.98A7 7 0 0 1 18.42 12H19a3 3 0 0 1 2.07 5.17" />
+      <line x1="3" y1="3" x2="21" y2="21" />
+    </svg>
+  )
+}
+
 const CLOUD_PROVIDER_LOGOS: Record<string, React.ComponentType<{ size?: number }>> = {
   anthropic: AnthropicLogo,
   openai: OpenAILogo,
@@ -2250,7 +2269,9 @@ function ModeToggle({
 }): React.JSX.Element {
   const { t } = useTranslation()
 
-  const cloudIcon = (activeCloudProvider && CLOUD_PROVIDER_LOGOS[activeCloudProvider]) || CloudIcon
+  const hasCloudModel = cloudModel !== null
+  const cloudFallback = hasCloudModel ? CloudIcon : CloudOffIcon
+  const cloudIcon = (activeCloudProvider && CLOUD_PROVIDER_LOGOS[activeCloudProvider]) || cloudFallback
   const cloudLabel = activeCloudProvider
     ? t(`settings.model.providers.${activeCloudProvider}`)
     : t('chat.modeToggle.cloud')
@@ -2263,13 +2284,13 @@ function ModeToggle({
     {
       key: 'local',
       label: t('chat.modeToggle.local'),
-      tooltip: localModel ?? t('chat.modeToggle.noModel'),
+      tooltip: localModel || t('chat.modeToggle.noModel'),
       Icon: OllamaLogo
     },
     {
       key: 'cloud',
       label: cloudLabel,
-      tooltip: cloudModel ?? t('chat.modeToggle.noModel'),
+      tooltip: cloudModel || t('chat.modeToggle.noModel'),
       Icon: cloudIcon
     }
   ]

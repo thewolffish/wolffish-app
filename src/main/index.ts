@@ -599,7 +599,7 @@ function createTray(locale: Locale = 'en'): void {
     img.addRepresentation({ scaleFactor: 2, width: 44, height: 44, buffer: img2x.toPNG() })
     img.setTemplateImage(true)
   } else {
-    img = nativeImage.createFromPath(trayIconDefault).resize({ width: 18, height: 18 })
+    img = nativeImage.createFromPath(trayIconDefault).resize({ width: 32, height: 32 })
   }
   tray = new Tray(img)
   tray.setToolTip('Wolffish')

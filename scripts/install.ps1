@@ -18,19 +18,14 @@ $ErrorActionPreference = "Stop"
 $ReleasesBase = "https://releases.wolffi.sh"
 
 function Write-Banner {
-    $cyan = [char]27 + "[36m"
-    $bold = [char]27 + "[1m"
-    $reset = [char]27 + "[0m"
-
     Write-Host ""
-    Write-Host "${cyan}  +--+  +--+  +   +--+ +--+ + +--+ +  +" -NoNewline
-    Write-Host "$reset"
-    Write-Host "${cyan}  |  |  | /|  |   |    |    | |    |  |" -NoNewline
-    Write-Host "$reset"
-    Write-Host "${cyan}  +/\+  +/ |  +-- +--  +--  + +--+ +--+" -NoNewline
-    Write-Host "$reset"
+    Write-Host '  #   # ##### #     ##### ##### ##### ##### #   #' -ForegroundColor Cyan
+    Write-Host '  #   # #   # #     #     #       #   #     #   #' -ForegroundColor Cyan
+    Write-Host '  # # # #   # #     ####  ####    #   ##### #####' -ForegroundColor Cyan
+    Write-Host '  ## ## #   # #     #     #       #       # #   #' -ForegroundColor Cyan
+    Write-Host '  #   # ##### ##### #     #     ##### ##### #   #' -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "  ${bold}Wolffish Installer${reset}"
+    Write-Host "  Wolffish Installer" -ForegroundColor White
     Write-Host ""
 }
 
@@ -48,7 +43,6 @@ function Show-Usage {
     Write-Host "  -Version    Print the latest available version and exit"
     Write-Host ""
     Write-Host "Downloads and installs the latest Wolffish for Windows."
-    exit 0
 }
 
 function Get-Manifest {
@@ -57,9 +51,7 @@ function Get-Manifest {
         $response = Invoke-RestMethod -Uri $Url -UseBasicParsing
         return $response
     } catch {
-        Write-Err "Failed to download manifest from $Url"
-        Write-Err $_.Exception.Message
-        exit 1
+        throw "Failed to download manifest from ${Url}: $($_.Exception.Message)"
     }
 }
 
@@ -105,39 +97,33 @@ function Test-Checksum {
     $expectedHex = -join ($expectedBytes | ForEach-Object { $_.ToString("x2") })
 
     if ($actualHex -ne $expectedHex) {
-        Write-Err "Checksum mismatch!"
-        Write-Err "  Expected: $expectedHex"
-        Write-Err "  Got:      $actualHex"
-        Write-Err "The downloaded file may be corrupted. Aborting."
-        exit 1
+        throw "Checksum mismatch!`n  Expected: $expectedHex`n  Got:      $actualHex`nThe downloaded file may be corrupted."
     }
 
     Write-Ok "Checksum verified"
 }
 
 function Install-Wolffish {
-    if ($Help) { Show-Usage }
+    if ($Help) { Show-Usage; return }
 
     $manifest = Get-Manifest "$ReleasesBase/latest.yml"
 
-    $version = Get-ManifestVersion $manifest
-    if (-not $version) {
-        Write-Err "Could not determine latest version from manifest"
-        exit 1
+    $latestVersion = Get-ManifestVersion $manifest
+    if (-not $latestVersion) {
+        throw "Could not determine latest version from manifest"
     }
 
     if ($Version) {
-        Write-Host $version
-        exit 0
+        Write-Host $latestVersion
+        return
     }
 
     Write-Banner
-    Write-Ok "Latest version: $version"
+    Write-Ok "Latest version: $latestVersion"
 
     $relUrl = Get-ManifestUrl $manifest "exe"
     if (-not $relUrl) {
-        Write-Err "Could not find .exe download URL in manifest"
-        exit 1
+        throw "Could not find .exe download URL in manifest"
     }
 
     $filename = [System.IO.Path]::GetFileName($relUrl)
@@ -167,15 +153,11 @@ function Install-Wolffish {
         Write-Info "Running installer..."
         $process = Start-Process -FilePath $destPath -ArgumentList "/S" -Wait -PassThru
         if ($process.ExitCode -ne 0) {
-            Write-Err "Installer exited with code $($process.ExitCode)"
-            exit 1
+            throw "Installer exited with code $($process.ExitCode)"
         }
 
-        Write-Ok "Wolffish v$version installed successfully!"
+        Write-Ok "Wolffish v$latestVersion installed successfully!"
         Write-Host ""
-    } catch {
-        Write-Err "Installation failed: $($_.Exception.Message)"
-        exit 1
     } finally {
         if (Test-Path $tempDir) {
             Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
@@ -183,4 +165,11 @@ function Install-Wolffish {
     }
 }
 
-Install-Wolffish
+try {
+    Install-Wolffish
+} catch {
+    Write-Err $_.Exception.Message
+}
+
+Write-Host ""
+Read-Host "Press Enter to exit"
