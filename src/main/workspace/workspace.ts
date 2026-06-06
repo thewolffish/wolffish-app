@@ -36,6 +36,7 @@ export type CloudProviderConfig = {
   // successful "Test" in settings. Optional so legacy configs migrate
   // cleanly — an empty cache just means "no list yet, retest to populate".
   models?: string[]
+  reasoningModels?: string[]
 }
 
 export type SafetyConfig = {

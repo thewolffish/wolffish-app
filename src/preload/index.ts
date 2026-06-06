@@ -56,6 +56,7 @@ export type CloudProviderConfig = {
   model: string
   apiKey: string
   models?: string[]
+  reasoningModels?: string[]
 }
 
 export type SafetyConfig = {
