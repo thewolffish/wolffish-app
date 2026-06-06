@@ -98,14 +98,14 @@ jobs:
     runs-on: ubuntu-latest
     environment: Production
     steps:
+      - uses: actions/checkout@v5
+        with:
+          sparse-checkout: scripts
+
       - uses: actions/download-artifact@v7
         with:
           path: artifacts
           merge-multiple: true
-
-      - uses: actions/checkout@v5
-        with:
-          sparse-checkout: scripts
 
       - name: Upload to Cloudflare R2
         env:
