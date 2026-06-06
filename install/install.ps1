@@ -103,6 +103,37 @@ function Test-Checksum {
     Write-Ok "Checksum verified"
 }
 
+function Save-RemoteFile {
+    param([string]$Url, [string]$Dest)
+
+    # Ensure a modern TLS version (PS 5.1 / older .NET can default to TLS 1.0)
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    } catch {}
+
+    # Prefer BITS: fast, resumable, and shows a real progress bar.
+    # Invoke-WebRequest -OutFile is very slow for large binaries on PS 5.1
+    # and appears to hang when the progress bar is suppressed.
+    $bits = Get-Command Start-BitsTransfer -ErrorAction SilentlyContinue
+    if ($bits) {
+        try {
+            Start-BitsTransfer -Source $Url -Destination $Dest -Description "Downloading Wolffish" -ErrorAction Stop
+            return
+        } catch {
+            Write-Warn "BITS transfer unavailable, using direct download..."
+        }
+    }
+
+    # Fallback: WebClient streams straight to disk (fast, low memory, no hang)
+    $client = New-Object System.Net.WebClient
+    try {
+        $client.Headers.Add("User-Agent", "Wolffish-Installer")
+        $client.DownloadFile($Url, $Dest)
+    } finally {
+        $client.Dispose()
+    }
+}
+
 function Install-Wolffish {
     if ($Help) { Show-Usage; return }
 
@@ -139,9 +170,7 @@ function Install-Wolffish {
         }
 
         Write-Info "Downloading $downloadUrl ..."
-        $ProgressPreference = 'SilentlyContinue'
-        Invoke-WebRequest -Uri $downloadUrl -OutFile $destPath -UseBasicParsing
-        $ProgressPreference = 'Continue'
+        Save-RemoteFile $downloadUrl $destPath
         Write-Ok "Download complete"
 
         if ($sha512Base64) {
