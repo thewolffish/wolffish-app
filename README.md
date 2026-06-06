@@ -16,8 +16,27 @@ Built around a 15-module runtime modeled after the human brain, from memory cons
 
 ---
 
+## Install
+
+**macOS / Linux / Windows:**
+
+```bash
+curl -fsSL https://releases.wolffi.sh/install.sh | sh
+```
+
+**Windows (PowerShell):**
+
+```powershell
+irm https://releases.wolffi.sh/install.ps1 | iex
+```
+
+Or download the latest release directly from [wolffi.sh](https://wolffi.sh).
+
+---
+
 ## Table of Contents
 
+- [Install](#install)
 - [Features](#features)
 - [Architecture](#architecture)
 - [The Agent Pipeline](#the-agent-pipeline)
