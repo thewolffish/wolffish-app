@@ -683,6 +683,7 @@ function createWindow(): BrowserWindow {
   })
 
   mainWindow.on('close', (event) => {
+    if (updateInstallInProgress) return
     if (isQuittingFromTray || isShuttingDown) {
       if (quitInProgress) {
         event.preventDefault()
@@ -754,6 +755,7 @@ let pendingDrainResolvers: Array<() => void> = []
 // otherwise a spammed Cmd+Q would let the second event slip past the
 // in-progress drain and kill the process anyway.
 let quitInProgress = false
+let updateInstallInProgress = false
 
 async function trackBackgroundTask<T>(work: () => Promise<T>): Promise<T> {
   pendingBackgroundTasks += 1
@@ -1893,15 +1895,23 @@ app.whenReady().then(async () => {
   )
 
   ipcMain.handle('updater:install', async () => {
-    if (is.dev) return
+    if (is.dev || updateInstallInProgress) return
+    updateInstallInProgress = true
     await stampPreUpdateVersion()
-    // Don't await — shutdownGracefully sets isShuttingDown synchronously
-    // (which the close handler needs), but the async cleanup (bot stop,
-    // WebSocket teardown, etc.) can hang on Windows and block the install.
-    // quitAndInstall force-quits the process anyway.
     void shutdownGracefully()
+    // Grace period: let in-flight work finish, then force through
+    await new Promise((resolve) => setTimeout(resolve, 4_000))
     quitInProgress = false
     installUpdate()
+    // Safety net: force exit if quitAndInstall silently failed
+    setTimeout(() => {
+      wlog.warn('[updater]', 'quitAndInstall did not exit — forcing')
+      if (lockAcquired) {
+        releaseLockSync(lockfilePath())
+        lockAcquired = false
+      }
+      app.exit(0)
+    }, 5_000)
   })
 
   ipcMain.handle('updater:consumePostUpdate', async () => {
@@ -2389,6 +2399,7 @@ app.whenReady().then(async () => {
 
 app.on('before-quit', (event) => {
   isQuittingFromTray = true
+  if (updateInstallInProgress) return
   if (quitInProgress) {
     event.preventDefault()
     return
