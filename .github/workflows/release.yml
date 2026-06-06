@@ -103,6 +103,10 @@ jobs:
           path: artifacts
           merge-multiple: true
 
+      - uses: actions/checkout@v5
+        with:
+          sparse-checkout: scripts
+
       - name: Upload to Cloudflare R2
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
@@ -118,6 +122,8 @@ jobs:
           aws s3 cp --endpoint-url "$R2_ENDPOINT" "./artifacts/latest-mac.yml" "s3://$R2_BUCKET/latest-mac.yml"
           aws s3 cp --endpoint-url "$R2_ENDPOINT" "./artifacts/latest.yml" "s3://$R2_BUCKET/latest.yml"
           aws s3 cp --endpoint-url "$R2_ENDPOINT" "./artifacts/latest-linux.yml" "s3://$R2_BUCKET/latest-linux.yml"
+          aws s3 cp --endpoint-url "$R2_ENDPOINT" "./scripts/install.sh" "s3://$R2_BUCKET/install.sh" --content-type "text/plain"
+          aws s3 cp --endpoint-url "$R2_ENDPOINT" "./scripts/install.ps1" "s3://$R2_BUCKET/install.ps1" --content-type "text/plain"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
@@ -126,4 +132,6 @@ jobs:
             artifacts/*.dmg
             artifacts/*.exe
             artifacts/*.AppImage
+            scripts/install.sh
+            scripts/install.ps1
           generate_release_notes: true
