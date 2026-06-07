@@ -135,11 +135,27 @@ function Save-RemoteFile {
                 $downloaded = 0
             }
 
+            $total = $resp.ContentLength + $downloaded
             $mode = if ($downloaded -gt 0) { [System.IO.FileMode]::Append } else { [System.IO.FileMode]::Create }
             $stream = $resp.GetResponseStream()
             $file = [System.IO.FileStream]::new($Dest, $mode)
+            $buffer = New-Object byte[] 81920
+            $lastPct = -1
             try {
-                $stream.CopyTo($file)
+                while (($n = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+                    $file.Write($buffer, 0, $n)
+                    $downloaded += $n
+                    if ($total -gt 0) {
+                        $pct = [int](($downloaded * 100) / $total)
+                        if ($pct -ne $lastPct) {
+                            $lastPct = $pct
+                            $doneMB = "{0:N1}" -f ($downloaded / 1MB)
+                            $totalMB = "{0:N1}" -f ($total / 1MB)
+                            try { Write-Host ("`r    {0}% - {1}/{2} MB   " -f $pct, $doneMB, $totalMB) -NoNewline -ForegroundColor Cyan } catch {}
+                        }
+                    }
+                }
+                try { Write-Host "" } catch {}
             } finally {
                 $file.Close()
                 $stream.Close()
