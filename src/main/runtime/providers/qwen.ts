@@ -55,16 +55,18 @@ export class QwenProvider {
     if (isReasoningModel(this.model)) {
       body.max_completion_tokens = maxOutput
 
-      // Qwen requires thinking_budget < max_completion_tokens (strictly less).
+      const RESPONSE_RESERVE = 32768
+      const thinkingRoom = maxOutput - RESPONSE_RESERVE
       const mode = options.thinkingMode ?? 'basic'
-      if (mode === 'none') {
+
+      if (mode === 'none' || thinkingRoom <= 0) {
         body.enable_thinking = false
       } else if (mode === 'max') {
         body.enable_thinking = true
-        body.thinking_budget = maxOutput - 1
+        body.thinking_budget = Math.max(4096, thinkingRoom)
       } else {
         body.enable_thinking = true
-        body.thinking_budget = Math.min(10240, maxOutput - 1)
+        body.thinking_budget = Math.min(10240, thinkingRoom)
       }
     } else {
       body.max_tokens = maxOutput
