@@ -111,147 +111,45 @@ function Test-Checksum {
     Write-Ok "Checksum verified"
 }
 
-# Minimal inline progress line, drawn at the bottom (where the cursor is).
-# Best-effort only: callers MUST guard this so a drawing failure never
-# affects the download.
-function Show-DownloadProgress {
-    param([int]$Percent, [long]$Done, [long]$Total)
-    $doneMB = "{0:N1}" -f ($Done / 1MB)
-    if ($Total -gt 0) {
-        $width = 22
-        $fill = [int]($width * $Percent / 100)
-        if ($fill -lt 0) { $fill = 0 } elseif ($fill -gt $width) { $fill = $width }
-        $bar = ('#' * $fill) + ('-' * ($width - $fill))
-        $totalMB = "{0:N1}" -f ($Total / 1MB)
-        $line = "  [$bar] {0,3}%  {1}/{2} MB" -f $Percent, $doneMB, $totalMB
-    } else {
-        $line = "  Downloading...  {0} MB" -f $doneMB
-    }
-    # PadRight clears any leftovers from a previous, longer line.
-    Write-Host ("`r" + $line.PadRight(56)) -ForegroundColor Cyan -NoNewline
-}
-
-# Stream the download to disk in chunks, drawing our own progress line, and
-# transparently RESUME via HTTP Range if the connection stalls or drops
-# mid-transfer (the usual cause of a "hang" — what BITS used to handle for us).
-# A read that delivers no data for 60s is treated as stalled; we reconnect and
-# continue from the byte we reached instead of blocking or restarting at zero.
-# Any unrecoverable failure bubbles up so the caller can fall back.
-function Get-StreamedFile {
-    param([string]$Url, [string]$Dest)
-
-    $file = [System.IO.File]::Create($Dest)
-    $buffer = New-Object byte[] 81920
-    $downloaded = [int64]0
-    $total = [int64](-1)
-    $render = $true
-    $rendered = $false
-    $lastShown = -1
-    $attempt = 0
-    $maxAttempts = 5   # consecutive *no-progress* failures before giving up
-
-    try {
-        while ($true) {
-            $resp = $null
-            $stream = $null
-            $before = $downloaded
-            try {
-                $req = [System.Net.HttpWebRequest]([System.Net.WebRequest]::Create($Url))
-                $req.UserAgent = "Wolffish-Installer"
-                $req.Timeout = 30000           # connect timeout
-                $req.ReadWriteTimeout = 60000  # 60s with no data = stalled
-                if ($downloaded -gt 0) { $req.AddRange($downloaded) }   # resume point
-
-                $resp = $req.GetResponse()
-                $http = [System.Net.HttpWebResponse]$resp
-
-                # Resumed, but the server ignored Range and sent the whole file
-                # (200, not 206): restart cleanly to avoid a corrupt file.
-                if ($downloaded -gt 0 -and $http.StatusCode -ne [System.Net.HttpStatusCode]::PartialContent) {
-                    $file.SetLength(0)
-                    [void]$file.Seek(0, [System.IO.SeekOrigin]::Begin)
-                    $downloaded = 0
-                }
-
-                # Capture full size from the first non-range response.
-                if ($total -lt 0 -and $downloaded -eq 0) {
-                    $total = [int64]$resp.ContentLength
-                }
-
-                $stream = $resp.GetResponseStream()
-                while (($n = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
-                    $file.Write($buffer, 0, $n)
-                    $downloaded += $n
-
-                    # --- progress drawing is fully isolated from the transfer ---
-                    if ($render) {
-                        try {
-                            if ($total -gt 0) {
-                                $pct = [int](($downloaded * 100) / $total)
-                                if ($pct -ne $lastShown) {
-                                    $lastShown = $pct
-                                    Show-DownloadProgress $pct $downloaded $total
-                                    $rendered = $true
-                                }
-                            } else {
-                                $mb = [int]($downloaded / 1MB)
-                                if ($mb -ne $lastShown) {
-                                    $lastShown = $mb
-                                    Show-DownloadProgress -1 $downloaded -1
-                                    $rendered = $true
-                                }
-                            }
-                        } catch {
-                            # Drawing failed (redirected output, no console).
-                            # Stop trying; the download keeps going.
-                            $render = $false
-                        }
-                    }
-                }
-
-                $stream.Close(); $stream = $null
-                $resp.Close();   $resp = $null
-
-                # Complete if we have it all (or length was unknown and the
-                # stream ended cleanly).
-                if ($total -lt 0 -or $downloaded -ge $total) { break }
-                # Server closed early before EOF — loop to resume.
-            } catch {
-                if ($stream) { try { $stream.Close() } catch {} }
-                if ($resp)   { try { $resp.Close() }   catch {} }
-
-                # Reset the counter whenever we made forward progress, so a flaky
-                # link that keeps inching ahead still finishes; only give up after
-                # $maxAttempts consecutive failures that moved zero bytes.
-                if ($downloaded -gt $before) { $attempt = 0 } else { $attempt++ }
-                if ($attempt -ge $maxAttempts) { throw }
-                Start-Sleep -Milliseconds (500 * $attempt)
-            }
-        }
-    } finally {
-        $file.Close()
-        if ($rendered) { try { Write-Host "" } catch {} }  # end the progress line
-    }
-}
-
 function Save-RemoteFile {
     param([string]$Url, [string]$Dest)
-
-    try {
-        # Primary: resumable streamed download with our own bottom progress bar.
-        Get-StreamedFile $Url $Dest
-    } catch {
-        # Last resort if the streamed path errors for a real network/IO reason
-        # (display errors can't reach here — they're swallowed inside the loop).
-        # A plain WebClient is a separate, dependable code path, and
-        # HttpWebRequest's default 5-min ReadWriteTimeout stops it hanging
-        # forever. It overwrites any partial file from the failed attempt.
-        $client = New-Object System.Net.WebClient
+    $maxRetries = 5
+    for ($i = 1; $i -le $maxRetries; $i++) {
         try {
-            $client.Headers.Add("User-Agent", "Wolffish-Installer")
-            $client.DownloadFile($Url, $Dest)
-        } finally {
-            $client.Dispose()
+            $req = [System.Net.HttpWebRequest]([System.Net.WebRequest]::Create($Url))
+            $req.UserAgent = "Wolffish-Installer"
+            $req.Timeout = 30000
+            $req.ReadWriteTimeout = 30000
+
+            # Resume from partial file if a previous attempt was interrupted
+            $downloaded = 0L
+            if (Test-Path $Dest) {
+                $downloaded = (Get-Item $Dest).Length
+                if ($downloaded -gt 0) { $req.AddRange($downloaded) }
+            }
+
+            $resp = $req.GetResponse()
+
+            # Server ignored Range (200 instead of 206) — start over
+            if ($downloaded -gt 0 -and ([System.Net.HttpWebResponse]$resp).StatusCode -ne [System.Net.HttpStatusCode]::PartialContent) {
+                $downloaded = 0
+            }
+
+            $mode = if ($downloaded -gt 0) { [System.IO.FileMode]::Append } else { [System.IO.FileMode]::Create }
+            $stream = $resp.GetResponseStream()
+            $file = [System.IO.FileStream]::new($Dest, $mode)
+            try {
+                $stream.CopyTo($file)
+            } finally {
+                $file.Close()
+                $stream.Close()
+                $resp.Close()
+            }
+            return
+        } catch {
+            if ($i -eq $maxRetries) { throw }
+            Write-Warn "Download interrupted, retrying ($i/$maxRetries)..."
+            Start-Sleep -Seconds (3 * $i)
         }
     }
 }

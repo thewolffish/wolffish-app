@@ -77,9 +77,13 @@ download_file() {
   local url="$1" dest="$2"
   info "Downloading from $url ..."
   if command -v curl >/dev/null 2>&1; then
-    curl -fSL --progress-bar -o "$dest" "$url" || die "Download failed: $url"
+    curl -fSL --progress-bar -o "$dest" "$url" \
+      --retry 5 --retry-delay 3 --retry-connrefused -C - \
+      || die "Download failed: $url"
   elif command -v wget >/dev/null 2>&1; then
-    wget --show-progress -qO "$dest" "$url" || die "Download failed: $url"
+    wget --show-progress -qO "$dest" "$url" \
+      --tries=5 --wait=3 -c \
+      || die "Download failed: $url"
   fi
 }
 
