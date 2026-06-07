@@ -142,12 +142,13 @@ export function Chat(): React.JSX.Element {
   // Persist via API — the source of truth is persistedThinkingModes, which
   // updates reactively through status once the write completes.
   const setThinkingMode = useCallback(
-    (mode: string) => {
+    async (mode: string) => {
       if (activeCloudModel) {
-        void window.api.runtime.setThinkingMode(activeCloudModel, mode as ThinkingMode)
+        await window.api.runtime.setThinkingMode(activeCloudModel, mode as ThinkingMode)
+        await refreshStatus()
       }
     },
-    [activeCloudModel]
+    [activeCloudModel, refreshStatus]
   )
 
   const thinkingModeOptions = useMemo<ThinkingModeOption[]>(() => {
@@ -2271,7 +2272,8 @@ function ModeToggle({
 
   const hasCloudModel = cloudModel !== null
   const cloudFallback = hasCloudModel ? CloudIcon : CloudOffIcon
-  const cloudIcon = (activeCloudProvider && CLOUD_PROVIDER_LOGOS[activeCloudProvider]) || cloudFallback
+  const cloudIcon =
+    (activeCloudProvider && CLOUD_PROVIDER_LOGOS[activeCloudProvider]) || cloudFallback
   const cloudLabel = activeCloudProvider
     ? t(`settings.model.providers.${activeCloudProvider}`)
     : t('chat.modeToggle.cloud')
