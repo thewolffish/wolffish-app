@@ -321,11 +321,18 @@ export class Thalamus {
   }
 
   /**
-   * Token budget for context assembly. Equal to the full context window
-   * since output tokens are counted separately by the API.
+   * Token budget for context assembly. Subtracts the model's output ceiling
+   * from the context window so the combined input+max_tokens never exceeds
+   * the model's limit. For Anthropic (separate input/output budgets) the
+   * deduction is zero.
    */
   getContextBudget(): number {
-    return this.getActiveContextWindow()
+    const cascade = this.buildCascade()
+    if (cascade.length === 0) return 8_000
+    const model = cascade[0].model
+    const window = contextWindowForModel(model)
+    const outputReserve = maxOutputForModel(model)
+    return Math.max(window - outputReserve, Math.floor(window * 0.5))
   }
 
   /**
@@ -880,8 +887,65 @@ function contextWindowForModel(model: string): number {
   if (m.includes('gpt-4.1')) return 1_000_000
   if (m.includes('gpt-4o')) return 128_000
   if (m.includes('gpt-4')) return 128_000
+  if (m.includes('o1-mini')) return 128_000
+  if (m.includes('o1')) return 128_000
   if (m.includes('o3') || m.includes('o4')) return 200_000
+  if (m.includes('gpt-3.5')) return 16_000
   return 8_000
+}
+
+/**
+ * Max output tokens (max_tokens / max_completion_tokens) that the provider
+ * sends for a given model. Used by getContextBudget() to reserve space.
+ * For Anthropic the input/output budgets are independent so this returns 0.
+ */
+function maxOutputForModel(model: string): number {
+  const m = model.toLowerCase()
+  // Anthropic — input and output windows are separate
+  if (m.includes('opus-4') || m.includes('sonnet-4') || m.includes('haiku-4')) return 0
+  if (m.includes('claude')) return 0
+  if (/3\.[57]-(sonnet|haiku)/.test(m)) return 0
+  // DeepSeek
+  if (m.includes('deepseek-v4')) return 32_768
+  // Xiaomi Mimo
+  if (m.includes('mimo-v2.5-pro')) return 65_536
+  if (m.includes('mimo')) return 32_768
+  // Kimi / Moonshot
+  if (m.includes('kimi-k2')) return 65_536
+  if (m.includes('moonshot-v1-128k')) return 16_384
+  if (m.includes('moonshot-v1-32k')) return 8_192
+  if (m.includes('moonshot-v1-8k')) return 4_096
+  if (m.includes('moonshot')) return 8_192
+  // MiniMax
+  if (m.includes('minimax-m3')) return 65_536
+  if (m.includes('minimax-m2')) return 32_768
+  // Qwen
+  if (m.includes('qwen3.7') || m.includes('qwen3.6') || m.includes('qwen3.5')) return 65_536
+  if (m.includes('qwen3')) return 32_768
+  if (m.includes('qwen-plus')) return 32_768
+  if (m.includes('qwen')) return 8_192
+  // Stepfun
+  if (m.includes('step-3')) return 32_768
+  if (m.includes('step-2') || m.includes('step-1')) return 8_192
+  // xAI / Grok
+  if (m.includes('grok-4.3') || m.includes('grok-4.20')) return 65_536
+  if (m.includes('grok-4') || m.includes('grok-build')) return 32_768
+  if (m.includes('grok')) return 32_768
+  // OpenAI
+  if (m.includes('gpt-5')) return 65_536
+  if (m.includes('gpt-4.1')) return 32_768
+  if (m.includes('gpt-4o') || m.includes('gpt-4')) return 16_384
+  if (m.includes('o1')) return 32_768
+  if (m.includes('o3') || m.includes('o4')) return 65_536
+  // OpenRouter prefixed models — match provider slug patterns
+  if (m.includes('anthropic/')) return 0
+  if (m.includes('openai/gpt-5')) return 65_536
+  if (m.includes('openai/o3') || m.includes('openai/o4')) return 65_536
+  if (m.includes('openai/gpt-4.1')) return 32_768
+  if (m.includes('openai/gpt-4o')) return 16_384
+  if (m.includes('deepseek/')) return 32_768
+  if (m.includes('google/gemini')) return 65_536
+  return 32_768
 }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<boolean> {

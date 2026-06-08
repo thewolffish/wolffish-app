@@ -15,12 +15,12 @@ const OPENAI_ENDPOINT = 'https://api.openai.com/v1/chat/completions'
 // conservative cap.
 function maxTokensFor(model: string): number {
   const m = model.toLowerCase()
-  if (m.startsWith('gpt-5')) return 128000
+  if (m.startsWith('gpt-5')) return 65536
   if (m.startsWith('gpt-4.1')) return 32768
   if (m.startsWith('gpt-4o')) return 16384
-  if (m.startsWith('o4')) return 100000
-  if (m.startsWith('o3')) return 100000
-  if (m.startsWith('o1-mini')) return 65536
+  if (m.startsWith('o4')) return 65536
+  if (m.startsWith('o3')) return 65536
+  if (m.startsWith('o1-mini')) return 32768
   if (m.startsWith('o1')) return 32768
   if (m.startsWith('gpt-4-turbo')) return 4096
   if (m.startsWith('gpt-4')) return 8192

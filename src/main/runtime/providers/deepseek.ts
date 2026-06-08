@@ -11,8 +11,8 @@ const DEEPSEEK_ENDPOINT = 'https://api.deepseek.com/chat/completions'
 
 function maxTokensFor(model: string): number {
   const m = model.toLowerCase()
-  if (m.includes('v4-pro')) return 384_000
-  if (m.includes('v4-flash')) return 384_000
+  if (m.includes('v4-pro')) return 32768
+  if (m.includes('v4-flash')) return 32768
   return 16384
 }
 

@@ -11,18 +11,18 @@ const OPENROUTER_ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions'
 
 function maxTokensFor(model: string): number {
   const m = model.toLowerCase()
-  if (m.includes('claude-opus') || m.includes('claude-sonnet')) return 128000
-  if (m.includes('gpt-5')) return 128000
+  if (m.includes('claude-opus') || m.includes('claude-sonnet')) return 32768
+  if (m.includes('gpt-5')) return 65536
   if (m.includes('gpt-4o')) return 16384
   if (m.includes('gpt-4.1')) return 32768
   if (m.includes('/o4') || m.includes('/o3') || m.startsWith('o4') || m.startsWith('o3'))
-    return 100000
-  if (m.includes('deepseek')) return 65536
-  if (m.includes('grok')) return 131072
+    return 65536
+  if (m.includes('deepseek')) return 32768
+  if (m.includes('grok')) return 32768
   if (m.includes('gemini')) return 65536
   if (m.includes('llama')) return 16384
-  if (m.includes('qwen')) return 65536
-  if (m.includes('mistral')) return 65536
+  if (m.includes('qwen')) return 32768
+  if (m.includes('mistral')) return 32768
   return 16384
 }
 

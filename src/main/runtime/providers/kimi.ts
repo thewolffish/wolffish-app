@@ -13,7 +13,8 @@ function maxCompletionTokens(model: string): number {
   const m = model.toLowerCase()
   if (m.includes('k2')) return 65536
   if (m.includes('128k')) return 16384
-  if (m.includes('32k')) return 16384
+  if (m.includes('32k')) return 8192
+  if (m.includes('8k')) return 4096
   return 8192
 }
 
