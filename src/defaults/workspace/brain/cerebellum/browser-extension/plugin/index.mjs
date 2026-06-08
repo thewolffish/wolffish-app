@@ -90,7 +90,12 @@ const toolDefinitions = [
   { name: 'ext_wait_for', description: 'Wait for an element to appear.', parameters: { type: 'object', properties: { selector: { type: 'string' }, timeout: { type: 'number' }, visible: { type: 'boolean' }, tabId: { type: 'number' } }, required: ['selector'] } },
   { name: 'ext_wait_for_navigation', description: 'Wait for page navigation.', parameters: { type: 'object', properties: { timeout: { type: 'number' }, tabId: { type: 'number' } }, required: [] } },
   { name: 'ext_wait_for_network_idle', description: 'Wait for network to settle.', parameters: { type: 'object', properties: { timeout: { type: 'number' }, idleTime: { type: 'number' }, tabId: { type: 'number' } }, required: [] } },
-  { name: 'ext_notify', description: 'Show a browser notification.', parameters: { type: 'object', properties: { title: { type: 'string' }, message: { type: 'string' }, iconUrl: { type: 'string' } }, required: ['title', 'message'] } }
+  { name: 'ext_notify', description: 'Show a browser notification.', parameters: { type: 'object', properties: { title: { type: 'string' }, message: { type: 'string' }, iconUrl: { type: 'string' } }, required: ['title', 'message'] } },
+  { name: 'ext_debugger_attach', description: 'Attach Chrome debugger to a tab for trusted input events.', parameters: { type: 'object', properties: { tabId: { type: 'number' } }, required: ['tabId'] } },
+  { name: 'ext_debugger_detach', description: 'Detach the debugger from the currently attached tab.', parameters: { type: 'object', properties: {}, required: [] } },
+  { name: 'ext_debugger_status', description: 'Check whether the debugger is attached and to which tab.', parameters: { type: 'object', properties: {}, required: [] } },
+  { name: 'ext_mouse_move', description: 'Move cursor to coordinates along a bezier curve path.', parameters: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' }, tabId: { type: 'number' } }, required: ['x', 'y'] } },
+  { name: 'ext_humanize', description: 'Inject a random human micro-action between real actions.', parameters: { type: 'object', properties: { intensity: { type: 'string' }, tabId: { type: 'number' } }, required: [] } }
 ]
 
 const plugin = {

@@ -8,7 +8,7 @@
       "strict_min_version": "109.0"
     }
   },
-  "version": "0.1.36",
+  "version": "0.1.39",
   "description": "__MSG_extensionDescription__",
   "host_permissions": [
     "<all_urls>"
@@ -25,7 +25,8 @@
     "clipboardRead",
     "clipboardWrite",
     "webNavigation",
-    "sidePanel"
+    "sidePanel",
+    "debugger"
   ],
   "background": {
     "service_worker": "background.js",

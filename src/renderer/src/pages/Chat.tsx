@@ -1260,7 +1260,7 @@ export function Chat(): React.JSX.Element {
         </div>
         <div
           className={cn(
-            'mx-auto flex max-w-2xl flex-col gap-4',
+            'mx-auto flex max-w-3xl flex-col gap-4',
             !hasMessages && 'h-full justify-center'
           )}
         >
@@ -1771,8 +1771,8 @@ function UserBubble({
         </div>
       ) : (
         hasContent && (
-          <div className="bg-primary text-primary-fg max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap wrap-break-word">
-            {content}
+          <div className="bg-primary text-primary-fg max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed wrap-break-word [&_h1]:text-inherit [&_h2]:text-inherit [&_h3]:text-inherit [&_h4]:text-inherit [&_code]:text-inherit [&_code]:bg-primary-fg/15 [&_pre_pre]:bg-primary-fg/10 [&_pre_pre]:text-inherit [&_pre_pre]:border-primary-fg/20 [&_a]:text-primary-fg [&_blockquote]:text-inherit [&_blockquote]:border-primary-fg/40 [&_table]:border-primary-fg/20 [&_th]:border-primary-fg/20 [&_td]:border-primary-fg/20 [&_thead]:bg-primary-fg/10 [&_hr]:border-primary-fg/30">
+            <Markdown content={content} />
           </div>
         )
       )}

@@ -940,7 +940,7 @@
         "supported": "Supported",
         "notSupported": "Not supported",
         "actionsTitle": "Available Actions",
-        "actionsSubtitle": "44 tools the agent can use when the extension is connected.",
+        "actionsSubtitle": "46 tools the agent can use when the extension is connected.",
         "actions": {
           "navigation": {
             "category": "Navigation"
@@ -1003,7 +1003,21 @@
           "ext_wait_for": "Wait for an element to appear",
           "ext_wait_for_navigation": "Wait for page navigation",
           "ext_wait_for_network_idle": "Wait for network to settle",
-          "ext_notify": "Show a browser notification"
+          "ext_notify": "Show a browser notification",
+          "ext_debugger_attach": "Attach debugger for trusted input events",
+          "ext_debugger_detach": "Detach debugger from tab",
+          "ext_debugger_status": "Check debugger attachment state",
+          "ext_mouse_move": "Move cursor with bezier path",
+          "ext_humanize": "Inject random human micro-action"
+        },
+        "debuggerMode": {
+          "title": "Debugger Mode",
+          "body": "Wolffish uses Chrome's debugger API to simulate human-like browser interactions (clicks, typing, scrolling) that are indistinguishable from real user input. This works automatically on all Chromium-based browsers — Chrome, Brave, Edge, Arc, Opera, and Vivaldi. No setup is required.",
+          "infobarNote": "When debugger mode is active, a yellow infobar saying \"Extension is debugging this page\" may appear at the top of the tab. This is a standard Chrome notification and is purely cosmetic — it does not affect functionality. To hide it, launch your browser with the following flag:",
+          "tipLabel": "Tip:",
+          "tipText": "Create a separate browser shortcut with this flag for Wolffish automation sessions.",
+          "notSupportedLabel": "Not supported:",
+          "notSupportedText": "Firefox and Safari do not support the debugger extension API. Debugger mode is Chromium-only."
         }
       }
     },

@@ -13,7 +13,7 @@ import chromiumIcon from '@renderer/assets/browsers/chromium.svg'
 import edgeIcon from '@renderer/assets/browsers/edge.svg'
 import firefoxIcon from '@renderer/assets/browsers/firefox.svg'
 import safariIcon from '@renderer/assets/browsers/safari.svg'
-import { FolderOpenIcon, Tick02Icon } from 'hugeicons-react'
+import { ArrowDown01Icon, FolderOpenIcon, Tick02Icon } from 'hugeicons-react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -93,7 +93,12 @@ const ACTIONS = [
       'ext_wait_for',
       'ext_wait_for_navigation',
       'ext_wait_for_network_idle',
-      'ext_notify'
+      'ext_notify',
+      'ext_debugger_attach',
+      'ext_debugger_detach',
+      'ext_debugger_status',
+      'ext_mouse_move',
+      'ext_humanize'
     ]
   }
 ]
@@ -111,6 +116,7 @@ export function BrowserExtensionPanel(): React.JSX.Element {
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<'success' | 'failed' | null>(null)
   const [everConnected, setEverConnected] = useState(false)
+  const [debuggerGuideOpen, setDebuggerGuideOpen] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -511,6 +517,84 @@ export function BrowserExtensionPanel(): React.JSX.Element {
             )}
           </section>
         )}
+
+        {/* Debugger Mode Guide */}
+        <section className="bg-surface border-border flex flex-col rounded-2xl border">
+          <button
+            type="button"
+            onClick={() => setDebuggerGuideOpen((v) => !v)}
+            className="flex w-full cursor-pointer items-center justify-between p-5"
+          >
+            <h2 className="text-fg text-sm font-semibold">
+              {t('settings.services.browserExtension.debuggerMode.title')}
+            </h2>
+            <ArrowDown01Icon
+              size={16}
+              className={cn(
+                'text-muted shrink-0 transition-transform duration-200',
+                debuggerGuideOpen && 'rotate-180'
+              )}
+            />
+          </button>
+          <div
+            className={cn(
+              'grid transition-[grid-template-rows,opacity] duration-200 ease-out',
+              debuggerGuideOpen ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'
+            )}
+          >
+            <div className="overflow-hidden">
+              <div className="flex flex-col gap-4 px-5 pb-5 pt-0">
+                <p className="text-muted text-sm leading-relaxed">
+                  {t('settings.services.browserExtension.debuggerMode.body')}
+                </p>
+                <div className="bg-bg rounded-lg p-4">
+                  <p className="text-muted text-xs leading-relaxed">
+                    {t('settings.services.browserExtension.debuggerMode.infobarNote')}
+                  </p>
+                  <div className="mt-3 flex flex-col gap-2">
+                    <div className="flex flex-col gap-1">
+                      <span className="text-muted text-[10px] font-semibold uppercase tracking-wider">
+                        macOS
+                      </span>
+                      <code className="text-fg bg-surface rounded px-2 py-1 text-[11px] font-mono break-all">
+                        open -a &quot;Google Chrome&quot; --args --silent-debugger-extension-api
+                      </code>
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <span className="text-muted text-[10px] font-semibold uppercase tracking-wider">
+                        Windows
+                      </span>
+                      <code className="text-fg bg-surface rounded px-2 py-1 text-[11px] font-mono break-all">
+                        &quot;C:\Program Files\Google\Chrome\Application\chrome.exe&quot;
+                        --silent-debugger-extension-api
+                      </code>
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <span className="text-muted text-[10px] font-semibold uppercase tracking-wider">
+                        Linux
+                      </span>
+                      <code className="text-fg bg-surface rounded px-2 py-1 text-[11px] font-mono break-all">
+                        google-chrome --silent-debugger-extension-api
+                      </code>
+                    </div>
+                  </div>
+                </div>
+                <p className="text-muted text-xs leading-relaxed">
+                  <span className="font-semibold">
+                    {t('settings.services.browserExtension.debuggerMode.tipLabel')}
+                  </span>{' '}
+                  {t('settings.services.browserExtension.debuggerMode.tipText')}
+                </p>
+                <p className="text-muted text-xs leading-relaxed">
+                  <span className="font-semibold">
+                    {t('settings.services.browserExtension.debuggerMode.notSupportedLabel')}
+                  </span>{' '}
+                  {t('settings.services.browserExtension.debuggerMode.notSupportedText')}
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
 
         {/* Actions Table */}
         <section className="bg-surface border-border flex flex-col rounded-2xl border">

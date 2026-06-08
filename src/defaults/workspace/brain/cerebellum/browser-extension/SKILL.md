@@ -629,6 +629,46 @@ tools:
         type: string
         description: URL of the notification icon.
         required: false
+  # Debugger Mode
+  - name: ext_debugger_attach
+    description: 'Attach Chrome debugger to a tab for trusted input events (isTrusted: true). All subsequent interactions on that tab use CDP instead of content scripts.'
+    parameters:
+      tabId:
+        type: number
+        description: ID of the tab to attach the debugger to.
+  - name: ext_debugger_detach
+    description: Detach the debugger from the currently attached tab. No-op if nothing is attached.
+    parameters: {}
+  - name: ext_debugger_status
+    description: Check whether the debugger is currently attached and to which tab.
+    parameters: {}
+  # Mouse Move
+  - name: ext_mouse_move
+    description: Move the cursor to target coordinates along a bezier curve path. In debugger mode, produces real mouse movement events.
+    parameters:
+      x:
+        type: number
+        description: Target X coordinate (pixels from left).
+      y:
+        type: number
+        description: Target Y coordinate (pixels from top).
+      tabId:
+        type: number
+        description: Target tab.
+        required: false
+  # Humanize
+  - name: ext_humanize
+    description: Inject a single random human-like micro-action (pause, scroll, cursor drift) between real actions to break robotic patterns.
+    parameters:
+      intensity:
+        type: string
+        description: How pronounced the micro-action should be.
+        enum: [light, moderate, heavy]
+        required: false
+      tabId:
+        type: number
+        description: Target tab.
+        required: false
 danger_patterns:
   - pattern: 'ext_execute_js\s.*document\.cookie'
     level: block
@@ -645,7 +685,7 @@ confirm_patterns:
     reason: Modifying browser cookies
   - pattern: 'ext_navigate\s.*(?:bank|paypal|venmo|stripe\.com|checkout|payment)'
     reason: Navigating to a financial or payment site
-version: 1.0.0
+version: 1.1.0
 ---
 
 # Browser Extension
@@ -673,6 +713,43 @@ Don't navigate away from the user's current tab. If the task involves looking so
 ## Screenshots
 
 `ext_screenshot` returns the image inline. Use `fullPage: true` for full scrollable page captures, or `selector` for a specific element.
+
+## Debugger Mode
+
+Before any interaction sequence on a webpage, call `ext_debugger_status` to check current state.
+
+If no debugger is attached and you need to interact with the page (click, scroll, type, move cursor), call `ext_debugger_attach` with the target tab's tabId first. If attach fails, proceed without it — all interaction commands fall back to content script mode automatically.
+
+When you are done with all browser interactions for the current turn, call `ext_debugger_detach`. Always detach. Never leave the debugger attached between turns.
+
+Debugger mode makes all interactions use trusted browser input events identical to real human input. Always prefer it for any page where detection matters — social media platforms, banking sites, or any page that may check for automated input.
+
+The sequence is always: `ext_debugger_status` → `ext_debugger_attach` (if needed) → do your work → `ext_debugger_detach`.
+
+## Humanize
+
+When interacting with social media platforms, e-commerce sites, or any page that may detect automation, call the `ext_humanize` command BETWEEN your real actions.
+
+Do not call humanize before your first action or after your last action. Call it between actions. Example flow:
+
+1. ext_click (on comment menu)
+2. ext_humanize
+3. ext_click (on delete button)
+4. ext_humanize
+5. ext_scroll (to next comment)
+6. ext_click (on comment menu)
+7. ext_humanize
+8. ext_click (on delete button)
+
+Use intensity `light` for fast tasks with few actions. Use `moderate` for longer sequences. Use `heavy` only when interacting with platforms known for aggressive bot detection.
+
+Humanize is not needed for DOM reading, screenshots, or non-interaction commands. Only use it between physical interaction commands (click, type, scroll, mouse_move).
+
+## Typing Behavior
+
+In debugger mode, text input is automatically streamed character by character with natural keystroke timing. You do not need to do anything special — the `ext_type` command handles this internally.
+
+For long text input (more than a sentence), call `ext_humanize` with `light` intensity midway through if the text is being entered across multiple type commands.
 
 ## Safety
 
