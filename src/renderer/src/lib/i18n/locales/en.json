@@ -1275,6 +1275,15 @@
         "denied": "Denied"
       }
     },
+    "compactionCard": {
+      "title": "Context compacted",
+      "summary": "{{count}} message compacted, ~{{tokens}} tokens saved",
+      "summary_plural": "{{count}} messages compacted, ~{{tokens}} tokens saved",
+      "detail": "{{tool}}: {{from}} → {{to}} chars ({{pct}}% smaller, via {{model}})",
+      "detailTruncated": "{{tool}}: {{from}} → {{to}} chars ({{pct}}% smaller, truncated)",
+      "targetAssistant": "assistant message",
+      "targetUser": "user message"
+    },
     "turnFooter": {
       "error": "Connection error"
     },

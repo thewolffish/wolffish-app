@@ -997,6 +997,21 @@ export class WhatsAppChannel {
       return
     }
 
+    if (segment.kind === 'compaction') {
+      const saved =
+        segment.tokensSaved >= 1000
+          ? `${Math.round(segment.tokensSaved / 1000)}k`
+          : String(segment.tokensSaved)
+      const model = segment.details[0]?.compactedBy
+      const via = model && model !== 'truncate' ? ` via ${model}` : ''
+      const msg =
+        `🗜️ *Context compacted* — ${segment.targetsCount}` +
+        ` message${segment.targetsCount !== 1 ? 's' : ''} compacted, ` +
+        `~${saved} tokens saved${via}`
+      await this.safeSend(jid, msg)
+      return
+    }
+
     if (segment.kind === 'turn_end') {
       active.stopReason = segment.stopReason
       active.pendingActiveModel = null

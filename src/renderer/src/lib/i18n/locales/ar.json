@@ -1224,6 +1224,15 @@
         "denied": "مرفوض"
       }
     },
+    "compactionCard": {
+      "title": "تم ضغط السياق",
+      "summary": "تم ضغط رسالة واحدة، ~{{tokens}} رمز تم توفيره",
+      "summary_plural": "تم ضغط {{count}} رسائل، ~{{tokens}} رمز تم توفيره",
+      "detail": "{{tool}}: {{from}} → {{to}} chars ({{pct}}% smaller, via {{model}})",
+      "detailTruncated": "{{tool}}: {{from}} → {{to}} chars ({{pct}}% smaller, truncated)",
+      "targetAssistant": "رسالة المساعد",
+      "targetUser": "رسالة المستخدم"
+    },
     "turnFooter": {
       "error": "خطأ في الاتصال"
     },

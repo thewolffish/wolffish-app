@@ -280,6 +280,7 @@ export type ChatTurnEvent = {
     | 'safety.blocked'
     | 'safety.approved'
     | 'safety.denied'
+    | 'compaction.applied'
   payload: Record<string, unknown>
 }
 

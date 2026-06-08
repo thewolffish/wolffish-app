@@ -1595,6 +1595,21 @@ export class TelegramChannel {
       return
     }
 
+    if (segment.kind === 'compaction') {
+      const saved =
+        segment.tokensSaved >= 1000
+          ? `${Math.round(segment.tokensSaved / 1000)}k`
+          : String(segment.tokensSaved)
+      const model = segment.details[0]?.compactedBy
+      const via = model && model !== 'truncate' ? ` via ${escapeHtml(model)}` : ''
+      const html =
+        `🗜️ <b>Context compacted</b> — ${segment.targetsCount}` +
+        ` message${segment.targetsCount !== 1 ? 's' : ''} compacted, ` +
+        `~${saved} tokens saved${via}`
+      await this.sendHtml(chatId, html)
+      return
+    }
+
     if (segment.kind === 'turn_end') {
       active.stopReason = segment.stopReason
       // Flush any remaining text. onDone is also called by the runner

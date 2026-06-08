@@ -1,4 +1,5 @@
 import { ActiveModelChip } from '@components/common/active-model-chip/ActiveModelChip'
+import { CompactionCard } from '@components/common/compaction-card/CompactionCard'
 import { ApprovalCard } from '@components/common/approval-card/ApprovalCard'
 import { AttachmentList } from '@components/common/attachment-list/AttachmentList'
 import { AudioPlayer } from '@components/common/audio-player/AudioPlayer'
@@ -670,12 +671,19 @@ export function Chat(): React.JSX.Element {
     const offTurnEvent = window.api.chat.onTurnEvent(({ turnId, type, payload }) => {
       if (pendingTurnIdRef.current !== turnId) return
       if (type === 'context.built') {
-        if (typeof payload.tokenBudget === 'number') setContextBudget(payload.tokenBudget)
+        // Show the full model context window (e.g. 1M) instead of the
+        // discounted token budget that reserves space for output tokens.
+        const cw = modelContextWindowRef.current
+        if (typeof payload.tokenBudget === 'number') {
+          setContextBudget(cw && cw > 8_000 ? cw : payload.tokenBudget)
+        }
       } else if (type === 'llm.response') {
         const uncached = typeof payload.inputTokens === 'number' ? payload.inputTokens : 0
         const cacheRead = typeof payload.cacheReadTokens === 'number' ? payload.cacheReadTokens : 0
         const cacheCreated =
           typeof payload.cacheCreationTokens === 'number' ? payload.cacheCreationTokens : 0
+        // With in-place compaction the compacted context IS the real
+        // context — the meter reflects what was actually sent to the model.
         setContextTokens(uncached + cacheRead + cacheCreated)
         if (typeof payload.inputTokens === 'number') {
           const v = payload.inputTokens
@@ -828,6 +836,7 @@ export function Chat(): React.JSX.Element {
       setOutputTokens(0)
       setCacheReadTokens(0)
 
+
       const response = await window.api.chat.send({
         history,
         conversationId,
@@ -963,6 +972,7 @@ export function Chat(): React.JSX.Element {
       setInputTokens(0)
       setOutputTokens(0)
       setCacheReadTokens(0)
+
 
       const response = await window.api.chat.send({
         history,
@@ -1675,27 +1685,38 @@ export function Chat(): React.JSX.Element {
   )
 }
 
-function relativeTime(ts: number): string {
+function relativeTime(ts: number, locale: string): string {
   const diff = Date.now() - ts
   const s = Math.floor(diff / 1000)
-  if (s < 5) return 'just now'
-  if (s < 60) return `${s}s ago`
   const m = Math.floor(s / 60)
-  if (m < 60) return `${m}m ago`
   const h = Math.floor(m / 60)
-  if (h < 24) return `${h}h ago`
   const d = Math.floor(h / 24)
-  return `${d}d ago`
+
+  try {
+    const rtf = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' })
+    if (d > 0) return rtf.format(-d, 'day')
+    if (h > 0) return rtf.format(-h, 'hour')
+    if (m > 0) return rtf.format(-m, 'minute')
+    if (s < 5) return rtf.format(0, 'second') // "now" / "الآن"
+    return rtf.format(-s, 'second')
+  } catch {
+    if (d > 0) return `${d}d ago`
+    if (h > 0) return `${h}h ago`
+    if (m > 0) return `${m}m ago`
+    if (s < 5) return 'just now'
+    return `${s}s ago`
+  }
 }
 
 function useRelativeTime(ts: number | undefined): string | null {
+  const { i18n } = useTranslation()
   const [, setTick] = useState(0)
   useEffect(() => {
     if (!ts) return
     const id = setInterval(() => setTick((t) => t + 1), 30_000)
     return () => clearInterval(id)
   }, [ts])
-  return ts ? relativeTime(ts) : null
+  return ts ? relativeTime(ts, i18n.language) : null
 }
 
 function ChatItem({
@@ -2088,6 +2109,17 @@ function renderSegments(
       if (!hasFollowingContent(segments, segIdx)) continue
       flushText()
       blocks.push(<ActiveModelChip key={seg.segmentId} provider={seg.to} model={seg.model} />)
+    } else if (seg.kind === 'compaction') {
+      flushText()
+      blocks.push(
+        <CompactionCard
+          key={seg.segmentId}
+          targetsCount={seg.targetsCount}
+          tokensSaved={seg.tokensSaved}
+          durationMs={seg.durationMs}
+          details={seg.details}
+        />
+      )
     } else if (seg.kind === 'turn_end') {
       flushText()
       if (seg.stopReason === 'no_provider_available' && seg.providerErrors?.length) {

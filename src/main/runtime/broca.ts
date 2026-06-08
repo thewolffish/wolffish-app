@@ -71,6 +71,25 @@ export type Segment =
       reasoningContent?: string
     }
   | { kind: 'separator'; turnId: string; segmentId: string }
+  | {
+      kind: 'compaction'
+      turnId: string
+      segmentId: string
+      /** Number of tool results that were compacted. */
+      targetsCount: number
+      /** Total tokens reclaimed by compaction. */
+      tokensSaved: number
+      /** How long the compaction took in milliseconds. */
+      durationMs: number
+      /** Per-target details for the card. */
+      details: Array<{
+        toolName?: string
+        originalChars: number
+        compactedChars: number
+        /** Model name that performed the compaction (or 'truncate'). */
+        compactedBy: string
+      }>
+    }
 
 export type SegmentSink = (segment: Segment) => void
 
@@ -266,6 +285,34 @@ export class Broca {
   emitSeparator(turnId: string): void {
     if (this.turnId !== turnId || !this.sink) return
     this.emit({ kind: 'separator', turnId, segmentId: this.nextId() })
+  }
+
+  /**
+   * Emit a compaction card so the renderer can show the user that context
+   * was intelligently summarized before this LLM call.
+   */
+  emitCompaction(
+    turnId: string,
+    targetsCount: number,
+    tokensSaved: number,
+    durationMs: number,
+    details: Array<{
+      toolName?: string
+      originalChars: number
+      compactedChars: number
+      compactedBy: string
+    }>
+  ): void {
+    if (this.turnId !== turnId || !this.sink) return
+    this.emit({
+      kind: 'compaction',
+      turnId,
+      segmentId: this.nextId(),
+      targetsCount,
+      tokensSaved,
+      durationMs,
+      details
+    })
   }
 
   /**

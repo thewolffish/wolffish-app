@@ -14,6 +14,7 @@ import {
   type ToolResultStatus
 } from '@main/runtime/broca'
 import { Cerebellum } from '@main/runtime/cerebellum'
+import { compactOverflow } from '@main/runtime/compactor'
 import { Corpus } from '@main/runtime/corpus'
 import { Cortex } from '@main/runtime/cortex'
 import { Device } from '@main/runtime/device'
@@ -398,6 +399,51 @@ export class Agent {
           }
         }
 
+        // Cheap compaction: truncate stale tool results and evict old
+        // screenshots. Zero LLM cost — just string slicing. Runs every
+        // iteration to keep context lean.
+        const cheapCompaction = compactMessages(messages)
+        if (cheapCompaction) {
+          const estimatedTokensSaved = Math.round(cheapCompaction.charsSaved / 4)
+          broca.emitCompaction(
+            turn.turnId,
+            cheapCompaction.targetsCount,
+            estimatedTokensSaved,
+            0, // instant — no LLM call
+            cheapCompaction.details
+          )
+          this.corpus.emit('compaction.applied', {
+            tokensSaved: estimatedTokensSaved,
+            targetsCount: cheapCompaction.targetsCount
+          })
+        }
+
+        // Smart Context Compaction: if context STILL exceeds the model's
+        // input budget after cheap compaction, use LLM-generated summaries.
+        // This is the overflow safety net — rarely needed when cheap
+        // compaction keeps context lean.
+        const compactionStart = Date.now()
+        const compaction = await compactOverflow(this.thalamus, systemPrompt, messages, turn.signal)
+        if (compaction) {
+          const compactionDurationMs = Date.now() - compactionStart
+          broca.emitCompaction(
+            turn.turnId,
+            compaction.targets.length,
+            compaction.tokensSaved,
+            compactionDurationMs,
+            compaction.targets.map((t) => ({
+              toolName: t.toolName,
+              originalChars: t.originalChars,
+              compactedChars: t.compactedChars,
+              compactedBy: t.compactedBy
+            }))
+          )
+          this.corpus.emit('compaction.applied', {
+            tokensSaved: compaction.tokensSaved,
+            targetsCount: compaction.targets.length
+          })
+        }
+
         const stream = this.thalamus.stream({
           system: systemPrompt,
           messages,
@@ -672,10 +718,6 @@ export class Agent {
           stopReason = 'canceled'
           break
         }
-
-        // Between iterations: compact old images and stale tool results
-        // to bound context growth in long-running agentic loops.
-        compactMessages(messages)
       }
 
       if (task) {
@@ -1016,14 +1058,31 @@ async function* captureUsage(
 
 /** How many screenshot images to keep (counted from the most recent). */
 const COMPACT_KEEP_IMAGES = 5
-/** Only truncate text results older than this many assistant turns. */
-const COMPACT_STALE_TURNS = 6
+/** Only truncate text results older than this many assistant turns.
+ *  2 = the model gets one full iteration to reference a result before
+ *  it's trimmed to a 500-char prefix. By the time 2 assistant responses
+ *  exist after a tool result, its content has been consumed. */
+const COMPACT_STALE_TURNS = 2
 /** Only truncate text results longer than this (chars). */
 const COMPACT_TRUNCATE_ABOVE = 2000
 /** How many leading chars to preserve when truncating. */
 const COMPACT_KEEP_CHARS = 500
 
-function compactMessages(messages: ChatMessage[]): void {
+interface CompactMessagesResult {
+  targetsCount: number
+  charsSaved: number
+  details: Array<{
+    toolName?: string
+    originalChars: number
+    compactedChars: number
+    compactedBy: string
+  }>
+}
+
+function compactMessages(messages: ChatMessage[]): CompactMessagesResult | null {
+  const details: CompactMessagesResult['details'] = []
+  let charsSaved = 0
+
   // Pass 1: evict old screenshot images
   let imagesFromEnd = 0
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -1032,10 +1091,18 @@ function compactMessages(messages: ChatMessage[]): void {
     if (!m.images || m.images.length === 0) continue
     imagesFromEnd++
     if (imagesFromEnd > COMPACT_KEEP_IMAGES) {
+      const imageChars = m.images.reduce((sum, img) => sum + img.data.length, 0)
       m.images = undefined
       if (!m.content.startsWith('[Screenshot')) {
         m.content = `[Screenshot analyzed — image omitted from context]\n${m.content}`
       }
+      charsSaved += imageChars
+      details.push({
+        toolName: m.toolName ?? 'screenshot',
+        originalChars: imageChars,
+        compactedChars: 0,
+        compactedBy: 'image eviction'
+      })
     }
   }
 
@@ -1048,9 +1115,22 @@ function compactMessages(messages: ChatMessage[]): void {
     if (m.isError) continue
     if (assistantTurns < COMPACT_STALE_TURNS) continue
     if (m.content.length <= COMPACT_TRUNCATE_ABOVE) continue
+    // Skip already-truncated results
+    if (m.content.includes('[…truncated ')) continue
     const originalLength = m.content.length
     m.content =
       m.content.slice(0, COMPACT_KEEP_CHARS) +
       `\n\n[…truncated ${originalLength - COMPACT_KEEP_CHARS} chars — full result was processed in an earlier iteration]`
+    const saved = originalLength - m.content.length
+    charsSaved += saved
+    details.push({
+      toolName: m.toolName,
+      originalChars: originalLength,
+      compactedChars: m.content.length,
+      compactedBy: 'truncation'
+    })
   }
+
+  if (details.length === 0) return null
+  return { targetsCount: details.length, charsSaved, details }
 }

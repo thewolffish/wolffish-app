@@ -1,13 +1,13 @@
 import type { Corpus } from '@main/runtime/corpus'
 import { AnthropicProvider } from '@main/runtime/providers/anthropic'
 import { DeepSeekProvider } from '@main/runtime/providers/deepseek'
-import { LocalProvider } from '@main/runtime/providers/local'
 import { KimiProvider } from '@main/runtime/providers/kimi'
-import { MiniMaxProvider } from '@main/runtime/providers/minimax'
+import { LocalProvider } from '@main/runtime/providers/local'
 import { MimoProvider } from '@main/runtime/providers/mimo'
+import { MiniMaxProvider } from '@main/runtime/providers/minimax'
 import { OpenAIProvider } from '@main/runtime/providers/openai'
-import { QwenProvider } from '@main/runtime/providers/qwen'
 import { OpenRouterProvider } from '@main/runtime/providers/openrouter'
+import { QwenProvider } from '@main/runtime/providers/qwen'
 import { StepfunProvider } from '@main/runtime/providers/stepfun'
 import { XAIProvider } from '@main/runtime/providers/xai'
 import { net } from 'electron'
@@ -333,6 +333,106 @@ export class Thalamus {
     const window = contextWindowForModel(model)
     const outputReserve = maxOutputForModel(model)
     return Math.max(window - outputReserve, Math.floor(window * 0.5))
+  }
+
+  /**
+   * Make a bare LLM call to summarize content for context compaction.
+   * Uses the same provider cascade as the main stream (head provider
+   * first, falling through on failure). No system prompt, no tools —
+   * pure summarization.
+   *
+   * If the content exceeds the compaction model's own context window, it
+   * is split into parts, each compacted separately, and the summaries
+   * merged.
+   */
+  async compactContent(
+    content: string,
+    signal?: AbortSignal
+  ): Promise<{ text: string; provider: string; model: string }> {
+    const prompt =
+      'Summarize the following content preserving all key information: names, dates, numbers, action items, decisions, links, and attachments. Be thorough but concise.\n\n---\n\n' +
+      content
+    const promptTokens = Math.ceil(prompt.length / 4)
+
+    const cascade = this.buildCascade()
+    if (cascade.length === 0) throw new Error('No compaction providers available')
+
+    for (const entry of cascade) {
+      const modelWindow = contextWindowForModel(entry.model)
+      const maxOutput = maxOutputForModel(entry.model)
+      const available = modelWindow - maxOutput
+
+      // If content fits in this model, compact in one call
+      if (promptTokens <= available) {
+        const result = await this.compactSingle(entry, prompt, signal)
+        if (result) return result
+        continue // try next provider
+      }
+
+      // Content too large — split into parts
+      const promptOverheadChars = 300 // the instruction text before ---
+      const charsPerPart = Math.max(available * 4 - promptOverheadChars, 4000)
+      const parts: string[] = []
+      for (let i = 0; i < content.length; i += charsPerPart) {
+        parts.push(content.slice(i, i + charsPerPart))
+      }
+
+      try {
+        const summaries = await Promise.all(
+          parts.map((part) => {
+            const partPrompt =
+              'Summarize the following content preserving all key information: names, dates, numbers, action items, decisions, links, and attachments. Be thorough but concise.\n\n---\n\n' +
+              part
+            return this.compactSingle(entry, partPrompt, signal)
+          })
+        )
+        const valid = summaries.filter(Boolean) as { text: string; provider: string; model: string }[]
+        if (valid.length === parts.length) {
+          return {
+            text: valid.map((s) => s.text).join('\n\n'),
+            provider: valid[0].provider,
+            model: valid[0].model
+          }
+        }
+      } catch {
+        // fall through to next provider
+      }
+    }
+
+    throw new Error('All compaction providers failed')
+  }
+
+  /**
+   * Single compaction call to one provider. Returns null on failure.
+   * Retries up to 3 times with brief back-off.
+   */
+  private async compactSingle(
+    entry: CascadeEntry,
+    prompt: string,
+    signal?: AbortSignal
+  ): Promise<{ text: string; provider: string; model: string } | null> {
+    const messages: ChatMessage[] = [{ role: 'user', content: prompt }]
+    let attempts = 0
+
+    while (attempts < 3) {
+      attempts++
+      if (signal?.aborted) return null
+      try {
+        let text = ''
+        for await (const chunk of entry.provider.stream({
+          system: '',
+          messages,
+          signal
+        })) {
+          if (chunk.type === 'text') text += chunk.text
+        }
+        if (text.length > 0) return { text, provider: entry.id, model: entry.model }
+      } catch {
+        if (attempts >= 3) return null
+        await sleep(1000, signal)
+      }
+    }
+    return null
   }
 
   /**
@@ -946,6 +1046,50 @@ function maxOutputForModel(model: string): number {
   if (m.includes('deepseek/')) return 32_768
   if (m.includes('google/gemini')) return 65_536
   return 32_768
+}
+
+/**
+ * Rough token estimate for a messages array. Uses the same 1-token ≈ 4-chars
+ * heuristic as RAS.estimateTokens(). Accounts for all text content in
+ * user, assistant, tool, and system messages plus base64 image payloads
+ * (≈0.75 bytes per token after base64 overhead).
+ */
+export function estimateMessageTokens(messages: ChatMessage[]): number {
+  let chars = 0
+  for (const m of messages) {
+    switch (m.role) {
+      case 'system':
+        chars += m.content.length
+        break
+      case 'user':
+        if (typeof m.content === 'string') {
+          chars += m.content.length
+        } else {
+          for (const block of m.content) {
+            if (block.type === 'text') chars += block.text.length
+            else if (block.type === 'image' || block.type === 'document')
+              chars += block.data.length * 0.75
+          }
+        }
+        break
+      case 'assistant':
+        chars += m.content.length
+        if (m.reasoningContent) chars += m.reasoningContent.length
+        if (m.toolUses) {
+          for (const tu of m.toolUses) {
+            chars += tu.name.length + JSON.stringify(tu.args).length
+          }
+        }
+        break
+      case 'tool':
+        chars += m.content.length
+        if (m.images) {
+          for (const img of m.images) chars += img.data.length * 0.75
+        }
+        break
+    }
+  }
+  return Math.ceil(chars / 4)
 }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<boolean> {

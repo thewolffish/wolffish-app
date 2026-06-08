@@ -24,7 +24,8 @@ export const TURN_RELAYED_EVENTS: CorpusEvent[] = [
   'safety.allowed',
   'safety.blocked',
   'safety.approved',
-  'safety.denied'
+  'safety.denied',
+  'compaction.applied'
 ]
 
 export type TurnSendOptions = {

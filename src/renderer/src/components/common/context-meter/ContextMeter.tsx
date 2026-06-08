@@ -78,6 +78,11 @@ export function ContextMeter({
         <svg width={size} height={size}>
           <path
             d={d}
+            fill={useBorderColor ? 'none' : color}
+            fillOpacity={0.15}
+          />
+          <path
+            d={d}
             fill="none"
             stroke="currentColor"
             strokeWidth={strokeWidth}

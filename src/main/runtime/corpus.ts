@@ -86,6 +86,8 @@ export type CorpusEvents = {
     reason: string
   }
 
+  'compaction.applied': { tokensSaved: number; targetsCount: number }
+
   'memory.episodeSaved': { date: string; section: string }
   'memory.consolidated': { week: string }
   'memory.knowledgeUpdated': { file: string; fact: string }
