@@ -364,7 +364,6 @@ export function Chat(): React.JSX.Element {
   const scrollerRef = useRef<HTMLDivElement>(null)
   const pendingTurnIdRef = useRef<string | null>(null)
   const conversationRef = useRef<ConversationFile | null>(null)
-  const titleGeneratedRef = useRef(false)
   const modelContextWindowRef = useRef<number | null>(null)
   // Tracks the last working-folder value we communicated to the model
   // per conversation. Lets us emit a one-shot "cleared" notice on the
@@ -581,7 +580,6 @@ export function Chat(): React.JSX.Element {
         const conv = await window.api.conversation.create(currentModel)
         conversationRef.current = conv
         setActiveConversationId(conv.id)
-        titleGeneratedRef.current = false
       }
 
       conversationRef.current.messages = convMessages
@@ -591,16 +589,6 @@ export function Chat(): React.JSX.Element {
           ? { contextTokens, contextBudget }
           : (conversationRef.current.contextMeter ?? null)
       await window.api.conversation.save(conversationRef.current)
-
-      if (!titleGeneratedRef.current && convMessages.some((m) => m.role === 'user')) {
-        titleGeneratedRef.current = true
-        const { title } = await window.api.conversation.generateTitle(conversationRef.current)
-        if (title !== 'Untitled' && conversationRef.current) {
-          conversationRef.current.title = title
-          conversationRef.current.updatedAt = Date.now()
-          void window.api.conversation.save(conversationRef.current)
-        }
-      }
     },
     [currentModel, setActiveConversationId, contextTokens, contextBudget]
   )
@@ -618,7 +606,6 @@ export function Chat(): React.JSX.Element {
         // newer effect run is now in flight and owns conversationRef.
         if (!conv || activeConversationId !== targetId) return
         conversationRef.current = conv
-        titleGeneratedRef.current = conv.title !== 'Untitled'
         if (conv.contextMeter) {
           setContextTokens(conv.contextMeter.contextTokens)
           const cw = modelContextWindowRef.current
@@ -635,7 +622,6 @@ export function Chat(): React.JSX.Element {
       })
     } else {
       conversationRef.current = null
-      titleGeneratedRef.current = false
     }
   }, [activeConversationId])
 
@@ -768,7 +754,6 @@ export function Chat(): React.JSX.Element {
         const loaded = await window.api.conversation.load(activeConversationId)
         if (loaded) {
           conversationRef.current = loaded
-          titleGeneratedRef.current = loaded.title !== 'Untitled'
         } else {
           const now = Date.now()
           conversationRef.current = {
@@ -779,7 +764,6 @@ export function Chat(): React.JSX.Element {
             createdAt: now,
             updatedAt: now
           }
-          titleGeneratedRef.current = false
         }
       }
       return activeConversationId
@@ -787,7 +771,6 @@ export function Chat(): React.JSX.Element {
     const conv = await window.api.conversation.create(currentModel)
     conversationRef.current = conv
     setActiveConversationId(conv.id)
-    titleGeneratedRef.current = false
     return conv.id
   }, [activeConversationId, currentModel, setActiveConversationId])
 

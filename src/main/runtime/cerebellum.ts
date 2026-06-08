@@ -208,9 +208,9 @@ export class Cerebellum {
    * agent's finally block — a stale id leaking into the next turn
    * would silently misroute artifacts.
    */
-  setCurrentConversationId(id: string | null): void {
+  setCurrentConversationId(id: string | null, title?: string | null): void {
     this.currentConversationId = id
-    this.options.corpus?.emit('conversation.changed', { conversationId: id })
+    this.options.corpus?.emit('conversation.changed', { conversationId: id, title })
   }
 
   getCurrentConversationId(): string | null {

@@ -481,7 +481,6 @@ export type ConversationApi = {
   save: (conv: ConversationFile) => Promise<{ ok: true }>
   delete: (id: string) => Promise<{ ok: true }>
   create: (model: string | null) => Promise<ConversationFile>
-  generateTitle: (conv: ConversationFile) => Promise<{ title: string }>
 }
 
 export type ViewerTreeNode =
@@ -1133,8 +1132,7 @@ const api: WolffishApi = {
     load: (id) => ipcRenderer.invoke('conversation:load', id),
     save: (conv) => ipcRenderer.invoke('conversation:save', conv),
     delete: (id) => ipcRenderer.invoke('conversation:delete', id),
-    create: (model) => ipcRenderer.invoke('conversation:create', model),
-    generateTitle: (conv) => ipcRenderer.invoke('conversation:generateTitle', conv)
+    create: (model) => ipcRenderer.invoke('conversation:create', model)
   },
   viewer: {
     readTree: () => ipcRenderer.invoke('viewer:readTree'),

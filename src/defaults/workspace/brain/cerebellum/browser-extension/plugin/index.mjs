@@ -3,6 +3,9 @@ import path from 'node:path'
 import os from 'node:os'
 
 let sharp = null
+let getConversationId = () => null
+let screenshotCounter = 0
+let lastScreenshotSize = null
 
 async function loadSharp() {
   if (sharp) return sharp
@@ -14,19 +17,10 @@ async function loadSharp() {
   }
 }
 
-/**
- * Bridge to the Wolffish extension WebSocket server.
- * The core server exposes this on globalThis when the extension connects.
- * null when disconnected.
- */
 function getBridge() {
   return globalThis.__wolffishExtensionBridge ?? null
 }
 
-/**
- * Strip data URL prefix and return raw base64.
- * e.g. "data:image/png;base64,iVBOR..." → "iVBOR..."
- */
 function stripDataUrl(dataUrl) {
   const idx = dataUrl.indexOf(',')
   return idx >= 0 ? dataUrl.slice(idx + 1) : dataUrl
@@ -104,6 +98,9 @@ const plugin = {
 
   async init(context) {
     workspaceRoot = context?.workspaceRoot ?? ''
+    if (context?.getCurrentConversationId) {
+      getConversationId = context.getCurrentConversationId
+    }
   },
 
   async execute(toolName, args) {
@@ -130,7 +127,6 @@ const plugin = {
         return { success: false, error: response.error ?? 'Extension command failed' }
       }
 
-      // Screenshot — resize, optimize, return inline
       if (toolName === 'ext_screenshot' && response.data) {
         const { image, width, height } = response.data
         const rawBase64 = stripDataUrl(image)
@@ -150,6 +146,8 @@ const plugin = {
           const finalWidth = width > maxWidth ? maxWidth : width
           const finalHeight = Math.round(height * (finalWidth / width))
 
+          lastScreenshotSize = { width: finalWidth, height: finalHeight }
+
           let buffer, mediaType
           if (format === 'png') {
             buffer = await pipeline.png().toBuffer()
@@ -159,28 +157,56 @@ const plugin = {
             mediaType = 'image/jpeg'
           }
 
+          const base64 = buffer.toString('base64')
+          const ext = format === 'png' ? 'png' : 'jpg'
+
+          let savedPath = ''
+          try {
+            const root = workspaceRoot || path.join(os.homedir(), '.wolffish', 'workspace')
+            const convId = getConversationId()
+            const safe = (convId ?? 'unknown').replace(/[^A-Za-z0-9._-]/g, '_')
+            const dir = path.join(root, 'screenshots', `conv-${safe}`)
+            await fs.mkdir(dir, { recursive: true })
+            screenshotCounter++
+            const filename = `shot-${Date.now()}-${screenshotCounter}.${ext}`
+            const filePath = path.join(dir, filename)
+            await fs.writeFile(filePath, buffer)
+            savedPath = filePath
+          } catch {
+            // Non-fatal — image still returned inline via base64
+          }
+
+          const pathLine = savedPath ? `\n${savedPath}` : ''
           return {
             success: true,
-            output: `Screenshot taken (${finalWidth}x${finalHeight}, ${format}, ${(buffer.length / 1024).toFixed(0)}KB)`,
-            images: [{ mediaType, data: buffer.toString('base64') }]
+            output: `Screenshot captured (${finalWidth}x${finalHeight}, ${format}). Viewport coordinates: x 0–${finalWidth}, y 0–${finalHeight}.${pathLine}`,
+            images: [{ mediaType, data: base64 }]
           }
         }
 
-        // Fallback without sharp — pass through raw
+        lastScreenshotSize = { width, height }
         return {
           success: true,
-          output: `Screenshot taken (${width}x${height})`,
+          output: `Screenshot captured (${width}x${height}). Viewport coordinates: x 0–${width}, y 0–${height}.`,
           images: [{ mediaType: 'image/png', data: rawBase64 }]
         }
       }
 
-      // PDF — save to workspace and return path
       if (toolName === 'ext_pdf' && response.data) {
         const pdfData = response.data.data
+        const pdfBuffer = Buffer.from(pdfData, 'base64')
         const root = workspaceRoot || path.join(os.homedir(), '.wolffish', 'workspace')
-        const filePath = path.join(root, 'files', `page-${Date.now()}.pdf`)
-        await fs.writeFile(filePath, Buffer.from(pdfData, 'base64'))
-        return { success: true, output: `PDF saved to ${filePath}` }
+        const convId = getConversationId()
+        const safe = (convId ?? 'unknown').replace(/[^A-Za-z0-9._-]/g, '_')
+        const dir = path.join(root, 'downloads', `conv-${safe}`)
+        await fs.mkdir(dir, { recursive: true })
+        const filename = `page-${Date.now()}.pdf`
+        const filePath = path.join(dir, filename)
+        await fs.writeFile(filePath, pdfBuffer)
+        return {
+          success: true,
+          output: JSON.stringify({ path: filePath, size: pdfBuffer.length })
+        }
       }
 
       return { success: true, output: JSON.stringify(response.data ?? {}) }

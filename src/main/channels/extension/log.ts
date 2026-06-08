@@ -25,6 +25,8 @@ export type ExtensionEventType =
   | 'screenshot'
   | 'scroll'
   | 'download'
+  | 'debugger'
+  | 'move'
   | 'unknown'
 
 export interface ExtensionEvent {
@@ -78,7 +80,12 @@ const COMMAND_EVENT_MAP: Record<string, ExtensionEventType> = {
   browser_download: 'download',
   browser_clipboard_read: 'download',
   browser_clipboard_write: 'download',
-  browser_notify: 'download'
+  browser_notify: 'download',
+  browser_debugger_attach: 'debugger',
+  browser_debugger_detach: 'debugger',
+  browser_debugger_status: 'debugger',
+  browser_mouse_move: 'move',
+  browser_humanize: 'move'
 }
 
 function buildTitle(commandType: string, params: Record<string, unknown>): string {
@@ -171,6 +178,16 @@ function buildTitle(commandType: string, params: Record<string, unknown>): strin
       return 'Wrote clipboard'
     case 'browser_notify':
       return `Notified: ${params.title ?? 'notification'}`
+    case 'browser_debugger_attach':
+      return `Debugger attached to tab #${params.tabId ?? ''}`
+    case 'browser_debugger_detach':
+      return 'Debugger detached'
+    case 'browser_debugger_status':
+      return 'Debugger status checked'
+    case 'browser_mouse_move':
+      return `Moved to (${params.x ?? '?'}, ${params.y ?? '?'})`
+    case 'browser_humanize':
+      return `Humanize: ${params.intensity ?? 'default'}`
     default:
       return commandType.replace(/_/g, ' ')
   }
@@ -227,9 +244,9 @@ export async function lookupTitle(conversationId: string): Promise<string> {
     const filePath = join(CONVERSATIONS_DIR, `conv-${safe}.json`)
     const raw = await readFile(filePath, 'utf8')
     const conv = JSON.parse(raw) as { title?: string }
-    return conv.title || conversationId
+    return conv.title || 'Untitled'
   } catch {
-    return conversationId
+    return 'Untitled'
   }
 }
 

@@ -1,4 +1,5 @@
 import { turnRouter, type TurnSink } from '@main/channels/channel'
+import { generateTitle } from '@main/conversations'
 import type { Agent } from '@main/runtime/agent'
 import type { CorpusEvent } from '@main/runtime/corpus'
 import { CREDENTIAL_BLOCKED_REPLY, detectSensitiveData } from '@main/runtime/sensitiveDataFilter'
@@ -29,6 +30,7 @@ export const TURN_RELAYED_EVENTS: CorpusEvent[] = [
 export type TurnSendOptions = {
   history: ChatHistoryMessage[]
   conversationId?: string | null
+  conversationTitle?: string | null
   thinkingMode?: 'none' | 'basic' | 'extended' | 'max' | 'fast' | 'budget'
   /**
    * External controller. Lets channels tie cancellation to a parent
@@ -152,10 +154,26 @@ export class TurnRunner {
       turnRouter.setActive(sink)
 
       try {
+        let title = opts.conversationTitle
+        if (!title) {
+          const firstUser = opts.history.find((m) => m.role === 'user')
+          if (firstUser) {
+            title = generateTitle({
+              id: '',
+              title: 'Untitled',
+              model: null,
+              messages: [{ role: 'user', content: firstUser.content, timestamp: 0 }],
+              createdAt: 0,
+              updatedAt: 0
+            })
+          }
+        }
+
         await agent.respond({
           history: opts.history,
           turnId,
           conversationId: opts.conversationId ?? null,
+          conversationTitle: title,
           signal: controller.signal,
           onSegment: (segment) => sink.onSegment(segment),
           thinkingMode: opts.thinkingMode

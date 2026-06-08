@@ -1,4 +1,28 @@
-## v1.0.107 — 2026-06-05 `Latest`
+## v1.0.126 — 2026-06-08 `Latest`
+
+### Extension — Screenshot & Download Management
+
+Screenshots and downloads are now organized per conversation. Screenshots save to `workspace/screenshots/conv-{id}/` with timestamped filenames, and each screenshot result includes viewport coordinate ranges so the agent can reason about click targets more accurately. PDF downloads now save to `workspace/downloads/conv-{id}/` (previously `workspace/files/`) and return structured JSON with path and size instead of a plain string.
+
+### Automatic Title Generation
+
+Conversation titles are now generated automatically in the main process. When a conversation is saved as "Untitled" with user messages, a title is derived from the first message — stripped of Markdown headings, bold/italic markup, links, and list prefixes. Titles propagate in real time through the agent pipeline to the browser extension side panel, so you always see an up-to-date title without switching back to the desktop app.
+
+### Extension — Debugger & Mouse Commands
+
+Five new browser commands: `browser_debugger_attach`, `browser_debugger_detach`, `browser_debugger_status`, `browser_mouse_move`, and `browser_humanize`. The agent can now attach Chrome DevTools Protocol debugging sessions and perform precise mouse movements on the page. All events appear in the extension activity log with human-readable labels.
+
+### Extension — Reliable Link Clicks
+
+CDP-simulated clicks now detect anchor elements and perform a follow-up real `.click()` after the synthetic mouse events, ensuring link navigation fires reliably on pages where simulated input alone was not enough.
+
+### Extension v0.1.46
+
+Extension updated from v0.1.39 to v0.1.46 with rebuilt side panel and background scripts.
+
+---
+
+## v1.0.107 — 2026-06-05
 
 ### Browser Extension
 

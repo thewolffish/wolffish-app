@@ -902,7 +902,7 @@ app.whenReady().then(async () => {
       .start({ port: extCfg.port })
       .catch((err) => console.error('extension server start failed:', err))
     agent.corpus.on('conversation.changed', (payload) => {
-      extensionServer.setConversationId(payload.conversationId)
+      extensionServer.setConversationId(payload.conversationId, payload.title)
     })
   }
 
@@ -2029,7 +2029,11 @@ app.whenReady().then(async () => {
   )
   ipcMain.handle('conversation:save', (_e, conv: ConversationFile): Promise<{ ok: true }> => {
     return trackBackgroundTask(async () => {
+      if (conv.title === 'Untitled' && conv.messages.some((m) => m.role === 'user')) {
+        conv.title = generateTitle(conv)
+      }
       await saveConversation(conv)
+      extensionServer.updateTitle(conv.id, conv.title)
       return { ok: true as const }
     })
   })
@@ -2041,9 +2045,6 @@ app.whenReady().then(async () => {
     'conversation:create',
     (_e, model: string | null): ConversationFile => createConversation(model)
   )
-  ipcMain.handle('conversation:generateTitle', (_e, conv: ConversationFile): { title: string } => {
-    return { title: generateTitle(conv) }
-  })
 
   // Ollama
   ipcMain.handle('ollama:detect', async () => {

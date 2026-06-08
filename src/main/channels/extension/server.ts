@@ -1,7 +1,6 @@
 import {
   listConversations,
   logEvent,
-  lookupTitle,
   readEvents,
   type ExtensionEvent
 } from '@main/channels/extension/log'
@@ -88,6 +87,7 @@ export class ExtensionServer {
   private extensionVersion: string | null = null
   private currentConversationId: string | null = null
   private syncedConversationId: string | null = null
+  private currentTitle: string | null = null
   private currentPort = 23151
   private onStatusChange: ((status: ExtensionServerStatus) => void) | null = null
 
@@ -191,8 +191,20 @@ export class ExtensionServer {
     }
   }
 
-  setConversationId(id: string | null): void {
+  setConversationId(id: string | null, title?: string | null): void {
+    if (!id) return
     this.currentConversationId = id
+    if (title && title !== 'Untitled') this.currentTitle = title
+  }
+
+  updateTitle(id: string, title: string): void {
+    if (!title || title === 'Untitled') return
+    if (id !== this.currentConversationId || !this.isConnected()) return
+    if (title === this.currentTitle) return
+    this.currentTitle = title
+    if (this.syncedConversationId === id) {
+      void this.pushEventsSync(id)
+    }
   }
 
   async sendCommand(
@@ -208,12 +220,14 @@ export class ExtensionServer {
     const command: WolffishCommand = { id, type, params }
 
     if (this.currentConversationId) {
+      const event = await logEvent(this.currentConversationId, type, params)
+
       if (this.currentConversationId !== this.syncedConversationId) {
         this.syncedConversationId = this.currentConversationId
         void this.pushEventsSync(this.currentConversationId)
+      } else {
+        this.pushEventLogged(event)
       }
-      const event = await logEvent(this.currentConversationId, type, params)
-      this.pushEventLogged(event)
     }
 
     return new Promise((resolve, reject) => {
@@ -437,16 +451,25 @@ export class ExtensionServer {
 
   private async pushEventsSync(conversationId: string): Promise<void> {
     try {
-      const [events, title] = await Promise.all([
-        readEvents(conversationId),
-        lookupTitle(conversationId)
-      ])
+      const title = this.currentTitle || 'Untitled'
+      const events = await readEvents(conversationId)
       this.sendRaw({
         type: 'event',
         event: 'events_sync',
         data: { conversationId, title, events }
       })
       const conversations = await listConversations()
+      const existing = conversations.find((c) => c.conversationId === conversationId)
+      if (existing) {
+        existing.title = title
+      } else {
+        conversations.unshift({
+          conversationId,
+          title,
+          eventCount: events.length,
+          lastTimestamp: Date.now()
+        })
+      }
       this.sendRaw({
         type: 'event',
         event: 'conversations_list',
@@ -460,6 +483,14 @@ export class ExtensionServer {
   private async pushConversationsList(): Promise<void> {
     try {
       const conversations = await listConversations()
+      if (this.currentConversationId && this.currentTitle) {
+        const existing = conversations.find(
+          (c) => c.conversationId === this.currentConversationId
+        )
+        if (existing) {
+          existing.title = this.currentTitle
+        }
+      }
       this.sendRaw({
         type: 'event',
         event: 'conversations_list',

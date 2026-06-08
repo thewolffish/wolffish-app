@@ -75,6 +75,7 @@ export type AgentTurnOptions = {
    * call sites don't have to invent one.
    */
   conversationId?: string | null
+  conversationTitle?: string | null
   /**
    * Isolated Broca instance for this turn. When provided, the turn uses
    * this instead of the shared `this.broca`, preventing state collision
@@ -342,7 +343,7 @@ export class Agent {
     let turnModel: string | null = null
 
     broca.beginTurn(turn.turnId, turn.onSegment)
-    this.cerebellum.setCurrentConversationId(turn.conversationId ?? null)
+    this.cerebellum.setCurrentConversationId(turn.conversationId ?? null, turn.conversationTitle)
 
     try {
       while (true) {
@@ -884,6 +885,7 @@ export class Agent {
       onSegment: sink,
       signal: opts.signal,
       conversationId: conv.id,
+      conversationTitle: conv.title,
       broca: localBroca,
       bypassApproval: true
     })

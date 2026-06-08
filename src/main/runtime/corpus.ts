@@ -171,7 +171,7 @@ export type CorpusEvents = {
   'whatsapp.message.received': { remoteJid: string; body: string }
   'whatsapp.message.sent': { remoteJid: string }
 
-  'conversation.changed': { conversationId: string | null }
+  'conversation.changed': { conversationId: string | null; title?: string | null }
 }
 
 export type CorpusEvent = keyof CorpusEvents

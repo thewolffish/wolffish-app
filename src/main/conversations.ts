@@ -368,7 +368,14 @@ export function generateTitle(conv: ConversationFile): string {
   const raw = userMsg.content.trim()
   if (!raw) return 'Untitled'
 
-  const text = raw.replace(/^```[\s\S]*?```\s*/g, '').trim() || raw
+  const text =
+    raw
+      .replace(/^```[\s\S]*?```\s*/g, '')
+      .replace(/^#{1,6}\s+/gm, '')
+      .replace(/(\*{1,3}|_{1,3}|~~|`)(.*?)\1/g, '$2')
+      .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+      .replace(/^\s*[-*+>]\s+/gm, '')
+      .trim() || raw
   const doc = nlp(text)
   const first = (doc.sentences().first().text() || text).trim()
 
