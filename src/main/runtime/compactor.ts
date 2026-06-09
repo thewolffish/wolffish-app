@@ -337,7 +337,8 @@ function buildSummaryPrompt(
     `   PROGRESS: Numbered list of completed steps with key results\n` +
     `   REMAINING: Numbered list of what still needs to be done (be specific: exact items, counts, IDs)\n` +
     `   DATA: Key values extracted from content — names, emails, dates, IDs, numbers, URLs, errors\n` +
-    `   DECISIONS: Any decisions or confirmations made during the conversation\n\n` +
+    `   DECISIONS: Any decisions or confirmations made during the conversation\n` +
+    `   CONTINUATION: Quote or paraphrase the assistant's last stated plan — what it said it would do next, in its own words. If the assistant announced a next batch, listed upcoming items, or described its next action, capture that verbatim. This is what the model will read to pick up exactly where it left off.\n\n` +
     `RULES:\n` +
     `- Include EVERY name, email, date, ID, URL, number, error code from the original\n` +
     `- For lists of items (emails, files, records), enumerate EACH one with key fields\n` +
@@ -372,12 +373,14 @@ function buildContinuationNudge(summary: { text: string; model: string } | null)
     return (
       `[Compaction Summary]\n\n` +
       `${summary.text}\n\n` +
-      `[Status: Context was compacted. The messages above contain truncated versions ` +
-      `of older content (showing first and last portions). This summary captures the ` +
-      `full conversation state from the original content before truncation. ` +
-      `If you were in the middle of a multi-step task, review this summary and ` +
-      `continue where you left off. Do NOT produce final output until ALL steps ` +
-      `of the current task are complete. Do NOT re-do work that is listed as completed.]`
+      `[Post-compaction instructions]\n` +
+      `Context was compacted. The summary above is your source of truth for everything ` +
+      `that happened before this point. To continue:\n` +
+      `- Read the CONTINUATION section — it contains what you said you would do next. Do that.\n` +
+      `- The DATA section has every account, ID, URL, and value you already fetched. Use it directly — do NOT re-call tools to rediscover information that is already in the summary.\n` +
+      `- The PROGRESS section lists completed work. Do NOT repeat any of it.\n` +
+      `- The REMAINING section lists pending work. Pick up from there.\n` +
+      `- Do NOT produce final output until ALL steps of the current task are complete.`
     )
   }
 

@@ -196,7 +196,8 @@ export class Agent {
       basalganglia: this.basalganglia,
       corpus,
       device: this.device,
-      getContextBudget
+      getContextBudget,
+      getContextWindow: () => this.thalamus.getActiveContextWindow()
     })
     this.wernicke = new Wernicke({ corpus })
     this.broca = new Broca({ corpus, shouldSilenceToolCall: isInternalToolCall })
@@ -419,9 +420,10 @@ export class Agent {
           {
             tools: filteredTools.length > 0 ? filteredTools : undefined,
             lastKnownInputTokens: lastIterationInputTokens,
-            onStarted: (targetsCount, currentTokens, inputBudget) => {
+            onStarted: (targetsCount, currentTokens) => {
               this.corpus.emit('compaction.started', { messagesCount: messages.length })
-              broca.emitCompactionStarted(turn.turnId, messages.length, targetsCount, currentTokens, inputBudget)
+              const contextWindow = this.thalamus.getActiveContextWindow()
+              broca.emitCompactionStarted(turn.turnId, messages.length, targetsCount, currentTokens, contextWindow)
             }
           }
         )
@@ -519,9 +521,10 @@ export class Agent {
                 tools: filteredTools.length > 0 ? filteredTools : undefined,
                 lastKnownInputTokens: lastIterationInputTokens,
                 force: true,
-                onStarted: (targetsCount, currentTokens, inputBudget) => {
+                onStarted: (targetsCount, currentTokens) => {
                   this.corpus.emit('compaction.started', { messagesCount: messages.length, force: true })
-                  broca.emitCompactionStarted(turn.turnId, messages.length, targetsCount, currentTokens, inputBudget)
+                  const contextWindow = this.thalamus.getActiveContextWindow()
+                  broca.emitCompactionStarted(turn.turnId, messages.length, targetsCount, currentTokens, contextWindow)
                 }
               }
             )

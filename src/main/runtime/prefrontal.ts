@@ -21,6 +21,7 @@ export type PrefrontalOptions = {
   episodeWindowDays?: number
   feedbackWindowDays?: number
   getContextBudget?: () => number
+  getContextWindow?: () => number
   cortex?: Cortex
   ras?: RAS
   cerebellum?: Cerebellum
@@ -274,7 +275,7 @@ export class Prefrontal {
     if (this.corpus) {
       this.corpus.emit('context.built', {
         tokenCount: estimatedTokens,
-        tokenBudget: this.getTokenBudget(),
+        tokenBudget: this.getContextWindow(),
         sectionsIncluded
       })
     }
@@ -305,6 +306,10 @@ export class Prefrontal {
    */
   getTokenBudget(): number {
     return this.options.getContextBudget?.() ?? DEFAULT_BUDGET_TOKENS
+  }
+
+  getContextWindow(): number {
+    return this.options.getContextWindow?.() ?? this.getTokenBudget()
   }
 
   private async collectMemoryCandidates(
