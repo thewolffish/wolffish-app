@@ -1571,6 +1571,19 @@ export class TelegramChannel {
         return
       }
 
+      const avPaths = extractAudioVideoPaths(output)
+      if (avPaths.length > 0) {
+        await this.sendHtml(chatId, heading)
+        for (const av of avPaths) {
+          if (av.type === 'audio') {
+            await this.sendAudioFile(chatId, av.path)
+          } else {
+            await this.sendVideoFile(chatId, av.path)
+          }
+        }
+        return
+      }
+
       if (output.length === 0) {
         await this.sendHtml(chatId, heading)
         return
@@ -1678,6 +1691,28 @@ export class TelegramChannel {
       const file = new InputFile(buffer, path.basename(filePath))
       const sent = await this.bot.api.sendDocument(chatId, file)
       this.trackMessageId(chatId, sent.message_id)
+    } catch {
+      // best-effort
+    }
+  }
+
+  private async sendAudioFile(chatId: number, filePath: string): Promise<void> {
+    if (!this.bot) return
+    try {
+      const buffer = await fs.readFile(filePath)
+      const file = new InputFile(buffer, path.basename(filePath))
+      await this.bot.api.sendAudio(chatId, file)
+    } catch {
+      // best-effort
+    }
+  }
+
+  private async sendVideoFile(chatId: number, filePath: string): Promise<void> {
+    if (!this.bot) return
+    try {
+      const buffer = await fs.readFile(filePath)
+      const file = new InputFile(buffer, path.basename(filePath))
+      await this.bot.api.sendVideo(chatId, file)
     } catch {
       // best-effort
     }
@@ -2088,15 +2123,28 @@ function parseVoiceToolOutput(output: string): { filePath: string; fileName: str
   }
 }
 
-const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp'])
+const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.tiff', '.tif'])
 const DOCUMENT_EXTS = new Set(['.pdf', '.docx', '.xlsx', '.pptx', '.doc', '.xls', '.csv'])
+const AUDIO_EXTS = new Set(['.mp3', '.wav', '.m4a', '.ogg', '.flac', '.aac', '.wma', '.opus'])
+const VIDEO_EXTS = new Set(['.mp4', '.mov', '.avi', '.mkv', '.m4v', '.wmv', '.flv', '.webm'])
 
 function extractWolffishMediaPaths(output: string): string[] {
   const paths: string[] = []
   const seen = new Set<string>()
 
-  const mediaRegex = /wolffish-media:\/\/([^\s)"]+)/g
+  // Explicit [wolffish-output: path (image)] markers from ffmpeg plugin —
+  // these identify the output file unambiguously.
+  const markerRegex = /\[wolffish-output:\s*([^\]]+?)\s+\(image\)\]/g
   let match: RegExpExecArray | null
+  while ((match = markerRegex.exec(output)) !== null) {
+    const abs = match[1].trim()
+    if (!seen.has(abs)) {
+      seen.add(abs)
+      paths.push(abs)
+    }
+  }
+
+  const mediaRegex = /wolffish-media:\/\/([^\s)"]+)/g
   while ((match = mediaRegex.exec(output)) !== null) {
     const abs = path.join(workspaceRoot(), decodeURIComponent(match[1]))
     if (!seen.has(abs)) {
@@ -2105,7 +2153,7 @@ function extractWolffishMediaPaths(output: string): string[] {
     }
   }
 
-  const absRegex = /(\/[^\s",:)]+\.(?:png|jpe?g|gif|webp))\b/gi
+  const absRegex = /(\/[^\s",:)]+\.(?:png|jpe?g|gif|webp|bmp|tiff?))\b/gi
   while ((match = absRegex.exec(output)) !== null) {
     const abs = match[1]
     if (!seen.has(abs) && IMAGE_EXTS.has(path.extname(abs).toLowerCase())) {
@@ -2115,7 +2163,7 @@ function extractWolffishMediaPaths(output: string): string[] {
   }
 
   const home = os.homedir()
-  const homeRegex = /(~\/[^\s",:)]+\.(?:png|jpe?g|gif|webp))\b/gi
+  const homeRegex = /(~\/[^\s",:)]+\.(?:png|jpe?g|gif|webp|bmp|tiff?))\b/gi
   while ((match = homeRegex.exec(output)) !== null) {
     const abs = path.join(home, match[1].slice(2))
     if (!seen.has(abs) && IMAGE_EXTS.has(path.extname(abs).toLowerCase())) {
@@ -2143,7 +2191,7 @@ function extractWolffishMediaPaths(output: string): string[] {
 function stripWolffishMediaMarkdown(text: string): string {
   return text
     .replace(/!\[[^\]]*\]\(wolffish-media:\/\/[^\s)]+\)/g, '')
-    .replace(/(Saved to|Screenshot saved[^.]*) ~?\/[^\s"]+\.(?:png|jpe?g|gif|webp)/gi, '')
+    .replace(/(Saved to|Screenshot saved[^.]*) ~?\/[^\s"]+\.(?:png|jpe?g|gif|webp|bmp|tiff?)/gi, '')
     .trim()
 }
 
@@ -2181,6 +2229,45 @@ function extractDocumentPaths(output: string): string[] {
   }
 
   return paths
+}
+
+function extractAudioVideoPaths(output: string): { path: string; type: 'audio' | 'video' }[] {
+  const results: { path: string; type: 'audio' | 'video' }[] = []
+  const seen = new Set<string>()
+  const home = os.homedir()
+
+  function resolvePath(p: string): string {
+    return p.startsWith('~/') ? path.join(home, p.slice(2)) : p
+  }
+
+  // 1. Explicit [wolffish-output: path (audio|video)] markers
+  const markerRegex = /\[wolffish-output:\s*([^\]]+?)\s+\((audio|video)\)\]/g
+  let match: RegExpExecArray | null
+  while ((match = markerRegex.exec(output)) !== null) {
+    const abs = resolvePath(match[1].trim())
+    if (!seen.has(abs)) {
+      seen.add(abs)
+      results.push({ path: abs, type: match[2] as 'audio' | 'video' })
+    }
+  }
+
+  // 2. Fallback: absolute paths with known audio/video extensions
+  const avRegex =
+    /(\/[^\s",:)]+\.(?:mp3|wav|m4a|ogg|flac|aac|wma|opus|mp4|mov|avi|mkv|m4v|wmv|flv|webm))\b/gi
+  while ((match = avRegex.exec(output)) !== null) {
+    const abs = match[1]
+    if (seen.has(abs)) continue
+    const ext = path.extname(abs).toLowerCase()
+    if (AUDIO_EXTS.has(ext)) {
+      seen.add(abs)
+      results.push({ path: abs, type: 'audio' })
+    } else if (VIDEO_EXTS.has(ext)) {
+      seen.add(abs)
+      results.push({ path: abs, type: 'video' })
+    }
+  }
+
+  return results
 }
 
 // Re-exported so the IPC layer can include attachment data when

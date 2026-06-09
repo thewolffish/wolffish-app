@@ -982,6 +982,19 @@ export class WhatsAppChannel {
         return
       }
 
+      const avPaths = extractAudioVideoPaths(output)
+      if (avPaths.length > 0) {
+        await this.safeSend(jid, heading)
+        for (const av of avPaths) {
+          if (av.type === 'audio') {
+            await this.sendAudioFile(jid, av.path)
+          } else {
+            await this.sendVideoFile(jid, av.path)
+          }
+        }
+        return
+      }
+
       if (output.length === 0) {
         await this.safeSend(jid, heading)
         return
@@ -1158,14 +1171,15 @@ export class WhatsAppChannel {
       await fs.access(resolved)
       const buffer = await fs.readFile(resolved)
       const ext = path.extname(resolved).toLowerCase()
-      const mimetype =
-        ext === '.gif'
-          ? 'image/gif'
-          : ext === '.png'
-            ? 'image/png'
-            : ext === '.webp'
-              ? 'image/webp'
-              : 'image/jpeg'
+      const IMAGE_MIME: Record<string, string> = {
+        '.png': 'image/png',
+        '.gif': 'image/gif',
+        '.webp': 'image/webp',
+        '.bmp': 'image/bmp',
+        '.tiff': 'image/tiff',
+        '.tif': 'image/tiff'
+      }
+      const mimetype = IMAGE_MIME[ext] ?? 'image/jpeg'
       const sent = await this.sock.sendMessage(jid, {
         image: buffer,
         mimetype
@@ -1199,6 +1213,68 @@ export class WhatsAppChannel {
       const mimetype = MIME[ext] ?? 'application/octet-stream'
       const sent = await this.sock.sendMessage(jid, {
         document: buffer,
+        mimetype,
+        fileName: path.basename(resolved)
+      })
+      if (sent?.key.id) {
+        this.sentIds.add(sent.key.id)
+      }
+    } catch {
+      // best-effort
+    }
+  }
+
+  private async sendAudioFile(jid: string, filePath: string): Promise<void> {
+    if (!this.sock) return
+    const resolved = path.resolve(filePath)
+    try {
+      await fs.access(resolved)
+      const buffer = await fs.readFile(resolved)
+      const ext = path.extname(resolved).toLowerCase()
+      const AUDIO_MIME: Record<string, string> = {
+        '.mp3': 'audio/mpeg',
+        '.wav': 'audio/wav',
+        '.m4a': 'audio/mp4',
+        '.ogg': 'audio/ogg',
+        '.flac': 'audio/flac',
+        '.aac': 'audio/aac',
+        '.wma': 'audio/x-ms-wma',
+        '.opus': 'audio/opus'
+      }
+      const mimetype = AUDIO_MIME[ext] ?? 'audio/mpeg'
+      const sent = await this.sock.sendMessage(jid, {
+        audio: buffer,
+        mimetype,
+        fileName: path.basename(resolved)
+      })
+      if (sent?.key.id) {
+        this.sentIds.add(sent.key.id)
+      }
+    } catch {
+      // best-effort
+    }
+  }
+
+  private async sendVideoFile(jid: string, filePath: string): Promise<void> {
+    if (!this.sock) return
+    const resolved = path.resolve(filePath)
+    try {
+      await fs.access(resolved)
+      const buffer = await fs.readFile(resolved)
+      const ext = path.extname(resolved).toLowerCase()
+      const VIDEO_MIME: Record<string, string> = {
+        '.mp4': 'video/mp4',
+        '.mov': 'video/quicktime',
+        '.avi': 'video/x-msvideo',
+        '.mkv': 'video/x-matroska',
+        '.m4v': 'video/mp4',
+        '.wmv': 'video/x-ms-wmv',
+        '.flv': 'video/x-flv',
+        '.webm': 'video/webm'
+      }
+      const mimetype = VIDEO_MIME[ext] ?? 'video/mp4'
+      const sent = await this.sock.sendMessage(jid, {
+        video: buffer,
         mimetype,
         fileName: path.basename(resolved)
       })
@@ -1300,15 +1376,28 @@ function parseSelectionNumber(text: string): number | null {
   return Number.isFinite(n) && n > 0 ? n : null
 }
 
-const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp'])
+const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.tiff', '.tif'])
 const DOCUMENT_EXTS = new Set(['.pdf', '.docx', '.xlsx', '.pptx', '.doc', '.xls', '.csv'])
+const AUDIO_EXTS = new Set(['.mp3', '.wav', '.m4a', '.ogg', '.flac', '.aac', '.wma', '.opus'])
+const VIDEO_EXTS = new Set(['.mp4', '.mov', '.avi', '.mkv', '.m4v', '.wmv', '.flv', '.webm'])
 
 function extractWolffishMediaPaths(output: string): string[] {
   const paths: string[] = []
   const seen = new Set<string>()
 
-  const mediaRegex = /wolffish-media:\/\/([^\s)"]+)/g
+  // Explicit [wolffish-output: path (image)] markers from ffmpeg plugin —
+  // these identify the output file unambiguously.
+  const markerRegex = /\[wolffish-output:\s*([^\]]+?)\s+\(image\)\]/g
   let match: RegExpExecArray | null
+  while ((match = markerRegex.exec(output)) !== null) {
+    const abs = match[1].trim()
+    if (!seen.has(abs)) {
+      seen.add(abs)
+      paths.push(abs)
+    }
+  }
+
+  const mediaRegex = /wolffish-media:\/\/([^\s)"]+)/g
   while ((match = mediaRegex.exec(output)) !== null) {
     const abs = path.join(workspaceRoot(), decodeURIComponent(match[1]))
     if (!seen.has(abs)) {
@@ -1317,7 +1406,7 @@ function extractWolffishMediaPaths(output: string): string[] {
     }
   }
 
-  const absRegex = /(\/[^\s",:)]+\.(?:png|jpe?g|gif|webp))\b/gi
+  const absRegex = /(\/[^\s",:)]+\.(?:png|jpe?g|gif|webp|bmp|tiff?))\b/gi
   while ((match = absRegex.exec(output)) !== null) {
     const abs = match[1]
     if (!seen.has(abs) && IMAGE_EXTS.has(path.extname(abs).toLowerCase())) {
@@ -1327,7 +1416,7 @@ function extractWolffishMediaPaths(output: string): string[] {
   }
 
   const home = os.homedir()
-  const homeRegex = /(~\/[^\s",:)]+\.(?:png|jpe?g|gif|webp))\b/gi
+  const homeRegex = /(~\/[^\s",:)]+\.(?:png|jpe?g|gif|webp|bmp|tiff?))\b/gi
   while ((match = homeRegex.exec(output)) !== null) {
     const abs = path.join(home, match[1].slice(2))
     if (!seen.has(abs) && IMAGE_EXTS.has(path.extname(abs).toLowerCase())) {
@@ -1355,7 +1444,7 @@ function extractWolffishMediaPaths(output: string): string[] {
 function stripWolffishMediaMarkdown(text: string): string {
   return text
     .replace(/!\[[^\]]*\]\(wolffish-media:\/\/[^\s)]+\)/g, '')
-    .replace(/(Saved to|Screenshot saved[^.]*) ~?\/[^\s"]+\.(?:png|jpe?g|gif|webp)/gi, '')
+    .replace(/(Saved to|Screenshot saved[^.]*) ~?\/[^\s"]+\.(?:png|jpe?g|gif|webp|bmp|tiff?)/gi, '')
     .trim()
 }
 
@@ -1393,6 +1482,45 @@ function extractDocumentPaths(output: string): string[] {
   }
 
   return paths
+}
+
+function extractAudioVideoPaths(output: string): { path: string; type: 'audio' | 'video' }[] {
+  const results: { path: string; type: 'audio' | 'video' }[] = []
+  const seen = new Set<string>()
+  const home = os.homedir()
+
+  function resolvePath(p: string): string {
+    return p.startsWith('~/') ? path.join(home, p.slice(2)) : p
+  }
+
+  // 1. Explicit [wolffish-output: path (audio|video)] markers
+  const markerRegex = /\[wolffish-output:\s*([^\]]+?)\s+\((audio|video)\)\]/g
+  let match: RegExpExecArray | null
+  while ((match = markerRegex.exec(output)) !== null) {
+    const abs = resolvePath(match[1].trim())
+    if (!seen.has(abs)) {
+      seen.add(abs)
+      results.push({ path: abs, type: match[2] as 'audio' | 'video' })
+    }
+  }
+
+  // 2. Fallback: absolute paths with known audio/video extensions
+  const avRegex =
+    /(\/[^\s",:)]+\.(?:mp3|wav|m4a|ogg|flac|aac|wma|opus|mp4|mov|avi|mkv|m4v|wmv|flv|webm))\b/gi
+  while ((match = avRegex.exec(output)) !== null) {
+    const abs = match[1]
+    if (seen.has(abs)) continue
+    const ext = path.extname(abs).toLowerCase()
+    if (AUDIO_EXTS.has(ext)) {
+      seen.add(abs)
+      results.push({ path: abs, type: 'audio' })
+    } else if (VIDEO_EXTS.has(ext)) {
+      seen.add(abs)
+      results.push({ path: abs, type: 'video' })
+    }
+  }
+
+  return results
 }
 
 const WHATSAPP_MESSAGE_LIMIT = 4096

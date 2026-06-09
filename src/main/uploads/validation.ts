@@ -6,6 +6,7 @@ export const MAX_IMAGE_BYTES = 1024 * 1024 * 1024 // 1 GB
 export const MAX_PDF_BYTES = 512 * 1024 * 1024 // 512 MB
 export const MAX_DOCUMENT_BYTES = 512 * 1024 * 1024 // 512 MB
 export const MAX_AUDIO_BYTES = 512 * 1024 * 1024 // 512 MB
+export const MAX_VIDEO_BYTES = 1024 * 1024 * 1024 // 1 GB
 
 const ALLOWED_IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp'])
 const ALLOWED_PDF_EXTS = new Set(['.pdf'])
@@ -30,7 +31,6 @@ export type ValidationError =
   | { code: 'max_files_reached'; max: number }
   | { code: 'total_size_exceeded'; maxBytes: number }
   | { code: 'type_not_supported' }
-  | { code: 'video_not_allowed' }
   | { code: 'vision_not_supported'; model: string }
 
 export function categorizeFile(fileName: string): FileCategory {
@@ -53,6 +53,8 @@ export function getMaxBytesForCategory(category: FileCategory): number {
       return MAX_DOCUMENT_BYTES
     case 'audio':
       return MAX_AUDIO_BYTES
+    case 'video':
+      return MAX_VIDEO_BYTES
     default:
       return 0
   }
@@ -66,7 +68,6 @@ export function validateFile(
 ): ValidationError | null {
   const category = categorizeFile(fileName)
 
-  if (category === 'video') return { code: 'video_not_allowed' }
   if (category === 'unknown') return { code: 'type_not_supported' }
   if (currentFileCount >= MAX_FILES_PER_MESSAGE)
     return { code: 'max_files_reached', max: MAX_FILES_PER_MESSAGE }
@@ -85,7 +86,12 @@ export function isVisionModel(modelName: string): boolean {
 }
 
 export function getAllowedExtensions(supportsVision: boolean): string[] {
-  const exts: string[] = [...ALLOWED_DOCUMENT_EXTS, ...ALLOWED_AUDIO_EXTS, ...ALLOWED_PDF_EXTS]
+  const exts: string[] = [
+    ...ALLOWED_DOCUMENT_EXTS,
+    ...ALLOWED_AUDIO_EXTS,
+    ...ALLOWED_PDF_EXTS,
+    ...VIDEO_EXTS
+  ]
   if (supportsVision) {
     exts.push(...ALLOWED_IMAGE_EXTS)
   }

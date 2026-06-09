@@ -3,6 +3,7 @@ import { useUploadBlob } from '@hooks/use-upload-blob/useUploadBlob'
 import { cn } from '@lib/utils/cn'
 import { Download01Icon, Image02Icon } from 'hugeicons-react'
 import { useCallback, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 export type ImageViewerProps = {
   filePath: string
@@ -43,6 +44,7 @@ export function ImageViewer({
 }
 
 function DeletedImage({ width, height }: { width?: number; height?: number }): React.JSX.Element {
+  const { t } = useTranslation()
   const ratio = width && height ? `${width} / ${height}` : '1 / 1'
   return (
     <div
@@ -53,7 +55,7 @@ function DeletedImage({ width, height }: { width?: number; height?: number }): R
       style={{ aspectRatio: ratio }}
     >
       <Image02Icon size={32} className="text-muted" />
-      <span className="text-muted text-sm italic">Image file was deleted</span>
+      <span className="text-muted text-sm italic">{t('chat.imageViewer.deleted')}</span>
     </div>
   )
 }

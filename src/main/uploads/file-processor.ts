@@ -63,14 +63,8 @@ export async function processAttachment(
     return processDocument(abs, originalName, ext)
   }
 
-  // Audio: no code preprocessing. The renderer's <attachments> block
-  // already exposes filename, mime, size, and absolute path to the
-  // model — that's enough for it to decide whether to invoke a
-  // cerebellum tool (e.g. stt_transcribe_upload) or ask the user.
-  // Returning null leaves the user message untouched: the file still
-  // renders as an AudioPlayer in chat (driven by attachments state),
-  // and the LLM still sees the metadata via the original text content.
   if (mimeType.startsWith('audio/')) return null
+  if (mimeType.startsWith('video/')) return null
 
   return null
 }

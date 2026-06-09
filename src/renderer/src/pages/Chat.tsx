@@ -1,13 +1,14 @@
 import { ActiveModelChip } from '@components/common/active-model-chip/ActiveModelChip'
-import { CompactionCard } from '@components/common/compaction-card/CompactionCard'
 import { ApprovalCard } from '@components/common/approval-card/ApprovalCard'
 import { AttachmentList } from '@components/common/attachment-list/AttachmentList'
 import { AudioPlayer } from '@components/common/audio-player/AudioPlayer'
 import { CodeFileViewer } from '@components/common/code-file-viewer/CodeFileViewer'
+import { CompactionCard } from '@components/common/compaction-card/CompactionCard'
 import { ContextMeter } from '@components/common/context-meter/ContextMeter'
 import { DocxViewer } from '@components/common/docx-viewer/DocxViewer'
 import { FileCard } from '@components/common/file-card/FileCard'
 import { HeartbeatActiveOverlay } from '@components/common/heartbeat-active-overlay/HeartbeatActiveOverlay'
+import { ImageViewer } from '@components/common/image-viewer/ImageViewer'
 import { PdfViewer } from '@components/common/pdf-viewer/PdfViewer'
 import { ProviderErrorCards } from '@components/common/provider-error-card/ProviderErrorCard'
 import { Sidebar } from '@components/common/sidebar/Sidebar'
@@ -19,6 +20,7 @@ import {
 import { ToolCard } from '@components/common/tool-card/ToolCard'
 import { TurnFooter } from '@components/common/turn-footer/TurnFooter'
 import { UpdateCard } from '@components/common/update-card/UpdateCard'
+import { VideoPlayer } from '@components/common/video-player/VideoPlayer'
 import { CodeEditor } from '@components/core/CodeEditor'
 import { useContextMenu } from '@components/core/ContextMenu'
 import { CopyButton } from '@components/core/CopyButton'
@@ -311,81 +313,78 @@ export function Chat(): React.JSX.Element {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   const { onContextMenu: onTextareaContextMenu, menu: textareaMenu } = useContextMenu(
-    useCallback(
-      () => {
-        const el = textareaRef.current
-        const hasSelection = el ? el.selectionStart !== el.selectionEnd : false
-        return [
-          {
-            label: t('chat.contextMenu.selectAll'),
-            action: () => el?.select(),
-            disabled: !draft
+    useCallback(() => {
+      const el = textareaRef.current
+      const hasSelection = el ? el.selectionStart !== el.selectionEnd : false
+      return [
+        {
+          label: t('chat.contextMenu.selectAll'),
+          action: () => el?.select(),
+          disabled: !draft
+        },
+        {
+          label: t('chat.contextMenu.copy'),
+          action: () => {
+            if (el)
+              void navigator.clipboard.writeText(
+                el.value.substring(el.selectionStart, el.selectionEnd)
+              )
           },
-          {
-            label: t('chat.contextMenu.copy'),
-            action: () => {
-              if (el) void navigator.clipboard.writeText(el.value.substring(el.selectionStart, el.selectionEnd))
-            },
-            disabled: !hasSelection
-          },
-          {
-            label: t('chat.contextMenu.paste'),
-            action: async () => {
-              const text = await navigator.clipboard.readText()
-              if (!el) return
-              const start = el.selectionStart
-              const end = el.selectionEnd
-              const before = draft.substring(0, start)
-              const after = draft.substring(end)
-              setDraft(before + text + after)
-            }
-          },
-          { separator: true as const },
-          {
-            label: t('chat.contextMenu.clear'),
-            action: () => setDraft(''),
-            disabled: !draft
+          disabled: !hasSelection
+        },
+        {
+          label: t('chat.contextMenu.paste'),
+          action: async () => {
+            const text = await navigator.clipboard.readText()
+            if (!el) return
+            const start = el.selectionStart
+            const end = el.selectionEnd
+            const before = draft.substring(0, start)
+            const after = draft.substring(end)
+            setDraft(before + text + after)
           }
-        ]
-      },
-      [draft, t]
-    )
+        },
+        { separator: true as const },
+        {
+          label: t('chat.contextMenu.clear'),
+          action: () => setDraft(''),
+          disabled: !draft
+        }
+      ]
+    }, [draft, t])
   )
 
   const { onContextMenu: onEditorContextMenu, menu: editorMenu } = useContextMenu(
-    useCallback(
-      () => {
-        return [
-          {
-            label: t('chat.contextMenu.selectAll'),
-            action: () => document.execCommand('selectAll'),
-            disabled: !draft
+    useCallback(() => {
+      return [
+        {
+          label: t('chat.contextMenu.selectAll'),
+          action: () => document.execCommand('selectAll'),
+          disabled: !draft
+        },
+        {
+          label: t('chat.contextMenu.copy'),
+          action: () => {
+            const sel = window.getSelection()
+            if (sel && sel.toString()) void navigator.clipboard.writeText(sel.toString())
           },
-          {
-            label: t('chat.contextMenu.copy'),
-            action: () => {
-              const sel = window.getSelection()
-              if (sel && sel.toString()) void navigator.clipboard.writeText(sel.toString())
-            },
-            disabled: !window.getSelection()?.toString()
-          },
-          {
-            label: t('chat.contextMenu.paste'),
-            action: async () => {
-              const text = await navigator.clipboard.readText()
-              document.execCommand('insertText', false, text)
-            }
-          },
-          { separator: true as const },
-          {
-            label: t('chat.contextMenu.clear'),
-            action: () => setDraft(''),
-            disabled: !draft
+          disabled: !window.getSelection()?.toString()
+        },
+        {
+          label: t('chat.contextMenu.paste'),
+          action: async () => {
+            const text = await navigator.clipboard.readText()
+            document.execCommand('insertText', false, text)
           }
-        ]
-      },
-      [draft, t]
-    )
+        },
+        { separator: true as const },
+        {
+          label: t('chat.contextMenu.clear'),
+          action: () => setDraft(''),
+          disabled: !draft
+        }
+      ]
+    }, [draft, t])
   )
   const [storedFolders, setStoredFolders] = useState<string[]>([])
   const workingFolders = useMemo(
@@ -674,7 +673,10 @@ export function Chat(): React.JSX.Element {
         contextTokens != null && contextBudget != null
           ? { contextTokens, contextBudget }
           : (conversationRef.current.contextMeter ?? null)
-      conversationRef.current.timeline = timelineEntries.length > 0 ? timelineEntries : (conversationRef.current.timeline ?? undefined)
+      conversationRef.current.timeline =
+        timelineEntries.length > 0
+          ? timelineEntries
+          : (conversationRef.current.timeline ?? undefined)
       await window.api.conversation.save(conversationRef.current)
     },
     [currentModel, setActiveConversationId, contextTokens, contextBudget, timelineEntries]
@@ -710,7 +712,7 @@ export function Chat(): React.JSX.Element {
       })
     } else {
       conversationRef.current = null
-      setTimelineEntries([])
+      queueMicrotask(() => setTimelineEntries([]))
     }
   }, [activeConversationId])
 
@@ -807,7 +809,12 @@ export function Chat(): React.JSX.Element {
           setCacheReadTokens((prev) => (prev ?? 0) + v)
         }
       }
-      if (type !== 'tool.called' && type !== 'tool.completed' && type !== 'tool.failed' && type !== 'compaction.applied') {
+      if (
+        type !== 'tool.called' &&
+        type !== 'tool.completed' &&
+        type !== 'tool.failed' &&
+        type !== 'compaction.applied'
+      ) {
         const { summary: tlSummary, detail: tlDetail } = timelineEventSummary(type, payload)
         setTimelineEntries((prev) => [
           ...prev,
@@ -1909,7 +1916,19 @@ const TIMELINE_KIND_COLOR: Record<string, string> = {
   'segment.provider_change': 'bg-amber-500'
 }
 
-function CompactionStartedCard({ messagesCount, targetsCount, tokenCount, tokenBudget, startedAt }: { messagesCount: number; targetsCount: number; tokenCount: number; tokenBudget: number; startedAt: number }): React.JSX.Element {
+function CompactionStartedCard({
+  messagesCount,
+  targetsCount,
+  tokenCount,
+  tokenBudget,
+  startedAt
+}: {
+  messagesCount: number
+  targetsCount: number
+  tokenCount: number
+  tokenBudget: number
+  startedAt: number
+}): React.JSX.Element {
   const { t } = useTranslation()
   const [now, setNow] = useState<number>(() => Date.now())
   useEffect(() => {
@@ -1928,7 +1947,12 @@ function CompactionStartedCard({ messagesCount, targetsCount, tokenCount, tokenB
         </span>
       </div>
       <p className="text-muted mt-1 text-xs">
-        {t('chat.compactionCard.compacting', { targets: targetsCount, messages: messagesCount, current: fmtNum(tokenCount), limit: fmtNum(tokenBudget) })}
+        {t('chat.compactionCard.compacting', {
+          targets: targetsCount,
+          messages: messagesCount,
+          current: fmtNum(tokenCount),
+          limit: fmtNum(tokenBudget)
+        })}
       </p>
     </div>
   )
@@ -1986,9 +2010,10 @@ function TimelineList({
           const color = TIMELINE_KIND_COLOR[entry.kind] ?? 'bg-muted/40'
           const label = t(`chat.timeline.event.${entry.kind}`, { defaultValue: entry.kind })
           const timeStr = relativeTime(entry.timestamp, locale)
-          const content = entry.summary || entry.detail
-            ? [entry.summary, entry.detail].filter(Boolean).join('\n')
-            : null
+          const content =
+            entry.summary || entry.detail
+              ? [entry.summary, entry.detail].filter(Boolean).join('\n')
+              : null
           return (
             <div
               key={entry.id}
@@ -2001,9 +2026,7 @@ function TimelineList({
                 <span
                   className={cn(
                     'inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full px-1 text-[9px] font-semibold tabular-nums',
-                    isLast
-                      ? `${color} text-white`
-                      : 'bg-muted/15 text-muted/50',
+                    isLast ? `${color} text-white` : 'bg-muted/15 text-muted/50',
                     entry.kind === 'compaction.started' && 'animate-pulse'
                   )}
                 >
@@ -2021,7 +2044,7 @@ function TimelineList({
                   <pre
                     dir="ltr"
                     className={cn(
-                      'overflow-x-auto rounded-md border px-3 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words',
+                      'overflow-x-auto rounded-md border px-3 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap wrap-break-word',
                       isLast
                         ? 'bg-bg border-border text-fg/80'
                         : 'bg-bg/50 border-border/50 text-muted/50'
@@ -2076,7 +2099,8 @@ function buildSegmentTimelineEntry(segment: Segment): TimelineEntry | null {
   }
   if (segKind === 'compaction') {
     const lines = segment.details.map((d) => {
-      const pct = d.originalChars > 0 ? Math.round((1 - d.compactedChars / d.originalChars) * 100) : 0
+      const pct =
+        d.originalChars > 0 ? Math.round((1 - d.compactedChars / d.originalChars) * 100) : 0
       return `${d.toolName ?? 'unknown'}: ${d.originalChars} → ${d.compactedChars} chars (${pct}% reduced)`
     })
     lines.unshift(`~${fmtNum(segment.tokensSaved)} tokens saved in ${segment.durationMs}ms`)
@@ -2116,9 +2140,12 @@ function timelineEventSummary(
     case 'context.built': {
       const count = typeof payload.tokenCount === 'number' ? payload.tokenCount : null
       const budget = typeof payload.tokenBudget === 'number' ? payload.tokenBudget : null
-      const sections = Array.isArray(payload.sectionsIncluded) ? (payload.sectionsIncluded as string[]).join(', ') : null
+      const sections = Array.isArray(payload.sectionsIncluded)
+        ? (payload.sectionsIncluded as string[]).join(', ')
+        : null
       const lines: string[] = []
-      if (count != null) lines.push(`Tokens: ${fmtNum(count)}${budget != null ? ` / ${fmtNum(budget)} budget` : ''}`)
+      if (count != null)
+        lines.push(`Tokens: ${fmtNum(count)}${budget != null ? ` / ${fmtNum(budget)} budget` : ''}`)
       if (sections) lines.push(`Sections: ${sections}`)
       return { detail: lines.length > 0 ? lines.join('\n') : undefined }
     }
@@ -2126,7 +2153,8 @@ function timelineEventSummary(
       const inp = typeof payload.inputTokens === 'number' ? payload.inputTokens : 0
       const out = typeof payload.outputTokens === 'number' ? payload.outputTokens : 0
       const cache = typeof payload.cacheReadTokens === 'number' ? payload.cacheReadTokens : 0
-      const cacheCreated = typeof payload.cacheCreationTokens === 'number' ? payload.cacheCreationTokens : 0
+      const cacheCreated =
+        typeof payload.cacheCreationTokens === 'number' ? payload.cacheCreationTokens : 0
       const dur = typeof payload.durationMs === 'number' ? payload.durationMs : null
       const provider = typeof payload.provider === 'string' ? payload.provider : null
       const lines: string[] = []
@@ -2140,10 +2168,13 @@ function timelineEventSummary(
     }
     case 'safety.blocked':
       return {
-        detail: [
-          typeof payload.tool === 'string' ? `Tool: ${payload.tool}` : null,
-          typeof payload.reason === 'string' ? payload.reason : null
-        ].filter(Boolean).join('\n') || undefined
+        detail:
+          [
+            typeof payload.tool === 'string' ? `Tool: ${payload.tool}` : null,
+            typeof payload.reason === 'string' ? payload.reason : null
+          ]
+            .filter(Boolean)
+            .join('\n') || undefined
       }
     case 'safety.allowed':
     case 'safety.approved':
@@ -2151,7 +2182,8 @@ function timelineEventSummary(
       return { detail: typeof payload.tool === 'string' ? payload.tool : undefined }
     case 'compaction.started': {
       const lines: string[] = []
-      if (typeof payload.messagesCount === 'number') lines.push(`Messages: ${payload.messagesCount}`)
+      if (typeof payload.messagesCount === 'number')
+        lines.push(`Messages: ${payload.messagesCount}`)
       if (payload.force) lines.push('Mode: forced (overflow recovery)')
       if (payload.progressive) lines.push('Mode: progressive (mid-iteration)')
       return { detail: lines.length > 0 ? lines.join('\n') : undefined }
@@ -2164,11 +2196,16 @@ function timelineEventSummary(
     }
     case 'task.stepCompleted':
       return {
-        detail: typeof payload.step === 'number' && typeof payload.total === 'number'
-          ? `Step ${payload.step}/${payload.total}` : undefined
+        detail:
+          typeof payload.step === 'number' && typeof payload.total === 'number'
+            ? `Step ${payload.step}/${payload.total}`
+            : undefined
       }
     case 'task.completed':
-      return { detail: typeof payload.durationMs === 'number' ? `Duration: ${payload.durationMs}ms` : undefined }
+      return {
+        detail:
+          typeof payload.durationMs === 'number' ? `Duration: ${payload.durationMs}ms` : undefined
+      }
     case 'task.failed':
       return { detail: typeof payload.error === 'string' ? payload.error : undefined }
     case 'task.stopped':
@@ -2505,13 +2542,21 @@ function renderSegments(
       } else {
         const imagePath = extractToolResultImage(result)
         if (imagePath) {
-          const src = imagePath.startsWith('wolffish-media://')
+          const imgRelPath = imagePath.startsWith('wolffish-media://')
             ? imagePath
-            : `wolffish-media://${imagePath.replace(/^.*?\.wolffish\/workspace\//, '')}`
+            : imagePath.replace(/^.*?\.wolffish\/workspace\//, '')
+          const imgReachable = !imgRelPath.startsWith('/')
+          const imgFileName = imagePath.split('/').pop() ?? 'image'
+          const imgExt = (imagePath.match(/\.[^./\\]+$/) || [''])[0].toLowerCase()
+          const imgMime = `image/${imgExt === '.jpg' ? 'jpeg' : imgExt.slice(1)}`
           blocks.push(
-            <div key={`img_${seg.segmentId}`} className="self-start max-w-[85%]">
-              <img src={src} alt="Tool result" className="max-w-full rounded-xl" loading="lazy" />
-            </div>
+            <ImageViewer
+              key={`img_${seg.segmentId}`}
+              filePath={imgRelPath}
+              fileExists={imgReachable}
+              mimeType={imgMime}
+              fileName={imgFileName}
+            />
           )
         }
 
@@ -2565,6 +2610,43 @@ function renderSegments(
             }
           }
         }
+
+        const media = extractToolResultMedia(result)
+        if (media) {
+          const mediaFileName = media.path.split('/').pop() ?? 'media'
+          const mediaExt = (media.path.match(/\.[^./\\]+$/) || [''])[0].toLowerCase()
+          const mediaMime =
+            media.type === 'audio'
+              ? `audio/${mediaExt === '.mp3' ? 'mpeg' : mediaExt.slice(1)}`
+              : `video/${mediaExt === '.mov' ? 'quicktime' : mediaExt.slice(1)}`
+          // Convert absolute workspace path to a relative path for the blob loader.
+          // If the path is outside the workspace (e.g. /tmp/) the regex won't
+          // match and relPath stays absolute — render with fileExists=false so
+          // the player shows an "unavailable" placeholder.
+          const relPath = media.path.replace(/^.*?\.wolffish\/workspace\//, '')
+          const fileReachable = !relPath.startsWith('/')
+          if (media.type === 'audio') {
+            blocks.push(
+              <AudioPlayer
+                key={`media_${seg.segmentId}`}
+                filePath={relPath}
+                fileExists={fileReachable}
+                mimeType={mediaMime}
+                fileName={mediaFileName}
+              />
+            )
+          } else {
+            blocks.push(
+              <VideoPlayer
+                key={`media_${seg.segmentId}`}
+                filePath={relPath}
+                fileExists={fileReachable}
+                mimeType={mediaMime}
+                fileName={mediaFileName}
+              />
+            )
+          }
+        }
       }
     } else if (seg.kind === 'tool_result') {
       // Already rendered alongside its tool_call.
@@ -2591,7 +2673,16 @@ function renderSegments(
       const hasCompletion = segments.some((s, j) => j > segIdx && s.kind === 'compaction')
       if (!hasCompletion) {
         flushText()
-        blocks.push(<CompactionStartedCard key={seg.segmentId} messagesCount={seg.messagesCount} targetsCount={seg.targetsCount} tokenCount={seg.tokenCount} tokenBudget={seg.tokenBudget} startedAt={seg.startedAt} />)
+        blocks.push(
+          <CompactionStartedCard
+            key={seg.segmentId}
+            messagesCount={seg.messagesCount}
+            targetsCount={seg.targetsCount}
+            tokenCount={seg.tokenCount}
+            tokenBudget={seg.tokenBudget}
+            startedAt={seg.startedAt}
+          />
+        )
       }
     } else if (seg.kind === 'compaction') {
       flushText()
@@ -2844,8 +2935,10 @@ function findResult(segments: Segment[], toolCallId: string): ToolResultSegment 
   return undefined
 }
 
-const IMAGE_EXTS_RE = /\.(?:png|jpe?g|gif|webp)$/i
+const IMAGE_EXTS_RE = /\.(?:png|jpe?g|gif|webp|bmp|tiff?)$/i
 const DOCUMENT_EXTS_RE = /\.(?:pdf|docx?|xlsx?|pptx?|csv)$/i
+// const AUDIO_EXTS_RE = /\.(?:mp3|wav|m4a|ogg|flac|aac|wma|opus)$/i
+// const VIDEO_EXTS_RE = /\.(?:mp4|mov|avi|mkv|m4v|wmv|flv|webm)$/i
 const CODE_EXTS_RE =
   /\.(?:js|jsx|mjs|cjs|ts|tsx|vue|svelte|py|rb|rs|go|java|kt|kts|swift|c|cpp|h|hpp|cs|css|scss|less|sass|html|htm|xml|json|yaml|yml|toml|ini|conf|env|sh|bash|zsh|fish|bat|cmd|ps1|sql|graphql|gql|md|mdx|txt|log|php|lua|r|pl|dart|scala|groovy|proto|zig|ex|exs|erl|hs|clj|ml|dockerfile|makefile)$/i
 
@@ -2882,6 +2975,13 @@ function extractToolResultCodeFile(
 function extractToolResultImage(result?: ToolResultSegment): string | null {
   if (!result?.output || result.status !== 'success') return null
   const output = result.output.trim()
+
+  // Prefer the explicit [wolffish-output: path (image)] marker — it
+  // identifies the output file unambiguously even when the ffmpeg
+  // stderr also contains the input file path.
+  const marker = output.match(/\[wolffish-output:\s*([^\]]+?)\s+\(image\)\]/)
+  if (marker) return marker[1].trim()
+
   try {
     const parsed = JSON.parse(output)
     if (typeof parsed?.path === 'string' && IMAGE_EXTS_RE.test(parsed.path)) {
@@ -2891,7 +2991,7 @@ function extractToolResultImage(result?: ToolResultSegment): string | null {
   } catch {
     /* not JSON */
   }
-  const m = output.match(/(\/[^\s",:)]+\.(?:png|jpe?g|gif|webp))\b/i)
+  const m = output.match(/(\/[^\s",:)]+\.(?:png|jpe?g|gif|webp|bmp|tiff?))\b/i)
   if (m) return m[1]
   return null
 }
@@ -2923,6 +3023,33 @@ function extractToolResultDocuments(
   }
 
   return docs.length > 0 ? docs : null
+}
+
+/**
+ * Extract audio/video file paths from tool result output. Detects the
+ * `[wolffish-output: /path (type)]` marker emitted by the ffmpeg plugin,
+ * as well as bare absolute paths with known media extensions.
+ */
+function extractToolResultMedia(
+  result?: ToolResultSegment
+): { path: string; type: 'audio' | 'video' } | null {
+  if (!result?.output || result.status !== 'success') return null
+  const output = result.output
+
+  // Match the wolffish-output marker: [wolffish-output: /path/to/file.mp3 (audio)]
+  const marker = output.match(/\[wolffish-output:\s*([^\]]+?)\s+\((audio|video)\)\]/)
+  if (marker) {
+    return { path: marker[1].trim(), type: marker[2] as 'audio' | 'video' }
+  }
+
+  // Fallback: look for bare absolute paths with audio/video extensions
+  const audioMatch = output.match(/(\/[^\s",:)]+\.(?:mp3|wav|m4a|ogg|flac|aac|wma|opus))\b/i)
+  if (audioMatch) return { path: audioMatch[1], type: 'audio' }
+
+  const videoMatch = output.match(/(\/[^\s",:)]+\.(?:mp4|mov|avi|mkv|m4v|wmv|flv|webm))\b/i)
+  if (videoMatch) return { path: videoMatch[1], type: 'video' }
+
+  return null
 }
 
 function collectText(segments: Segment[]): string {
@@ -2999,10 +3126,7 @@ function markError(messages: ChatMessage[], turnId: string, error: string): Chat
   return out
 }
 
-function textHistory(
-  messages: ChatMessage[],
-  workspaceRoot: string | null
-): ChatHistoryMessage[] {
+function textHistory(messages: ChatMessage[], workspaceRoot: string | null): ChatHistoryMessage[] {
   const out: ChatHistoryMessage[] = []
   for (const m of messages) {
     if (isUser(m)) {
@@ -3166,6 +3290,12 @@ function composeHistoryContent(
     parts.push(
       `<attachments>\nThe user attached ${attachments.length} file${attachments.length === 1 ? '' : 's'} to this message:\n${lines.join('\n')}\n</attachments>`
     )
+    const hasVideo = attachments.some((a) => a.type === 'video')
+    if (hasVideo) {
+      parts.push(
+        `<video_instructions>\nOne or more attached files are videos. You cannot view or process video content directly. Instead, use ffmpeg/ffprobe via your shell tool to read the video metadata and inspect the file. Start by running: ffprobe -v quiet -print_format json -show_format -show_streams "<path>" for each video file. Use ffmpeg for any further video operations the user requests.\n</video_instructions>`
+      )
+    }
   }
   return parts.join('\n\n')
 }
@@ -3221,7 +3351,6 @@ type ValidationErrorType =
   | { code: 'max_files_reached'; max: number }
   | { code: 'total_size_exceeded'; maxBytes: number }
   | { code: 'type_not_supported' }
-  | { code: 'video_not_allowed' }
   | { code: 'vision_not_supported'; model: string }
 
 function validationErrorMessage(
@@ -3237,8 +3366,6 @@ function validationErrorMessage(
       return t('chat.upload.totalExceeded', { limit: formatBytes(error.maxBytes) })
     case 'type_not_supported':
       return t('chat.upload.typeNotSupported')
-    case 'video_not_allowed':
-      return t('chat.upload.videoNotAllowed')
     case 'vision_not_supported':
       return t('chat.upload.visionNotSupported', { model: error.model })
   }

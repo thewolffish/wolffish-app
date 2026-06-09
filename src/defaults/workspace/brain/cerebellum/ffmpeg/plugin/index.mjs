@@ -1,4 +1,6 @@
 import { execFile, spawn } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { copyFile, mkdir } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
@@ -162,6 +164,34 @@ async function ffmpegInstall() {
   })
 }
 
+const MEDIA_EXTS = new Set([
+  // audio
+  '.mp3', '.wav', '.m4a', '.ogg', '.flac', '.aac', '.wma', '.opus',
+  // video
+  '.mp4', '.mov', '.avi', '.mkv', '.m4v', '.wmv', '.flv', '.webm',
+  // image
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.tiff'
+])
+
+/**
+ * Detect the output file from ffmpeg args. The output is typically the
+ * last non-flag argument. We walk backwards through the expanded args
+ * to find the first argument that looks like a file path with a known
+ * media extension.
+ */
+function detectOutputFile(expandedArgs) {
+  for (let i = expandedArgs.length - 1; i >= 0; i--) {
+    const arg = expandedArgs[i]
+    if (arg.startsWith('-')) continue
+    const ext = path.extname(arg).toLowerCase()
+    if (MEDIA_EXTS.has(ext)) return arg
+    // If the last non-flag arg has any extension, it's likely the output
+    if (ext.length > 0) return arg
+    break
+  }
+  return null
+}
+
 async function ffmpegRun(args) {
   const rawArgs = String(args?.args ?? '').trim()
   if (!rawArgs) return { success: false, error: 'args is required' }
@@ -187,10 +217,52 @@ async function ffmpegRun(args) {
       stderr = clampOutput(stderr, c)
     })
 
-    child.on('close', (code) => {
+    child.on('close', async (code) => {
       const output = (stdout + '\n' + stderr).trim()
       if (code === 0) {
-        resolve({ success: true, output: output || '(completed successfully)' })
+        // Detect and surface the output file so renderers and channels
+        // can show inline previews / auto-send it
+        const outputFile = detectOutputFile(ffmpegArgs)
+        if (outputFile && existsSync(outputFile)) {
+          const ext = path.extname(outputFile).toLowerCase()
+          const audioExts = new Set(['.mp3', '.wav', '.m4a', '.ogg', '.flac', '.aac', '.wma', '.opus'])
+          const videoExts = new Set(['.mp4', '.mov', '.avi', '.mkv', '.m4v', '.wmv', '.flv', '.webm'])
+          const imageExts = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.tiff'])
+          let type = 'file'
+          if (audioExts.has(ext)) type = 'audio'
+          else if (videoExts.has(ext)) type = 'video'
+          else if (imageExts.has(ext)) type = 'image'
+
+          // If the output landed outside the workspace (e.g. /tmp/),
+          // copy it into workspace/files/ so the renderer can load it
+          // through the upload IPC channel and the file persists
+          // beyond OS temp cleanup.
+          let markerPath = outputFile
+          const wsRoot = path.join(homedir(), '.wolffish', 'workspace')
+          if (!outputFile.startsWith(wsRoot)) {
+            try {
+              const filesDir = path.join(wsRoot, 'files')
+              await mkdir(filesDir, { recursive: true })
+              const baseName = path.basename(outputFile)
+              let destPath = path.join(filesDir, baseName)
+              if (existsSync(destPath)) {
+                const stem = path.basename(baseName, ext)
+                let suffix = 1
+                while (existsSync(path.join(filesDir, `${stem}_${suffix}${ext}`))) suffix++
+                destPath = path.join(filesDir, `${stem}_${suffix}${ext}`)
+              }
+              await copyFile(outputFile, destPath)
+              markerPath = destPath
+            } catch {
+              // Copy failed — fall back to original path
+            }
+          }
+
+          const marker = `\n[wolffish-output: ${markerPath} (${type})]`
+          resolve({ success: true, output: (output || '(completed successfully)') + marker })
+        } else {
+          resolve({ success: true, output: output || '(completed successfully)' })
+        }
       } else {
         resolve({
           success: false,
@@ -219,7 +291,7 @@ const toolDefinitions = [
   },
   {
     name: 'ffmpeg_run',
-    description: 'Run an ffmpeg command',
+    description: "Run an ffmpeg command. IMPORTANT — save output files inside the workspace files/ directory. Never use /tmp/.",
     parameters: {
       type: 'object',
       properties: {

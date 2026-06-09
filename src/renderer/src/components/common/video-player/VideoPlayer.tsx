@@ -2,6 +2,7 @@ import { useUploadBlob } from '@hooks/use-upload-blob/useUploadBlob'
 import { cn } from '@lib/utils/cn'
 import { Download01Icon, VideoOffIcon } from 'hugeicons-react'
 import { useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 
 export type VideoPlayerProps = {
   filePath: string
@@ -29,6 +30,7 @@ export function VideoPlayer({
 }
 
 function DeletedVideo(): React.JSX.Element {
+  const { t } = useTranslation()
   return (
     <div
       className={cn(
@@ -37,7 +39,7 @@ function DeletedVideo(): React.JSX.Element {
       )}
     >
       <VideoOffIcon size={32} className="text-muted" />
-      <span className="text-muted text-sm italic">Video file was deleted</span>
+      <span className="text-muted text-sm italic">{t('chat.videoPlayer.deleted')}</span>
     </div>
   )
 }

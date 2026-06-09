@@ -1020,7 +1020,6 @@ export type UploadValidationError =
   | { code: 'max_files_reached'; max: number }
   | { code: 'total_size_exceeded'; maxBytes: number }
   | { code: 'type_not_supported' }
-  | { code: 'video_not_allowed' }
   | { code: 'vision_not_supported'; model: string }
 
 export type UploadApi = {

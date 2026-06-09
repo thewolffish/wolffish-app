@@ -1720,7 +1720,14 @@ app.whenReady().then(async () => {
             'ogg',
             'm4a',
             'flac',
-            'webm'
+            'webm',
+            'mp4',
+            'mov',
+            'avi',
+            'mkv',
+            'm4v',
+            'wmv',
+            'flv'
           ]
         },
         { name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp'] },
@@ -1729,6 +1736,7 @@ app.whenReady().then(async () => {
           extensions: ['pdf', 'docx', 'xlsx', 'xls', 'csv', 'tsv', 'txt', 'md', 'json', 'pptx']
         },
         { name: 'Audio', extensions: ['mp3', 'wav', 'ogg', 'm4a', 'flac', 'webm'] },
+        { name: 'Video', extensions: ['mp4', 'mov', 'avi', 'mkv', 'm4v', 'wmv', 'flv'] },
         { name: 'All files', extensions: ['*'] }
       ]
     })

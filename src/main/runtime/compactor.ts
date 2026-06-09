@@ -334,8 +334,8 @@ function buildSummaryPrompt(
     `1. Read ALL sections of original content below\n` +
     `2. Produce a summary with these EXACT headers:\n` +
     `   TASK: What the user originally asked for (one sentence)\n` +
-    `   PROGRESS: Numbered list of completed steps with key results. For batch/iterative work (reading N emails, processing N files, fetching N pages): state exact per-group counts (e.g., "account A: 8/8 done; account B: 6/45 done") and list every completed item's ID.\n` +
-    `   REMAINING: Numbered list of what still needs to be done. For batch work: list every unprocessed item ID explicitly, not just a count.\n` +
+    `   PROGRESS: Numbered list of completed steps with key results. For batch/iterative work: ALWAYS start with the overall total (e.g., "15/53 processed total"), then break down per group with status labels (e.g., "account-a@x.com: 8/8 COMPLETE; account-b@x.com: 7/45 IN PROGRESS"). List every completed item's ID per group.\n` +
+    `   REMAINING: Numbered list of what still needs to be done. For batch work: state total remaining (e.g., "38/53 remaining"), then list every unprocessed item ID per group.\n` +
     `   DATA: Key values extracted from content — names, emails, dates, IDs, numbers, URLs, errors.\n` +
     `   DECISIONS: Any decisions or confirmations made during the conversation\n` +
     `   CONTINUATION: Quote or paraphrase the assistant's last stated plan — what it said it would do next, in its own words. If the assistant announced a next batch, listed upcoming items, or described its next action, capture that verbatim. This is what the model will read to pick up exactly where it left off.\n\n` +

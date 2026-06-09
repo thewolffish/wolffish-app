@@ -29,7 +29,12 @@ export function composeAttachmentContext(
     return `  - ${a.originalName} (type=${a.type}, mime=${a.mimeType}, size=${a.sizeBytes}b, path=${abs}${ext ? `, ext=${ext}` : ''})`
   })
   const block = `<attachments>\nThe user attached ${attachments.length} file${attachments.length === 1 ? '' : 's'} to this message:\n${lines.join('\n')}\n</attachments>`
-  return text ? `${text}\n\n${block}` : block
+  const hasVideo = attachments.some((a) => a.type === 'video')
+  const videoPrompt = hasVideo
+    ? `<video_instructions>\nOne or more attached files are videos. You cannot view or process video content directly. Instead, use ffmpeg/ffprobe via your shell tool to read the video metadata and inspect the file. Start by running: ffprobe -v quiet -print_format json -show_format -show_streams "<path>" for each video file. Use ffmpeg for any further video operations the user requests.\n</video_instructions>`
+    : ''
+  const parts = [text, block, videoPrompt].filter(Boolean)
+  return parts.join('\n\n')
 }
 
 function toAbsoluteUploadPath(relativePath: string, root: string): string {

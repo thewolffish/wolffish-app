@@ -114,7 +114,7 @@ tools:
     description: Install ffmpeg via the system package manager
     parameters: {}
   - name: ffmpeg_run
-    description: Run an ffmpeg command
+    description: "Run an ffmpeg command. IMPORTANT — save output files inside the workspace files/ directory. Never use /tmp/."
     parameters:
       args:
         type: string
@@ -132,16 +132,15 @@ Use `ffmpeg_check` to verify ffmpeg is installed before running commands.
 If not installed, call `ffmpeg_install` (requires user approval).
 
 Use `ffmpeg_run` with the arguments you'd pass after `ffmpeg` on the command line.
-For example, to compress a video:
 
-```
-args: "-i input.mp4 -crf 28 -preset medium output.mp4"
-```
+## Output files
+
+Save all output files in the workspace `files/` directory — the same parent directory where `uploads/` lives, but use `files/` instead. For example if the input is at `…/uploads/conv-…/video.mp4`, save output to `…/files/output.mp3`. Never use `/tmp/` or any path outside the workspace.
 
 ## Common patterns
 
 - **Compress video:** `-i input.mp4 -crf 28 -preset medium output.mp4`
 - **Extract audio:** `-i input.mp4 -vn -acodec copy output.aac`
-- **Convert format:** `-i input.avi -c:v libx264 -c:a aac output.mp4`
+- **Convert format:** `-i input.avi -c:v libx264 -c:a output.mp4`
 - **Resize video:** `-i input.mp4 -vf scale=1280:720 output.mp4`
 - **Get info:** `-i input.mp4` (prints metadata to stderr)

@@ -1224,6 +1224,15 @@
       "deleted": "File was deleted",
       "download": "Download"
     },
+    "audioPlayer": {
+      "deleted": "Audio file was deleted or unavailable"
+    },
+    "videoPlayer": {
+      "deleted": "Video file was deleted or unavailable"
+    },
+    "imageViewer": {
+      "deleted": "Image file was deleted or unavailable"
+    },
     "docxViewer": {
       "loading": "Loading document"
     },

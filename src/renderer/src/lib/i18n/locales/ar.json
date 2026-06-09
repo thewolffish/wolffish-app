@@ -1173,6 +1173,15 @@
       "deleted": "تم حذف الملف",
       "download": "تنزيل"
     },
+    "audioPlayer": {
+      "deleted": "ملف الصوت محذوف أو غير متاح"
+    },
+    "videoPlayer": {
+      "deleted": "ملف الفيديو محذوف أو غير متاح"
+    },
+    "imageViewer": {
+      "deleted": "ملف الصورة محذوف أو غير متاح"
+    },
     "docxViewer": {
       "loading": "جارٍ تحميل المستند"
     },

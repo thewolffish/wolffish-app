@@ -7,6 +7,7 @@ import {
   VolumeMute02Icon
 } from 'hugeicons-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 export type AudioSource = 'upload' | 'voice'
 
@@ -49,6 +50,7 @@ export function AudioPlayer({
 }
 
 function DeletedPlayer(): React.JSX.Element {
+  const { t } = useTranslation()
   return (
     <div
       className={cn(
@@ -59,7 +61,7 @@ function DeletedPlayer(): React.JSX.Element {
       <div className="bg-muted/20 flex h-8 w-8 shrink-0 items-center justify-center rounded-full">
         <VolumeMute02Icon size={16} className="text-muted" />
       </div>
-      <span className="text-muted text-sm italic">Audio file was deleted</span>
+      <span className="text-muted text-sm italic">{t('chat.audioPlayer.deleted')}</span>
     </div>
   )
 }
