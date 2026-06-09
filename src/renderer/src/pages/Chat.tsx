@@ -20,6 +20,7 @@ import { ToolCard } from '@components/common/tool-card/ToolCard'
 import { TurnFooter } from '@components/common/turn-footer/TurnFooter'
 import { UpdateCard } from '@components/common/update-card/UpdateCard'
 import { CodeEditor } from '@components/core/CodeEditor'
+import { useContextMenu } from '@components/core/ContextMenu'
 import { CopyButton } from '@components/core/CopyButton'
 import { Markdown } from '@components/core/Markdown'
 import {
@@ -307,6 +308,85 @@ export function Chat(): React.JSX.Element {
   const [draft, setDraft] = useState('')
   const [draftExpanded, setDraftExpanded] = useState(false)
   const [streaming, setStreaming] = useState(false)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  const { onContextMenu: onTextareaContextMenu, menu: textareaMenu } = useContextMenu(
+    useCallback(
+      () => {
+        const el = textareaRef.current
+        const hasSelection = el ? el.selectionStart !== el.selectionEnd : false
+        return [
+          {
+            label: t('chat.contextMenu.selectAll'),
+            action: () => el?.select(),
+            disabled: !draft
+          },
+          {
+            label: t('chat.contextMenu.copy'),
+            action: () => {
+              if (el) void navigator.clipboard.writeText(el.value.substring(el.selectionStart, el.selectionEnd))
+            },
+            disabled: !hasSelection
+          },
+          {
+            label: t('chat.contextMenu.paste'),
+            action: async () => {
+              const text = await navigator.clipboard.readText()
+              if (!el) return
+              const start = el.selectionStart
+              const end = el.selectionEnd
+              const before = draft.substring(0, start)
+              const after = draft.substring(end)
+              setDraft(before + text + after)
+            }
+          },
+          { separator: true as const },
+          {
+            label: t('chat.contextMenu.clear'),
+            action: () => setDraft(''),
+            disabled: !draft
+          }
+        ]
+      },
+      [draft, t]
+    )
+  )
+
+  const { onContextMenu: onEditorContextMenu, menu: editorMenu } = useContextMenu(
+    useCallback(
+      () => {
+        return [
+          {
+            label: t('chat.contextMenu.selectAll'),
+            action: () => document.execCommand('selectAll'),
+            disabled: !draft
+          },
+          {
+            label: t('chat.contextMenu.copy'),
+            action: () => {
+              const sel = window.getSelection()
+              if (sel && sel.toString()) void navigator.clipboard.writeText(sel.toString())
+            },
+            disabled: !window.getSelection()?.toString()
+          },
+          {
+            label: t('chat.contextMenu.paste'),
+            action: async () => {
+              const text = await navigator.clipboard.readText()
+              document.execCommand('insertText', false, text)
+            }
+          },
+          { separator: true as const },
+          {
+            label: t('chat.contextMenu.clear'),
+            action: () => setDraft(''),
+            disabled: !draft
+          }
+        ]
+      },
+      [draft, t]
+    )
+  )
   const [storedFolders, setStoredFolders] = useState<string[]>([])
   const workingFolders = useMemo(
     () => (activeConversationId ? storedFolders : []),
@@ -1601,8 +1681,10 @@ export function Chat(): React.JSX.Element {
               <>
                 <div className="relative flex min-w-0 flex-1 flex-col">
                   <textarea
+                    ref={textareaRef}
                     value={draft}
                     onChange={(e) => setDraft(e.target.value)}
+                    onContextMenu={onTextareaContextMenu}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && !e.shiftKey) {
                         e.preventDefault()
@@ -1621,8 +1703,13 @@ export function Chat(): React.JSX.Element {
                   />
                   <button
                     type="button"
+                    disabled={streaming}
                     onClick={() => setDraftExpanded(true)}
-                    className="text-muted hover:text-fg absolute inset-e-2 top-1/2 z-10 -translate-y-1/2 cursor-pointer opacity-50 hover:opacity-100"
+                    className={cn(
+                      'text-muted hover:text-fg absolute inset-e-2 top-1/2 z-10 -translate-y-1/2 opacity-50 hover:opacity-100',
+                      'disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:text-muted',
+                      !streaming && 'cursor-pointer'
+                    )}
                   >
                     <ArrowExpandIcon size={14} />
                   </button>
@@ -1721,6 +1808,8 @@ export function Chat(): React.JSX.Element {
           </div>
         </form>
       )}
+      {textareaMenu}
+      {editorMenu}
       {draftExpanded &&
         createPortal(
           <div
@@ -1730,6 +1819,7 @@ export function Chat(): React.JSX.Element {
           >
             <div
               onClick={(e) => e.stopPropagation()}
+              onContextMenu={onEditorContextMenu}
               className="border-border bg-surface flex h-[80vh] w-[80vw] flex-col overflow-hidden rounded-2xl border shadow-xl"
             >
               <CodeEditor

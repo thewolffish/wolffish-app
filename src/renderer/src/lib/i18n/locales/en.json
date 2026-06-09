@@ -1247,6 +1247,12 @@
     "copied": "Copied",
     "copyMessage": "Copy message",
     "copyCode": "Copy code",
+    "contextMenu": {
+      "selectAll": "Select all",
+      "copy": "Copy",
+      "paste": "Paste",
+      "clear": "Clear"
+    },
     "settings": "Settings",
     "history": "History",
     "workspace": "Workspace",

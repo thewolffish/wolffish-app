@@ -1196,6 +1196,12 @@
     "copied": "تم النسخ",
     "copyMessage": "نسخ الرسالة",
     "copyCode": "نسخ الكود",
+    "contextMenu": {
+      "selectAll": "تحديد الكل",
+      "copy": "نسخ",
+      "paste": "لصق",
+      "clear": "مسح"
+    },
     "settings": "الاعدادات",
     "history": "السجل",
     "workspace": "مساحة العمل",

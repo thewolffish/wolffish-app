@@ -334,14 +334,15 @@ function buildSummaryPrompt(
     `1. Read ALL sections of original content below\n` +
     `2. Produce a summary with these EXACT headers:\n` +
     `   TASK: What the user originally asked for (one sentence)\n` +
-    `   PROGRESS: Numbered list of completed steps with key results\n` +
-    `   REMAINING: Numbered list of what still needs to be done (be specific: exact items, counts, IDs)\n` +
-    `   DATA: Key values extracted from content — names, emails, dates, IDs, numbers, URLs, errors\n` +
+    `   PROGRESS: Numbered list of completed steps with key results. For batch/iterative work (reading N emails, processing N files, fetching N pages): state exact per-group counts (e.g., "account A: 8/8 done; account B: 6/45 done") and list every completed item's ID.\n` +
+    `   REMAINING: Numbered list of what still needs to be done. For batch work: list every unprocessed item ID explicitly, not just a count.\n` +
+    `   DATA: Key values extracted from content — names, emails, dates, IDs, numbers, URLs, errors.\n` +
     `   DECISIONS: Any decisions or confirmations made during the conversation\n` +
     `   CONTINUATION: Quote or paraphrase the assistant's last stated plan — what it said it would do next, in its own words. If the assistant announced a next batch, listed upcoming items, or described its next action, capture that verbatim. This is what the model will read to pick up exactly where it left off.\n\n` +
     `RULES:\n` +
     `- Include EVERY name, email, date, ID, URL, number, error code from the original\n` +
     `- For lists of items (emails, files, records), enumerate EACH one with key fields\n` +
+    `- For batch/iterative tasks, split items into PROCESSED (with IDs) and UNPROCESSED (with IDs) in PROGRESS/REMAINING — the model needs to know exactly where to resume\n` +
     `- Do NOT fabricate data not present in the original content\n` +
     `- Do NOT use markdown formatting\n` +
     `- Keep it dense and factual\n\n` +
