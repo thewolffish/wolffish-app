@@ -72,6 +72,16 @@ export type Segment =
     }
   | { kind: 'separator'; turnId: string; segmentId: string }
   | {
+      kind: 'compaction_started'
+      turnId: string
+      segmentId: string
+      messagesCount: number
+      targetsCount: number
+      tokenCount: number
+      tokenBudget: number
+      startedAt: number
+    }
+  | {
       kind: 'compaction'
       turnId: string
       segmentId: string
@@ -285,6 +295,11 @@ export class Broca {
   emitSeparator(turnId: string): void {
     if (this.turnId !== turnId || !this.sink) return
     this.emit({ kind: 'separator', turnId, segmentId: this.nextId() })
+  }
+
+  emitCompactionStarted(turnId: string, messagesCount: number, targetsCount: number, tokenCount: number, tokenBudget: number): void {
+    if (this.turnId !== turnId || !this.sink) return
+    this.emit({ kind: 'compaction_started', turnId, segmentId: this.nextId(), messagesCount, targetsCount, tokenCount, tokenBudget, startedAt: Date.now() })
   }
 
   /**

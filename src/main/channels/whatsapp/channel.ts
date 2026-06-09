@@ -1,5 +1,5 @@
 import { Boom } from '@hapi/boom'
-import type { TurnSink } from '@main/channels/channel'
+import { assistantSegmentsToHistory, type TurnSink } from '@main/channels/channel'
 import type { TurnRunner } from '@main/channels/turn-runner'
 import {
   getConversationIdForJid,
@@ -751,16 +751,9 @@ export class WhatsAppChannel {
     conversation.updatedAt = userMessage.timestamp
     await saveConversation(conversation)
 
-    const history: ChatHistoryMessage[] = conversation.messages.map((m) => {
-      if (m.role !== 'user') {
-        const turnEnd = m.segments?.find((s) => s.kind === 'turn_end')
-        const entry: ChatHistoryMessage = { role: m.role, content: m.content }
-        if (turnEnd && 'reasoningContent' in turnEnd && turnEnd.reasoningContent) {
-          entry.reasoningContent = turnEnd.reasoningContent as string
-        }
-        return entry
-      }
-      if (m.voicePrompt) return { role: 'user', content: `<voice_note>\n${m.content}` }
+    const history: ChatHistoryMessage[] = conversation.messages.flatMap((m) => {
+      if (m.role !== 'user') return assistantSegmentsToHistory(m)
+      if (m.voicePrompt) return [{ role: 'user' as const, content: `<voice_note>\n${m.content}` }]
       const atts = m.attachments ?? []
       const entry: ChatHistoryMessage = {
         role: 'user',
@@ -775,7 +768,7 @@ export class WhatsAppChannel {
           sizeBytes: a.sizeBytes
         }))
       }
-      return entry
+      return [entry]
     })
 
     const handle = this.runner.send({

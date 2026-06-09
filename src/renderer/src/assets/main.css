@@ -210,6 +210,40 @@ textarea,
   --hljs-deletion-bg: #67060c;
 }
 
+@keyframes rainbow-slide {
+  0% {
+    background-position: 0% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.rainbow-border {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1.5px;
+  background: linear-gradient(
+    90deg,
+    #f43f5e,
+    #f59e0b,
+    #10b981,
+    #3b82f6,
+    #8b5cf6,
+    #ec4899,
+    #f43f5e,
+    #f59e0b,
+    #10b981,
+    #3b82f6,
+    #8b5cf6,
+    #ec4899
+  );
+  background-size: 200% 100%;
+  animation: rainbow-slide 2.5s linear infinite;
+}
+
 .hljs {
   color: var(--color-fg);
 }

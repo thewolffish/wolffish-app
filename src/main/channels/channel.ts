@@ -1,6 +1,8 @@
 import type { ApprovalDecision, ApprovalRequest } from '@main/runtime/amygdala'
 import type { Segment } from '@main/runtime/broca'
 import type { CorpusEvent, CorpusEvents } from '@main/runtime/corpus'
+import type { ConversationMessage } from '@main/conversations'
+import type { ChatHistoryMessage } from '@preload/index'
 
 /**
  * A channel is one mouth wolffish can speak through. The Electron renderer
@@ -80,3 +82,76 @@ class TurnRouter {
 }
 
 export const turnRouter = new TurnRouter()
+
+/**
+ * Reconstruct the full message history from a conversation's stored messages,
+ * preserving tool calls and tool results from assistant segments. This gives
+ * the model access to its prior tool interactions across turns.
+ */
+export function assistantSegmentsToHistory(msg: ConversationMessage): ChatHistoryMessage[] {
+  const segments = msg.segments
+  if (!segments || segments.length === 0) {
+    return [{ role: 'assistant', content: msg.content }]
+  }
+
+  const out: ChatHistoryMessage[] = []
+  const toolCallNames = new Map<string, string>()
+  for (const s of segments) {
+    if (s.kind === 'tool_call') toolCallNames.set(s.toolCallId, s.name)
+  }
+
+  let iterText = ''
+  let iterToolUses: Array<{ id: string; name: string; args: Record<string, unknown> }> = []
+  let iterToolResults: ChatHistoryMessage[] = []
+  let hasContent = false
+
+  const flush = (): void => {
+    if (!hasContent) return
+    const assistantMsg: ChatHistoryMessage = { role: 'assistant', content: iterText }
+    if (iterToolUses.length > 0) assistantMsg.toolUses = iterToolUses
+    out.push(assistantMsg)
+    for (const tr of iterToolResults) out.push(tr)
+    iterText = ''
+    iterToolUses = []
+    iterToolResults = []
+    hasContent = false
+  }
+
+  let iterCount = 0
+  for (const s of segments) {
+    if (s.kind === 'active_model') {
+      if (iterCount > 0) flush()
+      iterCount++
+    } else if (s.kind === 'text') {
+      iterText += s.delta
+      hasContent = true
+    } else if (s.kind === 'tool_call') {
+      iterToolUses.push({ id: s.toolCallId, name: s.name, args: s.args })
+      hasContent = true
+    } else if (s.kind === 'tool_result') {
+      iterToolResults.push({
+        role: 'tool',
+        toolUseId: s.toolCallId,
+        toolName: toolCallNames.get(s.toolCallId) ?? 'unknown',
+        content: s.output,
+        isError: s.status === 'failed' || undefined
+      })
+      hasContent = true
+    }
+  }
+  flush()
+
+  if (out.length === 0) {
+    return [{ role: 'assistant', content: msg.content }]
+  }
+
+  const turnEnd = segments.find((s) => s.kind === 'turn_end')
+  if (turnEnd && 'reasoningContent' in turnEnd && turnEnd.reasoningContent) {
+    const first = out[0]
+    if (first.role === 'assistant') {
+      first.reasoningContent = turnEnd.reasoningContent as string
+    }
+  }
+
+  return out
+}

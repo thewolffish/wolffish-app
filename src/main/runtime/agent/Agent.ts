@@ -337,11 +337,19 @@ export class Agent {
     let lastAssistantText = ''
     let lastReasoningContent: string | undefined
     let noProviderAvailable: NoProviderAvailableInfo[] | null = null
+    let providerErrors: NoProviderAvailableInfo[] | undefined
     let fallbackState: { mode: FallbackMode; reason: string; cloudProvider: string } | null = null
     const turnTools: TurnToolCall[] = []
     let turnUsage: StreamUsage = { inputTokens: 0, outputTokens: 0 }
     let turnProvider: ProviderId | null = null
     let turnModel: string | null = null
+    // Track the most recent LLM response's input token count. This is
+    // ground truth from the provider and beats any char-based estimation.
+    // Passed to compactOverflow so it can calibrate against reality.
+    let lastIterationInputTokens = 0
+    // When a context-overflow 400 fires, we force compaction and retry
+    // exactly once. This flag prevents infinite retry loops.
+    let contextOverflowRetried = false
 
     broca.beginTurn(turn.turnId, turn.onSegment)
     this.cerebellum.setCurrentConversationId(turn.conversationId ?? null, turn.conversationTitle)
@@ -399,31 +407,24 @@ export class Agent {
           }
         }
 
-        // Cheap compaction: truncate stale tool results and evict old
-        // screenshots. Zero LLM cost — just string slicing. Runs every
-        // iteration to keep context lean.
-        const cheapCompaction = compactMessages(messages)
-        if (cheapCompaction) {
-          const estimatedTokensSaved = Math.round(cheapCompaction.charsSaved / 4)
-          broca.emitCompaction(
-            turn.turnId,
-            cheapCompaction.targetsCount,
-            estimatedTokensSaved,
-            0, // instant — no LLM call
-            cheapCompaction.details
-          )
-          this.corpus.emit('compaction.applied', {
-            tokensSaved: estimatedTokensSaved,
-            targetsCount: cheapCompaction.targetsCount
-          })
-        }
-
-        // Smart Context Compaction: if context STILL exceeds the model's
-        // input budget after cheap compaction, use LLM-generated summaries.
-        // This is the overflow safety net — rarely needed when cheap
-        // compaction keeps context lean.
+        // Context Compaction: if context exceeds the model's input budget,
+        // use LLM-generated summaries to reduce size while retaining
+        // critical details. Only fires when actually needed.
         const compactionStart = Date.now()
-        const compaction = await compactOverflow(this.thalamus, systemPrompt, messages, turn.signal)
+        const compaction = await compactOverflow(
+          this.thalamus,
+          systemPrompt,
+          messages,
+          turn.signal,
+          {
+            tools: filteredTools.length > 0 ? filteredTools : undefined,
+            lastKnownInputTokens: lastIterationInputTokens,
+            onStarted: (targetsCount, currentTokens, inputBudget) => {
+              this.corpus.emit('compaction.started', { messagesCount: messages.length })
+              broca.emitCompactionStarted(turn.turnId, messages.length, targetsCount, currentTokens, inputBudget)
+            }
+          }
+        )
         if (compaction) {
           const compactionDurationMs = Date.now() - compactionStart
           broca.emitCompaction(
@@ -457,6 +458,10 @@ export class Agent {
           if (provider) turnProvider = provider
           if (model) turnModel = model
           if (usage) {
+            // Track per-iteration input tokens for compaction calibration.
+            // This is ground truth from the provider — use it on the next
+            // iteration to catch cases where char estimation underestimates.
+            lastIterationInputTokens = usage.inputTokens
             turnUsage = {
               inputTokens: turnUsage.inputTokens + usage.inputTokens,
               outputTokens: turnUsage.outputTokens + usage.outputTokens,
@@ -485,11 +490,75 @@ export class Agent {
         }
 
         if (parsed.error) {
+          // Detect context-overflow 400s: the provider rejected the request
+          // because the payload exceeded its context window. Instead of
+          // crashing, force compaction and retry exactly once.
+          const isContextOverflow =
+            /maximum context length|context.length.*exceeded|too many tokens|reduce the length/i.test(
+              parsed.error
+            )
+
+          if (isContextOverflow && !contextOverflowRetried) {
+            contextOverflowRetried = true
+            console.log(
+              `[agent] Context overflow detected — forcing compaction and retrying. ` +
+                `Error: ${parsed.error.slice(0, 200)}`
+            )
+            // Note: not emitting a corpus event here to avoid type changes.
+            // The console.log above provides observability.
+
+            // Force compaction — bypasses the estimate check and compacts
+            // the largest messages unconditionally.
+            const overflowCompactionStart = Date.now()
+            const overflowCompaction = await compactOverflow(
+              this.thalamus,
+              systemPrompt,
+              messages,
+              turn.signal,
+              {
+                tools: filteredTools.length > 0 ? filteredTools : undefined,
+                lastKnownInputTokens: lastIterationInputTokens,
+                force: true,
+                onStarted: (targetsCount, currentTokens, inputBudget) => {
+                  this.corpus.emit('compaction.started', { messagesCount: messages.length, force: true })
+                  broca.emitCompactionStarted(turn.turnId, messages.length, targetsCount, currentTokens, inputBudget)
+                }
+              }
+            )
+            if (overflowCompaction) {
+              const dur = Date.now() - overflowCompactionStart
+              broca.emitCompaction(
+                turn.turnId,
+                overflowCompaction.targets.length,
+                overflowCompaction.tokensSaved,
+                dur,
+                overflowCompaction.targets.map((t) => ({
+                  toolName: t.toolName,
+                  originalChars: t.originalChars,
+                  compactedChars: t.compactedChars,
+                  compactedBy: t.compactedBy
+                }))
+              )
+              this.corpus.emit('compaction.applied', {
+                tokensSaved: overflowCompaction.tokensSaved,
+                targetsCount: overflowCompaction.targets.length
+              })
+            }
+            // Don't increment iterationCount — this is a retry of the same
+            // iteration, not a new one. Just loop back to rebuild prompt
+            // and re-call the LLM with the compacted messages.
+            iterationCount -= 1
+            continue
+          }
+
           if (parsed.noProviderAvailable) {
             stopReason = 'no_provider_available'
             noProviderAvailable = parsed.noProviderAvailable
           } else {
             stopReason = 'error'
+            if (parsed.providerFailures) {
+              providerErrors = parsed.providerFailures
+            }
           }
           if (task) await this.motor.completeTask(task.id, 'failed').catch(() => undefined)
           throw new Error(parsed.error)
@@ -712,6 +781,7 @@ export class Agent {
             toolMsg.images = result.images
           }
           messages.push(toolMsg)
+
         }
 
         if (aborted) {
@@ -778,7 +848,7 @@ export class Agent {
       if (noProviderAvailable) {
         broca.emitTurnEnd(turn.turnId, 'no_provider_available', iterationCount, noProviderAvailable)
       } else {
-        broca.emitTurnEnd(turn.turnId, 'error', iterationCount)
+        broca.emitTurnEnd(turn.turnId, 'error', iterationCount, providerErrors)
       }
       throw err
     } finally {
@@ -1028,109 +1098,3 @@ async function* captureUsage(
   }
 }
 
-// ---------------------------------------------------------------------------
-// Message history compaction
-// ---------------------------------------------------------------------------
-// Between agent loop iterations the message array grows with every tool
-// result — including base64 screenshots (~100K tokens each) and bulky
-// web_fetch bodies (10-15K chars). Left unchecked a 60-iteration heartbeat
-// run accumulates ~15 screenshots and ~120K chars of stale research text,
-// all re-sent on every subsequent API call.
-//
-// compactMessages runs after each iteration and applies two conservative
-// passes that preserve context quality:
-//
-//   1. Image eviction  — keeps the N most recent screenshots. Older ones
-//      have their binary data removed; the tool's text output (dimensions,
-//      display info) is kept and a marker prepended. The model's analysis
-//      of those screenshots is preserved verbatim in the adjacent assistant
-//      messages.
-//
-//   2. Result truncation — tool results older than M assistant turns whose
-//      text exceeds a character threshold are trimmed to a prefix. Error
-//      results are never truncated (the model may reference them for retry
-//      logic).
-//
-// All mutations are local to the in-flight `messages` array inside
-// respond(). Nothing is persisted — the renderer, hippocampus, and
-// conversation file are unaffected.
-// ---------------------------------------------------------------------------
-
-/** How many screenshot images to keep (counted from the most recent). */
-const COMPACT_KEEP_IMAGES = 5
-/** Only truncate text results older than this many assistant turns.
- *  2 = the model gets one full iteration to reference a result before
- *  it's trimmed to a 500-char prefix. By the time 2 assistant responses
- *  exist after a tool result, its content has been consumed. */
-const COMPACT_STALE_TURNS = 2
-/** Only truncate text results longer than this (chars). */
-const COMPACT_TRUNCATE_ABOVE = 2000
-/** How many leading chars to preserve when truncating. */
-const COMPACT_KEEP_CHARS = 500
-
-interface CompactMessagesResult {
-  targetsCount: number
-  charsSaved: number
-  details: Array<{
-    toolName?: string
-    originalChars: number
-    compactedChars: number
-    compactedBy: string
-  }>
-}
-
-function compactMessages(messages: ChatMessage[]): CompactMessagesResult | null {
-  const details: CompactMessagesResult['details'] = []
-  let charsSaved = 0
-
-  // Pass 1: evict old screenshot images
-  let imagesFromEnd = 0
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i]
-    if (m.role !== 'tool') continue
-    if (!m.images || m.images.length === 0) continue
-    imagesFromEnd++
-    if (imagesFromEnd > COMPACT_KEEP_IMAGES) {
-      const imageChars = m.images.reduce((sum, img) => sum + img.data.length, 0)
-      m.images = undefined
-      if (!m.content.startsWith('[Screenshot')) {
-        m.content = `[Screenshot analyzed — image omitted from context]\n${m.content}`
-      }
-      charsSaved += imageChars
-      details.push({
-        toolName: m.toolName ?? 'screenshot',
-        originalChars: imageChars,
-        compactedChars: 0,
-        compactedBy: 'image eviction'
-      })
-    }
-  }
-
-  // Pass 2: truncate stale large tool results
-  let assistantTurns = 0
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role === 'assistant') assistantTurns++
-    const m = messages[i]
-    if (m.role !== 'tool') continue
-    if (m.isError) continue
-    if (assistantTurns < COMPACT_STALE_TURNS) continue
-    if (m.content.length <= COMPACT_TRUNCATE_ABOVE) continue
-    // Skip already-truncated results
-    if (m.content.includes('[…truncated ')) continue
-    const originalLength = m.content.length
-    m.content =
-      m.content.slice(0, COMPACT_KEEP_CHARS) +
-      `\n\n[…truncated ${originalLength - COMPACT_KEEP_CHARS} chars — full result was processed in an earlier iteration]`
-    const saved = originalLength - m.content.length
-    charsSaved += saved
-    details.push({
-      toolName: m.toolName,
-      originalChars: originalLength,
-      compactedChars: m.content.length,
-      compactedBy: 'truncation'
-    })
-  }
-
-  if (details.length === 0) return null
-  return { targetsCount: details.length, charsSaved, details }
-}

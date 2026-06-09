@@ -147,6 +147,24 @@ function ErrorDetailBlock({ text }: { text: string }): React.JSX.Element {
   )
 }
 
+function buildDetailText(payload: NoProviderAvailablePayload): string {
+  const lines: string[] = []
+  lines.push(`Provider: ${payload.provider}`)
+  if (payload.statusCode) lines.push(`Status: HTTP ${payload.statusCode}`)
+  lines.push(`Error: ${payload.errorReason}`)
+  if (payload.errorDetail) lines.push(`Detail: ${payload.errorDetail}`)
+  if (payload.retriesAttempted > 0) lines.push(`Retries: ${payload.retriesAttempted}`)
+  if (payload.totalDurationMs > 0) {
+    const sec = (payload.totalDurationMs / 1000).toFixed(1)
+    lines.push(`Duration: ${sec}s`)
+  }
+  lines.push('')
+  lines.push('This is an API provider issue — not a Wolffish error.')
+  lines.push('The provider terminated or failed to complete the response.')
+  lines.push('Try again, or switch to a different provider in settings.')
+  return lines.join('\n')
+}
+
 function SingleErrorCard({ payload }: { payload: NoProviderAvailablePayload }): React.JSX.Element {
   const { t } = useTranslation()
   const [showDetail, setShowDetail] = useState(false)
@@ -169,21 +187,19 @@ function SingleErrorCard({ payload }: { payload: NoProviderAvailablePayload }): 
         <div className="flex-1 text-xs">
           <p className="font-medium">{title}</p>
           <p className="opacity-80">{description}</p>
-          {payload.errorDetail && (
-            <button
-              type="button"
-              onClick={() => setShowDetail((v) => !v)}
-              className={cn(
-                'mt-1 text-[11px] underline underline-offset-2 opacity-60',
-                'hover:opacity-90 transition-opacity'
-              )}
-            >
-              {t('errors.provider.viewDetails')}
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={() => setShowDetail((v) => !v)}
+            className={cn(
+              'mt-1 text-[11px] underline underline-offset-2 opacity-60',
+              'hover:opacity-90 transition-opacity'
+            )}
+          >
+            {t('errors.provider.viewDetails')}
+          </button>
         </div>
       </div>
-      {showDetail && payload.errorDetail && <ErrorDetailBlock text={payload.errorDetail} />}
+      {showDetail && <ErrorDetailBlock text={buildDetailText(payload)} />}
     </div>
   )
 }

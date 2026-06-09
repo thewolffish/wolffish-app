@@ -25,6 +25,7 @@ export const TURN_RELAYED_EVENTS: CorpusEvent[] = [
   'safety.blocked',
   'safety.approved',
   'safety.denied',
+  'compaction.started',
   'compaction.applied'
 ]
 

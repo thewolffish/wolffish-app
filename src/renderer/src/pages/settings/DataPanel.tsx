@@ -1,5 +1,5 @@
-import { Button } from '@components/core/Button'
 import { DiskUsageBar } from '@components/common/disk-usage-bar/DiskUsageBar'
+import { Button } from '@components/core/Button'
 import { Input } from '@components/core/Input'
 import { Modal } from '@components/core/Modal'
 import { useToast } from '@components/core/toast/useToast'
@@ -12,8 +12,8 @@ import {
   CpuIcon,
   Database02Icon,
   HardDriveIcon,
-  RamMemoryIcon,
   Pulse01Icon,
+  RamMemoryIcon,
   Refresh01Icon,
   WasteIcon
 } from 'hugeicons-react'
@@ -227,7 +227,7 @@ function FactoryResetCard({ onOpen }: { onOpen: () => void }): React.JSX.Element
             size="md"
             variant="outline"
             onClick={onOpen}
-            className="border-red-500/40 bg-red-500/10 text-red-700 hover:bg-red-500/20 dark:text-red-400"
+            className="border-red-500/40 bg-red-500/10 text-red-700 hover:bg-red-500/20 dark:text-red-400 active:bg-red-500/20"
           >
             {t('settings.data.factoryReset.button')}
           </Button>

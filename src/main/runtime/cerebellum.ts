@@ -364,10 +364,17 @@ export class Cerebellum {
    */
   findRelevantSkills(message: string, limit = 3): Capability[] {
     const lower = message.toLowerCase()
+    const always: Capability[] = []
     const scored: Array<{ cap: Capability; score: number }> = []
     for (const cap of this.capabilities.values()) {
       if (cap.status !== 'ok') continue
       if (this.disabled.has(cap.name)) continue
+      // A trigger of "*" means always inject this skill — no keyword
+      // matching needed. These don't count against the limit.
+      if (cap.triggers.keywords.includes('*')) {
+        always.push(cap)
+        continue
+      }
       let score = 0
       for (const kw of cap.triggers.keywords) {
         if (lower.includes(kw.toLowerCase())) score += 1
@@ -375,7 +382,7 @@ export class Cerebellum {
       if (score > 0) scored.push({ cap, score })
     }
     scored.sort((a, b) => b.score - a.score)
-    return scored.slice(0, limit).map((s) => s.cap)
+    return [...always, ...scored.slice(0, limit).map((s) => s.cap)]
   }
 
   /**

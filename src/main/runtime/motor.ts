@@ -534,6 +534,18 @@ export class Motor {
     } catch {
       // best-effort: a transcript write failure must not abort execution
     }
+    // Write full tool outputs to a separate detail log for debugging.
+    // Never indexed by cortex, never included in context — just a
+    // crash-recovery and debugging artifact.
+    const detail = renderDetailLog(task)
+    if (detail) {
+      const detailPath = task.transcriptPath.replace('.md', '-detail.log')
+      try {
+        await fs.writeFile(detailPath, detail, 'utf8')
+      } catch {
+        // best-effort
+      }
+    }
   }
 
   private async sleep(ms: number, signal?: AbortSignal): Promise<boolean> {
@@ -598,10 +610,17 @@ function renderTranscript(task: Task): string {
     }
     lines.push(`- **Attempts:** ${step.attempts}`)
     if (step.output) {
-      lines.push('- **Output:**')
-      lines.push('```')
-      lines.push(step.output)
-      lines.push('```')
+      const size = step.output.length
+      const PREVIEW_LIMIT = 2000
+      const preview = step.output.slice(0, PREVIEW_LIMIT).replace(/\n/g, ' ').trim()
+      const truncated = size - PREVIEW_LIMIT
+      if (truncated > 0) {
+        lines.push(
+          `- **Output:** (${size.toLocaleString()} chars) ${preview}… [${truncated.toLocaleString()} chars omitted]`
+        )
+      } else {
+        lines.push(`- **Output:** ${preview}`)
+      }
     }
     if (step.error) {
       lines.push(`- **Error:** ${step.error}`)
@@ -610,6 +629,27 @@ function renderTranscript(task: Task): string {
     lines.push('')
   })
 
+  return lines.join('\n')
+}
+
+/**
+ * Render full tool outputs for debugging. Written alongside the summary
+ * transcript as TASK-{id}-detail.log — never indexed by cortex, never
+ * included in context. Preserves the full output for crash recovery and
+ * post-mortem inspection.
+ */
+function renderDetailLog(task: Task): string | null {
+  const stepsWithOutput = task.steps.filter((s) => s.output && s.output.length > 2000)
+  if (stepsWithOutput.length === 0) return null
+  const lines: string[] = [`# Task Detail Log: TASK-${task.id}`, '']
+  task.steps.forEach((step, idx) => {
+    if (!step.output || step.output.length <= 2000) return
+    lines.push(`## Step ${idx + 1}: ${step.call.name}`)
+    lines.push('```')
+    lines.push(step.output)
+    lines.push('```')
+    lines.push('')
+  })
   return lines.join('\n')
 }
 

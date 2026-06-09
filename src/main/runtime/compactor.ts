@@ -1,29 +1,50 @@
-import { type ChatMessage, type Thalamus } from '@main/runtime/thalamus'
+import { type ChatMessage, type Thalamus, type ToolDefinition } from '@main/runtime/thalamus'
 
 // ---------------------------------------------------------------------------
 // Smart Context Compaction
 // ---------------------------------------------------------------------------
-// When the accumulated messages[] would overflow the active model's context
-// window, this module compacts messages in-place to fit. It targets content
-// in priority order:
+// When the accumulated messages[] approach 75% of the active model's context
+// window, this module compacts messages in-place to fit. Strategy:
 //
-//   1. Tool results — largest first, skip errors + 3 most recent
-//   2. Older assistant messages — oldest first, skip the most recent 2
-//   3. Older user messages — oldest first, skip the most recent 2
+//   1. Select targets (all message types, protect recent 3 per role + first prompt)
+//   2. Strip images from all tool results
+//   3. Proportional truncation in-place (instant, no LLM call)
+//   4. One LLM call: summarize original content into a conversation summary
+//   5. Inject summary + continuation nudge into messages[]
 //
-// Each target is LLM-summarized in parallel via the cheapest provider. When
-// the LLM call fails, a deterministic head+tail truncation is used instead.
-//
-// The messages[] array IS mutated in-place. This is safe because persistence
-// works through broca segments, hippocampus only sees episode summaries, and
-// the messages array is local to the current turn. In-place mutation ensures
-// subsequent iterations don't re-compact the same content.
+// Previous approach used N individual LLM calls (one per target) — slow
+// (~6 min for 9 targets). New approach: instant truncation + 1 summary call.
 // ---------------------------------------------------------------------------
 
-// JSON-heavy tool results tokenize at ~2-2.5 chars/token. We use chars/2
-// because the cost of underestimation (context overflow → hard 400) vastly
-// exceeds overestimation (unnecessary compaction).
-const CHARS_PER_TOKEN = 2
+// Conservative chars-to-token ratio. Different providers and content types
+// tokenize at wildly different densities:
+//   - English prose: ~4 chars/token
+//   - JSON/HTML:     ~1.5-2.5 chars/token
+//   - DeepSeek JSON: ~1.2-1.8 chars/token
+// We use 1.5 because the cost of underestimation (context overflow → hard 400
+// that crashes the turn) vastly exceeds overestimation (an extra compaction
+// pass that preserves the conversation). Previous value of 2 was too optimistic
+// for non-English-optimized tokenizers on structured content.
+const CHARS_PER_TOKEN = 1.5
+
+/** Trigger compaction when payload exceeds this fraction of the input budget. */
+const COMPACTION_THRESHOLD = 0.75
+/** Compact down to this fraction — leaves headroom for the model to keep working. */
+const COMPACTION_TARGET = 0.50
+/** Number of most-recent messages per role to protect from compaction. */
+const PROTECT_RECENT = 3
+/** Minimum content size worth compacting (chars). */
+const MIN_COMPACTION_SIZE = 500
+/** Truncation keeps this fraction of the original as a head excerpt. */
+const HEAD_RATIO = 0.15
+/** Max chars for the head excerpt. */
+const HEAD_CAP = 6000
+/** Truncation keeps this fraction of the original as a tail excerpt. */
+const TAIL_RATIO = 0.08
+/** Max chars for the tail excerpt. */
+const TAIL_CAP = 3000
+/** Effective retention ratio for savings projection (~23% of original). */
+const COMPACTION_RATIO = 0.25
 
 /** Metadata about a single compacted message. */
 export type CompactionTarget = {
@@ -44,19 +65,41 @@ export type CompactionResult = {
     CompactionTarget & {
       /** Chars after compaction. */
       compactedChars: number
-      /** Which model performed the compaction (or 'truncate'). */
+      /** Which method performed the compaction. */
       compactedBy: string
     }
   >
   /** Total tokens saved. */
   tokensSaved: number
+  /** One-shot conversation summary, or null if the LLM call failed. */
+  summary: { text: string; model: string } | null
 }
 
 // ---------------------------------------------------------------------------
 // Token estimation
 // ---------------------------------------------------------------------------
 
-export function estimatePayloadTokens(systemPrompt: string, messages: ChatMessage[]): number {
+/**
+ * Estimate tokens for the tool definitions sent via the API `tools` parameter.
+ * These JSON schemas count as input tokens but are separate from the system
+ * prompt and messages. Ignoring them creates a blind spot that can cause
+ * context overflow on tool-heavy workspaces (150+ tools = 50-100k tokens).
+ */
+export function estimateToolTokens(tools?: ToolDefinition[]): number {
+  if (!tools || tools.length === 0) return 0
+  let chars = 0
+  for (const t of tools) {
+    chars += t.name.length + t.description.length + JSON.stringify(t.parameters).length
+    chars += 40
+  }
+  return Math.ceil(chars / CHARS_PER_TOKEN)
+}
+
+export function estimatePayloadTokens(
+  systemPrompt: string,
+  messages: ChatMessage[],
+  tools?: ToolDefinition[]
+): number {
   let chars = systemPrompt.length
   for (const m of messages) {
     switch (m.role) {
@@ -90,8 +133,11 @@ export function estimatePayloadTokens(systemPrompt: string, messages: ChatMessag
         }
         break
     }
+    chars += 30
   }
-  return Math.ceil(chars / CHARS_PER_TOKEN)
+  const contentTokens = Math.ceil(chars / CHARS_PER_TOKEN)
+  const toolTokens = estimateToolTokens(tools)
+  return contentTokens + toolTokens
 }
 
 /** Get the text content length of a message (for candidate sizing). */
@@ -113,49 +159,54 @@ function messageContentLength(m: ChatMessage): number {
 // Target selection
 // ---------------------------------------------------------------------------
 
-/** Number of most-recent tool results to protect from compaction. */
-const PROTECT_TOOL_RESULTS = 3
-/** Number of most-recent assistant/user messages to protect. */
-const PROTECT_RECENT_MESSAGES = 2
-/** Minimum content size worth compacting (chars). */
-const MIN_COMPACTION_SIZE = 500
-
 /**
  * Select messages for compaction in priority order:
- *   1. Tool results (largest first, skip errors + 3 most recent)
- *   2. Older assistant messages (oldest first, skip 2 most recent)
- *   3. Older user messages (oldest first, skip 2 most recent)
+ *   1. Tool results (largest first, skip errors + last 3)
+ *   2. Older assistant messages (oldest first, skip last 3)
+ *   3. Older user messages (oldest first, skip first + last 3)
  *
- * Picks greedily until projected savings cover the excess.
+ * Picks greedily until projected savings cover the excess between
+ * `currentTokens` and `targetTokens`.
  */
 export function selectCompactionTargets(
   messages: ChatMessage[],
   currentTokens: number,
-  inputBudget: number
+  targetTokens: number
 ): CompactionTarget[] {
-  const buffer = Math.floor(inputBudget * 0.1)
-  const targetBudget = inputBudget - buffer
-  const excess = currentTokens - targetBudget
+  const excess = currentTokens - targetTokens
   if (excess <= 0) return []
 
-  const COMPACTION_RATIO = 0.15 // compacted ≈ 15% of original
+  // --- Collect protected indices ---
+  const protectedIndices = new Set<number>()
 
-  // --- Pass 1: tool results (largest first) ---
-  const protectedTools = new Set<number>()
+  // Always protect messages[0] (the original task prompt)
+  if (messages.length > 0) protectedIndices.add(0)
+
+  // Protect last N per role
   let toolCount = 0
-  for (let i = messages.length - 1; i >= 0 && toolCount < PROTECT_TOOL_RESULTS; i--) {
-    if (messages[i].role === 'tool') {
-      protectedTools.add(i)
+  let assistantCount = 0
+  let userCount = 0
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const role = messages[i].role
+    if (role === 'tool' && toolCount < PROTECT_RECENT) {
+      protectedIndices.add(i)
       toolCount++
+    } else if (role === 'assistant' && assistantCount < PROTECT_RECENT) {
+      protectedIndices.add(i)
+      assistantCount++
+    } else if (role === 'user' && userCount < PROTECT_RECENT) {
+      protectedIndices.add(i)
+      userCount++
     }
   }
 
+  // --- Pass 1: tool results (largest first) ---
   const toolCandidates: CompactionTarget[] = []
   for (let i = 0; i < messages.length; i++) {
     const m = messages[i]
     if (m.role !== 'tool') continue
     if (m.isError) continue
-    if (protectedTools.has(i)) continue
+    if (protectedIndices.has(i)) continue
     if (m.content.length <= MIN_COMPACTION_SIZE) continue
     toolCandidates.push({
       index: i,
@@ -178,20 +229,11 @@ export function selectCompactionTargets(
   if (projectedSavings >= excess) return selected
 
   // --- Pass 2: older assistant messages (oldest first) ---
-  const protectedRecent = new Set<number>()
-  let assistantCount = 0
-  for (let i = messages.length - 1; i >= 0 && assistantCount < PROTECT_RECENT_MESSAGES; i--) {
-    if (messages[i].role === 'assistant') {
-      protectedRecent.add(i)
-      assistantCount++
-    }
-  }
-
   for (let i = 0; i < messages.length; i++) {
     if (projectedSavings >= excess) break
     const m = messages[i]
     if (m.role !== 'assistant') continue
-    if (protectedRecent.has(i)) continue
+    if (protectedIndices.has(i)) continue
     const len = messageContentLength(m)
     if (len <= MIN_COMPACTION_SIZE) continue
     const tokens = Math.ceil(len / CHARS_PER_TOKEN)
@@ -206,20 +248,12 @@ export function selectCompactionTargets(
 
   if (projectedSavings >= excess) return selected
 
-  // --- Pass 3: older user messages (oldest first) ---
-  let userCount = 0
-  for (let i = messages.length - 1; i >= 0 && userCount < PROTECT_RECENT_MESSAGES; i--) {
-    if (messages[i].role === 'user') {
-      protectedRecent.add(i)
-      userCount++
-    }
-  }
-
+  // --- Pass 3: older user messages (oldest first, skip index 0) ---
   for (let i = 0; i < messages.length; i++) {
     if (projectedSavings >= excess) break
     const m = messages[i]
     if (m.role !== 'user') continue
-    if (protectedRecent.has(i)) continue
+    if (protectedIndices.has(i)) continue
     const len = messageContentLength(m)
     if (len <= MIN_COMPACTION_SIZE) continue
     const tokens = Math.ceil(len / CHARS_PER_TOKEN)
@@ -236,10 +270,35 @@ export function selectCompactionTargets(
 }
 
 // ---------------------------------------------------------------------------
-// Deterministic truncation fallback
+// Proportional truncation
 // ---------------------------------------------------------------------------
 
-/** First 500 tokens (~2000 chars) + last 200 tokens (~800 chars). */
+/**
+ * Truncate content proportionally — keeps a generous head and tail with a
+ * clear label showing what was removed. The head shows the beginning of the
+ * content (usually the most informative), the tail shows the end (recent
+ * state), and the label gives the original size so the model knows content
+ * was lost.
+ */
+function proportionalTruncate(content: string): string {
+  const headChars = Math.min(Math.floor(content.length * HEAD_RATIO), HEAD_CAP)
+  const tailChars = Math.min(Math.floor(content.length * TAIL_RATIO), TAIL_CAP)
+
+  if (content.length <= headChars + tailChars + 200) return content
+
+  const head = content.slice(0, headChars)
+  const tail = content.slice(-tailChars)
+  const omitted = content.length - headChars - tailChars
+  return (
+    head +
+    `\n\n[TRUNCATED — ${content.length.toLocaleString()} chars original, ` +
+    `${omitted.toLocaleString()} chars omitted, ` +
+    `showing first ${headChars.toLocaleString()} + last ${tailChars.toLocaleString()} chars]\n\n` +
+    tail
+  )
+}
+
+/** Fixed head+tail fallback for edge cases. */
 export function truncateFallback(content: string): string {
   const headChars = 2000
   const tailChars = 800
@@ -255,59 +314,173 @@ export function truncateFallback(content: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Per-message compaction (in-place mutation)
+// Summary prompt builder
+// ---------------------------------------------------------------------------
+
+function buildSummaryPrompt(
+  targets: CompactionTarget[],
+  originals: Map<number, string>,
+  messages: ChatMessage[]
+): string {
+  let totalOriginalChars = 0
+  for (const o of originals.values()) totalOriginalChars += o.length
+
+  let prompt =
+    `TASK: Produce a structured conversation summary after context compaction.\n\n` +
+    `CONTEXT: A conversation between a user and an AI assistant has been truncated ` +
+    `to fit within the model's context window. The truncated messages retain their ` +
+    `first and last portions. This summary captures information lost during truncation.\n\n` +
+    `INSTRUCTIONS:\n` +
+    `1. Read ALL sections of original content below\n` +
+    `2. Produce a summary with these EXACT headers:\n` +
+    `   TASK: What the user originally asked for (one sentence)\n` +
+    `   PROGRESS: Numbered list of completed steps with key results\n` +
+    `   REMAINING: Numbered list of what still needs to be done (be specific: exact items, counts, IDs)\n` +
+    `   DATA: Key values extracted from content — names, emails, dates, IDs, numbers, URLs, errors\n` +
+    `   DECISIONS: Any decisions or confirmations made during the conversation\n\n` +
+    `RULES:\n` +
+    `- Include EVERY name, email, date, ID, URL, number, error code from the original\n` +
+    `- For lists of items (emails, files, records), enumerate EACH one with key fields\n` +
+    `- Do NOT fabricate data not present in the original content\n` +
+    `- Do NOT use markdown formatting\n` +
+    `- Keep it dense and factual\n\n` +
+    `--- ORIGINAL CONTENT (${targets.length} sections, ${totalOriginalChars.toLocaleString()} chars total) ---\n\n`
+
+  for (let i = 0; i < targets.length; i++) {
+    const t = targets[i]
+    const m = messages[t.index]
+    const original = originals.get(t.index) ?? ''
+    const roleLabel =
+      m.role === 'tool'
+        ? `tool result from ${(m as { toolName?: string }).toolName ?? 'unknown'}`
+        : m.role
+    prompt +=
+      `=== Section ${i + 1}: ${roleLabel} (${t.originalChars.toLocaleString()} chars) ===\n` +
+      original +
+      '\n\n'
+  }
+
+  return prompt
+}
+
+// ---------------------------------------------------------------------------
+// Continuation nudge builder
+// ---------------------------------------------------------------------------
+
+function buildContinuationNudge(summary: { text: string; model: string } | null): string {
+  if (summary) {
+    return (
+      `[Compaction Summary]\n\n` +
+      `${summary.text}\n\n` +
+      `[Status: Context was compacted. The messages above contain truncated versions ` +
+      `of older content (showing first and last portions). This summary captures the ` +
+      `full conversation state from the original content before truncation. ` +
+      `If you were in the middle of a multi-step task, review this summary and ` +
+      `continue where you left off. Do NOT produce final output until ALL steps ` +
+      `of the current task are complete. Do NOT re-do work that is listed as completed.]`
+    )
+  }
+
+  return (
+    `[Compaction Notice: Context was compacted by truncating older messages ` +
+    `(showing first and last portions of each). A conversation summary could not ` +
+    `be generated. Review the truncated content carefully to reconstruct what has ` +
+    `been completed and what remains. If you were in the middle of a multi-step ` +
+    `task, continue where you left off. Do NOT produce final output until ALL ` +
+    `steps of the current task are complete.]`
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Main compaction orchestrator
 // ---------------------------------------------------------------------------
 
 /**
- * Compact a single message in-place. Handles tool, assistant, and user roles.
+ * If the system prompt + messages exceed 75% of the model's input budget,
+ * compact messages **in-place** using proportional truncation + one-shot
+ * LLM summary.
+ *
+ * Flow:
+ *   1. Strip images from all tool results
+ *   2. Select targets across all message types
+ *   3. Save original content for summary generation
+ *   4. Truncate all targets in-place (instant)
+ *   5. One LLM call to summarize originals (5 retries with backoff)
+ *   6. Inject summary + continuation nudge as a user message
+ *
+ * Returns null when no compaction is needed (payload fits within 75%).
  */
-async function compactMessage(
+export async function compactOverflow(
   thalamus: Thalamus,
+  systemPrompt: string,
   messages: ChatMessage[],
-  target: CompactionTarget,
-  signal?: AbortSignal
-): Promise<CompactionTarget & { compactedChars: number; compactedBy: string }> {
-  const m = messages[target.index]
-
-  // Extract the text to compact
-  let content: string
-  if (m.role === 'tool') {
-    content = m.content
-  } else if (m.role === 'assistant') {
-    content = m.content
-  } else if (m.role === 'user') {
-    content = typeof m.content === 'string' ? m.content : ''
-  } else {
-    return { ...target, compactedChars: target.originalChars, compactedBy: 'skip' }
+  signal?: AbortSignal,
+  options?: {
+    tools?: ToolDefinition[]
+    lastKnownInputTokens?: number
+    force?: boolean
+    onStarted?: (targetsCount: number, currentTokens: number, inputBudget: number) => void
   }
+): Promise<CompactionResult | null> {
+  const inputBudget = thalamus.getContextBudget()
 
-  if (!content || content.length <= MIN_COMPACTION_SIZE) {
-    return { ...target, compactedChars: target.originalChars, compactedBy: 'skip' }
-  }
+  const charEstimate = estimatePayloadTokens(systemPrompt, messages, options?.tools)
 
-  try {
-    if (signal?.aborted) throw new Error('aborted')
-    const compacted = await thalamus.compactContent(content, signal)
-    const summary =
-      `[Compacted by ${compacted.provider} — original ${target.originalChars} chars]\n\n` +
-      compacted.text
+  // When we have actual token data from the previous LLM response, use it
+  // as a calibration floor.
+  const lastKnown = options?.lastKnownInputTokens ?? 0
+  const currentTokens = Math.max(charEstimate, lastKnown)
 
-    if (m.role === 'tool') {
-      messages[target.index] = { ...m, content: summary } as ChatMessage
-    } else if (m.role === 'assistant') {
-      // Preserve toolUses but replace content text + clear reasoning
-      messages[target.index] = {
-        ...m,
-        content: summary,
-        reasoningContent: undefined
-      } as ChatMessage
-    } else if (m.role === 'user') {
-      messages[target.index] = { ...m, content: summary } as ChatMessage
+  const threshold = Math.floor(inputBudget * COMPACTION_THRESHOLD)
+  const needsCompaction = options?.force || currentTokens > threshold
+  console.log(
+    `[compactor] charEstimate=${charEstimate} lastKnown=${lastKnown} ` +
+      `effective=${currentTokens} budget=${inputBudget} ` +
+      `threshold=${threshold} (${(COMPACTION_THRESHOLD * 100).toFixed(0)}%) ` +
+      `messages=${messages.length} sysChars=${systemPrompt.length} ` +
+      `tools=${options?.tools?.length ?? 0} force=${!!options?.force} ` +
+      `needsCompaction=${needsCompaction}`
+  )
+  if (!needsCompaction) return null
+
+  // Target: compact to COMPACTION_TARGET of budget
+  const targetTokens = Math.floor(inputBudget * COMPACTION_TARGET)
+  const targets = selectCompactionTargets(messages, currentTokens, targetTokens)
+  if (targets.length === 0) return null
+
+  options?.onStarted?.(targets.length, currentTokens, inputBudget)
+
+  const tokensBefore = currentTokens
+
+  // Step 1: Strip images from ALL tool results (before anything else)
+  for (const m of messages) {
+    if (m.role === 'tool' && m.images && m.images.length > 0) {
+      ;(m as { images: undefined }).images = undefined
+      if (!m.content.startsWith('[Screenshot')) {
+        m.content = `[Screenshot analyzed — image omitted from context]\n${m.content}`
+      }
     }
+  }
 
-    return { ...target, compactedChars: summary.length, compactedBy: compacted.model }
-  } catch {
-    const truncated = truncateFallback(content)
+  // Step 2: Save original content before truncation
+  const originals = new Map<number, string>()
+  for (const t of targets) {
+    const m = messages[t.index]
+    if (m.role === 'tool') {
+      originals.set(t.index, m.content)
+    } else if (m.role === 'assistant') {
+      originals.set(t.index, m.content)
+    } else if (m.role === 'user') {
+      originals.set(t.index, typeof m.content === 'string' ? m.content : '')
+    }
+  }
+
+  // Step 3: Truncate all targets in-place (instant, no LLM call)
+  const results: Array<CompactionTarget & { compactedChars: number; compactedBy: string }> = []
+  for (const target of targets) {
+    const m = messages[target.index]
+    const original = originals.get(target.index) ?? ''
+    const truncated = proportionalTruncate(original)
 
     if (m.role === 'tool') {
       messages[target.index] = { ...m, content: truncated } as ChatMessage
@@ -321,65 +494,32 @@ async function compactMessage(
       messages[target.index] = { ...m, content: truncated } as ChatMessage
     }
 
-    return { ...target, compactedChars: truncated.length, compactedBy: 'truncate' }
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Main compaction orchestrator
-// ---------------------------------------------------------------------------
-
-/**
- * If the system prompt + messages exceed the model's input budget,
- * compact messages **in-place** using LLM-generated summaries.
- *
- * Targets are selected in priority order: tool results first, then
- * older assistant messages, then older user messages. All targets
- * are compacted in parallel for speed.
- *
- * Returns null when no compaction is needed (payload fits).
- */
-export async function compactOverflow(
-  thalamus: Thalamus,
-  systemPrompt: string,
-  messages: ChatMessage[],
-  signal?: AbortSignal
-): Promise<CompactionResult | null> {
-  const inputBudget = thalamus.getContextBudget()
-
-  const currentTokens = estimatePayloadTokens(systemPrompt, messages)
-  console.log(
-    `[compactor] estimate=${currentTokens} budget=${inputBudget} ` +
-      `messages=${messages.length} sysChars=${systemPrompt.length} ` +
-      `needsCompaction=${currentTokens > inputBudget}`
-  )
-  if (currentTokens <= inputBudget) return null
-
-  const targets = selectCompactionTargets(messages, currentTokens, inputBudget)
-  if (targets.length === 0) return null
-
-  const tokensBefore = currentTokens
-
-  // Compact all targets in parallel — mutating messages[] in-place
-  const results = await Promise.all(
-    targets.map((target) => compactMessage(thalamus, messages, target, signal))
-  )
-
-  // Strip images from all tool results to reclaim space
-  for (const m of messages) {
-    if (m.role === 'tool' && m.images && m.images.length > 0) {
-      ;(m as { images: undefined }).images = undefined
-      if (!m.content.startsWith('[Screenshot')) {
-        m.content = `[Screenshot analyzed — image omitted from context]\n${m.content}`
-      }
-    }
+    results.push({
+      ...target,
+      compactedChars: truncated.length,
+      compactedBy: 'truncate'
+    })
   }
 
-  const tokensAfter = estimatePayloadTokens(systemPrompt, messages)
+  // Step 4: One LLM call for conversation summary
+  let summary: { text: string; model: string } | null = null
+  try {
+    const summaryPrompt = buildSummaryPrompt(targets, originals, messages)
+    const result = await thalamus.summarize(summaryPrompt, signal)
+    summary = { text: result.text, model: result.model }
+  } catch (err) {
+    console.log(`[compactor] Summary failed, continuing with truncation only: ${err}`)
+    summary = null
+  }
+
+  // Step 5: Inject summary + continuation nudge
+  messages.push({
+    role: 'user',
+    content: buildContinuationNudge(summary)
+  })
+
+  const tokensAfter = estimatePayloadTokens(systemPrompt, messages, options?.tools)
   const tokensSaved = Math.max(0, tokensBefore - tokensAfter)
 
-  return {
-    targets: results,
-    tokensSaved
-  }
+  return { targets: results, tokensSaved, summary }
 }

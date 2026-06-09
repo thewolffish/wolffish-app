@@ -1276,13 +1276,14 @@
       }
     },
     "compactionCard": {
-      "title": "Context compacted",
+      "title": "Compaction",
       "summary": "{{count}} message compacted, ~{{tokens}} tokens saved",
       "summary_plural": "{{count}} messages compacted, ~{{tokens}} tokens saved",
       "detail": "{{tool}}: {{from}} → {{to}} chars ({{pct}}% smaller, via {{model}})",
       "detailTruncated": "{{tool}}: {{from}} → {{to}} chars ({{pct}}% smaller, truncated)",
       "targetAssistant": "assistant message",
-      "targetUser": "user message"
+      "targetUser": "user message",
+      "compacting": "Compacting {{targets}} of {{messages}} messages · {{current}} / {{limit}} tokens"
     },
     "turnFooter": {
       "error": "Connection error"
@@ -1302,6 +1303,35 @@
       "contextTokens": "{{count}} ctx",
       "elapsedSeconds": "{{seconds}}s",
       "elapsedMinutes": "{{minutes}}m {{seconds}}s"
+    },
+    "timeline": {
+      "viewDetails": "View Details",
+      "title": "Timeline",
+      "event": {
+        "context.built": "Context built",
+        "llm.response": "Model responded",
+        "tool.called": "Tool called",
+        "tool.completed": "Tool completed",
+        "tool.failed": "Tool failed",
+        "safety.allowed": "Allowed",
+        "safety.blocked": "Blocked",
+        "safety.approved": "Approved",
+        "safety.denied": "Denied",
+        "compaction.started": "Compacting context",
+        "compaction.applied": "Compaction applied",
+        "task.created": "Task created",
+        "task.stepCompleted": "Step completed",
+        "task.completed": "Task completed",
+        "task.failed": "Task failed",
+        "task.stopped": "Task stopped",
+        "segment.text": "Generating text",
+        "segment.tool_call": "Calling tool",
+        "segment.tool_result": "Tool result",
+        "segment.compaction": "Compacting context",
+        "segment.active_model": "Model active",
+        "segment.provider_change": "Provider changed"
+      },
+      "eventCount": "{{count}} events"
     },
     "modeToggle": {
       "ariaLabel": "Provider mode",
@@ -1410,8 +1440,8 @@
   },
   "errors": {
     "provider": {
-      "noProviderTitle": "No model available",
-      "noProviderDescription": "No provider available — check settings or retry.",
+      "noProviderTitle": "API provider error",
+      "noProviderDescription": "The API provider failed to complete the response — this is not a wolffish issue.",
       "invalidKeyTitle": "API key invalid",
       "invalidKey": "API key invalid or expired — update in settings.",
       "badRequestTitle": "Request rejected",

@@ -240,6 +240,26 @@ export class Prefrontal {
           sections.push(this.wrap('tools', toolsBody))
           sectionsIncluded.push('tools')
         }
+
+        // Pure skills (no tools, just procedure bodies) are injected into
+        // a <skills> section when the user's message matches their trigger
+        // keywords. This surfaces capabilities like "planning" that guide
+        // agent behaviour without providing callable tools.
+        if (this.cerebellum && message.trim()) {
+          const matched = this.cerebellum
+            .findRelevantSkills(message)
+            .filter((cap) => cap.tools.length === 0 && cap.body.trim().length > 0)
+          if (matched.length > 0) {
+            const skillsBody = matched
+              .map(
+                (cap) =>
+                  `<source path="brain/cerebellum/${cap.name}/SKILL.md">\n${cap.body}\n</source>`
+              )
+              .join('\n\n')
+            sections.push(this.wrap('skills', skillsBody))
+            sectionsIncluded.push('skills')
+          }
+        }
       }
     }
 
@@ -462,6 +482,9 @@ function formatRuntimeBody(
   if (runtime) {
     lines.push(`  Tool iteration this turn: ${runtime.iteration}`)
     lines.push(`  Tools called this turn: ${runtime.toolsCalled}`)
+    lines.push(
+      `  IMPORTANT: When a task requires calling a tool for each item in a set (e.g. reading N emails, fetching N pages), you MUST call the tool for EVERY item before producing final output. Batch 10-15 calls per response for efficiency, then continue with the remaining items in your next response. Metadata from search/list results is NOT a substitute for calling the per-item tool — if the task says "read all," call read for ALL, not just a subset.`
+    )
   }
   if (providerContext?.isFallback) {
     const cloudName = providerContext.cloudProvider ?? 'the cloud provider'

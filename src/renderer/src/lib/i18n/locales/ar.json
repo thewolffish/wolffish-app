@@ -1225,13 +1225,14 @@
       }
     },
     "compactionCard": {
-      "title": "تم ضغط السياق",
+      "title": "ضغط",
       "summary": "تم ضغط رسالة واحدة، ~{{tokens}} رمز تم توفيره",
       "summary_plural": "تم ضغط {{count}} رسائل، ~{{tokens}} رمز تم توفيره",
       "detail": "{{tool}}: {{from}} → {{to}} chars ({{pct}}% smaller, via {{model}})",
       "detailTruncated": "{{tool}}: {{from}} → {{to}} chars ({{pct}}% smaller, truncated)",
       "targetAssistant": "رسالة المساعد",
-      "targetUser": "رسالة المستخدم"
+      "targetUser": "رسالة المستخدم",
+      "compacting": "ضغط {{targets}} من {{messages}} رسالة · {{current}} / {{limit}} رمز"
     },
     "turnFooter": {
       "error": "خطأ في الاتصال"
@@ -1251,6 +1252,35 @@
       "contextTokens": "{{count}} سياق",
       "elapsedSeconds": "{{seconds}} ث",
       "elapsedMinutes": "{{minutes}} د {{seconds}} ث"
+    },
+    "timeline": {
+      "viewDetails": "عرض التفاصيل",
+      "title": "المخطط الزمني",
+      "event": {
+        "context.built": "تم بناء السياق",
+        "llm.response": "استجاب النموذج",
+        "tool.called": "تم استدعاء أداة",
+        "tool.completed": "اكتملت الأداة",
+        "tool.failed": "فشلت الأداة",
+        "safety.allowed": "مسموح",
+        "safety.blocked": "محظور",
+        "safety.approved": "تمت الموافقة",
+        "safety.denied": "مرفوض",
+        "compaction.started": "جارٍ ضغط السياق",
+        "compaction.applied": "تم تطبيق الضغط",
+        "task.created": "تم إنشاء مهمة",
+        "task.stepCompleted": "اكتملت خطوة",
+        "task.completed": "اكتملت المهمة",
+        "task.failed": "فشلت المهمة",
+        "task.stopped": "توقفت المهمة",
+        "segment.text": "توليد النص",
+        "segment.tool_call": "استدعاء أداة",
+        "segment.tool_result": "نتيجة الأداة",
+        "segment.compaction": "ضغط السياق",
+        "segment.active_model": "النموذج نشط",
+        "segment.provider_change": "تم تغيير المزود"
+      },
+      "eventCount": "{{count}} أحداث"
     },
     "modeToggle": {
       "ariaLabel": "وضع المزوّد",
@@ -1359,8 +1389,8 @@
   },
   "errors": {
     "provider": {
-      "noProviderTitle": "لا يوجد نموذج متاح",
-      "noProviderDescription": "لا يوجد مزوّد — تحقق من الإعدادات أو أعد.",
+      "noProviderTitle": "خطأ من مزوّد الـ API",
+      "noProviderDescription": "فشل مزوّد الـ API في إكمال الاستجابة — هذا ليس خطأ من وولف فيش.",
       "invalidKeyTitle": "مفتاح API غير صالح",
       "invalidKey": "مفتاح API غير صالح أو منتهٍ — حدّثه من الإعدادات.",
       "badRequestTitle": "تم رفض الطلب",

@@ -225,6 +225,14 @@ export type ConversationMessage = {
 
 export type ConversationChannel = 'electron' | 'telegram' | 'whatsapp' | 'heartbeat'
 
+export type TimelineEntry = {
+  id: string
+  timestamp: number
+  kind: string
+  summary?: string
+  detail?: string
+}
+
 export type ConversationFile = {
   id: string
   title: string
@@ -236,6 +244,7 @@ export type ConversationFile = {
   sealed?: boolean
   workingFolder?: string[] | null
   contextMeter?: { contextTokens: number; contextBudget: number } | null
+  timeline?: TimelineEntry[]
 }
 
 export type ConversationMeta = {
@@ -254,12 +263,26 @@ export type ChatHistoryAttachment = {
   sizeBytes: number
 }
 
-export type ChatHistoryMessage = {
-  role: 'user' | 'assistant'
-  content: string
-  attachments?: ChatHistoryAttachment[]
-  reasoningContent?: string
-}
+export type ChatHistoryMessage =
+  | {
+      role: 'user'
+      content: string
+      attachments?: ChatHistoryAttachment[]
+      reasoningContent?: string
+    }
+  | {
+      role: 'assistant'
+      content: string
+      toolUses?: Array<{ id: string; name: string; args: Record<string, unknown> }>
+      reasoningContent?: string
+    }
+  | {
+      role: 'tool'
+      toolUseId: string
+      toolName: string
+      content: string
+      isError?: boolean
+    }
 export type ChatDoneEvent = { turnId: string }
 export type ChatErrorEvent = { turnId: string; error: string }
 
@@ -280,6 +303,7 @@ export type ChatTurnEvent = {
     | 'safety.blocked'
     | 'safety.approved'
     | 'safety.denied'
+    | 'compaction.started'
     | 'compaction.applied'
   payload: Record<string, unknown>
 }

@@ -86,6 +86,7 @@ export type CorpusEvents = {
     reason: string
   }
 
+  'compaction.started': { messagesCount: number; force?: boolean }
   'compaction.applied': { tokensSaved: number; targetsCount: number }
 
   'memory.episodeSaved': { date: string; section: string }

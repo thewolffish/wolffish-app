@@ -60,6 +60,14 @@ export type ConversationMessage = {
  */
 export type ConversationChannel = 'electron' | 'telegram' | 'whatsapp' | 'heartbeat'
 
+export type TimelineEntry = {
+  id: string
+  timestamp: number
+  kind: string
+  summary?: string
+  detail?: string
+}
+
 export type ConversationFile = {
   id: string
   title: string
@@ -71,6 +79,7 @@ export type ConversationFile = {
   sealed?: boolean
   workingFolder?: string[] | null
   contextMeter?: { contextTokens: number; contextBudget: number } | null
+  timeline?: TimelineEntry[]
 }
 
 export type ConversationMeta = {

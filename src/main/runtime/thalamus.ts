@@ -111,7 +111,7 @@ export type StreamChunk =
   | { type: 'reasoning'; text: string }
   | { type: 'tool_call'; id: string; name: string; args: Record<string, unknown> }
   | { type: 'turn_meta'; stopReason: StopReason; usage?: StreamUsage }
-  | { type: 'error'; message: string; recoverable: boolean }
+  | { type: 'error'; message: string; recoverable: boolean; failures?: NoProviderAvailableInfo[] }
   | { type: 'active_model'; provider: ProviderId; model: string }
   | {
       type: 'provider_change'
@@ -349,9 +349,21 @@ export class Thalamus {
     content: string,
     signal?: AbortSignal
   ): Promise<{ text: string; provider: string; model: string }> {
-    const prompt =
-      'Summarize the following content preserving all key information: names, dates, numbers, action items, decisions, links, and attachments. Be thorough but concise.\n\n---\n\n' +
-      content
+    const instruction =
+      `You are compacting conversation context to fit within a model's context window. ` +
+      `Your goal is to REDUCE size while RETAINING maximum useful information.\n\n` +
+      `Rules:\n` +
+      `- Preserve ALL: tool names, function calls, API endpoints, parameter names, return values, error messages, status codes\n` +
+      `- Preserve ALL: names, emails, dates, timestamps, numbers, IDs, URLs, file paths\n` +
+      `- Preserve ALL: decisions made, action items, conclusions, errors and their causes\n` +
+      `- For structured data (JSON, tables): keep the schema/keys and representative values, collapse repeated similar entries into a count + example\n` +
+      `- For tool results: keep the tool name, key fields from the response, and outcome. Do NOT reduce a tool call + result to a single sentence\n` +
+      `- Remove: redundant whitespace, boilerplate HTML/headers, repeated patterns, verbose formatting, base64 data, CSS/styling\n` +
+      `- Remove: marketing copy, legal disclaimers, email footers/signatures, tracking pixels descriptions\n` +
+      `- Output plain text, no markdown formatting overhead\n` +
+      `- Never fabricate or infer data not present in the original\n\n` +
+      `Compact the following:\n\n---\n\n`
+    const prompt = instruction + content
     const promptTokens = Math.ceil(prompt.length / 4)
 
     const cascade = this.buildCascade()
@@ -362,15 +374,13 @@ export class Thalamus {
       const maxOutput = maxOutputForModel(entry.model)
       const available = modelWindow - maxOutput
 
-      // If content fits in this model, compact in one call
       if (promptTokens <= available) {
         const result = await this.compactSingle(entry, prompt, signal)
         if (result) return result
-        continue // try next provider
+        continue
       }
 
-      // Content too large — split into parts
-      const promptOverheadChars = 300 // the instruction text before ---
+      const promptOverheadChars = instruction.length + 50
       const charsPerPart = Math.max(available * 4 - promptOverheadChars, 4000)
       const parts: string[] = []
       for (let i = 0; i < content.length; i += charsPerPart) {
@@ -380,10 +390,7 @@ export class Thalamus {
       try {
         const summaries = await Promise.all(
           parts.map((part) => {
-            const partPrompt =
-              'Summarize the following content preserving all key information: names, dates, numbers, action items, decisions, links, and attachments. Be thorough but concise.\n\n---\n\n' +
-              part
-            return this.compactSingle(entry, partPrompt, signal)
+            return this.compactSingle(entry, instruction + part, signal)
           })
         )
         const valid = summaries.filter(Boolean) as { text: string; provider: string; model: string }[]
@@ -400,6 +407,92 @@ export class Thalamus {
     }
 
     throw new Error('All compaction providers failed')
+  }
+
+  /**
+   * Raw LLM call for conversation-level summarization during compaction.
+   * Unlike compactContent, takes a complete prompt (no hardcoded instruction)
+   * and uses 5 retries with escalating backoff for resilience.
+   *
+   * If the prompt exceeds the model's context window, it is split into parts,
+   * each summarized separately, and the results merged.
+   */
+  async summarize(
+    prompt: string,
+    signal?: AbortSignal
+  ): Promise<{ text: string; provider: string; model: string }> {
+    const promptTokens = Math.ceil(prompt.length / 4)
+
+    const cascade = this.buildCascade()
+    if (cascade.length === 0) throw new Error('No summarization providers available')
+
+    for (const entry of cascade) {
+      const modelWindow = contextWindowForModel(entry.model)
+      const maxOutput = maxOutputForModel(entry.model)
+      const available = modelWindow - maxOutput
+
+      if (promptTokens <= available) {
+        const result = await this.summarizeSingle(entry, prompt, signal)
+        if (result) return result
+        continue
+      }
+
+      const charsPerPart = Math.max(available * 4 - 500, 4000)
+      const parts: string[] = []
+      for (let i = 0; i < prompt.length; i += charsPerPart) {
+        parts.push(prompt.slice(i, i + charsPerPart))
+      }
+
+      try {
+        const summaries = await Promise.all(
+          parts.map((part) => this.summarizeSingle(entry, part, signal))
+        )
+        const valid = summaries.filter(Boolean) as { text: string; provider: string; model: string }[]
+        if (valid.length === parts.length) {
+          return {
+            text: valid.map((s) => s.text).join('\n\n'),
+            provider: valid[0].provider,
+            model: valid[0].model
+          }
+        }
+      } catch {
+        // fall through to next provider
+      }
+    }
+
+    throw new Error('All summarization providers failed')
+  }
+
+  /**
+   * Single summarization call. 5 retries with escalating backoff
+   * (1s, 2s, 4s, 8s, 16s).
+   */
+  private async summarizeSingle(
+    entry: CascadeEntry,
+    prompt: string,
+    signal?: AbortSignal
+  ): Promise<{ text: string; provider: string; model: string } | null> {
+    const msgs: ChatMessage[] = [{ role: 'user', content: prompt }]
+    const delays = [1000, 2000, 4000, 8000, 16000]
+
+    for (let attempt = 0; attempt < 5; attempt++) {
+      if (signal?.aborted) return null
+      try {
+        let text = ''
+        for await (const chunk of entry.provider.stream({
+          system: '',
+          messages: msgs,
+          signal
+        })) {
+          if (chunk.type === 'text') text += chunk.text
+        }
+        if (text.length > 0) return { text, provider: entry.id, model: entry.model }
+      } catch {
+        if (attempt >= 4) return null
+        await sleep(delays[attempt], signal)
+      }
+    }
+    return null
   }
 
   /**
@@ -479,7 +572,20 @@ export class Thalamus {
       const result = yield* this.streamOnce(entry, options, { retry: true })
       if (result.kind === 'success') return
       if (result.kind === 'committed-error') {
-        yield { type: 'error', message: result.message, recoverable: false }
+        const failures = result.failure
+          ? [
+              {
+                provider: result.failure.provider,
+                providerLogo: PROVIDER_LOGO[result.failure.provider],
+                statusCode: result.failure.statusCode,
+                errorReason: result.failure.reasonKey,
+                errorDetail: result.failure.rawMessage,
+                retriesAttempted: result.failure.retries,
+                totalDurationMs: result.failure.durationMs
+              }
+            ]
+          : undefined
+        yield { type: 'error', message: result.message, recoverable: false, failures }
         return
       }
       allFailures.push(result.failure)
@@ -525,7 +631,20 @@ export class Thalamus {
       const result = yield* this.streamOnce(localEntry, localOptions, { retry: false })
       if (result.kind === 'success') return
       if (result.kind === 'committed-error') {
-        yield { type: 'error', message: result.message, recoverable: false }
+        const failures = result.failure
+          ? [
+              {
+                provider: result.failure.provider,
+                providerLogo: PROVIDER_LOGO[result.failure.provider],
+                statusCode: result.failure.statusCode,
+                errorReason: result.failure.reasonKey,
+                errorDetail: result.failure.rawMessage,
+                retriesAttempted: result.failure.retries,
+                totalDurationMs: result.failure.durationMs
+              }
+            ]
+          : undefined
+        yield { type: 'error', message: result.message, recoverable: false, failures }
         return
       }
       allFailures.push(result.failure)
@@ -566,7 +685,7 @@ export class Thalamus {
   ): AsyncGenerator<
     StreamChunk,
     | { kind: 'success' }
-    | { kind: 'committed-error'; message: string }
+    | { kind: 'committed-error'; message: string; failure?: ProviderFailure }
     | { kind: 'failed'; failure: ProviderFailure }
   > {
     const overallStartedAt = Date.now()
@@ -646,7 +765,20 @@ export class Thalamus {
         if (textEmitted) {
           // Provider had already streamed bytes to the user — committing
           // to a different provider mid-turn would be incoherent.
-          return { kind: 'committed-error', message }
+          const classified = classifyError(err)
+          return {
+            kind: 'committed-error',
+            message,
+            failure: {
+              provider: entry.id,
+              statusCode: classified.statusCode,
+              errorClass: classified.errorClass,
+              reasonKey: reasonKeyFor(classified.statusCode),
+              rawMessage: extractProviderDetail(message) ?? message,
+              retries: attempt,
+              durationMs: Date.now() - overallStartedAt
+            }
+          }
         }
         if (isAbortError(err)) {
           return { kind: 'committed-error', message }

@@ -43,11 +43,13 @@ import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
 import { preselectSettingsTab } from '@pages/settings/settingsNav'
 import type {
+  ChatHistoryMessage,
   ConversationChannel,
   ConversationFile,
   MessageAttachment,
   Segment,
-  ThinkingMode
+  ThinkingMode,
+  TimelineEntry
 } from '@preload/index'
 import {
   useFlow,
@@ -340,6 +342,9 @@ export function Chat(): React.JSX.Element {
   // can see how long the last reply took.
   const [turnEndedAt, setTurnEndedAt] = useState<number | null>(null)
 
+  const [timelineEntries, setTimelineEntries] = useState<TimelineEntry[]>([])
+  const [timelineOpen, setTimelineOpen] = useState(false)
+
   const onNewChat = useCallback(() => {
     setMessages([])
     setActiveConversationId(null)
@@ -589,9 +594,10 @@ export function Chat(): React.JSX.Element {
         contextTokens != null && contextBudget != null
           ? { contextTokens, contextBudget }
           : (conversationRef.current.contextMeter ?? null)
+      conversationRef.current.timeline = timelineEntries.length > 0 ? timelineEntries : (conversationRef.current.timeline ?? undefined)
       await window.api.conversation.save(conversationRef.current)
     },
-    [currentModel, setActiveConversationId, contextTokens, contextBudget]
+    [currentModel, setActiveConversationId, contextTokens, contextBudget, timelineEntries]
   )
 
   useEffect(() => {
@@ -620,9 +626,11 @@ export function Chat(): React.JSX.Element {
         setStoredFolders(folders)
         setFolderListOpen(false)
         sentFolderByConvRef.current.set(conv.id, folders)
+        setTimelineEntries(conv.timeline ?? [])
       })
     } else {
       conversationRef.current = null
+      setTimelineEntries([])
     }
   }, [activeConversationId])
 
@@ -651,6 +659,31 @@ export function Chat(): React.JSX.Element {
     const offSegment = window.api.chat.onSegment((segment) => {
       if (pendingTurnIdRef.current !== segment.turnId) return
       setMessages((prev) => appendSegment(prev, segment))
+      const segKind = segment.kind
+      if (
+        segKind === 'tool_call' ||
+        segKind === 'tool_result' ||
+        segKind === 'compaction' ||
+        segKind === 'active_model' ||
+        segKind === 'provider_change'
+      ) {
+        const entry = buildSegmentTimelineEntry(segment)
+        if (entry) {
+          if (segKind === 'compaction') {
+            setTimelineEntries((prev) => {
+              const idx = prev.findLastIndex((e) => e.kind === 'compaction.started')
+              if (idx !== -1) {
+                const updated = [...prev]
+                updated[idx] = { ...updated[idx], ...entry }
+                return updated
+              }
+              return [...prev, entry]
+            })
+          } else {
+            setTimelineEntries((prev) => [...prev, entry])
+          }
+        }
+      }
     })
     const offDone = window.api.chat.onDone(({ turnId }) => {
       if (pendingTurnIdRef.current !== turnId) return
@@ -671,8 +704,6 @@ export function Chat(): React.JSX.Element {
     const offTurnEvent = window.api.chat.onTurnEvent(({ turnId, type, payload }) => {
       if (pendingTurnIdRef.current !== turnId) return
       if (type === 'context.built') {
-        // Show the full model context window (e.g. 1M) instead of the
-        // discounted token budget that reserves space for output tokens.
         const cw = modelContextWindowRef.current
         if (typeof payload.tokenBudget === 'number') {
           setContextBudget(cw && cw > 8_000 ? cw : payload.tokenBudget)
@@ -682,8 +713,6 @@ export function Chat(): React.JSX.Element {
         const cacheRead = typeof payload.cacheReadTokens === 'number' ? payload.cacheReadTokens : 0
         const cacheCreated =
           typeof payload.cacheCreationTokens === 'number' ? payload.cacheCreationTokens : 0
-        // With in-place compaction the compacted context IS the real
-        // context — the meter reflects what was actually sent to the model.
         setContextTokens(uncached + cacheRead + cacheCreated)
         if (typeof payload.inputTokens === 'number') {
           const v = payload.inputTokens
@@ -697,6 +726,19 @@ export function Chat(): React.JSX.Element {
           const v = payload.cacheReadTokens
           setCacheReadTokens((prev) => (prev ?? 0) + v)
         }
+      }
+      if (type !== 'tool.called' && type !== 'tool.completed' && type !== 'tool.failed' && type !== 'compaction.applied') {
+        const { summary: tlSummary, detail: tlDetail } = timelineEventSummary(type, payload)
+        setTimelineEntries((prev) => [
+          ...prev,
+          {
+            id: `te_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            timestamp: Date.now(),
+            kind: type,
+            ...(tlSummary ? { summary: tlSummary } : {}),
+            ...(tlDetail ? { detail: tlDetail } : {})
+          }
+        ])
       }
     })
     const offApprovalRequest = window.api.chat.onApprovalRequest((event) => {
@@ -835,7 +877,8 @@ export function Chat(): React.JSX.Element {
       setInputTokens(0)
       setOutputTokens(0)
       setCacheReadTokens(0)
-
+      setTimelineEntries([])
+      setTimelineOpen(false)
 
       const response = await window.api.chat.send({
         history,
@@ -972,7 +1015,8 @@ export function Chat(): React.JSX.Element {
       setInputTokens(0)
       setOutputTokens(0)
       setCacheReadTokens(0)
-
+      setTimelineEntries([])
+      setTimelineOpen(false)
 
       const response = await window.api.chat.send({
         history,
@@ -1373,8 +1417,12 @@ export function Chat(): React.JSX.Element {
             if (streaming) stop()
             else void send()
           }}
-          className="border-border/60 bg-bg/80 relative border-t p-4 backdrop-blur"
+          className={cn(
+            'bg-bg/80 relative p-4 backdrop-blur',
+            !streaming && 'border-t border-border/60'
+          )}
         >
+          {streaming && <div className="rainbow-border" />}
           {pendingAttachments.length > 0 && (
             <div className="pointer-events-none absolute inset-x-0 bottom-full px-4 pb-2">
               <div className="pointer-events-auto mx-auto flex max-w-xl flex-wrap gap-2">
@@ -1390,6 +1438,21 @@ export function Chat(): React.JSX.Element {
           )}
           <div className="relative mx-auto flex max-w-xl items-end gap-2">
             <div className="pointer-events-auto absolute inset-e-full top-1/2 me-6 -translate-y-1/2 flex items-center gap-2 whitespace-nowrap">
+              {timelineEntries.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setTimelineOpen(true)}
+                  className={cn(
+                    'border-border bg-surface text-muted hover:text-fg absolute bottom-full mb-7 flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-1.5 text-xs shadow-sm transition-colors',
+                    'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
+                  )}
+                >
+                  <span className="bg-accent inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-semibold tabular-nums text-black dark:text-white">
+                    {timelineEntries.length}
+                  </span>
+                  {t('chat.timeline.viewDetails')}
+                </button>
+              )}
               <div className="border-border bg-surface inline-flex items-center rounded-lg border p-0.5">
                 <button
                   type="button"
@@ -1681,6 +1744,30 @@ export function Chat(): React.JSX.Element {
           </div>,
           document.body
         )}
+      {timelineOpen &&
+        createPortal(
+          <div
+            role="presentation"
+            onClick={() => setTimelineOpen(false)}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="border-border bg-surface flex h-[80vh] w-[80vw] flex-col overflow-hidden rounded-2xl border shadow-xl"
+            >
+              <div className="border-border flex shrink-0 items-center justify-between border-b px-5 py-3">
+                <h2 className="text-fg min-w-0 flex-1 truncate text-sm font-semibold">
+                  {messages.find((m) => m.role === 'user')?.content || t('chat.timeline.title')}
+                </h2>
+                <span className="text-muted ms-3 shrink-0 text-[10px] tabular-nums">
+                  {t('chat.timeline.eventCount', { count: timelineEntries.length })}
+                </span>
+              </div>
+              <TimelineList entries={timelineEntries} locale={locale} />
+            </div>
+          </div>,
+          document.body
+        )}
     </main>
   )
 }
@@ -1705,6 +1792,299 @@ function relativeTime(ts: number, locale: string): string {
     if (m > 0) return `${m}m ago`
     if (s < 5) return 'just now'
     return `${s}s ago`
+  }
+}
+
+const TIMELINE_KIND_COLOR: Record<string, string> = {
+  'context.built': 'bg-sky-500',
+  'llm.response': 'bg-indigo-500',
+  'tool.called': 'bg-blue-500',
+  'tool.completed': 'bg-emerald-500',
+  'tool.failed': 'bg-red-500',
+  'safety.allowed': 'bg-emerald-500',
+  'safety.blocked': 'bg-red-500',
+  'safety.approved': 'bg-emerald-500',
+  'safety.denied': 'bg-amber-500',
+  'compaction.started': 'bg-blue-500',
+  'compaction.applied': 'bg-violet-500',
+  'task.created': 'bg-sky-500',
+  'task.stepCompleted': 'bg-emerald-500',
+  'task.completed': 'bg-emerald-500',
+  'task.failed': 'bg-red-500',
+  'task.stopped': 'bg-amber-500',
+  'segment.tool_call': 'bg-blue-500',
+  'segment.tool_result': 'bg-violet-500',
+  'segment.compaction': 'bg-violet-500',
+  'segment.active_model': 'bg-sky-500',
+  'segment.provider_change': 'bg-amber-500'
+}
+
+function CompactionStartedCard({ messagesCount, targetsCount, tokenCount, tokenBudget, startedAt }: { messagesCount: number; targetsCount: number; tokenCount: number; tokenBudget: number; startedAt: number }): React.JSX.Element {
+  const { t } = useTranslation()
+  const [now, setNow] = useState<number>(() => Date.now())
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 200)
+    return () => clearInterval(id)
+  }, [])
+  const elapsedMs = now - startedAt
+  return (
+    <div className="border-border bg-surface w-full max-w-[85%] self-start rounded-2xl border px-4 py-3 text-sm">
+      <div className="flex items-center justify-between gap-3">
+        <span className="inline-flex items-center rounded-full bg-blue-500/10 px-2 py-0.5 text-xs font-medium text-blue-600 animate-pulse dark:text-blue-400">
+          {t('chat.compactionCard.title')}
+        </span>
+        <span className="text-muted shrink-0 text-xs tabular-nums">
+          {formatCompactionElapsed(elapsedMs)}
+        </span>
+      </div>
+      <p className="text-muted mt-1 text-xs">
+        {t('chat.compactionCard.compacting', { targets: targetsCount, messages: messagesCount, current: fmtNum(tokenCount), limit: fmtNum(tokenBudget) })}
+      </p>
+    </div>
+  )
+}
+
+function formatCompactionElapsed(ms: number): string {
+  if (ms < 1000) return `${ms}ms`
+  const totalSeconds = ms / 1000
+  if (totalSeconds < 60) return `${totalSeconds.toFixed(totalSeconds < 10 ? 1 : 0)}s`
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = Math.floor(totalSeconds % 60)
+  return `${minutes}m ${seconds}s`
+}
+
+function fmtNum(n: number): string {
+  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}B`
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
+  return String(n)
+}
+
+function TimelineList({
+  entries,
+  locale
+}: {
+  entries: TimelineEntry[]
+  locale: string
+}): React.JSX.Element {
+  const { t } = useTranslation()
+  const endRef = useRef<HTMLDivElement>(null)
+  const [, setTick] = useState(0)
+
+  useEffect(() => {
+    const id = setInterval(() => setTick((n) => n + 1), 5_000)
+    return () => clearInterval(id)
+  }, [])
+
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [entries.length])
+
+  if (entries.length === 0) {
+    return (
+      <div className="text-muted/50 flex items-center justify-center py-8 text-xs">
+        {t('heartbeat.overlay.waiting')}
+      </div>
+    )
+  }
+
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-5 py-3">
+      <div className="flex flex-col gap-1">
+        {entries.map((entry, i) => {
+          const isLast = i === entries.length - 1
+          const color = TIMELINE_KIND_COLOR[entry.kind] ?? 'bg-muted/40'
+          const label = t(`chat.timeline.event.${entry.kind}`, { defaultValue: entry.kind })
+          const timeStr = relativeTime(entry.timestamp, locale)
+          const content = entry.summary || entry.detail
+            ? [entry.summary, entry.detail].filter(Boolean).join('\n')
+            : null
+          return (
+            <div
+              key={entry.id}
+              className={cn(
+                'rounded-lg px-3 py-2 text-xs transition-opacity',
+                isLast ? 'text-fg bg-accent/5' : 'text-muted/70'
+              )}
+            >
+              <div className="flex items-center gap-2">
+                <span
+                  className={cn(
+                    'inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full px-1 text-[9px] font-semibold tabular-nums',
+                    isLast
+                      ? `${color} text-white`
+                      : 'bg-muted/15 text-muted/50',
+                    entry.kind === 'compaction.started' && 'animate-pulse'
+                  )}
+                >
+                  {i + 1}
+                </span>
+                <span className="font-semibold">{label}</span>
+                {entry.kind === 'compaction.started' && (
+                  <span className="text-blue-500 animate-pulse text-[10px]">●</span>
+                )}
+                <span className="flex-1" />
+                <span className="text-muted/40 shrink-0 text-[10px] tabular-nums">{timeStr}</span>
+              </div>
+              {content && (
+                <div className="group/tl relative mt-1.5 ms-4">
+                  <pre
+                    dir="ltr"
+                    className={cn(
+                      'overflow-x-auto rounded-md border px-3 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words',
+                      isLast
+                        ? 'bg-bg border-border text-fg/80'
+                        : 'bg-bg/50 border-border/50 text-muted/50'
+                    )}
+                  >
+                    {content}
+                  </pre>
+                  <div className="absolute right-1.5 top-1.5 opacity-0 transition-opacity group-hover/tl:opacity-100">
+                    <CopyButton text={content} />
+                  </div>
+                </div>
+              )}
+            </div>
+          )
+        })}
+        <div ref={endRef} />
+      </div>
+    </div>
+  )
+}
+
+function buildSegmentTimelineEntry(segment: Segment): TimelineEntry | null {
+  const segKind = segment.kind
+  const ts = Date.now()
+  if (segKind === 'tool_call') {
+    const args = segment.args
+    const action =
+      typeof args.command === 'string'
+        ? args.command
+        : typeof args.path === 'string'
+          ? args.path
+          : typeof args.query === 'string'
+            ? args.query
+            : null
+    return {
+      id: segment.segmentId,
+      timestamp: ts,
+      kind: `segment.${segKind}`,
+      summary: segment.name,
+      detail: action ?? (Object.keys(args).length > 0 ? JSON.stringify(args, null, 2) : undefined)
+    }
+  }
+  if (segKind === 'tool_result') {
+    const output = segment.output || segment.error || ''
+    return {
+      id: segment.segmentId,
+      timestamp: ts,
+      kind: `segment.${segKind}`,
+      summary: segment.status,
+      detail: output ? (output.length > 2000 ? output.slice(0, 2000) + '…' : output) : undefined
+    }
+  }
+  if (segKind === 'compaction') {
+    const lines = segment.details.map((d) => {
+      const pct = d.originalChars > 0 ? Math.round((1 - d.compactedChars / d.originalChars) * 100) : 0
+      return `${d.toolName ?? 'unknown'}: ${d.originalChars} → ${d.compactedChars} chars (${pct}% reduced)`
+    })
+    lines.unshift(`~${fmtNum(segment.tokensSaved)} tokens saved in ${segment.durationMs}ms`)
+    return {
+      id: segment.segmentId,
+      timestamp: ts,
+      kind: `segment.${segKind}`,
+      detail: lines.join('\n')
+    }
+  }
+  if (segKind === 'active_model') {
+    return {
+      id: segment.segmentId,
+      timestamp: ts,
+      kind: `segment.${segKind}`,
+      detail: `${segment.provider}/${segment.model}`
+    }
+  }
+  if (segKind === 'provider_change') {
+    const lines = [`${segment.from} → ${segment.to}`]
+    if (segment.reason) lines.push(segment.reason)
+    return {
+      id: segment.segmentId,
+      timestamp: ts,
+      kind: `segment.${segKind}`,
+      detail: lines.join('\n')
+    }
+  }
+  return null
+}
+
+function timelineEventSummary(
+  type: string,
+  payload: Record<string, unknown>
+): { summary?: string; detail?: string } {
+  switch (type) {
+    case 'context.built': {
+      const count = typeof payload.tokenCount === 'number' ? payload.tokenCount : null
+      const budget = typeof payload.tokenBudget === 'number' ? payload.tokenBudget : null
+      const sections = Array.isArray(payload.sectionsIncluded) ? (payload.sectionsIncluded as string[]).join(', ') : null
+      const lines: string[] = []
+      if (count != null) lines.push(`Tokens: ${fmtNum(count)}${budget != null ? ` / ${fmtNum(budget)} budget` : ''}`)
+      if (sections) lines.push(`Sections: ${sections}`)
+      return { detail: lines.length > 0 ? lines.join('\n') : undefined }
+    }
+    case 'llm.response': {
+      const inp = typeof payload.inputTokens === 'number' ? payload.inputTokens : 0
+      const out = typeof payload.outputTokens === 'number' ? payload.outputTokens : 0
+      const cache = typeof payload.cacheReadTokens === 'number' ? payload.cacheReadTokens : 0
+      const cacheCreated = typeof payload.cacheCreationTokens === 'number' ? payload.cacheCreationTokens : 0
+      const dur = typeof payload.durationMs === 'number' ? payload.durationMs : null
+      const provider = typeof payload.provider === 'string' ? payload.provider : null
+      const lines: string[] = []
+      lines.push(`Input: ${fmtNum(inp)} tokens`)
+      lines.push(`Output: ${fmtNum(out)} tokens`)
+      if (cache > 0) lines.push(`Cache read: ${fmtNum(cache)} tokens`)
+      if (cacheCreated > 0) lines.push(`Cache created: ${fmtNum(cacheCreated)} tokens`)
+      if (provider) lines.push(`Provider: ${provider}`)
+      if (dur != null) lines.push(`Duration: ${dur}ms`)
+      return { summary: `${fmtNum(inp)} in / ${fmtNum(out)} out`, detail: lines.join('\n') }
+    }
+    case 'safety.blocked':
+      return {
+        detail: [
+          typeof payload.tool === 'string' ? `Tool: ${payload.tool}` : null,
+          typeof payload.reason === 'string' ? payload.reason : null
+        ].filter(Boolean).join('\n') || undefined
+      }
+    case 'safety.allowed':
+    case 'safety.approved':
+    case 'safety.denied':
+      return { detail: typeof payload.tool === 'string' ? payload.tool : undefined }
+    case 'compaction.started': {
+      const lines: string[] = []
+      if (typeof payload.messagesCount === 'number') lines.push(`Messages: ${payload.messagesCount}`)
+      if (payload.force) lines.push('Mode: forced (overflow recovery)')
+      if (payload.progressive) lines.push('Mode: progressive (mid-iteration)')
+      return { detail: lines.length > 0 ? lines.join('\n') : undefined }
+    }
+    case 'task.created': {
+      const lines: string[] = []
+      if (typeof payload.name === 'string') lines.push(payload.name)
+      if (typeof payload.stepsTotal === 'number') lines.push(`Steps: ${payload.stepsTotal}`)
+      return { detail: lines.length > 0 ? lines.join('\n') : undefined }
+    }
+    case 'task.stepCompleted':
+      return {
+        detail: typeof payload.step === 'number' && typeof payload.total === 'number'
+          ? `Step ${payload.step}/${payload.total}` : undefined
+      }
+    case 'task.completed':
+      return { detail: typeof payload.durationMs === 'number' ? `Duration: ${payload.durationMs}ms` : undefined }
+    case 'task.failed':
+      return { detail: typeof payload.error === 'string' ? payload.error : undefined }
+    case 'task.stopped':
+      return { detail: typeof payload.taskId === 'string' ? `Task: ${payload.taskId}` : undefined }
+    default:
+      return {}
   }
 }
 
@@ -1794,7 +2174,7 @@ function UserBubble({
             className="px-2"
           />
           {timeLabel && (
-            <span className="inline-flex items-center gap-1 text-[11px] text-muted">
+            <span className="inline-flex items-center gap-1 text-xs text-muted">
               <Clock01Icon size={14} />
               {timeLabel}
             </span>
@@ -1873,9 +2253,7 @@ function AssistantBubble({
   if (isError && message.error) {
     const providerSeg = message.segments.find(
       (s): s is Extract<Segment, { kind: 'turn_end' }> =>
-        s.kind === 'turn_end' &&
-        s.stopReason === 'no_provider_available' &&
-        !!s.providerErrors?.length
+        s.kind === 'turn_end' && !!s.providerErrors?.length
     )
     if (providerSeg?.providerErrors?.length) {
       return (
@@ -1886,9 +2264,19 @@ function AssistantBubble({
     }
     return (
       <div className="flex flex-col gap-1 items-start">
-        <div className="bg-surface border-border text-muted max-w-[85%] rounded-2xl border px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap wrap-break-word">
-          <strong>{t('chat.errorPrefix')}:</strong> {message.error}
-        </div>
+        <ProviderErrorCards
+          failures={[
+            {
+              provider: 'unknown',
+              providerLogo: '',
+              statusCode: null,
+              errorReason: message.error,
+              errorDetail: null,
+              retriesAttempted: 0,
+              totalDurationMs: 0
+            }
+          ]}
+        />
       </div>
     )
   }
@@ -1917,7 +2305,7 @@ function AssistantBubble({
             className="px-2"
           />
           {timeLabel && (
-            <span className="inline-flex items-center gap-1 text-[11px] text-muted">
+            <span className="inline-flex items-center gap-1 text-xs text-muted">
               <Clock01Icon size={14} />
               {timeLabel}
             </span>
@@ -2109,6 +2497,12 @@ function renderSegments(
       if (!hasFollowingContent(segments, segIdx)) continue
       flushText()
       blocks.push(<ActiveModelChip key={seg.segmentId} provider={seg.to} model={seg.model} />)
+    } else if (seg.kind === 'compaction_started') {
+      const hasCompletion = segments.some((s, j) => j > segIdx && s.kind === 'compaction')
+      if (!hasCompletion) {
+        flushText()
+        blocks.push(<CompactionStartedCard key={seg.segmentId} messagesCount={seg.messagesCount} targetsCount={seg.targetsCount} tokenCount={seg.tokenCount} tokenBudget={seg.tokenBudget} startedAt={seg.startedAt} />)
+      }
     } else if (seg.kind === 'compaction') {
       flushText()
       blocks.push(
@@ -2122,7 +2516,7 @@ function renderSegments(
       )
     } else if (seg.kind === 'turn_end') {
       flushText()
-      if (seg.stopReason === 'no_provider_available' && seg.providerErrors?.length) {
+      if (seg.providerErrors?.length) {
         blocks.push(<ProviderErrorCards key={seg.segmentId} failures={seg.providerErrors} />)
       } else if (seg.stopReason === 'error') {
         blocks.push(<TurnFooter key={seg.segmentId} stopReason={seg.stopReason} />)
@@ -2518,40 +2912,75 @@ function markError(messages: ChatMessage[], turnId: string, error: string): Chat
 function textHistory(
   messages: ChatMessage[],
   workspaceRoot: string | null
-): Array<{
-  role: 'user' | 'assistant'
-  content: string
-  attachments?: MessageAttachment[]
-  reasoningContent?: string
-}> {
-  const out: Array<{
-    role: 'user' | 'assistant'
-    content: string
-    attachments?: MessageAttachment[]
-    reasoningContent?: string
-  }> = []
+): ChatHistoryMessage[] {
+  const out: ChatHistoryMessage[] = []
   for (const m of messages) {
     if (isUser(m)) {
       const content = composeHistoryContent(m.content, m.attachments ?? [], workspaceRoot)
-      const entry: { role: 'user'; content: string; attachments?: MessageAttachment[] } = {
-        role: 'user',
-        content
-      }
+      const entry: ChatHistoryMessage = { role: 'user', content }
       if (m.attachments && m.attachments.length > 0) entry.attachments = m.attachments
       out.push(entry)
     } else if (isAssistant(m) && m.status === 'complete') {
-      const text = collectText(m.segments)
-      if (text.length > 0) {
-        const turnEnd = m.segments.find((s) => s.kind === 'turn_end')
-        const entry: { role: 'assistant'; content: string; reasoningContent?: string } = {
-          role: 'assistant',
-          content: text
-        }
-        if (turnEnd && 'reasoningContent' in turnEnd && turnEnd.reasoningContent) {
-          entry.reasoningContent = turnEnd.reasoningContent as string
-        }
-        out.push(entry)
+      const segments = m.segments
+      const turnEnd = segments.find((s) => s.kind === 'turn_end')
+      const reasoningContent =
+        turnEnd && 'reasoningContent' in turnEnd && turnEnd.reasoningContent
+          ? (turnEnd.reasoningContent as string)
+          : undefined
+
+      // Build a tool_call lookup so tool_results can reference the name
+      const toolCallNames = new Map<string, string>()
+      for (const s of segments) {
+        if (s.kind === 'tool_call') toolCallNames.set(s.toolCallId, s.name)
       }
+
+      // Split segments into iterations delimited by active_model boundaries.
+      // Each iteration = one LLM call that may produce text + tool_uses,
+      // followed by tool results before the next LLM call.
+      let iterText = ''
+      let iterToolUses: Array<{ id: string; name: string; args: Record<string, unknown> }> = []
+      let iterToolResults: ChatHistoryMessage[] = []
+      let hasContent = false
+
+      const flushIteration = (): void => {
+        if (!hasContent) return
+        const assistantMsg: ChatHistoryMessage = {
+          role: 'assistant',
+          content: iterText
+        }
+        if (iterToolUses.length > 0) assistantMsg.toolUses = iterToolUses
+        if (reasoningContent && out.length === 0) assistantMsg.reasoningContent = reasoningContent
+        out.push(assistantMsg)
+        for (const tr of iterToolResults) out.push(tr)
+        iterText = ''
+        iterToolUses = []
+        iterToolResults = []
+        hasContent = false
+      }
+
+      let iterCount = 0
+      for (const s of segments) {
+        if (s.kind === 'active_model') {
+          if (iterCount > 0) flushIteration()
+          iterCount++
+        } else if (s.kind === 'text') {
+          iterText += s.delta
+          hasContent = true
+        } else if (s.kind === 'tool_call') {
+          iterToolUses.push({ id: s.toolCallId, name: s.name, args: s.args })
+          hasContent = true
+        } else if (s.kind === 'tool_result') {
+          iterToolResults.push({
+            role: 'tool',
+            toolUseId: s.toolCallId,
+            toolName: toolCallNames.get(s.toolCallId) ?? 'unknown',
+            content: s.output,
+            isError: s.status === 'failed' || undefined
+          })
+          hasContent = true
+        }
+      }
+      flushIteration()
     }
   }
   return out

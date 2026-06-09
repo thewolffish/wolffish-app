@@ -47,6 +47,7 @@ import {
 } from '@main/ollama'
 import { Agent } from '@main/runtime/agent'
 import type { ApprovalDecision } from '@main/runtime/amygdala'
+import type { ChatHistoryMessage } from '@preload/index'
 import { MODEL_CATALOG } from '@main/runtime/models'
 import { localProvider } from '@main/runtime/providers/local'
 import type { CloudProviderConfig } from '@main/runtime/thalamus'
@@ -2340,7 +2341,7 @@ app.whenReady().then(async () => {
     (
       e,
       payload: {
-        history: Array<{ role: 'user' | 'assistant'; content: string }>
+        history: ChatHistoryMessage[]
         conversationId?: string | null
         thinkingMode?: string
       }

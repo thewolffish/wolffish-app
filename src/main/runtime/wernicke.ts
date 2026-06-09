@@ -43,6 +43,7 @@ export type ParsedResponse = {
   stopReason: StopReason
   error?: string
   noProviderAvailable?: NoProviderAvailableInfo[]
+  providerFailures?: NoProviderAvailableInfo[]
   providerChange?: ProviderChange
 }
 
@@ -75,6 +76,7 @@ export class Wernicke {
     let stopReason: StopReason = 'unknown'
     let error: string | undefined
     let noProviderAvailable: NoProviderAvailableInfo[] | undefined
+    let providerFailures: NoProviderAvailableInfo[] | undefined
     let providerChange: ProviderChange | undefined
 
     for await (const chunk of stream) {
@@ -92,6 +94,9 @@ export class Wernicke {
         }
       } else if (chunk.type === 'error') {
         error = chunk.message
+        if (chunk.failures?.length) {
+          providerFailures = chunk.failures
+        }
       } else if (chunk.type === 'no_provider_available') {
         noProviderAvailable = chunk.failures
         // Set error so the agent's existing throw-on-error path triggers
@@ -125,6 +130,7 @@ export class Wernicke {
     if (thinking) result.thinking = thinking
     if (error) result.error = error
     if (noProviderAvailable) result.noProviderAvailable = noProviderAvailable
+    if (providerFailures) result.providerFailures = providerFailures
     if (providerChange) result.providerChange = providerChange
     return result
   }

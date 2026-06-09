@@ -1,4 +1,48 @@
-## v1.0.126 — 2026-06-08 `Latest`
+## v1.0.129 — 2026-06-09 `Latest`
+
+### Context Compaction Redesign
+
+The context compaction system has been rebuilt from the ground up. The previous approach made one LLM call per message being compacted — a 9-target run required 9 separate API calls batched 7 at a time, taking roughly 6 minutes. The new system uses instant proportional truncation plus a single LLM summary call. Compaction that previously took 6 minutes now completes in under 30 seconds.
+
+**How it works:** when the conversation reaches 75% of the model's context window (previously 100%), the compactor selects targets across all message types — tool results, assistant messages, and user messages — and truncates them in-place, keeping a generous head (15% of original, up to 6,000 chars) and tail (8% of original, up to 3,000 chars) with a clear label showing the original size and how much was omitted. It then makes one LLM call on the saved original content to produce a structured conversation summary covering the task, progress, remaining work, key data values, and decisions made. The summary and a continuation nudge are injected as a single message so the model knows exactly where it left off.
+
+This fixes a critical reliability bug: after compaction, the model would sometimes treat the shorter context as "done" and skip remaining work in a multi-step task — for example, reading 30 of 43 emails and then producing a final summary, silently dropping the last 13. The new continuation nudge explicitly lists what has been completed and what remains, and instructs the model not to produce final output until all steps are complete.
+
+**Protection rules:** the first user message (the original task prompt) and the 3 most recent messages per role are never compacted. Error tool results and messages under 500 characters are also skipped. Previously compacted summaries are not protected, allowing recursive compression across multiple compaction passes. Images are stripped from all tool results before anything else to reclaim space immediately.
+
+**Fallback:** if the summary LLM call fails after 5 retries with escalating backoff (1s → 2s → 4s → 8s → 16s), the truncated versions remain in place and a fallback nudge is injected that tells the model to reconstruct context from the truncated head and tail excerpts.
+
+### Planning Skill
+
+A new built-in skill injects planning instructions into the system prompt on every turn. Before executing any multi-step task, the agent must state its understanding, lay out 2–5 phases with concrete verification criteria, and confirm each definition of done after execution. Single-step tasks skip planning automatically. The skill is implemented as a pure procedure (no tools) using the cerebellum's new wildcard trigger (`*`), which always injects regardless of keyword matching.
+
+### Batch Completion Enforcement
+
+A new runtime instruction ensures the agent completes every item in a batch operation. When a task requires calling a tool for each item in a set (e.g. reading N emails, fetching N pages), the agent must call the tool for every item before producing final output, batching 10–15 calls per response. This prevents the model from summarizing after a partial run and works alongside the compaction redesign to ensure long-running tasks finish reliably.
+
+### Multi-Turn Tool History
+
+Channel conversations (Telegram, WhatsApp) now reconstruct the full tool-call history from stored segments when building context for a new turn. Previously, assistant messages in follow-up turns included only the final text output — the model couldn't see which tools it had called or what they returned in earlier turns. The new `assistantSegmentsToHistory` function walks the stored segments and emits properly structured assistant messages with `toolUses` arrays and matching tool-result messages, preserving the complete interaction history.
+
+### Provider Error Cards
+
+The error detail view for provider failures now always shows structured diagnostic information — provider name, HTTP status, error reason, retry count, and duration — regardless of whether the API returned a detail string. Previously, the "View details" link only appeared when the raw API response included an error body, leaving users with no diagnostics on connection timeouts or empty failures.
+
+### Conversation Timeline
+
+Conversations now track a timeline of key events — tool calls, tool results, compaction passes, model switches, and provider changes. Timeline entries are persisted in the conversation file and restored when reopening a chat. The `ChatHistoryMessage` type has been extended to include tool-role messages with `toolUseId`, `toolName`, and `isError` fields, enabling full round-trip tool state.
+
+### Tool Transcript Detail Logs
+
+The motor now writes a separate `-detail.log` file alongside each tool transcript. The main transcript previews tool output (first 2,000 chars with a truncation notice), while the detail log captures the complete raw output for debugging. Neither file is indexed by the cortex or included in model context.
+
+### Provider Failure Tracking
+
+Wernicke now surfaces per-provider failure details when a stream errors mid-response, not just when all providers are exhausted. The new `providerFailures` field on `ParsedResponse` carries the same structured failure info (status code, error class, retry count, duration) that was previously only available in the `no_provider_available` path.
+
+---
+
+## v1.0.126 — 2026-06-08
 
 ### Extension — Screenshot & Download Management
 
