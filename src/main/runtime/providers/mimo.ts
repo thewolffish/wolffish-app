@@ -12,7 +12,7 @@ const MIMO_ENDPOINT = 'https://api.xiaomimimo.com/v1/chat/completions'
 function maxCompletionTokens(model: string): number {
   const m = model.toLowerCase()
   if (m.includes('v2.5-pro')) return 65536
-  if (m.includes('v2.5')) return 32768
+  if (m.includes('v2.5')) return 65536
   return 16384
 }
 

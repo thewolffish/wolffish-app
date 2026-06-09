@@ -567,6 +567,19 @@ export class Agent {
         if (parsed.thinking) lastReasoningContent = parsed.thinking
 
         if (parsed.toolCalls.length === 0) {
+          if (parsed.stopReason === 'max_tokens') {
+            console.log(`[agent] max_tokens truncation — continuing (iter ${iterationCount})`)
+            const truncatedMsg: ChatMessage = { role: 'assistant', content: parsed.text }
+            if (parsed.thinking) truncatedMsg.reasoningContent = parsed.thinking
+            messages.push(truncatedMsg)
+            messages.push({
+              role: 'user',
+              content:
+                '[System: Your previous response was truncated by the output token limit. Do NOT repeat what you already said. Continue from where you stopped.]'
+            })
+            continue
+          }
+
           lastAssistantText = parsed.text
           stopReason = mapProviderStopReason(parsed.stopReason)
           break

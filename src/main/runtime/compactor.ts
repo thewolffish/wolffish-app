@@ -30,7 +30,7 @@ const CHARS_PER_TOKEN = 1.5
 /** Trigger compaction when payload exceeds this fraction of the input budget. */
 const COMPACTION_THRESHOLD = 0.75
 /** Compact down to this fraction — leaves headroom for the model to keep working. */
-const COMPACTION_TARGET = 0.50
+const COMPACTION_TARGET = 0.5
 /** Number of most-recent messages per role to protect from compaction. */
 const PROTECT_RECENT = 3
 /** Minimum content size worth compacting (chars). */

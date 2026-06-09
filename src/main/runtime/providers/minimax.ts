@@ -12,7 +12,7 @@ const MINIMAX_ENDPOINT = 'https://api.minimaxi.chat/v1/chat/completions'
 function maxCompletionTokens(model: string): number {
   const m = model.toLowerCase()
   if (m.includes('-m3')) return 65536
-  if (m.includes('-m2')) return 32768
+  if (m.includes('-m2')) return 65536
   return 16384
 }
 

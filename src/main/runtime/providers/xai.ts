@@ -12,10 +12,10 @@ const XAI_ENDPOINT = 'https://api.x.ai/v1/chat/completions'
 function maxTokensFor(model: string): number {
   const m = model.toLowerCase()
   if (m.includes('grok-4.3') || m.includes('grok-4.20')) return 65536
-  if (m.includes('grok-4')) return 32768
-  if (m.includes('grok-build')) return 32768
-  if (m.includes('grok-3')) return 32768
-  return 32768
+  if (m.includes('grok-4')) return 65536
+  if (m.includes('grok-build')) return 65536
+  if (m.includes('grok-3')) return 65536
+  return 65536
 }
 
 function isReasoningModel(model: string): boolean {

@@ -11,8 +11,8 @@ const STEPFUN_ENDPOINT = 'https://api.stepfun.ai/v1/chat/completions'
 
 function maxTokensFor(model: string): number {
   const m = model.toLowerCase()
-  if (m.includes('step-3.7')) return 32768
-  if (m.includes('step-3.5')) return 32768
+  if (m.includes('step-3.7')) return 65536
+  if (m.includes('step-3.5')) return 65536
   if (m.includes('step-2-16k')) return 4096
   if (m.includes('step-2')) return 8192
   if (m.includes('step-1-200k') || m.includes('step-1-128k')) return 4096
