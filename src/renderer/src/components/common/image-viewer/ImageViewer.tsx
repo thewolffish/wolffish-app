@@ -49,10 +49,10 @@ function DeletedImage({ width, height }: { width?: number; height?: number }): R
   return (
     <div
       className={cn(
-        'border-border bg-surface flex w-full max-w-[85%] flex-col items-center justify-center gap-2 self-start',
+        'border-border bg-surface flex max-w-[85%] flex-col items-center justify-center gap-2 self-start',
         'rounded-2xl border opacity-50'
       )}
-      style={{ aspectRatio: ratio }}
+      style={{ aspectRatio: ratio, width: width ? Math.max(width, 192) : 320 }}
     >
       <Image02Icon size={32} className="text-muted" />
       <span className="text-muted text-sm italic">{t('chat.imageViewer.deleted')}</span>
@@ -92,7 +92,7 @@ function ActiveImage({
     <>
       <div
         className={cn(
-          'border-border bg-surface flex max-w-[85%] flex-col gap-2 self-start',
+          'border-border bg-surface flex w-fit max-w-[85%] flex-col gap-2 self-start',
           'overflow-hidden rounded-2xl border'
         )}
       >
@@ -103,25 +103,21 @@ function ActiveImage({
             className="block cursor-zoom-in"
             aria-label="Open image at full size"
           >
-            <img
-              src={url}
-              alt={fileName}
-              className="block max-h-[50vh] max-w-full"
-              draggable={false}
-            />
+            <img src={url} alt={fileName} className="block max-w-full" draggable={false} />
           </button>
         ) : (
           <div
-            className="bg-border/30 flex items-center justify-center"
+            className="bg-border/30 flex max-w-full items-center justify-center"
             style={{
               aspectRatio: width && height ? `${width} / ${height}` : '4 / 3',
-              width: width ? Math.min(width, 480) : 320
+              width: width ?? 320
             }}
           >
             <span className="text-muted text-xs">Loading image…</span>
           </div>
         )}
-        <div className="flex items-center justify-between gap-2 px-3 pb-2">
+        {/* w-0 + min-w-full keeps a long filename from widening the card past the image */}
+        <div className="flex w-0 min-w-full items-center justify-between gap-2 px-3 pb-2">
           <span className="text-muted truncate text-[11px] font-medium" title={fileName}>
             {fileName}
           </span>

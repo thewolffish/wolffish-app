@@ -53,6 +53,7 @@ import { localProvider } from '@main/runtime/providers/local'
 import type { CloudProviderConfig } from '@main/runtime/thalamus'
 import { Thalamus } from '@main/runtime/thalamus'
 import type { TimeRange as UsageTimeRange } from '@main/runtime/usage'
+import { cloudModelSupportsVision } from '@main/runtime/vision'
 import { detectSystem, type SystemInfo } from '@main/system'
 import {
   checkForUpdatesIfEnabled,
@@ -2194,10 +2195,12 @@ app.whenReady().then(async () => {
   }))
 
   // Active-model capability check used by the renderer to decide whether
-  // to allow image uploads. Cloud providers all support vision today; for
-  // local Ollama we ask /api/show whether the model declares a "vision"
-  // capability (cached in LocalProvider). Returns false when no model is
-  // available at all so the renderer can dim the upload button.
+  // to allow image uploads. Cloud models go through the well-known-family
+  // check in vision.ts (text-only APIs like DeepSeek reject image parts
+  // with HTTP 400); for local Ollama we ask /api/show whether the model
+  // declares a "vision" capability (cached in LocalProvider). Returns
+  // false when no model is available at all so the renderer can dim the
+  // upload button.
   ipcMain.handle(
     'model:capabilities',
     async (): Promise<{
@@ -2216,7 +2219,9 @@ app.whenReady().then(async () => {
       }
       const cloudProviders = agent.thalamus.getCloudProviders()
       const active = cloudProviders.find((p) => p.id === provider)
-      return { provider, model: active?.model ?? null, supportsVision: true, contextWindow }
+      const model = active?.model ?? null
+      const supportsVision = model !== null && cloudModelSupportsVision(provider, model)
+      return { provider, model, supportsVision, contextWindow }
     }
   )
 

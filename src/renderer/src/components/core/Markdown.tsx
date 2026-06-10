@@ -112,13 +112,8 @@ const components: Components = {
       ? src.slice('wolffish-media://'.length)
       : null
     return (
-      <span className="group relative block leading-none">
-        <img
-          src={src}
-          alt={alt ?? ''}
-          className="block max-h-[50vh] max-w-full rounded-2xl"
-          loading="lazy"
-        />
+      <span className="group relative block w-fit max-w-full leading-none">
+        <img src={src} alt={alt ?? ''} className="block max-w-full rounded-2xl" loading="lazy" />
         {relativePath && (
           <button
             type="button"

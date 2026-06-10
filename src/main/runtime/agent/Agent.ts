@@ -38,6 +38,7 @@ import {
   type UserContentBlock
 } from '@main/runtime/thalamus'
 import { Usage, calculateCost } from '@main/runtime/usage'
+import { cloudModelSupportsVision } from '@main/runtime/vision'
 import { Wernicke } from '@main/runtime/wernicke'
 import {
   processAttachments,
@@ -279,7 +280,14 @@ export class Agent {
                 : provider === 'minimax'
                   ? 'minimax'
                   : 'local'
-    const supportsVision = providerKey !== 'local' || (await this.thalamus.localSupportsVision())
+    // Branch on the real provider id, not providerKey — providerKey
+    // collapses providers missing from FileProcessorOptions (xai, qwen,
+    // stepfun, openrouter) to 'local', and asking Ollama about a cloud
+    // model's vision support answers the wrong question.
+    const supportsVision =
+      provider === null || provider === 'local'
+        ? await this.thalamus.localSupportsVision()
+        : cloudModelSupportsVision(provider, this.thalamus.getActiveModel() ?? '')
 
     const out: ChatMessage[] = []
     for (const m of history) {

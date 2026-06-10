@@ -10,6 +10,11 @@ import { OpenRouterProvider } from '@main/runtime/providers/openrouter'
 import { QwenProvider } from '@main/runtime/providers/qwen'
 import { StepfunProvider } from '@main/runtime/providers/stepfun'
 import { XAIProvider } from '@main/runtime/providers/xai'
+import {
+  cloudModelSupportsVision,
+  hasVisualContent,
+  stripVisualContent
+} from '@main/runtime/vision'
 import { net } from 'electron'
 
 export type ToolUse = {
@@ -296,6 +301,14 @@ export class Thalamus {
     return this.buildCascade()[0]?.id ?? null
   }
 
+  /**
+   * Model name of the first cascade entry — the one getActiveProvider()
+   * points at. Null when nothing is configured.
+   */
+  getActiveModel(): string | null {
+    return this.buildCascade()[0]?.model ?? null
+  }
+
   getLocalModelName(): string | null {
     return this.local.currentModel
   }
@@ -307,6 +320,27 @@ export class Thalamus {
    */
   async localSupportsVision(): Promise<boolean> {
     return this.local.supportsVision()
+  }
+
+  /**
+   * Per-entry multimodal gate. Vision blocks can reach a text-only entry
+   * via replayed history, tool-result screenshots, or a mid-turn cascade
+   * fallback from a vision model — and text-only APIs reject the whole
+   * request with HTTP 400 when they see an image part (DeepSeek: `unknown
+   * variant image_url, expected text`). Strip rather than fail: the model
+   * gets a note about what was removed instead.
+   */
+  private async guardVisualContent(
+    entry: CascadeEntry,
+    options: ProviderStreamOptions
+  ): Promise<ProviderStreamOptions> {
+    if (!hasVisualContent(options.messages)) return options
+    const vision =
+      entry.id === 'local'
+        ? await this.local.supportsVision()
+        : cloudModelSupportsVision(entry.id, entry.model)
+    if (vision) return options
+    return { ...options, messages: stripVisualContent(options.messages) }
   }
 
   /**
@@ -688,6 +722,7 @@ export class Thalamus {
     | { kind: 'committed-error'; message: string; failure?: ProviderFailure }
     | { kind: 'failed'; failure: ProviderFailure }
   > {
+    const guarded = await this.guardVisualContent(entry, options)
     const overallStartedAt = Date.now()
     let attempt = 0
     let lastFailure: ProviderFailure | null = null
@@ -734,7 +769,7 @@ export class Thalamus {
       let cacheReadTokens = 0
 
       try {
-        for await (const chunk of entry.provider.stream(options)) {
+        for await (const chunk of entry.provider.stream(guarded)) {
           if (chunk.type === 'text') {
             textEmitted = true
           } else if (chunk.type === 'turn_meta' && chunk.usage) {
