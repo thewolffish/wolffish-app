@@ -1320,7 +1320,7 @@
       "elapsedMinutes": "{{minutes}}m {{seconds}}s"
     },
     "timeline": {
-      "viewDetails": "View Details",
+      "viewLogs": "View Logs",
       "title": "Timeline",
       "event": {
         "context.built": "Context built",

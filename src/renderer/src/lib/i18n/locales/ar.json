@@ -1269,7 +1269,7 @@
       "elapsedMinutes": "{{minutes}} د {{seconds}} ث"
     },
     "timeline": {
-      "viewDetails": "عرض التفاصيل",
+      "viewLogs": "عرض السجلات",
       "title": "المخطط الزمني",
       "event": {
         "context.built": "تم بناء السياق",

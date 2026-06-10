@@ -1505,7 +1505,7 @@ export function Chat(): React.JSX.Element {
             else void send()
           }}
           className={cn(
-            'bg-bg/80 relative p-4 backdrop-blur',
+            'bg-bg/80 relative z-40 p-4 backdrop-blur',
             !streaming && 'border-t border-border/60'
           )}
         >
@@ -1530,14 +1530,14 @@ export function Chat(): React.JSX.Element {
                   type="button"
                   onClick={() => setTimelineOpen(true)}
                   className={cn(
-                    'border-border bg-surface text-muted hover:text-fg absolute bottom-full mb-7 flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-1.5 text-xs shadow-sm transition-colors',
+                    'border-border bg-surface text-muted hover:text-fg absolute bottom-full mb-2 flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-1.5 text-xs shadow-sm transition-colors',
                     'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
                   )}
                 >
                   <span className="bg-accent inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-semibold tabular-nums text-black dark:text-white">
                     {timelineEntries.length}
                   </span>
-                  {t('chat.timeline.viewDetails')}
+                  {t('chat.timeline.viewLogs')}
                 </button>
               )}
               <div className="border-border bg-surface inline-flex items-center rounded-lg border p-0.5">
