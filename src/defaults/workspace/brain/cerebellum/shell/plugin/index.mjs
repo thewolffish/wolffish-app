@@ -1,5 +1,6 @@
 import { execFile, spawn } from 'node:child_process'
-import { access, chmod, constants, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { access, chmod, constants, copyFile, mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
@@ -325,7 +326,11 @@ async function execShell(args) {
   const timeoutMs =
     typeof args?.timeout === 'number' && args.timeout > 0 ? args.timeout : 0
 
-  return execForeground({ command: execCommand, cwd, shell, timeoutMs, env: execEnv })
+  const result = await execForeground({ command: execCommand, cwd, shell, timeoutMs, env: execEnv })
+  if (result.success) {
+    result.output = await surfaceOpenedFiles(command, cwd, result.output)
+  }
+  return result
 }
 
 function execBackground({ command, cwd, shell, env }) {
@@ -445,6 +450,167 @@ function buildDiagnostic(stdout, stderr, command) {
 }
 
 // ---------------------------------------------------------------------------
+// Opened-file detection
+// ---------------------------------------------------------------------------
+
+// A file-opening command (open/xdg-open/start) hands the file to the OS
+// viewer and prints nothing — so the chat has nothing to render, and remote
+// channels (Telegram/WhatsApp) never see the file at all. Detect these
+// commands after a successful run and append the same
+// `[wolffish-output: path (type)]` markers the ffmpeg plugin emits; every
+// channel already knows how to render or send those.
+
+const OPENER_BINS = new Set(['open', 'xdg-open', 'start', 'start-process', 'invoke-item'])
+
+// macOS `open` flags whose next token is an app name / bundle id, not a file.
+const OPENER_FLAGS_WITH_VALUE = new Set(['-a', '-b'])
+
+const OPEN_IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.tiff', '.tif'])
+const OPEN_AUDIO_EXTS = new Set(['.mp3', '.wav', '.m4a', '.ogg', '.flac', '.aac', '.wma', '.opus'])
+const OPEN_VIDEO_EXTS = new Set(['.mp4', '.mov', '.avi', '.mkv', '.m4v', '.wmv', '.flv', '.webm'])
+const OPEN_DOCUMENT_EXTS = new Set(['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.pptx', '.csv'])
+
+// Bot APIs cap uploads around this size; bigger files stay local-only.
+const MAX_SURFACE_BYTES = 50 * 1024 * 1024
+
+function classifyOpenedFile(ext) {
+  if (OPEN_IMAGE_EXTS.has(ext)) return 'image'
+  if (OPEN_AUDIO_EXTS.has(ext)) return 'audio'
+  if (OPEN_VIDEO_EXTS.has(ext)) return 'video'
+  if (OPEN_DOCUMENT_EXTS.has(ext)) return 'document'
+  return null
+}
+
+// Minimal quote-aware splitter. Backslash escaping is a POSIX-ism — on
+// Windows backslash is the path separator and must pass through.
+function tokenizeCommand(cmd) {
+  const tokens = []
+  const escapes = process.platform !== 'win32'
+  let cur = ''
+  let quote = null
+  for (let i = 0; i < cmd.length; i++) {
+    const ch = cmd[i]
+    if (quote) {
+      if (ch === quote) quote = null
+      else if (escapes && ch === '\\' && quote === '"' && i + 1 < cmd.length) cur += cmd[++i]
+      else cur += ch
+    } else if (ch === "'" || ch === '"') {
+      quote = ch
+    } else if (escapes && ch === '\\' && i + 1 < cmd.length) {
+      cur += cmd[++i]
+    } else if (/\s/.test(ch)) {
+      if (cur) {
+        tokens.push(cur)
+        cur = ''
+      }
+    } else {
+      cur += ch
+    }
+  }
+  if (cur) tokens.push(cur)
+  return tokens
+}
+
+export async function detectOpenedFiles(command, cwd) {
+  const found = []
+  const seen = new Set()
+  // A `cd` anywhere in the chain makes relative resolution unreliable —
+  // only absolute and ~ paths are trusted in that case.
+  const hasCd = /(?:^|&&|\|\||;|\|)\s*cd\s/.test(command)
+  for (const sub of command.split(/&&|\|\||;|\|/)) {
+    const tokens = tokenizeCommand(sub.trim())
+    if (tokens.length < 2) continue
+    const bin = path.basename(tokens[0]).toLowerCase().replace(/\.exe$/, '')
+    if (!OPENER_BINS.has(bin)) continue
+    for (let i = 1; i < tokens.length; i++) {
+      const tok = tokens[i]
+      // Everything after `open --args` belongs to the launched app.
+      if (tok === '--args') break
+      if (OPENER_FLAGS_WITH_VALUE.has(tok.toLowerCase())) {
+        i++
+        continue
+      }
+      if (tok.startsWith('-')) continue
+      if (/^[a-z][a-z0-9+.-]*:\/\//i.test(tok)) continue
+      // cmd.exe `start` switches (/min, /wait, …) — a real unix path has
+      // more than one segment, so this never matches one.
+      if (bin === 'start' && /^\/\w+$/.test(tok)) continue
+      let resolved = tok
+      if (tok === '~') resolved = homedir()
+      else if (tok.startsWith('~/')) resolved = path.join(homedir(), tok.slice(2))
+      else if (!path.isAbsolute(tok)) {
+        if (hasCd) continue
+        resolved = path.resolve(cwd, tok)
+      }
+      const type = classifyOpenedFile(path.extname(resolved).toLowerCase())
+      if (!type || seen.has(resolved)) continue
+      let st
+      try {
+        st = await stat(resolved)
+      } catch {
+        continue
+      }
+      if (!st.isFile() || st.size > MAX_SURFACE_BYTES) continue
+      seen.add(resolved)
+      found.push({ path: resolved, type })
+      if (found.length >= 5) return found
+    }
+  }
+  return found
+}
+
+async function surfaceOpenedFiles(command, cwd, output) {
+  let opened
+  try {
+    opened = await detectOpenedFiles(command, cwd)
+  } catch {
+    return output
+  }
+  if (opened.length === 0) return output
+
+  const wsRoot = path.join(homedir(), '.wolffish', 'workspace')
+  const markers = []
+  for (const file of opened) {
+    let markerPath = file.path
+    if (!file.path.startsWith(wsRoot + path.sep)) {
+      // The in-app renderer can only read inside the workspace — copy
+      // outside files into workspace/files/, same as the ffmpeg plugin.
+      try {
+        const filesDir = path.join(wsRoot, 'files')
+        await mkdir(filesDir, { recursive: true })
+        const ext = path.extname(file.path)
+        const baseName = path.basename(file.path)
+        const stem = path.basename(baseName, ext)
+        const srcSize = (await stat(file.path)).size
+        let destPath = path.join(filesDir, baseName)
+        let suffix = 0
+        let reuse = false
+        while (existsSync(destPath)) {
+          const destSize = await stat(destPath)
+            .then((s) => s.size)
+            .catch(() => -1)
+          // Same name and size ⇒ the same file re-opened; don't pile up copies.
+          if (destSize === srcSize) {
+            reuse = true
+            break
+          }
+          suffix++
+          destPath = path.join(filesDir, `${stem}_${suffix}${ext}`)
+        }
+        if (!reuse) await copyFile(file.path, destPath)
+        markerPath = destPath
+      } catch {
+        // copy failed — remote channels can still send the original path
+      }
+    }
+    markers.push(`[wolffish-output: ${markerPath} (${file.type})]`)
+  }
+
+  const base = output && output !== '(no output)' ? output : ''
+  return base ? `${base}\n${markers.join('\n')}` : markers.join('\n')
+}
+
+// ---------------------------------------------------------------------------
 // Risk descriptions (for the approval card UI)
 // ---------------------------------------------------------------------------
 
@@ -462,6 +628,7 @@ function describeShellAction(command) {
     [/^ls\b/, 'List files'],
     [/^pwd\b/, 'Print working directory'],
     [/^cat\b/, 'Print file contents'],
+    [/^(?:open|xdg-open|start)\b/, 'Open file'],
     [/^cd\b/, 'Change directory'],
     [/^cp\b/, 'Copy files'],
     [/^mv\b/, 'Move/rename files'],

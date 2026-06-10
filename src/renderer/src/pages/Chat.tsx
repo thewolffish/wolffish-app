@@ -3007,6 +3007,18 @@ function extractToolResultDocuments(
   const docs: { path: string; size: number }[] = []
   const seen = new Set<string>()
 
+  // [wolffish-output: path (document)] markers from the shell plugin's
+  // opened-file detection — explicit markers survive paths with spaces.
+  const markerRegex = /\[wolffish-output:\s*([^\]]+?)\s+\(document\)\]/g
+  let marker: RegExpExecArray | null
+  while ((marker = markerRegex.exec(output)) !== null) {
+    const markerPath = marker[1].trim()
+    if (DOCUMENT_EXTS_RE.test(markerPath) && !seen.has(markerPath)) {
+      seen.add(markerPath)
+      docs.push({ path: markerPath, size: 0 })
+    }
+  }
+
   try {
     const parsed = JSON.parse(output)
     if (typeof parsed?.path === 'string' && DOCUMENT_EXTS_RE.test(parsed.path)) {

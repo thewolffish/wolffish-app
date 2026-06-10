@@ -2190,6 +2190,7 @@ function extractWolffishMediaPaths(output: string): string[] {
 
 function stripWolffishMediaMarkdown(text: string): string {
   return text
+    .replace(/\[wolffish-output:[^\]]+\]/g, '')
     .replace(/!\[[^\]]*\]\(wolffish-media:\/\/[^\s)]+\)/g, '')
     .replace(/(Saved to|Screenshot saved[^.]*) ~?\/[^\s"]+\.(?:png|jpe?g|gif|webp|bmp|tiff?)/gi, '')
     .trim()
@@ -2206,6 +2207,15 @@ function extractDocumentPaths(output: string): string[] {
       seen.add(abs)
       paths.push(abs)
     }
+  }
+
+  // Explicit [wolffish-output: path (document)] markers from the shell
+  // plugin's opened-file detection — these survive paths with spaces,
+  // which the bare-path regex below cannot.
+  const markerRegex = /\[wolffish-output:\s*([^\]]+?)\s+\(document\)\]/g
+  let markerMatch: RegExpExecArray | null
+  while ((markerMatch = markerRegex.exec(output)) !== null) {
+    addIfDocument(markerMatch[1].trim())
   }
 
   try {
