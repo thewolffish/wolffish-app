@@ -44,6 +44,7 @@ import { useToast } from '@components/core/toast/useToast'
 import { Tooltip } from '@components/core/Tooltip'
 import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
+import { formatBytes } from '@lib/utils/format'
 import { preselectSettingsTab } from '@pages/settings/settingsNav'
 import type {
   ChatHistoryMessage,
@@ -2724,7 +2725,6 @@ function PendingAttachmentChip({
   attachment: MessageAttachment
   onRemove: () => void
 }): React.JSX.Element {
-  const sizeKb = Math.max(1, Math.round(attachment.sizeBytes / 1024))
   return (
     <div
       className={cn(
@@ -2738,7 +2738,9 @@ function PendingAttachmentChip({
       <span className="truncate" title={attachment.originalName}>
         {attachment.originalName}
       </span>
-      <span className="text-muted shrink-0 tabular-nums text-[10px]">{sizeKb} KB</span>
+      <span className="text-muted shrink-0 tabular-nums text-[10px]">
+        {formatBytes(attachment.sizeBytes)}
+      </span>
       <button
         type="button"
         onClick={onRemove}
@@ -3359,20 +3361,14 @@ function validationErrorMessage(
 ): string {
   switch (error.code) {
     case 'file_too_large':
-      return t('chat.upload.fileTooLarge', { limit: formatBytes(error.maxBytes) })
+      return t('chat.upload.fileTooLarge', { limit: formatBytes(error.maxBytes, 0) })
     case 'max_files_reached':
       return t('chat.upload.maxFiles', { count: error.max })
     case 'total_size_exceeded':
-      return t('chat.upload.totalExceeded', { limit: formatBytes(error.maxBytes) })
+      return t('chat.upload.totalExceeded', { limit: formatBytes(error.maxBytes, 0) })
     case 'type_not_supported':
       return t('chat.upload.typeNotSupported')
     case 'vision_not_supported':
       return t('chat.upload.visionNotSupported', { model: error.model })
   }
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes >= 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(0)} GB`
-  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(0)} MB`
-  return `${(bytes / 1024).toFixed(0)} KB`
 }
