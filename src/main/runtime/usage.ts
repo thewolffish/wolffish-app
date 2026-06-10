@@ -73,6 +73,7 @@ type ModelPricing = {
 
 // https://docs.anthropic.com/en/docs/about-claude/models#model-comparison-table
 const ANTHROPIC_PRICING: Record<string, ModelPricing> = {
+  'claude-fable-5': { input: 10 / 1e6, output: 50 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 },
   'claude-opus-4-8': { input: 5 / 1e6, output: 25 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 },
   'claude-opus-4-7': { input: 5 / 1e6, output: 25 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 },
   'claude-opus-4-6': { input: 5 / 1e6, output: 25 / 1e6, cacheWrite: 1.25, cacheRead: 0.1 },

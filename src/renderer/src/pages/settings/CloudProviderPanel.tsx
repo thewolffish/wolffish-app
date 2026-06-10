@@ -77,12 +77,21 @@ type ModelSpec = {
 const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
   anthropic: [
     {
+      name: 'claude-fable-5',
+      context: '1M',
+      input: '$10.00',
+      output: '$50.00',
+      cached: '$1.00',
+      badges: ['frontier', 'reasoning'],
+      modes: ['none', 'high', 'max']
+    },
+    {
       name: 'claude-opus-4-8',
       context: '1M',
       input: '$5.00',
       output: '$25.00',
       cached: '$0.50',
-      badges: ['frontier', 'reasoning'],
+      badges: ['reasoning'],
       modes: ['none', 'high', 'max']
     },
     {

@@ -15,6 +15,7 @@ const ANTHROPIC_ENDPOINT = 'https://api.anthropic.com/v1/messages'
 // by max_tokens that the model itself wouldn't have ended.
 function maxTokensFor(model: string): number {
   const m = model.toLowerCase()
+  if (m.includes('fable')) return 128000
   if (m.includes('opus-4')) return 32000
   if (m.includes('sonnet-4')) return 64000
   if (m.includes('haiku-4')) return 8192
@@ -45,18 +46,22 @@ export class AnthropicProvider {
     }
 
     // Anthropic thinking modes:
+    // - fable-5: adaptive or omitted — an explicit {type:'disabled'} is an
+    //   HTTP 400 on fable; leaving the field out is its off-mode
     // - 4-8/4-7/4-6: adaptive (model decides depth) or disabled
     // - 4-5/4-1/haiku: enabled + budget_tokens or disabled
     const mode = options.thinkingMode ?? 'basic'
     const m = this.model.toLowerCase()
+    const isFable = m.includes('fable')
     const supportsAdaptive =
+      isFable ||
       m.includes('opus-4-8') ||
       m.includes('opus-4-7') ||
       m.includes('sonnet-4-6') ||
       m.includes('opus-4-6')
 
     if (mode === 'none') {
-      body.thinking = { type: 'disabled' }
+      if (!isFable) body.thinking = { type: 'disabled' }
     } else if (supportsAdaptive) {
       body.thinking = { type: 'adaptive' }
       if (mode === 'max') {

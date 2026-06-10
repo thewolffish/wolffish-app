@@ -183,10 +183,11 @@ export function Chat(): React.JSX.Element {
       tooltipKey: 'chat.thinkingMode.highTooltip'
     }
 
-    // ── Anthropic: adaptive on 4-6+, manual on 4-5/4-1 ──
+    // ── Anthropic: adaptive on Fable 5 and 4-6+, manual on 4-5/4-1 ──
     if (provider === 'anthropic') {
       const ml = model.toLowerCase()
       const is46Plus =
+        ml.includes('fable') ||
         ml.includes('opus-4-8') ||
         ml.includes('opus-4-7') ||
         ml.includes('sonnet-4-6') ||

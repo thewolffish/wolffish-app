@@ -1091,7 +1091,8 @@ function extractProviderDetail(raw: string): string | null {
 
 function contextWindowForModel(model: string): number {
   const m = model.toLowerCase()
-  // Claude 4.6+ — Opus 4.6/4.7/4.8 and Sonnet 4.6 have 1M windows
+  // Claude Fable 5 and 4.6+ — Fable 5, Opus 4.6/4.7/4.8, Sonnet 4.6 have 1M windows
+  if (m.includes('fable')) return 1_000_000
   if (m.includes('opus-4-8') || m.includes('opus-4-7') || m.includes('opus-4-6')) return 1_000_000
   if (m.includes('sonnet-4-6')) return 1_000_000
   // Claude 4.0–4.5 and Haiku — 200k
