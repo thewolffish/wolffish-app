@@ -1531,7 +1531,7 @@ export function Chat(): React.JSX.Element {
                   type="button"
                   onClick={() => setTimelineOpen(true)}
                   className={cn(
-                    'border-border bg-surface text-muted hover:text-fg absolute bottom-full mb-2 flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-1.5 text-xs shadow-sm transition-colors',
+                    'border-border bg-surface text-muted hover:text-fg absolute bottom-full mb-6 flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-1.5 text-xs shadow-sm transition-colors',
                     'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
                   )}
                 >
