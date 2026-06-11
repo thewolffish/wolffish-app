@@ -745,11 +745,28 @@ Use intensity `light` for fast tasks with few actions. Use `moderate` for longer
 
 Humanize is not needed for DOM reading, screenshots, or non-interaction commands. Only use it between physical interaction commands (click, type, scroll, mouse_move).
 
-## Typing Behavior
+## Typing text
 
-In debugger mode, text input is automatically streamed character by character with natural keystroke timing. You do not need to do anything special — the `ext_type` command handles this internally.
+`ext_type` types **character by character**, firing real keydown/keypress/input/keyup events for each one. This is on by default (`humanize: true`) and is what makes input look typed rather than pasted — keep it on for any page where detection matters.
 
-For long text input (more than a sentence), call `ext_humanize` with `light` intensity midway through if the text is being entered across multiple type commands.
+- **It is not instant.** A short field is sub-second; a long post body takes a few seconds. That is expected — let the command finish. There is **no execution timeout**, so even a very long body will complete. Do not "give up" and retry, and do not split the text into chunks to beat a timeout — that just stacks duplicated, garbled text.
+- **One `ext_type` per field.** Send the entire value in a single call. Don't loop character-by-character yourself.
+- **Replacing existing text:** pass `clearFirst: true` to clear the field first. Without it, text is *appended* to whatever is already there — so never re-send a failed/partial `ext_type` without `clearFirst`, or you'll pile a partial on top of a partial.
+- **When speed matters more than realism** (long text on a page that doesn't fingerprint input, or a plain form), pass `humanize: false` to insert the whole string at once.
+- Don't sprinkle `ext_humanize` inside a single `ext_type` — the per-keystroke timing is already built in. `ext_humanize` is only for pauses *between separate* interaction commands.
+
+## Selectors
+
+`ext_*` selectors are plain **CSS** (passed to `querySelectorAll`). Playwright/jQuery-style extensions are **not** supported and throw "not a valid selector":
+
+- ❌ `button:has-text("Post")`, `:contains("Submit")`, `text=Post`
+- ✅ `button[type="submit"]`, `[aria-label="Post"]`, `[name="title"]`
+
+To act on an element by its visible text (e.g. a "Post"/"Submit" button with no stable selector), query a broad set with `ext_query_selector` (e.g. `button`) and pick the one whose returned `text` matches, or use `ext_execute_js` to find and click it. Don't guess Playwright-style text selectors.
+
+## Capturing the page
+
+To see what's on a web page, use **`ext_screenshot`** — it captures the browser tab through the extension. Do **not** use `computer_screenshot` / desktop capture for web content: that's for native desktop apps, it needs OS screen-recording permission, and it grabs the whole screen instead of the page. If you only need the page's content (not a picture), prefer `ext_read_page` (text/markdown) over a screenshot.
 
 ## Safety
 

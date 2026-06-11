@@ -13,7 +13,6 @@ import { join } from 'node:path'
 import { WebSocketServer, type WebSocket } from 'ws'
 
 const TAG = 'extension'
-const COMMAND_TIMEOUT_MS = 30_000
 const HEARTBEAT_CHECK_MS = 45_000
 
 // ─── Debug Logger ───────────────────────────────────────────────────────────
@@ -58,7 +57,6 @@ export interface ExtensionServerStatus {
 interface PendingCommand {
   resolve: (response: WolffishResponse) => void
   reject: (error: Error) => void
-  timer: ReturnType<typeof setTimeout>
 }
 
 interface WolffishCommand {
@@ -207,11 +205,7 @@ export class ExtensionServer {
     }
   }
 
-  async sendCommand(
-    type: string,
-    params: Record<string, unknown>,
-    timeoutMs = COMMAND_TIMEOUT_MS
-  ): Promise<WolffishResponse> {
+  async sendCommand(type: string, params: Record<string, unknown>): Promise<WolffishResponse> {
     if (!this.isConnected()) {
       throw new Error('Browser extension is not connected')
     }
@@ -230,18 +224,17 @@ export class ExtensionServer {
       }
     }
 
+    // No execution timeout: a command runs for as long as it legitimately
+    // needs (e.g. humanized typing of a long body). Pending commands are not
+    // orphaned — rejectAllPending() settles them when the socket closes,
+    // shuts down, or is replaced, which is the only way a sent command can
+    // fail to come back.
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pendingCommands.delete(id)
-        reject(new Error(`Command ${type} timed out after ${timeoutMs}ms`))
-      }, timeoutMs)
-
-      this.pendingCommands.set(id, { resolve, reject, timer })
+      this.pendingCommands.set(id, { resolve, reject })
 
       try {
         this.client!.send(JSON.stringify(command))
       } catch (err) {
-        clearTimeout(timer)
         this.pendingCommands.delete(id)
         reject(err instanceof Error ? err : new Error(String(err)))
       }
@@ -431,7 +424,6 @@ export class ExtensionServer {
     if (typeof msg.id === 'string') {
       const pending = this.pendingCommands.get(msg.id)
       if (pending) {
-        clearTimeout(pending.timer)
         this.pendingCommands.delete(msg.id)
         pending.resolve(msg as unknown as WolffishResponse)
         void debug('INFO', `resolved command ${msg.id}`)
@@ -560,7 +552,6 @@ export class ExtensionServer {
     const count = this.pendingCommands.size
     if (count > 0) void debug('INFO', `rejecting ${count} pending commands: ${reason}`)
     for (const [id, pending] of this.pendingCommands) {
-      clearTimeout(pending.timer)
       pending.reject(new Error(reason))
       this.pendingCommands.delete(id)
     }

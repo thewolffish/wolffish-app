@@ -730,19 +730,19 @@ function requireBrowserPolyfill() {
                   return p[h];
                 if (!(h in d))
                   return;
-                let E = d[h];
-                if (typeof E == "function")
+                let w = d[h];
+                if (typeof w == "function")
                   if (typeof g[h] == "function")
-                    E = A(d, d[h], g[h]);
+                    w = A(d, d[h], g[h]);
                   else if (S(f, h)) {
                     let W = u(h, f[h]);
-                    E = A(d, d[h], W);
+                    w = A(d, d[h], W);
                   } else
-                    E = E.bind(d);
-                else if (typeof E == "object" && E !== null && (S(g, h) || S(f, h)))
-                  E = _(E, g[h], f[h]);
+                    w = w.bind(d);
+                else if (typeof w == "object" && w !== null && (S(g, h) || S(f, h)))
+                  w = _(w, g[h], f[h]);
                 else if (S(f, "*"))
-                  E = _(E, g[h], f["*"]);
+                  w = _(w, g[h], f["*"]);
                 else
                   return Object.defineProperty(p, h, {
                     configurable: !0,
@@ -753,10 +753,10 @@ function requireBrowserPolyfill() {
                     set(W) {
                       d[h] = W;
                     }
-                  }), E;
-                return p[h] = E, E;
+                  }), w;
+                return p[h] = w, w;
               },
-              set(b, h, y, E) {
+              set(b, h, y, w) {
                 return h in p ? p[h] = y : d[h] = y, !0;
               },
               defineProperty(b, h, y) {
@@ -785,7 +785,7 @@ function requireBrowserPolyfill() {
               }
             });
             d(p);
-          }), w = new r((d) => typeof d != "function" ? d : function(f, p, R) {
+          }), E = new r((d) => typeof d != "function" ? d : function(f, p, R) {
             let C = !1, b, h = new Promise((x) => {
               b = function(v) {
                 C = !0, x(v);
@@ -796,8 +796,8 @@ function requireBrowserPolyfill() {
             } catch (x) {
               y = Promise.reject(x);
             }
-            const E = y !== !0 && l(y);
-            if (y !== !0 && !E && !C)
+            const w = y !== !0 && l(y);
+            if (y !== !0 && !w && !C)
               return !1;
             const W = (x) => {
               x.then((v) => {
@@ -812,7 +812,7 @@ function requireBrowserPolyfill() {
                 console.error("Failed to send onMessage rejected reply", v);
               });
             };
-            return W(E ? y : h), !0;
+            return W(w ? y : h), !0;
           }), O = ({
             reject: d,
             resolve: g
@@ -837,8 +837,8 @@ function requireBrowserPolyfill() {
               }
             },
             runtime: {
-              onMessage: T(w),
-              onMessageExternal: T(w),
+              onMessage: T(E),
+              onMessageExternal: T(E),
               sendMessage: P.bind(null, "sendMessage", {
                 minArgs: 1,
                 maxArgs: 3
@@ -1047,10 +1047,7 @@ const DEFAULT_PORT = 23151, LOG_PREFIX = "[Wolffish]", HEARTBEAT_INTERVAL_MS = 1
   if (!(t != null && t.length))
     throw new Error("No active tab found");
   return t[0].id;
-}, withTimeout = (e, t = COMMAND_TIMEOUT_MS) => Promise.race([
-  e,
-  new Promise((s, n) => setTimeout(() => n(new Error(`Timeout: command did not complete within ${t}ms`)), t))
-]), makeResponse = (e, t) => ({ id: e, success: !0, data: t }), makeErrorResponse = (e, t) => ({ id: e, success: !1, error: t });
+}, withTimeout = (e) => e, makeResponse = (e, t) => ({ id: e, success: !0, data: t }), makeErrorResponse = (e, t) => ({ id: e, success: !1, error: t });
 var StorageEnum;
 (function(e) {
   e.Local = "local", e.Sync = "sync", e.Managed = "managed", e.Session = "session";
@@ -1073,30 +1070,30 @@ const checkStoragePermission = (e) => {
 }, createStorage = (e, t, s) => {
   var T, I;
   let n = null, a = !1, o = [];
-  const i = (s == null ? void 0 : s.storageEnum) ?? StorageEnum.Local, r = ((T = s == null ? void 0 : s.serialization) == null ? void 0 : T.serialize) ?? ((w) => w), l = ((I = s == null ? void 0 : s.serialization) == null ? void 0 : I.deserialize) ?? ((w) => w);
+  const i = (s == null ? void 0 : s.storageEnum) ?? StorageEnum.Local, r = ((T = s == null ? void 0 : s.serialization) == null ? void 0 : T.serialize) ?? ((E) => E), l = ((I = s == null ? void 0 : s.serialization) == null ? void 0 : I.deserialize) ?? ((E) => E);
   globalSessionAccessLevelFlag === !1 && i === StorageEnum.Session && (s == null ? void 0 : s.sessionAccessForContentScripts) === !0 && (checkStoragePermission(i), chrome$1 == null || chrome$1.storage[i].setAccessLevel({
     accessLevel: SessionAccessLevelEnum.ExtensionPagesAndContentScripts
-  }).catch((w) => {
-    console.error(w), console.error("Please call .setAccessLevel() into different context, like a background script.");
+  }).catch((E) => {
+    console.error(E), console.error("Please call .setAccessLevel() into different context, like a background script.");
   }), globalSessionAccessLevelFlag = !0);
   const c = async () => {
     checkStoragePermission(i);
-    const w = await (chrome$1 == null ? void 0 : chrome$1.storage[i].get([e]));
-    return w ? l(w[e]) ?? t : t;
-  }, m = async (w) => {
-    a || (n = await c()), n = await updateCache(w, n), await (chrome$1 == null ? void 0 : chrome$1.storage[i].set({ [e]: r(n) })), S();
-  }, u = (w) => (o = [...o, w], () => {
-    o = o.filter((O) => O !== w);
+    const E = await (chrome$1 == null ? void 0 : chrome$1.storage[i].get([e]));
+    return E ? l(E[e]) ?? t : t;
+  }, m = async (E) => {
+    a || (n = await c()), n = await updateCache(E, n), await (chrome$1 == null ? void 0 : chrome$1.storage[i].set({ [e]: r(n) })), S();
+  }, u = (E) => (o = [...o, E], () => {
+    o = o.filter((O) => O !== E);
   }), A = () => n, S = () => {
-    o.forEach((w) => w());
-  }, _ = async (w) => {
-    if (w[e] === void 0)
+    o.forEach((E) => E());
+  }, _ = async (E) => {
+    if (E[e] === void 0)
       return;
-    const O = l(w[e].newValue);
+    const O = l(E[e].newValue);
     n !== O && (n = await updateCache(O, n), S());
   };
-  return c().then((w) => {
-    n = w, a = !0, S();
+  return c().then((E) => {
+    n = E, a = !0, S();
   }), chrome$1 == null || chrome$1.storage[i].onChanged.addListener(_), {
     get: c,
     set: m,
