@@ -99,8 +99,12 @@ const VALIDATION_RE =
 //     Win32 GetLastError 2/3, surfaced verbatim by cmd.exe
 // These are the most common deterministic shell errors on Windows; without
 // them the motor retries 10x on a typo and burns ~5 minutes per failure.
+// "unknown tool: <name>" / "no such tool" come from the cerebellum when the
+// model hallucinates a tool name (e.g. a browser_* twin of an ext_* tool).
+// That is deterministic — the tool will never exist on retry — so classify it
+// as not_found and fail fast instead of burning three attempts.
 const NOT_FOUND_RE =
-  /command not found|not found|no .+ found|ENOENT|no such file|is not installed|HTTP 404\b|HTTP 410\b|is not recognized as|CommandNotFoundException|cannot find the (?:file|path) specified/i
+  /command not found|not found|no .+ found|ENOENT|no such file|is not installed|unknown tool|no such tool|HTTP 404\b|HTTP 410\b|is not recognized as|CommandNotFoundException|cannot find the (?:file|path) specified/i
 const NETWORK_RE = /ECONNREFUSED|ETIMEDOUT|ECONNRESET|network error|fetch failed|DNS resolution/i
 const TIMEOUT_RE = /timed out|timeout|SIGTERM/i
 
@@ -277,11 +281,21 @@ export class Motor {
       if (
         !result.success &&
         attempt < this.maxRetries &&
-        TIMEOUT_ERROR_RE.test(result.error ?? '') &&
-        typeof attemptArgs.timeout === 'number' &&
-        attemptArgs.timeout > 0
+        TIMEOUT_ERROR_RE.test(result.error ?? '')
       ) {
-        attemptArgs = { ...attemptArgs, timeout: attemptArgs.timeout * 2 }
+        // Plugins name their timeout arg differently — the shell plugin uses
+        // `timeout`, the playwright browser tools use `timeout_ms`. Double
+        // whichever one the call actually carries so a too-tight budget
+        // doesn't just retry into the same wall with the same value.
+        const timeoutKey =
+          typeof attemptArgs.timeout === 'number' && attemptArgs.timeout > 0
+            ? 'timeout'
+            : typeof attemptArgs.timeout_ms === 'number' && attemptArgs.timeout_ms > 0
+              ? 'timeout_ms'
+              : null
+        if (timeoutKey) {
+          attemptArgs = { ...attemptArgs, [timeoutKey]: (attemptArgs[timeoutKey] as number) * 2 }
+        }
       }
 
       const durationMs = Date.now() - startedAt
@@ -443,10 +457,14 @@ export class Motor {
         durationMs: task.updatedAt - task.createdAt
       })
     } else if (status === 'failed') {
+      // Report the error from the step that actually failed, not the last
+      // step in the list — a trailing recovered step can leave the final
+      // entry successful, which is what produced the bogus "unknown" reason.
+      const lastFailedStep = [...task.steps].reverse().find((s) => s.status === 'failed')
       this.corpus?.emit('task.failed', {
         taskId,
         failedAt: task.updatedAt,
-        error: task.steps[task.steps.length - 1]?.error ?? 'unknown'
+        error: lastFailedStep?.error ?? 'unknown'
       })
     } else if (status === 'stopped') {
       this.corpus?.emit('task.stopped', { taskId, stoppedAt: task.updatedAt })
@@ -576,8 +594,21 @@ function generateTaskId(): string {
 }
 
 function deriveTerminalStatus(steps: TaskStep[]): TaskStatus {
-  if (steps.some((s) => s.status === 'failed')) return 'failed'
-  if (steps.some((s) => s.status === 'stopped')) return 'stopped'
+  // A failed step the agent worked past — it retried, took another route, and
+  // a later step succeeded — is a *recovered* failure, not a task failure.
+  // Only an unrecovered outcome at the tail of the run is terminal. Judge by
+  // the last step that actually ran: if the agent ended on (or after) a
+  // success, the task succeeded regardless of mid-run stumbles.
+  let lastSucceeded = -1
+  let lastFailed = -1
+  let lastStopped = -1
+  steps.forEach((s, i) => {
+    if (s.status === 'succeeded') lastSucceeded = i
+    else if (s.status === 'failed') lastFailed = i
+    else if (s.status === 'stopped') lastStopped = i
+  })
+  if (lastStopped > lastSucceeded && lastStopped > lastFailed) return 'stopped'
+  if (lastFailed > lastSucceeded) return 'failed'
   return 'succeeded'
 }
 

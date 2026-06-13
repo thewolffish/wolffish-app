@@ -54,8 +54,18 @@ export class OpenRouterProvider {
   }
 
   async *stream(options: ProviderStreamOptions): AsyncGenerator<StreamChunk> {
+    // Anthropic models honor per-block cache_control passed through
+    // OpenRouter (verbatim Anthropic syntax), so the stable system prefix
+    // gets an explicit breakpoint with the volatile <runtime> block split
+    // off — mirroring the direct-Anthropic provider. Message-level
+    // breakpoints are not sent: OpenRouter's pass-through for tool-role
+    // content parts is undocumented, and a misplace would silently disable
+    // caching. Other models rely on byte-stable prefixes (automatic).
+    const systemContent = this.model.startsWith('anthropic/')
+      ? buildCachedSystemParts(options.system)
+      : options.system
     const messages = [
-      { role: 'system' as const, content: options.system } as Record<string, unknown>,
+      { role: 'system' as const, content: systemContent } as Record<string, unknown>,
       ...toOpenRouterMessages(options.messages)
     ]
 
@@ -234,6 +244,23 @@ type OpenRouterEvent = {
     total_tokens?: number
     prompt_tokens_details?: { cached_tokens?: number }
   }
+}
+
+/**
+ * Split the system prompt so the stable prefix carries an explicit cache
+ * breakpoint and the volatile `<runtime>` block stays uncached — the same
+ * scheme as the direct Anthropic provider, in OpenAI content-part form.
+ */
+function buildCachedSystemParts(system: string): unknown[] {
+  const marker = '<runtime>'
+  const idx = system.lastIndexOf(marker)
+  if (idx > 0) {
+    return [
+      { type: 'text', text: system.slice(0, idx).trimEnd(), cache_control: { type: 'ephemeral' } },
+      { type: 'text', text: system.slice(idx) }
+    ]
+  }
+  return [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }]
 }
 
 function toOpenRouterTool(tool: ToolDefinition): Record<string, unknown> {

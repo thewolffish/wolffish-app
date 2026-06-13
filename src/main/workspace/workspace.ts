@@ -37,6 +37,10 @@ export type CloudProviderConfig = {
   // cleanly — an empty cache just means "no list yet, retest to populate".
   models?: string[]
   reasoningModels?: string[]
+  // Anthropic prompt-cache breakpoint TTL. '1h' costs 2x base input on
+  // cache writes but keeps the prefix warm through tasks whose individual
+  // steps outlast the 5-minute default. Ignored by other providers.
+  cacheTtl?: '5m' | '1h'
 }
 
 export type SafetyConfig = {
@@ -216,6 +220,20 @@ export type WorkspaceConfig = {
   // On by default. When true, the chat input shows a small strip with
   // elapsed time, output tokens, and context size.
   showChatAnalytics?: boolean
+  // Context optimization (prompt caching). On by default; set
+  // enabled: false to restore the legacy per-iteration prompt rebuild
+  // for debugging. Gates the per-turn pinning of system prompt + tools,
+  // the outbound volatile runtime tail, and provider stickiness. Bug
+  // fixes (memory exclusions, compaction calibration) are not gated.
+  // `truncation` (also default on, requires enabled) additionally
+  // collapses provably superseded page reads, byte-equal duplicate
+  // results, and stale screenshots into self-describing stubs in the
+  // outbound request only — internal history, episodes, and task files
+  // keep full fidelity.
+  contextOptimization?: {
+    enabled?: boolean
+    truncation?: boolean
+  }
   // 0 = Sunday, 1 = Monday. Defaults to Monday (ISO 8601). Drives how the
   // activity heatmap is laid out and how the user thinks about week
   // boundaries. Optional so legacy configs migrate cleanly.

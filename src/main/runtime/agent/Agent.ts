@@ -22,6 +22,7 @@ import { Hippocampus, type TurnToolCall } from '@main/runtime/hippocampus'
 import { Hypothalamus } from '@main/runtime/hypothalamus'
 import { Insula } from '@main/runtime/insula'
 import { Motor } from '@main/runtime/motor'
+import { formatRuntimeStatus } from '@main/runtime/outbound'
 import { Prefrontal, type ProviderContext } from '@main/runtime/prefrontal'
 import { RAS } from '@main/runtime/ras'
 import {
@@ -45,7 +46,7 @@ import {
   type FileProcessorOptions,
   type MessageAttachmentInput
 } from '@main/uploads/file-processor'
-import { isInternalToolCall } from '@main/workspace/workspace'
+import { isInternalToolCall, readConfig } from '@main/workspace/workspace'
 
 /**
  * Maximum number of tools each provider API accepts per request.
@@ -352,13 +353,30 @@ export class Agent {
     let turnUsage: StreamUsage = { inputTokens: 0, outputTokens: 0 }
     let turnProvider: ProviderId | null = null
     let turnModel: string | null = null
-    // Track the most recent LLM response's input token count. This is
-    // ground truth from the provider and beats any char-based estimation.
+    // Track the most recent LLM response's input token count (uncached +
+    // cache reads — providers report them separately). This is ground
+    // truth from the provider and beats any char-based estimation.
     // Passed to compactOverflow so it can calibrate against reality.
     let lastIterationInputTokens = 0
     // When a context-overflow 400 fires, we force compaction and retry
     // exactly once. This flag prevents infinite retry loops.
     let contextOverflowRetried = false
+
+    // Context optimization gates (default on). `enabled` pins the system
+    // prompt and tool list for the whole turn so every byte upstream of
+    // the messages tail stays cache-stable; the live loop counters travel
+    // as an outbound-only volatile tail message instead. `truncation`
+    // additionally collapses provably superseded/duplicated payloads in
+    // the outbound clone (internal history is never touched). Disabling
+    // `enabled` restores the legacy per-iteration prompt rebuild.
+    const optimizationConfig = await readConfig()
+      .then((c) => c?.contextOptimization)
+      .catch(() => undefined)
+    const optimizeContext = optimizationConfig?.enabled !== false
+    const truncateOutbound = optimizeContext && optimizationConfig?.truncation !== false
+    let pinnedSystemPrompt: string | null = null
+    let pinnedTools: ToolDefinition[] | null = null
+    let pinnedWithFallback = false
 
     broca.beginTurn(turn.turnId, turn.onSegment)
     this.cerebellum.setCurrentConversationId(turn.conversationId ?? null, turn.conversationTitle)
@@ -381,18 +399,52 @@ export class Agent {
             }
           : undefined
 
-        const runtime = { iteration: iterationCount, toolsCalled: totalToolCalls }
+        const runtime = {
+          iteration: iterationCount,
+          toolsCalled: totalToolCalls,
+          renderCounters: !optimizeContext
+        }
 
-        // Rebuild the system prompt each iteration so the <runtime>
-        // block reflects the live iteration counter and any fallback
-        // state from a prior iteration this turn.
-        const systemPrompt = await this.prefrontal.buildSystemPrompt(
-          userContent,
-          runtime,
-          providerContext
-        )
-        const iterationTools = this.prefrontal.selectTools(providerContext)
-        const filteredTools = this.filterToolsForProvider(iterationTools, userContent)
+        let systemPrompt: string
+        let filteredTools: ToolDefinition[]
+        if (optimizeContext) {
+          // Task-start pin: prompt and tools are derived once per turn and
+          // reused across iterations. Rebuilt only when fallback state
+          // flips — a provider change resets the cache anyway, and the
+          // fallback prompt carries the <provider> notice and a different
+          // tool surface.
+          const isFallback = providerContext !== undefined
+          if (
+            pinnedSystemPrompt === null ||
+            pinnedTools === null ||
+            pinnedWithFallback !== isFallback
+          ) {
+            pinnedSystemPrompt = await this.prefrontal.buildSystemPrompt(
+              userContent,
+              runtime,
+              providerContext
+            )
+            pinnedTools = this.filterToolsForProvider(
+              this.prefrontal.selectTools(providerContext),
+              userContent
+            )
+            pinnedWithFallback = isFallback
+          }
+          systemPrompt = pinnedSystemPrompt
+          filteredTools = pinnedTools
+        } else {
+          // Legacy path: rebuild the system prompt each iteration so the
+          // <runtime> block reflects the live iteration counter.
+          systemPrompt = await this.prefrontal.buildSystemPrompt(
+            userContent,
+            runtime,
+            providerContext
+          )
+          filteredTools = this.filterToolsForProvider(
+            this.prefrontal.selectTools(providerContext),
+            userContent
+          )
+        }
 
         // Cloud→local transitions happen mid-stream inside thalamus, so
         // the iter-1 fallback prompt has to be rebuilt from there.
@@ -401,7 +453,7 @@ export class Agent {
         // straight to local without invoking this).
         const buildFallback = async (
           mode: FallbackMode
-        ): Promise<{ system: string; tools?: typeof iterationTools }> => {
+        ): Promise<{ system: string; tools?: ToolDefinition[] }> => {
           const ctx: ProviderContext = {
             isFallback: true,
             mode,
@@ -431,7 +483,13 @@ export class Agent {
             onStarted: (targetsCount, currentTokens) => {
               this.corpus.emit('compaction.started', { messagesCount: messages.length })
               const contextWindow = this.thalamus.getActiveContextWindow()
-              broca.emitCompactionStarted(turn.turnId, messages.length, targetsCount, currentTokens, contextWindow)
+              broca.emitCompactionStarted(
+                turn.turnId,
+                messages.length,
+                targetsCount,
+                currentTokens,
+                contextWindow
+              )
             }
           }
         )
@@ -455,13 +513,31 @@ export class Agent {
           })
         }
 
+        // Snapshot for closure-safe narrowing: the provider+model that
+        // served the previous iteration, used to pin the cascade.
+        const stickyId = turnProvider
+        const stickyModel = turnModel
+
         const stream = this.thalamus.stream({
           system: systemPrompt,
           messages,
           tools: filteredTools.length > 0 ? filteredTools : undefined,
           signal: turn.signal,
           buildFallback,
-          thinkingMode: turn.thinkingMode
+          thinkingMode: turn.thinkingMode,
+          cacheKey: turn.conversationId ?? turn.turnId,
+          truncateOutbound,
+          // The live loop counters ride at the very end of the outbound
+          // clone — iteration 1 omits them so the first cache write is a
+          // clean prefix (the counters carry no information yet anyway).
+          volatileStatus:
+            optimizeContext && iterationCount > 1
+              ? formatRuntimeStatus({ iteration: iterationCount, toolsCalled: totalToolCalls })
+              : undefined,
+          stickyProvider:
+            optimizeContext && stickyId && stickyId !== 'local' && stickyModel
+              ? { id: stickyId, model: stickyModel }
+              : undefined
         })
         const teed = broca.streamSegments(stream)
         const tracked = captureUsage(teed, (provider, model, usage) => {
@@ -471,7 +547,9 @@ export class Agent {
             // Track per-iteration input tokens for compaction calibration.
             // This is ground truth from the provider — use it on the next
             // iteration to catch cases where char estimation underestimates.
-            lastIterationInputTokens = usage.inputTokens
+            // Cache reads count: they are real context the model ingested,
+            // and once caching works they dominate the total.
+            lastIterationInputTokens = usage.inputTokens + (usage.cacheReadTokens ?? 0)
             turnUsage = {
               inputTokens: turnUsage.inputTokens + usage.inputTokens,
               outputTokens: turnUsage.outputTokens + usage.outputTokens,
@@ -530,9 +608,18 @@ export class Agent {
                 lastKnownInputTokens: lastIterationInputTokens,
                 force: true,
                 onStarted: (targetsCount, currentTokens) => {
-                  this.corpus.emit('compaction.started', { messagesCount: messages.length, force: true })
+                  this.corpus.emit('compaction.started', {
+                    messagesCount: messages.length,
+                    force: true
+                  })
                   const contextWindow = this.thalamus.getActiveContextWindow()
-                  broca.emitCompactionStarted(turn.turnId, messages.length, targetsCount, currentTokens, contextWindow)
+                  broca.emitCompactionStarted(
+                    turn.turnId,
+                    messages.length,
+                    targetsCount,
+                    currentTokens,
+                    contextWindow
+                  )
                 }
               }
             )
@@ -805,7 +892,6 @@ export class Agent {
             toolMsg.images = result.images
           }
           messages.push(toolMsg)
-
         }
 
         if (aborted) {
@@ -853,6 +939,22 @@ export class Agent {
             cost
           })
           .catch(() => undefined)
+        // Whole-turn roll-up with the cache split, so a 200-iteration task
+        // leaves one line that says whether caching actually worked.
+        const cacheRead = turnUsage.cacheReadTokens ?? 0
+        const totalInput = turnUsage.inputTokens + cacheRead
+        this.corpus.emit('turn.usage', {
+          provider: turnProvider,
+          model: turnModel,
+          iterations: iterationCount,
+          toolCalls: totalToolCalls,
+          inputTokens: turnUsage.inputTokens,
+          outputTokens: turnUsage.outputTokens,
+          cacheCreationTokens: turnUsage.cacheCreationTokens ?? 0,
+          cacheReadTokens: cacheRead,
+          cacheHitRate: totalInput > 0 ? cacheRead / totalInput : 0,
+          cost
+        })
       }
 
       broca.emitTurnEnd(
@@ -1115,10 +1217,12 @@ async function* captureUsage(
   for await (const chunk of stream) {
     if (chunk.type === 'active_model') {
       onCapture(chunk.provider, chunk.model, null)
-    } else if (chunk.type === 'turn_meta' && chunk.usage) {
-      onCapture(null, null, chunk.usage)
+    } else if (chunk.type === 'turn_meta') {
+      // turn_meta names the entry that actually served the call (stamped
+      // by thalamus), which can differ from the active_model head when
+      // the cascade fell through — pinning must follow the real winner.
+      onCapture(chunk.provider ?? null, chunk.model ?? null, chunk.usage ?? null)
     }
     yield chunk
   }
 }
-

@@ -1,4 +1,5 @@
 import type { Corpus } from '@main/runtime/corpus'
+import { shapeOutbound } from '@main/runtime/outbound'
 import { AnthropicProvider } from '@main/runtime/providers/anthropic'
 import { DeepSeekProvider } from '@main/runtime/providers/deepseek'
 import { KimiProvider } from '@main/runtime/providers/kimi'
@@ -35,7 +36,18 @@ export type ToolResultImage = {
 
 export type ChatMessage =
   | { role: 'system'; content: string }
-  | { role: 'user'; content: string | UserContentBlock[] }
+  | {
+      role: 'user'
+      content: string | UserContentBlock[]
+      /**
+       * Marks a synthetic outbound-only message (the per-iteration runtime
+       * status tail). Never present on internal history — it is appended to
+       * the structural clone right before provider dispatch. Providers must
+       * never place a cache breakpoint on a volatile message: its content
+       * changes every call, so a breakpoint there would never match again.
+       */
+      volatile?: boolean
+    }
   | { role: 'assistant'; content: string; toolUses?: ToolUse[]; reasoningContent?: string }
   | {
       role: 'tool'
@@ -73,6 +85,34 @@ export type ProviderStreamOptions = {
   tools?: ToolDefinition[]
   signal?: AbortSignal
   thinkingMode?: ThinkingMode
+  /**
+   * Per-iteration loop-position report (live tool counters). Appended to
+   * the outbound structural clone as a final volatile user message so
+   * everything before it stays a byte-stable, cacheable prefix. The
+   * internal messages array is never touched.
+   */
+  volatileStatus?: string
+  /**
+   * Enables deterministic outbound truncation in the structural clone:
+   * superseded page-state reads, byte-equal duplicate results, and stale
+   * screenshots collapse to self-describing stubs. Internal history is
+   * never touched. See outbound.ts for the exact (conservative) rules.
+   */
+  truncateOutbound?: boolean
+  /**
+   * Stable per-conversation key passed to providers that support cache
+   * routing hints (OpenAI `prompt_cache_key`). Keeps all calls of a task
+   * on the same cache shard — without it, sustained tool loops above
+   * ~15 req/min on one prefix overflow to cold machines.
+   */
+  cacheKey?: string
+  /**
+   * Provider+model that served the previous iteration of this turn. The
+   * cascade moves this entry to the front so a mid-task turn keeps
+   * hitting the same provider cache. Hard failures still cascade onward —
+   * pinning biases the order, it never traps the turn on a dead provider.
+   */
+  stickyProvider?: { id: ProviderId; model: string }
   /**
    * Invoked by thalamus on a cloud→local fallback transition within a
    * single stream call. Lets the caller (the agent) supply a system
@@ -115,7 +155,16 @@ export type StreamChunk =
   | { type: 'text'; text: string }
   | { type: 'reasoning'; text: string }
   | { type: 'tool_call'; id: string; name: string; args: Record<string, unknown> }
-  | { type: 'turn_meta'; stopReason: StopReason; usage?: StreamUsage }
+  // provider/model are stamped by thalamus on relay — unlike the
+  // head-of-cascade active_model announcement, they name the entry that
+  // actually served the call, which is what turn pinning must follow.
+  | {
+      type: 'turn_meta'
+      stopReason: StopReason
+      usage?: StreamUsage
+      provider?: ProviderId
+      model?: string
+    }
   | { type: 'error'; message: string; recoverable: boolean; failures?: NoProviderAvailableInfo[] }
   | { type: 'active_model'; provider: ProviderId; model: string }
   | {
@@ -144,6 +193,10 @@ export type CloudProviderConfig = {
   apiKey: string
   models?: string[]
   reasoningModels?: string[]
+  // Anthropic cache breakpoint TTL. '1h' costs 2x base on cache writes but
+  // survives tasks whose individual steps outlast the 5-minute default
+  // (slow browser automation, long shell commands). Anthropic-only.
+  cacheTtl?: '5m' | '1h'
 }
 
 export type ProviderHealth = {
@@ -427,7 +480,11 @@ export class Thalamus {
             return this.compactSingle(entry, instruction + part, signal)
           })
         )
-        const valid = summaries.filter(Boolean) as { text: string; provider: string; model: string }[]
+        const valid = summaries.filter(Boolean) as {
+          text: string
+          provider: string
+          model: string
+        }[]
         if (valid.length === parts.length) {
           return {
             text: valid.map((s) => s.text).join('\n\n'),
@@ -481,7 +538,11 @@ export class Thalamus {
         const summaries = await Promise.all(
           parts.map((part) => this.summarizeSingle(entry, part, signal))
         )
-        const valid = summaries.filter(Boolean) as { text: string; provider: string; model: string }[]
+        const valid = summaries.filter(Boolean) as {
+          text: string
+          provider: string
+          model: string
+        }[]
         if (valid.length === parts.length) {
           return {
             text: valid.map((s) => s.text).join('\n\n'),
@@ -589,6 +650,19 @@ export class Thalamus {
 
     const cloudEntries = cascade.filter((c) => c.id !== 'local')
     const localEntry = cascade.find((c) => c.id === 'local') ?? null
+
+    // Task pinning: bias the cascade toward the provider+model that served
+    // the previous iteration of this turn, so the conversation prefix keeps
+    // hitting the same provider's cache. Only reorders — a pinned provider
+    // that hard-fails still cascades to the rest as usual.
+    const sticky = options.stickyProvider
+    if (sticky) {
+      const idx = cloudEntries.findIndex((c) => c.id === sticky.id && c.model === sticky.model)
+      if (idx > 0) {
+        const [entry] = cloudEntries.splice(idx, 1)
+        cloudEntries.unshift(entry)
+      }
+    }
 
     // Announce who's about to handle this turn so the renderer can show a
     // chip alongside the response. Falls back to local when no cloud key
@@ -722,7 +796,7 @@ export class Thalamus {
     | { kind: 'committed-error'; message: string; failure?: ProviderFailure }
     | { kind: 'failed'; failure: ProviderFailure }
   > {
-    const guarded = await this.guardVisualContent(entry, options)
+    const guarded = await this.guardVisualContent(entry, shapeOutbound(options))
     const overallStartedAt = Date.now()
     let attempt = 0
     let lastFailure: ProviderFailure | null = null
@@ -772,11 +846,18 @@ export class Thalamus {
         for await (const chunk of entry.provider.stream(guarded)) {
           if (chunk.type === 'text') {
             textEmitted = true
-          } else if (chunk.type === 'turn_meta' && chunk.usage) {
-            inputTokens = chunk.usage.inputTokens
-            outputTokens = chunk.usage.outputTokens
-            cacheCreationTokens = chunk.usage.cacheCreationTokens ?? 0
-            cacheReadTokens = chunk.usage.cacheReadTokens ?? 0
+          } else if (chunk.type === 'turn_meta') {
+            if (chunk.usage) {
+              inputTokens = chunk.usage.inputTokens
+              outputTokens = chunk.usage.outputTokens
+              cacheCreationTokens = chunk.usage.cacheCreationTokens ?? 0
+              cacheReadTokens = chunk.usage.cacheReadTokens ?? 0
+            }
+            // Stamp the entry that actually served this call so the agent
+            // can pin the next iteration to it (active_model only names
+            // the cascade head, which may not be who answered).
+            yield { ...chunk, provider: entry.id, model: entry.model }
+            continue
           }
           yield chunk
         }
@@ -906,7 +987,7 @@ export class Thalamus {
         out.push({
           id: 'anthropic',
           model: cfg.model,
-          provider: new AnthropicProvider(cfg.apiKey, cfg.model)
+          provider: new AnthropicProvider(cfg.apiKey, cfg.model, undefined, undefined, cfg.cacheTtl)
         })
       } else if (id === 'openai') {
         out.push({

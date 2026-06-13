@@ -1233,6 +1233,10 @@
     "imageViewer": {
       "deleted": "Image file was deleted or unavailable"
     },
+    "pageViewer": {
+      "untitled": "Page content",
+      "chars": "chars"
+    },
     "docxViewer": {
       "loading": "Loading document"
     },

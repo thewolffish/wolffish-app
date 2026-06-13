@@ -1182,6 +1182,10 @@
     "imageViewer": {
       "deleted": "ملف الصورة محذوف أو غير متاح"
     },
+    "pageViewer": {
+      "untitled": "محتوى الصفحة",
+      "chars": "حرف"
+    },
     "docxViewer": {
       "loading": "جارٍ تحميل المستند"
     },

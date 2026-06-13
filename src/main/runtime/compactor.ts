@@ -414,6 +414,23 @@ function buildContinuationNudge(summary: { text: string; model: string } | null)
  *
  * Returns null when no compaction is needed (payload fits within 75%).
  */
+/**
+ * Effective payload size for the compaction trigger. Provider-billed
+ * tokens from the previous call (uncached + cache reads) are ground truth
+ * and replace the char heuristic entirely once available — the 1.5
+ * chars/token worst-case ratio overestimates real usage ~2.5x on mixed
+ * content and used to fire compaction at 39% of the actual window (a 45s
+ * stall observed in the 2026-06-11 run). The char estimate still rules
+ * the first call of a turn, and a 25%-of-estimate floor catches the rare
+ * case where a single iteration appends far more than the last call saw.
+ * A genuine overflow that outruns both is caught by the hard-400 force
+ * path, which is the designed escape hatch.
+ */
+export function effectivePayloadTokens(charEstimate: number, lastKnownInputTokens: number): number {
+  if (lastKnownInputTokens <= 0) return charEstimate
+  return Math.max(lastKnownInputTokens, Math.ceil(charEstimate * 0.25))
+}
+
 export async function compactOverflow(
   thalamus: Thalamus,
   systemPrompt: string,
@@ -430,10 +447,8 @@ export async function compactOverflow(
 
   const charEstimate = estimatePayloadTokens(systemPrompt, messages, options?.tools)
 
-  // When we have actual token data from the previous LLM response, use it
-  // as a calibration floor.
   const lastKnown = options?.lastKnownInputTokens ?? 0
-  const currentTokens = Math.max(charEstimate, lastKnown)
+  const currentTokens = effectivePayloadTokens(charEstimate, lastKnown)
 
   const threshold = Math.floor(inputBudget * COMPACTION_THRESHOLD)
   const needsCompaction = options?.force || currentTokens > threshold

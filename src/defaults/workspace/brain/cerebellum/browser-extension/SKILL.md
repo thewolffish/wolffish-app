@@ -120,7 +120,7 @@ tools:
         required: false
   # Page Interaction
   - name: ext_click
-    description: Click an element on the page by CSS selector.
+    description: Click an element on the page by CSS selector, or text=<visible text> to target by text.
     parameters:
       selector:
         type: string
@@ -571,6 +571,34 @@ tools:
         enum: [ISOLATED, MAIN]
         required: false
   # Wait & Polling
+  - name: ext_wait
+    description: Generic wait. With a selector, waits for that element to appear; without one, sleeps for the given duration.
+    parameters:
+      type:
+        type: string
+        description: Wait type. Inferred when omitted (selector given → selector, else timeout).
+        enum: [selector, navigation, network_idle, timeout]
+        required: false
+      selector:
+        type: string
+        description: CSS selector to wait for (type=selector).
+        required: false
+      ms:
+        type: number
+        description: Sleep duration in ms for plain waits. Default 1000, max 300000.
+        required: false
+      timeout_ms:
+        type: number
+        description: Max wait time in ms (alias accepted for any wait type).
+        required: false
+      visible:
+        type: boolean
+        description: Wait for the element to be visible. Default false.
+        required: false
+      tabId:
+        type: number
+        description: Target tab.
+        required: false
   - name: ext_wait_for
     description: Wait for an element to appear on the page.
     parameters:
@@ -685,7 +713,7 @@ confirm_patterns:
     reason: Modifying browser cookies
   - pattern: 'ext_navigate\s.*(?:bank|paypal|venmo|stripe\.com|checkout|payment)'
     reason: Navigating to a financial or payment site
-version: 1.1.0
+version: 1.2.1
 ---
 
 # Browser Extension

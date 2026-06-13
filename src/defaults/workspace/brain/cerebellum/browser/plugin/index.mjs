@@ -346,12 +346,14 @@ async function browserClick(args) {
   const page = getPage(session, args?.tab_id)
   if (!page) return { success: false, error: 'No active page in session.' }
 
-  const timeout = args?.timeout_ms || 10_000
+  // No Wolffish-imposed default — the run is LLM-led. Use the model's
+  // timeout_ms when given, otherwise defer to Playwright's own default.
+  const timeout = args?.timeout_ms || 0
   const locator = page.locator(args.selector).first()
   await locator.click({
     button: args?.button || 'left',
     clickCount: args?.click_count || 1,
-    timeout
+    timeout: timeout || undefined
   })
 
   return { success: true, output: `Clicked: ${args.selector}` }
@@ -971,7 +973,7 @@ const toolDefinitions = [
         selector: { type: 'string', description: 'Element selector.' },
         button: { type: 'string', enum: ['left', 'right', 'middle'], description: 'Mouse button.' },
         click_count: { type: 'number', description: 'Number of clicks. Default 1.' },
-        timeout_ms: { type: 'number', description: 'Timeout for element. Default 10000.' },
+        timeout_ms: { type: 'number', description: 'Timeout for element in ms. Optional — defaults to the browser engine default when unset.' },
         tab_id: { type: 'string', description: 'Target tab.' }
       },
       required: ['session_id', 'selector']

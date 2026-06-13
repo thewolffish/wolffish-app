@@ -81,7 +81,12 @@ export class LocalProvider {
       // num_predict: -1 tells Ollama to generate until the model itself
       // stops or the context window fills. Without this, Ollama applies
       // its default cap (128 tokens) and truncates replies mid-thought.
-      options: { num_predict: -1 }
+      options: { num_predict: -1 },
+      // Hold the model (and its KV cache) in memory across tool-loop
+      // iterations. The 5-minute default can evict mid-task whenever a
+      // single step runs long, forcing a full prefill of the entire
+      // conversation on the next call.
+      keep_alive: '30m'
     }
     if (options.tools && options.tools.length > 0) {
       body.tools = options.tools.map(toOllamaTool)

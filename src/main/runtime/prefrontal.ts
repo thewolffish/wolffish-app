@@ -48,6 +48,14 @@ export type ContextBundle = {
 export type RuntimeContext = {
   iteration: number
   toolsCalled: number
+  /**
+   * When false, the live iteration counters are omitted from the
+   * `<runtime>` block so the system prompt stays byte-stable across
+   * tool-loop iterations (the counters travel in the outbound volatile
+   * tail instead — see formatRuntimeStatus). Defaults to true, which
+   * preserves the legacy in-prompt rendering.
+   */
+  renderCounters?: boolean
 }
 
 /**
@@ -335,6 +343,18 @@ export class Prefrontal {
       // doesn't need to read its own event log, and at 500-700 tokens per
       // day they crowd out actually-useful memories.
       if (hit.path.startsWith('brain/corpus/')) continue
+      // Motor task transcripts are rewritten after every tool step. The
+      // running task's file embeds the user's message verbatim, so cortex
+      // scores it 1.00 and the prompt re-ingests a growing copy of the
+      // very conversation the model is already holding — mutating the
+      // prompt every iteration and defeating provider prefix caches.
+      // Past tasks stay reachable on demand via insula tools and through
+      // hippocampus episodes; task minutiae never belong in every prompt.
+      if (hit.path.startsWith('brain/motor/')) continue
+      // Basal-ganglia day files are byte-duplicates of the recent.md
+      // feedback candidate injected by collectFeedbackCandidate below,
+      // and they grow with every recorded tool outcome mid-task.
+      if (hit.path.startsWith('brain/basalganglia/')) continue
       const content = await this.readFile(hit.path)
       if (!content) continue
       out.push({ category: 'memory', source: hit.path, content })
@@ -485,10 +505,12 @@ function formatRuntimeBody(
 ): string {
   const lines: string[] = []
   if (runtime) {
-    lines.push(`  Tool iteration this turn: ${runtime.iteration}`)
-    lines.push(`  Tools called this turn: ${runtime.toolsCalled}`)
+    if (runtime.renderCounters !== false) {
+      lines.push(`  Tool iteration this turn: ${runtime.iteration}`)
+      lines.push(`  Tools called this turn: ${runtime.toolsCalled}`)
+    }
     lines.push(
-      `  IMPORTANT: When a task requires calling a tool for each item in a set (e.g. reading N emails, fetching N pages), you MUST call the tool for EVERY item before producing final output. Batch 10-15 calls per response for efficiency, then continue with the remaining items in your next response. Metadata from search/list results is NOT a substitute for calling the per-item tool — if the task says "read all," call read for ALL, not just a subset.`
+      `  IMPORTANT: When a task requires calling a tool for each item in a set (e.g. reading N emails, fetching N pages), you MUST call the tool for EVERY item before producing final output. Batch 10-15 calls per response for efficiency; their results return to you automatically and you continue with the remaining items in the same loop. A response with no tool calls ENDS the task — never end one planning to "continue next turn". Metadata from search/list results is NOT a substitute for calling the per-item tool — if the task says "read all," call read for ALL, not just a subset.`
     )
   }
   if (providerContext?.isFallback) {

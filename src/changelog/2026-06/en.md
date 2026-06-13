@@ -1,4 +1,41 @@
-## v1.0.129 — 2026-06-09 `Latest`
+## v1.0.141 — 2026-06-13 `Latest`
+
+### Prompt Caching Across All Providers
+
+Long agentic tasks are now dramatically cheaper and faster. Previously, every iteration of a tool-using task re-sent the entire conversation as uncached input — a 30-minute browser task consumed 28.8M input tokens with only a 5.5% cache hit rate. The same workload now runs at a 96–98% hit rate, making each model call roughly 36× cheaper and about twice as fast.
+
+**What changed:** the system prompt and tool list are now pinned for the duration of a turn, so every byte upstream of the newest messages stays cache-stable across iterations. The live iteration counters that previously mutated the prompt on every call now travel as a tiny telemetry line at the very end of the request. Three prompt-churn bugs were fixed along the way: the memory system no longer re-ingests the running task's own transcript into the prompt (it grew the prompt on every tool step and was the single biggest cache killer), the behavioral feedback log is no longer included twice, and device stats no longer re-sample free RAM mid-task.
+
+**Per-provider work:** Anthropic requests place moving cache breakpoints that extend the cached prefix each iteration, with an optional `cacheTtl: '1h'` setting for tasks whose steps outlast the 5-minute default. OpenAI requests carry a stable per-conversation `prompt_cache_key` so sustained tool loops stay on their warm cache shard. Claude models routed through OpenRouter now receive explicit cache_control blocks. Ollama holds the model and its KV cache in memory for 30 minutes between calls. The cascade also pins the provider and model that served the previous iteration, so a mid-task turn keeps hitting the same provider's cache — hard failures still fall through to the next provider as before.
+
+### Outbound Context Truncation
+
+The request sent to the provider is now a shaped copy of the conversation, not a verbatim dump. Older page reads that have been superseded by a newer read of the same browser session, byte-identical duplicate tool results, and stale screenshots collapse into short self-describing stubs — each stub names what it was, how large it was, and how to fetch it again. The newest page state, the newest screenshot, and every failed result always remain full, and internal conversation history, episodes, and task transcripts keep complete fidelity on disk — truncation exists only on the wire.
+
+On a 184-iteration mission with 53 page reads, the context plateaued at ~130k tokens where it previously would have grown past 350k, with zero measurable overhead in uncached input and no change in task quality. Both behaviors ship enabled and can be disabled in config via `contextOptimization.enabled` and `contextOptimization.truncation`.
+
+### Smarter Compaction Trigger
+
+Context compaction now calibrates against the provider's actual reported token counts (including cache reads) instead of a worst-case character heuristic that overestimated real usage by ~2.5×. Previously this could fire compaction at 39% of the real window — one observed run stalled 45 seconds mid-task truncating a conversation that comfortably fit. Compaction is now reserved for genuine context pressure, and with outbound truncation keeping long tasks flat, it rarely needs to fire at all.
+
+### Task Loop Reliability
+
+Fixed a failure mode where the agent abandoned a long mission halfway: at a frustrating moment it would write a progress summary and plan to "continue in the next turn" — but ending a response without tool calls ends the task, so the mission silently died. The loop-awareness instructions, the batch-completion rule, and the new runtime telemetry line all now state the actual mechanic: there is no next turn; if the task is unfinished, keep calling tools; end with prose only when the work is complete or genuinely blocked. Long multi-phase missions now run to completion — verified on 80- and 184-iteration browser tasks that previously stalled.
+
+### Per-Task Usage Summary
+
+Every turn now emits a single roll-up event with iterations, tool calls, input/output tokens, cache hit rate, and cost — so a 200-iteration task leaves one line that says whether caching actually worked, alongside the existing per-call records.
+
+### Extension — Generic Wait & Text Selectors
+
+Two gaps observed in real runs, where the model reached for capabilities that didn't exist:
+
+- **`ext_wait`** — a generic wait tool: sleeps for a duration, or waits for a CSS selector, navigation, or network idle, accepting the argument shapes models naturally produce. Previously the model guessed this name (mirroring the playwright capability's `browser_wait`) and lost a step to "unknown tool".
+- **`text=` selectors** — `ext_click`, `ext_wait_for`, and every other selector-taking command now accept Playwright-style `text=<visible text>` selectors, resolving to the deepest visible element whose text matches. Invalid CSS selectors now fail instantly with a clear message instead of burning three retries on a syntax error that could never succeed.
+
+---
+
+## v1.0.129 — 2026-06-09
 
 ### Context Compaction Redesign
 

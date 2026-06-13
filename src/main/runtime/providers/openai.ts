@@ -58,6 +58,12 @@ export class OpenAIProvider {
       // turn_meta with API-reported token counts instead of guessing.
       stream_options: { include_usage: true }
     }
+    // Cache-shard routing hint. Agentic loops exceed ~15 req/min on one
+    // prefix, which overflows to machines with cold caches; a stable
+    // per-conversation key keeps the task on its warm shard.
+    if (options.cacheKey) {
+      body.prompt_cache_key = options.cacheKey
+    }
     if (isReasoningModel(this.model)) {
       body.max_completion_tokens = maxOutput
 

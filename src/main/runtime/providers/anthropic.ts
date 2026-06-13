@@ -28,20 +28,30 @@ function maxTokensFor(model: string): number {
   return 16384
 }
 
+/**
+ * Cache breakpoint marker. The 1h TTL costs 2x base on writes (vs 1.25x
+ * for the 5m default) but keeps the prefix warm through tasks whose
+ * individual steps outlast five minutes.
+ */
+export type AnthropicCacheControl = { type: 'ephemeral'; ttl?: '1h' }
+
 export class AnthropicProvider {
   constructor(
     private apiKey: string,
     private model: string,
     private endpoint: string = ANTHROPIC_ENDPOINT,
-    private maxTokens: number = maxTokensFor(model)
+    private maxTokens: number = maxTokensFor(model),
+    private cacheTtl: '5m' | '1h' = '5m'
   ) {}
 
   async *stream(options: ProviderStreamOptions): AsyncGenerator<StreamChunk> {
+    const cc: AnthropicCacheControl =
+      this.cacheTtl === '1h' ? { type: 'ephemeral', ttl: '1h' } : { type: 'ephemeral' }
     const body: Record<string, unknown> = {
       model: this.model,
       max_tokens: this.maxTokens,
-      system: buildSystemBlocks(options.system),
-      messages: toAnthropicMessages(options.messages),
+      system: buildSystemBlocks(options.system, cc),
+      messages: toAnthropicMessages(options.messages, cc),
       stream: true
     }
 
@@ -78,7 +88,7 @@ export class AnthropicProvider {
 
     if (options.tools && options.tools.length > 0) {
       const tools = options.tools.map(toAnthropicTool)
-      ;(tools[tools.length - 1] as Record<string, unknown>).cache_control = { type: 'ephemeral' }
+      ;(tools[tools.length - 1] as Record<string, unknown>).cache_control = cc
       body.tools = tools
     }
 
@@ -268,12 +278,16 @@ function userContentToAnthropic(content: string | UserContentBlock[]): string | 
     : blocks
 }
 
-function toAnthropicMessages(messages: ChatMessage[]): AnthropicMessage[] {
+export function toAnthropicMessages(
+  messages: ChatMessage[],
+  cc: AnthropicCacheControl = { type: 'ephemeral' }
+): AnthropicMessage[] {
   // Anthropic requires alternating user/assistant turns. Tool results live
   // inside user-role messages as `tool_result` content blocks. We coalesce
   // consecutive tool messages into a single user turn to keep that invariant.
   const out: AnthropicMessage[] = []
   let pendingToolResults: unknown[] = []
+  let volatileText: string | null = null
 
   const flushToolResults = (): void => {
     if (pendingToolResults.length === 0) return
@@ -283,6 +297,13 @@ function toAnthropicMessages(messages: ChatMessage[]): AnthropicMessage[] {
 
   for (const m of messages) {
     if (m.role === 'system') continue
+    if (m.role === 'user' && m.volatile) {
+      // The outbound-only runtime status tail. Held back and appended
+      // after breakpoint placement so its per-iteration churn sits
+      // strictly after every cache marker.
+      volatileText = typeof m.content === 'string' ? m.content : ''
+      continue
+    }
     if (m.role === 'tool') {
       let content: string | unknown[]
       if (m.images && m.images.length > 0) {
@@ -331,24 +352,74 @@ function toAnthropicMessages(messages: ChatMessage[]): AnthropicMessage[] {
   }
   flushToolResults()
 
-  // Cache breakpoint: mark the last user turn that precedes at least one more
-  // message. Everything up to this point is stable between tool-loop iterations
-  // and across conversation turns, so the prefix cache stays warm.
+  // Moving breakpoint: the final content block of the stable history. Each
+  // iteration this extends the cached prefix by exactly the new messages —
+  // the previous iteration's entry is found by the API's backward walk
+  // (≤20 blocks) and read as a hit, then the extension is written.
+  markFinalBlock(out, cc)
+
+  // Anchor breakpoint: the last user turn that precedes at least one more
+  // message. Backstop for iterations that append more than the lookback
+  // window can cover (e.g. a 15-tool batch), and for cross-turn replay.
   for (let i = out.length - 2; i >= 0; i--) {
     if (out[i].role === 'user') {
       const msg = out[i]
       if (typeof msg.content === 'string') {
-        msg.content = [{ type: 'text', text: msg.content, cache_control: { type: 'ephemeral' } }]
-      } else if (Array.isArray(msg.content) && msg.content.length > 0) {
-        ;(msg.content[msg.content.length - 1] as Record<string, unknown>).cache_control = {
-          type: 'ephemeral'
+        if (msg.content.length > 0) {
+          msg.content = [{ type: 'text', text: msg.content, cache_control: cc }]
         }
+      } else if (Array.isArray(msg.content) && msg.content.length > 0) {
+        const lastBlock = msg.content[msg.content.length - 1] as Record<string, unknown>
+        if (!lastBlock.cache_control) lastBlock.cache_control = cc
       }
       break
     }
   }
 
+  // Volatile runtime status renders strictly after every breakpoint. It
+  // merges into the trailing user turn (alternation must hold), and blocks
+  // after a breakpoint never affect that breakpoint's prefix hash.
+  if (volatileText && volatileText.length > 0) {
+    appendVolatileText(out, volatileText)
+  }
+
   return out
+}
+
+/**
+ * Place the moving cache breakpoint on the last non-empty content block.
+ * Skips backward over empty messages — Anthropic rejects empty text
+ * blocks, so an empty trailing assistant message can't carry the marker.
+ */
+function markFinalBlock(out: AnthropicMessage[], cc: AnthropicCacheControl): void {
+  for (let i = out.length - 1; i >= 0; i--) {
+    const msg = out[i]
+    if (typeof msg.content === 'string') {
+      if (msg.content.length === 0) continue
+      msg.content = [{ type: 'text', text: msg.content, cache_control: cc }]
+      return
+    }
+    if (Array.isArray(msg.content) && msg.content.length > 0) {
+      ;(msg.content[msg.content.length - 1] as Record<string, unknown>).cache_control = cc
+      return
+    }
+  }
+}
+
+function appendVolatileText(out: AnthropicMessage[], text: string): void {
+  const last = out[out.length - 1]
+  if (last && last.role === 'user') {
+    if (typeof last.content === 'string') {
+      const blocks: unknown[] =
+        last.content.length > 0 ? [{ type: 'text', text: last.content }] : []
+      blocks.push({ type: 'text', text })
+      last.content = blocks
+    } else {
+      last.content = [...last.content, { type: 'text', text }]
+    }
+    return
+  }
+  out.push({ role: 'user', content: [{ type: 'text', text }] })
 }
 
 /**
@@ -357,18 +428,21 @@ function toAnthropicMessages(messages: ChatMessage[]): AnthropicMessage[] {
  * content block. Without this, every iteration invalidates the entire system
  * prompt cache — the single biggest cost driver in agentic loops.
  */
-function buildSystemBlocks(system: string): unknown[] {
+function buildSystemBlocks(
+  system: string,
+  cc: AnthropicCacheControl = { type: 'ephemeral' }
+): unknown[] {
   const marker = '<runtime>'
   const idx = system.lastIndexOf(marker)
   if (idx > 0) {
     const stable = system.slice(0, idx).trimEnd()
     const volatile = system.slice(idx)
     return [
-      { type: 'text', text: stable, cache_control: { type: 'ephemeral' } },
+      { type: 'text', text: stable, cache_control: cc },
       { type: 'text', text: volatile }
     ]
   }
-  return [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }]
+  return [{ type: 'text', text: system, cache_control: cc }]
 }
 
 function safeParseJSON(raw: string): Record<string, unknown> | null {

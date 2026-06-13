@@ -9,6 +9,7 @@ import { DocxViewer } from '@components/common/docx-viewer/DocxViewer'
 import { FileCard } from '@components/common/file-card/FileCard'
 import { HeartbeatActiveOverlay } from '@components/common/heartbeat-active-overlay/HeartbeatActiveOverlay'
 import { ImageViewer } from '@components/common/image-viewer/ImageViewer'
+import { PageViewer } from '@components/common/page-viewer/PageViewer'
 import { PdfViewer } from '@components/common/pdf-viewer/PdfViewer'
 import { ProviderErrorCards } from '@components/common/provider-error-card/ProviderErrorCard'
 import { Sidebar } from '@components/common/sidebar/Sidebar'
@@ -2533,12 +2534,24 @@ function renderSegments(
         blocks.push(<ToolCard key={seg.segmentId} call={seg} result={result} timing={timing} />)
       }
 
+      const page = codeFile ? null : extractToolResultPage(seg, result)
+
       if (codeFile) {
         blocks.push(
           <CodeFileViewer
             key={`code_${seg.segmentId}`}
             content={codeFile.content}
             fileName={codeFile.fileName}
+          />
+        )
+      } else if (page) {
+        blocks.push(
+          <PageViewer
+            key={`page_${seg.segmentId}`}
+            content={page.content}
+            title={page.title}
+            url={page.url}
+            format={page.format}
           />
         )
       } else {
@@ -2994,9 +3007,63 @@ function extractToolResultImage(result?: ToolResultSegment): string | null {
   } catch {
     /* not JSON */
   }
-  const m = output.match(/(\/[^\s",:)]+\.(?:png|jpe?g|gif|webp|bmp|tiff?))\b/i)
+  // Bare-path fallback for tools (e.g. ext_screenshot) whose plain-text output
+  // is just a saved screenshot path. Require the path to live inside the
+  // workspace — that's the only image the viewer can actually load, and the
+  // restriction stops incidental image URLs embedded in fetched page content
+  // (e.g. browser_page_content returning HTML full of /preview.redd.it/*.png)
+  // from being mis-detected and rendered as a broken "image unavailable" card.
+  const m = output.match(
+    /(\/[^\s",:)]*\.wolffish\/workspace\/[^\s",:)]+\.(?:png|jpe?g|gif|webp|bmp|tiff?))\b/i
+  )
   if (m) return m[1]
   return null
+}
+
+/** Tools whose successful output is a fetched web page worth rendering as a card. */
+const PAGE_CONTENT_TOOLS = new Set(['browser_page_content', 'ext_read_page', 'web_fetch'])
+
+/**
+ * Extract a renderable web page from a page-content tool result. Returns the
+ * page text plus whatever title/url metadata the tool exposed: ext_read_page
+ * yields JSON `{content,url,title}`; browser_page_content yields raw text/HTML
+ * (title sniffed from <title> when HTML); web_fetch carries its URL in args.
+ */
+function extractToolResultPage(
+  call: ToolCallSegment,
+  result?: ToolResultSegment
+): { content: string; title: string | null; url: string | null; format: string } | null {
+  if (!result?.output || result.status !== 'success') return null
+  if (!PAGE_CONTENT_TOOLS.has(call.name)) return null
+  const raw = result.output.trim()
+  if (!raw) return null
+
+  const argFormat = typeof call.args?.format === 'string' ? call.args.format : null
+  const argUrl = typeof call.args?.url === 'string' ? call.args.url : null
+
+  if (call.name === 'ext_read_page') {
+    try {
+      const parsed = JSON.parse(raw)
+      if (parsed && typeof parsed.content === 'string') {
+        return {
+          content: parsed.content,
+          title: typeof parsed.title === 'string' && parsed.title.trim() ? parsed.title : null,
+          url: typeof parsed.url === 'string' && parsed.url.trim() ? parsed.url : null,
+          format: argFormat ?? 'text'
+        }
+      }
+    } catch {
+      /* not JSON — fall through and render the raw text */
+    }
+  }
+
+  const format = argFormat ?? (call.name === 'web_fetch' ? 'markdown' : 'text')
+  let title: string | null = null
+  if (format === 'html') {
+    const tm = raw.match(/<title[^>]*>([^<]+)<\/title>/i)
+    if (tm) title = tm[1].trim()
+  }
+  return { content: raw, title, url: argUrl, format }
 }
 
 function extractToolResultDocuments(

@@ -674,7 +674,10 @@ function createWindow(): BrowserWindow {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
       contextIsolation: true,
-      plugins: true
+      plugins: true,
+      // Enables the <webview> tag used by the in-chat page viewer to render a
+      // fetched website inline (borderless, isolated 'pageviewer' partition).
+      webviewTag: true
     }
   })
 

@@ -42,6 +42,20 @@ export type CorpusEvents = {
   'llm.fallback': { from: string; to: string; reason: string }
   'llm.retry': { provider: string; attempt: number; delayMs: number; errorClass: string }
   'llm.reasoning_effort.stripped': { model: string; reason: string }
+  // Whole-turn roll-up emitted once per agent turn, with the cache split
+  // priced separately so caching wins are measurable from the corpus log.
+  'turn.usage': {
+    provider: string
+    model: string
+    iterations: number
+    toolCalls: number
+    inputTokens: number
+    outputTokens: number
+    cacheCreationTokens: number
+    cacheReadTokens: number
+    cacheHitRate: number
+    cost: number
+  }
 
   'tool.called': { taskId: string; tool: string; args: Record<string, unknown> }
   'tool.completed': { taskId: string; tool: string; durationMs: number }
