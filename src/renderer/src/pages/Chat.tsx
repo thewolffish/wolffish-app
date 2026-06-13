@@ -1704,10 +1704,12 @@ export function Chat(): React.JSX.Element {
                     rows={1}
                     placeholder={t('chat.placeholder')}
                     dir={isRtl ? 'rtl' : 'ltr'}
+                    disabled={streaming}
                     className={cn(
                       'bg-surface text-fg border-border placeholder:text-muted hover:border-muted',
                       'min-h-10 max-h-40 w-full resize-none rounded-lg border px-3 py-2 text-sm',
                       'focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+                      'disabled:cursor-not-allowed disabled:opacity-50',
                       placeholderAlign
                     )}
                   />

@@ -2,6 +2,7 @@ import { CodeBlock } from '@components/core/CodeBlock'
 import { cn } from '@lib/utils/cn'
 import type { RiskLevel } from '@preload/index'
 import type { ApprovalCardState } from '@providers/flow/useFlow'
+import { getApprovalPhrases, localizeApprovalPhrase } from './localizeApproval'
 import { useTranslation } from 'react-i18next'
 
 const RISK_DOT: Record<RiskLevel, string> = {
@@ -26,6 +27,28 @@ function detectCommandLanguage(tool: string, args: Record<string, unknown>): str
   return undefined
 }
 
+// The raw call args, shown like a tool call so the user can see exactly what
+// will run — not just the prose. The `command` key is dropped when it's
+// already surfaced in the headline command block above, so we never repeat it.
+function buildDetailArgs(
+  args: Record<string, unknown>,
+  command: string | null
+): Record<string, unknown> {
+  const rest = { ...args }
+  if (command !== null && typeof rest.command === 'string' && rest.command === command) {
+    delete rest.command
+  }
+  return rest
+}
+
+function jsonInline(value: unknown): string {
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return String(value)
+  }
+}
+
 export function ApprovalCard({
   state,
   onDecision
@@ -36,21 +59,34 @@ export function ApprovalCard({
   const { t } = useTranslation()
   const decided = state.decision !== undefined
 
+  // Plugins author the title / description / impact in English; localize each
+  // here, inside the card, with a graceful fallback to the original string.
+  const phrases = getApprovalPhrases(t)
+
   // Prefer the plugin-supplied description; fall back to a derived title
   // and the danger pattern reason so the card is never blank.
-  const title = state.description?.title ?? titleCase(state.tool)
-  const description = state.description?.description ?? state.reason
+  const title = localizeApprovalPhrase(state.description?.title ?? titleCase(state.tool), phrases)
+  const description = localizeApprovalPhrase(
+    state.description?.description ?? state.reason,
+    phrases
+  )
   const command =
     state.description?.command ??
     (typeof state.args.command === 'string' ? state.args.command : null)
-  const impact = state.description?.impact
+  const impact = localizeApprovalPhrase(state.description?.impact, phrases)
   const risk: RiskLevel = state.description?.risk ?? 'medium'
+  const riskLabel = t(`chat.approval.risk.${risk}`)
+
+  const detailArgs = buildDetailArgs(state.args, command)
+  const hasDetails = Object.keys(detailArgs).length > 0
 
   return (
     <div className="border-border bg-surface w-full max-w-[85%] self-start rounded-2xl border px-4 py-3 text-sm">
       <div className="mb-1 flex items-center gap-2">
         <span
-          aria-hidden
+          role="img"
+          aria-label={riskLabel}
+          title={riskLabel}
           className={cn('inline-block h-2 w-2 shrink-0 rounded-full', RISK_DOT[risk])}
         />
         <span className="text-fg text-base font-semibold leading-tight">{title}</span>
@@ -62,6 +98,15 @@ export function ApprovalCard({
         <CodeBlock
           content={command}
           language={detectCommandLanguage(state.tool, state.args)}
+          maxH="max-h-40"
+          className="mb-2"
+        />
+      ) : null}
+
+      {hasDetails ? (
+        <CodeBlock
+          content={jsonInline(detailArgs)}
+          language="json"
           maxH="max-h-40"
           className="mb-2"
         />
