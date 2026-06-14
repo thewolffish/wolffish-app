@@ -99,7 +99,7 @@ const components: Components = {
     return (
       <code
         dir="ltr"
-        className="bg-border/40 text-fg inline-block rounded px-1 py-0.5 font-mono text-[0.85em]"
+        className="bg-border/40 text-fg inline-block max-w-full rounded px-1 py-0.5 font-mono text-[0.85em] wrap-anywhere"
         {...rest}
       >
         {children}
