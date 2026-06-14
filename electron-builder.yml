@@ -23,7 +23,7 @@ extraResources:
     to: changelog
 win:
   executableName: wolffish
-  icon: resources/icons/icons/icon.ico
+  icon: resources/icons-win/icons/icon.ico
   target: nsis
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
@@ -53,7 +53,7 @@ mac:
 dmg:
   artifactName: ${name}-${version}.${ext}
 linux:
-  icon: resources/icons/icons
+  icon: resources/icons-win/icons
   target:
     - AppImage
   maintainer: wolffi.sh

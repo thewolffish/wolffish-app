@@ -16,7 +16,7 @@
     "dev": "electron-vite dev",
     "build": "npm run typecheck && electron-vite build",
     "build:icons:prepare": "node scripts/mask-icon/mask.mjs",
-    "build:icons:generate": "electron-icon-builder --input=./resources/images/icon-master.png --output=./resources/icons --flatten",
+    "build:icons:generate": "electron-icon-builder --input=./resources/images/icon-master.png --output=./resources/icons --flatten && electron-icon-builder --input=./resources/images/icon-master-win.png --output=./resources/icons-win --flatten",
     "build:icons": "npm run build:icons:prepare && npm run build:icons:generate",
     "postinstall": "electron-builder install-app-deps",
     "build:unpack": "npm run build && electron-builder --dir",

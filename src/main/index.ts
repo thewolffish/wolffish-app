@@ -154,7 +154,7 @@ import {
   type WorkspaceStatus
 } from '@main/workspace/workspace'
 import dockIcon from '@resources/icons/icons/1024x1024.png?asset'
-import icon from '@resources/icons/icons/512x512.png?asset'
+import icon from '@resources/icons-win/icons/512x512.png?asset'
 import trayIconMac from '@resources/icons/icons/trayTemplate.png?asset'
 import trayIconMac2x from '@resources/icons/icons/trayTemplate@2x.png?asset'
 import trayIconDefault from '@resources/images/icon_transparent.png?asset'
@@ -182,6 +182,25 @@ import { join } from 'node:path'
 const WOLFFISH_ROOT = join(os.homedir(), '.wolffish')
 app.setPath('userData', join(WOLFFISH_ROOT, 'runtime'))
 app.setAppLogsPath(join(WOLFFISH_ROOT, 'logs'))
+
+// Single-instance guard: if Wolffish is already running (even collapsed to
+// tray), focus the existing window instead of showing a lockfile error.
+if (!app.requestSingleInstanceLock()) {
+  app.quit()
+}
+
+app.on('second-instance', () => {
+  const win = BrowserWindow.getAllWindows()[0]
+  if (win) {
+    if (win.isMinimized()) win.restore()
+    win.show()
+    win.focus()
+    showDock()
+  } else {
+    createWindow()
+    showDock()
+  }
+})
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -912,19 +931,7 @@ app.whenReady().then(async () => {
   }
 
   const lock = await acquireLock(lockfilePath())
-  if (!lock.acquired) {
-    dialog.showMessageBoxSync({
-      type: 'warning',
-      title: 'Wolffish',
-      message: 'Wolffish is already running.',
-      detail: `Another instance (pid ${lock.runningPid}) is using ~/.wolffish.`,
-      buttons: ['OK'],
-      defaultId: 0
-    })
-    app.exit(0)
-    return
-  }
-  lockAcquired = true
+  if (lock.acquired) lockAcquired = true
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
