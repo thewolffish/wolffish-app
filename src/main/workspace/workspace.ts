@@ -352,11 +352,15 @@ export function lockfilePath(): string {
   return path.join(WORKSPACE_ROOT, LOCK_FILENAME)
 }
 
-export function defaultsWorkspacePath(): string {
+export function defaultsRootPath(): string {
   if (is.dev) {
-    return path.join(app.getAppPath(), 'src', 'defaults', 'workspace')
+    return path.join(app.getAppPath(), 'src', 'defaults')
   }
-  return path.join(process.resourcesPath, 'defaults', 'workspace')
+  return path.join(process.resourcesPath, 'defaults')
+}
+
+export function defaultsWorkspacePath(): string {
+  return path.join(defaultsRootPath(), 'workspace')
 }
 
 export async function readConfig(): Promise<WorkspaceConfig | null> {
@@ -444,6 +448,7 @@ export async function ensureWorkspace(): Promise<void> {
   // see the current bundled versions.
   await migrateConfig()
   await migrateAgentsCore()
+  await migrateAgentsGuide()
 
   // Always sync bundled capabilities — new ones get added and existing
   // ones get refreshed on every launch, so plugin bug fixes shipped by an
@@ -596,6 +601,27 @@ async function migrateAgentsCore(): Promise<void> {
   const bundled = path.join(defaultsWorkspacePath(), 'brain', 'prefrontal', 'agents.core.md')
   if (!existsSync(bundled)) return
   const target = path.join(WORKSPACE_ROOT, 'brain', 'prefrontal', 'agents.core.md')
+  await fs.mkdir(path.dirname(target), { recursive: true })
+  await fs.copyFile(bundled, target)
+}
+
+/**
+ * AGENTS.md is the orientation guide for any AI assistant pointed at the
+ * ~/.wolffish folder. It lives at the ROOT of ~/.wolffish (next to workspace/,
+ * runtime/, logs/) — not inside the workspace — because it documents the whole
+ * footprint, and its own map and path references are written relative to that
+ * root. Bundled at src/defaults/AGENTS.md.
+ *
+ * App-managed, exactly like agents.core.md above: the bundled copy is rewritten
+ * on every launch, so an app upgrade always ships the current guide. Wolffish
+ * owns this file — local edits are replaced on the next launch. Custom,
+ * persistent agent instructions belong in brain/prefrontal/agents.md, which we
+ * never overwrite.
+ */
+async function migrateAgentsGuide(): Promise<void> {
+  const bundled = path.join(defaultsRootPath(), 'AGENTS.md')
+  if (!existsSync(bundled)) return
+  const target = path.join(path.dirname(WORKSPACE_ROOT), 'AGENTS.md')
   await fs.mkdir(path.dirname(target), { recursive: true })
   await fs.copyFile(bundled, target)
 }
