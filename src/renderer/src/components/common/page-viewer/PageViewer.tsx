@@ -53,6 +53,15 @@ export function PageViewer({
   )
 }
 
+/**
+ * The subset of the Electron <webview> API we drive imperatively to scale a
+ * loaded page down so its full width fits the card.
+ */
+type FitWebview = HTMLElement & {
+  executeJavaScript: (code: string) => Promise<number>
+  setZoomFactor: (factor: number) => void
+}
+
 function WebsiteCard({
   url,
   heading,
@@ -82,6 +91,41 @@ function WebsiteCard({
     return () => io.disconnect()
   }, [visible])
 
+  // Scale the embedded page so its full width fits the card. A wide desktop
+  // site (e.g. old.reddit.com) otherwise lays out past the card and shows its
+  // own horizontal scrollbar. We only ever shrink — pages that already fit
+  // stay at 1× — and re-fit on load, in-page navigation, and card resize.
+  // Vertical scrolling inside the page is untouched.
+  useEffect(() => {
+    if (!visible) return
+    const wv = ref.current?.querySelector('webview') as FitWebview | null
+    if (!wv) return
+    let disposed = false
+    const fit = (): void => {
+      if (disposed) return
+      wv.executeJavaScript(
+        'Math.max(document.documentElement.scrollWidth, document.body ? document.body.scrollWidth : 0)'
+      )
+        .then((contentWidth) => {
+          if (disposed || !contentWidth) return
+          const avail = wv.offsetWidth
+          if (!avail) return
+          wv.setZoomFactor(contentWidth > avail ? Math.max(0.3, (avail - 1) / contentWidth) : 1)
+        })
+        .catch(() => {})
+    }
+    wv.addEventListener('dom-ready', fit)
+    wv.addEventListener('did-finish-load', fit)
+    const ro = new ResizeObserver(fit)
+    ro.observe(wv)
+    return () => {
+      disposed = true
+      wv.removeEventListener('dom-ready', fit)
+      wv.removeEventListener('did-finish-load', fit)
+      ro.disconnect()
+    }
+  }, [visible])
+
   return (
     <div
       ref={ref}
@@ -89,7 +133,7 @@ function WebsiteCard({
     >
       <div className="flex items-center gap-2 px-3 py-2">
         <GlobalIcon size={14} className="text-muted shrink-0" />
-        <span className="text-fg truncate text-xs font-medium" title={heading}>
+        <span className="text-fg min-w-0 truncate text-xs font-medium" title={heading}>
           {heading}
         </span>
         <a
@@ -137,10 +181,10 @@ function ContentCard({
   const language = format === 'html' ? 'html' : format === 'markdown' ? 'markdown' : 'plaintext'
 
   return (
-    <div className="border-border bg-surface flex w-full max-w-[85%] flex-col self-start overflow-hidden rounded-2xl border">
+    <div className="border-border bg-surface flex w-full flex-col self-start overflow-hidden rounded-2xl border">
       <div className="flex items-center gap-2 px-3 py-2">
         <GlobalIcon size={14} className="text-muted shrink-0" />
-        <span className="text-fg truncate text-xs font-medium" title={heading}>
+        <span className="text-fg min-w-0 truncate text-xs font-medium" title={heading}>
           {heading}
         </span>
         <span className="text-muted shrink-0 text-[10px]">

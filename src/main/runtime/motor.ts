@@ -91,7 +91,7 @@ const PERMISSION_RE =
 // quoting errors). Treat the same way as EINVAL — retrying the exact
 // same call will produce the exact same error.
 const VALIDATION_RE =
-  /invalid argument|missing required|EINVAL|bad request|HTTP 400\b|HTTP 422\b|syntax is incorrect|incorrect parameter/i
+  /invalid argument|missing required|EINVAL|bad request|HTTP 400\b|HTTP 422\b|syntax is incorrect|incorrect parameter|is not a valid selector/i
 // Windows phrasings we deliberately add:
 //   * "is not recognized as" — cmd.exe and PowerShell's CommandNotFoundException
 //   * "CommandNotFoundException" — PowerShell typed error name
@@ -103,8 +103,14 @@ const VALIDATION_RE =
 // model hallucinates a tool name (e.g. a browser_* twin of an ext_* tool).
 // That is deterministic — the tool will never exist on retry — so classify it
 // as not_found and fail fast instead of burning three attempts.
+// "No tab with id: N" / "No window with id: N" come from the browser
+// extension when the model passes a guessed or stale id. Deterministic — that
+// id will never exist on retry — so fail fast instead of burning three
+// attempts (observed live: `ext_get_url {tabId:1}` retried 3× for 6s before
+// surfacing). The extension also now falls back to the active tab in
+// resolveTabId, so this mainly catches the tab-taking commands that don't.
 const NOT_FOUND_RE =
-  /command not found|not found|no .+ found|ENOENT|no such file|is not installed|unknown tool|no such tool|HTTP 404\b|HTTP 410\b|is not recognized as|CommandNotFoundException|cannot find the (?:file|path) specified/i
+  /command not found|not found|no .+ found|ENOENT|no such file|is not installed|unknown tool|no such tool|HTTP 404\b|HTTP 410\b|is not recognized as|CommandNotFoundException|cannot find the (?:file|path) specified|no tab with id|no window with id/i
 const NETWORK_RE = /ECONNREFUSED|ETIMEDOUT|ECONNRESET|network error|fetch failed|DNS resolution/i
 const TIMEOUT_RE = /timed out|timeout|SIGTERM/i
 

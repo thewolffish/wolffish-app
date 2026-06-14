@@ -242,6 +242,30 @@ tools:
         type: number
         description: Target tab.
         required: false
+  - name: ext_set_value
+    description: 'Set an input/textarea/contenteditable value reliably and instantly via the framework-safe native setter (plus input/change events). The dependable way to fill a form field — React/SPA apps register it where synthetic ext_type does not. Pair with ext_submit_form.'
+    parameters:
+      selector:
+        type: string
+        description: CSS selector (or text=) of the field to fill.
+      value:
+        type: string
+        description: The value to set (replaces existing content).
+      tabId:
+        type: number
+        description: Target tab.
+        required: false
+  - name: ext_submit_form
+    description: 'Submit the form containing the selector (or a form selector, or the currently focused field). Uses form.requestSubmit() — the reliable replacement for hunting and clicking a submit/post button. Falls back to clicking the submit control, then form.submit().'
+    parameters:
+      selector:
+        type: string
+        description: A selector inside or of the form. Omit to submit the focused field's form.
+        required: false
+      tabId:
+        type: number
+        description: Target tab.
+        required: false
   # Page Reading
   - name: ext_read_page
     description: Extract page content as text, markdown, or HTML.
@@ -670,16 +694,151 @@ tools:
   - name: ext_debugger_status
     description: Check whether the debugger is currently attached and to which tab.
     parameters: {}
-  # Mouse Move
+  # Mouse Interaction (coordinate- or selector-based)
   - name: ext_mouse_move
     description: Move the cursor to target coordinates along a bezier curve path. In debugger mode, produces real mouse movement events.
     parameters:
       x:
         type: number
-        description: Target X coordinate (pixels from left).
+        description: Target X coordinate (viewport pixels from left).
       y:
         type: number
-        description: Target Y coordinate (pixels from top).
+        description: Target Y coordinate (viewport pixels from top).
+      tabId:
+        type: number
+        description: Target tab.
+        required: false
+  - name: ext_mouse_click
+    description: 'Click at viewport coordinates (x,y) OR a selector. Produces trusted input (isTrusted: true) in debugger mode. Use coordinates for canvas, maps, SVG, games, and custom widgets where no stable CSS selector exists.'
+    parameters:
+      x:
+        type: number
+        description: Target X (viewport pixels). Provide x and y together, or use selector instead.
+        required: false
+      y:
+        type: number
+        description: Target Y (viewport pixels).
+        required: false
+      selector:
+        type: string
+        description: CSS selector or text=<visible text>, resolved to the element center. Alternative to x/y.
+        required: false
+      button:
+        type: string
+        description: Mouse button.
+        enum: [left, right, middle]
+        required: false
+      double:
+        type: boolean
+        description: Double-click instead of single click. Default false.
+        required: false
+      tabId:
+        type: number
+        description: Target tab.
+        required: false
+  - name: ext_mouse_down
+    description: Press and HOLD a mouse button at coordinates or a selector. Compose with ext_mouse_move then ext_mouse_up for custom gestures (drawing on canvas, dragging sliders, press-and-hold). Real button-hold only in debugger mode.
+    parameters:
+      x:
+        type: number
+        description: Target X (viewport pixels). Provide x and y together, or use selector.
+        required: false
+      y:
+        type: number
+        description: Target Y (viewport pixels).
+        required: false
+      selector:
+        type: string
+        description: CSS selector or text=<visible text>, resolved to the element center.
+        required: false
+      button:
+        type: string
+        description: Mouse button to press.
+        enum: [left, right, middle]
+        required: false
+      tabId:
+        type: number
+        description: Target tab.
+        required: false
+  - name: ext_mouse_up
+    description: Release a held mouse button at coordinates or a selector. Pairs with ext_mouse_down.
+    parameters:
+      x:
+        type: number
+        description: Target X (viewport pixels).
+        required: false
+      y:
+        type: number
+        description: Target Y (viewport pixels).
+        required: false
+      selector:
+        type: string
+        description: CSS selector or text=<visible text>, resolved to the element center.
+        required: false
+      button:
+        type: string
+        description: Mouse button to release.
+        enum: [left, right, middle]
+        required: false
+      tabId:
+        type: number
+        description: Target tab.
+        required: false
+  - name: ext_mouse_drag
+    description: 'Drag from a start point to an end point (press → move with the button held → release). Provide startX/startY + endX/endY, or sourceSelector + targetSelector. Much more reliable than ext_drag_drop for canvas, kanban boards, and sliders — especially in debugger mode, where it is a real coordinate drag.'
+    parameters:
+      startX:
+        type: number
+        description: Drag start X (viewport pixels). Use with startY/endX/endY, or use the selector pair.
+        required: false
+      startY:
+        type: number
+        description: Drag start Y (viewport pixels).
+        required: false
+      endX:
+        type: number
+        description: Drag end X (viewport pixels).
+        required: false
+      endY:
+        type: number
+        description: Drag end Y (viewport pixels).
+        required: false
+      sourceSelector:
+        type: string
+        description: CSS selector or text=<visible text> of the drag source. Alternative to startX/startY.
+        required: false
+      targetSelector:
+        type: string
+        description: CSS selector or text=<visible text> of the drop target. Alternative to endX/endY.
+        required: false
+      tabId:
+        type: number
+        description: Target tab.
+        required: false
+  - name: ext_element_from_point
+    description: Describe the topmost element at viewport coordinates (x,y) — tag, text, attributes, and bounding rect. Pair with ext_screenshot to identify what is under a pixel before clicking it.
+    parameters:
+      x:
+        type: number
+        description: X coordinate (viewport pixels from left).
+      y:
+        type: number
+        description: Y coordinate (viewport pixels from top).
+      tabId:
+        type: number
+        description: Target tab.
+        required: false
+  - name: ext_get_interactive_elements
+    description: List visible interactive elements (links, buttons, inputs, [role=button], etc.) with their center coordinates, bounding rect, text label, and key attributes. The map for clicking and moving through a web app — read it, then act by coordinates (ext_mouse_click) or by a selector built from id/name/aria-label.
+    parameters:
+      selector:
+        type: string
+        description: Limit the scan to descendants of this container. Default whole document.
+        required: false
+      limit:
+        type: number
+        description: Max elements to return. Default 50.
+        required: false
       tabId:
         type: number
         description: Target tab.
@@ -713,7 +872,7 @@ confirm_patterns:
     reason: Modifying browser cookies
   - pattern: 'ext_navigate\s.*(?:bank|paypal|venmo|stripe\.com|checkout|payment)'
     reason: Navigating to a financial or payment site
-version: 1.2.1
+version: 1.4.0
 ---
 
 # Browser Extension
@@ -726,7 +885,7 @@ All tools use the `ext_` prefix. The wire protocol translates these to `browser_
 
 ## Selectors
 
-Only standard CSS selectors work: `#id`, `.class`, `input[name="email"]`, `div.container > a.link`. Playwright pseudo-selectors like `:has-text()`, `text=`, `role=` are NOT supported.
+Selectors are standard CSS: `#id`, `.class`, `input[name="email"]`, `div.container > a.link`. As a convenience, a selector of the form `text=<visible text>` targets the deepest visible element whose text matches (exact preferred over substring) — handy for buttons/links with no stable selector, and it works the same whether or not the debugger is attached. Other Playwright pseudo-selectors (`:has-text()`, `:contains()`, `role=`) are NOT supported. See the fuller Selectors note below.
 
 ## Reading Pages
 
@@ -742,17 +901,43 @@ Don't navigate away from the user's current tab. If the task involves looking so
 
 `ext_screenshot` returns the image inline. Use `fullPage: true` for full scrollable page captures, or `selector` for a specific element.
 
-## Debugger Mode
+## Debugger Mode — prefer it for everything
 
-Before any interaction sequence on a webpage, call `ext_debugger_status` to check current state.
+Debugger mode is the best way to drive a page, and you should attach it by default before interacting with any web app. It is the single most important setting for reliable browser control — when in doubt, attach.
 
-If no debugger is attached and you need to interact with the page (click, scroll, type, move cursor), call `ext_debugger_attach` with the target tab's tabId first. If attach fails, proceed without it — all interaction commands fall back to content script mode automatically.
+**Why it is the best mode.** With the debugger attached, every interaction is dispatched through the Chrome DevTools Protocol as a *trusted* browser input event (`isTrusted: true`), indistinguishable from a real human. This is strictly better than the content-script fallback (synthetic `isTrusted: false` events):
 
-When you are done with all browser interactions for the current turn, call `ext_debugger_detach`. Always detach. Never leave the debugger attached between turns.
+- **Real coordinate input.** `ext_mouse_click`, `ext_mouse_down`/`ext_mouse_up`, `ext_mouse_drag`, and `ext_mouse_move` produce genuine pointer input only when attached. That is what lets you operate canvas apps, maps, `<svg>`, games, drag-and-drop boards, and sliders — surfaces with no clickable DOM node.
+- **Reliable drag.** `ext_mouse_drag` becomes a real press-move-release gesture (the way Playwright/Puppeteer drag) instead of synthetic HTML5 DragEvents that most modern apps ignore.
+- **Passes input checks.** Sites that gate on trusted events or automation fingerprints (social platforms, banking, checkout) accept the input.
+- **Faithful typing and keys.** `ext_type` and `ext_keypress` fire real key events with correct keycodes.
 
-Debugger mode makes all interactions use trusted browser input events identical to real human input. Always prefer it for any page where detection matters — social media platforms, banking sites, or any page that may check for automated input.
+**Always attach.** Before interacting with a page (click, type, scroll, mouse, drag), the sequence is always:
 
-The sequence is always: `ext_debugger_status` → `ext_debugger_attach` (if needed) → do your work → `ext_debugger_detach`.
+1. `ext_debugger_status` — check whether something is already attached.
+2. `ext_debugger_attach` with the target tab's `tabId` — unless it is already attached to that tab. **Attach even for a single "simple" click** — there is no downside and everything gets more reliable.
+3. Do your work — clicks, typing, mouse, drag, screenshots, reading.
+4. `ext_debugger_detach` when you are done with all browser interactions for the turn.
+
+If `ext_debugger_attach` fails (a restricted page like `chrome://`, DevTools already open, or another debugger attached), proceed without it — every interaction command falls back to content-script mode automatically, just with synthetic events. Don't abort the task over a failed attach; continue.
+
+**Always detach** when finished. Never leave the debugger attached between turns — Chrome shows a "Wolffish is debugging this browser" banner the entire time it is attached, so a forgotten detach leaves that banner up. You can only attach one tab at a time; attaching to a different tab auto-detaches the previous one.
+
+## Mouse control & coordinates
+
+Every action targets either a **selector** (when the element has a usable CSS selector or unique visible text) or **viewport coordinates** (when it doesn't — canvas, maps, SVG, games, custom-drawn widgets). The coordinate mouse tools accept either.
+
+Coordinates are **viewport pixels** — the same space `ext_screenshot` reports (it tells you `x 0–W, y 0–H`) and that `ext_query_selector` / `ext_get_interactive_elements` return in `rect`/`center`. To drive a page you can't select into:
+
+1. `ext_screenshot` to see it, or `ext_get_interactive_elements` to list clickable targets with their center coordinates and attributes.
+2. `ext_element_from_point` to confirm what's under a coordinate before acting (optional, avoids mis-clicks).
+3. `ext_mouse_click` / `ext_mouse_drag` at the coordinates.
+
+- `ext_mouse_click` — left/right/middle, single or double, by point or selector. Right-click triggers the page's own context-menu handler (web apps with a custom menu); on a plain page it triggers the native menu.
+- `ext_mouse_down` + `ext_mouse_move` + `ext_mouse_up` — compose a custom gesture: draw on a canvas, drag a slider, press-and-hold.
+- `ext_mouse_drag` — the one-shot version: source point/selector → target point/selector. Prefer it over `ext_drag_drop` for canvas/kanban/sliders.
+
+These are **trusted input only when the debugger is attached** (see above). Without it they fall back to synthetic events, which work on ordinary DOM but not on canvas or pointer-gated widgets — one more reason to attach first.
 
 ## Humanize
 
@@ -771,7 +956,7 @@ Do not call humanize before your first action or after your last action. Call it
 
 Use intensity `light` for fast tasks with few actions. Use `moderate` for longer sequences. Use `heavy` only when interacting with platforms known for aggressive bot detection.
 
-Humanize is not needed for DOM reading, screenshots, or non-interaction commands. Only use it between physical interaction commands (click, type, scroll, mouse_move).
+Humanize is not needed for DOM reading, screenshots, or non-interaction commands. Only use it between physical interaction commands (`ext_click`, `ext_type`, `ext_scroll`, `ext_mouse_click`, `ext_mouse_drag`, `ext_mouse_move`).
 
 ## Typing text
 
@@ -780,17 +965,34 @@ Humanize is not needed for DOM reading, screenshots, or non-interaction commands
 - **It is not instant.** A short field is sub-second; a long post body takes a few seconds. That is expected — let the command finish. There is **no execution timeout**, so even a very long body will complete. Do not "give up" and retry, and do not split the text into chunks to beat a timeout — that just stacks duplicated, garbled text.
 - **One `ext_type` per field.** Send the entire value in a single call. Don't loop character-by-character yourself.
 - **Replacing existing text:** pass `clearFirst: true` to clear the field first. Without it, text is *appended* to whatever is already there — so never re-send a failed/partial `ext_type` without `clearFirst`, or you'll pile a partial on top of a partial.
-- **When speed matters more than realism** (long text on a page that doesn't fingerprint input, or a plain form), pass `humanize: false` to insert the whole string at once.
+- **When speed matters more than realism** (long text on a page that doesn't fingerprint input, or a plain form), pass `humanize: false` to insert the whole string at once — or use `ext_set_value`, which is instant *and* framework-safe (see below).
 - Don't sprinkle `ext_humanize` inside a single `ext_type` — the per-keystroke timing is already built in. `ext_humanize` is only for pauses *between separate* interaction commands.
 
-## Selectors
+## Filling & submitting forms (comments, posts, search)
 
-`ext_*` selectors are plain **CSS** (passed to `querySelectorAll`). Playwright/jQuery-style extensions are **not** supported and throw "not a valid selector":
+This is the highest-leverage workflow to get right — filling a field and submitting is where naive automation wastes the most steps. The reliable pattern is **three calls**:
 
-- ❌ `button:has-text("Post")`, `:contains("Submit")`, `text=Post`
-- ✅ `button[type="submit"]`, `[aria-label="Post"]`, `[name="title"]`
+1. `ext_click` the field (focus it).
+2. `ext_set_value` with the text. This sets the value through the **native setter + input/change events**, so React/SPA frameworks actually register it. Plain `ext_type humanize:false` assigns `el.value` directly, which React silently reverts — the field *looks* filled but the component state stays empty, so the submit posts nothing. Use `ext_set_value` for any framework-driven form. (Use `ext_type` only when you specifically need humanized keystrokes for stealth on a plain field.)
+3. `ext_submit_form` (pass the field selector, or nothing to submit the focused field's form). This calls `form.requestSubmit()` — the real, cancelable submit event that server-rendered forms and jQuery/old-style sites listen for. **Do not** hunt for the submit button by selector (`.usertext-buttons button`, `button:has-text("save")`, `text=save`, Tab→Enter, …) — that roulette is exactly what to avoid.
 
-To act on an element by its visible text (e.g. a "Post"/"Submit" button with no stable selector), query a broad set with `ext_query_selector` (e.g. `button`) and pick the one whose returned `text` matches, or use `ext_execute_js` to find and click it. Don't guess Playwright-style text selectors.
+**On a failed submit, do NOT re-type.** Re-typing a long body with `ext_type` costs 10–60s every time. Instead: `ext_get_value` to confirm the field still holds your text (it usually does), then just call `ext_submit_form` again. Only re-fill (with `ext_set_value`, which is instant) if the field is actually empty.
+
+**Attach the debugger first.** Submits that depend on a real click/keystroke need trusted input — attach before you start interacting, not after several failed attempts (see Debugger Mode).
+
+**Prefer a server-rendered surface when one exists.** Heavy SPAs (e.g. new Reddit) render controls inside **shadow DOM**, which `text=`/`querySelector` cannot pierce — so "Add a comment" / composer buttons won't be found. If the site has a classic server-rendered version (e.g. `old.reddit.com`), drive that instead: plain `<form>` + `<textarea>`, and `ext_set_value` + `ext_submit_form` just work.
+
+**Verify once.** After submitting, navigate to where the content appears (e.g. your user profile's comments) and `ext_read_page` to confirm it's live, then capture the permalink a single time — don't re-verify in a loop.
+
+## Selectors (full note)
+
+Selectors are plain **CSS** (passed to `querySelector`/`querySelectorAll`), with one convenience extension — `text=<visible text>`:
+
+- ✅ `button[type="submit"]`, `[aria-label="Post"]`, `[name="title"]` — CSS
+- ✅ `text=Post`, `text=Submit` — match by visible text (deepest visible match; exact beats substring). Works in `ext_click`, `ext_hover`, `ext_wait_for`, and the mouse tools, with or without the debugger.
+- ❌ `button:has-text("Post")`, `:contains("Submit")`, `role=button` — jQuery/Playwright pseudo-selectors throw "selector syntax is incorrect"
+
+When an element has neither a stable CSS selector nor unique text, use `ext_get_interactive_elements` to list candidates with their center coordinates and attributes, then act by coordinates (`ext_mouse_click`) or build a selector from the returned `id`/`name`/`aria-label`.
 
 ## Capturing the page
 
