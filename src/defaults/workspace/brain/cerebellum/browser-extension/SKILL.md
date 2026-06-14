@@ -596,7 +596,7 @@ tools:
         required: false
   # Wait & Polling
   - name: ext_wait
-    description: Generic wait. With a selector, waits for that element to appear; without one, sleeps for the given duration.
+    description: Generic wait. With a selector, waits for that element to appear; without one, sleeps for the given duration. No cap on the sleep — you decide. A wait cannot be interrupted once in flight, so split very long waits into several calls.
     parameters:
       type:
         type: string
@@ -609,7 +609,7 @@ tools:
         required: false
       ms:
         type: number
-        description: Sleep duration in ms for plain waits. Default 1000, max 300000.
+        description: Sleep duration in ms for plain waits. No cap — you decide; omit it and the wait returns immediately (no minimum). Split very long waits across several ext_wait calls so each stays interruptible.
         required: false
       timeout_ms:
         type: number

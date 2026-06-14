@@ -14,7 +14,6 @@ let lastScreenshotSize = null
 
 const DEFAULT_MAX_WIDTH = 1280
 const DEFAULT_FORMAT = 'jpeg'
-const MAX_WAIT_MS = 10_000
 
 const KEY_MAP = {
   enter: 'Return',
@@ -400,7 +399,12 @@ async function keyboardPress(args) {
 }
 
 async function waitMs(args) {
-  const ms = Math.max(0, Math.min(MAX_WAIT_MS, Number(args?.ms) || 0))
+  // No cap — the model decides the duration (see SKILL.md). A wait cannot be
+  // interrupted once in flight, so very long waits should be split into
+  // several computer_wait calls. A missing, negative, or non-finite value
+  // waits 0ms.
+  const requested = Number(args?.ms)
+  const ms = Number.isFinite(requested) && requested > 0 ? requested : 0
   await new Promise((r) => setTimeout(r, ms))
   return { success: true, output: `Waited ${ms}ms` }
 }
@@ -512,11 +516,11 @@ const toolDefinitions = [
   },
   {
     name: 'computer_wait',
-    description: 'Wait for a specified duration (max 10s).',
+    description: 'Wait/sleep for the given number of milliseconds before the next action (e.g. 500–2000ms for a UI transition). No cap — you decide. A wait cannot be interrupted once in flight, so split very long waits into several computer_wait calls rather than one giant sleep.',
     parameters: {
       type: 'object',
       properties: {
-        ms: { type: 'number', description: 'Milliseconds to wait (max 10000)' }
+        ms: { type: 'number', description: 'Milliseconds to wait. No cap; split very long waits across multiple calls.' }
       },
       required: ['ms']
     }

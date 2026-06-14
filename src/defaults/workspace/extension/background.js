@@ -685,16 +685,16 @@ function requireBrowserPolyfill() {
           if (Object.keys(i).length === 0)
             throw new Error("api-metadata.json has not been included in browser-polyfill");
           class r extends WeakMap {
-            constructor(m, A = void 0) {
-              super(A), this.createItem = m;
+            constructor(m, p = void 0) {
+              super(p), this.createItem = m;
             }
             get(m) {
               return this.has(m) || this.set(m, this.createItem(m)), super.get(m);
             }
           }
-          const c = (u) => u && typeof u == "object" && typeof u.then == "function", d = (u, m) => (...A) => {
-            n.runtime.lastError ? u.reject(new Error(n.runtime.lastError.message)) : m.singleCallbackArg || A.length <= 1 && m.singleCallbackArg !== !1 ? u.resolve(A[0]) : u.resolve(A);
-          }, h = (u) => u == 1 ? "argument" : "arguments", l = (u, m) => function(p, ...S) {
+          const c = (u) => u && typeof u == "object" && typeof u.then == "function", d = (u, m) => (...p) => {
+            n.runtime.lastError ? u.reject(new Error(n.runtime.lastError.message)) : m.singleCallbackArg || p.length <= 1 && m.singleCallbackArg !== !1 ? u.resolve(p[0]) : u.resolve(p);
+          }, h = (u) => u == 1 ? "argument" : "arguments", l = (u, m) => function(E, ...S) {
             if (S.length < m.minArgs)
               throw new Error(`Expected at least ${m.minArgs} ${h(m.minArgs)} for ${u}(), got ${S.length}`);
             if (S.length > m.maxArgs)
@@ -702,105 +702,105 @@ function requireBrowserPolyfill() {
             return new Promise((C, y) => {
               if (m.fallbackToNoCallback)
                 try {
-                  p[u](...S, d({
+                  E[u](...S, d({
                     resolve: C,
                     reject: y
                   }, m));
                 } catch (w) {
-                  console.warn(`${u} API method doesn't seem to support the callback parameter, falling back to call it without a callback: `, w), p[u](...S), m.fallbackToNoCallback = !1, m.noCallback = !0, C();
+                  console.warn(`${u} API method doesn't seem to support the callback parameter, falling back to call it without a callback: `, w), E[u](...S), m.fallbackToNoCallback = !1, m.noCallback = !0, C();
                 }
-              else m.noCallback ? (p[u](...S), C()) : p[u](...S, d({
+              else m.noCallback ? (E[u](...S), C()) : E[u](...S, d({
                 resolve: C,
                 reject: y
               }, m));
             });
-          }, g = (u, m, A) => new Proxy(m, {
-            apply(p, S, C) {
-              return A.call(S, u, ...C);
+          }, g = (u, m, p) => new Proxy(m, {
+            apply(E, S, C) {
+              return p.call(S, u, ...C);
             }
           });
-          let E = Function.call.bind(Object.prototype.hasOwnProperty);
-          const f = (u, m = {}, A = {}) => {
-            let p = /* @__PURE__ */ Object.create(null), S = {
+          let A = Function.call.bind(Object.prototype.hasOwnProperty);
+          const f = (u, m = {}, p = {}) => {
+            let E = /* @__PURE__ */ Object.create(null), S = {
               has(y, w) {
-                return w in u || w in p;
+                return w in u || w in E;
               },
               get(y, w, v) {
-                if (w in p)
-                  return p[w];
+                if (w in E)
+                  return E[w];
                 if (!(w in u))
                   return;
                 let _ = u[w];
                 if (typeof _ == "function")
                   if (typeof m[w] == "function")
                     _ = g(u, u[w], m[w]);
-                  else if (E(A, w)) {
-                    let M = l(w, A[w]);
-                    _ = g(u, u[w], M);
+                  else if (A(p, w)) {
+                    let B = l(w, p[w]);
+                    _ = g(u, u[w], B);
                   } else
                     _ = _.bind(u);
-                else if (typeof _ == "object" && _ !== null && (E(m, w) || E(A, w)))
-                  _ = f(_, m[w], A[w]);
-                else if (E(A, "*"))
-                  _ = f(_, m[w], A["*"]);
+                else if (typeof _ == "object" && _ !== null && (A(m, w) || A(p, w)))
+                  _ = f(_, m[w], p[w]);
+                else if (A(p, "*"))
+                  _ = f(_, m[w], p["*"]);
                 else
-                  return Object.defineProperty(p, w, {
+                  return Object.defineProperty(E, w, {
                     configurable: !0,
                     enumerable: !0,
                     get() {
                       return u[w];
                     },
-                    set(M) {
-                      u[w] = M;
+                    set(B) {
+                      u[w] = B;
                     }
                   }), _;
-                return p[w] = _, _;
+                return E[w] = _, _;
               },
               set(y, w, v, _) {
-                return w in p ? p[w] = v : u[w] = v, !0;
+                return w in E ? E[w] = v : u[w] = v, !0;
               },
               defineProperty(y, w, v) {
-                return Reflect.defineProperty(p, w, v);
+                return Reflect.defineProperty(E, w, v);
               },
               deleteProperty(y, w) {
-                return Reflect.deleteProperty(p, w);
+                return Reflect.deleteProperty(E, w);
               }
             }, C = Object.create(u);
             return new Proxy(C, S);
           }, b = (u) => ({
-            addListener(m, A, ...p) {
-              m.addListener(u.get(A), ...p);
+            addListener(m, p, ...E) {
+              m.addListener(u.get(p), ...E);
             },
-            hasListener(m, A) {
-              return m.hasListener(u.get(A));
+            hasListener(m, p) {
+              return m.hasListener(u.get(p));
             },
-            removeListener(m, A) {
-              m.removeListener(u.get(A));
+            removeListener(m, p) {
+              m.removeListener(u.get(p));
             }
-          }), W = new r((u) => typeof u != "function" ? u : function(A) {
-            const p = f(A, {}, {
+          }), W = new r((u) => typeof u != "function" ? u : function(p) {
+            const E = f(p, {}, {
               getContent: {
                 minArgs: 0,
                 maxArgs: 0
               }
             });
-            u(p);
-          }), R = new r((u) => typeof u != "function" ? u : function(A, p, S) {
-            let C = !1, y, w = new Promise((B) => {
+            u(E);
+          }), R = new r((u) => typeof u != "function" ? u : function(p, E, S) {
+            let C = !1, y, w = new Promise((M) => {
               y = function(O) {
-                C = !0, B(O);
+                C = !0, M(O);
               };
             }), v;
             try {
-              v = u(A, p, y);
-            } catch (B) {
-              v = Promise.reject(B);
+              v = u(p, E, y);
+            } catch (M) {
+              v = Promise.reject(M);
             }
             const _ = v !== !0 && c(v);
             if (v !== !0 && !_ && !C)
               return !1;
-            const M = (B) => {
-              B.then((O) => {
+            const B = (M) => {
+              M.then((O) => {
                 S(O);
               }, (O) => {
                 let P;
@@ -812,23 +812,23 @@ function requireBrowserPolyfill() {
                 console.error("Failed to send onMessage rejected reply", O);
               });
             };
-            return M(_ ? v : w), !0;
+            return B(_ ? v : w), !0;
           }), I = ({
             reject: u,
             resolve: m
-          }, A) => {
-            n.runtime.lastError ? n.runtime.lastError.message === a ? m() : u(new Error(n.runtime.lastError.message)) : A && A.__mozWebExtensionPolyfillReject__ ? u(new Error(A.message)) : m(A);
-          }, D = (u, m, A, ...p) => {
-            if (p.length < m.minArgs)
-              throw new Error(`Expected at least ${m.minArgs} ${h(m.minArgs)} for ${u}(), got ${p.length}`);
-            if (p.length > m.maxArgs)
-              throw new Error(`Expected at most ${m.maxArgs} ${h(m.maxArgs)} for ${u}(), got ${p.length}`);
+          }, p) => {
+            n.runtime.lastError ? n.runtime.lastError.message === a ? m() : u(new Error(n.runtime.lastError.message)) : p && p.__mozWebExtensionPolyfillReject__ ? u(new Error(p.message)) : m(p);
+          }, D = (u, m, p, ...E) => {
+            if (E.length < m.minArgs)
+              throw new Error(`Expected at least ${m.minArgs} ${h(m.minArgs)} for ${u}(), got ${E.length}`);
+            if (E.length > m.maxArgs)
+              throw new Error(`Expected at most ${m.maxArgs} ${h(m.maxArgs)} for ${u}(), got ${E.length}`);
             return new Promise((S, C) => {
               const y = I.bind(null, {
                 resolve: S,
                 reject: C
               });
-              p.push(y), A.sendMessage(...p);
+              E.push(y), p.sendMessage(...E);
             });
           }, x = {
             devtools: {
@@ -1106,19 +1106,19 @@ const checkStoragePermission = (e) => {
     const R = await (chrome$1 == null ? void 0 : chrome$1.storage[i].get([e]));
     return R ? c(R[e]) ?? t : t;
   }, h = async (R) => {
-    o || (a = await d()), a = await updateCache(R, a), await (chrome$1 == null ? void 0 : chrome$1.storage[i].set({ [e]: r(a) })), E();
+    o || (a = await d()), a = await updateCache(R, a), await (chrome$1 == null ? void 0 : chrome$1.storage[i].set({ [e]: r(a) })), A();
   }, l = (R) => (n = [...n, R], () => {
     n = n.filter((I) => I !== R);
-  }), g = () => a, E = () => {
+  }), g = () => a, A = () => {
     n.forEach((R) => R());
   }, f = async (R) => {
     if (R[e] === void 0)
       return;
     const I = c(R[e].newValue);
-    a !== I && (a = await updateCache(I, a), E());
+    a !== I && (a = await updateCache(I, a), A());
   };
   return d().then((R) => {
-    a = R, o = !0, E();
+    a = R, o = !0, A();
   }), chrome$1 == null || chrome$1.storage[i].onChanged.addListener(f), {
     get: d,
     set: h,
@@ -1152,8 +1152,8 @@ const resetState = () => {
 }, generateBezierPath = (e, t, s, a, o) => {
   const n = e + (s - e) * 0.25 + (Math.random() - 0.5) * Math.abs(s - e) * 0.3, i = t + (a - t) * 0.25 + (Math.random() - 0.5) * Math.abs(a - t) * 0.3, r = e + (s - e) * 0.75 + (Math.random() - 0.5) * Math.abs(s - e) * 0.3, c = t + (a - t) * 0.75 + (Math.random() - 0.5) * Math.abs(a - t) * 0.3, d = [];
   for (let h = 1; h <= o; h++) {
-    const l = h / o, g = 1 - l, E = g * g * g * e + 3 * g * g * l * n + 3 * g * l * l * r + l * l * l * s, f = g * g * g * t + 3 * g * g * l * i + 3 * g * l * l * c + l * l * l * a;
-    d.push({ x: Math.round(E), y: Math.round(f) });
+    const l = h / o, g = 1 - l, A = g * g * g * e + 3 * g * g * l * n + 3 * g * l * l * r + l * l * l * s, f = g * g * g * t + 3 * g * g * l * i + 3 * g * l * l * c + l * l * l * a;
+    d.push({ x: Math.round(A), y: Math.round(f) });
   }
   return d;
 };
@@ -1163,21 +1163,21 @@ const getCursorPosition = () => ({ x: cursorX, y: cursorY }), BUTTON_MASK = { le
   const o = (n = (await api$2.scripting.executeScript({
     target: { tabId: e },
     func: (i, r) => {
-      const c = (E) => E.replace(/\s+/g, " ").trim().toLowerCase(), d = (E) => {
-        if (E.offsetParent !== null) return !0;
-        const f = getComputedStyle(E);
+      const c = (A) => A.replace(/\s+/g, " ").trim().toLowerCase(), d = (A) => {
+        if (A.offsetParent !== null) return !0;
+        const f = getComputedStyle(A);
         return f.display !== "none" && f.visibility !== "hidden";
       };
       let h = null;
       if (i.startsWith("text=")) {
-        const E = c(i.slice(5).replace(/^(["'])([\s\S]*)\1$/, "$2"));
-        if (E) {
+        const A = c(i.slice(5).replace(/^(["'])([\s\S]*)\1$/, "$2"));
+        if (A) {
           const f = /* @__PURE__ */ new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE"]), b = [], W = [], R = document.body ? Array.from(document.body.getElementsByTagName("*")) : [];
           for (const x of R) {
             const T = x;
             if (f.has(T.tagName)) continue;
             const u = c(T.textContent ?? "");
-            !u || u.length > E.length + 200 || (u === E ? b.push(T) : u.includes(E) && W.push(T));
+            !u || u.length > A.length + 200 || (u === A ? b.push(T) : u.includes(A) && W.push(T));
           }
           const I = b.length > 0 ? b : W;
           h = I.filter((x) => !I.some((T) => T !== x && x.contains(T))).find(d) ?? null;
@@ -1375,9 +1375,9 @@ const handleDebuggerAttach = async (e) => {
     const d = attachedTabId, l = (c = (await api$2.scripting.executeScript({
       target: { tabId: d },
       func: (g) => {
-        const E = document.querySelector(g);
-        if (!E) return null;
-        const f = E.getBoundingClientRect();
+        const A = document.querySelector(g);
+        if (!A) return null;
+        const f = A.getBoundingClientRect();
         return { x: Math.round(f.left + f.width / 2), y: Math.round(f.top + f.height / 2) };
       },
       args: [a],
@@ -1502,9 +1502,9 @@ const handleDebuggerAttach = async (e) => {
   return await api$2.scripting.executeScript({
     target: { tabId: a },
     func: (i, r, c, d) => {
-      const h = document.elementFromPoint(i, r) ?? document.body, l = document.elementFromPoint(c, d) ?? document.body, g = (E, f, b, W) => {
+      const h = document.elementFromPoint(i, r) ?? document.body, l = document.elementFromPoint(c, d) ?? document.body, g = (A, f, b, W) => {
         W.dispatchEvent(
-          new MouseEvent(E, { bubbles: !0, cancelable: !0, clientX: f, clientY: b, button: 0, view: window })
+          new MouseEvent(A, { bubbles: !0, cancelable: !0, clientX: f, clientY: b, button: 0, view: window })
         );
       };
       g("mousedown", i, r, h), g("mousemove", Math.round((i + c) / 2), Math.round((r + d) / 2), l), g("mousemove", c, d, l), g("mouseup", c, d, l);
@@ -1731,7 +1731,7 @@ const connectWebSocket = async (e) => {
 }, sendToServer = (e) => {
   (ws == null ? void 0 : ws.readyState) === WebSocket.OPEN && ws.send(JSON.stringify(e));
 }, waitForTabSettled = (e, t, s) => new Promise((a) => {
-  var g, E;
+  var g, A;
   let o = !1, n = !1;
   const i = () => {
     var f, b;
@@ -1744,7 +1744,7 @@ const connectWebSocket = async (e) => {
   }, d = (f) => {
     f.tabId === e && f.frameId === 0 && (n = !0, c());
   };
-  (E = (g = api.webNavigation) == null ? void 0 : g.onCompleted) == null || E.addListener(d);
+  (A = (g = api.webNavigation) == null ? void 0 : g.onCompleted) == null || A.addListener(d);
   const h = setInterval(() => void c(), 100), l = setTimeout(() => {
     api.tabs.get(e).then(r).catch(() => r(null));
   }, s);
@@ -1897,34 +1897,34 @@ const connectWebSocket = async (e) => {
     }, a), d = (l) => {
       l.tabId === s && l.frameId === 0 && api.tabs.get(s).then((g) => r(g.url || l.url, g.title || "")).catch(() => r(l.url, ""));
     }, h = (l, g) => {
-      l === s && g.url && g.url !== o && api.tabs.get(s).then((E) => r(E.url || g.url, E.title || "")).catch(() => r(g.url, ""));
+      l === s && g.url && g.url !== o && api.tabs.get(s).then((A) => r(A.url || g.url, A.title || "")).catch(() => r(g.url, ""));
     };
     api.webNavigation.onCompleted.addListener(d), api.tabs.onUpdated.addListener(h);
   });
-}, MAX_WAIT_SLEEP_MS = 3e5, handleWait = async (e) => {
+}, handleWait = async (e) => {
   const t = e, s = t.timeout_ms ?? t.timeout ?? t.ms, a = t.type ?? (t.selector ? "selector" : "timeout");
   if (a === "navigation")
     return handleWaitForNavigation({ timeout: s, tabId: t.tabId });
   if (a === "selector" || a === "network_idle") {
     if (a === "selector" && !t.selector)
       throw new Error("selector is required for type=selector");
-    const n = await resolveTabId(t);
-    await ensureContentScriptInjected(n);
-    const i = {
+    const i = await resolveTabId(t);
+    await ensureContentScriptInjected(i);
+    const r = {
       id: generateId(),
       type: a === "selector" ? WolffishCommands.BROWSER_WAIT_FOR : WolffishCommands.BROWSER_WAIT_FOR_NETWORK_IDLE,
-      params: a === "selector" ? { selector: t.selector, timeout: s, visible: t.visible, tabId: n } : { timeout: s, tabId: n }
-    }, r = await sendToContentScript(n, {
+      params: a === "selector" ? { selector: t.selector, timeout: s, visible: t.visible, tabId: i } : { timeout: s, tabId: i }
+    }, c = await sendToContentScript(i, {
       source: "service-worker",
       target: "content-script",
-      payload: i
+      payload: r
     });
-    if (!(r != null && r.success))
-      throw new Error((r == null ? void 0 : r.error) ?? `${a} wait failed`);
-    return r.data;
+    if (!(c != null && c.success))
+      throw new Error((c == null ? void 0 : c.error) ?? `${a} wait failed`);
+    return c.data;
   }
-  const o = Math.max(0, Math.min(s ?? 1e3, MAX_WAIT_SLEEP_MS));
-  return await new Promise((n) => setTimeout(n, o)), { waited: o };
+  const o = Number(s), n = Number.isFinite(o) && o > 0 ? o : 0;
+  return await new Promise((i) => setTimeout(i, n)), { waited: n };
 }, handleNotify = async (e) => {
   const { title: t, message: s, iconUrl: a } = e;
   return { notificationId: await api.notifications.create("", {

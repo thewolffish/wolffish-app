@@ -154,11 +154,11 @@ tools:
     description: List all connected displays with resolution, scale factor, and position. Use this when you need to find which display an app is on, or when the primary display screenshot doesn't show what you expect.
     parameters: {}
   - name: computer_wait
-    description: Wait for a specified duration. Useful between actions to allow UI transitions, page loads, or animations to complete.
+    description: Wait for a specified duration. Useful between actions to allow UI transitions, page loads, or animations to complete. No cap — you decide. A wait cannot be interrupted once in flight, so split very long waits into several computer_wait calls.
     parameters:
       ms:
         type: number
-        description: Milliseconds to wait (max 10000)
+        description: Milliseconds to wait. No cap; split very long waits across multiple calls.
 confirm_patterns:
   - pattern: computer_mouse_click
     reason: Clicking on screen
@@ -217,7 +217,7 @@ macOS will silently fail the tool call rather than showing a prompt. The tool re
 ## Guidelines
 
 - **Start simple.** Screenshot → identify target → single click/type → screenshot to verify. Don't chain many actions without checking.
-- **Wait for transitions.** After clicking a button that triggers a page load, animation, or dialog, call `computer_wait` with 500–2000ms before the next screenshot.
+- **Wait for transitions.** After clicking a button that triggers a page load, animation, or dialog, call `computer_wait` with 500–2000ms before the next screenshot. There's no cap — when waiting on a genuinely long task (a build, an export, a render), wait as long as you need. The only caveat: a wait can't be interrupted once it's in flight, so split very long waits into several sequential `computer_wait` calls rather than one giant sleep.
 - **Never type passwords or secrets** unless the user explicitly provides them in the current message. If you need credentials, ask the user to type them directly.
 - **Use keyboard shortcuts** when they're more reliable than clicking (e.g. Cmd+C to copy, Ctrl+A to select all).
 - **Cap your actions.** If you've taken more than 15 actions without completing the task, pause and ask the user if you're on the right track.
