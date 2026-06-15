@@ -444,19 +444,31 @@ function execForeground({ command, cwd, shell, timeoutMs, env }) {
       const output = combine(stdout, stderr)
       if (code === 0) {
         finish({ success: true, output: output || '(no output)' })
-      } else {
-        const diagnostic = buildDiagnostic(stdout, stderr, command)
-        const partial = stdout.trim().length > 100
-        finish({
-          success: false,
-          exitCode: code,
-          partial,
-          error: diagnostic
-            ? `Command exited with code ${code}: ${diagnostic}`
-            : `Command exited with code ${code}`,
-          output
-        })
+        return
       }
+      // Exit code 1 with no output at all is the universal "no match / nothing
+      // found" signal for query tools — grep (1 = no lines matched), find/ls on
+      // an absent path, test, and any pipeline ending in one of them. That is a
+      // valid empty result, not a failure. Reporting it as a failure made the
+      // motor retry a deterministic no-match three times and handed the model a
+      // blind "(unknown)" error with zero signal. Surface it as a clean empty
+      // result. Exit codes >= 2 still mean a real error (e.g. grep 2 = read
+      // error) and fall through to the failure path below.
+      if (code === 1 && !stdout.trim() && !stderr.trim()) {
+        finish({ success: true, output: '(no matches — command exited 1 with no output)' })
+        return
+      }
+      const diagnostic = buildDiagnostic(stdout, stderr, command)
+      const partial = stdout.trim().length > 100
+      finish({
+        success: false,
+        exitCode: code,
+        partial,
+        error: diagnostic
+          ? `Command exited with code ${code}: ${diagnostic}`
+          : `Command exited with code ${code} (no output captured — if you redirected stderr with 2>/dev/null, drop it so the cause is visible)`,
+        output
+      })
     })
   })
 }

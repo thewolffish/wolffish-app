@@ -1,4 +1,28 @@
-## v1.0.148 — 2026-06-15 `Latest`
+## v1.0.149 — 2026-06-15 `Latest`
+
+### Import Your Own Capabilities
+
+The Cerebellum settings panel now lets you add your own skills, plugins, and tools to Wolffish. Drag a `SKILL.md`, a capability folder, or a `.zip` onto the new import dropzone — or click to browse — and it becomes a first-class capability alongside the bundled ones, with the same trigger matching, tools, and dependency handling.
+
+Three shapes are accepted: a single **`SKILL.md`** (a pure skill — a markdown procedure with a YAML frontmatter block, no tools to run), a **capability folder** (a `SKILL.md` next to an optional `plugin/index.mjs` and `package.json` — the full skill, its executable tools, and any declared dependencies, all in one drop), or a **`.zip`** of that folder (unpacked to a temporary location and validated exactly like a folder).
+
+**Validated before anything touches disk.** Every drop is staged in a throwaway temp directory and checked hard before a single byte reaches `brain/cerebellum/`, so a failed import can never corrupt or half-install your existing capabilities. The checks mirror the loader exactly — valid YAML frontmatter with a `name`, well-formed `triggers`/`requires`/`tools`, a real entry file (`index.mjs`, `.js`, or `.cjs`) in any `plugin/` folder, and declared tools only where a plugin exists to back them — and reject early anything the loader would otherwise choke on silently. Names must be unique across all capabilities, and any npm or system dependencies install automatically the first time the capability runs.
+
+**Safe by construction.** Zip extraction is guarded against path traversal (zip-slip), generous size and file-count caps stop a pathological archive from hanging the import (1 MB per `SKILL.md`; 50 MB and 5,000 files in total), and junk (`node_modules`, `.git`, `__MACOSX`, `.DS_Store`) is stripped on the way in. Every validation failure surfaces as a plain-language message in the panel instead of a silent no-op.
+
+**Removable too.** Capabilities you imported can be deleted from the panel, with a confirmation step before the folder is removed. Bundled (official) and built-in capabilities are refused — a stray click can't wipe a core feature — and a path-containment guard ensures only a direct child of `brain/cerebellum/` is ever removed.
+
+### Shell "No Match" No Longer Looks Like a Failure
+
+A shell command that finds nothing — `grep` with no matching lines, `find`/`ls`/`test` on a path that isn't there — exits with code 1 and no output. That is the universal "nothing found" signal, not an error, but Wolffish previously reported it as a failure. The motor then retried the same deterministic command three times and handed the model a blind `(unknown)` error with zero signal. Now an exit code of 1 with no output at all is surfaced as a clean empty result, so the agent reads "no matches" and moves on. Exit codes of 2 or higher still mean a real error (for example, `grep` 2 = read error) and are reported as failures.
+
+**No more retrying deterministic failures.** A command that exits non-zero without a transient (network or timeout) signature reproduces the same result every time — retrying just burns backoff and shows the model the same blind error three times over. The error classifier now treats these as deterministic and fails fast, so the agent adjusts the command instead of waiting through three identical attempts. Genuinely transient failures still retry: network-error detection was widened to cover `could not resolve host`, `connection refused`/`reset`/`timed out`, and `temporary failure in name resolution`, and those checks run first, so a flaky `curl` or `git` keeps its retries.
+
+**Clearer failures.** When a command does fail with no captured output, the error now points at the usual cause — a `2>/dev/null` redirect swallowing stderr — and suggests dropping it so the real reason is visible.
+
+---
+
+## v1.0.148 — 2026-06-15
 
 ### Admin Password Asked Once Per Session
 

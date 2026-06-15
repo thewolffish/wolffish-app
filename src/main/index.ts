@@ -47,6 +47,7 @@ import {
 } from '@main/ollama'
 import { Agent } from '@main/runtime/agent'
 import type { ApprovalDecision } from '@main/runtime/amygdala'
+import { deleteCapabilityFolder, importCapability } from '@main/runtime/capabilityImport'
 import type { ChatHistoryMessage } from '@preload/index'
 import { MODEL_CATALOG } from '@main/runtime/models'
 import { localProvider } from '@main/runtime/providers/local'
@@ -1664,6 +1665,72 @@ app.whenReady().then(async () => {
     const list = [...disabled]
     await patchConfig((c) => ({ ...c, disabledCapabilities: list }))
     agent.cerebellum.setDisabled(list)
+  })
+
+  // Import a user-supplied capability (SKILL.md / folder / .zip) into
+  // brain/cerebellum/. Validation + staging + copy all happen in the
+  // importCapability module; on success the renderer calls cerebellum:reload
+  // to pick up the new folder and refresh the list.
+  ipcMain.handle('cerebellum:importCapability', async (_e, sourcePath: string) => {
+    await agent.init()
+    const existingNames = new Set(agent.cerebellum.getCapabilities().map((c) => c.name))
+    return importCapability({
+      sourcePath,
+      cerebellumDir: join(workspaceRoot(), 'brain', 'cerebellum'),
+      existingNames
+    })
+  })
+
+  // Native picker for the import dropzone's "browse" affordance. On macOS the
+  // dialog accepts a file (SKILL.md/.zip) or a folder; on Windows only files
+  // (folders still arrive via drag-and-drop). Returns null when canceled.
+  ipcMain.handle(
+    'cerebellum:pickImport',
+    async (_e, options?: { title?: string; filterName?: string }): Promise<string | null> => {
+      const mainWin = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+      if (!mainWin) return null
+      // Labels are localized in the renderer and passed in; English fallbacks
+      // keep the dialog sane if the call ever arrives without them.
+      const result = await dialog.showOpenDialog(mainWin, {
+        title: options?.title ?? 'Import capability',
+        properties: ['openFile', 'openDirectory'],
+        filters: [{ name: options?.filterName ?? 'Capability', extensions: ['md', 'zip'] }]
+      })
+      if (result.canceled || !result.filePaths[0]) return null
+      return result.filePaths[0]
+    }
+  )
+
+  // Delete a user-imported capability — cleanly nuke its folder. Official
+  // (bundled) and built-in in-process capabilities are refused so a stray
+  // click can't wipe a core feature. A path-containment guard ensures we only
+  // ever remove a direct child of brain/cerebellum/, never a folder reached
+  // through a crafted path. Returns the refreshed list on success.
+  ipcMain.handle('cerebellum:deleteCapability', async (_e, name: string) => {
+    await agent.init()
+    const cap = agent.cerebellum.getCapabilities().find((c) => c.name === name)
+    if (!cap) return { ok: false as const, error: `Capability "${name}" not found.` }
+
+    const bundled = await bundledCapabilityNames()
+    const outcome = await deleteCapabilityFolder({
+      name,
+      dir: cap.dir,
+      cerebellumDir: join(workspaceRoot(), 'brain', 'cerebellum'),
+      isOfficial: bundled.has(name),
+      isInProcess: Boolean(cap.inProcess)
+    })
+    if (!outcome.ok) return outcome
+
+    // Forget any disabled-toggle for the gone capability, then reload so the
+    // in-memory cerebellum (and the plugin's destroy hook) reflect the removal.
+    await patchConfig((c) => ({
+      ...c,
+      disabledCapabilities: (c.disabledCapabilities ?? []).filter((n) => n !== name)
+    }))
+    await agent.cerebellum.reload()
+    const cfg = await readConfig()
+    agent.cerebellum.setDisabled(cfg?.disabledCapabilities ?? [])
+    return { ok: true as const, capabilities: await serializeCapabilities() }
   })
 
   // Voice — read TTS-generated audio files for the renderer's AudioPlayer

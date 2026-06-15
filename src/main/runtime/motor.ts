@@ -111,7 +111,8 @@ const VALIDATION_RE =
 // resolveTabId, so this mainly catches the tab-taking commands that don't.
 const NOT_FOUND_RE =
   /command not found|not found|no .+ found|ENOENT|no such file|is not installed|unknown tool|no such tool|HTTP 404\b|HTTP 410\b|is not recognized as|CommandNotFoundException|cannot find the (?:file|path) specified|no tab with id|no window with id/i
-const NETWORK_RE = /ECONNREFUSED|ETIMEDOUT|ECONNRESET|network error|fetch failed|DNS resolution/i
+const NETWORK_RE =
+  /ECONNREFUSED|ETIMEDOUT|ECONNRESET|network error|fetch failed|DNS resolution|could not resolve host|connection refused|connection reset|connection timed out|temporary failure in name resolution/i
 const TIMEOUT_RE = /timed out|timeout|SIGTERM/i
 
 /**
@@ -173,6 +174,17 @@ export function classifyError(error: string, exitCode?: number | null): ToolErro
   }
   if (TIMEOUT_RE.test(message)) {
     return { message, retryable: true, category: 'timeout' }
+  }
+  // A process that exited non-zero without any transient signature (network /
+  // timeout, both handled above) is deterministic: the same args against the
+  // same machine state reproduce it exactly. Retrying just burns backoff and
+  // hands the model the same blind "(unknown)" three times — observed live on
+  // `grep`/`find`/`ls` inventory probes that exit 1 to mean "no match". Fail
+  // fast so the model can adjust the command instead. Only shell-style tools
+  // report an exitCode; tool errors without one keep the retryable default
+  // below, so non-shell behaviour is unchanged.
+  if (exitCode != null && exitCode !== 0) {
+    return { message, retryable: false, category: 'unknown' }
   }
   return { message, retryable: true, category: 'unknown' }
 }

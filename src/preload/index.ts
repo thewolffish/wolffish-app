@@ -622,10 +622,33 @@ export type CapabilityEntry = {
   error?: string
 }
 
+export type CapabilityImportSource = 'skill' | 'folder' | 'zip'
+
+export type CapabilityImportResult =
+  | {
+      ok: true
+      name: string
+      folderName: string
+      source: CapabilityImportSource
+      hasPlugin: boolean
+      toolCount: number
+    }
+  | { ok: false; error: string }
+
+export type CapabilityDeleteResult =
+  | { ok: true; capabilities: CapabilityEntry[] }
+  | { ok: false; error: string }
+
 export type CerebellumApi = {
   listCapabilities: () => Promise<CapabilityEntry[]>
   reload: () => Promise<CapabilityEntry[]>
   toggleCapability: (name: string, enabled: boolean) => Promise<void>
+  /** Validate and import a dropped/picked SKILL.md, folder, or .zip. */
+  importCapability: (sourcePath: string) => Promise<CapabilityImportResult>
+  /** Open a native file/folder picker for the import dropzone. Null if canceled. */
+  pickImport: (options?: { title?: string; filterName?: string }) => Promise<string | null>
+  /** Delete a user-imported capability and nuke its folder. Refuses official ones. */
+  deleteCapability: (name: string) => Promise<CapabilityDeleteResult>
 }
 
 export type VoiceApi = {
@@ -1211,7 +1234,10 @@ const api: WolffishApi = {
     listCapabilities: () => ipcRenderer.invoke('cerebellum:listCapabilities'),
     reload: () => ipcRenderer.invoke('cerebellum:reload'),
     toggleCapability: (name, enabled) =>
-      ipcRenderer.invoke('cerebellum:toggleCapability', name, enabled)
+      ipcRenderer.invoke('cerebellum:toggleCapability', name, enabled),
+    importCapability: (sourcePath) => ipcRenderer.invoke('cerebellum:importCapability', sourcePath),
+    pickImport: (options) => ipcRenderer.invoke('cerebellum:pickImport', options),
+    deleteCapability: (name) => ipcRenderer.invoke('cerebellum:deleteCapability', name)
   },
   variables: {
     list: () => ipcRenderer.invoke('variables:list'),

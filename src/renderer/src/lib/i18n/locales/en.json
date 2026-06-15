@@ -278,7 +278,40 @@
       "requires": "Requires {{deps}}",
       "resync": "Resync",
       "resyncSuccessToast": "Capabilities resynced",
-      "resyncErrorToast": "Failed to resync capabilities"
+      "resyncErrorToast": "Failed to resync capabilities",
+      "import": {
+        "label": "Import a capability",
+        "hint": "Add your own skills, plugins, and tools to the Cellebrum.",
+        "dropzone": "Drag a SKILL.md, folder, or .zip here — or click to browse",
+        "dropzoneActive": "Drop to import",
+        "dialogTitle": "Import a capability",
+        "dialogFilter": "Capability (SKILL.md or .zip)",
+        "importing": "Importing…",
+        "successToast": "Imported \"{{name}}\"",
+        "errorToast": "Import failed",
+        "errorTitle": "Import failed",
+        "dismiss": "Dismiss",
+        "readError": "Could not read the dropped item. Try the browse button instead.",
+        "guide": {
+          "title": "What you can drop",
+          "skillTitle": "A single SKILL.md",
+          "skillDesc": "A markdown procedure with a YAML frontmatter block (name, description, and optional triggers). Imported as a pure skill — guidance the agent follows when a trigger matches, with no tools or dependencies to install.",
+          "folderTitle": "A capability folder",
+          "folderDesc": "A folder containing a SKILL.md alongside an optional plugin/ (index.mjs) and package.json. This is the full capability — the skill, its executable tools, and any declared dependencies, all in a single drop.",
+          "zipTitle": "A .zip archive",
+          "zipDesc": "The same capability folder, compressed into one file. It's safely unpacked to a temporary location, validated exactly like a folder, then added only once every check passes.",
+          "tip": "Every drop is fully validated before anything is written to disk, so a failed import can't corrupt or half-install your existing capabilities. The name must be unique across all capabilities, and any system or npm dependencies are installed automatically the first time the capability runs."
+        }
+      },
+      "delete": {
+        "action": "Delete capability",
+        "title": "Delete capability",
+        "warning": "Delete \"{{name}}\" and permanently remove its folder from your workspace? This can't be undone.",
+        "cta": "Delete",
+        "deleting": "Deleting…",
+        "cancel": "Cancel",
+        "successToast": "Deleted \"{{name}}\""
+      }
     },
     "model": {
       "providers": {
