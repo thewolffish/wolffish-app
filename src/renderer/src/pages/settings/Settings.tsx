@@ -117,7 +117,7 @@ function restoreSnapshot(
         : 'ollama',
     channel:
       s?.channel && CHANNELS.includes(s.channel as Channel) ? (s.channel as Channel) : 'telegram',
-    service: s?.service ? (s.service as Service) : 'brave',
+    service: s?.service ? (s.service as Service) : 'browserExtension',
     hippocampusTab:
       s?.hippocampusTab && HIPPOCAMPUS_TABS.includes(s.hippocampusTab as HippocampusTab)
         ? (s.hippocampusTab as HippocampusTab)
