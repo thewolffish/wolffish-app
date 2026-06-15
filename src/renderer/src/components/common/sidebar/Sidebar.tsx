@@ -18,16 +18,35 @@ type SidebarProps = {
   className?: string
 }
 
+// Collapsed state is persisted to the workspace config via setLastSettingsState,
+// but FlowProvider's in-memory `status` snapshot is NOT refreshed on that write —
+// it only updates on unrelated refreshStatus() calls. Navigating Chat → Settings
+// fully unmounts <Chat> (and this <Sidebar>); on return it remounts and, if it
+// re-derived `collapsed` from `status`, would read a stale value and visibly
+// revert the user's last toggle. Whether it reverted depended on whether some
+// other refreshStatus() happened to land in between — the intermittent race.
+//
+// Keep the live value in a module-scoped cache so the toggle is the source of
+// truth across remounts, independent of IPC timing. `status` only seeds it once
+// (first mount of the app session / after a restart, when the persisted value is
+// authoritative); the backend write then only matters for the next launch.
+let liveCollapsed: boolean | null = null
+
 export function Sidebar({ items, className }: SidebarProps): React.JSX.Element {
   const { locale } = useLocale()
   const isRtl = RTL_LOCALES.has(locale)
   const { status } = useFlow()
   const saved = status?.config?.lastSettingsState?.sidebarCollapsed
-  const [collapsed, setCollapsed] = useState(() => saved !== 'false')
+  const [collapsed, setCollapsed] = useState(() => {
+    // Default to collapsed unless explicitly persisted as expanded.
+    if (liveCollapsed === null) liveCollapsed = saved !== 'false'
+    return liveCollapsed
+  })
 
   const toggle = useCallback(() => {
     setCollapsed((c) => {
       const next = !c
+      liveCollapsed = next
       void window.api.runtime.setLastSettingsState({ sidebarCollapsed: String(next) })
       return next
     })

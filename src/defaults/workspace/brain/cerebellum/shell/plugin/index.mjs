@@ -69,6 +69,12 @@ const SUDO_INJECT_RE = /(?<=^|\s|&&|\|\||;)(\s*)(sudo|doas)(\s)/gi
 // succeed silently. The askpass helper stays on disk until cleanup.
 let askpassState = null // { askpassPath, tmpDir, env, primedAt }
 
+// Injected at plugin init by the main process. On macOS we route elevation
+// through this shared, app-lifetime password session so the user is prompted
+// once per app run instead of per command. Null until init runs, and unused on
+// non-macOS where the legacy per-session askpass path below still applies.
+let sudoCtx = null
+
 async function cleanupAskpass() {
   if (!askpassState) return
   const { tmpDir } = askpassState
@@ -306,17 +312,45 @@ async function execShell(args) {
   let execCommand = command
 
   if (needsElevation) {
-    const elevation = await ensureElevation()
-    if (!elevation.ok) {
-      return { success: false, error: elevation.error }
-    }
-    execEnv = elevation.env
-    execCommand = injectAskpassFlag(command)
+    let handled = false
 
-    // Refresh the OS credential cache right before execution so the timer
-    // resets. This is silent (no dialog) as long as the cache hasn't already
-    // expired. If it has, sudo calls the askpass helper automatically.
-    await runCollect('sudo', ['-A', '-v'], execEnv)
+    // Preferred path (macOS + Linux): the shared in-memory password session.
+    // Acquire once, reuse for the app's lifetime — no dialog after the first
+    // capture. Windows has no sudo, so we skip straight to the legacy guidance.
+    if (sudoCtx && process.platform !== 'win32') {
+      const auth = await sudoCtx.ensurePassword()
+      if (auth.ok) {
+        execEnv = { ...process.env, ...sudoCtx.getElevatedEnv() }
+        execCommand = injectAskpassFlag(command)
+        handled = true
+      } else if (!auth.unsupported) {
+        // The session attempted and was rejected (cancelled, wrong password,
+        // not in sudoers). Surface that — don't fall back, which would just
+        // re-prompt. Only `unsupported` (no GUI tool, infra error) falls
+        // through to the legacy path below.
+        return {
+          success: false,
+          error: auth.error ?? 'operation not permitted (elevation required)'
+        }
+      }
+    }
+
+    // Fallback: legacy per-session askpass dialog. Runs on Windows, when the
+    // session is unavailable, or when the session reported it couldn't attempt
+    // (e.g. no GUI password tool on Linux). Byte-for-byte the pre-session flow.
+    if (!handled) {
+      const elevation = await ensureElevation()
+      if (!elevation.ok) {
+        return { success: false, error: elevation.error }
+      }
+      execEnv = elevation.env
+      execCommand = injectAskpassFlag(command)
+
+      // Refresh the OS credential cache right before execution so the timer
+      // resets. This is silent (no dialog) as long as the cache hasn't already
+      // expired. If it has, sudo calls the askpass helper automatically.
+      await runCollect('sudo', ['-A', '-v'], execEnv)
+    }
   }
 
   if (args?.background === true) {
@@ -684,6 +718,9 @@ function describeShellAction(command) {
 const plugin = {
   name: 'shell',
   tools: toolDefinitions,
+  async init(context) {
+    sudoCtx = context?.sudo ?? null
+  },
   describeAction(toolName, args) {
     if (toolName !== 'shell_exec') return null
     return describeShellAction(args?.command)

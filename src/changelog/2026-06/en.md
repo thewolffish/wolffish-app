@@ -1,4 +1,18 @@
-## v1.0.141 — 2026-06-13 `Latest`
+## v1.0.148 — 2026-06-15 `Latest`
+
+### Admin Password Asked Once Per Session
+
+Privileged (`sudo`) commands no longer prompt for your administrator password on every run. Wolffish now captures it once, holds it in memory for as long as the app is open, and reuses it silently for the rest of the session — a task that runs ten privileged commands shows one dialog instead of ten.
+
+**What changed:** previously every elevated command leaned on the operating system's own ~5-minute credential cache, so once that expired the password dialog reappeared mid-task. The password is now held in the main process for the app's lifetime and handed to `sudo` through an askpass helper that never writes it to disk. The command's input stream is left untouched, so chained commands (`sudo a && sudo b`), piped commands (`echo x | sudo tee f`), and anything that reads stdin keep working exactly as before. Quitting Wolffish clears the password from memory — you're asked once again on the next launch.
+
+**macOS and Linux:** both capture the password once and reuse it (macOS via the system dialog, Linux via zenity, kdialog, or ssh-askpass). If capture isn't possible — no graphical password tool, an unexpected error, or Windows, which has no `sudo` — Wolffish falls back to its previous elevation behavior, so nothing regresses.
+
+**Localized dialog:** the password prompt now follows the app language — title, the prompt and Homebrew-install messages, and buttons — with English as the fallback.
+
+---
+
+## v1.0.141 — 2026-06-13
 
 ### Prompt Caching Across All Providers
 

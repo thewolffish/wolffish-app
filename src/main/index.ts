@@ -50,6 +50,7 @@ import type { ApprovalDecision } from '@main/runtime/amygdala'
 import type { ChatHistoryMessage } from '@preload/index'
 import { MODEL_CATALOG } from '@main/runtime/models'
 import { localProvider } from '@main/runtime/providers/local'
+import { sudoSession } from '@main/runtime/sudoSession'
 import type { CloudProviderConfig } from '@main/runtime/thalamus'
 import { Thalamus } from '@main/runtime/thalamus'
 import type { TimeRange as UsageTimeRange } from '@main/runtime/usage'
@@ -883,6 +884,7 @@ app.whenReady().then(async () => {
   agent.amygdala.setBypassPermissions(cfg?.safety?.bypassPermissions ?? false)
   turnRunner.setBlockCredentials(cfg?.safety?.blockCredentials ?? false)
   turnRunner.setLocale(cfg?.locale ?? 'en')
+  sudoSession.setLocale(cfg?.locale ?? 'en')
   agent.cerebellum.setDisabled(cfg?.disabledCapabilities ?? [])
 
   // Compaction schedule from config. Brainstem.init() will call
@@ -953,6 +955,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('locale:set', async (_e, locale: Locale) => {
     await persistLocale(locale)
     turnRunner.setLocale(locale)
+    sudoSession.setLocale(locale)
     return locale
   })
 

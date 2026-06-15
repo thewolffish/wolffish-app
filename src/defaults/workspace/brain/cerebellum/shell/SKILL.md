@@ -173,7 +173,7 @@ confirm_patterns:
   - **Unix:** `/bin/sh -c`
   - **Windows:** PowerShell 7+ (`pwsh`) if installed, else Windows PowerShell 5.1 (`powershell.exe`), else `cmd.exe`. Check the `<device>` block in your system prompt to see which one is active — it's reported as `shell:`.
 - Timeout: none by default — commands run until they exit. You may pass an explicit timeout if you want fast failure on a command you expect to finish quickly.
-- Elevation: `sudo` and `doas` commands are **fully supported**. The plugin detects them, pops a native OS password dialog (macOS: system dialog via osascript, Linux: zenity or kdialog), caches the credential for ~5 minutes, and injects the `-A` flag so no TTY is needed. The user sees one password prompt per session, not per command.
+- Elevation: `sudo` and `doas` commands are **fully supported**. The plugin detects them, pops a native OS password dialog (macOS: system dialog via osascript, Linux: zenity or kdialog), and injects the `-A` flag so no TTY is needed. On macOS and Linux the password is captured **once per app run** and held in memory, so every later privileged command is silent (Linux needs a GUI password tool — zenity/kdialog/ssh-askpass — and otherwise falls back to sudo's ~5-minute timestamp cache); Windows has no sudo. Either way the user sees one prompt, not one per command.
 - stdin: set to `/dev/null` (EOF) so commands that unexpectedly wait for input fail fast instead of hanging.
 - Returns combined stdout+stderr; truncated past ~100 KB
 
@@ -209,7 +209,7 @@ from your side. The plugin automatically:
 
 1. Detects elevation keywords in the command
 2. Pops a native OS password dialog (macOS system dialog, Linux zenity/kdialog)
-3. Caches the credential for ~5 minutes (one prompt per session, not per command)
+3. Captures the password once and holds it in app memory for the whole app run (macOS and Linux); where no GUI capture tool exists it falls back to sudo's ~5-minute timestamp — one prompt per session, not per command
 4. Injects the `-A` flag so sudo uses the dialog instead of a TTY
 5. Runs the original command with the cached credential
 

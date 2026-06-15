@@ -12,6 +12,11 @@ const MAX_OUTPUT = 50_000
 const HOMEBREW_INSTALL_CMD =
   '/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
 
+// Injected at plugin init by the main process. When present (macOS), the
+// Homebrew install routes through the shared, app-lifetime password session so
+// the user reuses the one password they already entered for shell commands.
+let sudoCtx = null
+
 function validatePackageName(name) {
   if (!name || typeof name !== 'string') return false
   return !UNSAFE_CHARS.test(name)
@@ -228,35 +233,69 @@ async function pkgInstallManager() {
     return { success: false, error: `Unsupported platform: ${platform}` }
   }
 
-  // macOS: install Homebrew. Prime sudo via the askpass helper so brew's
-  // internal sudo calls (mkdir /opt/homebrew, chown, etc.) succeed without
-  // a TTY. The brew installer itself runs as the normal user — running it
-  // as root via `osascript ... with administrator privileges` makes brew
-  // refuse with "Don't run this as root!".
-  const prime = await primeSudoMacOS('Wolffish needs admin access to install Homebrew on your Mac.')
-  if (!prime.ok) {
-    await cleanupAskpass(prime.tmpDir)
-    if (prime.cancelled) {
+  // macOS: install Homebrew. We need sudo primed so brew's internal sudo
+  // calls (mkdir /opt/homebrew, chown, etc.) succeed without a TTY. The brew
+  // installer itself runs as the normal user — running it as root via
+  // `osascript ... with administrator privileges` makes brew refuse with
+  // "Don't run this as root!".
+  let elevatedEnv
+  let cleanup = async () => {}
+
+  // Preferred: shared in-memory password session. Prompts once per app run,
+  // reuses the password already entered for shell commands, and holds it in
+  // main-process memory (never on disk). Its helper is session-scoped, so
+  // there's nothing to clean up. Falls through to the legacy primeSudoMacOS
+  // helper when the session is absent OR reports it couldn't attempt
+  // (auth.unsupported) — same defensive contract as the shell plugin.
+  if (sudoCtx) {
+    const auth = await sudoCtx.ensurePassword('installHomebrew')
+    if (auth.ok) {
+      elevatedEnv = { ...process.env, ...sudoCtx.getElevatedEnv() }
+    } else if (auth.cancelled) {
       return {
         success: false,
         error:
           'Homebrew installation requires admin access. You cancelled the password prompt. To install manually, open Terminal and run: ' +
           HOMEBREW_INSTALL_CMD
       }
+    } else if (!auth.unsupported) {
+      return { success: false, error: auth.error ?? 'sudo authentication failed' }
     }
-    return {
-      success: false,
-      error: prime.error ?? 'sudo authentication failed'
+    // auth.unsupported → fall through to primeSudoMacOS below
+  }
+
+  if (!elevatedEnv) {
+    // Fallback: legacy per-install askpass helper whose password is piped
+    // straight from osascript to sudo and never cached.
+    const prime = await primeSudoMacOS(
+      'Wolffish needs admin access to install Homebrew on your Mac.'
+    )
+    if (!prime.ok) {
+      await cleanupAskpass(prime.tmpDir)
+      if (prime.cancelled) {
+        return {
+          success: false,
+          error:
+            'Homebrew installation requires admin access. You cancelled the password prompt. To install manually, open Terminal and run: ' +
+            HOMEBREW_INSTALL_CMD
+        }
+      }
+      return {
+        success: false,
+        error: prime.error ?? 'sudo authentication failed'
+      }
     }
+    elevatedEnv = prime.env
+    cleanup = () => cleanupAskpass(prime.tmpDir)
   }
 
   try {
     // Run the official Homebrew installer as the normal user.
     // NONINTERACTIVE=1 skips brew's TTY check; SUDO_ASKPASS is set so any
-    // additional sudo prompts use the GUI helper instead of the missing
-    // tty. Cached timestamp from primeSudoMacOS keeps it silent.
+    // additional sudo prompts use the helper instead of the missing tty. The
+    // primed credential (cached password or timestamp) keeps it silent.
     const env = {
-      ...prime.env,
+      ...elevatedEnv,
       NONINTERACTIVE: '1'
     }
     const install = await runSpawn(
@@ -294,7 +333,7 @@ async function pkgInstallManager() {
       }
     }
   } finally {
-    await cleanupAskpass(prime.tmpDir)
+    await cleanup()
   }
 }
 
@@ -577,6 +616,9 @@ function describeAction(toolName, args) {
 const plugin = {
   name: 'package-manager',
   tools: toolDefinitions,
+  async init(context) {
+    sudoCtx = context?.sudo ?? null
+  },
   describeAction,
   async execute(toolName, args) {
     switch (toolName) {

@@ -1,5 +1,6 @@
 import type { Amygdala, DangerLevel, DangerPattern } from '@main/runtime/amygdala'
 import type { Corpus } from '@main/runtime/corpus'
+import { sudoSession, type SudoSession } from '@main/runtime/sudoSession'
 import type { ToolDefinition } from '@main/runtime/thalamus'
 import type { ToolCall } from '@main/runtime/wernicke'
 import yaml from 'js-yaml'
@@ -155,6 +156,14 @@ export type PluginContext = {
    * one that happened to be active when the plugin first loaded.
    */
   getCurrentConversationId: () => string | null
+  /**
+   * Shared, app-lifetime admin-password session. Plugins that run privileged
+   * (sudo) commands call `sudo.ensurePassword()` once and merge
+   * `sudo.getElevatedEnv()` into their elevated spawns so the user is prompted
+   * a single time per app run instead of per command. macOS-only; callers
+   * gate on platform and fall back to their own elevation path elsewhere.
+   */
+  sudo: SudoSession
 }
 
 export type WolffishPlugin = {
@@ -671,7 +680,8 @@ export class Cerebellum {
       await plugin.init?.({
         pluginDir: path.dirname(cap.pluginEntryPath),
         workspaceRoot: this.options.workspaceRoot ?? '',
-        getCurrentConversationId: () => this.currentConversationId
+        getCurrentConversationId: () => this.currentConversationId,
+        sudo: sudoSession
       })
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
@@ -763,6 +773,10 @@ export class Cerebellum {
       }
     }
     this.plugins.clear()
+    // Drop the cached admin password and remove the askpass helper dir on app
+    // shutdown. (reload() deliberately does NOT do this, so the password
+    // survives a capability reload.)
+    await sudoSession.destroy().catch(() => {})
   }
 
   private async loadCapability(capDir: string, folderName: string): Promise<Capability | null> {
