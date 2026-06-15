@@ -2474,23 +2474,34 @@ function renderSegments(
   const flushText = (): void => {
     if (textBuffer.length === 0) return
     textRun += 1
-    // If the buffer is a bare wolffish-media image, render it without the
-    // text-bubble wrapper so it displays like a shared photo — no border,
-    // no background, no padding — just the image with rounded corners.
-    const isMediaImage = /^!\[[^\]]*\]\(wolffish-media:\/\/[^)]+\)$/.test(textBuffer.trim())
-    blocks.push(
-      isMediaImage ? (
-        <div key={`md-${textRun}`} className="self-start max-w-[85%]">
-          <Markdown content={textBuffer} />
-        </div>
-      ) : (
-        <div
+    // A standalone wolffish-media image (e.g. a generated meme/GIF) renders as
+    // a proper file card — filename + reveal/download — matching every other
+    // attachment, instead of a bare floating photo.
+    const mediaImage = textBuffer.trim().match(/^!\[[^\]]*\]\(wolffish-media:\/\/([^)]+)\)$/)
+    if (mediaImage) {
+      const relativePath = mediaImage[1]
+      const mediaFileName = relativePath.split('/').pop() ?? 'image'
+      const mediaExt = (mediaFileName.match(/\.[^./\\]+$/)?.[0] ?? '').toLowerCase()
+      const mediaMime = `image/${mediaExt === '.jpg' ? 'jpeg' : mediaExt.slice(1) || 'png'}`
+      blocks.push(
+        <ImageViewer
           key={`md-${textRun}`}
-          className="bg-surface border-border text-fg max-w-[85%] rounded-2xl border px-4 py-2.5 text-sm leading-relaxed self-start wrap-anywhere"
-        >
-          <Markdown content={textBuffer} />
-        </div>
+          filePath={relativePath}
+          fileExists={true}
+          mimeType={mediaMime}
+          fileName={mediaFileName}
+        />
       )
+      textBuffer = ''
+      return
+    }
+    blocks.push(
+      <div
+        key={`md-${textRun}`}
+        className="bg-surface border-border text-fg max-w-[85%] rounded-2xl border px-4 py-2.5 text-sm leading-relaxed self-start wrap-anywhere"
+      >
+        <Markdown content={textBuffer} />
+      </div>
     )
     textBuffer = ''
   }

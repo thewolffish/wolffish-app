@@ -1,6 +1,6 @@
 import { cn } from '@lib/utils/cn'
 import { formatBytes } from '@lib/utils/format'
-import { Download01Icon, File01Icon } from 'hugeicons-react'
+import { Download01Icon, File01Icon, FolderOpenIcon } from 'hugeicons-react'
 import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -74,6 +74,14 @@ function ActiveFile({
     }
   }, [filePath])
 
+  const revealInFolder = useCallback(async () => {
+    try {
+      await window.api.upload.revealInFolder(filePath)
+    } catch {
+      // best-effort
+    }
+  }, [filePath])
+
   return (
     <div
       className={cn(
@@ -92,6 +100,17 @@ function ActiveFile({
           {mimeType || 'file'} · {formatBytes(sizeBytes)}
         </span>
       </div>
+      <button
+        type="button"
+        onClick={revealInFolder}
+        title={t('chat.fileCard.reveal')}
+        className={cn(
+          'text-muted hover:text-fg flex shrink-0 cursor-pointer items-center justify-center rounded p-1',
+          'focus-visible:ring-2 focus-visible:ring-accent'
+        )}
+      >
+        <FolderOpenIcon size={14} />
+      </button>
       <button
         type="button"
         onClick={download}

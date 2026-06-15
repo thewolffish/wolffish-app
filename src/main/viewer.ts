@@ -71,6 +71,15 @@ export async function readViewerBinaryFile(relativePath: string): Promise<Buffer
   return fs.readFile(target)
 }
 
+/** Absolute on-disk path for a viewer-relative path, or null if it escapes the root. */
+export function resolveViewerPath(relativePath: string): string | null {
+  try {
+    return resolveScoped(viewerRoot(), relativePath)
+  } catch {
+    return null
+  }
+}
+
 export async function statViewerFile(relativePath: string): Promise<{ mtimeMs: number }> {
   const target = resolveScoped(viewerRoot(), relativePath)
   const s = await fs.stat(target)

@@ -81,6 +81,7 @@ import {
   readViewerBinaryFile,
   readViewerFile,
   readViewerTree,
+  resolveViewerPath,
   statViewerFile,
   writeViewerFile,
   type ViewerTreeNode
@@ -1755,6 +1756,11 @@ app.whenReady().then(async () => {
     await writeFile(result.filePath, data)
     return { ok: true }
   })
+  ipcMain.handle('voice:revealInFolder', (_e, filePath: string): { ok: boolean } => {
+    if (!filePath) return { ok: false }
+    shell.showItemInFolder(filePath)
+    return { ok: true }
+  })
   ipcMain.handle('voice:exists', async (_e, filePath: string): Promise<boolean> => {
     const { access, constants } = await import('node:fs/promises')
     try {
@@ -1952,6 +1958,13 @@ app.whenReady().then(async () => {
     return { ok: true }
   })
 
+  ipcMain.handle('upload:revealInFolder', (_e, relativePath: string): { ok: boolean } => {
+    const abs = resolveUploadPath(relativePath)
+    if (!abs) return { ok: false }
+    shell.showItemInFolder(abs)
+    return { ok: true }
+  })
+
   ipcMain.handle('runtime:setUpdatesEnabled', async (_e, value: boolean) => {
     await patchConfig((c) => ({
       ...c,
@@ -2088,6 +2101,13 @@ app.whenReady().then(async () => {
     const buf = await readViewerBinaryFile(relativePath)
     const { writeFile } = await import('node:fs/promises')
     await writeFile(result.filePath, buf)
+    return { ok: true }
+  })
+
+  ipcMain.handle('viewer:revealInFolder', (_e, relativePath: string): { ok: boolean } => {
+    const abs = resolveViewerPath(relativePath)
+    if (!abs) return { ok: false }
+    shell.showItemInFolder(abs)
     return { ok: true }
   })
 

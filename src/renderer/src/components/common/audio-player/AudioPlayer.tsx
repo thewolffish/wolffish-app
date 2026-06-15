@@ -4,6 +4,7 @@ import {
   PlayIcon,
   DashboardSpeed01Icon,
   Download01Icon,
+  FolderOpenIcon,
   VolumeMute02Icon
 } from 'hugeicons-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -151,6 +152,15 @@ function ActivePlayer({
     }
   }, [filePath, source])
 
+  const revealInFolder = useCallback(async () => {
+    try {
+      if (source === 'voice') await window.api.voice.revealInFolder(filePath)
+      else await window.api.upload.revealInFolder(filePath)
+    } catch {
+      // best-effort
+    }
+  }, [filePath, source])
+
   if (error) {
     return <DeletedPlayer />
   }
@@ -214,6 +224,17 @@ function ActivePlayer({
           {playbackRate}x
         </button>
 
+        <button
+          type="button"
+          onClick={revealInFolder}
+          title="Reveal in folder"
+          className={cn(
+            'text-muted hover:text-fg flex shrink-0 cursor-pointer items-center justify-center rounded p-1',
+            'focus-visible:ring-2 focus-visible:ring-accent'
+          )}
+        >
+          <FolderOpenIcon size={14} />
+        </button>
         <button
           type="button"
           onClick={download}

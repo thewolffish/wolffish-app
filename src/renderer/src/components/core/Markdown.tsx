@@ -1,6 +1,6 @@
 import { CopyButton } from '@components/core/CopyButton'
 import { cn } from '@lib/utils/cn'
-import { Download01Icon } from 'hugeicons-react'
+import { Download01Icon, FolderOpenIcon } from 'hugeicons-react'
 import { memo, type ReactNode } from 'react'
 import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown'
 import rehypeHighlight from 'rehype-highlight'
@@ -121,19 +121,37 @@ const components: Components = {
       <span className="group relative block w-fit max-w-full leading-none">
         <img src={src} alt={alt ?? ''} className="block max-w-full rounded-2xl" loading="lazy" />
         {relativePath && (
-          <button
-            type="button"
-            onClick={() => void window.api.upload.download(relativePath)}
-            aria-label="Download"
+          <span
             className={cn(
-              'absolute inset-e-2 top-2 flex h-7 w-7 cursor-pointer items-center justify-center',
-              'rounded-md bg-bg/80 text-fg shadow-sm backdrop-blur-sm',
-              'opacity-0 transition-opacity group-hover:opacity-100',
-              'focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-transparent'
+              'absolute inset-e-2 top-2 flex items-center gap-1',
+              'opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100'
             )}
           >
-            <Download01Icon size={14} />
-          </button>
+            <button
+              type="button"
+              onClick={() => void window.api.upload.revealInFolder(relativePath)}
+              aria-label="Reveal in folder"
+              className={cn(
+                'flex h-7 w-7 cursor-pointer items-center justify-center',
+                'rounded-md bg-bg/80 text-fg shadow-sm backdrop-blur-sm',
+                'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-transparent'
+              )}
+            >
+              <FolderOpenIcon size={14} />
+            </button>
+            <button
+              type="button"
+              onClick={() => void window.api.upload.download(relativePath)}
+              aria-label="Download"
+              className={cn(
+                'flex h-7 w-7 cursor-pointer items-center justify-center',
+                'rounded-md bg-bg/80 text-fg shadow-sm backdrop-blur-sm',
+                'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-transparent'
+              )}
+            >
+              <Download01Icon size={14} />
+            </button>
+          </span>
         )}
       </span>
     )

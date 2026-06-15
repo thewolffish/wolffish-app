@@ -23,6 +23,7 @@ import {
   File02Icon,
   FloppyDiskIcon,
   Folder01Icon,
+  FolderOpenIcon,
   Image02Icon,
   PauseIcon,
   Pdf02Icon,
@@ -350,6 +351,15 @@ export function ViewerPage(): React.JSX.Element {
     }
   }, [selectedPath])
 
+  const handleReveal = useCallback(async (): Promise<void> => {
+    if (!selectedPath) return
+    try {
+      await window.api.viewer.revealInFolder(selectedPath)
+    } catch {
+      // best-effort
+    }
+  }, [selectedPath])
+
   const handleResync = useCallback(async (): Promise<void> => {
     if (resyncing) return
     setResyncing(true)
@@ -441,6 +451,19 @@ export function ViewerPage(): React.JSX.Element {
                       {t('workspace.readOnly')}
                     </Badge>
                   )}
+                  <button
+                    type="button"
+                    onClick={() => void handleReveal()}
+                    aria-label={t('workspace.reveal')}
+                    className={cn(
+                      'inline-flex items-center gap-1 rounded-md text-xs cursor-pointer transition-colors',
+                      'text-muted hover:text-fg px-1.5 py-0.5',
+                      'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
+                    )}
+                  >
+                    <FolderOpenIcon size={14} />
+                    <span>{t('workspace.reveal')}</span>
+                  </button>
                   <button
                     type="button"
                     onClick={() => void handleDownload()}

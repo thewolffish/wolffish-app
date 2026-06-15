@@ -573,6 +573,7 @@ export type ViewerApi = {
   readDefault: (relativePath: string) => Promise<string>
   stat: (relativePath: string) => Promise<{ mtimeMs: number }>
   download: (relativePath: string) => Promise<{ ok: boolean }>
+  revealInFolder: (relativePath: string) => Promise<{ ok: boolean }>
   resync: () => Promise<ViewerTreeNode[]>
 }
 
@@ -654,6 +655,7 @@ export type CerebellumApi = {
 export type VoiceApi = {
   readFile: (filePath: string) => Promise<ArrayBuffer>
   download: (filePath: string) => Promise<{ ok: boolean }>
+  revealInFolder: (filePath: string) => Promise<{ ok: boolean }>
   exists: (filePath: string) => Promise<boolean>
 }
 
@@ -1069,6 +1071,8 @@ export type UploadApi = {
   }) => Promise<UploadValidationError | null>
   openExternal: (relativePath: string) => Promise<{ ok: boolean; error?: string }>
   download: (relativePath: string) => Promise<{ ok: boolean }>
+  /** Reveal the file in the OS file manager (Finder/Explorer). */
+  revealInFolder: (relativePath: string) => Promise<{ ok: boolean }>
   /** Resolve the absolute filesystem path for a File object (e.g. from drag-and-drop). */
   getPathForFile: (file: File) => string
 }
@@ -1191,6 +1195,7 @@ const api: WolffishApi = {
     readDefault: (relativePath) => ipcRenderer.invoke('viewer:readDefault', relativePath),
     stat: (relativePath) => ipcRenderer.invoke('viewer:stat', relativePath),
     download: (relativePath) => ipcRenderer.invoke('viewer:download', relativePath),
+    revealInFolder: (relativePath) => ipcRenderer.invoke('viewer:revealInFolder', relativePath),
     resync: () => ipcRenderer.invoke('viewer:resync')
   },
   heartbeat: {
@@ -1246,6 +1251,7 @@ const api: WolffishApi = {
   voice: {
     readFile: (filePath) => ipcRenderer.invoke('voice:readFile', filePath),
     download: (filePath) => ipcRenderer.invoke('voice:download', filePath),
+    revealInFolder: (filePath) => ipcRenderer.invoke('voice:revealInFolder', filePath),
     exists: (filePath) => ipcRenderer.invoke('voice:exists', filePath)
   },
   upload: {
@@ -1260,6 +1266,7 @@ const api: WolffishApi = {
     validate: (payload) => ipcRenderer.invoke('upload:validate', payload),
     openExternal: (relativePath) => ipcRenderer.invoke('upload:openExternal', relativePath),
     download: (relativePath) => ipcRenderer.invoke('upload:download', relativePath),
+    revealInFolder: (relativePath) => ipcRenderer.invoke('upload:revealInFolder', relativePath),
     getPathForFile: (file) => webUtils.getPathForFile(file)
   },
   telegram: {

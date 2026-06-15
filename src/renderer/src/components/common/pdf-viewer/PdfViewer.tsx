@@ -1,6 +1,6 @@
 import { useUploadBlob } from '@hooks/use-upload-blob/useUploadBlob'
 import { cn } from '@lib/utils/cn'
-import { Download01Icon, LinkSquare02Icon, Pdf02Icon } from 'hugeicons-react'
+import { Download01Icon, FolderOpenIcon, LinkSquare02Icon, Pdf02Icon } from 'hugeicons-react'
 import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -67,6 +67,14 @@ function ActivePdf({
     }
   }, [filePath])
 
+  const revealInFolder = useCallback(async () => {
+    try {
+      await window.api.upload.revealInFolder(filePath)
+    } catch {
+      // best-effort
+    }
+  }, [filePath])
+
   if (error) {
     return <DeletedPdf fileName={fileName} />
   }
@@ -103,6 +111,17 @@ function ActivePdf({
           )}
         >
           <LinkSquare02Icon size={14} />
+        </button>
+        <button
+          type="button"
+          onClick={revealInFolder}
+          title={t('chat.fileCard.reveal')}
+          className={cn(
+            'text-muted hover:text-fg flex shrink-0 cursor-pointer items-center justify-center rounded p-1',
+            'focus-visible:ring-2 focus-visible:ring-accent'
+          )}
+        >
+          <FolderOpenIcon size={14} />
         </button>
         <button
           type="button"

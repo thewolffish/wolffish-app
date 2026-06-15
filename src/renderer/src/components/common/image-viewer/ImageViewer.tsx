@@ -1,7 +1,7 @@
 import { Modal } from '@components/core/Modal'
 import { useUploadBlob } from '@hooks/use-upload-blob/useUploadBlob'
 import { cn } from '@lib/utils/cn'
-import { Download01Icon, Image02Icon } from 'hugeicons-react'
+import { Download01Icon, FolderOpenIcon, Image02Icon, LinkSquare02Icon } from 'hugeicons-react'
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -76,9 +76,25 @@ function ActiveImage({
   const { url, error } = useUploadBlob(filePath, mimeType)
   const [open, setOpen] = useState(false)
 
+  const openExternal = useCallback(async () => {
+    try {
+      await window.api.upload.openExternal(filePath)
+    } catch {
+      // best-effort
+    }
+  }, [filePath])
+
   const download = useCallback(async () => {
     try {
       await window.api.upload.download(filePath)
+    } catch {
+      // best-effort
+    }
+  }, [filePath])
+
+  const revealInFolder = useCallback(async () => {
+    try {
+      await window.api.upload.revealInFolder(filePath)
     } catch {
       // best-effort
     }
@@ -117,10 +133,35 @@ function ActiveImage({
           </div>
         )}
         {/* w-0 + min-w-full keeps a long filename from widening the card past the image */}
-        <div className="flex w-0 min-w-full items-center justify-between gap-2 px-3 pb-2">
-          <span className="text-muted truncate text-[11px] font-medium" title={fileName}>
+        <div className="flex w-0 min-w-full items-center gap-2 px-3 pb-2">
+          <span
+            className="text-muted min-w-0 flex-1 truncate text-[11px] font-medium"
+            title={fileName}
+          >
             {fileName}
           </span>
+          <button
+            type="button"
+            onClick={openExternal}
+            title="Open in default viewer"
+            className={cn(
+              'text-muted hover:text-fg flex shrink-0 cursor-pointer items-center justify-center rounded p-1',
+              'focus-visible:ring-2 focus-visible:ring-accent'
+            )}
+          >
+            <LinkSquare02Icon size={14} />
+          </button>
+          <button
+            type="button"
+            onClick={revealInFolder}
+            title="Reveal in folder"
+            className={cn(
+              'text-muted hover:text-fg flex shrink-0 cursor-pointer items-center justify-center rounded p-1',
+              'focus-visible:ring-2 focus-visible:ring-accent'
+            )}
+          >
+            <FolderOpenIcon size={14} />
+          </button>
           <button
             type="button"
             onClick={download}

@@ -1,4 +1,16 @@
-## v1.0.149 — 2026-06-15 `Latest`
+## v1.0.151 — 2026-06-15 `Latest`
+
+### Reveal & Open Files from Any Card
+
+Every file Wolffish shows you — PDFs, images, videos, audio, spreadsheets, Word documents, code, and generic attachments, plus files in the workspace viewer — now has a **Reveal** button that jumps straight to it in your operating system's file manager (Finder on macOS, Explorer on Windows, your file manager on Linux), with the file highlighted. It sits next to the existing download button, mirroring the "Reveal in Finder" action already used for the browser-extension folder.
+
+**Open in the default app.** Image and video cards also gain an **Open** button that launches the file in whatever app your system uses by default — Preview or Photos for an image, your media player for a video. Both actions are best-effort across macOS, Windows, and Linux, and fail quietly when the OS can't service them.
+
+**Generated images are proper cards now.** A meme or image the agent creates renders in the same bordered card as every other attachment — filename plus open, reveal, and download in a tidy footer — instead of a bare floating photo.
+
+---
+
+## v1.0.149 — 2026-06-15
 
 ### Import Your Own Capabilities
 

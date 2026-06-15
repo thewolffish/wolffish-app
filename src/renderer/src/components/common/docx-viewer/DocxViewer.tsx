@@ -1,5 +1,5 @@
 import { cn } from '@lib/utils/cn'
-import { Download01Icon, File01Icon, LinkSquare02Icon } from 'hugeicons-react'
+import { Download01Icon, File01Icon, FolderOpenIcon, LinkSquare02Icon } from 'hugeicons-react'
 import mammoth from 'mammoth'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -75,6 +75,14 @@ function Active({ filePath, fileName }: { filePath: string; fileName: string }):
     }
   }, [filePath])
 
+  const revealInFolder = useCallback(async () => {
+    try {
+      await window.api.upload.revealInFolder(filePath)
+    } catch {
+      // best-effort
+    }
+  }, [filePath])
+
   if (error) return <Deleted fileName={fileName} />
 
   return (
@@ -94,7 +102,12 @@ function Active({ filePath, fileName }: { filePath: string; fileName: string }):
           <span className="text-muted animate-pulse text-xs">{t('chat.docxViewer.loading')}</span>
         </div>
       )}
-      <Footer fileName={fileName} onOpenExternal={openExternal} onDownload={download} />
+      <Footer
+        fileName={fileName}
+        onOpenExternal={openExternal}
+        onReveal={revealInFolder}
+        onDownload={download}
+      />
     </div>
   )
 }
@@ -102,10 +115,12 @@ function Active({ filePath, fileName }: { filePath: string; fileName: string }):
 function Footer({
   fileName,
   onOpenExternal,
+  onReveal,
   onDownload
 }: {
   fileName: string
   onOpenExternal: () => void
+  onReveal: () => void
   onDownload: () => void
 }): React.JSX.Element {
   const { t } = useTranslation()
@@ -125,6 +140,17 @@ function Footer({
         )}
       >
         <LinkSquare02Icon size={14} />
+      </button>
+      <button
+        type="button"
+        onClick={onReveal}
+        title={t('chat.fileCard.reveal')}
+        className={cn(
+          'text-muted hover:text-fg flex shrink-0 cursor-pointer items-center justify-center rounded p-1',
+          'focus-visible:ring-2 focus-visible:ring-accent'
+        )}
+      >
+        <FolderOpenIcon size={14} />
       </button>
       <button
         type="button"

@@ -1,6 +1,6 @@
 import { useUploadBlob } from '@hooks/use-upload-blob/useUploadBlob'
 import { cn } from '@lib/utils/cn'
-import { Download01Icon, VideoOffIcon } from 'hugeicons-react'
+import { Download01Icon, FolderOpenIcon, LinkSquare02Icon, VideoOffIcon } from 'hugeicons-react'
 import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -55,9 +55,25 @@ function ActiveVideo({
 }): React.JSX.Element {
   const { url, error } = useUploadBlob(filePath, mimeType)
 
+  const openExternal = useCallback(async () => {
+    try {
+      await window.api.upload.openExternal(filePath)
+    } catch {
+      // best-effort
+    }
+  }, [filePath])
+
   const download = useCallback(async () => {
     try {
       await window.api.upload.download(filePath)
+    } catch {
+      // best-effort
+    }
+  }, [filePath])
+
+  const revealInFolder = useCallback(async () => {
+    try {
+      await window.api.upload.revealInFolder(filePath)
     } catch {
       // best-effort
     }
@@ -90,10 +106,35 @@ function ActiveVideo({
           <span className="text-muted text-xs">Loading video…</span>
         </div>
       )}
-      <div className="flex items-center justify-between gap-2 px-3 pb-2">
-        <span className="text-muted truncate text-[11px] font-medium" title={fileName}>
+      <div className="flex items-center gap-2 px-3 pb-2">
+        <span
+          className="text-muted min-w-0 flex-1 truncate text-[11px] font-medium"
+          title={fileName}
+        >
           {fileName}
         </span>
+        <button
+          type="button"
+          onClick={openExternal}
+          title="Open in default player"
+          className={cn(
+            'text-muted hover:text-fg flex shrink-0 cursor-pointer items-center justify-center rounded p-1',
+            'focus-visible:ring-2 focus-visible:ring-accent'
+          )}
+        >
+          <LinkSquare02Icon size={14} />
+        </button>
+        <button
+          type="button"
+          onClick={revealInFolder}
+          title="Reveal in folder"
+          className={cn(
+            'text-muted hover:text-fg flex shrink-0 cursor-pointer items-center justify-center rounded p-1',
+            'focus-visible:ring-2 focus-visible:ring-accent'
+          )}
+        >
+          <FolderOpenIcon size={14} />
+        </button>
         <button
           type="button"
           onClick={download}

@@ -7,7 +7,8 @@ import {
   ArrowRight01Icon,
   CodeIcon,
   Download01Icon,
-  File01Icon
+  File01Icon,
+  FolderOpenIcon
 } from 'hugeicons-react'
 import hljs from 'highlight.js/lib/common'
 import { useMemo, useState } from 'react'
@@ -71,7 +72,8 @@ export function CodeFileViewer({
   fileName,
   language,
   sizeBytes,
-  onDownload
+  onDownload,
+  onReveal
 }: {
   content: string
   fileName: string
@@ -80,6 +82,8 @@ export function CodeFileViewer({
   sizeBytes?: number
   /** When set, a download button appears in the footer (attachment cards). */
   onDownload?: () => void
+  /** When set, a "reveal in folder" button appears in the footer (attachment cards). */
+  onReveal?: () => void
 }): React.JSX.Element {
   const { t } = useTranslation()
   const [expanded, setExpanded] = useState(false)
@@ -183,6 +187,19 @@ export function CodeFileViewer({
           {lang ?? ext}
           {sizeBytes != null ? ` · ${formatBytes(sizeBytes)}` : ''}
         </span>
+        {onReveal && (
+          <button
+            type="button"
+            onClick={onReveal}
+            title={t('chat.fileCard.reveal')}
+            className={cn(
+              'text-muted hover:text-fg flex shrink-0 cursor-pointer items-center justify-center rounded p-1',
+              'focus-visible:ring-2 focus-visible:ring-accent'
+            )}
+          >
+            <FolderOpenIcon size={14} />
+          </button>
+        )}
         {onDownload && (
           <button
             type="button"

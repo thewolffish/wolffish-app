@@ -1255,7 +1255,8 @@
     },
     "fileCard": {
       "deleted": "File was deleted",
-      "download": "Download"
+      "download": "Download",
+      "reveal": "Reveal in folder"
     },
     "audioPlayer": {
       "deleted": "Audio file was deleted or unavailable"
@@ -1454,7 +1455,8 @@
     "resynced": "File resynced",
     "saved": "File saved",
     "saveError": "Save failed",
-    "download": "Download"
+    "download": "Download",
+    "reveal": "Reveal"
   },
   "heartbeat": {
     "title": "Heartbeat",

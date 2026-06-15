@@ -1204,7 +1204,8 @@
     },
     "fileCard": {
       "deleted": "تم حذف الملف",
-      "download": "تنزيل"
+      "download": "تنزيل",
+      "reveal": "إظهار في المجلد"
     },
     "audioPlayer": {
       "deleted": "ملف الصوت محذوف أو غير متاح"
@@ -1660,7 +1661,8 @@
     "resynced": "تمت إعادة مزامنة الملف",
     "saved": "تم حفظ الملف",
     "saveError": "فشل الحفظ",
-    "download": "تحميل"
+    "download": "تحميل",
+    "reveal": "إظهار"
   },
   "heartbeat": {
     "title": "نبض القلب",

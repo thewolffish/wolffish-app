@@ -37,6 +37,12 @@ export function MarkdownFileViewer({
     })
   }, [filePath])
 
+  const revealInFolder = useCallback(() => {
+    window.api.upload.revealInFolder(filePath).catch(() => {
+      // best-effort
+    })
+  }, [filePath])
+
   if (text === null) {
     return (
       <FileCard
@@ -55,6 +61,7 @@ export function MarkdownFileViewer({
       fileName={fileName}
       sizeBytes={sizeBytes}
       onDownload={download}
+      onReveal={revealInFolder}
     />
   )
 }
