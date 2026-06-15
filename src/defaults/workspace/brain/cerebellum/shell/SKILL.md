@@ -270,9 +270,102 @@ Notes:
 - Never run destructive commands without user approval — the safety gate
   enforces this, but assume nothing.
 
+## Windows PowerShell pitfalls
+
+These are the most common causes of wasted tool calls on Windows. Read this section if `<device>` shows `shell: powershell`.
+
+### Don't wrap PowerShell in PowerShell
+
+When the shell is already `powershell.exe` or `pwsh`, your command runs *inside* PowerShell. Do NOT wrap it in `powershell -Command "..."` — that spawns a child PowerShell and double-interpolates variables.
+
+**Broken:** `powershell -Command "Get-Disk | Where-Object {$_.BusType -eq 'USB'}"`
+The outer PowerShell sees `$_` inside double quotes, interpolates it to empty string, and the inner shell receives `{.BusType -eq 'USB'}` — a bare term error.
+
+**Correct:** `Get-Disk | Where-Object {$_.BusType -eq 'USB'}`
+Run PowerShell cmdlets directly. No wrapper needed.
+
+If you absolutely must call `powershell -Command` (e.g. to force a specific PS version), use single-quoted here-strings or escape the `$` as `` `$ ``:
+`powershell -Command 'Get-Disk | Where-Object {$_.BusType -eq \"USB\"}'`
+
+### No `&` chaining — use `;`
+
+`&` is **cmd.exe** syntax. In PowerShell it is the call operator (for running executables by path), not a command separator. Chaining with `&` produces a parser error.
+
+**Broken:** `echo foo & echo bar & echo baz`
+**Correct:** `echo foo; echo bar; echo baz`
+
+For conditional chaining (run B only if A succeeds), there is no `&&` in PS 5.1. Use:
+`command1; if ($?) { command2 }`
+
+### Piping text to admin tools doesn't work
+
+`echo list disk | diskpart` fails because:
+1. `diskpart.exe` requires elevation — it will error with "requires elevation" unless Wolffish is running as admin.
+2. Even elevated, piping `echo` to `diskpart` via PowerShell pipe doesn't reliably feed diskpart's interactive prompt.
+
+**For diskpart, always use a script file:**
+1. Write commands to a `.txt` file (one command per line)
+2. Run `diskpart /s C:\path\to\script.txt`
+
+### Windows tools that always require elevation
+
+These tools will ALWAYS fail without admin privileges. Before using them, check if Wolffish is elevated:
+`([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)`
+
+If false, tell the user to relaunch Wolffish as admin. Do NOT retry — no workaround exists.
+
+- `diskpart` — disk/partition management
+- `bcdedit` — boot configuration
+- `sfc` / `DISM` — system file repair
+- `netsh` — network configuration
+- `wmic` (some queries) — system management
+- `chkdsk /f` — disk check with repair
+- `format` (the standalone .exe) — volume formatting
+
+### diskpart script best practices
+
+When writing a diskpart script file, always include `select partition 1` (or the appropriate number) after `create partition primary` and before `format`. The `create partition` command does NOT auto-select the volume for formatting.
+
+**Broken sequence:**
+```
+select disk 1
+clean
+create partition primary
+format fs=ntfs quick        ← fails: "no volume selected"
+assign
+```
+
+**Correct sequence:**
+```
+select disk 1
+clean
+create partition primary
+select partition 1
+format fs=ntfs quick
+assign
+```
+
+### Drive letters change after disk operations
+
+After `diskpart clean` + `create partition primary` + `format` + `assign`, Windows assigns the *next available* drive letter — which is often different from the original. Never verify the result using the old drive letter.
+
+**Broken:** `Get-Partition -DriveLetter D | Format-Table` (D: may no longer exist)
+**Correct:** `Get-Disk -Number 1 | Get-Partition | Format-Table` (query by disk number)
+
+Rule: after any diskpart operation that destroys and recreates partitions, always verify by **disk number**, not by drive letter.
+
 ## Common patterns
 
+**Unix:**
 - Inspect the cwd: `ls -la`, `pwd`, `git status`.
 - Inspect a file: `cat <path>` for short files, `wc -l <path>` for size.
 - Search the codebase: `grep -rn 'foo' .` (or `rg 'foo'` if ripgrep is installed).
 - Check Node version: `node -v`. Check Git version: `git --version`.
+
+**Windows (PowerShell):**
+- Inspect the cwd: `Get-ChildItem`, `Get-Location`, `git status`.
+- Inspect a file: `Get-Content <path>` for short files, `(Get-Content <path>).Count` for line count.
+- Search the codebase: `Select-String -Path .\* -Pattern 'foo' -Recurse` (or `rg 'foo'` if ripgrep is installed).
+- Check elevation: `([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)`
+- List disks: `Get-Disk | Format-Table -AutoSize`
+- List partitions on a disk: `Get-Disk -Number N | Get-Partition | Format-Table -AutoSize`

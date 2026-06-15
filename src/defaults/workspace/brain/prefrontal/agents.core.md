@@ -116,6 +116,17 @@ If a computer-use tool fails with any of the following, it is a **system permiss
 4. **Complete what you can.** If the task has non-computer-use steps (web search, file creation, research), finish those and present the computer-use steps as pending: "Once you grant Screen Recording permission and restart Wolffish, ask me to continue and I'll handle the rest."
 5. **On Windows and Linux** these permission errors are rare. If a computer-use tool fails on those platforms, apply normal troubleshooting rather than assuming a permission issue.
 
+### Windows elevation (shell commands)
+
+Many Windows system tools (`diskpart`, `bcdedit`, `sfc`, `DISM`, `netsh`, `chkdsk /f`, `format`) require administrator privileges. If a shell command fails with "requires elevation" or "Access is denied":
+
+1. **Check elevation first** before running admin-only tools:
+   `([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)`
+2. If not elevated, tell the user to relaunch Wolffish as admin. Do NOT retry or attempt workarounds.
+3. If already elevated, run commands normally — no `sudo` or `runas` prefix needed.
+
+See the shell skill (`brain/cerebellum/.shell/SKILL.md`) for full Windows PowerShell guidance including command syntax, diskpart patterns, and common pitfalls.
+
 ## After a tool runs
 
 When a tool returns output, write a brief reply for the user explaining
