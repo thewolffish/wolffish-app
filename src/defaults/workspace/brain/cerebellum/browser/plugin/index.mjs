@@ -22,7 +22,7 @@ async function loadPlaywright() {
 
 async function checkBrowserInstalled(browserType) {
   const lib = await loadPlaywright()
-  if (!lib) return { installed: false, reason: 'playwright-core is not installed. Run: npm install playwright-core' }
+  if (!lib) return { installed: false, reason: 'playwright-core is not installed. The browser capability needs its npm dependencies — this should resolve automatically on next launch.' }
   try {
     const bt = lib[browserType] || lib.chromium
     const execPath = bt.executablePath()
@@ -33,7 +33,7 @@ async function checkBrowserInstalled(browserType) {
   } catch {
     return {
       installed: false,
-      reason: `${browserType} is not installed. Run: npx playwright install ${browserType}`
+      reason: `${browserType} is not installed. The browser binary should have been set up automatically — try restarting Wolffish so the capability can re-initialize.`
     }
   }
 }
@@ -154,7 +154,7 @@ function getPage(session, tabId) {
 async function browserLaunch(args, screenshotsDir) {
   const lib = await loadPlaywright()
   if (!lib) {
-    return { success: false, error: 'playwright-core is not installed. Run: npm install playwright-core' }
+    return { success: false, error: 'playwright-core is not installed. The browser capability needs its npm dependencies — this should resolve automatically on next launch.' }
   }
 
   const browserType = args?.browser || 'chromium'

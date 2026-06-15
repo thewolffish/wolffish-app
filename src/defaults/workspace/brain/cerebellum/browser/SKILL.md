@@ -719,8 +719,6 @@ Playwright auto-waits for elements to be visible and actionable before interacti
 
 ## Browser Installation
 
-This capability requires Chromium to be installed via Playwright. If the browser is not installed, tools will return an instruction to run:
-```
-npx playwright install chromium
-```
-This downloads ~150 MB. Firefox and WebKit can be installed similarly if needed.
+Chromium is installed automatically when this capability's npm dependencies are set up (via the `postinstall` script in `package.json`). This happens on first use — you do not need to install it manually.
+
+If `browser_launch` fails with a "not installed" error, restart Wolffish so the capability can re-initialize its dependencies. Do NOT run `npx playwright install` — that pulls an arbitrary version from npm and may cause a version mismatch.

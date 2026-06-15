@@ -498,7 +498,17 @@ async function ensureBundledCapabilities(): Promise<void> {
     await fs.cp(source, target, {
       recursive: true,
       force: true,
-      filter: (src) => !src.endsWith('.DS_Store')
+      filter: (src) => {
+        if (src.endsWith('.DS_Store')) return false
+        const rel = path.relative(source, src)
+        if (rel === 'node_modules' || rel.startsWith('node_modules' + path.sep)) return false
+        if (
+          rel === 'plugin' + path.sep + 'node_modules' ||
+          rel.startsWith('plugin' + path.sep + 'node_modules' + path.sep)
+        )
+          return false
+        return true
+      }
     })
   }
 }
