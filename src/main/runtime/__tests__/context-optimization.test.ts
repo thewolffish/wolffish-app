@@ -9,6 +9,7 @@
 
 import { effectivePayloadTokens } from '../compactor'
 import {
+  formatClock,
   formatRuntimeStatus,
   shapeOutbound,
   truncateSuperseded,
@@ -140,6 +141,27 @@ check(
   'status: states the loop mechanic',
   status.includes('a response without tool calls ends the task'),
   true
+)
+check('status: embeds the host clock', status.includes('Current date/time:'), true)
+
+// ---------------------------------------------------------------------------
+// formatClock — deterministic given (now, timeZone)
+// ---------------------------------------------------------------------------
+
+check(
+  'clock: weekday, ISO date, 24h time, offset, IANA zone',
+  formatClock(new Date('2026-06-15T11:34:00Z'), 'Asia/Riyadh'),
+  'Mon 2026-06-15 14:34 (GMT+03:00, Asia/Riyadh)'
+)
+check(
+  'clock: half-hour offset zone',
+  formatClock(new Date('2026-06-15T11:34:00Z'), 'Asia/Kolkata'),
+  'Mon 2026-06-15 17:04 (GMT+05:30, Asia/Kolkata)'
+)
+check(
+  'clock: DST-active negative offset zone',
+  formatClock(new Date('2026-06-15T11:34:00Z'), 'America/Los_Angeles'),
+  'Mon 2026-06-15 04:34 (GMT-07:00, America/Los_Angeles)'
 )
 
 // ---------------------------------------------------------------------------

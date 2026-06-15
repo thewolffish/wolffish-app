@@ -527,9 +527,11 @@ export class Agent {
           thinkingMode: turn.thinkingMode,
           cacheKey: turn.conversationId ?? turn.turnId,
           truncateOutbound,
-          // The live loop counters ride at the very end of the outbound
-          // clone — iteration 1 omits them so the first cache write is a
-          // clean prefix (the counters carry no information yet anyway).
+          // The live runtime tail (host clock + loop counters) rides at the
+          // very end of the outbound clone — omitted on iteration 1, as
+          // before, so the first cache write is a clean prefix. It renders
+          // strictly after every cache breakpoint (see anthropic.ts), so it
+          // never perturbs a prefix hash.
           volatileStatus:
             optimizeContext && iterationCount > 1
               ? formatRuntimeStatus({ iteration: iterationCount, toolsCalled: totalToolCalls })
