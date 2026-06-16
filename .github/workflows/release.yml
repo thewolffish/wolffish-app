@@ -82,7 +82,11 @@ jobs:
 
       - run: npm run build
 
-      - run: npx electron-builder --linux
+      # rpmbuild is required to emit .rpm on the Ubuntu runner; deb tooling ships with the image.
+      - name: Install RPM build tooling
+        run: sudo apt-get update && sudo apt-get install -y rpm
+
+      - run: npx electron-builder --linux AppImage deb rpm
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -91,6 +95,8 @@ jobs:
           name: linux-artifacts
           path: |
             dist/*.AppImage
+            dist/*.deb
+            dist/*.rpm
             dist/latest-linux.yml
 
   release:
@@ -115,6 +121,8 @@ jobs:
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
         run: |
           VERSION=${GITHUB_REF#refs/tags/}
+          # Recursive copy uploads every built artifact (.dmg/.exe/.AppImage/.deb/.rpm/.zip/.blockmap);
+          # latest*.yml manifests are excluded here and published to the bucket root below.
           aws s3 cp --endpoint-url "$R2_ENDPOINT" ./artifacts/ "s3://$R2_BUCKET/$VERSION/" --recursive --exclude "latest*.yml" --cache-control "public, max-age=31536000, immutable"
           sed -i "s|url: |url: $VERSION/|g" ./artifacts/latest-mac.yml
           sed -i "s|url: |url: $VERSION/|g" ./artifacts/latest.yml
@@ -132,6 +140,8 @@ jobs:
             artifacts/*.dmg
             artifacts/*.exe
             artifacts/*.AppImage
+            artifacts/*.deb
+            artifacts/*.rpm
             install/install.sh
             install/install.ps1
           generate_release_notes: true

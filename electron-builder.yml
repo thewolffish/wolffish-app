@@ -54,10 +54,32 @@ dmg:
   artifactName: ${name}-${version}.${ext}
 linux:
   icon: resources/icons-win/icons
+  # AppImage is the auto-update channel: electron-updater self-updates the AppImage in
+  # place via latest-linux.yml. deb/rpm install natively into the system app menu but
+  # CANNOT self-update — electron-updater can replace an AppImage, not run a package
+  # manager. deb/rpm users update by reinstalling. See .github/workflows/release.yml.
   target:
     - AppImage
-  maintainer: wolffi.sh
-  category: Utility
+    - deb
+    - rpm
+  maintainer: Younes Alturkey <younes@wolffi.sh>
+  vendor: wolffi.sh
+  # Drives the .desktop `Categories=` field (electron-builder appends the trailing ';').
+  # This is NOT the deb Section / rpm Group (those come from packageCategory), so a
+  # multi-value list here is safe and only affects application-menu placement.
+  category: Utility;Development
+  # Short summary — used as the deb short description and the rpm summary. The longer
+  # .desktop `Comment=` and the deb/rpm body description come from package.json#description.
+  synopsis: Personal AI agent that runs locally with full system access
+  desktop:
+    entry:
+      # Name and StartupWMClass both already default to productName ("Wolffish"); set
+      # explicitly so window grouping is guaranteed. Comment and Categories are deliberately
+      # NOT set here — electron-builder always overrides desktop.entry.Comment (from the app
+      # description) and desktop.entry.Categories (from `category` above), so those values
+      # live on the keys above instead of being silently dropped here.
+      Name: Wolffish
+      StartupWMClass: Wolffish
 appImage:
   artifactName: ${name}-${version}.${ext}
 npmRebuild: false
