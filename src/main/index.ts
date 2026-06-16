@@ -194,14 +194,21 @@ app.setAppLogsPath(join(WOLFFISH_ROOT, 'logs'))
 // chrome-sandbox helper needed in a packaged AppImage/deb. Must run before
 // app.whenReady(). Built-in safety lives in the amygdala approval gate.
 //
-// Do NOT also pass `--disable-setuid-sandbox`: that flag pushes Chromium toward
-// the *namespace* sandbox, and on hosts without unprivileged user namespaces it
-// leaves the <webview>/PDF/GPU guest processes in a half-initialized state —
-// the in-chat page viewer, PDF preview, and wolffish-media files all render
-// blank while the main window is fine. `--no-sandbox` alone (the same flag
-// `electron-vite ... --noSandbox` uses in dev, where the viewer works) avoids
-// that.
+// Do NOT also pass `--disable-setuid-sandbox`: it's redundant under
+// `--no-sandbox` and Linux-only, so it only muddies the flag set.
 app.commandLine.appendSwitch('no-sandbox')
+
+// Running unsandboxed, Chromium's guest/renderer processes allocate their
+// shared memory directly in /dev/shm instead of via the sandbox broker. On some
+// Linux hosts a guest process can't access /dev/shm from its context and dies
+// FATAL ("Creating shared memory in /dev/shm ... failed"), which leaves the
+// <webview> page viewer, PDF preview, and wolffish-media files BLANK while the
+// main window (already painted) looks fine. This bit packaged Linux only —
+// macOS/Windows don't use /dev/shm, and under the SUID sandbox (before we
+// disabled it) the broker handled the shared memory. `--disable-dev-shm-usage`
+// routes that shared memory to a regular temp file, fixing the blank guests
+// with no effect on the sudo/no_new_privs behavior above.
+app.commandLine.appendSwitch('disable-dev-shm-usage')
 
 // Single-instance guard: if Wolffish is already running (even collapsed to
 // tray), focus the existing window instead of showing a lockfile error.

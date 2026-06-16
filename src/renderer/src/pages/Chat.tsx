@@ -1537,7 +1537,7 @@ export function Chat(): React.JSX.Element {
                     'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
                   )}
                 >
-                  <span className="bg-accent inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-semibold tabular-nums text-black dark:text-white">
+                  <span className="bg-bg border-border text-fg inline-flex h-4 min-w-4 items-center justify-center rounded-full border px-1 text-[10px] font-semibold tabular-nums">
                     {timelineEntries.length}
                   </span>
                   {t('chat.timeline.viewLogs')}
@@ -3137,11 +3137,19 @@ function extractToolResultMedia(
     return { path: marker[1].trim(), type: marker[2] as 'audio' | 'video' }
   }
 
-  // Fallback: look for bare absolute paths with audio/video extensions
-  const audioMatch = output.match(/(\/[^\s",:)]+\.(?:mp3|wav|m4a|ogg|flac|aac|wma|opus))\b/i)
+  // Bare-path fallback for tools whose plain-text output is just a saved media
+  // path. Require the path to live inside the workspace — same restriction the
+  // image extractor uses — so incidental media URLs embedded in tool output
+  // (e.g. a web_search result snippet linking a .mp4) aren't mis-detected and
+  // rendered as a broken "deleted or unavailable" player.
+  const audioMatch = output.match(
+    /(\/[^\s",:)]*\.wolffish\/workspace\/[^\s",:)]+\.(?:mp3|wav|m4a|ogg|flac|aac|wma|opus))\b/i
+  )
   if (audioMatch) return { path: audioMatch[1], type: 'audio' }
 
-  const videoMatch = output.match(/(\/[^\s",:)]+\.(?:mp4|mov|avi|mkv|m4v|wmv|flv|webm))\b/i)
+  const videoMatch = output.match(
+    /(\/[^\s",:)]*\.wolffish\/workspace\/[^\s",:)]+\.(?:mp4|mov|avi|mkv|m4v|wmv|flv|webm))\b/i
+  )
   if (videoMatch) return { path: videoMatch[1], type: 'video' }
 
   return null
