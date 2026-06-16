@@ -619,7 +619,13 @@ export class Cerebellum {
       deps: Object.keys(cap.npmDependencies)
     })
 
-    const callId = `npm_${cap.name}_${Date.now().toString(36)}`
+    // Unique per emission. A bare timestamp can collide when the same
+    // capability's install is re-attempted (it's only marked done on success,
+    // so a failing install re-enters here), and two identical synthetic
+    // `tool_call_id`s in the replayed history make OpenAI-style providers
+    // (DeepSeek, etc.) reject the whole request with HTTP 400 "Duplicate
+    // value for 'tool_call_id'". The random suffix guarantees uniqueness.
+    const callId = `npm_${cap.name}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
     hook?.emitToolCall(callId, '__npm_install', {
       capability: cap.name,
       packages: cap.npmDependencies

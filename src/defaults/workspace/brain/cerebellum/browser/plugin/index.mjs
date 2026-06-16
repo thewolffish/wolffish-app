@@ -20,22 +20,103 @@ async function loadPlaywright() {
   }
 }
 
-async function checkBrowserInstalled(browserType) {
-  const lib = await loadPlaywright()
-  if (!lib) return { installed: false, reason: 'playwright-core is not installed. The browser capability needs its npm dependencies — this should resolve automatically on next launch.' }
+// True when Playwright's own bundled build for this engine is present on disk.
+async function bundledBrowserAvailable(bt) {
   try {
-    const bt = lib[browserType] || lib.chromium
     const execPath = bt.executablePath()
-    if (!execPath) throw new Error('no executable')
+    if (!execPath) return false
     const { access } = await import('node:fs/promises')
     await access(execPath)
-    return { installed: true }
+    return true
   } catch {
-    return {
-      installed: false,
-      reason: `${browserType} is not installed. The browser binary should have been set up automatically — try restarting Wolffish so the capability can re-initialize.`
+    return false
+  }
+}
+
+// Common install locations for a system Chrome / Edge / Chromium, per OS.
+// Used as a fallback when Playwright couldn't download its own Chromium
+// (e.g. on a brand-new Linux distro it doesn't recognize yet).
+function systemChromiumCandidates() {
+  if (process.platform === 'darwin') {
+    return [
+      '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+      '/Applications/Chromium.app/Contents/MacOS/Chromium',
+      '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge'
+    ]
+  }
+  if (process.platform === 'win32') {
+    const pf = process.env['PROGRAMFILES'] || 'C:\\Program Files'
+    const pf86 = process.env['PROGRAMFILES(X86)'] || 'C:\\Program Files (x86)'
+    const local = process.env['LOCALAPPDATA'] || ''
+    const list = [
+      path.join(pf, 'Google\\Chrome\\Application\\chrome.exe'),
+      path.join(pf86, 'Google\\Chrome\\Application\\chrome.exe'),
+      path.join(pf, 'Microsoft\\Edge\\Application\\msedge.exe'),
+      path.join(pf86, 'Microsoft\\Edge\\Application\\msedge.exe')
+    ]
+    if (local) list.unshift(path.join(local, 'Google\\Chrome\\Application\\chrome.exe'))
+    return list
+  }
+  return [
+    '/usr/bin/google-chrome',
+    '/usr/bin/google-chrome-stable',
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+    '/snap/bin/chromium',
+    '/usr/bin/microsoft-edge'
+  ]
+}
+
+// Find the first system Chromium-family executable that exists on disk.
+async function findSystemChromium() {
+  const { access } = await import('node:fs/promises')
+  for (const candidate of systemChromiumCandidates()) {
+    if (!candidate) continue
+    try {
+      await access(candidate)
+      return candidate
+    } catch {
+      // keep looking
     }
   }
+  return null
+}
+
+// Launch a browser, preferring Playwright's bundled build but transparently
+// falling back to a system-installed Chrome/Edge/Chromium when it's missing.
+// Only chromium has a borrowable system equivalent; firefox/webkit must use
+// the bundled build.
+async function launchBrowser(bt, browserType, launchOpts) {
+  if (await bundledBrowserAvailable(bt)) {
+    return bt.launch(launchOpts)
+  }
+
+  if (browserType === 'chromium') {
+    // 1. Let Playwright discover a system Chrome/Edge via its channel support
+    //    (cross-platform, handles registry/app-bundle lookups for us).
+    for (const channel of ['chrome', 'msedge', 'chromium']) {
+      try {
+        return await bt.launch({ ...launchOpts, channel })
+      } catch {
+        // try the next channel
+      }
+    }
+    // 2. Fall back to an explicit executable we located on disk.
+    const execPath = await findSystemChromium()
+    if (execPath) {
+      return bt.launch({ ...launchOpts, executablePath: execPath })
+    }
+    throw new Error(
+      'No usable Chromium found. Playwright’s bundled build is not installed and no system ' +
+        'Chrome / Edge / Chromium was detected. Install Google Chrome and try again, or run ' +
+        '"npx playwright-core install chromium" if your OS is supported.'
+    )
+  }
+
+  throw new Error(
+    `${browserType} is not installed. Restart Wolffish so the capability can re-download it, ` +
+      `or run "npx playwright-core install ${browserType}".`
+  )
 }
 
 function resolveUserPath(p, workspaceRoot) {
@@ -158,15 +239,16 @@ async function browserLaunch(args, screenshotsDir) {
   }
 
   const browserType = args?.browser || 'chromium'
-  const check = await checkBrowserInstalled(browserType)
-  if (!check.installed) {
-    return { success: false, error: check.reason }
-  }
-
   const bt = lib[browserType] || lib.chromium
-  const browser = await bt.launch({
-    headless: args?.headless === true
-  })
+
+  let browser
+  try {
+    browser = await launchBrowser(bt, browserType, {
+      headless: args?.headless === true
+    })
+  } catch (err) {
+    return { success: false, error: err?.message ?? String(err) }
+  }
 
   const context = await browser.newContext({
     viewport: {

@@ -5,9 +5,9 @@
   "type": "module",
   "description": "Wolffish browser automation capability — runtime npm dependencies installed lazily on first use.",
   "dependencies": {
-    "playwright-core": "1.60.0"
+    "playwright-core": "1.49.1"
   },
   "scripts": {
-    "postinstall": "playwright-core install chromium"
+    "postinstall": "node install.mjs"
   }
 }

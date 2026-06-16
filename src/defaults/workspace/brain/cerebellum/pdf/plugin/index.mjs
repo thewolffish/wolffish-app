@@ -235,6 +235,7 @@ async function pdfRead(args) {
 
     const info = parser.getInfo() || {}
     const result = {
+      path: filePath,
       pages: totalPages,
       metadata: {
         title: info.Title || null,

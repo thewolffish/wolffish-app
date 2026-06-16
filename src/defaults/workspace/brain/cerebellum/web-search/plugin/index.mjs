@@ -54,6 +54,11 @@ const toolDefinitions = [
         maxLength: {
           type: 'number',
           description: 'Maximum characters to return (default 15000)'
+        },
+        timeout: {
+          type: 'number',
+          description:
+            'Optional. Seconds to wait before giving up on a slow or unresponsive page. Omit to wait indefinitely (no timeout).'
         }
       },
       required: ['url']
@@ -79,11 +84,32 @@ function unwrapDdgUrl(url) {
   return url
 }
 
-async function fetchWithTimeout(url, options, timeoutMs = 30_000) {
+// Fetch with an OPTIONAL timeout. We never impose a timeout by default — the
+// request runs to completion unless a caller explicitly passes `timeoutMs`
+// (e.g. the web_fetch tool, when the model asks for one). This keeps timeouts
+// a deliberate choice rather than a hard-coded limit.
+async function fetchWithTimeout(url, options, timeoutMs) {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return fetch(url, options)
+  }
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  let timedOut = false
+  const timer = setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, timeoutMs)
   try {
     return await fetch(url, { ...options, signal: controller.signal })
+  } catch (err) {
+    // Distinguish our timeout abort from other fetch errors so callers can
+    // surface a clear, classifiable message ("timed out") rather than the
+    // opaque "This operation was aborted".
+    if (timedOut) {
+      const e = new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s`)
+      e.name = 'TimeoutError'
+      throw e
+    }
+    throw err
   } finally {
     clearTimeout(timer)
   }
@@ -339,6 +365,10 @@ async function executeFetch(args) {
 
   const maxLength = Number(args?.maxLength) || DEFAULT_MAX_LENGTH
 
+  // No timeout unless the model explicitly asks for one (in seconds).
+  const timeoutSec = Number(args?.timeout)
+  const timeoutMs = Number.isFinite(timeoutSec) && timeoutSec > 0 ? timeoutSec * 1000 : undefined
+
   let response
   try {
     response = await fetchWithTimeout(
@@ -351,10 +381,11 @@ async function executeFetch(args) {
         },
         redirect: 'follow'
       },
+      timeoutMs
     )
   } catch (err) {
-    if (err?.name === 'AbortError') {
-      return { success: false, error: 'Request aborted' }
+    if (err?.name === 'TimeoutError') {
+      return { success: false, error: err.message }
     }
     return { success: false, error: `Fetch failed: ${err?.message ?? err}` }
   }

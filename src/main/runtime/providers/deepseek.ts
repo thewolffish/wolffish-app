@@ -222,12 +222,23 @@ function userContentToDeepSeek(content: string | UserContentBlock[]): string | u
 
 function toMessages(messages: ChatMessage[]): Array<Record<string, unknown>> {
   const out: Array<Record<string, unknown>> = []
+  // DeepSeek (OpenAI-style) rejects the whole request with HTTP 400 if a
+  // `tool_call_id` appears more than once, or if a tool result references an
+  // id that was never declared. Replayed history can contain such anomalies
+  // (e.g. a synthetic install call recorded twice), so we repair the stream
+  // here: keep the first declaration/result for each id and drop duplicates
+  // and orphans. Well-formed histories pass through unchanged.
+  const declaredCallIds = new Set<string>()
+  const resultedCallIds = new Set<string>()
   for (const m of messages) {
     if (m.role === 'system') continue
     if (m.role === 'tool') {
+      const id = m.toolUseId
+      if (!id || !declaredCallIds.has(id) || resultedCallIds.has(id)) continue
+      resultedCallIds.add(id)
       out.push({
         role: 'tool',
-        tool_call_id: m.toolUseId,
+        tool_call_id: id,
         content: m.content
       })
       continue
@@ -237,18 +248,28 @@ function toMessages(messages: ChatMessage[]): Array<Record<string, unknown>> {
       continue
     }
     if (m.toolUses && m.toolUses.length > 0) {
-      const msg: Record<string, unknown> = {
-        role: 'assistant',
-        content: m.content && m.content.length > 0 ? m.content : null,
-        tool_calls: m.toolUses.map((use) => ({
-          id: use.id,
-          type: 'function',
-          function: {
-            name: use.name,
-            arguments: JSON.stringify(use.args)
-          }
-        }))
-      }
+      const uniqueUses = m.toolUses.filter((use) => {
+        if (declaredCallIds.has(use.id)) return false
+        declaredCallIds.add(use.id)
+        return true
+      })
+      const msg: Record<string, unknown> =
+        uniqueUses.length > 0
+          ? {
+              role: 'assistant',
+              content: m.content && m.content.length > 0 ? m.content : null,
+              tool_calls: uniqueUses.map((use) => ({
+                id: use.id,
+                type: 'function',
+                function: {
+                  name: use.name,
+                  arguments: JSON.stringify(use.args)
+                }
+              }))
+            }
+          : // Every tool call was a duplicate — drop the (invalid) empty
+            // tool_calls array but keep any text so the turn isn't lost.
+            { role: 'assistant', content: m.content && m.content.length > 0 ? m.content : '' }
       if (m.reasoningContent) msg.reasoning_content = m.reasoningContent
       out.push(msg)
     } else {
