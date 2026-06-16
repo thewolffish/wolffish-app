@@ -49,7 +49,7 @@ usage() {
   printf "Options:\n"
   printf "  --help       Show this help message\n"
   printf "  --version    Print the latest available version and exit\n"
-  printf "\nInstalls Wolffish on macOS (.dmg), Linux (.AppImage), or Windows (.exe).\n"
+  printf "\nInstalls Wolffish on macOS (.dmg), Linux (.deb/.rpm/.AppImage), or Windows (.exe).\n"
   exit 0
 }
 
@@ -180,14 +180,88 @@ install_macos() {
   info "You can launch it from Spotlight or run: open /Applications/$app_name"
 }
 
-install_linux() {
-  local appimage_path="$1"
+# True if we can run a command as root (already root, or sudo is available).
+can_root() {
+  [ "$(id -u)" -eq 0 ] && return 0
+  command -v sudo >/dev/null 2>&1
+}
+
+# Run a command as root — directly when already root, otherwise via sudo.
+as_root() {
+  if [ "$(id -u)" -eq 0 ]; then
+    "$@"
+  else
+    sudo "$@"
+  fi
+}
+
+# Native package format for this distro, chosen by available package manager.
+# deb covers Debian/Ubuntu/Mint/Pop!_OS/etc.; rpm covers Fedora/RHEL/openSUSE/etc.;
+# anything else (e.g. Arch) gets the portable AppImage.
+detect_linux_format() {
+  if command -v apt-get >/dev/null 2>&1 || command -v dpkg >/dev/null 2>&1; then
+    echo deb
+  elif command -v dnf >/dev/null 2>&1 || command -v zypper >/dev/null 2>&1 \
+    || command -v yum >/dev/null 2>&1 || command -v rpm >/dev/null 2>&1; then
+    echo rpm
+  else
+    echo AppImage
+  fi
+}
+
+# Pick the best artifact to install: the native .deb/.rpm when we can actually
+# install it (supported package manager AND root AND the release ships it),
+# otherwise the portable AppImage, which installs under $HOME with no root.
+choose_linux_extension() {
+  local manifest="$1" fmt
+  fmt=$(detect_linux_format)
+  if [ "$fmt" != "AppImage" ]; then
+    if ! can_root; then
+      fmt="AppImage"
+    elif [ -z "$(parse_url "$manifest" "$fmt")" ]; then
+      fmt="AppImage"
+    fi
+  fi
+  echo "$fmt"
+}
+
+# Install a .deb via apt (resolves dependencies); fall back to dpkg + apt -f.
+install_deb() {
+  info "Installing the Debian package (you may be prompted for your password)..."
+  if command -v apt-get >/dev/null 2>&1; then
+    if ! as_root apt-get install -y "$1"; then
+      as_root dpkg -i "$1" || true
+      as_root apt-get install -f -y || return 1
+    fi
+  else
+    as_root dpkg -i "$1" || return 1
+  fi
+  ok "Wolffish installed — find it in your application menu or run: wolffish"
+}
+
+# Install a .rpm via the system package manager (resolves dependencies).
+install_rpm() {
+  info "Installing the RPM package (you may be prompted for your password)..."
+  if command -v dnf >/dev/null 2>&1; then
+    as_root dnf install -y "$1" || return 1
+  elif command -v zypper >/dev/null 2>&1; then
+    as_root zypper --non-interactive install --allow-unsigned-rpm "$1" || return 1
+  elif command -v yum >/dev/null 2>&1; then
+    as_root yum install -y "$1" || return 1
+  else
+    as_root rpm -i "$1" || return 1
+  fi
+  ok "Wolffish installed — find it in your application menu or run: wolffish"
+}
+
+# Portable AppImage: install to ~/.local/bin (no root needed). Universal fallback.
+install_appimage() {
   local install_dir="$HOME/.local/bin"
 
   mkdir -p "$install_dir"
 
   info "Installing to $install_dir/wolffish..."
-  cp "$appimage_path" "$install_dir/wolffish"
+  cp "$1" "$install_dir/wolffish"
   chmod +x "$install_dir/wolffish"
 
   ok "Wolffish installed to $install_dir/wolffish"
@@ -198,6 +272,27 @@ install_linux() {
   fi
 
   info "Launch with: wolffish"
+}
+
+# Dispatch to the right installer for the chosen artifact. If a native package
+# install fails, best-effort fall back to the portable AppImage.
+install_linux() {
+  local path="$1" ext="$2" manifest="$3" os="$4" ai_url ai_file ai_sha
+
+  case "$ext" in
+    deb) install_deb "$path" && return 0 ;;
+    rpm) install_rpm "$path" && return 0 ;;
+    *)   install_appimage "$path"; return $? ;;
+  esac
+
+  warn "Native package install failed; falling back to the portable AppImage..."
+  ai_url=$(parse_url "$manifest" "AppImage")
+  [ -n "$ai_url" ] || die "No AppImage available to fall back to"
+  ai_file="$TEMP_DIR/$(basename "$ai_url")"
+  download_file "$RELEASES_BASE/$ai_url" "$ai_file"
+  ai_sha=$(parse_sha512 "$manifest" "$(basename "$ai_url")")
+  [ -n "$ai_sha" ] && verify_checksum "$ai_file" "$ai_sha" "$os"
+  install_appimage "$ai_file"
 }
 
 install_windows() {
@@ -240,7 +335,8 @@ main() {
       ;;
     linux)
       manifest=$(fetch_manifest "$RELEASES_BASE/latest-linux.yml")
-      extension="AppImage"
+      extension=$(choose_linux_extension "$manifest")
+      info "Selected Linux package: .$extension"
       ;;
     windows)
       manifest=$(fetch_manifest "$RELEASES_BASE/latest.yml")
@@ -279,7 +375,7 @@ main() {
 
   case "$os" in
     macos)   install_macos "$dest" ;;
-    linux)   install_linux "$dest" ;;
+    linux)   install_linux "$dest" "$extension" "$manifest" "$os" ;;
     windows) install_windows "$dest" ;;
   esac
 
