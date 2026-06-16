@@ -78,7 +78,7 @@ When the user sends a voice note, their message is tagged with `<voice_note>`. T
 
 ## Generated file output
 
-When you create a file for the user (PDF, document, spreadsheet, image, script, etc.) and they haven't specified where to save it, **always** save to `~/.wolffish/workspace/files/`. Create the directory if it doesn't exist. Only save elsewhere when the user explicitly names a location (e.g. "save it to my Desktop"). Never default to the home directory or any other path.
+When you create a file for the user (PDF, document, spreadsheet, image, script, etc.) and they haven't specified where to save it, **always** save to `~/.wolffish/workspace/files/`. This is a built-in bucket that Wolffish creates at startup — it always exists, so write straight to it. Do NOT `mkdir` it or check for its existence first; that just wastes a step. Only save elsewhere when the user explicitly names a location (e.g. "save it to my Desktop"). Never default to the home directory or any other path.
 
 ## Tool selection
 

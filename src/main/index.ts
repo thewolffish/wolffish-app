@@ -189,13 +189,19 @@ app.setAppLogsPath(join(WOLFFISH_ROOT, 'logs'))
 // works against that: on Linux it sets the kernel's no_new_privs flag on the
 // main process, which the kernel then uses to ignore the setuid bit on `sudo`
 // and `pkexec` — so EVERY elevation a plugin spawns fails with
-// `sudo: The "no new privileges" flag is set`. We deliberately run with no
-// sandbox so the agent has unrestricted system access (and so a packaged
-// AppImage needs no setuid chrome-sandbox helper). Must run before
-// app.whenReady(). Built-in safety lives in the amygdala approval gate, not the
-// Chromium sandbox.
+// `sudo: The "no new privileges" flag is set`. `--no-sandbox` runs every
+// process unsandboxed: no no_new_privs (sudo works) and no setuid
+// chrome-sandbox helper needed in a packaged AppImage/deb. Must run before
+// app.whenReady(). Built-in safety lives in the amygdala approval gate.
+//
+// Do NOT also pass `--disable-setuid-sandbox`: that flag pushes Chromium toward
+// the *namespace* sandbox, and on hosts without unprivileged user namespaces it
+// leaves the <webview>/PDF/GPU guest processes in a half-initialized state —
+// the in-chat page viewer, PDF preview, and wolffish-media files all render
+// blank while the main window is fine. `--no-sandbox` alone (the same flag
+// `electron-vite ... --noSandbox` uses in dev, where the viewer works) avoids
+// that.
 app.commandLine.appendSwitch('no-sandbox')
-app.commandLine.appendSwitch('disable-setuid-sandbox')
 
 // Single-instance guard: if Wolffish is already running (even collapsed to
 // tray), focus the existing window instead of showing a lockfile error.

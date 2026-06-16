@@ -11,7 +11,7 @@ const MAX_OUTPUT = 50_000
 // Pinned LTS used only when nodejs.org/dist/index.json can't be reached (offline
 // no-root install). The live index is preferred; this just keeps the fallback
 // pointing at a real release.
-const FALLBACK_NODE_VERSION = 'v22.11.0'
+const FALLBACK_NODE_VERSION = 'v24.16.0'
 
 // Injected at plugin init by the main process: the shared in-memory sudo
 // session (one reusable admin password) and the workspace root (used to derive
@@ -251,7 +251,7 @@ function distTriplet() {
   return null
 }
 
-/** Newest LTS version string (e.g. "v22.11.0"); pinned fallback when offline. */
+/** Newest LTS version string (e.g. "v24.16.0"); pinned fallback when offline. */
 async function latestLtsVersion() {
   try {
     const res = await fetch('https://nodejs.org/dist/index.json', { signal: AbortSignal.timeout(20_000) })
