@@ -184,6 +184,19 @@ const WOLFFISH_ROOT = join(os.homedir(), '.wolffish')
 app.setPath('userData', join(WOLFFISH_ROOT, 'runtime'))
 app.setAppLogsPath(join(WOLFFISH_ROOT, 'logs'))
 
+// Wolffish is a full-access local agent — it runs shell commands, installs
+// software, and elevates with sudo on the user's behalf. Chromium's sandbox
+// works against that: on Linux it sets the kernel's no_new_privs flag on the
+// main process, which the kernel then uses to ignore the setuid bit on `sudo`
+// and `pkexec` — so EVERY elevation a plugin spawns fails with
+// `sudo: The "no new privileges" flag is set`. We deliberately run with no
+// sandbox so the agent has unrestricted system access (and so a packaged
+// AppImage needs no setuid chrome-sandbox helper). Must run before
+// app.whenReady(). Built-in safety lives in the amygdala approval gate, not the
+// Chromium sandbox.
+app.commandLine.appendSwitch('no-sandbox')
+app.commandLine.appendSwitch('disable-setuid-sandbox')
+
 // Single-instance guard: if Wolffish is already running (even collapsed to
 // tray), focus the existing window instead of showing a lockfile error.
 if (!app.requestSingleInstanceLock()) {

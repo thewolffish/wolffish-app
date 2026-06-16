@@ -127,6 +127,18 @@ Many Windows system tools (`diskpart`, `bcdedit`, `sfc`, `DISM`, `netsh`, `chkds
 
 See the shell skill (`brain/cerebellum/.shell/SKILL.md`) for full Windows PowerShell guidance including command syntax, diskpart patterns, and common pitfalls.
 
+### Installing software (use the capability tools, not raw sudo)
+
+1. **Install through the capability tools.** Use `node_install` for Node.js and
+   `pkg_install` for everything else. They run through the shared admin-password
+   session (one native prompt, reused) and the approval gate — and `node_install`
+   falls back to a no-root copy under `~/.wolffish/bin` if the system install
+   can't run. Don't shell out to `sudo apt install` / `pkexec` / `brew` /
+   `winget` yourself to install something a capability already covers.
+2. **A permission or "password prompt cancelled" error is non-retryable.** Stop
+   and report it; don't re-run the same command or try a manual `sudo` workaround.
+3. For Node specifically, `node_check` then `node_install` is the whole flow.
+
 ## After a tool runs
 
 When a tool returns output, write a brief reply for the user explaining

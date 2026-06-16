@@ -84,8 +84,13 @@ export type ToolError = {
   category: ErrorCategory
 }
 
+// "no new privileges" — a process under a no_new_privs sandbox (e.g. the
+//   packaged Electron app) where the kernel ignores the setuid bit, so sudo and
+//   pkexec can never elevate; retrying the install just re-fires the same wall.
+// "dismissed the password" / "password prompt cancelled" — the user declined
+//   the elevation dialog; a blind retry can't change that decision.
 const PERMISSION_RE =
-  /permission denied|access denied|need sudo|not permitted|not authorized|EACCES|EPERM|requires admin|requires root|operation not permitted|insufficient privileges|Failed to get sources|assistive access|HTTP 401\b|HTTP 403\b|HTTP 451\b|\bForbidden\b|\bUnauthorized\b|a terminal is required|no tty present/i
+  /permission denied|access denied|need sudo|not permitted|not authorized|EACCES|EPERM|requires admin|requires root|operation not permitted|insufficient privileges|Failed to get sources|assistive access|HTTP 401\b|HTTP 403\b|HTTP 451\b|\bForbidden\b|\bUnauthorized\b|a terminal is required|no tty present|no new privileges|dismissed the password|password prompt cancelled|password prompt\b/i
 // Windows cmd.exe and PowerShell both emit "syntax is incorrect" when a
 // command line is malformed (typically unresolved %ENV% expansion or
 // quoting errors). Treat the same way as EINVAL — retrying the exact

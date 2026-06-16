@@ -73,17 +73,12 @@ triggers:
   - npm build
 requires:
   - package-manager
-packages:
-  brew: node
-  winget_id: OpenJS.NodeJS.LTS
-  apt: nodejs
-  dnf: nodejs
 tools:
   - name: node_check
     description: Check if Node.js is installed
     parameters: {}
   - name: node_install
-    description: Install Node.js via the system package manager
+    description: Install Node.js (system package manager, or a no-root local copy if elevation is unavailable)
     parameters: {}
 confirm_patterns:
   - pattern: "node_install"
@@ -95,6 +90,17 @@ confirm_patterns:
 ## Usage
 
 Use `node_check` to verify Node.js is installed and get the version.
-If not installed, call `node_install` (requires user approval).
+If not installed, call `node_install` (requires user approval) — and trust it.
+`node_install` installs Node through the system package manager first (Homebrew
+on macOS, apt/dnf on Linux, winget on Windows), prompting once for the admin
+password when needed. Only if that can't run does it fall back to an official
+no-root copy under `~/.wolffish/bin`. The system path is preferred because
+Homebrew/apt also make the rest of the software ecosystem available.
+
+Do NOT install Node yourself with raw `shell_exec` `sudo apt install nodejs` (or
+`pkexec`/`brew`/`winget`). Use `node_install` — it routes through the shared
+password session and the approval gate. If it returns a permission or
+"password prompt cancelled" error, surface it; that error is deterministic, so
+don't retry the same command.
 
 Once installed, use the `shell_exec` tool for `node`, `npm`, and `npx` commands.

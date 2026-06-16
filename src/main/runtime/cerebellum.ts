@@ -1180,7 +1180,23 @@ function refreshPath(): void {
       stdio: ['ignore', 'pipe', 'ignore']
     })
     const resolved = raw.match(/__WFPATH__(.+?)__WFPATH__/)?.[1]
-    if (resolved && resolved.includes(':')) process.env.PATH = resolved
+    if (resolved && resolved.includes(':')) {
+      // Merge, don't replace. The current PATH may hold session-only entries
+      // not in the login shell — Electron startup additions, or a no-root
+      // runtime dir a plugin (e.g. node) appended after installing without
+      // root. Overwriting would drop them and make the just-installed binary
+      // vanish. Keep existing entries (and their precedence) and append any
+      // new dirs the login shell reports.
+      const current = (process.env.PATH ?? '').split(':').filter(Boolean)
+      const seen = new Set(current)
+      for (const dir of resolved.split(':')) {
+        if (dir && !seen.has(dir)) {
+          seen.add(dir)
+          current.push(dir)
+        }
+      }
+      process.env.PATH = current.join(':')
+    }
   } catch {
     // best-effort
   }

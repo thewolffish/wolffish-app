@@ -1,9 +1,23 @@
 import { execFile, spawn } from 'node:child_process'
+import { access, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 import { promisify } from 'node:util'
 
 const execFileP = promisify(execFile)
 
 const MAX_OUTPUT = 50_000
+
+// Pinned LTS used only when nodejs.org/dist/index.json can't be reached (offline
+// no-root install). The live index is preferred; this just keeps the fallback
+// pointing at a real release.
+const FALLBACK_NODE_VERSION = 'v22.11.0'
+
+// Injected at plugin init by the main process: the shared in-memory sudo
+// session (one reusable admin password) and the workspace root (used to derive
+// where a no-root Node copy lives). Absent in unit tests / non-Electron hosts.
+let sudoCtx = null
+let workspaceRoot = ''
 
 async function which(cmd) {
   try {
@@ -15,13 +29,94 @@ async function which(cmd) {
   }
 }
 
+async function fileExists(p) {
+  try {
+    await access(p)
+    return true
+  } catch {
+    return false
+  }
+}
+
 function clampOutput(buf, chunk) {
   if (buf.length >= MAX_OUTPUT) return buf
   return buf + chunk.toString().slice(0, MAX_OUTPUT - buf.length)
 }
 
+/** Spawn a command, collect stdout/stderr, never reject. */
+function runSpawn(cmd, args, env = process.env) {
+  return new Promise((resolve) => {
+    let child
+    try {
+      child = spawn(cmd, args, { env, stdio: ['ignore', 'pipe', 'pipe'] })
+    } catch (err) {
+      resolve({ code: -1, stdout: '', stderr: err?.message ?? String(err) })
+      return
+    }
+    let stdout = ''
+    let stderr = ''
+    child.stdout?.on('data', (c) => {
+      stdout = clampOutput(stdout, c)
+    })
+    child.stderr?.on('data', (c) => {
+      stderr = clampOutput(stderr, c)
+    })
+    child.on('close', (code) => resolve({ code: code ?? -1, stdout, stderr }))
+    child.on('error', (err) =>
+      resolve({ code: -1, stdout, stderr: stderr + '\n' + (err?.message ?? String(err)) })
+    )
+  })
+}
+
+// ---------------------------------------------------------------------------
+// No-root install location. A system install is always preferred (Node ends up
+// globally visible and Homebrew/apt unlock the wider software ecosystem). The
+// userspace copy is only a last-resort fallback — most users never hit it. Local
+// packages such as Node live under ~/.wolffish/bin (a sibling of the workspace,
+// alongside any other no-root tools), so the tree sits at ~/.wolffish/bin/node.
+// ---------------------------------------------------------------------------
+
+function binBase() {
+  if (workspaceRoot) return path.join(path.dirname(workspaceRoot), 'bin')
+  return path.join(os.homedir(), '.wolffish', 'bin')
+}
+function nodeHome() {
+  return path.join(binBase(), 'node')
+}
+function localBinDir() {
+  // Windows tarballs put node.exe at the package root; POSIX uses a bin/ subdir.
+  return process.platform === 'win32' ? nodeHome() : path.join(nodeHome(), 'bin')
+}
+function localNodeBinary() {
+  return path.join(localBinDir(), process.platform === 'win32' ? 'node.exe' : 'node')
+}
+
+/**
+ * Make the no-root Node visible to every subsequent spawn (node_check's
+ * `which`, shell_exec's `/bin/sh -c`, npm install — all inherit process.env).
+ * Appended, never prepended, so a system or nvm-managed node always wins and
+ * the local copy never shadows a node the user installs later.
+ */
+function ensureLocalOnPath() {
+  const sep = process.platform === 'win32' ? ';' : ':'
+  const dir = localBinDir()
+  const entries = (process.env.PATH ?? '').split(sep).filter(Boolean)
+  if (!entries.includes(dir)) {
+    entries.push(dir)
+    process.env.PATH = entries.join(sep)
+  }
+}
+
 async function nodeCheck() {
-  const nodePath = await which('node')
+  // Prefer whatever already resolves (system, nvm, or a local copy still on
+  // PATH from a previous install this session). Only consult the userspace copy
+  // when nothing else provides node, and re-attach it to PATH so it survives a
+  // fresh app start.
+  let nodePath = await which('node')
+  if (!nodePath && (await fileExists(localNodeBinary()))) {
+    ensureLocalOnPath()
+    nodePath = localNodeBinary()
+  }
   if (!nodePath) {
     return { success: true, output: JSON.stringify({ installed: false, version: '' }) }
   }
@@ -33,87 +128,213 @@ async function nodeCheck() {
   }
 }
 
-async function nodeInstall() {
-  const platform = process.platform
-  let cmd, args
+// ---------------------------------------------------------------------------
+// System install — the preferred path. brew on macOS, winget on Windows,
+// apt/dnf on Linux.
+// ---------------------------------------------------------------------------
 
-  if (platform === 'darwin') {
-    const brewPath =
-      process.arch === 'arm64' ? '/opt/homebrew/bin/brew' : '/usr/local/bin/brew'
-    try {
-      await execFileP(brewPath, ['--version'])
-      cmd = brewPath
-      args = ['install', 'node']
-    } catch {
-      const found = await which('brew')
-      if (found) {
-        cmd = found
-        args = ['install', 'node']
-      } else {
-        return {
-          success: false,
-          error: 'Homebrew is not installed. Install it first with pkg_install_manager.'
-        }
-      }
-    }
-  } else if (platform === 'win32') {
-    cmd = 'winget'
-    args = [
-      'install',
-      '--id',
-      'OpenJS.NodeJS.LTS',
-      '-e',
-      '--accept-source-agreements',
-      '--accept-package-agreements'
-    ]
-  } else {
-    const aptPath = await which('apt')
-    if (aptPath) {
-      cmd = 'sudo'
-      args = ['apt', 'install', '-y', 'nodejs']
-    } else {
-      const dnfPath = await which('dnf')
-      if (dnfPath) {
-        cmd = 'sudo'
-        args = ['dnf', 'install', '-y', 'nodejs']
-      } else {
-        return { success: false, error: 'No supported package manager found (apt or dnf).' }
-      }
+async function brewPath() {
+  const p = process.arch === 'arm64' ? '/opt/homebrew/bin/brew' : '/usr/local/bin/brew'
+  if (await fileExists(p)) return p
+  return which('brew')
+}
+
+async function macSystemInstall() {
+  const brew = await brewPath()
+  // Don't try to install Homebrew here (that itself needs sudo) — if brew is
+  // absent we let the no-root fallback handle it.
+  if (!brew) return { success: false, error: 'Homebrew is not installed' }
+  const r = await runSpawn(brew, ['install', 'node'])
+  if (r.code === 0) {
+    return { success: true, output: (r.stdout + '\n' + r.stderr).trim() || 'Node.js installed via Homebrew' }
+  }
+  return { success: false, error: `brew install node failed (exit ${r.code}): ${(r.stderr || r.stdout).slice(0, 300)}` }
+}
+
+async function winSystemInstall() {
+  if (!(await which('winget'))) return { success: false, error: 'winget is not available' }
+  const r = await runSpawn('winget', [
+    'install',
+    '--id',
+    'OpenJS.NodeJS.LTS',
+    '-e',
+    '--accept-source-agreements',
+    '--accept-package-agreements'
+  ])
+  if (r.code === 0) {
+    return { success: true, output: (r.stdout + '\n' + r.stderr).trim() || 'Node.js installed via winget' }
+  }
+  return { success: false, error: `winget install failed (exit ${r.code}): ${(r.stderr || r.stdout).slice(0, 300)}` }
+}
+
+/**
+ * True when the process runs under a no-new-privileges sandbox (e.g. the
+ * packaged AppImage under Chromium's SUID sandbox). The kernel then ignores the
+ * setuid bit, so BOTH `sudo` and `pkexec` (both setuid-root) can't elevate —
+ * detecting it lets us skip a doomed password prompt and go straight to the
+ * no-root install.
+ */
+async function noNewPrivsBlocksSudo() {
+  if (process.platform !== 'linux') return false
+  try {
+    const status = await readFile('/proc/self/status', 'utf8')
+    return /^NoNewPrivs:\s*1\b/m.test(status)
+  } catch {
+    return false
+  }
+}
+
+async function linuxSystemInstall() {
+  const manager = (await which('apt')) ? 'apt' : (await which('dnf')) ? 'dnf' : null
+  if (!manager) return { success: false, error: 'no supported package manager (apt or dnf)' }
+  const installArgs = [manager, 'install', '-y', 'nodejs']
+
+  if (await noNewPrivsBlocksSudo()) {
+    return {
+      success: false,
+      error: 'no-new-privileges sandbox blocks sudo and pkexec elevation'
     }
   }
 
-  return new Promise((resolve) => {
-    const child = spawn(cmd, args, {
-      env: process.env,
-      stdio: ['ignore', 'pipe', 'pipe']
-    })
-
-    let stdout = ''
-    let stderr = ''
-
-    child.stdout?.on('data', (c) => {
-      stdout = clampOutput(stdout, c)
-    })
-    child.stderr?.on('data', (c) => {
-      stderr = clampOutput(stderr, c)
-    })
-
-    child.on('close', (code) => {
-      const output = (stdout + '\n' + stderr).trim()
-      if (code === 0) {
-        resolve({ success: true, output: output || 'Node.js installed successfully' })
-      } else {
-        resolve({
-          success: false,
-          error: `Installation failed (exit ${code}): ${output.slice(0, 500)}`
-        })
+  // Preferred: the shared in-memory sudo session — prompts once, reuses the
+  // password already entered for other commands.
+  if (sudoCtx) {
+    const auth = await sudoCtx.ensurePassword()
+    if (auth.ok) {
+      const env = { ...process.env, ...sudoCtx.getElevatedEnv() }
+      const r = await runSpawn('sudo', ['-A', ...installArgs], env)
+      if (r.code === 0) {
+        return { success: true, output: (r.stdout + '\n' + r.stderr).trim() || 'Node.js installed' }
       }
-    })
+      return {
+        success: false,
+        error: `sudo ${manager} install failed (exit ${r.code}): ${(r.stderr || r.stdout).slice(0, 300)}`
+      }
+    }
+    if (auth.cancelled) return { success: false, error: 'admin password prompt cancelled' }
+    if (!auth.unsupported) return { success: false, error: auth.error ?? 'sudo authentication failed' }
+    // auth.unsupported → fall through to pkexec
+  }
 
-    child.on('error', (err) => {
-      resolve({ success: false, error: err.message })
-    })
-  })
+  // Fallback within the system path: pkexec's GUI polkit prompt.
+  const pkexec = await which('pkexec')
+  if (pkexec) {
+    const r = await runSpawn(pkexec, installArgs)
+    if (r.code === 0) {
+      return { success: true, output: (r.stdout + '\n' + r.stderr).trim() || 'Node.js installed' }
+    }
+    return { success: false, error: `pkexec ${manager} install failed (exit ${r.code})` }
+  }
+  return { success: false, error: 'no usable elevation (sudo session unavailable, pkexec missing)' }
+}
+
+async function systemInstall() {
+  if (process.platform === 'darwin') return macSystemInstall()
+  if (process.platform === 'win32') return winSystemInstall()
+  if (process.platform === 'linux') return linuxSystemInstall()
+  return { success: false, error: `unsupported platform: ${process.platform}` }
+}
+
+// ---------------------------------------------------------------------------
+// Userspace install — official prebuilt binary, no root. Works under the
+// no_new_privs sandbox, without Homebrew, and when the user declines elevation.
+// ---------------------------------------------------------------------------
+
+/** Map process.arch/platform to a nodejs.org dist filename triplet, or null. */
+function distTriplet() {
+  const archMap = { x64: 'x64', arm64: 'arm64', arm: 'armv7l', ppc64: 'ppc64le', s390x: 's390x' }
+  const arch = archMap[process.arch]
+  if (!arch) return null
+  if (process.platform === 'linux') return { os: 'linux', arch, ext: 'tar.gz', zip: false }
+  if (process.platform === 'darwin') return { os: 'darwin', arch, ext: 'tar.gz', zip: false }
+  if (process.platform === 'win32') return { os: 'win', arch, ext: 'zip', zip: true }
+  return null
+}
+
+/** Newest LTS version string (e.g. "v22.11.0"); pinned fallback when offline. */
+async function latestLtsVersion() {
+  try {
+    const res = await fetch('https://nodejs.org/dist/index.json', { signal: AbortSignal.timeout(20_000) })
+    if (res.ok) {
+      const list = await res.json()
+      const lts = Array.isArray(list) ? list.find((e) => e && e.lts) : null
+      if (lts?.version && /^v\d+\.\d+\.\d+$/.test(lts.version)) return lts.version
+    }
+  } catch {
+    // offline → pinned fallback below
+  }
+  return FALLBACK_NODE_VERSION
+}
+
+async function download(url, dest) {
+  const res = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(180_000) })
+  if (!res.ok) throw new Error(`download HTTP ${res.status} for ${url}`)
+  const buf = Buffer.from(await res.arrayBuffer())
+  await writeFile(dest, buf)
+}
+
+async function userspaceInstall() {
+  const triplet = distTriplet()
+  if (!triplet) {
+    return { success: false, error: `no prebuilt Node for ${process.platform}/${process.arch}` }
+  }
+
+  // Stage the download/extract UNDER binBase so the final rename into place
+  // is same-filesystem (no EXDEV when /tmp is a separate tmpfs mount).
+  let stage
+  try {
+    const stageRoot = path.join(binBase(), '.staging')
+    await mkdir(stageRoot, { recursive: true })
+    stage = await mkdtemp(path.join(stageRoot, 'dl-'))
+
+    const version = await latestLtsVersion()
+    const base = `node-${version}-${triplet.os}-${triplet.arch}`
+    const archivePath = path.join(stage, `${base}.${triplet.ext}`)
+    await download(`https://nodejs.org/dist/${version}/${base}.${triplet.ext}`, archivePath)
+
+    if (triplet.zip) {
+      const ps = `Expand-Archive -LiteralPath '${archivePath.replace(/'/g, "''")}' -DestinationPath '${stage.replace(/'/g, "''")}' -Force`
+      const r = await runSpawn('powershell', ['-NoProfile', '-NonInteractive', '-Command', ps])
+      if (r.code !== 0) throw new Error(`unzip failed (exit ${r.code}): ${r.stderr.slice(0, 200)}`)
+    } else {
+      const r = await runSpawn('tar', ['-xzf', archivePath, '-C', stage])
+      if (r.code !== 0) throw new Error(`extract failed (exit ${r.code}): ${r.stderr.slice(0, 200)}`)
+    }
+
+    const extractedDir = path.join(stage, base)
+    if (!(await fileExists(extractedDir))) throw new Error(`extracted directory missing: ${base}`)
+
+    const home = nodeHome()
+    await rm(home, { recursive: true, force: true })
+    await rename(extractedDir, home)
+
+    ensureLocalOnPath()
+    const { stdout } = await execFileP(localNodeBinary(), ['--version'])
+    return {
+      success: true,
+      output: `Node.js ${stdout.trim()} installed without root at ${home}`
+    }
+  } catch (err) {
+    return { success: false, error: `no-root install failed: ${err?.message ?? String(err)}` }
+  } finally {
+    if (stage) await rm(stage, { recursive: true, force: true }).catch(() => {})
+  }
+}
+
+async function nodeInstall() {
+  // System install first (globally visible, no PATH surprises). If it can't
+  // run — sandbox blocks elevation, no Homebrew, user cancels — fall back to a
+  // no-root userspace copy so a critical dependency never leaves the user stuck.
+  const sys = await systemInstall()
+  if (sys.success) return sys
+
+  const local = await userspaceInstall()
+  if (local.success) return local
+
+  return {
+    success: false,
+    error: `Could not install Node.js. System install: ${sys.error}. No-root fallback: ${local.error}`
+  }
 }
 
 const toolDefinitions = [
@@ -124,7 +345,7 @@ const toolDefinitions = [
   },
   {
     name: 'node_install',
-    description: 'Install Node.js via the system package manager',
+    description: 'Install Node.js (system package manager, or a no-root local copy if elevation is unavailable)',
     parameters: { type: 'object', properties: {}, required: [] }
   }
 ]
@@ -142,11 +363,13 @@ function describeAction(toolName) {
     if (process.platform === 'darwin') command = 'brew install node'
     else if (process.platform === 'win32')
       command = 'winget install --id OpenJS.NodeJS.LTS -e --accept-source-agreements --accept-package-agreements'
-    else command = 'apt install -y nodejs (or dnf install -y nodejs)'
+    else command = 'apt/dnf install nodejs'
     return {
       title: 'Install Node.js',
       description: 'Install Node.js LTS via the system package manager',
       command,
+      impact:
+        'Installs Node.js system-wide when admin access is available; otherwise downloads an official no-root copy into ~/.wolffish/runtime.',
       risk: 'low'
     }
   }
@@ -156,8 +379,12 @@ function describeAction(toolName) {
 const plugin = {
   name: 'node',
   tools: toolDefinitions,
+  async init(context) {
+    sudoCtx = context?.sudo ?? null
+    workspaceRoot = context?.workspaceRoot ?? ''
+  },
   describeAction,
-  async execute(toolName, args) {
+  async execute(toolName) {
     switch (toolName) {
       case 'node_check':
         return nodeCheck()
