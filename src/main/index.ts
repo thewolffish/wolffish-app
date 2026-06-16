@@ -48,7 +48,6 @@ import {
 import { Agent } from '@main/runtime/agent'
 import type { ApprovalDecision } from '@main/runtime/amygdala'
 import { deleteCapabilityFolder, importCapability } from '@main/runtime/capabilityImport'
-import type { ChatHistoryMessage } from '@preload/index'
 import { MODEL_CATALOG } from '@main/runtime/models'
 import { localProvider } from '@main/runtime/providers/local'
 import { sudoSession } from '@main/runtime/sudoSession'
@@ -156,10 +155,9 @@ import {
   type WhatsAppConfig,
   type WorkspaceStatus
 } from '@main/workspace/workspace'
-import dockIcon from '@resources/icons/icons/1024x1024.png?asset'
+import type { ChatHistoryMessage } from '@preload/index'
 import icon from '@resources/icons-win/icons/512x512.png?asset'
-import trayIconMac from '@resources/icons/icons/trayTemplate.png?asset'
-import trayIconMac2x from '@resources/icons/icons/trayTemplate@2x.png?asset'
+import dockIcon from '@resources/icons/icons/1024x1024.png?asset'
 import trayIconDefault from '@resources/images/icon_transparent.png?asset'
 import {
   app,
@@ -616,12 +614,22 @@ function createTray(locale: Locale = 'en'): void {
   const isAr = locale === 'ar'
   let img: Electron.NativeImage
   if (process.platform === 'darwin') {
-    const img1x = nativeImage.createFromPath(trayIconMac)
-    const img2x = nativeImage.createFromPath(trayIconMac2x)
+    // Unified with Windows/Linux: show the transparent colored logo (not the white template),
+    // keeping the existing 22pt menu-bar size (22x22 @1x, 44x44 @2x for retina).
+    const base = nativeImage.createFromPath(trayIconDefault)
     img = nativeImage.createEmpty()
-    img.addRepresentation({ scaleFactor: 1, width: 22, height: 22, buffer: img1x.toPNG() })
-    img.addRepresentation({ scaleFactor: 2, width: 44, height: 44, buffer: img2x.toPNG() })
-    img.setTemplateImage(true)
+    img.addRepresentation({
+      scaleFactor: 1,
+      width: 22,
+      height: 22,
+      buffer: base.resize({ width: 22, height: 22 }).toPNG()
+    })
+    img.addRepresentation({
+      scaleFactor: 2,
+      width: 44,
+      height: 44,
+      buffer: base.resize({ width: 44, height: 44 }).toPNG()
+    })
   } else {
     img = nativeImage.createFromPath(trayIconDefault).resize({ width: 32, height: 32 })
   }
