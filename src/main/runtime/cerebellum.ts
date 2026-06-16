@@ -1171,7 +1171,38 @@ function hashString(s: string): string {
  * plugin, npm install, browser plugin, all of them.
  */
 function refreshPath(): void {
-  if (process.platform === 'win32') return
+  if (process.platform === 'win32') {
+    try {
+      const script =
+        "[Environment]::GetEnvironmentVariable('PATH','Machine');" +
+        "[Environment]::GetEnvironmentVariable('PATH','User')"
+      const raw = execFileSync(
+        'powershell',
+        ['-NoProfile', '-NonInteractive', '-Command', script],
+        { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] }
+      )
+      const additions = raw
+        .split(/\r?\n/)
+        .flatMap((line: string) => line.split(';'))
+        .map((p: string) => p.trim().replace(/[\\/]+$/, ''))
+        .filter(Boolean)
+      if (additions.length === 0) return
+      const current = (process.env.PATH ?? '')
+        .split(';')
+        .map((p: string) => p.trim())
+        .filter(Boolean)
+      const seen = new Set(current.map((p: string) => p.toLowerCase().replace(/[\\/]+$/, '')))
+      for (const entry of additions) {
+        if (seen.has(entry.toLowerCase())) continue
+        seen.add(entry.toLowerCase())
+        current.push(entry)
+      }
+      process.env.PATH = current.join(';')
+    } catch {
+      // best-effort
+    }
+    return
+  }
   const userShell = process.env.SHELL || '/bin/sh'
   try {
     const raw = execFileSync(userShell, ['-ilc', 'printf "__WFPATH__%s__WFPATH__" "$PATH"'], {
@@ -1181,12 +1212,6 @@ function refreshPath(): void {
     })
     const resolved = raw.match(/__WFPATH__(.+?)__WFPATH__/)?.[1]
     if (resolved && resolved.includes(':')) {
-      // Merge, don't replace. The current PATH may hold session-only entries
-      // not in the login shell — Electron startup additions, or a no-root
-      // runtime dir a plugin (e.g. node) appended after installing without
-      // root. Overwriting would drop them and make the just-installed binary
-      // vanish. Keep existing entries (and their precedence) and append any
-      // new dirs the login shell reports.
       const current = (process.env.PATH ?? '').split(':').filter(Boolean)
       const seen = new Set(current)
       for (const dir of resolved.split(':')) {

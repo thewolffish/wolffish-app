@@ -151,6 +151,41 @@ async function macSystemInstall() {
   return { success: false, error: `brew install node failed (exit ${r.code}): ${(r.stderr || r.stdout).slice(0, 300)}` }
 }
 
+async function refreshWindowsPath() {
+  if (process.platform !== 'win32') return
+  try {
+    const script =
+      "[Environment]::GetEnvironmentVariable('PATH','Machine');" +
+      "[Environment]::GetEnvironmentVariable('PATH','User')"
+    const { stdout } = await execFileP(
+      'powershell',
+      ['-NoProfile', '-NonInteractive', '-Command', script],
+      { timeout: 5_000, windowsHide: true }
+    )
+    const additions = stdout
+      .split(/\r?\n/)
+      .flatMap((line) => line.split(';'))
+      .map((p) => p.trim().replace(/[\\/]+$/, ''))
+      .filter(Boolean)
+    if (additions.length === 0) return
+    const current = (process.env.PATH ?? '')
+      .split(';')
+      .map((p) => p.trim())
+      .filter(Boolean)
+    const seen = new Set(current.map((p) => p.toLowerCase().replace(/[\\/]+$/, '')))
+    let mutated = false
+    for (const entry of additions) {
+      if (seen.has(entry.toLowerCase())) continue
+      seen.add(entry.toLowerCase())
+      current.push(entry)
+      mutated = true
+    }
+    if (mutated) process.env.PATH = current.join(';')
+  } catch {
+    // best-effort
+  }
+}
+
 async function winSystemInstall() {
   if (!(await which('winget'))) return { success: false, error: 'winget is not available' }
   const r = await runSpawn('winget', [
@@ -162,6 +197,7 @@ async function winSystemInstall() {
     '--accept-package-agreements'
   ])
   if (r.code === 0) {
+    await refreshWindowsPath()
     return { success: true, output: (r.stdout + '\n' + r.stderr).trim() || 'Node.js installed via winget' }
   }
   return { success: false, error: `winget install failed (exit ${r.code}): ${(r.stderr || r.stdout).slice(0, 300)}` }
