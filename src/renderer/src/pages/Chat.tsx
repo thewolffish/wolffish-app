@@ -3269,6 +3269,26 @@ function textHistory(messages: ChatMessage[], workspaceRoot: string | null): Cha
         if (reasoningContent && out.length === 0) assistantMsg.reasoningContent = reasoningContent
         out.push(assistantMsg)
         for (const tr of iterToolResults) out.push(tr)
+        // Backfill: a run stopped mid-tool can leave a tool_call segment with
+        // no tool_result (older conversations saved before the agent closed
+        // these at the source). Providers reject an assistant tool_calls
+        // message that isn't answered for every id, so synthesize a canceled
+        // result for each missing one — immediately after the assistant turn.
+        const resultIds = new Set(
+          iterToolResults
+            .filter((r): r is Extract<ChatHistoryMessage, { role: 'tool' }> => r.role === 'tool')
+            .map((r) => r.toolUseId)
+        )
+        for (const use of iterToolUses) {
+          if (resultIds.has(use.id)) continue
+          out.push({
+            role: 'tool',
+            toolUseId: use.id,
+            toolName: use.name,
+            content: 'Tool execution was canceled by the user before it completed.',
+            isError: true
+          })
+        }
         iterText = ''
         iterToolUses = []
         iterToolResults = []

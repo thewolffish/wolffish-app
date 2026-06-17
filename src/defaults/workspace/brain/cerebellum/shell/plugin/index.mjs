@@ -288,7 +288,9 @@ function combine(out, err) {
 // Core execution
 // ---------------------------------------------------------------------------
 
-async function execShell(args) {
+async function execShell(args, signal) {
+  if (signal?.aborted) return { success: false, error: 'Stopped by user.' }
+
   const command = String(args?.command ?? '').trim()
   if (!command) return { success: false, error: 'empty command' }
 
@@ -360,7 +362,7 @@ async function execShell(args) {
   const timeoutMs =
     typeof args?.timeout === 'number' && args.timeout > 0 ? args.timeout : 0
 
-  const result = await execForeground({ command: execCommand, cwd, shell, timeoutMs, env: execEnv })
+  const result = await execForeground({ command: execCommand, cwd, shell, timeoutMs, env: execEnv, signal })
   if (result.success) {
     result.output = await surfaceOpenedFiles(command, cwd, result.output)
   }
@@ -387,7 +389,7 @@ function execBackground({ command, cwd, shell, env }) {
   }
 }
 
-function execForeground({ command, cwd, shell, timeoutMs, env }) {
+function execForeground({ command, cwd, shell, timeoutMs, env, signal }) {
   return new Promise((resolve) => {
     let child
     try {
@@ -409,11 +411,44 @@ function execForeground({ command, cwd, shell, timeoutMs, env }) {
     let stderr = ''
     let resolved = false
     let timer = null
+    let onAbort = null
     const finish = (result) => {
       if (resolved) return
       resolved = true
       if (timer) clearTimeout(timer)
+      if (signal && onAbort) signal.removeEventListener('abort', onAbort)
       resolve(result)
+    }
+
+    // The command's shell spawns descendants; a plain child.kill leaves them
+    // running. On Windows kill the whole tree via taskkill (same approach as
+    // the cerebellum's npm-install backstop); elsewhere SIGKILL the shell.
+    const killTree = () => {
+      try {
+        if (process.platform === 'win32' && child.pid) {
+          spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore' })
+        } else {
+          child.kill('SIGKILL')
+        }
+      } catch {
+        // already dead
+      }
+    }
+
+    // Stop the run mid-command: kill the process tree and resolve as a
+    // failure so the agent can close the turn cleanly instead of waiting for
+    // a long-running command to finish on its own.
+    if (signal) {
+      if (signal.aborted) {
+        killTree()
+        finish({ success: false, error: 'Stopped by user.', output: combine(stdout, stderr) })
+        return
+      }
+      onAbort = () => {
+        killTree()
+        finish({ success: false, error: 'Stopped by user.', output: combine(stdout, stderr) })
+      }
+      signal.addEventListener('abort', onAbort, { once: true })
     }
 
     if (timeoutMs > 0) {
@@ -737,11 +772,11 @@ const plugin = {
     if (toolName !== 'shell_exec') return null
     return describeShellAction(args?.command)
   },
-  async execute(toolName, args) {
+  async execute(toolName, args, signal) {
     if (toolName !== 'shell_exec') {
       return { success: false, error: `shell: unknown tool ${toolName}` }
     }
-    return execShell(args)
+    return execShell(args, signal)
   }
 }
 

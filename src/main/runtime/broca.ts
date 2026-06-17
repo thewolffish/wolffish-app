@@ -121,6 +121,14 @@ export class Broca {
   private counter = 0
   private turnEnded = false
   private silentToolCallIds = new Set<string>()
+  /**
+   * Tool calls whose tool_call segment has been emitted but whose
+   * tool_result segment has not. Drained by emitToolResult. Anything still
+   * here when the turn ends (a run stopped mid-tool) is closed by
+   * closeOpenToolCalls so the persisted segment stream never carries a
+   * tool_call without a matching result.
+   */
+  private openToolCallIds = new Set<string>()
 
   constructor(private options: BrocaOptions = {}) {
     void this.options
@@ -147,6 +155,7 @@ export class Broca {
     this.counter = 0
     this.turnEnded = false
     this.silentToolCallIds.clear()
+    this.openToolCallIds.clear()
   }
 
   /**
@@ -159,6 +168,7 @@ export class Broca {
     this.counter = 0
     this.turnEnded = false
     this.silentToolCallIds.clear()
+    this.openToolCallIds.clear()
   }
 
   /**
@@ -189,6 +199,7 @@ export class Broca {
             name: chunk.name,
             args: chunk.args
           })
+          this.openToolCallIds.add(chunk.id)
         }
       } else if (chunk.type === 'active_model') {
         this.emit({
@@ -239,6 +250,7 @@ export class Broca {
       name,
       args
     })
+    this.openToolCallIds.add(toolCallId)
   }
 
   /**
@@ -258,6 +270,7 @@ export class Broca {
       this.silentToolCallIds.delete(toolCallId)
       return
     }
+    this.openToolCallIds.delete(toolCallId)
     const segment: Segment = {
       kind: 'tool_result',
       turnId,
@@ -268,6 +281,38 @@ export class Broca {
     }
     if (error !== undefined) segment.error = error
     this.emit(segment)
+  }
+
+  /**
+   * Emit a synthetic tool_result for every tool_call this turn announced
+   * but never resolved — the case where the user stops a run while a tool
+   * is still in flight. Without it the persisted segment stream holds a
+   * tool_call with no matching result, and the next request rebuilt from
+   * those segments (renderer textHistory / channel assistantSegmentsToHistory)
+   * sends an assistant tool_calls message with no tool results, which every
+   * cloud provider rejects ("tool_calls must be followed by tool messages").
+   *
+   * Call immediately before emitTurnEnd. A no-op when nothing is open (the
+   * normal end-of-turn case), so it is safe to call unconditionally.
+   * Returns the ids that were closed.
+   */
+  closeOpenToolCalls(turnId: string, status: ToolResultStatus, output: string): string[] {
+    if (this.turnId !== turnId || !this.sink) return []
+    if (this.openToolCallIds.size === 0) return []
+    const closed: string[] = []
+    for (const toolCallId of this.openToolCallIds) {
+      this.emit({
+        kind: 'tool_result',
+        turnId,
+        segmentId: this.nextId(),
+        toolCallId,
+        status,
+        output
+      })
+      closed.push(toolCallId)
+    }
+    this.openToolCallIds.clear()
+    return closed
   }
 
   /**

@@ -59,6 +59,15 @@ const PROVIDER_TOOL_LIMITS: Record<string, number> = {
   xai: 200
 }
 
+/**
+ * Result text injected for a tool call that was announced to the model but
+ * never finished because the run was stopped (or errored) mid-flight. Must
+ * be non-empty — Anthropic rejects empty tool_result content — and reads as
+ * a normal tool failure so a continued conversation makes sense to the model.
+ */
+const INTERRUPTED_TOOL_RESULT =
+  'Tool execution was interrupted before it completed because the run was stopped. No output was produced.'
+
 export type AgentOptions = {
   thalamus: Thalamus
   workspaceRoot: string
@@ -836,7 +845,7 @@ export class Agent {
             images?: Array<{ mediaType: string; data: string }>
           }
           try {
-            const r = await this.motor.executeStep(task.id, call)
+            const r = await this.motor.executeStep(task.id, call, turn.signal)
             result = { ok: r.ok, output: r.output, images: r.images }
           } catch (err) {
             if (err instanceof SafetyBlockedError) {
@@ -901,6 +910,12 @@ export class Agent {
           break
         }
       }
+
+      // A run stopped mid-tool leaves tool_call segments with no matching
+      // tool_result. Close them before turn_end so the persisted segment
+      // stream — which the renderer and channels replay into the next
+      // request's history — stays valid. No-op on a clean turn.
+      broca.closeOpenToolCalls(turn.turnId, 'failed', INTERRUPTED_TOOL_RESULT)
 
       if (task) {
         // Motor derives succeeded/failed from per-step outcomes. We only
@@ -973,6 +988,10 @@ export class Agent {
         taskId: task?.id
       }
     } catch (err) {
+      // Same invariant on the error path: a tool call may have been emitted
+      // before the failure. Close any still open so the segment stream the
+      // channels persist isn't left with a dangling tool_call.
+      broca.closeOpenToolCalls(turn.turnId, 'failed', INTERRUPTED_TOOL_RESULT)
       if (noProviderAvailable) {
         broca.emitTurnEnd(turn.turnId, 'no_provider_available', iterationCount, noProviderAvailable)
       } else {

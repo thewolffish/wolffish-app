@@ -90,6 +90,8 @@ triggers:
   - search for
   - google it
   - look this up
+requires:
+  - node
 tools:
   - name: web_search
     description: Search the web for information. Returns titles, snippets, and URLs.

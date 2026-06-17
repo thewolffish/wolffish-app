@@ -197,6 +197,14 @@ export function classifyError(error: string, exitCode?: number | null): ToolErro
 export class Motor {
   private tasks = new Map<TaskId, Task>()
   private abortControllers = new Map<TaskId, AbortController>()
+  /**
+   * Turn-level signals already linked to a task controller. A turn reuses
+   * one signal across every tool call, so we wire the mirror once per signal
+   * — re-adding a listener per step would pile up abort listeners on the
+   * same signal and trip Node's EventTarget memory-leak warning on long
+   * tasks. WeakSet so finished turns' signals are collected automatically.
+   */
+  private linkedSignals = new WeakSet<AbortSignal>()
   private readonly workspaceRoot: string | null
   private readonly maxRetries: number
   private readonly backoff: number[]
@@ -250,7 +258,7 @@ export class Motor {
    * the transcript, and returns a structured result. The agent loop
    * decides whether to keep going.
    */
-  async executeStep(taskId: TaskId, call: ToolCall): Promise<StepResult> {
+  async executeStep(taskId: TaskId, call: ToolCall, signal?: AbortSignal): Promise<StepResult> {
     const task = this.tasks.get(taskId)
     if (!task) throw new Error(`unknown task: ${taskId}`)
     if (!this.cerebellum) {
@@ -258,6 +266,16 @@ export class Motor {
     }
 
     const abort = this.abortControllers.get(taskId)
+    // Mirror a turn-level abort into this task's controller so stopping the
+    // run also interrupts an in-flight tool, even on channels that abort the
+    // turn without calling stopTask. The per-task signal is what flows down
+    // to the plugin, so this keeps a single source of truth for "stop".
+    // Wired once per turn signal (see linkedSignals).
+    if (signal && abort && !this.linkedSignals.has(signal)) {
+      this.linkedSignals.add(signal)
+      if (signal.aborted) abort.abort()
+      else signal.addEventListener('abort', () => abort.abort(), { once: true })
+    }
     const step: TaskStep = {
       call,
       status: 'running',
@@ -288,7 +306,7 @@ export class Motor {
 
       let result: ToolExecutionResult
       try {
-        result = await this.cerebellum.executeTool(call.name, attemptArgs)
+        result = await this.cerebellum.executeTool(call.name, attemptArgs, abort?.signal)
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
         result = { success: false, error: message }

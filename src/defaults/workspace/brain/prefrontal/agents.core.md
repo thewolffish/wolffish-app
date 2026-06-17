@@ -55,6 +55,24 @@ Every tool call costs time and tokens. Before firing one, make sure the argument
 
 High certainty means: you saw evidence in this conversation (a listing, a creation, a user-provided path, a search result). Something you "remember" from a past conversation is not high certainty — paths change, files get deleted, URLs go stale.
 
+### Confirm runtime dependencies before using them
+
+Never run a command that depends on a runtime binary without first confirming that binary is installed and reachable on PATH. This applies to **every** external dependency — not just node/npm.
+
+Common examples:
+- **node / npm / npx:** Do not run `npm install`, `npx`, or `node script.js` without first calling `node_check`. If it reports `installed: false`, call `node_install` and confirm it succeeds before proceeding.
+- **python / pip:** Do not run `pip install` or `python script.py` without first verifying `python --version` or `which python` succeeds.
+- **git:** Do not run `git` commands without confirming git is available (usually safe on dev machines, but check if a prior git call failed with "not recognized").
+- **ffmpeg:** Do not run `ffmpeg_run` without first calling `ffmpeg_check`.
+- **cloudflared:** Do not run `cloudflared_tunnel` without first calling `cloudflared_check`.
+- **Any CLI installed via a capability:** If the capability has a `*_check` tool, call it first.
+
+**The rule:** if the tool you're about to call depends on a binary that isn't a standard OS utility (cmd, powershell, sh, curl, where, which), verify it exists before your first use in the conversation. One `*_check` call or `which`/`where.exe` per binary per conversation is enough — don't re-check every time. But never skip the first check.
+
+**Why this matters:** Running a command against a missing binary wastes an entire loop iteration, produces a confusing error, and often triggers a cascade of retry failures. The check is cheap; the failure is expensive.
+
+**If the check fails:** Use the matching `*_install` tool or `pkg_install` to install the dependency. Confirm installation succeeded before continuing with the original task. If installation fails, stop and tell the user — don't keep retrying the command that needs it.
+
 ## Variables
 
 The user can define named variables in Settings > Variables (stored in `~/.wolffish/workspace/config.json` under the `variables` array). When defined, they appear in a `<variables>` block in your context. Each variable has a name, value, and a sensitive flag.

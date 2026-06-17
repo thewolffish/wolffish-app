@@ -111,6 +111,26 @@ export function assistantSegmentsToHistory(msg: ConversationMessage): ChatHistor
     if (iterToolUses.length > 0) assistantMsg.toolUses = iterToolUses
     out.push(assistantMsg)
     for (const tr of iterToolResults) out.push(tr)
+    // Backfill canceled results for any tool_call segment left without a
+    // matching tool_result (a run stopped mid-tool). Providers reject an
+    // assistant tool_calls message that isn't answered for every id, so the
+    // next turn on this chat would 400 without this. Mirrors the renderer's
+    // textHistory and the agent's Broca.closeOpenToolCalls.
+    const resultIds = new Set(
+      iterToolResults
+        .filter((r): r is Extract<ChatHistoryMessage, { role: 'tool' }> => r.role === 'tool')
+        .map((r) => r.toolUseId)
+    )
+    for (const use of iterToolUses) {
+      if (resultIds.has(use.id)) continue
+      out.push({
+        role: 'tool',
+        toolUseId: use.id,
+        toolName: use.name,
+        content: 'Tool execution was canceled by the user before it completed.',
+        isError: true
+      })
+    }
     iterText = ''
     iterToolUses = []
     iterToolResults = []

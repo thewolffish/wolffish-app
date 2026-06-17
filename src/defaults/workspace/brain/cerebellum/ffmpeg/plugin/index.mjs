@@ -192,9 +192,10 @@ function detectOutputFile(expandedArgs) {
   return null
 }
 
-async function ffmpegRun(args) {
+async function ffmpegRun(args, signal) {
   const rawArgs = String(args?.args ?? '').trim()
   if (!rawArgs) return { success: false, error: 'args is required' }
+  if (signal?.aborted) return { success: false, error: 'Stopped by user.' }
 
   const ffmpegPath = await which('ffmpeg')
   if (!ffmpegPath) return { success: false, error: 'ffmpeg is not installed' }
@@ -210,6 +211,24 @@ async function ffmpegRun(args) {
     let stdout = ''
     let stderr = ''
 
+    // Stop the run mid-transcode: kill ffmpeg. The child's 'close' handler
+    // then resolves this promise as a failure, so we don't double-resolve.
+    const onAbort = () => {
+      try {
+        child.kill('SIGKILL')
+      } catch {
+        // already dead
+      }
+    }
+    if (signal) {
+      signal.addEventListener('abort', onAbort, { once: true })
+      // The signal can abort during the `await which('ffmpeg')` above, before
+      // this listener was attached — addEventListener never fires for an
+      // already-aborted signal, so re-check and kill now (parity with the
+      // shell plugin's post-spawn re-check). The 'close' handler then resolves.
+      if (signal.aborted) onAbort()
+    }
+
     child.stdout?.on('data', (c) => {
       stdout = clampOutput(stdout, c)
     })
@@ -218,6 +237,7 @@ async function ffmpegRun(args) {
     })
 
     child.on('close', async (code) => {
+      if (signal) signal.removeEventListener('abort', onAbort)
       const output = (stdout + '\n' + stderr).trim()
       if (code === 0) {
         // Detect and surface the output file so renderers and channels
@@ -273,6 +293,7 @@ async function ffmpegRun(args) {
     })
 
     child.on('error', (err) => {
+      if (signal) signal.removeEventListener('abort', onAbort)
       resolve({ success: false, error: err.message })
     })
   })
@@ -343,14 +364,14 @@ const plugin = {
   name: 'ffmpeg',
   tools: toolDefinitions,
   describeAction,
-  async execute(toolName, args) {
+  async execute(toolName, args, signal) {
     switch (toolName) {
       case 'ffmpeg_check':
         return ffmpegCheck()
       case 'ffmpeg_install':
         return ffmpegInstall()
       case 'ffmpeg_run':
-        return ffmpegRun(args)
+        return ffmpegRun(args, signal)
       default:
         return { success: false, error: `ffmpeg: unknown tool ${toolName}` }
     }

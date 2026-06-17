@@ -169,7 +169,18 @@ export type PluginContext = {
 export type WolffishPlugin = {
   name: string
   tools: ToolDefinition[]
-  execute: (toolName: string, args: Record<string, unknown>) => Promise<ToolExecutionResult>
+  /**
+   * Run a tool. The optional `signal` aborts when the user stops the run;
+   * long-running plugins (shell, ffmpeg, …) should honor it by killing the
+   * in-flight work and returning a failure result. Quick plugins may ignore
+   * it. Existing untyped .mjs plugins that declare execute(toolName, args)
+   * keep working — the extra positional arg is simply unused.
+   */
+  execute: (
+    toolName: string,
+    args: Record<string, unknown>,
+    signal?: AbortSignal
+  ) => Promise<ToolExecutionResult>
   init?: (context: PluginContext) => Promise<void>
   destroy?: () => Promise<void>
   /**
@@ -399,7 +410,11 @@ export class Cerebellum {
    * Returns a structured failure when the tool is unknown rather than
    * throwing, so the LLM can see the error and recover.
    */
-  async executeTool(name: string, args: Record<string, unknown>): Promise<ToolExecutionResult> {
+  async executeTool(
+    name: string,
+    args: Record<string, unknown>,
+    signal?: AbortSignal
+  ): Promise<ToolExecutionResult> {
     const capName = this.toolToCapability.get(name)
     if (!capName) {
       return { success: false, error: `unknown tool: ${name}` }
@@ -429,7 +444,7 @@ export class Cerebellum {
       }
     }
     try {
-      const result = await plugin.execute(name, args)
+      const result = await plugin.execute(name, args, signal)
       return result
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
@@ -587,6 +602,15 @@ export class Cerebellum {
     if (Object.keys(cap.npmDependencies).length === 0) return
     const cacheKey = `npm:${cap.name}`
     if (this.dependencyCache.get(cacheKey)) return
+
+    // On Windows the Electron process may have launched with a stale PATH that
+    // doesn't include binaries installed in a prior session (e.g. node/npm from
+    // winget). Refresh once before the first npm spawn so we don't fail with
+    // "npm.cmd not recognized" when npm is actually on disk.
+    if (!this.dependencyCache.get('__pathRefreshed')) {
+      refreshPath()
+      this.dependencyCache.set('__pathRefreshed', true)
+    }
 
     const pkgPath = path.join(cap.dir, 'package.json')
     const markerPath = path.join(cap.dir, 'node_modules', '.wolffish-installed')
@@ -1086,6 +1110,11 @@ async function readNpmDependencies(capDir: string): Promise<Record<string, strin
 
 const NPM_OUTPUT_LIMIT = 50_000
 
+// Hard cap for a single `npm install` (download + extract + postinstall). The
+// browser capability's postinstall pulls a ~150 MB Chromium build, so this is
+// generous — but finite, so a stalled network can't hang the task forever.
+const NPM_INSTALL_TIMEOUT_MS = 10 * 60_000
+
 /**
  * Spawn `npm install` in the capability directory. Returns success/failure
  * with truncated combined output. Cross-platform: resolves the npm binary
@@ -1119,10 +1148,31 @@ function runNpmInstall(
     let stdout = ''
     let stderr = ''
     let resolved = false
+    let timedOut = false
+    // Hard backstop: a hung install (stalled network, wedged postinstall like
+    // Playwright's Chromium download) must not block the task forever. After
+    // the cap, kill the whole process tree — npm runs under a shell and spawns
+    // node for postinstall scripts, so a plain child.kill() would orphan them.
+    const killTree = (): void => {
+      try {
+        if (process.platform === 'win32' && child.pid) {
+          spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore' })
+        } else {
+          child.kill('SIGKILL')
+        }
+      } catch {
+        // best-effort
+      }
+    }
+    const timer = setTimeout(() => {
+      timedOut = true
+      killTree()
+    }, NPM_INSTALL_TIMEOUT_MS)
 
     const finish = (result: { success: boolean; output?: string; error?: string }): void => {
       if (resolved) return
       resolved = true
+      clearTimeout(timer)
       resolve(result)
     }
 
@@ -1147,7 +1197,13 @@ function runNpmInstall(
 
     child.on('close', (code: number | null) => {
       const combined = (stdout + (stderr ? '\n' + stderr : '')).trim()
-      if (code === 0) {
+      if (timedOut) {
+        finish({
+          success: false,
+          error: `npm install timed out after ${Math.round(NPM_INSTALL_TIMEOUT_MS / 60_000)} min and was terminated (likely a stalled download or postinstall). ${combined.slice(-1000)}`.trim(),
+          output: combined
+        })
+      } else if (code === 0) {
         finish({ success: true, output: combined || 'npm install completed.' })
       } else {
         finish({

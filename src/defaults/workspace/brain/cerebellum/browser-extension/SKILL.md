@@ -80,6 +80,8 @@ triggers:
   - grab from page
   - save this page
   - print this page
+requires:
+  - node
 tools:
   # Navigation
   - name: ext_navigate

@@ -113,6 +113,30 @@ async function nodeCheck() {
   // when nothing else provides node, and re-attach it to PATH so it survives a
   // fresh app start.
   let nodePath = await which('node')
+
+  // On Windows, a prior-session winget install may have put node at the
+  // standard location but the current process inherited a stale PATH that
+  // doesn't include it. Refresh from the registry and retry before declaring
+  // node missing.
+  if (!nodePath && process.platform === 'win32') {
+    await refreshWindowsPath()
+    nodePath = await which('node')
+    if (!nodePath) {
+      const knownDir = 'C:\\Program Files\\nodejs'
+      const knownBin = path.join(knownDir, 'node.exe')
+      if (await fileExists(knownBin)) {
+        const sep = ';'
+        const entries = (process.env.PATH ?? '').split(sep).filter(Boolean)
+        const lower = new Set(entries.map((p) => p.toLowerCase().replace(/[\\/]+$/, '')))
+        if (!lower.has(knownDir.toLowerCase())) {
+          entries.push(knownDir)
+          process.env.PATH = entries.join(sep)
+        }
+        nodePath = knownBin
+      }
+    }
+  }
+
   if (!nodePath && (await fileExists(localNodeBinary()))) {
     ensureLocalOnPath()
     nodePath = localNodeBinary()
@@ -186,7 +210,65 @@ async function refreshWindowsPath() {
   }
 }
 
-async function winSystemInstall() {
+// Put the standard system Node dir on process.env.PATH (if present on disk) and
+// return its version, or null when no system node exists. Used to verify an
+// install landed and to adopt an already-present node.
+async function adoptSystemNode() {
+  const knownDir = 'C:\\Program Files\\nodejs'
+  const knownBin = path.join(knownDir, 'node.exe')
+  if (!(await fileExists(knownBin))) return null
+  const entries = (process.env.PATH ?? '').split(';').filter(Boolean)
+  const lower = new Set(entries.map((p) => p.toLowerCase().replace(/[\\/]+$/, '')))
+  if (!lower.has(knownDir.toLowerCase())) {
+    entries.push(knownDir)
+    process.env.PATH = entries.join(';')
+  }
+  try {
+    const { stdout } = await execFileP(knownBin, ['--version'])
+    return stdout.trim()
+  } catch {
+    return null
+  }
+}
+
+// PRIMARY Windows install: the official nodejs.org MSI via msiexec. This does
+// NOT depend on winget or the MSIX/AppX deployment subsystem — which can be
+// corrupt ("database disk image is malformed" / 0x87AF000B) and then takes
+// every winget install down with it. msiexec needs admin, so we elevate with a
+// single UAC prompt; if the user declines, the caller falls back to winget and
+// then to a no-root copy, so node is never left uninstalled.
+async function winMsiInstall() {
+  const arch = process.arch === 'arm64' ? 'arm64' : process.arch === 'ia32' ? 'x86' : 'x64'
+  const version = await latestLtsVersion()
+  const stageRoot = path.join(binBase(), '.staging')
+  await mkdir(stageRoot, { recursive: true })
+  const stage = await mkdtemp(path.join(stageRoot, 'msi-'))
+  try {
+    const msi = path.join(stage, `node-${version}-${arch}.msi`)
+    await download(`https://nodejs.org/dist/${version}/node-${version}-${arch}.msi`, msi)
+    // Start-Process -Verb RunAs raises the UAC prompt; -Wait -PassThru lets us
+    // read msiexec's exit code. 0 = success, 3010 = success + reboot pending.
+    const escaped = msi.replace(/'/g, "''")
+    const psCmd =
+      `$p = Start-Process msiexec.exe -ArgumentList '/i','"${escaped}"','/qn','/norestart' ` +
+      '-Verb RunAs -Wait -PassThru; exit $p.ExitCode'
+    const r = await runSpawn('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', psCmd])
+    if (r.code === 0 || r.code === 3010) {
+      await refreshWindowsPath()
+      const v = await adoptSystemNode()
+      if (v) return { success: true, output: `Node.js ${v} installed system-wide via the official MSI` }
+      return { success: false, error: 'MSI reported success but node.exe was not found afterward' }
+    }
+    return { success: false, error: `msiexec install failed (exit ${r.code}) — UAC may have been declined` }
+  } finally {
+    await rm(stage, { recursive: true, force: true }).catch(() => {})
+  }
+}
+
+// SECONDARY Windows install: winget. Kept as a fallback for hosts where the MSI
+// download is blocked but winget happens to work. On a healthy machine either
+// path yields a system-wide install.
+async function winWingetInstall() {
   if (!(await which('winget'))) return { success: false, error: 'winget is not available' }
   const r = await runSpawn('winget', [
     'install',
@@ -196,11 +278,34 @@ async function winSystemInstall() {
     '--accept-source-agreements',
     '--accept-package-agreements'
   ])
+  await refreshWindowsPath()
   if (r.code === 0) {
-    await refreshWindowsPath()
-    return { success: true, output: (r.stdout + '\n' + r.stderr).trim() || 'Node.js installed via winget' }
+    const v = await adoptSystemNode()
+    return {
+      success: true,
+      output: v ? `Node.js ${v} installed via winget` : (r.stdout + '\n' + r.stderr).trim() || 'Node.js installed via winget'
+    }
   }
+  // winget can fail yet node already be present ("already installed" / corrupt
+  // source). Adopt an existing system node before declaring failure.
+  const v = await adoptSystemNode()
+  if (v) return { success: true, output: `Node.js ${v} already installed (winget exited ${r.code})` }
   return { success: false, error: `winget install failed (exit ${r.code}): ${(r.stderr || r.stdout).slice(0, 300)}` }
+}
+
+async function winSystemInstall() {
+  // Prefer the MSI (winget-independent). Fall back to winget, then adopt any
+  // node that's somehow already on disk.
+  const msi = await winMsiInstall()
+  if (msi.success) return msi
+
+  const wg = await winWingetInstall()
+  if (wg.success) return wg
+
+  const existing = await adoptSystemNode()
+  if (existing) return { success: true, output: `Node.js ${existing} already installed system-wide` }
+
+  return { success: false, error: `MSI: ${msi.error} | winget: ${wg.error}` }
 }
 
 /**
@@ -342,7 +447,19 @@ async function userspaceInstall() {
 
     const home = nodeHome()
     await rm(home, { recursive: true, force: true })
-    await rename(extractedDir, home)
+    try {
+      await rename(extractedDir, home)
+    } catch (renameErr) {
+      // On Windows, antivirus or leftover file handles from a prior run can
+      // transiently lock the target. Wait briefly and retry once.
+      if (renameErr?.code === 'EPERM' || renameErr?.code === 'EACCES') {
+        await new Promise((r) => setTimeout(r, 1000))
+        await rm(home, { recursive: true, force: true })
+        await rename(extractedDir, home)
+      } else {
+        throw renameErr
+      }
+    }
 
     ensureLocalOnPath()
     const { stdout } = await execFileP(localNodeBinary(), ['--version'])
@@ -381,7 +498,8 @@ const toolDefinitions = [
   },
   {
     name: 'node_install',
-    description: 'Install Node.js (system package manager, or a no-root local copy if elevation is unavailable)',
+    description:
+      'Install Node.js system-wide (official installer on Windows/macOS, system package manager on Linux); falls back to a no-root local copy only if elevation is unavailable',
     parameters: { type: 'object', properties: {}, required: [] }
   }
 ]
@@ -398,14 +516,14 @@ function describeAction(toolName) {
     let command = 'install node'
     if (process.platform === 'darwin') command = 'brew install node'
     else if (process.platform === 'win32')
-      command = 'winget install --id OpenJS.NodeJS.LTS -e --accept-source-agreements --accept-package-agreements'
+      command = 'msiexec /i node-lts-x64.msi /qn  (official Node.js installer from nodejs.org)'
     else command = 'apt/dnf install nodejs'
     return {
       title: 'Install Node.js',
-      description: 'Install Node.js LTS via the system package manager',
+      description: 'Install Node.js LTS system-wide from the official installer',
       command,
       impact:
-        'Installs Node.js system-wide when admin access is available; otherwise downloads an official no-root copy into ~/.wolffish/runtime.',
+        'Installs Node.js system-wide when you approve the elevation prompt (UAC on Windows); otherwise downloads an official no-root copy into ~/.wolffish/bin.',
       risk: 'low'
     }
   }
