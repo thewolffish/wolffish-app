@@ -210,6 +210,26 @@ app.commandLine.appendSwitch('no-sandbox')
 // with no effect on the sudo/no_new_privs behavior above.
 app.commandLine.appendSwitch('disable-dev-shm-usage')
 
+// The real fix for the blank Linux viewers. Even with --no-sandbox, the
+// guest/renderer/GPU child processes in a packaged build still bring up the
+// seccomp-bpf filter ("InitializeSandbox() called ... in process gpu-process"),
+// and that filter REJECTS the syscall those processes use to allocate their
+// compositor shared-memory buffer — failing thousands of times per second with
+// the impossible `access(...) /tmp: No such process` (ESRCH = seccomp denial).
+// With no buffer, the <webview> page viewer / PDF preview / wolffish-media files
+// can't composite → BLANK, while the main window (already painted) looks fine.
+// In dev the CLI `--no-sandbox` tears down seccomp too, which is why dev renders;
+// macOS/Windows have no seccomp layer. Disabling the seccomp + GPU sandbox layers
+// here matches the --no-sandbox intent (fully unsandboxed) and lets the guests
+// get their shared memory. No effect on the sudo/no_new_privs behavior above.
+app.commandLine.appendSwitch('disable-seccomp-filter-sandbox')
+app.commandLine.appendSwitch('disable-gpu-sandbox')
+// --no-zygote: child processes are exec'd fresh (each inheriting the current
+// command line incl. --no-sandbox) instead of forked from a zygote that may
+// have committed to a sandbox before appendSwitch() ran in this main module.
+// Belt-and-suspenders for the same blank-guest issue.
+app.commandLine.appendSwitch('no-zygote')
+
 // Single-instance guard: if Wolffish is already running (even collapsed to
 // tray), focus the existing window instead of showing a lockfile error.
 if (!app.requestSingleInstanceLock()) {
