@@ -889,7 +889,7 @@ export class Thalamus {
               provider: entry.id,
               statusCode: classified.statusCode,
               errorClass: classified.errorClass,
-              reasonKey: reasonKeyFor(classified.statusCode),
+              reasonKey: reasonKeyFor(classified.statusCode, message),
               rawMessage: extractProviderDetail(message) ?? message,
               retries: attempt,
               durationMs: Date.now() - overallStartedAt
@@ -905,8 +905,8 @@ export class Thalamus {
           provider: entry.id,
           statusCode: classified.statusCode,
           errorClass: classified.errorClass,
-          reasonKey: reasonKeyFor(classified.statusCode),
-          rawMessage: extractProviderDetail(message),
+          reasonKey: reasonKeyFor(classified.statusCode, message),
+          rawMessage: extractProviderDetail(message) ?? message,
           retries: attempt,
           durationMs: Date.now() - overallStartedAt
         }
@@ -1140,7 +1140,7 @@ function classifyError(err: unknown): { statusCode: number | null; errorClass: E
   }
   // Fetch-level network errors look like TypeError or AbortError; the
   // ECONNRESET / ETIMEDOUT family also surfaces as transient.
-  if (/overloaded|ECONNRESET|ETIMEDOUT|ENETUNREACH|EAI_AGAIN|fetch failed/i.test(message)) {
+  if (/overloaded|ECONNRESET|ETIMEDOUT|ENETUNREACH|EAI_AGAIN|fetch failed|timeout/i.test(message)) {
     return { statusCode: null, errorClass: 'transient' }
   }
   return { statusCode: null, errorClass: 'unknown' }
@@ -1151,9 +1151,12 @@ function parseHttpStatus(message: string): number | null {
   return match ? Number(match[1]) : null
 }
 
-function reasonKeyFor(statusCode: number | null): string {
+function reasonKeyFor(statusCode: number | null, rawMessage?: string): string {
   if (statusCode !== null && STATUS_REASON_LABEL[statusCode]) {
     return STATUS_REASON_LABEL[statusCode]
+  }
+  if (rawMessage && /timeout/i.test(rawMessage)) {
+    return 'timeout'
   }
   return 'unavailable'
 }

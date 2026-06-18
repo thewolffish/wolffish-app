@@ -75,6 +75,9 @@ function descriptionKeyFor(errorReason: string, statusCode: number | null): stri
   if (errorReason === 'offline') {
     return 'errors.provider.offline'
   }
+  if (statusCode === 504 || errorReason === 'timeout') {
+    return 'errors.provider.timeout'
+  }
   if (statusCode !== null && statusCode >= 500) {
     return 'errors.provider.serverError'
   }
@@ -92,6 +95,9 @@ function titleKeyFor(errorReason: string, statusCode: number | null): string {
   }
   if (statusCode === 400 || errorReason === 'bad request') {
     return 'errors.provider.badRequestTitle'
+  }
+  if (statusCode === 504 || errorReason === 'timeout') {
+    return 'errors.provider.timeoutTitle'
   }
   return 'errors.provider.noProviderTitle'
 }

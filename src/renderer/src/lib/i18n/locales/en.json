@@ -797,7 +797,7 @@
       },
       "memes": {
         "title": "Memes",
-        "subtitle": "Generate captioned memes and search for reaction GIFs. Memegen.link works out of the box — Giphy and Imgflip need credentials.",
+        "subtitle": "Captioned memes and reaction GIFs via Memegen, Giphy, or Imgflip",
         "save": "Save",
         "saveSuccess": "Memes settings saved",
         "testConnection": "Save",
@@ -1508,6 +1508,8 @@
       "modelNotFound": "Model not found — may be renamed or retired.",
       "rateLimited": "Rate-limited — try again shortly.",
       "offline": "You're offline — check your connection.",
+      "timeoutTitle": "Provider not responding",
+      "timeout": "The provider didn't respond in time — it may be overloaded. Try again or switch providers.",
       "serverError": "Provider temporarily unavailable — retry shortly.",
       "viewDetails": "View details"
     }

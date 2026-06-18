@@ -52,15 +52,49 @@ export class DeepSeekProvider {
       body.tools = options.tools.map(toTool)
     }
 
-    const response = await fetch(this.endpoint, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${this.apiKey}`,
-        'content-type': 'application/json'
-      },
-      body: JSON.stringify(body),
-      signal: options.signal
-    })
+    const controller = new AbortController()
+    let connectionTimedOut = false
+    const timer = setTimeout(() => {
+      connectionTimedOut = true
+      controller.abort()
+    }, 180_000)
+    if (options.signal) {
+      if (options.signal.aborted) {
+        clearTimeout(timer)
+        controller.abort(options.signal.reason)
+      } else {
+        options.signal.addEventListener(
+          'abort',
+          () => {
+            clearTimeout(timer)
+            controller.abort(options.signal!.reason)
+          },
+          { once: true }
+        )
+      }
+    }
+
+    let response: Response
+    try {
+      response = await fetch(this.endpoint, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal
+      })
+      clearTimeout(timer)
+    } catch (err) {
+      clearTimeout(timer)
+      if (connectionTimedOut) {
+        throw new Error(
+          'deepseek: connection timeout — the provider did not respond within 3 minutes'
+        )
+      }
+      throw err
+    }
 
     if (!response.ok || !response.body) {
       const text = await response.text().catch(() => '')
@@ -74,7 +108,7 @@ export class DeepSeekProvider {
     let outputTokens = 0
     let cacheReadTokens = 0
 
-    for await (const event of readSSE(response.body)) {
+    for await (const event of readSSE(response.body, 180_000)) {
       if (!event.data) continue
       if (event.data === '[DONE]') break
 
@@ -295,15 +329,42 @@ function generateToolId(): string {
 }
 
 async function* readSSE(
-  body: ReadableStream<Uint8Array>
+  body: ReadableStream<Uint8Array>,
+  firstChunkTimeoutMs = 180_000
 ): AsyncGenerator<{ event: string; data: string }> {
   const reader = body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
+  let streaming = false
+
+  const readWithTimeout = (): Promise<ReadableStreamReadResult<Uint8Array>> =>
+    new Promise((resolve, reject) => {
+      const timer = setTimeout(
+        () =>
+          reject(
+            new Error(
+              `deepseek: no data received within ${firstChunkTimeoutMs / 1000}s — aborting stalled request`
+            )
+          ),
+        firstChunkTimeoutMs
+      )
+      reader.read().then(
+        (result) => {
+          clearTimeout(timer)
+          resolve(result)
+        },
+        (err) => {
+          clearTimeout(timer)
+          reject(err)
+        }
+      )
+    })
+
   try {
     while (true) {
-      const { done, value } = await reader.read()
+      const { done, value } = streaming ? await reader.read() : await readWithTimeout()
       if (done) break
+      streaming = true
       buffer += decoder.decode(value, { stream: true })
       let idx = buffer.indexOf('\n\n')
       while (idx >= 0) {
