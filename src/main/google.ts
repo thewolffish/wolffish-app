@@ -249,11 +249,10 @@ class GoogleService {
 
   async getStatus(): Promise<GoogleStatus> {
     const cfg = await getGoogleConfig()
-    // "Active" now means: gogcli is configured (credentials uploaded) AND
-    // at least one account is authorized. There is no "primary" — every
-    // tool call passes its own account, so the panel only needs to know
-    // whether any accounts exist.
-    if (cfg.status === 'inactive') {
+    // Derive status from reality: credentials on disk + gogcli accounts.
+    // Don't gate on cfg.status — it's a cached hint that easily drifts
+    // (e.g. credentials uploaded but status never flipped to 'active').
+    if (!cfg.credentialsStored) {
       return { status: 'inactive', errorKind: null, error: null }
     }
     const accounts = await this.listAccounts()
