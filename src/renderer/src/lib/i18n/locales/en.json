@@ -216,7 +216,7 @@
       },
       "allowLocalFallback": {
         "label": "Run agentic tasks on the local model",
-        "description": "Your local model always answers and chats. This switch decides whether it also gets Wolffish's full toolset — running commands, editing files, and chaining steps the way cloud models do. Off keeps it in plain conversation mode and declines tool-heavy requests. Recommended off — smaller local models tend to misuse tools, loop, or invent results. Turn it on only if your local model is large enough to handle multi-step tool use reliably."
+        "description": "Your local model always answers and chats. This switch decides whether it also gets Wolffish's full toolset — running commands, editing files, and chaining steps the way cloud models do. Off keeps it in plain conversation mode and declines tool-heavy requests. On by default — turn it off if your local model struggles with multi-step tool use."
       },
       "restrictPowerfulModels": {
         "label": "Restrict powerful local models",
@@ -531,7 +531,7 @@
       },
       "brave": {
         "title": "Brave Search",
-        "subtitle": "Use Brave Search API as the primary web-search provider. When enabled, the agent's web_search tool calls Brave first and only falls back to DuckDuckGo if Brave is unreachable or rate-limited.",
+        "subtitle": "Use Brave Search API as the primary web-search provider, with DuckDuckGo as fallback.",
         "enable": "Enable Brave Search",
         "enableDescription": "When on, web searches go through Brave first. When off, DuckDuckGo is used directly.",
         "toggle": {
@@ -577,7 +577,7 @@
       },
       "notion": {
         "title": "Notion",
-        "subtitle": "Connect to Notion to read and write pages, databases, and blocks. The agent uses your integration token to access workspaces shared with the integration.",
+        "subtitle": "Read and write pages, databases, and blocks via your Notion integration token.",
         "token": "Integration token",
         "tokenPlaceholder": "ntn_…",
         "tokenHint": "Create an internal integration at notion.so/my-integrations, then share pages/databases with it. Token is stored in config.json on your machine — never sent anywhere except api.notion.com.",
@@ -592,6 +592,7 @@
           "disabled": "Inactive",
           "error": "Error"
         },
+        "connectedAs": "Connected as",
         "testSuccess": "Token valid — connected as {{name}}",
         "testFailure": "Test failed: {{message}}",
         "saveSuccess": "Notion settings saved",
@@ -616,7 +617,7 @@
       },
       "github": {
         "title": "GitHub",
-        "subtitle": "Connect to GitHub to manage repos, issues, pull requests, branches, CI/Actions, releases, and gists. The agent uses your Personal Access Token to authenticate API calls.",
+        "subtitle": "Manage repos, issues, PRs, branches, CI, releases, and gists via your Personal Access Token.",
         "token": "Personal Access Token",
         "tokenPlaceholder": "ghp_… or github_pat_…",
         "tokenHint": "Create a token at <link>github.com/settings/personal-access-tokens</link> with the 'repo' scope (and 'gist' for gists). Token is stored in config.json on your machine — never sent anywhere except api.github.com.",
@@ -1303,6 +1304,9 @@
     "settings": "Settings",
     "history": "History",
     "workspace": "Workspace",
+    "soul": "Soul",
+    "user": "User",
+    "agents": "Agents",
     "heartbeat": "Heartbeat",
     "task": {
       "title": "Task",

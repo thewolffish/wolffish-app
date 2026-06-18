@@ -160,19 +160,6 @@ export function UsagePanel(): React.JSX.Element {
 
         <RangeSelector range={range} onChange={setRange} />
 
-        {stats === null ? <StatsGridSkeleton /> : <StatsGrid stats={stats} />}
-
-        {summary === null ? (
-          <ProviderCardsSkeleton />
-        ) : (
-          <div className="flex flex-col gap-3">
-            {summary.providers.map((p) => (
-              <ProviderCard key={p.provider} provider={p} />
-            ))}
-            <BraveSearchCard brave={summary.brave} />
-          </div>
-        )}
-
         <section className="flex flex-col gap-3">
           <div className="flex items-center justify-between">
             <h2 className="text-fg text-sm font-semibold">{t('settings.usage.activity')}</h2>
@@ -196,6 +183,19 @@ export function UsagePanel(): React.JSX.Element {
             />
           )}
         </section>
+
+        {stats === null ? <StatsGridSkeleton /> : <StatsGrid stats={stats} />}
+
+        {summary === null ? (
+          <ProviderCardsSkeleton />
+        ) : (
+          <div className="flex flex-col gap-3">
+            {summary.providers.map((p) => (
+              <ProviderCard key={p.provider} provider={p} />
+            ))}
+            <BraveSearchCard brave={summary.brave} />
+          </div>
+        )}
       </div>
     </div>
   )

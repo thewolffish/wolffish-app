@@ -22,6 +22,9 @@ export type Screen =
   | 'history'
   | 'changelog'
   | 'heartbeat'
+  | 'soul'
+  | 'user'
+  | 'agents'
 
 export type ChatRole = 'user' | 'assistant'
 

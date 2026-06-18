@@ -81,6 +81,8 @@ export type BraveConfig = {
  */
 export type NotionConfig = {
   token: string
+  name: string
+  email: string
 }
 
 /**
@@ -153,7 +155,6 @@ export type UpdatesConfig = {
 }
 
 export type ComputerUseConfig = {
-  enabled: boolean
   screenshotMaxWidth: number
   screenshotFormat: 'jpeg' | 'png'
 }
@@ -199,9 +200,8 @@ export type WorkspaceConfig = {
     // when absent the cascade falls back to the order in `providers`.
     cloudPriority?: CloudProviderConfig['id'][]
     // When true, the cascade falls back to the local Ollama model after
-    // all cloud providers exhaust their retries. Off by default — small
-    // local models can't reliably handle agentic tool-use turns, so we'd
-    // rather surface the failure to the user than silently degrade.
+    // all cloud providers exhaust their retries, and the local model
+    // receives the full toolset for agentic multi-step tasks.
     allowLocalFallback?: boolean
     // When true, the cascade skips cloud providers entirely and uses
     // only the local model. Toggle from the chat input's mode switch.
@@ -402,7 +402,7 @@ function defaultConfig(): WorkspaceConfig {
     llm: {
       local: emptyLocalModel(),
       providers: [],
-      allowLocalFallback: false,
+      allowLocalFallback: true,
       restrictPowerfulModels: true
     },
     safety: { bypassPermissions: true, blockCredentials: false },
@@ -1103,7 +1103,7 @@ export async function setTtsConfig(patch: Partial<TtsConfig>): Promise<Workspace
   })
 }
 
-const EMPTY_NOTION_CONFIG: NotionConfig = { token: '' }
+const EMPTY_NOTION_CONFIG: NotionConfig = { token: '', name: '', email: '' }
 
 export async function getNotionConfig(): Promise<NotionConfig> {
   const config = await readConfig()
@@ -1113,8 +1113,11 @@ export async function getNotionConfig(): Promise<NotionConfig> {
 export async function setNotionConfig(patch: Partial<NotionConfig>): Promise<WorkspaceConfig> {
   return patchConfig((c) => {
     const current = c.notion ?? EMPTY_NOTION_CONFIG
+    const tokenChanged = patch.token !== undefined && patch.token !== current.token
     const next: NotionConfig = {
-      token: patch.token ?? current.token
+      token: patch.token ?? current.token,
+      name: tokenChanged ? (patch.name ?? '') : (patch.name ?? current.name),
+      email: tokenChanged ? (patch.email ?? '') : (patch.email ?? current.email)
     }
     return { ...c, notion: next }
   })
@@ -1212,7 +1215,6 @@ export async function setMemesConfig(patch: Partial<MemesConfig>): Promise<Works
 }
 
 const DEFAULT_COMPUTER_USE_CONFIG: ComputerUseConfig = {
-  enabled: true,
   screenshotMaxWidth: 1280,
   screenshotFormat: 'jpeg'
 }
@@ -1222,7 +1224,6 @@ export async function getComputerUseConfig(): Promise<ComputerUseConfig> {
   const stored = config?.computerUse
   if (!stored) return DEFAULT_COMPUTER_USE_CONFIG
   return {
-    enabled: stored.enabled ?? true,
     screenshotMaxWidth: stored.screenshotMaxWidth ?? 1280,
     screenshotFormat: stored.screenshotFormat ?? 'jpeg'
   }
@@ -1234,7 +1235,6 @@ export async function setComputerUseConfig(
   return patchConfig((c) => {
     const current = c.computerUse ?? DEFAULT_COMPUTER_USE_CONFIG
     const next: ComputerUseConfig = {
-      enabled: patch.enabled ?? current.enabled,
       screenshotMaxWidth: patch.screenshotMaxWidth ?? current.screenshotMaxWidth,
       screenshotFormat: patch.screenshotFormat ?? current.screenshotFormat
     }

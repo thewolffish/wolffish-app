@@ -24,8 +24,7 @@ export function ComputerUsePanel(): React.JSX.Element {
   const dirty =
     loaded &&
     savedConfig !== null &&
-    (config!.enabled !== savedConfig.enabled ||
-      config!.screenshotMaxWidth !== savedConfig.screenshotMaxWidth ||
+    (config!.screenshotMaxWidth !== savedConfig.screenshotMaxWidth ||
       config!.screenshotFormat !== savedConfig.screenshotFormat)
 
   useEffect(() => {
@@ -60,14 +59,6 @@ export function ComputerUsePanel(): React.JSX.Element {
     }
   }, [config, t, toast])
 
-  const handleToggle = useCallback(
-    (enabled: boolean) => {
-      if (!config) return
-      setConfig({ ...config, enabled })
-    },
-    [config]
-  )
-
   const handleResolution = useCallback(
     (value: number) => {
       if (!config) return
@@ -98,36 +89,7 @@ export function ComputerUsePanel(): React.JSX.Element {
 
         {loaded && (
           <>
-            {/* Enable/disable */}
             <section className="bg-surface border-border flex flex-col gap-5 rounded-2xl border p-6">
-              <div className="flex items-center justify-between">
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-fg text-sm font-medium">
-                    {t('settings.services.computerUse.enableLabel')}
-                  </span>
-                  <span className="text-muted text-xs">
-                    {t('settings.services.computerUse.enableHint')}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={config!.enabled}
-                  onClick={() => handleToggle(!config!.enabled)}
-                  className={cn(
-                    'relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors',
-                    config!.enabled ? 'bg-primary' : 'bg-border'
-                  )}
-                >
-                  <span
-                    className={cn(
-                      'pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow transition-transform',
-                      config!.enabled ? 'translate-x-5' : 'translate-x-0'
-                    )}
-                  />
-                </button>
-              </div>
-
               {/* Screenshot resolution */}
               <div className="flex flex-col gap-2">
                 <label className="text-fg text-sm font-medium">

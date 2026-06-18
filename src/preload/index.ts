@@ -849,6 +849,8 @@ export type NotionStatus = {
 
 export type NotionConfig = {
   token: string
+  name: string
+  email: string
 }
 
 export type NotionTestResult =
@@ -942,7 +944,6 @@ export type UpdatesConfig = {
 }
 
 export type ComputerUseConfig = {
-  enabled: boolean
   screenshotMaxWidth: number
   screenshotFormat: 'jpeg' | 'png'
 }

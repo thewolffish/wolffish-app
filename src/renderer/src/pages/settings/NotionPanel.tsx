@@ -1,8 +1,9 @@
 import { Button } from '@components/core/Button'
 import { Input } from '@components/core/Input'
+import { NotionLogo } from '@components/core/ProviderLogos'
 import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn'
-import type { NotionErrorKind, NotionStatus } from '@preload/index'
+import type { NotionConfig, NotionErrorKind, NotionStatus } from '@preload/index'
 import { EyeIcon, ViewOffIcon } from 'hugeicons-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -19,6 +20,7 @@ export function NotionPanel(): React.JSX.Element {
 
   const [token, setToken] = useState('')
   const [tokenVisible, setTokenVisible] = useState(false)
+  const [connectedAccount, setConnectedAccount] = useState<Pick<NotionConfig, 'name' | 'email'> | null>(null)
   const [status, setStatus] = useState<NotionStatus>({
     status: 'disabled',
     errorKind: null,
@@ -35,6 +37,7 @@ export function NotionPanel(): React.JSX.Element {
       if (cancelled) return
       setToken(cfg.token)
       setStatus(live)
+      if (cfg.name) setConnectedAccount({ name: cfg.name, email: cfg.email })
     })()
     return () => {
       cancelled = true
@@ -61,8 +64,14 @@ export function NotionPanel(): React.JSX.Element {
     try {
       const result = await window.api.notion.test(token.trim())
       if (result.ok) {
-        const response = await window.api.notion.setConfig({ token: token.trim() })
+        const patch: Partial<NotionConfig> = { token: token.trim() }
+        if (result.name) patch.name = result.name
+        if (result.email) patch.email = result.email
+        const response = await window.api.notion.setConfig(patch)
         setStatus(response.status)
+        if (result.name) {
+          setConnectedAccount({ name: result.name, email: result.email ?? '' })
+        }
         toast.show({
           message: t('settings.services.notion.testSuccess', {
             name: result.name,
@@ -77,6 +86,7 @@ export function NotionPanel(): React.JSX.Element {
           }),
           tone: 'error'
         })
+        setConnectedAccount(null)
         const live = await window.api.notion.status()
         setStatus(live)
       }
@@ -121,6 +131,23 @@ export function NotionPanel(): React.JSX.Element {
                 <span className="text-fg text-sm">{statusLabel}</span>
               </div>
             </div>
+            {connectedAccount && status.status === 'configured' && (
+              <div className="bg-bg/40 border-border flex items-center gap-3 rounded-xl border px-3 py-2.5">
+                <div className="bg-surface border-border flex h-9 w-9 shrink-0 items-center justify-center rounded-full border">
+                  <NotionLogo size={18} />
+                </div>
+                <div className="flex min-w-0 flex-col">
+                  <span className="text-muted text-xs font-medium uppercase tracking-wider">
+                    {t('settings.services.notion.connectedAs')}
+                  </span>
+                  <span className="text-fg truncate text-sm font-medium">
+                    {connectedAccount.email
+                      ? `${connectedAccount.name} (${connectedAccount.email})`
+                      : connectedAccount.name}
+                  </span>
+                </div>
+              </div>
+            )}
             {statusErrorText && (
               <pre
                 className={cn(

@@ -14,6 +14,9 @@ import { ViewerPage } from '@pages/ViewerPage'
 import { History } from '@pages/History'
 import { Changelog } from '@pages/Changelog'
 import { Heartbeat } from '@pages/Heartbeat'
+import { Soul } from '@pages/Soul'
+import { User } from '@pages/User'
+import { Agents } from '@pages/Agents'
 
 function Screens(): React.JSX.Element {
   const { screen } = useFlow()
@@ -38,6 +41,12 @@ function Screens(): React.JSX.Element {
       return <Changelog />
     case 'heartbeat':
       return <Heartbeat />
+    case 'soul':
+      return <Soul />
+    case 'user':
+      return <User />
+    case 'agents':
+      return <Agents />
   }
 }
 

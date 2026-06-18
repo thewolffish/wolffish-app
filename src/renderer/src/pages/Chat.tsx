@@ -79,6 +79,9 @@ import {
   Folder01Icon,
   HeartCheckIcon,
   Image02Icon,
+  Robot01Icon,
+  SparklesIcon,
+  UserIcon,
   Mic01Icon,
   PauseIcon,
   PlayIcon,
@@ -1349,10 +1352,24 @@ export function Chat(): React.JSX.Element {
       <Sidebar
         items={[
           {
-            key: 'viewer',
-            icon: FileEditIcon,
-            label: t('chat.workspace'),
-            onClick: () => goTo('viewer'),
+            key: 'soul',
+            icon: SparklesIcon,
+            label: t('chat.soul'),
+            onClick: () => goTo('soul'),
+            disabled: streaming
+          },
+          {
+            key: 'user',
+            icon: UserIcon,
+            label: t('chat.user'),
+            onClick: () => goTo('user'),
+            disabled: streaming
+          },
+          {
+            key: 'agents',
+            icon: Robot01Icon,
+            label: t('chat.agents'),
+            onClick: () => goTo('agents'),
             disabled: streaming
           },
           {
@@ -1360,6 +1377,13 @@ export function Chat(): React.JSX.Element {
             icon: HeartCheckIcon,
             label: t('chat.heartbeat'),
             onClick: () => goTo('heartbeat'),
+            disabled: streaming
+          },
+          {
+            key: 'viewer',
+            icon: FileEditIcon,
+            label: t('chat.workspace'),
+            onClick: () => goTo('viewer'),
             disabled: streaming
           },
           {
