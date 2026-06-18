@@ -146,7 +146,9 @@ export function TextToSpeechPanel(): React.JSX.Element {
               {t('settings.services.engine')}
             </span>
             <div className="flex items-center gap-2">
-              <span className="text-fg text-sm font-medium">Microsoft Edge TTS</span>
+              <span className="text-fg text-sm font-medium">
+                {t('settings.services.tts.engineName')}
+              </span>
               <span className="bg-border/60 text-muted rounded-md px-1.5 py-0.5 text-[10px] font-medium">
                 {t('settings.services.tts.free')}
               </span>

@@ -439,6 +439,7 @@
         "title": "تحويل النص إلى كلام",
         "subtitle": "اضبط كيفية توليد وولف‌ فيش للصوت من النص.",
         "free": "مجاني",
+        "engineName": "مايكروسوفت إيدج TTS",
         "engineDescription": "تحويل نص إلى كلام بأصوات عصبية. لا يتطلّب مفتاح واجهة.",
         "voice": "الصوت الافتراضي",
         "speed": "سرعة الكلام",
@@ -449,6 +450,7 @@
         "title": "تحويل الكلام إلى نص",
         "subtitle": "اضبط كيفية تحويل وولف‌ فيش للصوت إلى نص.",
         "local": "محلي",
+        "engineName": "أوبن أيه آي ويسبر",
         "engineDescription": "التعرّف على الكلام مفتوح المصدر. يعمل بالكامل على جهازك — بدون مفتاح واجهة ولا سحابة.",
         "model": "النموذج الافتراضي",
         "language": "اللغة",
@@ -580,7 +582,43 @@
       },
       "notion": {
         "title": "نوشن",
-        "subtitle": "قراءة وكتابة الصفحات وقواعد البيانات والكتل عبر رمز تكامل نوشن."
+        "subtitle": "قراءة وكتابة الصفحات وقواعد البيانات والكتل عبر رمز تكامل نوشن.",
+        "token": "رمز التكامل",
+        "tokenPlaceholder": "ntn_…",
+        "tokenHint": "أنشئ تكاملاً داخلياً في notion.so/my-integrations ثم شارك الصفحات/قواعد البيانات معه. يُخزَّن الرمز في config.json على جهازك — لا يُرسل إلى أي مكان عدا api.notion.com.",
+        "showToken": "إظهار",
+        "hideToken": "إخفاء",
+        "test": "حفظ",
+        "testHint": "يستدعي نقطة /v1/users/me في نوشن للتحقق من صلاحية رمز التكامل.",
+        "save": "حفظ",
+        "status": {
+          "label": "الحالة",
+          "configured": "نشط",
+          "disabled": "غير نشط",
+          "error": "خطأ"
+        },
+        "connectedAs": "متصل بـ",
+        "testSuccess": "الرمز صالح — متصل بـ {{name}}",
+        "testFailure": "فشل الاختبار: {{message}}",
+        "saveSuccess": "تم حفظ إعدادات نوشن",
+        "validation": {
+          "tokenRequired": "رمز التكامل مطلوب."
+        },
+        "errors": {
+          "missing_token": "رمز التكامل مطلوب.",
+          "invalid_token": "الرمز مرفوض — انسخ رمزاً جديداً من نوشن.",
+          "rate_limit": "تم تقييد الطلبات من نوشن — انتظر وأعد.",
+          "network": "تعذّر الوصول إلى نوشن — تحقق من الاتصال.",
+          "unknown": "أرجع نوشن خطأ: {{message}}"
+        },
+        "howItWorksTitle": "كيف يعمل",
+        "howItWorks": {
+          "integration": "أنشئ تكاملاً داخلياً في notion.so/my-integrations.",
+          "pages": "شارك صفحات أو قواعد بيانات محددة مع التكامل لمنحه الوصول.",
+          "databases": "يمكن للوكيل البحث والقراءة والإنشاء والتحديث في الصفحات وقواعد البيانات.",
+          "privacy": "الرمز يبقى في config.json — بدون وسيط، بدون تتبع.",
+          "setup": "فقط الصفحات المشاركة صراحةً مع التكامل يمكن الوصول إليها."
+        }
       },
       "github": {
         "title": "جيت هب",
@@ -765,14 +803,14 @@
       },
       "memes": {
         "title": "ميمز",
-        "subtitle": "ميمز بنصوص مخصّصة وصور متحركة عبر Memegen أو Giphy أو Imgflip",
+        "subtitle": "ميمز بنصوص مخصّصة وصور متحركة عبر ميميجن أو جيفي أو إمجفليب",
         "save": "حفظ",
         "saveSuccess": "تم حفظ إعدادات الميمز",
         "testConnection": "حفظ",
         "testAndSave": "اختبار وحفظ",
         "testFailure": "فشل الاختبار: {{message}}",
-        "testGiphySuccess": "تم الاتصال بـ Giphy بنجاح",
-        "testImgflipSuccess": "تم الاتصال بـ Imgflip بنجاح",
+        "testGiphySuccess": "تم الاتصال بـ جيفي بنجاح",
+        "testImgflipSuccess": "تم الاتصال بـ إمجفليب بنجاح",
         "showKey": "إظهار",
         "hideKey": "إخفاء",
         "providerStatus": {
@@ -782,30 +820,30 @@
           "error": "خطأ"
         },
         "memegen": {
-          "title": "Memegen",
+          "title": "ميميجن",
           "description": "مولّد ميمز مجاني لا يحتاج إعداد. متاح دائماً — لا يحتاج حساب."
         },
         "giphy": {
-          "title": "Giphy",
+          "title": "جيفي",
           "description": "ابحث وحمّل صور متحركة. يحتاج مفتاح API مجاني.",
           "apiKeyLabel": "مفتاح API",
-          "apiKeyPlaceholder": "مفتاح Giphy API",
+          "apiKeyPlaceholder": "مفتاح جيفي API",
           "hint": "سجّل في developers.giphy.com وأنشئ تطبيقاً وانسخ مفتاح API.",
           "getKey": "احصل على مفتاح"
         },
         "imgflip": {
-          "title": "Imgflip",
+          "title": "إمجفليب",
           "description": "توليد ميمز متقدّم مع قوالب أكثر. يحتاج حساب مجاني.",
           "usernameLabel": "اسم المستخدم",
-          "usernamePlaceholder": "اسم مستخدم Imgflip",
+          "usernamePlaceholder": "اسم مستخدم إمجفليب",
           "passwordLabel": "كلمة المرور",
-          "passwordPlaceholder": "كلمة مرور Imgflip",
+          "passwordPlaceholder": "كلمة مرور إمجفليب",
           "hint": "أنشئ حساباً مجانياً في imgflip.com. يُستخدم اسم المستخدم وكلمة المرور لتوليد الميمز.",
           "createAccount": "إنشاء حساب"
         },
         "validation": {
-          "giphyKeyRequired": "مفتاح Giphy API مطلوب.",
-          "imgflipCredsRequired": "اسم المستخدم وكلمة المرور في Imgflip مطلوبان."
+          "giphyKeyRequired": "مفتاح جيفي API مطلوب.",
+          "imgflipCredsRequired": "اسم المستخدم وكلمة المرور في إمجفليب مطلوبان."
         },
         "errors": {
           "missing_key": "بيانات الاعتماد مطلوبة.",

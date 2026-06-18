@@ -78,7 +78,9 @@ export function SpeechToTextPanel(): React.JSX.Element {
               {t('settings.services.engine')}
             </span>
             <div className="flex items-center gap-2">
-              <span className="text-fg text-sm font-medium">OpenAI Whisper</span>
+              <span className="text-fg text-sm font-medium">
+                {t('settings.services.stt.engineName')}
+              </span>
               <span className="bg-border/60 text-muted rounded-md px-1.5 py-0.5 text-[10px] font-medium">
                 {t('settings.services.stt.local')}
               </span>
