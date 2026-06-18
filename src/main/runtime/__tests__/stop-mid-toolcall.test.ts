@@ -118,14 +118,19 @@ function testHistoryBackfill(): void {
 
   const assistantIdx = history.findIndex((m) => m.role === 'assistant')
   const toolIdx = history.findIndex((m) => m.role === 'tool')
-  const assistant = history[assistantIdx] as Extract<(typeof history)[number], { role: 'assistant' }>
+  const assistant = history[assistantIdx] as Extract<
+    (typeof history)[number],
+    { role: 'assistant' }
+  >
   const toolMsgs = history.filter(
     (m): m is Extract<(typeof history)[number], { role: 'tool' }> => m.role === 'tool'
   )
 
   ok(
     'assistant message carries the announced tool_use',
-    !!assistant?.toolUses && assistant.toolUses.length === 1 && assistant.toolUses[0].id === 'call_1'
+    !!assistant?.toolUses &&
+      assistant.toolUses.length === 1 &&
+      assistant.toolUses[0].id === 'call_1'
   )
   ok(
     'dangling tool_call is backfilled with exactly one result',
@@ -162,7 +167,10 @@ function testHistoryBackfill(): void {
     content: '',
     segments: balanced
   } as never)
-  ok('balanced tool_call is not double-backfilled', h2.filter((m) => m.role === 'tool').length === 1)
+  ok(
+    'balanced tool_call is not double-backfilled',
+    h2.filter((m) => m.role === 'tool').length === 1
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -217,7 +225,10 @@ async function testMotorAbort(): Promise<void> {
   await mirror.executeStep(t3.id, call, turnAc.signal)
   turnAc.abort()
   const res3 = await mirror.executeStep(t3.id, { ...call, id: 'call_2' }, turnAc.signal)
-  ok('step after a mirrored turn-abort is stopped', res3.ok === false && /stopped/i.test(res3.output))
+  ok(
+    'step after a mirrored turn-abort is stopped',
+    res3.ok === false && /stopped/i.test(res3.output)
+  )
 }
 
 async function main(): Promise<void> {

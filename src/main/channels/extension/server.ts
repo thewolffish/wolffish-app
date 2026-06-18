@@ -476,9 +476,7 @@ export class ExtensionServer {
     try {
       const conversations = await listConversations()
       if (this.currentConversationId && this.currentTitle) {
-        const existing = conversations.find(
-          (c) => c.conversationId === this.currentConversationId
-        )
+        const existing = conversations.find((c) => c.conversationId === this.currentConversationId)
         if (existing) {
           existing.title = this.currentTitle
         }

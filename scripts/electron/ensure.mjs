@@ -106,15 +106,14 @@ function extract(zip, dest) {
       // tool missing or failed — try the next one
     }
   }
-  console.warn('[ensure-electron] neither `unzip` nor `python3` is available to extract the archive.')
+  console.warn(
+    '[ensure-electron] neither `unzip` nor `python3` is available to extract the archive.'
+  )
   return false
 }
 
 function findInCache(name) {
-  const root =
-    process.env.electron_config_cache ||
-    process.env.ELECTRON_CACHE ||
-    defaultCacheRoot()
+  const root = process.env.electron_config_cache || process.env.ELECTRON_CACHE || defaultCacheRoot()
   try {
     return walk(root, name)
   } catch {

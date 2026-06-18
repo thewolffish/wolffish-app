@@ -1200,7 +1200,8 @@ function runNpmInstall(
       if (timedOut) {
         finish({
           success: false,
-          error: `npm install timed out after ${Math.round(NPM_INSTALL_TIMEOUT_MS / 60_000)} min and was terminated (likely a stalled download or postinstall). ${combined.slice(-1000)}`.trim(),
+          error:
+            `npm install timed out after ${Math.round(NPM_INSTALL_TIMEOUT_MS / 60_000)} min and was terminated (likely a stalled download or postinstall). ${combined.slice(-1000)}`.trim(),
           output: combined
         })
       } else if (code === 0) {

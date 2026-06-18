@@ -14,7 +14,8 @@ export default defineConfig(
       // Bundled workspace defaults are user-facing assets copied into
       // ~/.wolffish on first launch. Plugin code there is JavaScript the
       // user can edit — not part of the app's TypeScript source.
-      'src/defaults/workspace/**'
+      'src/defaults/workspace/**',
+      'scripts/**'
     ]
   },
   tseslint.configs.recommended,

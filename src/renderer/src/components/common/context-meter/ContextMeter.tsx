@@ -76,11 +76,7 @@ export function ContextMeter({
     <Tooltip content={tooltipText} side="top">
       <span className="relative inline-flex h-10 w-10 shrink-0 cursor-default items-center justify-center">
         <svg width={size} height={size}>
-          <path
-            d={d}
-            fill={useBorderColor ? 'none' : color}
-            fillOpacity={0.15}
-          />
+          <path d={d} fill={useBorderColor ? 'none' : color} fillOpacity={0.15} />
           <path
             d={d}
             fill="none"

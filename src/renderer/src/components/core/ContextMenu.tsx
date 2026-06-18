@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import { cn } from '@lib/utils/cn'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -53,7 +54,7 @@ function ContextMenuPopup({ items, position, onClose }: ContextMenuProps): React
     <div
       ref={menuRef}
       className={cn(
-        'bg-surface border-border fixed z-[9999] min-w-[140px] overflow-hidden rounded-lg border py-1 shadow-lg'
+        'bg-surface border-border fixed z-9999 min-w-[140px] overflow-hidden rounded-lg border py-1 shadow-lg'
       )}
       style={{ left: position.x, top: position.y }}
     >
@@ -83,7 +84,10 @@ function ContextMenuPopup({ items, position, onClose }: ContextMenuProps): React
   )
 }
 
-export function useContextMenu(buildItems: () => ContextMenuEntry[]) {
+export function useContextMenu(buildItems: () => ContextMenuEntry[]): {
+  onContextMenu: (e: React.MouseEvent) => void
+  menu: React.ReactNode
+} {
   const [state, setState] = useState<{ position: Position; items: ContextMenuEntry[] } | null>(null)
 
   const onContextMenu = useCallback(

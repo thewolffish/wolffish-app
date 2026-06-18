@@ -20,7 +20,10 @@ export function NotionPanel(): React.JSX.Element {
 
   const [token, setToken] = useState('')
   const [tokenVisible, setTokenVisible] = useState(false)
-  const [connectedAccount, setConnectedAccount] = useState<Pick<NotionConfig, 'name' | 'email'> | null>(null)
+  const [connectedAccount, setConnectedAccount] = useState<Pick<
+    NotionConfig,
+    'name' | 'email'
+  > | null>(null)
   const [status, setStatus] = useState<NotionStatus>({
     status: 'disabled',
     errorKind: null,

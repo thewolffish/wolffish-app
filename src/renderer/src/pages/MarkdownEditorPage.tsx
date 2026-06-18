@@ -6,12 +6,7 @@ import { cn } from '@lib/utils/cn'
 import { useFlow } from '@providers/flow/useFlow'
 import { useLocale } from '@providers/locale/useLocale'
 import { useTheme } from '@providers/theme/useTheme'
-import {
-  ArrowLeft02Icon,
-  ArrowRight02Icon,
-  FloppyDiskIcon,
-  Refresh01Icon
-} from 'hugeicons-react'
+import { ArrowLeft02Icon, ArrowRight02Icon, FloppyDiskIcon, Refresh01Icon } from 'hugeicons-react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
