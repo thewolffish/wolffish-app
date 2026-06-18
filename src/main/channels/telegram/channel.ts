@@ -219,6 +219,10 @@ type ActiveTurn = {
    * Cleared on flush (chip sent) or at turn_end (chip dropped).
    */
   pendingActiveModel: string | null
+  /** Last model name actually sent as a chip — prevents the same
+   *  provider name from appearing twice when both active_model and
+   *  provider_change fire, or across back-to-back iterations. */
+  lastFlushedModel: string | null
   /**
    * Promise chain that serializes renderSegment calls. Each call
    * chains onto the previous one so concurrent fire-and-forget
@@ -1317,6 +1321,7 @@ export class TelegramChannel {
             typingTimer: null,
             toolCallNames: new Map(),
             pendingActiveModel: null,
+            lastFlushedModel: null,
             renderChain: Promise.resolve()
           }
           this.activeByChat.set(chatId, active)
@@ -1648,6 +1653,8 @@ export class TelegramChannel {
     const model = active.pendingActiveModel
     if (!model) return
     active.pendingActiveModel = null
+    if (model === active.lastFlushedModel) return
+    active.lastFlushedModel = model
     await this.sendHtml(chatId, `🤖 <b>${escapeHtml(model)}</b>`)
   }
 

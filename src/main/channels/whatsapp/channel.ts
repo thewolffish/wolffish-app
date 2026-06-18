@@ -104,6 +104,7 @@ type ActiveTurn = {
   pendingApprovalResolve: ((decision: ApprovalDecision) => void) | null
   toolCallNames: Map<string, string>
   pendingActiveModel: string | null
+  lastFlushedModel: string | null
   sentImages: Set<string>
 }
 
@@ -791,6 +792,7 @@ export class WhatsAppChannel {
           pendingApprovalResolve: null,
           toolCallNames: new Map(),
           pendingActiveModel: null,
+          lastFlushedModel: null,
           sentImages: new Set()
         }
         this.activeByJid.set(jid, active)
@@ -1042,6 +1044,8 @@ export class WhatsAppChannel {
     const model = active.pendingActiveModel
     if (!model) return
     active.pendingActiveModel = null
+    if (model === active.lastFlushedModel) return
+    active.lastFlushedModel = model
     await this.safeSend(jid, `🤖 *${model}*`)
   }
 

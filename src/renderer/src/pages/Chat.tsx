@@ -2459,17 +2459,13 @@ function renderSegments(
   const blocks: ReactNode[] = []
   let textBuffer = ''
   let textRun = 0
-  // active_model is the upfront "who's handling this turn" chip. If the
-  // cascade later falls over to local, the provider_change chip shows the
-  // same info and the upfront chip becomes redundant — drop it.
-  const hasProviderChange = segments.some((s) => s.kind === 'provider_change')
   // Defer rendering either chip until the cascade has actually committed
   // to a provider — i.e. real content (text or a tool call) has arrived.
-  // Without this, a brief flicker shows: active_model chip flashes the
-  // cloud model name, then swaps to the local one when the fallback
-  // engages. Waiting for content means the chip appears once with the
-  // final answer and stays put.
   const hasCommitted = segments.some((s) => s.kind === 'text' || s.kind === 'tool_call')
+  // Track which model names have already been rendered as a chip so we
+  // never show the same provider name twice — covers active_model +
+  // provider_change naming the same model, and back-to-back iterations.
+  const renderedModelChips = new Set<string>()
 
   const flushText = (): void => {
     if (textBuffer.length === 0) return
@@ -2684,17 +2680,17 @@ function renderSegments(
       // continue — the next text segment starts a new bubble.
       flushText()
     } else if (seg.kind === 'active_model') {
-      if (hasProviderChange || !hasCommitted) continue
-      // Each agent iteration emits its own active_model chip. If this
-      // iteration produces no text or tool_call after the chip (e.g.
-      // the agent ends silently after a voice_respond), the chip would
-      // render as a stray bubble. Skip chips with no following content.
+      if (!hasCommitted) continue
       if (!hasFollowingContent(segments, segIdx)) continue
+      if (renderedModelChips.has(seg.model)) continue
+      renderedModelChips.add(seg.model)
       flushText()
       blocks.push(<ActiveModelChip key={seg.segmentId} provider={seg.provider} model={seg.model} />)
     } else if (seg.kind === 'provider_change') {
       if (!hasCommitted) continue
       if (!hasFollowingContent(segments, segIdx)) continue
+      if (renderedModelChips.has(seg.model)) continue
+      renderedModelChips.add(seg.model)
       flushText()
       blocks.push(<ActiveModelChip key={seg.segmentId} provider={seg.to} model={seg.model} />)
     } else if (seg.kind === 'compaction_started') {
