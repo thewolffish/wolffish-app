@@ -1237,7 +1237,7 @@ app.whenReady().then(async () => {
       patch: Partial<NotionConfig>
     ): Promise<{ ok: true; status: NotionStatus; config: NotionConfig }> => {
       const updated = await persistNotionConfig(patch)
-      const next = updated.notion ?? { token: '' }
+      const next = updated.notion ?? { token: '', name: '', email: '' }
       notionService.resetCache()
       return { ok: true as const, status: await notionService.getStatus(), config: next }
     }
