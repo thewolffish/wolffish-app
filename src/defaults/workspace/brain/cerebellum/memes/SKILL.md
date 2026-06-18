@@ -141,9 +141,9 @@ tools:
 
 ## Picking a provider
 
-- **memegen.link** — default. Zero config, always works. Use this unless told otherwise.
+- **Giphy** — **preferred first choice.** If a Giphy API key is configured, search for a relevant GIF before generating a captioned meme. Giphy results are fast, expressive, and usually land better than generated text memes. Use `gif_search` with a descriptive query matching the mood or topic.
+- **memegen.link** — fallback for captioned memes. Use when Giphy has no good match, the user explicitly asks for a captioned/template meme, or no Giphy API key is configured.
 - **Imgflip** — only if user has configured credentials AND specifically asks for it.
-- **Giphy** — for reaction GIFs (no captioning, just mood/emotion search). Needs API key.
 
 ## Popular templates and when to use them
 
@@ -187,7 +187,7 @@ tools:
 **Always call `add_to_chat()` after generating or finding an image.** It takes no arguments and automatically injects whatever was just generated.
 
 Workflow:
-1. Call `meme_generate` (or `gif_search` / `gif_trending`)
+1. If Giphy is configured, try `gif_search` first with a descriptive query. Fall back to `meme_generate` only if no good result or if a captioned meme is specifically needed.
 2. Call `add_to_chat()` — no arguments needed
 3. Add a short comment in your text response
 
