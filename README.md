@@ -1,5 +1,5 @@
 <picture>
-  <img src="https://cdn.wolffi.sh/branding/og_image.jpg" alt="wolffish" />
+  <img src="https://cdn.wolffi.sh/general/ogimage.jpg" alt="wolffish" />
 </picture>
 
 # wolffish-app
