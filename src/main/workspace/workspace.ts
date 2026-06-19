@@ -3,7 +3,7 @@ import { isKnownModelName } from '@main/runtime/models'
 import { app } from 'electron'
 import yaml from 'js-yaml'
 import { execFile } from 'node:child_process'
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import fs from 'node:fs/promises'
 import os from 'node:os'
@@ -296,6 +296,7 @@ export type WorkspaceStatus = {
 
 const WORKSPACE_ROOT = path.join(os.homedir(), '.wolffish', 'workspace')
 const CONFIG_FILENAME = 'config.json'
+const CONFIG_BACKUP_FILENAME = 'config.json.bak'
 const LOCK_FILENAME = '.lock'
 const DEFAULT_OLLAMA_ENDPOINT = 'http://localhost:11434'
 
@@ -348,6 +349,10 @@ export function configPath(): string {
   return path.join(WORKSPACE_ROOT, CONFIG_FILENAME)
 }
 
+export function configBackupPath(): string {
+  return path.join(WORKSPACE_ROOT, CONFIG_BACKUP_FILENAME)
+}
+
 export function lockfilePath(): string {
   return path.join(WORKSPACE_ROOT, LOCK_FILENAME)
 }
@@ -365,25 +370,147 @@ export function defaultsWorkspacePath(): string {
 
 export async function readConfig(): Promise<WorkspaceConfig | null> {
   try {
-    const raw = await fs.readFile(configPath(), 'utf8')
-    return JSON.parse(raw) as WorkspaceConfig
+    const { config } = await readConfigStrict()
+    return config
   } catch {
+    // Lenient read for the many read-only callers (getStatus, getVariables,
+    // the integration getXConfig helpers) that already treat a missing or
+    // unreadable config as null. Never throws.
     return null
   }
 }
 
+/**
+ * Read config.json while preserving the distinction the lenient readConfig
+ * throws away: a file that is genuinely ABSENT (fresh workspace) versus one
+ * that EXISTS but momentarily fails to read or parse (a foreign writer caught
+ * mid-write, a transient IO error). That distinction is load-bearing — a
+ * config that exists must never be treated as "absent", or a follow-up
+ * patchConfig would overwrite real settings with defaults.
+ *
+ * Returns { exists:false } only for ENOENT. Throws for any other read error
+ * or for unparseable JSON.
+ */
+async function readConfigStrict(): Promise<{ exists: boolean; config: WorkspaceConfig | null }> {
+  let raw: string
+  try {
+    raw = await fs.readFile(configPath(), 'utf8')
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      return { exists: false, config: null }
+    }
+    throw err
+  }
+  return { exists: true, config: JSON.parse(raw) as WorkspaceConfig }
+}
+
+// Serializes every config write and read-modify-write through one in-process
+// promise chain. The atomic write below guarantees no reader sees a torn
+// file; this guarantees no two writers interleave and lose each other's
+// update (e.g. a Telegram /local command racing a UI setting change, or the
+// renderer's thinking-mode effect racing a provider save). Single-threaded JS
+// reassigns `configMutex` synchronously per call, so callers queue FIFO.
+let configMutex: Promise<unknown> = Promise.resolve()
+
+function withConfigLock<T>(op: () => Promise<T>): Promise<T> {
+  const run = configMutex.then(op, op)
+  // Keep the chain moving whether op resolves or rejects; never let a
+  // rejection wedge the queue or surface as an unhandled rejection here.
+  configMutex = run.then(
+    () => undefined,
+    () => undefined
+  )
+  return run
+}
+
 export async function writeConfig(config: WorkspaceConfig): Promise<void> {
+  await withConfigLock(() => writeConfigAtomic(config))
+}
+
+/**
+ * Atomic write: stream to a sibling temp file, fsync, then rename(2) over the
+ * target. rename is atomic on the same filesystem, so a concurrent reader
+ * always sees either the complete old file or the complete new one — never the
+ * truncated state a bare fs.writeFile exposes mid-write (the partial-read
+ * window that made readConfig() return null and patchConfig() fall back to
+ * defaults, wiping API keys and providers). After the swap we mirror the same
+ * bytes to config.json.bak as a last-known-good snapshot for recovery.
+ *
+ * Not exported and not self-locking: always reached through writeConfig or
+ * patchConfig, both of which already hold the config lock, so it never
+ * re-enters it.
+ */
+async function writeConfigAtomic(config: WorkspaceConfig): Promise<void> {
   await fs.mkdir(WORKSPACE_ROOT, { recursive: true })
-  await fs.writeFile(configPath(), JSON.stringify(config, null, 2), 'utf8')
+  const target = configPath()
+  const data = JSON.stringify(config, null, 2)
+  const tmp = path.join(
+    WORKSPACE_ROOT,
+    `${CONFIG_FILENAME}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`
+  )
+  let handle: import('node:fs/promises').FileHandle | undefined
+  try {
+    handle = await fs.open(tmp, 'w')
+    await handle.writeFile(data, 'utf8')
+    await handle.sync()
+  } finally {
+    await handle?.close()
+  }
+  try {
+    await fs.rename(tmp, target)
+  } catch (err) {
+    // Rename failed — don't leave the scratch file behind.
+    await fs.rm(tmp, { force: true }).catch(() => {})
+    throw err
+  }
+  // Best-effort last-known-good snapshot. A failure here can never affect the
+  // live file, and the backup is only ever read as a recovery fallback.
+  await fs.writeFile(configBackupPath(), data, 'utf8').catch(() => {})
 }
 
 export async function patchConfig(
   patch: (current: WorkspaceConfig) => WorkspaceConfig
 ): Promise<WorkspaceConfig> {
-  const current = (await readConfig()) ?? defaultConfig()
-  const next = patch(current)
-  await writeConfig(next)
-  return next
+  return withConfigLock(async () => {
+    const current = await loadConfigBase()
+    const next = patch(current)
+    await writeConfigAtomic(next)
+    return next
+  })
+}
+
+/**
+ * The object a patch is applied on top of. Seeds defaults ONLY when the
+ * workspace genuinely has no config yet (fresh install). If config.json
+ * exists but can't be read or parsed, we recover the last-known-good backup
+ * rather than rebuilding from defaults — falling back to defaults here is the
+ * precise bug that wiped real settings. If neither the file nor a usable
+ * backup can be read, we throw to abort the write: failing one setting is
+ * recoverable; clobbering the whole config is not.
+ */
+async function loadConfigBase(): Promise<WorkspaceConfig> {
+  try {
+    const { exists, config } = await readConfigStrict()
+    if (config) return config
+    if (!exists) return defaultConfig()
+  } catch {
+    // exists-but-unreadable — fall through to backup recovery
+  }
+  const backup = await readBackupConfig()
+  if (backup) return backup
+  throw new Error(
+    'config.json exists but is unreadable and no usable backup was found; ' +
+      'refusing to overwrite it with defaults'
+  )
+}
+
+async function readBackupConfig(): Promise<WorkspaceConfig | null> {
+  try {
+    const raw = await fs.readFile(configBackupPath(), 'utf8')
+    return JSON.parse(raw) as WorkspaceConfig
+  } catch {
+    return null
+  }
 }
 
 function emptyLocalModel(): LocalModelConfig {

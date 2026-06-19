@@ -1,4 +1,18 @@
-## v1.0.151 — 2026-06-15 `Latest`
+## v1.0.169 — 2026-06-19 `Latest`
+
+### Settings No Longer Reset Themselves
+
+Fixed a bug that could wipe `config.json` back to defaults — erasing your cloud providers, API keys, and preferences — when two config writes happened at nearly the same moment. Starting a new chat from a Telegram-started conversation was a common trigger, but any overlapping writes could do it: a mode toggle, a provider save, or a Telegram `/local` / `/cloud` command racing a background write.
+
+**Root cause.** The config file was written non-atomically — truncated to empty, then rewritten — and any read that landed in that brief window saw a blank file. The reader treated "blank" as "no config" and rebuilt from defaults, then saved that over your real settings. Under contention this reproduced in roughly 95% of attempts.
+
+**The fix, in three layers.** Writes are now **atomic**: the new config is written to a temporary file and renamed into place, so a reader always sees a complete file — the old one or the new one, never a half-written one. All writes are **serialized** through a single in-process queue, so two changes can no longer interleave and clobber each other. And the read-modify-write step **refuses to fall back to defaults** when the file exists but can't be read — it recovers the last-known-good config instead, or fails that one write, rather than ever overwriting everything. The worst case is now "a single setting didn't save," not "all my settings are gone."
+
+**Self-healing backup.** Every successful save now also refreshes a `config.json.bak` snapshot in your workspace folder. If the live config is ever found corrupt — including from edits made outside the app — the next write transparently restores from it.
+
+---
+
+## v1.0.151 — 2026-06-15
 
 ### Reveal & Open Files from Any Card
 

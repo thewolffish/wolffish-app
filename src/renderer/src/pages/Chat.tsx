@@ -154,12 +154,18 @@ export function Chat(): React.JSX.Element {
   // updates reactively through status once the write completes.
   const setThinkingMode = useCallback(
     async (mode: string) => {
-      if (activeCloudModel) {
-        await window.api.runtime.setThinkingMode(activeCloudModel, mode as ThinkingMode)
-        await refreshStatus()
-      }
+      if (!activeCloudModel) return
+      // Skip redundant writes. The effect below drives this setter
+      // autonomously on every status/model transition (including starting a
+      // new chat), so persisting an unchanged value just adds config.json
+      // write churn — and that write contention is what surfaced the
+      // config-wipe race in the first place.
+      const current = persistedThinkingModes?.[activeCloudModel] ?? 'basic'
+      if (mode === current) return
+      await window.api.runtime.setThinkingMode(activeCloudModel, mode as ThinkingMode)
+      await refreshStatus()
     },
-    [activeCloudModel, refreshStatus]
+    [activeCloudModel, persistedThinkingModes, refreshStatus]
   )
 
   const thinkingModeOptions = useMemo<ThinkingModeOption[]>(() => {
