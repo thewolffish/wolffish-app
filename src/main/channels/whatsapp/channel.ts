@@ -131,6 +131,13 @@ export class WhatsAppChannel {
   private qrRequested = false
   private hadValidSession = false
   private connectedAt = 0
+  /**
+   * Bumped by stop()/logout. connect() captures it before its async
+   * setup and bails if it changed — so a stop() that lands while the
+   * version fetch is in flight can't have the late catch (or a
+   * just-built socket) resurrect a channel the user deliberately closed.
+   */
+  private connectGeneration = 0
 
   constructor(
     private readonly agent: Agent,
@@ -209,6 +216,9 @@ export class WhatsAppChannel {
   }
 
   async stop(reason?: string): Promise<void> {
+    // Invalidate any in-flight connect() so its async tail can't bring
+    // the channel back up after we tear it down here.
+    this.connectGeneration++
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = null
@@ -265,36 +275,76 @@ export class WhatsAppChannel {
   private async connect(): Promise<void> {
     if (!this.authDir) return
 
-    const logger = pino({ level: 'silent' })
-    // eslint-disable-next-line react-hooks/rules-of-hooks -- Baileys utility, not a React hook
-    const { state, saveCreds } = await useMultiFileAuthState(this.authDir)
-    const { version } = await fetchLatestBaileysVersion()
+    // Snapshot the generation so the async tail below can tell whether a
+    // stop() landed while we were awaiting the network.
+    const generation = this.connectGeneration
 
-    const sock = makeWASocket({
-      auth: {
-        creds: state.creds,
-        keys: makeCacheableSignalKeyStore(state.keys, logger)
-      },
-      version,
-      logger,
-      printQRInTerminal: false,
-      browser: ['Wolffish', 'desktop', '1.0.0'],
-      syncFullHistory: false,
-      markOnlineOnConnect: false,
-      keepAliveIntervalMs: 25000,
-      connectTimeoutMs: 60000,
-      defaultQueryTimeoutMs: 60000,
-      getMessage: async (key) => {
-        return this.messageStore.get(key.id ?? '') ?? undefined
+    let sock: WASocket
+    let saveCreds: () => Promise<void>
+    try {
+      const logger = pino({ level: 'silent' })
+      // eslint-disable-next-line react-hooks/rules-of-hooks -- Baileys utility, not a React hook
+      const auth = await useMultiFileAuthState(this.authDir)
+      saveCreds = auth.saveCreds
+      // Fetching the latest protocol version hits the network; offline at
+      // boot this throws before we ever get a socket. Handle it like any
+      // other connection failure so an established session keeps retrying
+      // gracefully instead of wedging on `connecting` or showing a raw
+      // stack-trace error.
+      const { version } = await fetchLatestBaileysVersion()
+
+      sock = makeWASocket({
+        auth: {
+          creds: auth.state.creds,
+          keys: makeCacheableSignalKeyStore(auth.state.keys, logger)
+        },
+        version,
+        logger,
+        printQRInTerminal: false,
+        browser: ['Wolffish', 'desktop', '1.0.0'],
+        syncFullHistory: false,
+        markOnlineOnConnect: false,
+        keepAliveIntervalMs: 25000,
+        connectTimeoutMs: 60000,
+        defaultQueryTimeoutMs: 60000,
+        getMessage: async (key) => {
+          return this.messageStore.get(key.id ?? '') ?? undefined
+        }
+      })
+    } catch (err) {
+      // A stop() that landed during setup wins — don't retry or paint
+      // status for a channel the user closed.
+      if (this.connectGeneration !== generation) return
+      this.sock = null
+      this.handleSetupFailure(err)
+      return
+    }
+
+    // Superseded by a stop() while we were building the socket: drop it.
+    if (this.connectGeneration !== generation) {
+      try {
+        sock.end(undefined)
+      } catch {
+        // best-effort
       }
-    })
+      return
+    }
 
     this.sock = sock
-    sock.ev.on('creds.update', saveCreds)
-    sock.ev.on('connection.update', (update) => this.handleConnectionUpdate(update))
-    sock.ev.on('messages.upsert', (upsert) => this.handleMessagesUpsert(upsert))
+    // Every listener guards on socket identity (`this.sock !== sock`) so a
+    // late event flushed from a socket we've already replaced or torn down
+    // can't act on the current session — stale creds writes, ghost message
+    // turns, and cross-session lid-map pollution all dissolve. Matches the
+    // connection.update guard; only the live socket drives any state.
+    sock.ev.on('creds.update', () => {
+      if (this.sock !== sock) return
+      void saveCreds()
+    })
+    sock.ev.on('connection.update', (update) => this.handleConnectionUpdate(update, sock))
+    sock.ev.on('messages.upsert', (upsert) => this.handleMessagesUpsert(upsert, sock))
 
     sock.ev.on('messaging-history.set', ({ contacts }) => {
+      if (this.sock !== sock) return
       if (!contacts) return
       for (const c of contacts) {
         if (!c.id || !c.lid) continue
@@ -305,13 +355,26 @@ export class WhatsAppChannel {
     })
 
     sock.ev.on('lid-mapping.update', ({ lid, pn }) => {
+      if (this.sock !== sock) return
       const lidNum = lid.split('@')[0].split(':')[0]
       const pnNum = pn.split('@')[0].split(':')[0]
       if (lidNum && pnNum) this.lidToPhone.set(lidNum, pnNum)
     })
   }
 
-  private handleConnectionUpdate(update: Partial<BaileysEventMap['connection.update']>): void {
+  private handleConnectionUpdate(
+    update: Partial<BaileysEventMap['connection.update']>,
+    sock: WASocket
+  ): void {
+    // Ignore events from a socket we've already replaced (a newer
+    // reconnect) or torn down (stop() sets this.sock = null). A genuine
+    // event from the current live socket arrives while this.sock still
+    // equals it — the close branch nulls this.sock only further down, so
+    // this guard never swallows the first close of the active socket.
+    // Without it, a late `close` fired during stop()'s teardown would
+    // schedule a phantom reconnect that resurrects a disabled channel.
+    if (this.sock !== sock) return
+
     const { connection, lastDisconnect, qr } = update
 
     if (qr) {
@@ -355,6 +418,10 @@ export class WhatsAppChannel {
       this.hadValidSession = true
       this.connectedAt = Date.now()
       this.agent.corpus.emit('whatsapp.started', {})
+      // Also emit statusChanged so every transition flows through the
+      // same channel the renderer listens on — `open` shouldn't be the
+      // one transition that reaches the UI only via the started handler.
+      this.agent.corpus.emit('whatsapp.statusChanged', {})
       return
     }
 
@@ -398,23 +465,55 @@ export class WhatsAppChannel {
       }
 
       if (this.reconnectAttempt < RECONNECT_MAX_ATTEMPTS) {
-        const errKind = classifyError(error)
+        // A routine network blip. Stay in the calm `connecting` state with
+        // no error text — the panel renders that as an amber spinner, not
+        // a red error box. Surfacing "Reconnecting (attempt N)..." as a
+        // statusError (which the UI styles like a failure) is exactly what
+        // made an otherwise-successful reconnect look broken. The attempt
+        // counter still drives backoff; it just isn't shown to the user.
         this.status = 'connecting'
-        this.statusError = `Reconnecting (attempt ${this.reconnectAttempt + 1})...`
-        this.agent.corpus.emit('whatsapp.error', {
-          kind: errKind,
-          message: error?.message ?? 'Connection closed'
-        })
+        this.statusError = null
+        this.agent.corpus.emit('whatsapp.statusChanged', {})
         this.scheduleReconnect()
       } else {
+        // Genuinely gave up — now it's a real error worth showing.
         this.status = 'error'
         this.statusError = 'Failed to reconnect after maximum attempts.'
         this.agent.corpus.emit('whatsapp.error', {
-          kind: 'network',
-          message: 'Max reconnect attempts exhausted'
+          kind: classifyError(error),
+          message: error?.message ?? 'Max reconnect attempts exhausted'
         })
       }
     }
+  }
+
+  /**
+   * Socket construction threw before we ever wired up `connection.update`
+   * (e.g. the version fetch failed offline at boot). Mirror the close
+   * handler's graceful path: an established session keeps retrying with
+   * backoff under the calm `connecting` state; otherwise we settle into a
+   * quiet `disconnected` the user can retry from.
+   */
+  private handleSetupFailure(err: unknown): void {
+    if (this.hadValidSession && this.reconnectAttempt < RECONNECT_MAX_ATTEMPTS) {
+      this.status = 'connecting'
+      this.statusError = null
+      this.agent.corpus.emit('whatsapp.statusChanged', {})
+      this.scheduleReconnect()
+      return
+    }
+    if (this.hadValidSession) {
+      this.status = 'error'
+      this.statusError = 'Failed to reconnect after maximum attempts.'
+      this.agent.corpus.emit('whatsapp.error', {
+        kind: err instanceof Boom ? classifyError(err) : 'network',
+        message: err instanceof Error ? err.message : 'Connection setup failed'
+      })
+      return
+    }
+    this.status = 'disconnected'
+    this.statusError = null
+    this.agent.corpus.emit('whatsapp.statusChanged', {})
   }
 
   private scheduleReconnect(overrideMs?: number): void {
@@ -433,10 +532,9 @@ export class WhatsAppChannel {
     this.reconnectAttempt++
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null
-      void this.connect().catch((err) => {
-        this.status = 'error'
-        this.statusError = err instanceof Error ? err.message : String(err)
-      })
+      // connect() now self-handles setup failures via handleSetupFailure,
+      // so it won't reject; the catch is a defensive backstop only.
+      void this.connect().catch(() => undefined)
     }, delayMs)
   }
 
@@ -457,7 +555,10 @@ export class WhatsAppChannel {
 
   // --- Inbound message handling ---
 
-  private handleMessagesUpsert(upsert: BaileysEventMap['messages.upsert']): void {
+  private handleMessagesUpsert(upsert: BaileysEventMap['messages.upsert'], sock: WASocket): void {
+    // Drop events flushed from a socket we've already replaced/torn down so
+    // a stale message can't spin up a ghost turn after stop() or a reconnect.
+    if (this.sock !== sock) return
     if (upsert.type !== 'notify') return
 
     for (const msg of upsert.messages) {

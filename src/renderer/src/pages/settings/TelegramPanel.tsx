@@ -63,6 +63,16 @@ export function TelegramPanel(): React.JSX.Element {
     }
   }, [])
 
+  // Live status pushes from the main process. The bot's start handshake
+  // runs in the background, so without this the panel would keep showing
+  // the snapshot it read on mount (e.g. "starting") until a manual Save.
+  useEffect(() => {
+    const off = window.api.telegram.onStatusChange((s) => setStatus(s))
+    return () => {
+      off()
+    }
+  }, [])
+
   const parseUserIds = useCallback(
     (input: string): { ok: true; ids: number[] } | { ok: false; error: string } => {
       const tokens = input

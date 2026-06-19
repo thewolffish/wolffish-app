@@ -135,6 +135,18 @@ const TELEGRAM_DOWNLOAD_LIMIT = 20 * 1024 * 1024
  */
 const TYPING_HEARTBEAT_MS = 4000
 
+// Startup/reconnect backoff. grammY's long-poll loop retries network
+// blips on its own once it's running, so this only covers the launch
+// handshake (bot.init / getMe), which is a one-shot that throws on a
+// cold-boot network race. We retry that with capped exponential backoff
+// + jitter so the channel resolves to `running` on its own instead of
+// landing in a terminal error the user has to clear by re-saving.
+const RECONNECT_INITIAL_MS = 2000
+const RECONNECT_MAX_MS = 30000
+const RECONNECT_FACTOR = 1.8
+const RECONNECT_JITTER = 0.25
+const RECONNECT_MAX_ATTEMPTS = 12
+
 type ChannelStatus = 'stopped' | 'starting' | 'running' | 'error'
 
 export type TelegramChannelStatus = {
@@ -263,6 +275,14 @@ export class TelegramChannel {
   private status: ChannelStatus = 'stopped'
   private statusError: string | null = null
   private statusErrorKind: TelegramErrorKind | null = null
+  /**
+   * The token start() was last asked to bring up. Held so a backoff
+   * retry (after a cold-boot network failure) can relaunch without the
+   * caller re-invoking start(). Cleared by stop().
+   */
+  private desiredToken: string | null = null
+  private reconnectAttempt = 0
+  private reconnectTimer: NodeJS.Timeout | null = null
   private readonly activeByChat = new Map<number, ActiveTurn>()
   /**
    * Tracks pickers in progress per chat. /resume and /delete render
@@ -319,12 +339,32 @@ export class TelegramChannel {
       return this.getStatus()
     }
 
-    this.status = 'starting'
+    this.allowedUserIds = new Set(config.allowedUserIds)
+    this.desiredToken = trimmedToken
+    this.reconnectAttempt = 0
     this.statusError = null
     this.statusErrorKind = null
-    this.allowedUserIds = new Set(config.allowedUserIds)
+    this.setStatus('starting')
 
-    const bot = new Bot(trimmedToken)
+    await this.launch()
+    return this.getStatus()
+  }
+
+  /**
+   * Bring the bot up for the current `desiredToken`. Split out of start()
+   * so a backoff retry can relaunch after a transient cold-boot failure
+   * without the caller re-invoking start(). On a network/rate-limit
+   * failure during the handshake it schedules a retry and stays in
+   * `starting` (no scary error text); a terminal failure (bad token)
+   * lands in `error`. Every successful launch ends in `running` and
+   * pushes a status change so the settings panel resolves on its own —
+   * the user never has to hit Save to nudge it.
+   */
+  private async launch(): Promise<void> {
+    const token = this.desiredToken
+    if (!token) return
+
+    const bot = new Bot(token)
     bot.on('message:text', (ctx) => void this.handleTextMessage(ctx))
     // Voice messages get their own path: Telegram's press-and-hold
     // mic recording is handled as if the user typed the transcript.
@@ -370,29 +410,24 @@ export class TelegramChannel {
         ])
         .catch(() => undefined)
     } catch (err) {
-      this.bot = null
-      const corpusKind = classifyBotError(err)
-      const rawMessage = err instanceof Error ? err.message : String(err)
-      // Map the corpus-event taxonomy onto the user-facing kind set the
-      // panel renders. The corpus uses `token` for any auth-shaped
-      // failure (401/403/404) and `send` for everything else; the panel
-      // wants to distinguish "invalid token" from a generic unknown so
-      // it can render a localized hint.
-      const userKind: TelegramErrorKind =
-        corpusKind === 'token'
-          ? 'invalid_token'
-          : corpusKind === 'rate_limit'
-            ? 'rate_limit'
-            : corpusKind === 'network'
-              ? 'network'
-              : 'unknown'
-      this.setStatusError(userKind, rawMessage)
-      this.agent.corpus.emit('telegram.error', { kind: corpusKind, message: rawMessage })
-      return this.getStatus()
+      // A stop()/reconfigure that landed while we were awaiting wins —
+      // drop this dead bot instead of resurrecting the channel.
+      if (this.desiredToken !== token) {
+        await bot.stop().catch(() => undefined)
+        return
+      }
+      this.handleLaunchFailure(err)
+      return
+    }
+
+    // Superseded mid-handshake (stop or a new token): abandon quietly.
+    if (this.desiredToken !== token) {
+      await bot.stop().catch(() => undefined)
+      return
     }
 
     this.bot = bot
-    this.botToken = trimmedToken
+    this.botToken = token
 
     // Hydrate the persisted message-id tracker so /clear can delete
     // messages from previous sessions. Best-effort — a missing or
@@ -411,33 +446,89 @@ export class TelegramChannel {
     this.agent.cerebellum.registerInProcessCapability(capability, plugin)
 
     // Long-poll loop. drop_pending_updates so a freshly enabled bot
-    // doesn't replay weeks of old messages on first launch.
+    // doesn't replay weeks of old messages on first launch. grammY
+    // retries transient network errors inside the loop on its own, so a
+    // rejection here means the loop stopped for good — relaunch on a
+    // transient kind, surface anything terminal. Guard on identity so a
+    // late rejection from a bot we've already replaced/stopped is ignored.
     void bot.start({ drop_pending_updates: true }).catch((err) => {
-      const corpusKind = classifyBotError(err)
-      const rawMessage = err instanceof Error ? err.message : String(err)
-      const userKind: TelegramErrorKind =
-        corpusKind === 'token'
-          ? 'invalid_token'
-          : corpusKind === 'rate_limit'
-            ? 'rate_limit'
-            : corpusKind === 'network'
-              ? 'network'
-              : 'unknown'
-      this.setStatusError(userKind, rawMessage)
-      this.agent.corpus.emit('telegram.error', { kind: corpusKind, message: rawMessage })
+      if (this.bot !== bot) return
+      this.bot = null
+      this.handleLaunchFailure(err)
     })
 
-    this.status = 'running'
+    this.reconnectAttempt = 0
+    this.statusError = null
+    this.statusErrorKind = null
+    this.setStatus('running')
     this.agent.corpus.emit('telegram.started', {
       allowedUserCount: this.allowedUserIds.size
     })
-    return this.getStatus()
+  }
+
+  /**
+   * Shared failure path for the launch handshake and the long-poll loop.
+   * Transient kinds (network, rate limit) retry with capped backoff while
+   * staying in `starting` so the UI shows a calm "starting" rather than a
+   * red error; everything else is terminal.
+   */
+  private handleLaunchFailure(err: unknown): void {
+    // Superseded by a stop()/reconfigure — the channel no longer wants
+    // this token up, so don't retry or paint an error.
+    if (this.desiredToken === null) return
+    const corpusKind = classifyBotError(err)
+    const rawMessage = err instanceof Error ? err.message : String(err)
+    this.agent.corpus.emit('telegram.error', { kind: corpusKind, message: rawMessage })
+
+    const transient = corpusKind === 'network' || corpusKind === 'rate_limit'
+    if (transient && this.reconnectAttempt < RECONNECT_MAX_ATTEMPTS) {
+      this.statusError = null
+      this.statusErrorKind = null
+      this.setStatus('starting')
+      this.scheduleReconnect()
+      return
+    }
+    // Map the corpus-event taxonomy onto the user-facing kind set the
+    // panel renders. The corpus uses `token` for any auth-shaped failure
+    // (401/403/404) and `send` for everything else; the panel wants to
+    // distinguish "invalid token" from a generic unknown.
+    this.setStatusError(mapBotErrorKind(corpusKind), rawMessage)
+  }
+
+  /** Schedule a relaunch with capped exponential backoff + jitter. */
+  private scheduleReconnect(): void {
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
+    const base = RECONNECT_INITIAL_MS * Math.pow(RECONNECT_FACTOR, this.reconnectAttempt)
+    const capped = Math.min(base, RECONNECT_MAX_MS)
+    const jitter = capped * RECONNECT_JITTER * (Math.random() * 2 - 1)
+    const delayMs = Math.max(0, capped + jitter)
+    this.reconnectAttempt++
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null
+      void this.launch()
+    }, delayMs)
   }
 
   /** Stop the bot. Idempotent. */
   async stop(reason?: string): Promise<void> {
+    // Cancel any pending backoff retry and forget the desired token first
+    // so an in-flight launch() or a timer that fires after us no-ops
+    // instead of resurrecting the channel.
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer)
+      this.reconnectTimer = null
+    }
+    this.reconnectAttempt = 0
+    this.desiredToken = null
+
     if (!this.bot) {
-      this.status = 'stopped'
+      this.activeByChat.clear()
+      this.pendingSelections.clear()
+      for (const timer of this.preTypingByChat.values()) clearInterval(timer)
+      this.preTypingByChat.clear()
+      this.statusError = null
+      this.statusErrorKind = null
+      this.setStatus('stopped')
       return
     }
     try {
@@ -460,9 +551,9 @@ export class TelegramChannel {
     // in-memory cache — message ids are persistent across bot
     // stop/start so /clear can sweep prior sessions.
     await flushMessageIds()
-    this.status = 'stopped'
     this.statusError = null
     this.statusErrorKind = null
+    this.setStatus('stopped')
     // Take the channel's tools out of the LLM's surface so it doesn't
     // see capabilities it can no longer execute. Idempotent.
     this.agent.cerebellum.unregisterInProcessCapability(TELEGRAM_CAPABILITY_NAME)
@@ -503,15 +594,7 @@ export class TelegramChannel {
     } catch (err) {
       const corpusKind = classifyBotError(err)
       const raw = err instanceof Error ? err.message : String(err)
-      const kind: TelegramErrorKind =
-        corpusKind === 'token'
-          ? 'invalid_token'
-          : corpusKind === 'rate_limit'
-            ? 'rate_limit'
-            : corpusKind === 'network'
-              ? 'network'
-              : 'unknown'
-      return { ok: false, kind, message: raw }
+      return { ok: false, kind: mapBotErrorKind(corpusKind), message: raw }
     }
   }
 
@@ -524,15 +607,27 @@ export class TelegramChannel {
   }
 
   /**
-   * Centralizes the "I'm in an error state" transition. Sets the
-   * channel status to 'error', records both the discriminated kind
-   * (so the renderer can translate) and the raw message (used as a
-   * fallback when the kind is `unknown`).
+   * Single chokepoint for status transitions. Updates the field and
+   * pushes a `telegram.statusChanged` event so the settings panel (which
+   * subscribes via IPC) reflects the new state live — without it, the
+   * panel only learns the status on mount or after a manual Save, which
+   * is exactly why a freshly-started bot used to read "starting" forever.
+   */
+  private setStatus(next: ChannelStatus): void {
+    this.status = next
+    this.agent.corpus.emit('telegram.statusChanged', {})
+  }
+
+  /**
+   * Centralizes the "I'm in an error state" transition. Records the
+   * discriminated kind (so the renderer can translate) and the raw
+   * message (used as a fallback when the kind is `unknown`), then flips
+   * to `error` through setStatus so the change is pushed to the panel.
    */
   private setStatusError(kind: TelegramErrorKind, message: string | null): void {
-    this.status = 'error'
     this.statusErrorKind = kind
     this.statusError = message
+    this.setStatus('error')
   }
 
   hasActiveTurn(): boolean {
@@ -2031,6 +2126,22 @@ function classifyBotError(err: unknown): CorpusEvents['telegram.error']['kind'] 
   const msg = err instanceof Error ? err.message : String(err)
   if (/\((?:401|403|404):/.test(msg)) return 'token'
   return 'unknown'
+}
+
+/**
+ * Map the corpus error taxonomy onto the user-facing kind set the panel
+ * renders. The corpus collapses every auth-shaped failure (401/403/404)
+ * into `token`; the panel wants `invalid_token` so it can show a
+ * token-specific hint, and a generic `unknown` for everything else.
+ */
+function mapBotErrorKind(corpusKind: CorpusEvents['telegram.error']['kind']): TelegramErrorKind {
+  return corpusKind === 'token'
+    ? 'invalid_token'
+    : corpusKind === 'rate_limit'
+      ? 'rate_limit'
+      : corpusKind === 'network'
+        ? 'network'
+        : 'unknown'
 }
 
 /**

@@ -716,6 +716,7 @@ export type TelegramApi = {
   }>
   status: () => Promise<TelegramChannelStatus>
   sendTestMessage: (payload: { token: string; userId: number }) => Promise<TelegramTestResult>
+  onStatusChange: (callback: (status: TelegramChannelStatus) => void) => () => void
 }
 
 /**
@@ -1274,7 +1275,8 @@ const api: WolffishApi = {
     getConfig: () => ipcRenderer.invoke('telegram:getConfig'),
     setConfig: (patch) => ipcRenderer.invoke('telegram:setConfig', patch),
     status: () => ipcRenderer.invoke('telegram:status'),
-    sendTestMessage: (payload) => ipcRenderer.invoke('telegram:sendTestMessage', payload)
+    sendTestMessage: (payload) => ipcRenderer.invoke('telegram:sendTestMessage', payload),
+    onStatusChange: (callback) => subscribe('telegram:statusChange', callback)
   },
   whatsapp: {
     getConfig: () => ipcRenderer.invoke('whatsapp:getConfig'),

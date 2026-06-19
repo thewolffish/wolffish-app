@@ -1,4 +1,22 @@
-## v1.0.169 — 2026-06-19 `Latest`
+## v1.0.170 — 2026-06-19 `Latest`
+
+### Telegram Reconnects on Its Own
+
+The Telegram connection status now settles by itself on startup — you no longer have to open Settings and re-save to push it from "Starting…" to "Connected".
+
+**Root cause.** The settings panel only read the connection status when it first opened or right after you saved. But the bot's startup handshake finishes a moment later in the background, and nothing told the panel — so a bot that had actually come up still read "Starting…" indefinitely, until a manual save happened to re-fetch the real state. Telegram now pushes every status change to the panel the instant it occurs, the same way WhatsApp already did.
+
+**More resilient startup, too.** If the network isn't ready at the exact moment the app launches, Telegram now retries the connection handshake with backoff and resolves to "Running" on its own — instead of landing in an error you had to clear by hand. The whole start/stop/reconnect path was reworked so a retry in flight can never resurrect a channel you've turned off.
+
+### Calmer, More Resilient WhatsApp Reconnection
+
+A brief network blip no longer makes WhatsApp look broken. A routine reconnect — one that recovers on its own — used to flash red "error" text and an "attempt 1… 2… 3…" counter, as though something had failed. Now it shows a calm amber "Connecting…" spinner with no error, and only a genuine give-up (after the full retry budget is spent) is surfaced as an actual error.
+
+**Hardened against reconnection races.** A connection that drops, gets swapped out, or is set up while offline can no longer leave behind a phantom reconnect or act on a stale event. Every socket listener now ignores activity from a connection that's already been replaced or torn down — so stopping the channel, re-linking it, riding out a blip, or launching with no network all behave predictably, with no orphaned turns, stale credential writes, or self-resurrecting connections.
+
+---
+
+## v1.0.169 — 2026-06-19
 
 ### Settings No Longer Reset Themselves
 

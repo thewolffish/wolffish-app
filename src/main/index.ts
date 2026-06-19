@@ -1109,6 +1109,18 @@ app.whenReady().then(async () => {
     (): ReturnType<TelegramChannel['getStatus']> => telegramChannel.getStatus()
   )
 
+  // Push Telegram status changes to the renderer as they happen, the same
+  // way WhatsApp does. Without this the settings panel only learns the
+  // status on mount or after a manual Save — so a bot that finishes
+  // starting in the background reads "starting" forever until the user
+  // re-saves. The channel emits `telegram.statusChanged` on every
+  // transition; we forward the current snapshot.
+  agent.corpus.on('telegram.statusChanged', () => {
+    for (const w of BrowserWindow.getAllWindows()) {
+      w.webContents.send('telegram:statusChange', telegramChannel.getStatus())
+    }
+  })
+
   ipcMain.handle(
     'telegram:sendTestMessage',
     (_e, payload: { token: string; userId: number }): Promise<{ ok: boolean; error?: string }> =>

@@ -164,6 +164,7 @@ export type CorpusEvents = {
 
   'telegram.started': { allowedUserCount: number }
   'telegram.stopped': { reason?: string }
+  'telegram.statusChanged': Record<string, never>
   'telegram.error': {
     kind: 'token' | 'network' | 'rate_limit' | 'send' | 'unknown'
     message: string
