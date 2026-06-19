@@ -2,6 +2,7 @@ import { CopyButton } from '@components/core/CopyButton'
 import { Markdown } from '@components/core/Markdown'
 import { cn } from '@lib/utils/cn'
 import { formatBytes } from '@lib/utils/format'
+import hljs from 'highlight.js/lib/common'
 import {
   ArrowDown01Icon,
   ArrowRight01Icon,
@@ -10,7 +11,6 @@ import {
   File01Icon,
   FolderOpenIcon
 } from 'hugeicons-react'
-import hljs from 'highlight.js/lib/common'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -153,7 +153,12 @@ export function CodeFileViewer({
         </button>
       )}
 
-      <div className={cn('overflow-auto', isMarkdown ? 'max-h-80' : expanded ? 'max-h-80' : 'max-h-40')}>
+      <div
+        className={cn(
+          'overflow-auto',
+          isMarkdown ? 'max-h-80' : expanded ? 'max-h-80' : 'max-h-40'
+        )}
+      >
         {isMarkdown ? (
           <div className="text-fg px-4 py-2.5 text-sm leading-relaxed wrap-break-word">
             <Markdown content={content} />
@@ -163,7 +168,7 @@ export function CodeFileViewer({
             <pre
               dir="ltr"
               aria-hidden
-              className="bg-bg/50 border-border sticky left-0 z-[1] shrink-0 border-e py-2 text-right font-mono text-[11px] leading-5 select-none"
+              className="bg-bg/50 border-border sticky left-0 z-1 shrink-0 border-e py-2 text-right font-mono text-[11px] leading-5 select-none"
             >
               {lines.map((_, i) => (
                 <div

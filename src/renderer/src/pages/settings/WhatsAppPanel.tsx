@@ -27,7 +27,8 @@ export function WhatsAppPanel(): React.JSX.Element {
     error: null,
     qr: null,
     connectedPhone: null,
-    connectedName: null
+    connectedName: null,
+    hasSession: false
   })
   const [qrCode, setQrCode] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -120,7 +121,8 @@ export function WhatsAppPanel(): React.JSX.Element {
         error: null,
         qr: null,
         connectedPhone: null,
-        connectedName: null
+        connectedName: null,
+        hasSession: false
       })
       toast.show({
         message: t('settings.services.whatsapp.logoutSuccess'),
@@ -166,6 +168,10 @@ export function WhatsAppPanel(): React.JSX.Element {
 
   const showConnected = status.status === 'connected' && status.connectedPhone
   const hasChanges = allowedPhonesInput !== savedPhones
+  // A 'connecting' state for an already-linked account is a reconnect (a
+  // network blip or a fresh launch of a paired session) — no QR needed.
+  // Show just the pulsing status dot + "Connecting" label, not the QR box.
+  const reconnecting = status.status === 'connecting' && status.hasSession
 
   return (
     <div className="flex min-h-full w-full items-start justify-center px-6 py-10">
@@ -247,7 +253,8 @@ export function WhatsAppPanel(): React.JSX.Element {
                     aria-hidden="true"
                     className={cn(
                       'h-2 w-2 rounded-full',
-                      enabled === false ? 'bg-rose-500' : STATUS_DOT[status.status]
+                      enabled === false ? 'bg-rose-500' : STATUS_DOT[status.status],
+                      reconnecting && 'animate-pulse'
                     )}
                   />
                   <span className="text-fg text-sm">{statusLabel}</span>
@@ -289,8 +296,10 @@ export function WhatsAppPanel(): React.JSX.Element {
               )}
             </div>
 
-            {/* Connect / QR / Connecting — mutually exclusive, same container size */}
-            {enabled && !showConnected && (
+            {/* Connect / QR / Connecting — mutually exclusive, same container size.
+                Hidden while reconnecting an established session: the pulsing
+                status dot + "Connecting" label above is enough, no QR box. */}
+            {enabled && !showConnected && !reconnecting && (
               <>
                 <div className="border-border/60 border-t" />
                 <div className="flex flex-col items-center gap-3 rounded-lg bg-bg/40 p-6">

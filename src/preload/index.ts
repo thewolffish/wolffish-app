@@ -85,6 +85,13 @@ export type WhatsAppChannelStatus = {
   qr: string | null
   connectedPhone: string | null
   connectedName: string | null
+  /**
+   * Whether an established (linked) session exists. True means a
+   * `connecting` status is a reconnect of an already-paired account, not
+   * first-time pairing — the UI shows just a pulsing dot instead of the
+   * QR box in that case.
+   */
+  hasSession: boolean
 }
 
 export type WhatsAppApi = {

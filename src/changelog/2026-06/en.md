@@ -1,4 +1,12 @@
-## v1.0.170 — 2026-06-19 `Latest`
+## v1.0.171 — 2026-06-19 `Latest`
+
+### Quieter WhatsApp Reconnect Screen
+
+When WhatsApp drops and reconnects on an account that's already linked — a brief network blip, or a fresh app launch of a paired session — the settings screen no longer shows the large QR-code panel. It now just pulses the status dot and shows "Connecting", since there's nothing to scan. The QR panel still appears for genuine first-time pairing, where you actually need it.
+
+---
+
+## v1.0.170 — 2026-06-19
 
 ### Telegram Reconnects on Its Own
 

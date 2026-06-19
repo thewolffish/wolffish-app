@@ -58,6 +58,13 @@ export type WhatsAppChannelStatus = {
   qr: string | null
   connectedPhone: string | null
   connectedName: string | null
+  /**
+   * Whether an established (linked) session exists. True means a
+   * `connecting` status is a reconnect of an already-paired account, not
+   * first-time pairing — the UI shows just a pulsing dot instead of the
+   * QR box in that case.
+   */
+  hasSession: boolean
 }
 
 type WhatsAppErrorKind = 'auth' | 'network' | 'crypto' | 'stream' | 'unknown'
@@ -152,7 +159,8 @@ export class WhatsAppChannel {
       error: this.statusError,
       qr: this.currentQr,
       connectedPhone: user?.id ? user.id.split('@')[0].split(':')[0] : null,
-      connectedName: user?.notify ?? user?.name ?? null
+      connectedName: user?.notify ?? user?.name ?? null,
+      hasSession: this.hadValidSession
     }
   }
 
