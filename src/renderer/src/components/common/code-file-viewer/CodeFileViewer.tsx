@@ -118,17 +118,9 @@ export function CodeFileViewer({
         'overflow-hidden rounded-2xl border'
       )}
     >
-      <button
-        type="button"
-        onClick={() => setExpanded((v) => !v)}
-        className="flex w-full cursor-pointer items-center justify-between gap-2 px-3 py-2"
-      >
-        <div className="flex min-w-0 items-center gap-2">
-          {isMarkdown ? (
-            <File01Icon size={14} className="text-muted shrink-0" />
-          ) : (
-            <CodeIcon size={14} className="text-muted shrink-0" />
-          )}
+      {isMarkdown ? (
+        <div className="flex w-full items-center gap-2 px-3 py-2">
+          <File01Icon size={14} className="text-muted shrink-0" />
           <span className="text-fg truncate text-xs font-medium" title={fileName}>
             {fileName}
           </span>
@@ -136,16 +128,32 @@ export function CodeFileViewer({
             {lineCount} {lineCount === 1 ? 'line' : 'lines'}
           </span>
         </div>
-        <div className="flex shrink-0 items-center gap-1.5">
-          {expanded ? (
-            <ArrowDown01Icon size={14} className="text-muted" aria-hidden />
-          ) : (
-            <ArrowRight01Icon size={14} className="text-muted" aria-hidden />
-          )}
-        </div>
-      </button>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="flex w-full cursor-pointer items-center justify-between gap-2 px-3 py-2"
+        >
+          <div className="flex min-w-0 items-center gap-2">
+            <CodeIcon size={14} className="text-muted shrink-0" />
+            <span className="text-fg truncate text-xs font-medium" title={fileName}>
+              {fileName}
+            </span>
+            <span className="text-muted shrink-0 text-[10px]">
+              {lineCount} {lineCount === 1 ? 'line' : 'lines'}
+            </span>
+          </div>
+          <div className="flex shrink-0 items-center gap-1.5">
+            {expanded ? (
+              <ArrowDown01Icon size={14} className="text-muted" aria-hidden />
+            ) : (
+              <ArrowRight01Icon size={14} className="text-muted" aria-hidden />
+            )}
+          </div>
+        </button>
+      )}
 
-      <div className={cn('overflow-auto', expanded ? 'max-h-80' : 'max-h-40')}>
+      <div className={cn('overflow-auto', isMarkdown ? 'max-h-80' : expanded ? 'max-h-80' : 'max-h-40')}>
         {isMarkdown ? (
           <div className="text-fg px-4 py-2.5 text-sm leading-relaxed wrap-break-word">
             <Markdown content={content} />
