@@ -318,7 +318,14 @@ export function TelegramPanel(): React.JSX.Element {
               <span className="text-muted text-xs font-medium uppercase tracking-wider">
                 {t('settings.services.telegram.status.label')}
               </span>
-              <div className="flex items-center gap-2">
+              {/* Pulse the dot and label together while starting/retrying so
+                  it reads as "actively working", not frozen. */}
+              <div
+                className={cn(
+                  'flex items-center gap-2',
+                  status.status === 'starting' && 'animate-pulse'
+                )}
+              >
                 <span
                   aria-hidden="true"
                   className={cn('h-2 w-2 rounded-full', STATUS_DOT[status.status])}

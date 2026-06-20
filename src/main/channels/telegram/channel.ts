@@ -141,11 +141,26 @@ const TYPING_HEARTBEAT_MS = 4000
 // cold-boot network race. We retry that with capped exponential backoff
 // + jitter so the channel resolves to `running` on its own instead of
 // landing in a terminal error the user has to clear by re-saving.
+//
+// The cap is deliberately short (10s, not 30s): right after a reboot the
+// network can take a while to come up, and a 30s gap meant the channel
+// could sit in "starting" for minutes before catching connectivity. A
+// 10s steady cadence catches the network within ~10s of it returning.
+// Network failures retry FOREVER (see handleLaunchFailure) — the max
+// attempt count only bounds rate-limit retries.
 const RECONNECT_INITIAL_MS = 2000
-const RECONNECT_MAX_MS = 30000
+const RECONNECT_MAX_MS = 10000
 const RECONNECT_FACTOR = 1.8
 const RECONNECT_JITTER = 0.25
 const RECONNECT_MAX_ATTEMPTS = 12
+
+// Hard ceiling on the launch handshake. grammY's API client has a very
+// long default request timeout (~500s), so a getMe that hangs on a
+// half-open connection (network up, no real route — common mid-reboot)
+// could stall the whole retry loop for minutes. Racing bot.init() against
+// this turns a hang into a normal transient failure that retries on the
+// 10s cadence instead of waiting out the underlying socket timeout.
+const LAUNCH_TIMEOUT_MS = 20000
 
 type ChannelStatus = 'stopped' | 'starting' | 'running' | 'error'
 
@@ -388,31 +403,10 @@ export class TelegramChannel {
     try {
       // bot.init() validates the token by fetching the bot's own
       // identity. A bad token throws here; we surface the failure
-      // without ever starting the long-poll loop.
-      await bot.init()
-      // Publish the slash command menu so Telegram clients show the
-      // available commands in the chat's command picker. Non-fatal if
-      // the call fails (older bot servers, transient network) — the
-      // commands still work as plain text, just without the
-      // discoverability hint. /approve and /deny are listed too so
-      // the user has somewhere to look when a confirmation prompt
-      // shows up; the LLM can still volunteer them on its own when a
-      // user seems lost.
-      await bot.api
-        .setMyCommands([
-          { command: 'new', description: 'Start a fresh conversation' },
-          { command: 'current', description: 'Current conversation' },
-          { command: 'resume', description: 'Pick a conversation to resume' },
-          { command: 'delete', description: 'Pick a conversation to delete' },
-          { command: 'clear', description: 'Clear all messages' },
-          { command: 'stop', description: 'Cancel the current task' },
-          { command: 'approve', description: 'Approve a pending action' },
-          { command: 'deny', description: 'Deny a pending action' },
-          { command: 'status', description: 'Wolffish current status' },
-          { command: 'local', description: 'Switch to local model' },
-          { command: 'cloud', description: 'Switch to cloud model' }
-        ])
-        .catch(() => undefined)
+      // without ever starting the long-poll loop. Bounded by
+      // LAUNCH_TIMEOUT_MS so a hung getMe (network up, no route) becomes a
+      // normal transient retry instead of a multi-minute stall.
+      await withTimeout(bot.init(), LAUNCH_TIMEOUT_MS)
     } catch (err) {
       // A stop()/reconfigure that landed while we were awaiting wins —
       // drop this dead bot instead of resurrecting the channel.
@@ -432,6 +426,27 @@ export class TelegramChannel {
 
     this.bot = bot
     this.botToken = token
+
+    // Publish the slash command menu so Telegram clients show the
+    // available commands in the chat's command picker. Fire-and-forget and
+    // non-fatal: it must never delay (or block) reaching `running`, and on
+    // older bot servers or a slow network it just no-ops — the commands
+    // still work as plain text, only the discoverability hint is missing.
+    void bot.api
+      .setMyCommands([
+        { command: 'new', description: 'Start a fresh conversation' },
+        { command: 'current', description: 'Current conversation' },
+        { command: 'resume', description: 'Pick a conversation to resume' },
+        { command: 'delete', description: 'Pick a conversation to delete' },
+        { command: 'clear', description: 'Clear all messages' },
+        { command: 'stop', description: 'Cancel the current task' },
+        { command: 'approve', description: 'Approve a pending action' },
+        { command: 'deny', description: 'Deny a pending action' },
+        { command: 'status', description: 'Wolffish current status' },
+        { command: 'local', description: 'Switch to local model' },
+        { command: 'cloud', description: 'Switch to cloud model' }
+      ])
+      .catch(() => undefined)
 
     // Hydrate the persisted message-id tracker so /clear can delete
     // messages from previous sessions. Best-effort — a missing or
@@ -472,30 +487,40 @@ export class TelegramChannel {
 
   /**
    * Shared failure path for the launch handshake and the long-poll loop.
-   * Transient kinds (network, rate limit) retry with capped backoff while
-   * staying in `starting` so the UI shows a calm "starting" rather than a
-   * red error; everything else is terminal.
+   * Transient kinds retry with capped backoff while staying in `starting`
+   * (the panel shows a calm pulsing dot, not a red error); everything else
+   * is terminal. Network failures — including a timed-out handshake — retry
+   * FOREVER so the channel always heals itself once connectivity returns,
+   * instead of giving up and forcing the user to re-save. Rate limits stay
+   * bounded since hammering past a 429 is counterproductive.
    */
   private handleLaunchFailure(err: unknown): void {
     // Superseded by a stop()/reconfigure — the channel no longer wants
     // this token up, so don't retry or paint an error.
     if (this.desiredToken === null) return
-    const corpusKind = classifyBotError(err)
+    // A timed-out handshake is a connectivity problem, not a bad token.
+    const corpusKind = err instanceof LaunchTimeoutError ? 'network' : classifyBotError(err)
     const rawMessage = err instanceof Error ? err.message : String(err)
-    this.agent.corpus.emit('telegram.error', { kind: corpusKind, message: rawMessage })
 
-    const transient = corpusKind === 'network' || corpusKind === 'rate_limit'
-    if (transient && this.reconnectAttempt < RECONNECT_MAX_ATTEMPTS) {
-      this.statusError = null
-      this.statusErrorKind = null
-      this.setStatus('starting')
+    const keepTrying =
+      corpusKind === 'network' ||
+      (corpusKind === 'rate_limit' && this.reconnectAttempt < RECONNECT_MAX_ATTEMPTS)
+    if (keepTrying) {
+      // Only touch state / emit when something actually changes — during a
+      // long outage we'd otherwise push an identical "starting" every 10s
+      // and flood the corpus log. The first failure (or a transition out of
+      // an error) updates; subsequent retries just reschedule silently.
+      if (this.status !== 'starting' || this.statusError !== null) {
+        this.statusError = null
+        this.statusErrorKind = null
+        this.setStatus('starting')
+      }
       this.scheduleReconnect()
       return
     }
-    // Map the corpus-event taxonomy onto the user-facing kind set the
-    // panel renders. The corpus uses `token` for any auth-shaped failure
-    // (401/403/404) and `send` for everything else; the panel wants to
-    // distinguish "invalid token" from a generic unknown.
+    // Terminal. Log it and map the corpus taxonomy onto the user-facing
+    // kind the panel renders (`token` → `invalid_token`, etc.).
+    this.agent.corpus.emit('telegram.error', { kind: corpusKind, message: rawMessage })
     this.setStatusError(mapBotErrorKind(corpusKind), rawMessage)
   }
 
@@ -2113,6 +2138,28 @@ function parseSlashCommand(lower: string): string | null {
   const head = lower.split(/\s+/, 1)[0]
   const at = head.indexOf('@')
   return at >= 0 ? head.slice(0, at) : head
+}
+
+/** Thrown when the launch handshake (bot.init) outlives LAUNCH_TIMEOUT_MS. */
+class LaunchTimeoutError extends Error {
+  constructor() {
+    super('Telegram launch handshake timed out')
+    this.name = 'LaunchTimeoutError'
+  }
+}
+
+/**
+ * Race a promise against a timeout. On timeout the returned promise rejects
+ * with LaunchTimeoutError; the underlying promise is left to settle on its
+ * own (we just stop waiting on it). The timer is always cleared so a
+ * fast-resolving promise doesn't keep the process awake.
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new LaunchTimeoutError()), ms)
+  })
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer))
 }
 
 function classifyBotError(err: unknown): CorpusEvents['telegram.error']['kind'] {

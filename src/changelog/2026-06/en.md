@@ -1,4 +1,14 @@
-## v1.0.173 — 2026-06-20 `Latest`
+## v1.0.174 — 2026-06-20 `Latest`
+
+### Telegram Recovers Faster After a Reboot
+
+Telegram no longer lingers in "Starting" for minutes when the app launches before the network is ready — a common situation right after a reboot. The connection now retries on a tight, steady cadence and keeps trying until it succeeds, so it settles into "Running" within seconds of connectivity returning instead of up to several minutes. A stalled handshake — network up, but no real route yet — is bounded by a timeout and retried instead of left to hang, and the channel never gives up on a network outage, so it always heals itself without you having to re-save.
+
+**Clearer "working on it" cue.** While the channel is starting or retrying, the status dot and "Starting" label now pulse, so it's obvious the app is actively connecting rather than frozen.
+
+---
+
+## v1.0.173 — 2026-06-20
 
 ### WhatsApp Auto-Refresh Conversations
 
