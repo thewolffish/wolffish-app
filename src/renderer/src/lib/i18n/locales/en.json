@@ -6,7 +6,13 @@
   "common": {
     "back": "Back",
     "offline": "No network connection",
-    "diskUsage": "{{free}} free of {{total}}"
+    "diskUsage": "{{free}} free of {{total}}",
+    "contextMenu": {
+      "selectAll": "Select all",
+      "copy": "Copy",
+      "paste": "Paste",
+      "clear": "Clear"
+    }
   },
   "closing": {
     "title": "Closing Wolffish",

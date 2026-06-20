@@ -3,6 +3,7 @@ import { LocaleProvider } from '@providers/locale/LocaleProvider'
 import { FlowProvider } from '@providers/flow/FlowProvider'
 import { useFlow } from '@providers/flow/useFlow'
 import { ToastProvider } from '@components/core/toast/ToastProvider'
+import { InputContextMenu } from '@components/core/InputContextMenu'
 import { ClosingOverlay } from '@components/common/closing-overlay/ClosingOverlay'
 import { Onboarding } from '@pages/Onboarding'
 import { LowDiskSpace } from '@pages/LowDiskSpace'
@@ -59,6 +60,7 @@ function App(): React.JSX.Element {
             <div className="app-titlebar" aria-hidden />
             <Screens />
             <ClosingOverlay />
+            <InputContextMenu />
           </FlowProvider>
         </ToastProvider>
       </LocaleProvider>

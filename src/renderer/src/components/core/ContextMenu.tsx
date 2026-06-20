@@ -22,7 +22,11 @@ type ContextMenuProps = {
   onClose: () => void
 }
 
-function ContextMenuPopup({ items, position, onClose }: ContextMenuProps): React.JSX.Element {
+export function ContextMenuPopup({
+  items,
+  position,
+  onClose
+}: ContextMenuProps): React.JSX.Element {
   const menuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {

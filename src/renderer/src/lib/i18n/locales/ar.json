@@ -6,7 +6,13 @@
   "common": {
     "back": "رجوع",
     "offline": "لا يوجد اتصال بالإنترنت",
-    "diskUsage": "{{free}} متاح من أصل {{total}}"
+    "diskUsage": "{{free}} متاح من أصل {{total}}",
+    "contextMenu": {
+      "selectAll": "تحديد الكل",
+      "copy": "نسخ",
+      "paste": "لصق",
+      "clear": "مسح"
+    }
   },
   "closing": {
     "title": "جاري إغلاق وولف‌ فيش",

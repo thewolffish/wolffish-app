@@ -1,4 +1,12 @@
-## v1.0.174 — 2026-06-20 `Latest`
+## v1.0.175 — 2026-06-20 `Latest`
+
+### Right-Click Menu in Every Field
+
+Every text field, box, and editor now has a right-click menu with **Select all**, **Copy**, **Paste**, and **Clear** — so you can edit with the mouse anywhere in the app, not just in the chat composer.
+
+---
+
+## v1.0.174 — 2026-06-20
 
 ### Telegram Recovers Faster After a Reboot
 
