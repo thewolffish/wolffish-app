@@ -153,6 +153,10 @@ export type TelegramChannelStatus = {
   status: ChannelStatus
   errorKind: TelegramErrorKind | null
   error: string | null
+  /** Connected bot's @username, available once running. Null otherwise. */
+  botUsername: string | null
+  /** Connected bot's display name (first_name), available once running. */
+  botName: string | null
 }
 
 /**
@@ -599,10 +603,16 @@ export class TelegramChannel {
   }
 
   getStatus(): TelegramChannelStatus {
+    // botInfo is populated by bot.init(); this.bot is only assigned after
+    // that handshake succeeds, so reading it here can never throw the
+    // "call bot.init() first" getter error. Null whenever not running.
+    const info = this.bot?.botInfo
     return {
       status: this.status,
       errorKind: this.statusErrorKind,
-      error: this.statusError
+      error: this.statusError,
+      botUsername: info?.username ?? null,
+      botName: info?.first_name ?? null
     }
   }
 

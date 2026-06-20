@@ -485,6 +485,10 @@
           "starting": "Starting",
           "error": "Error"
         },
+        "connectedAs": "Connected bot",
+        "disconnect": "Disconnect",
+        "disconnectSuccess": "Telegram bot disconnected",
+        "disconnectFailed": "Failed to disconnect Telegram",
         "testSuccess": "Test message sent",
         "testFailure": "Test failed: {{message}}",
         "saveSuccess": "Telegram settings saved",
@@ -878,9 +882,16 @@
         "allowedPhonesHint": "Comma-separated phone numbers. Only messages from these numbers will be processed.",
         "save": "Save",
         "saveSuccess": "WhatsApp settings saved",
-        "logout": "Logout",
+        "logout": "Disconnect",
         "logoutSuccess": "WhatsApp session cleared",
-        "logoutFailed": "Failed to logout from WhatsApp",
+        "logoutFailed": "Failed to disconnect WhatsApp",
+        "autoRefresh": {
+          "label": "Auto-refresh conversations",
+          "description": "Start a fresh conversation after idle time. Previous ones stay accessible via /resume.",
+          "staleLabel": "Idle timeout",
+          "hours_one": "{{count}} hour",
+          "hours_other": "{{count}} hours"
+        },
         "commandsTitle": "Available commands",
         "commandsSubtitle": "Send these commands in your WhatsApp chat.",
         "commands": {

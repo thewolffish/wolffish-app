@@ -1,5 +1,6 @@
 import { Button } from '@components/core/Button'
 import { Input } from '@components/core/Input'
+import { TelegramLogo } from '@components/core/ProviderLogos'
 import { Select, type SelectOption } from '@components/core/Select'
 import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn'
@@ -30,10 +31,16 @@ export function TelegramPanel(): React.JSX.Element {
   const [status, setStatus] = useState<TelegramChannelStatus>({
     status: 'stopped',
     errorKind: null,
-    error: null
+    error: null,
+    botUsername: null,
+    botName: null
   })
   const [autoRefresh, setAutoRefresh] = useState<boolean | null>(null)
   const [staleHours, setStaleHours] = useState(3)
+  // Remembered bot identity so the connected-bot card stays visible when the
+  // channel is toggled off (a stopped bot reports a null username). Cleared
+  // only on disconnect, when the token — and thus the bot — is actually gone.
+  const [lastBot, setLastBot] = useState<{ username: string; name: string | null } | null>(null)
   const [busy, setBusy] = useState<'idle' | 'saving' | 'testing'>('idle')
   const [validation, setValidation] = useState<string | null>(null)
   const loaded = enabled !== null
@@ -54,6 +61,7 @@ export function TelegramPanel(): React.JSX.Element {
       setAutoRefresh(cfg.autoRefresh ?? true)
       setStaleHours(cfg.staleHours ?? 3)
       setStatus(live)
+      if (live.botUsername) setLastBot({ username: live.botUsername, name: live.botName })
       // Set `enabled` last so the first render with a real boolean
       // has the rest of the form already populated. Avoids sub-flicker.
       setEnabled(cfg.enabled)
@@ -67,7 +75,10 @@ export function TelegramPanel(): React.JSX.Element {
   // runs in the background, so without this the panel would keep showing
   // the snapshot it read on mount (e.g. "starting") until a manual Save.
   useEffect(() => {
-    const off = window.api.telegram.onStatusChange((s) => setStatus(s))
+    const off = window.api.telegram.onStatusChange((s) => {
+      setStatus(s)
+      if (s.botUsername) setLastBot({ username: s.botUsername, name: s.botName })
+    })
     return () => {
       off()
     }
@@ -159,6 +170,43 @@ export function TelegramPanel(): React.JSX.Element {
     }
   }, [allowedUsersInput, autoRefresh, botToken, parseUserIds, staleHours, t, toast, translateError])
 
+  // Disconnect mirrors WhatsApp's logout: cleanly clear the connection by
+  // stopping the bot and wiping the saved token (the credential), keeping
+  // the allow-list. setConfig({ enabled: false }) routes to the channel's
+  // stop() in the main process; clearing the token means the On toggle
+  // stays locked until a fresh token is pasted.
+  const handleDisconnect = useCallback(async () => {
+    setBusy('saving')
+    try {
+      await window.api.telegram.setConfig({ enabled: false, botToken: '' })
+      setBotToken('')
+      setHasSavedToken(false)
+      setEnabled(false)
+      // Token is gone, so the bot is too — drop the remembered identity.
+      setLastBot(null)
+      setStatus({
+        status: 'stopped',
+        errorKind: null,
+        error: null,
+        botUsername: null,
+        botName: null
+      })
+      toast.show({
+        message: t('settings.services.telegram.disconnectSuccess'),
+        tone: 'success'
+      })
+    } catch {
+      const live = await window.api.telegram.status()
+      setStatus(live)
+      toast.show({
+        message: t('settings.services.telegram.disconnectFailed'),
+        tone: 'error'
+      })
+    } finally {
+      setBusy('idle')
+    }
+  }, [t, toast])
+
   const statusLabel = useMemo(() => {
     return t(`settings.services.telegram.status.${status.status}`)
   }, [status, t])
@@ -168,6 +216,12 @@ export function TelegramPanel(): React.JSX.Element {
     if (status.error) return status.error
     return null
   }, [status, translateError])
+
+  const connected = status.status === 'running'
+  // Config is read-only while the channel is off — but only once it's been
+  // set up. First-time setup (no saved token yet) keeps the fields editable
+  // so the user can enter a token and Save to come online.
+  const configLocked = enabled === false && hasSavedToken
 
   // Segmented toggle: matches the Off | On pattern in WolffishPanel and
   // is RTL-safe by construction (flex layout reflows with `dir`). The
@@ -272,6 +326,37 @@ export function TelegramPanel(): React.JSX.Element {
                 <span className="text-fg text-sm">{statusLabel}</span>
               </div>
             </div>
+
+            {/* Connected bot chip — mirrors WhatsApp's connected-account card.
+                Driven by the remembered identity so it stays put when the
+                channel is toggled off, not only while it's running. */}
+            {lastBot && (
+              <div
+                className={cn(
+                  'bg-bg/40 border-border flex items-center gap-3 rounded-xl border px-3 py-2.5 transition-opacity',
+                  !connected && 'opacity-40'
+                )}
+              >
+                <div className="bg-surface border-border flex h-9 w-9 shrink-0 items-center justify-center rounded-full border">
+                  <TelegramLogo size={18} className="text-sky-500" />
+                </div>
+                <div className="flex min-w-0 flex-col">
+                  <span className="text-muted text-xs font-medium uppercase tracking-wider">
+                    {t('settings.services.telegram.connectedAs')}
+                  </span>
+                  <span className="text-fg truncate text-sm font-medium">
+                    {lastBot.name ? (
+                      <>
+                        {lastBot.name} (<span dir="ltr">@{lastBot.username}</span>)
+                      </>
+                    ) : (
+                      <span dir="ltr">@{lastBot.username}</span>
+                    )}
+                  </span>
+                </div>
+              </div>
+            )}
+
             {statusErrorText && (
               <pre
                 className={cn(
@@ -301,6 +386,7 @@ export function TelegramPanel(): React.JSX.Element {
                 placeholder={t('settings.services.telegram.botTokenPlaceholder')}
                 autoComplete="off"
                 spellCheck={false}
+                disabled={configLocked}
                 className="pe-10 font-mono"
               />
               <button
@@ -331,6 +417,7 @@ export function TelegramPanel(): React.JSX.Element {
               placeholder={t('settings.services.telegram.allowedUsersPlaceholder')}
               autoComplete="off"
               spellCheck={false}
+              disabled={configLocked}
               className="font-mono"
             />
             <p className="text-muted text-xs">{t('settings.services.telegram.allowedUsersHint')}</p>
@@ -338,58 +425,70 @@ export function TelegramPanel(): React.JSX.Element {
 
           <div className="border-border/60 border-t" />
 
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex flex-col gap-1">
-              <span className="text-fg text-sm font-medium">
-                {t('settings.services.telegram.autoRefresh.label')}
-              </span>
-              <p className="text-muted text-xs">
-                {t('settings.services.telegram.autoRefresh.description')}
-              </p>
-            </div>
-            {autoRefresh === null ? (
-              <div
-                aria-hidden="true"
-                className="bg-border/30 h-7 w-[78px] shrink-0 animate-pulse rounded-lg"
-              />
-            ) : (
-              <div
-                role="tablist"
-                className="border-border bg-bg/40 inline-flex shrink-0 items-center rounded-lg border p-0.5"
-              >
-                {toggleOptions.map((opt) => {
-                  const active = opt.value === autoRefresh
-                  return (
-                    <button
-                      key={String(opt.value)}
-                      role="tab"
-                      type="button"
-                      aria-selected={active}
-                      onClick={() => setAutoRefresh(opt.value)}
-                      className={cn(
-                        'rounded-md px-3 py-1 text-xs font-medium transition-colors',
-                        'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-                        active
-                          ? 'bg-primary text-primary-fg shadow-sm'
-                          : 'text-muted hover:text-fg cursor-pointer'
-                      )}
-                    >
-                      {opt.label}
-                    </button>
-                  )
-                })}
-              </div>
+          {/* Auto-refresh only makes sense once the bot is online — there
+              are no live conversations to roll over otherwise. Dim and
+              disable the whole group until the connection is running. */}
+          <div
+            className={cn(
+              'flex flex-col gap-5 transition-opacity',
+              !connected && 'pointer-events-none opacity-40'
             )}
-          </div>
+          >
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex flex-col gap-1">
+                <span className="text-fg text-sm font-medium">
+                  {t('settings.services.telegram.autoRefresh.label')}
+                </span>
+                <p className="text-muted text-xs">
+                  {t('settings.services.telegram.autoRefresh.description')}
+                </p>
+              </div>
+              {autoRefresh === null ? (
+                <div
+                  aria-hidden="true"
+                  className="bg-border/30 h-7 w-[78px] shrink-0 animate-pulse rounded-lg"
+                />
+              ) : (
+                <div
+                  role="tablist"
+                  className="border-border bg-bg/40 inline-flex shrink-0 items-center rounded-lg border p-0.5"
+                >
+                  {toggleOptions.map((opt) => {
+                    const active = opt.value === autoRefresh
+                    return (
+                      <button
+                        key={String(opt.value)}
+                        role="tab"
+                        type="button"
+                        aria-selected={active}
+                        disabled={!connected}
+                        onClick={() => setAutoRefresh(opt.value)}
+                        className={cn(
+                          'rounded-md px-3 py-1 text-xs font-medium transition-colors',
+                          'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+                          active
+                            ? 'bg-primary text-primary-fg shadow-sm'
+                            : 'text-muted hover:text-fg cursor-pointer'
+                        )}
+                      >
+                        {opt.label}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
 
-          {autoRefresh !== false && (
+            {/* Always shown — disabled (not hidden) when the bot is offline
+                or auto-refresh is toggled off. */}
             <Select<string>
               label={t('settings.services.telegram.autoRefresh.staleLabel')}
               value={String(staleHours)}
               options={staleHoursOptions}
               onChange={(next) => setStaleHours(Number(next))}
+              disabled={!connected || autoRefresh !== true}
             />
-          )}
+          </div>
 
           {validation && (
             <p className="text-rose-500 text-xs" role="alert">
@@ -399,7 +498,7 @@ export function TelegramPanel(): React.JSX.Element {
 
           <div className="border-border/60 border-t" />
 
-          <div className="flex items-center justify-end">
+          <div className="flex items-center justify-between gap-2">
             <Button
               type="button"
               onClick={() => void handleTest()}
@@ -407,10 +506,21 @@ export function TelegramPanel(): React.JSX.Element {
                 busy !== 'idle' ||
                 !loaded ||
                 botToken.trim().length === 0 ||
-                allowedUsersInput.trim().length === 0
+                allowedUsersInput.trim().length === 0 ||
+                configLocked
               }
             >
               {t('settings.services.telegram.test')}
+            </Button>
+            {/* Always available and clickable, even when offline — lets the
+                user clear a saved token/connection regardless of state. */}
+            <Button
+              type="button"
+              variant="danger"
+              onClick={() => void handleDisconnect()}
+              disabled={busy !== 'idle'}
+            >
+              {t('settings.services.telegram.disconnect')}
             </Button>
           </div>
 

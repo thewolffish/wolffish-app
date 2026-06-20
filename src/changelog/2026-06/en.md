@@ -1,4 +1,24 @@
-## v1.0.171 — 2026-06-19 `Latest`
+## v1.0.173 — 2026-06-20 `Latest`
+
+### WhatsApp Auto-Refresh Conversations
+
+WhatsApp now starts a fresh conversation after a period of inactivity, the same way Telegram already does. Once a chat has been idle past the configured timeout, the next incoming message rolls over to a new conversation — your previous one stays intact and is reachable with `/resume`. A new "Auto-refresh conversations" toggle and an idle-timeout selector (1–24 hours, default 3) appear in WhatsApp settings; both save instantly and the channel reads them per message, so no reconnect is needed. Previously this idle window was hard-coded to 3 hours and couldn't be turned off.
+
+### Telegram Connected-Bot Card
+
+Telegram settings now show a connected-bot card — the bot's name and `@username` next to the Telegram logo — mirroring the connected-account card WhatsApp already had. It stays visible (dimmed) while the channel is off, so you can always see which bot is configured, and clears only when you disconnect.
+
+### Disconnect, on Both Channels
+
+WhatsApp's "Logout" is now called "Disconnect", and Telegram gained a matching button. Both are styled as a clear destructive action and cleanly clear the connection — WhatsApp unpairs and wipes its session, Telegram stops the bot and clears the saved token. The button stays available even when the channel is switched off, so you can clear a stored connection at any time.
+
+### Clearer Off-State for Channel Settings
+
+When a channel is switched off, its settings are now disabled in place rather than hidden — the bot token, allowed users / phone numbers, auto-refresh controls, and Save button grey out instead of disappearing, so the panel layout stays stable and it's obvious what's inactive.
+
+---
+
+## v1.0.171 — 2026-06-19
 
 ### Quieter WhatsApp Reconnect Screen
 

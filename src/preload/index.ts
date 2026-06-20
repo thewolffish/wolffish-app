@@ -75,6 +75,8 @@ export type TelegramConfig = {
 export type WhatsAppConfig = {
   enabled: boolean
   allowedPhoneNumbers: string[]
+  autoRefresh?: boolean
+  staleHours?: number
 }
 
 export type WhatsAppConnectionStatus = 'disconnected' | 'connecting' | 'qr' | 'connected' | 'error'
@@ -708,6 +710,10 @@ export type TelegramChannelStatus = {
   errorKind: TelegramErrorKind | null
   /** Raw error string from grammY/Telegram, useful when kind is `unknown`. */
   error: string | null
+  /** Connected bot's @username, available once running. Null otherwise. */
+  botUsername: string | null
+  /** Connected bot's display name (first_name), available once running. */
+  botName: string | null
 }
 
 export type TelegramTestResult =

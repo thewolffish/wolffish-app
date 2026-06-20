@@ -485,6 +485,10 @@
           "starting": "قيد البدء",
           "error": "خطأ"
         },
+        "connectedAs": "البوت المتصل",
+        "disconnect": "قطع الاتصال",
+        "disconnectSuccess": "تم قطع اتصال بوت تيليجرام",
+        "disconnectFailed": "فشل قطع اتصال تيليجرام",
         "testSuccess": "تم إرسال الرسالة التجريبية",
         "testFailure": "فشل الاختبار: {{message}}",
         "saveSuccess": "تم حفظ إعدادات تيليجرام",
@@ -881,9 +885,19 @@
         "allowedPhonesHint": "أرقام هواتف مفصولة بفاصلة. سيتم معالجة الرسائل من هذه الأرقام فقط.",
         "save": "حفظ",
         "saveSuccess": "تم حفظ إعدادات واتساب",
-        "logout": "تسجيل خروج",
+        "logout": "قطع الاتصال",
         "logoutSuccess": "تم مسح جلسة واتساب",
-        "logoutFailed": "فشل تسجيل الخروج من واتساب",
+        "logoutFailed": "فشل قطع اتصال واتساب",
+        "autoRefresh": {
+          "label": "تجديد المحادثات تلقائياً",
+          "description": "ابدأ محادثة جديدة بعد فترة الخمول. تبقى السابقة متاحة عبر /resume.",
+          "staleLabel": "مهلة الخمول",
+          "hours_one": "ساعة واحدة",
+          "hours_two": "ساعتان",
+          "hours_few": "{{count}} ساعات",
+          "hours_many": "{{count}} ساعة",
+          "hours_other": "{{count}} ساعة"
+        },
         "commandsTitle": "الأوامر المتاحة",
         "commandsSubtitle": "أرسل هذه الأوامر في محادثة واتساب.",
         "commands": {

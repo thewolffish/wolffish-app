@@ -963,8 +963,9 @@ export class WhatsAppChannel {
       const loaded = await loadConversation(existingId)
       if (loaded) {
         const cfg = await getWhatsAppConfig()
-        const staleMs = STALE_DEFAULT_HOURS * 60 * 60 * 1000
-        if (loaded.messages.length > 0) {
+        const autoRefresh = cfg.autoRefresh ?? true
+        const staleMs = (cfg.staleHours ?? STALE_DEFAULT_HOURS) * 60 * 60 * 1000
+        if (autoRefresh && loaded.messages.length > 0) {
           const elapsed = Date.now() - loaded.updatedAt
           if (elapsed >= staleMs) {
             const fresh = createConversation(null)
@@ -977,7 +978,6 @@ export class WhatsAppChannel {
               jid,
               `Conversation "${oldTitle}" was idle for ${hours}h — started a fresh one.\n\nUse /resume to go back.`
             )
-            void cfg
             return fresh
           }
         }

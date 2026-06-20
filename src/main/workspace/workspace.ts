@@ -66,6 +66,8 @@ export type TelegramConfig = {
 export type WhatsAppConfig = {
   enabled: boolean
   allowedPhoneNumbers: string[]
+  autoRefresh?: boolean
+  staleHours?: number
 }
 
 export type BraveConfig = {
@@ -1156,7 +1158,9 @@ export async function setTelegramConfig(patch: Partial<TelegramConfig>): Promise
 
 const EMPTY_WHATSAPP_CONFIG: WhatsAppConfig = {
   enabled: false,
-  allowedPhoneNumbers: []
+  allowedPhoneNumbers: [],
+  autoRefresh: true,
+  staleHours: 3
 }
 
 export async function getWhatsAppConfig(): Promise<WhatsAppConfig> {
@@ -1169,7 +1173,9 @@ export async function setWhatsAppConfig(patch: Partial<WhatsAppConfig>): Promise
     const current = c.whatsapp ?? EMPTY_WHATSAPP_CONFIG
     const next: WhatsAppConfig = {
       enabled: patch.enabled ?? current.enabled,
-      allowedPhoneNumbers: patch.allowedPhoneNumbers ?? current.allowedPhoneNumbers
+      allowedPhoneNumbers: patch.allowedPhoneNumbers ?? current.allowedPhoneNumbers,
+      autoRefresh: patch.autoRefresh ?? current.autoRefresh,
+      staleHours: patch.staleHours ?? current.staleHours
     }
     return { ...c, whatsapp: next }
   })

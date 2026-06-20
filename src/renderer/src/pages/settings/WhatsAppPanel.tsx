@@ -1,5 +1,6 @@
 import { Button } from '@components/core/Button'
 import { Input } from '@components/core/Input'
+import { Select, type SelectOption } from '@components/core/Select'
 import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn'
 import type { WhatsAppChannelStatus } from '@preload/index'
@@ -32,6 +33,8 @@ export function WhatsAppPanel(): React.JSX.Element {
   })
   const [qrCode, setQrCode] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [autoRefresh, setAutoRefresh] = useState<boolean | null>(null)
+  const [staleHours, setStaleHours] = useState(3)
   const loggingOut = useRef(false)
   const loaded = enabled !== null
 
@@ -46,6 +49,8 @@ export function WhatsAppPanel(): React.JSX.Element {
       setSavedPhones(phonesStr)
       setStatus(live)
       if (live.qr) setQrCode(live.qr)
+      setAutoRefresh(cfg.autoRefresh ?? true)
+      setStaleHours(cfg.staleHours ?? 3)
       setEnabled(cfg.enabled)
     })()
     return () => {
@@ -165,6 +170,31 @@ export function WhatsAppPanel(): React.JSX.Element {
       setBusy(false)
     }
   }, [])
+
+  // Auto-refresh settings persist immediately, like the enable toggle —
+  // no socket restart, the values are read fresh per message in the
+  // channel's loadOrCreateConversation.
+  const handleAutoRefresh = useCallback(async (value: boolean) => {
+    setAutoRefresh(value)
+    await window.api.whatsapp.setConfig({ autoRefresh: value })
+  }, [])
+
+  const handleStaleHours = useCallback(async (hours: number) => {
+    setStaleHours(hours)
+    await window.api.whatsapp.setConfig({ staleHours: hours })
+  }, [])
+
+  const staleHoursOptions: readonly SelectOption<string>[] = useMemo(
+    () =>
+      Array.from({ length: 24 }, (_, i) => {
+        const h = i + 1
+        return {
+          value: String(h),
+          label: t('settings.services.whatsapp.autoRefresh.hours', { count: h })
+        }
+      }),
+    [t]
+  )
 
   const showConnected = status.status === 'connected' && status.connectedPhone
   const hasChanges = allowedPhonesInput !== savedPhones
@@ -353,7 +383,7 @@ export function WhatsAppPanel(): React.JSX.Element {
                 placeholder={t('settings.services.whatsapp.allowedPhonesPlaceholder')}
                 autoComplete="off"
                 spellCheck={false}
-                disabled={!showConnected}
+                disabled={!showConnected || enabled === false}
                 className="font-mono"
               />
               <p className="text-muted text-xs">
@@ -363,26 +393,95 @@ export function WhatsAppPanel(): React.JSX.Element {
 
             <div className="border-border/60 border-t" />
 
-            {/* Actions */}
-            <div className="flex items-center justify-between gap-2">
-              <Button
-                type="button"
-                onClick={() => void handleSave()}
-                disabled={busy || !showConnected || !hasChanges}
-              >
-                {t('settings.services.whatsapp.save')}
-              </Button>
-              {showConnected && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => void handleLogout()}
-                  disabled={busy}
-                >
-                  {t('settings.services.whatsapp.logout')}
-                </Button>
+            {/* Auto-refresh conversations — same idle→fresh-conversation logic
+                as Telegram. Gated on a live connection like the phones field. */}
+            <div
+              className={cn(
+                'flex flex-col gap-5 transition-opacity',
+                !showConnected && 'pointer-events-none opacity-40'
+              )}
+            >
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex flex-col gap-1">
+                  <span className="text-fg text-sm font-medium">
+                    {t('settings.services.whatsapp.autoRefresh.label')}
+                  </span>
+                  <p className="text-muted text-xs">
+                    {t('settings.services.whatsapp.autoRefresh.description')}
+                  </p>
+                </div>
+                {autoRefresh === null ? (
+                  <div
+                    aria-hidden="true"
+                    className="bg-border/30 h-7 w-[78px] shrink-0 animate-pulse rounded-lg"
+                  />
+                ) : (
+                  <div
+                    role="tablist"
+                    className="border-border bg-bg/40 inline-flex shrink-0 items-center rounded-lg border p-0.5"
+                  >
+                    {toggleOptions.map((opt) => {
+                      const active = opt.value === autoRefresh
+                      return (
+                        <button
+                          key={String(opt.value)}
+                          role="tab"
+                          type="button"
+                          aria-selected={active}
+                          disabled={busy || !showConnected}
+                          onClick={() => {
+                            if (opt.value !== autoRefresh) void handleAutoRefresh(opt.value)
+                          }}
+                          className={cn(
+                            'rounded-md px-3 py-1 text-xs font-medium transition-colors',
+                            'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+                            active
+                              ? 'bg-primary text-primary-fg shadow-sm'
+                              : 'text-muted hover:text-fg cursor-pointer'
+                          )}
+                        >
+                          {opt.label}
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {autoRefresh !== false && (
+                <Select<string>
+                  label={t('settings.services.whatsapp.autoRefresh.staleLabel')}
+                  value={String(staleHours)}
+                  options={staleHoursOptions}
+                  onChange={(next) => void handleStaleHours(Number(next))}
+                  disabled={busy || !showConnected}
+                />
               )}
             </div>
+          </div>
+
+          <div className="border-border/60 border-t" />
+
+          {/* Actions — kept outside the off-gate above so Disconnect stays
+              available and clickable even when the channel is toggled off
+              (lets the user clear a stored session). Save governs its own
+              enabled state via `disabled`. */}
+          <div className="flex items-center justify-between gap-2">
+            <Button
+              type="button"
+              onClick={() => void handleSave()}
+              disabled={busy || enabled === false || !showConnected || !hasChanges}
+            >
+              {t('settings.services.whatsapp.save')}
+            </Button>
+            <Button
+              type="button"
+              variant="danger"
+              onClick={() => void handleLogout()}
+              disabled={busy}
+            >
+              {t('settings.services.whatsapp.logout')}
+            </Button>
           </div>
         </section>
 
