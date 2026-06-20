@@ -131,6 +131,13 @@ confirm_patterns:
 Use `ffmpeg_check` to verify ffmpeg is installed before running commands.
 If not installed, call `ffmpeg_install` (requires user approval).
 
+`ffmpeg_install` self-heals: on Windows it tries winget first, and if winget
+is broken or unavailable it automatically downloads a static build into
+`~/.wolffish/bin/ffmpeg`. Don't fall back to ad-hoc `shell` downloads — just
+call `ffmpeg_install`. `ffmpeg_check` and `ffmpeg_run` resolve that managed
+copy directly, so a freshly installed ffmpeg works immediately without an app
+restart.
+
 Use `ffmpeg_run` with the arguments you'd pass after `ffmpeg` on the command line.
 
 ## Output files

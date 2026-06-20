@@ -1,4 +1,12 @@
-## v1.0.175 — 2026-06-20 `Latest`
+## v1.0.176 — 2026-06-20 `Latest`
+
+### FFmpeg Installs Even When Windows' Package Manager Is Broken
+
+When Windows' `winget` is corrupted, FFmpeg now installs anyway: Wolffish downloads a standalone build directly into `~/.wolffish/bin/ffmpeg` and uses it immediately — no app restart needed. More broadly, a tool you've just installed (FFmpeg, or anything added from the shell) is found right away, because Wolffish refreshes its view of your system PATH after an install instead of waiting for a restart. Works on Windows, macOS, and Linux.
+
+---
+
+## v1.0.175 — 2026-06-20
 
 ### Right-Click Menu in Every Field
 

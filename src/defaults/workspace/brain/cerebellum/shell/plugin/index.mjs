@@ -147,6 +147,70 @@ function runCollect(cmd, args, env = process.env) {
   })
 }
 
+// Commands that add a NEW directory to the persistent/login PATH — installers
+// whose target dir isn't already on the running process's PATH. After one
+// succeeds we re-read the PATH so the new tool is reachable by the next tool
+// call without an app restart, the same staleness node_check / the ffmpeg
+// resolver guard against. Excluded on purpose: npm -g / pip / cargo (their bin
+// dirs are already on PATH) and apt/dnf/yum (install to /usr/bin, always on
+// PATH) — a refresh there adds nothing and just fires needlessly. brew/port/snap
+// ARE included: a GUI-launched app's minimal PATH lacks /opt/homebrew/bin,
+// /opt/local/bin, /snap/bin.
+const PATH_MUTATING_RE =
+  /\b(?:winget|choco|scoop|msiexec|setx)\b|SetEnvironmentVariable|\b(?:brew|port|snap)\s+install\b/i
+
+// Re-read the user's "real" PATH and merge any new entries into process.env.PATH
+// so a tool just installed by a shell command is reachable by the next spawn. On
+// Windows that's the registry (Machine + User scopes); elsewhere it's the login
+// shell's PATH, which sources the rc files where Homebrew/nvm/etc. live.
+// Append-only, deduped, best-effort — a failure leaves PATH untouched.
+async function refreshWolffishPath() {
+  const sep = process.platform === 'win32' ? ';' : ':'
+  let raw = []
+  try {
+    if (process.platform === 'win32') {
+      const script =
+        "[Environment]::GetEnvironmentVariable('PATH','Machine');" +
+        "[Environment]::GetEnvironmentVariable('PATH','User')"
+      const { stdout } = await execFileP(
+        'powershell',
+        ['-NoProfile', '-NonInteractive', '-Command', script],
+        { timeout: 5_000, windowsHide: true }
+      )
+      raw = stdout.split(/\r?\n/).flatMap((line) => line.split(';'))
+    } else {
+      const shell = process.env.SHELL || '/bin/sh'
+      const { stdout } = await execFileP(
+        shell,
+        ['-ilc', 'printf "__WFPATH__%s__WFPATH__" "$PATH"'],
+        { timeout: 5_000 }
+      )
+      const resolved = stdout.match(/__WFPATH__(.+?)__WFPATH__/)?.[1]
+      raw = resolved ? resolved.split(':') : []
+    }
+  } catch {
+    return // best-effort
+  }
+  const strip = (p) => p.trim().replace(/[\\/]+$/, '')
+  const key = (p) => (process.platform === 'win32' ? p.toLowerCase() : p)
+  const additions = raw.map(strip).filter(Boolean)
+  if (additions.length === 0) return
+  const current = (process.env.PATH ?? '')
+    .split(sep)
+    .map((p) => p.trim())
+    .filter(Boolean)
+  const seen = new Set(current.map((p) => key(strip(p))))
+  let mutated = false
+  for (const entry of additions) {
+    const k = key(entry)
+    if (seen.has(k)) continue
+    seen.add(k)
+    current.push(entry)
+    mutated = true
+  }
+  if (mutated) process.env.PATH = current.join(sep)
+}
+
 /**
  * Ensure sudo credentials are cached. Shows a native OS password dialog
  * on the first call; subsequent calls within ~5 minutes are free.
@@ -364,6 +428,11 @@ async function execShell(args, signal) {
 
   const result = await execForeground({ command: execCommand, cwd, shell, timeoutMs, env: execEnv, signal })
   if (result.success) {
+    // If the command installed something onto PATH, re-read the PATH so the new
+    // tool is reachable by the next tool call without an app restart.
+    if (PATH_MUTATING_RE.test(command)) {
+      await refreshWolffishPath()
+    }
     result.output = await surfaceOpenedFiles(command, cwd, result.output)
   }
   return result

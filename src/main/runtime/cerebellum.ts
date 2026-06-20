@@ -445,6 +445,18 @@ export class Cerebellum {
     }
     try {
       const result = await plugin.execute(name, args, signal)
+      // A successful *_install can place a binary on the persistent PATH that
+      // this long-lived process didn't inherit (Windows: a new registry entry;
+      // macOS/Linux: a brand-new bin dir such as a first Homebrew install).
+      // Re-read PATH so the next tool — in ANY capability, since process.env.PATH
+      // is shared by every plugin spawn — finds it without an app restart. This
+      // is the central counterpart to the refreshPath() in ensureDependencies:
+      // that covers auto-resolved dependency installs, this covers a direct
+      // *_install tool call. Centralized here so every install tool is covered on
+      // every OS, not just the few plugins that self-refresh.
+      if (result.success && name.endsWith('_install')) {
+        refreshPath()
+      }
       return result
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
