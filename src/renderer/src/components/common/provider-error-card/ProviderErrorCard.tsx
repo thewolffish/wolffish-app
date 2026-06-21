@@ -9,7 +9,8 @@ import {
   OpenRouterLogo,
   XAILogo,
   QwenLogo,
-  StepfunLogo
+  StepfunLogo,
+  ZaiLogo
 } from '@components/core/ProviderLogos'
 import { cn } from '@lib/utils/cn'
 import { CloudIcon, Copy01Icon, Tick02Icon } from 'hugeicons-react'
@@ -28,6 +29,7 @@ type Logo =
   | 'xai'
   | 'qwen'
   | 'stepfun'
+  | 'zai'
   | 'ollama'
 
 const LOGO: Record<Logo, IconType | React.ComponentType<{ size?: number; className?: string }>> = {
@@ -41,6 +43,7 @@ const LOGO: Record<Logo, IconType | React.ComponentType<{ size?: number; classNa
   xai: XAILogo,
   qwen: QwenLogo,
   stepfun: StepfunLogo,
+  zai: ZaiLogo,
   ollama: OllamaLogo
 }
 

@@ -48,6 +48,11 @@ export function cloudModelSupportsVision(provider: string, model: string): boole
     case 'stepfun':
       // step-1v / step-1.5v / step-1o are StepFun's vision lines.
       return /step-[\d.]+[vo]($|[^a-z0-9])/.test(m)
+    case 'zai':
+      // GLM-*V (e.g. glm-4.5v, glm-4.6v, glm-5v-turbo) are the vision
+      // variants; the bare glm-* chat models are text-only — confirmed
+      // live, glm-5.2 rejects image parts as "no multi-modal input".
+      return /glm-[\d.]+v($|[^a-z0-9])/.test(m)
     case 'openrouter':
       return openrouterSupportsVision(m)
     default:

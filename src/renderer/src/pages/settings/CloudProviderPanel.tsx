@@ -10,7 +10,8 @@ import {
   OpenRouterLogo,
   QwenLogo,
   StepfunLogo,
-  XAILogo
+  XAILogo,
+  ZaiLogo
 } from '@components/core/ProviderLogos'
 import { Select, type SelectOption } from '@components/core/Select'
 import { useToast } from '@components/core/toast/useToast'
@@ -45,7 +46,8 @@ const PROVIDER_LOGOS: Record<
   minimax: MiniMaxLogo,
   xai: XAILogo,
   qwen: QwenLogo,
-  stepfun: StepfunLogo
+  stepfun: StepfunLogo,
+  zai: ZaiLogo
 }
 
 const PROVIDER_URLS: Record<ProviderId, string> = {
@@ -58,7 +60,8 @@ const PROVIDER_URLS: Record<ProviderId, string> = {
   minimax: 'https://platform.minimax.io',
   xai: 'https://console.x.ai',
   qwen: 'https://www.qwencloud.com',
-  stepfun: 'https://platform.stepfun.ai'
+  stepfun: 'https://platform.stepfun.ai',
+  zai: 'https://z.ai/manage-apikey/apikey-list'
 }
 
 type BadgeKind = 'frontier' | 'vision' | 'reasoning' | 'code' | 'fast' | 'voice'
@@ -203,6 +206,80 @@ const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       cached: '$0.02',
       badges: ['fast', 'reasoning'],
       modes: ['none', 'high', 'max']
+    }
+  ],
+  zai: [
+    {
+      name: 'glm-5.2',
+      context: '1M',
+      input: '$1.40',
+      output: '$4.40',
+      cached: '$0.26',
+      badges: ['frontier', 'reasoning'],
+      modes: ['none', 'high']
+    },
+    {
+      name: 'glm-5.1',
+      context: '200K',
+      input: '$1.40',
+      output: '$4.40',
+      cached: '$0.26',
+      badges: ['reasoning'],
+      modes: ['none', 'high']
+    },
+    {
+      name: 'glm-5-turbo',
+      context: '200K',
+      input: '$1.20',
+      output: '$4.00',
+      cached: '$0.24',
+      badges: ['fast', 'reasoning'],
+      modes: ['none', 'high']
+    },
+    {
+      name: 'glm-5',
+      context: '200K',
+      input: '$1.00',
+      output: '$3.20',
+      cached: '$0.20',
+      badges: ['reasoning'],
+      modes: ['none', 'high']
+    },
+    {
+      name: 'glm-4.7',
+      context: '200K',
+      input: '$0.60',
+      output: '$2.20',
+      cached: '$0.11',
+      badges: ['reasoning'],
+      modes: ['none', 'high']
+    },
+    {
+      name: 'glm-4.6',
+      context: '200K',
+      input: '$0.60',
+      output: '$2.20',
+      cached: '$0.11',
+      badges: ['reasoning'],
+      modes: ['none', 'high']
+    },
+    {
+      name: 'glm-4.5',
+      context: '128K',
+      input: '$0.60',
+      output: '$2.20',
+      cached: '$0.11',
+      badges: ['reasoning'],
+      modes: ['none', 'high']
+    },
+    {
+      name: 'glm-4.5-air',
+      context: '128K',
+      input: '$0.20',
+      output: '$1.10',
+      cached: '$0.03',
+      badges: ['fast', 'reasoning'],
+      modes: ['none', 'high']
     }
   ],
   deepseek: [
@@ -994,6 +1071,7 @@ const OPENROUTER_PROVIDER_TIER: Record<string, number> = {
   moonshotai: 0,
   minimax: 0,
   stepfun: 0,
+  'z-ai': 0,
   google: 1,
   'x-ai': 1,
   'meta-llama': 1,

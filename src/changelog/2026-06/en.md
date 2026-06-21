@@ -1,4 +1,12 @@
-## v1.0.176 — 2026-06-20 `Latest`
+## v1.0.177 — 2026-06-21 `Latest`
+
+### New Cloud Provider: Z.ai (GLM)
+
+Z.ai joins the cloud lineup — its panel sits above DeepSeek in Settings. It streams responses, calls tools, and reports cache hits, with binary thinking (**Off / Think**) across the full GLM family, from `glm-4.5` and `glm-4.5-air` through `glm-5.2`. Context windows (128K–1M) and per-model pricing are tracked for accurate usage and cost. Add your API key in Settings and pick a model — everything else works like the existing providers.
+
+---
+
+## v1.0.176 — 2026-06-20
 
 ### FFmpeg Installs Even When Windows' Package Manager Is Broken
 

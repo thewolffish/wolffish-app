@@ -5,7 +5,8 @@ import {
   MiniMaxLogo,
   MimoLogo,
   OllamaLogo,
-  OpenAILogo
+  OpenAILogo,
+  ZaiLogo
 } from '@components/core/ProviderLogos'
 import { cn } from '@lib/utils/cn'
 import { CloudIcon } from 'hugeicons-react'
@@ -19,6 +20,7 @@ const LOGOS: Record<string, IconType | React.ComponentType<{ size?: number; clas
     mimo: MimoLogo,
     kimi: KimiLogo,
     minimax: MiniMaxLogo,
+    zai: ZaiLogo,
     local: OllamaLogo,
     ollama: OllamaLogo
   }

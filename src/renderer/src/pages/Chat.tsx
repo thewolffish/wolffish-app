@@ -37,6 +37,7 @@ import {
   OpenRouterLogo,
   QwenLogo,
   StepfunLogo,
+  ZaiLogo,
   TelegramLogo,
   WhatsAppLogo,
   XAILogo
@@ -228,6 +229,12 @@ export function Chat(): React.JSX.Element {
     if (provider === 'minimax') {
       if (model === 'MiniMax-M3') return [none, high]
       return []
+    }
+
+    // ── Z.ai: binary thinking toggle on every GLM model (verified live —
+    // reasoning_effort is ignored, only thinking.type enabled/disabled) ──
+    if (provider === 'zai') {
+      return [none, high]
     }
 
     // ── Qwen: thinking on qwen3+ and qwq models ──
@@ -2895,7 +2902,8 @@ const CLOUD_PROVIDER_LOGOS: Record<string, React.ComponentType<{ size?: number }
   minimax: MiniMaxLogo,
   xai: XAILogo,
   qwen: QwenLogo,
-  stepfun: StepfunLogo
+  stepfun: StepfunLogo,
+  zai: ZaiLogo
 }
 
 function ModeToggle({

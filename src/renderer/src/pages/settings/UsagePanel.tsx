@@ -11,7 +11,8 @@ import {
   OpenRouterLogo,
   XAILogo,
   QwenLogo,
-  StepfunLogo
+  StepfunLogo,
+  ZaiLogo
 } from '@components/core/ProviderLogos'
 import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn'
@@ -50,6 +51,7 @@ type ProviderId =
   | 'xai'
   | 'qwen'
   | 'stepfun'
+  | 'zai'
 
 const TIME_RANGES: UsageTimeRange[] = [
   'today',
@@ -71,7 +73,8 @@ const PROVIDER_ICONS: Record<ProviderId, React.ComponentType<{ size: number }>> 
   minimax: MiniMaxLogo,
   xai: XAILogo,
   qwen: QwenLogo,
-  stepfun: StepfunLogo
+  stepfun: StepfunLogo,
+  zai: ZaiLogo
 }
 
 export function UsagePanel(): React.JSX.Element {

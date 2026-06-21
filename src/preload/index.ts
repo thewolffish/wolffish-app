@@ -53,6 +53,7 @@ export type CloudProviderConfig = {
     | 'xai'
     | 'qwen'
     | 'stepfun'
+    | 'zai'
   model: string
   apiKey: string
   models?: string[]
@@ -535,6 +536,7 @@ export type UsageProviderSummary = {
     | 'xai'
     | 'qwen'
     | 'stepfun'
+    | 'zai'
     | 'local'
   totalInputTokens: number
   totalOutputTokens: number

@@ -331,8 +331,10 @@
         "xai": "xAI",
         "qwen": "Qwen",
         "stepfun": "Stepfun",
+        "zai": "Z.ai",
         "openrouter": "OpenRouter",
         "descriptions": {
+          "zai": "Z.ai — Zhipu's GLM models: frontier agentic reasoning and coding with long context",
           "stepfun": "Step — frontier reasoning models with built-in thinking and vision support",
           "qwen": "Alibaba's Qwen models — powerful reasoning and coding with long-context support",
           "xai": "Grok — xAI's frontier reasoning models with vision and live web search",
@@ -1129,6 +1131,7 @@
         "xai": "xAI",
         "qwen": "Qwen",
         "stepfun": "Stepfun",
+        "zai": "Z.ai",
         "openrouter": "OpenRouter",
         "brave": "Brave Search"
       },

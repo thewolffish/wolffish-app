@@ -446,6 +446,26 @@ async function fetchProviderModels(
       return { ok: true, models }
     }
 
+    if (id === 'zai') {
+      const res = await fetch('https://api.z.ai/api/paas/v4/models', {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${apiKey}` }
+      })
+      if (!res.ok) {
+        const text = await res.text().catch(() => '')
+        return { ok: false, ...classifyHttpError(res.status, text) }
+      }
+      const body = (await res.json()) as {
+        data?: Array<{ id: string; created?: number }>
+      }
+      const models = (body.data ?? [])
+        .filter((m) => isZaiChatModel(m.id))
+        .slice()
+        .sort((a, b) => (b.created ?? 0) - (a.created ?? 0))
+        .map((m) => m.id)
+      return { ok: true, models }
+    }
+
     if (id === 'xai') {
       const res = await fetch('https://api.x.ai/v1/models', {
         method: 'GET',
@@ -560,6 +580,16 @@ function isQwenChatModel(id: string): boolean {
   return false
 }
 
+function isZaiChatModel(id: string): boolean {
+  // Z.ai serves GLM chat/reasoning models. Vision variants (glm-*v) are
+  // chat-capable too; only filter out obvious non-chat endpoints.
+  if (id.startsWith('glm-')) {
+    if (/-(tts|asr|embedding|whisper|image|video|voice|cogview|realtime)/.test(id)) return false
+    return true
+  }
+  return false
+}
+
 function isXAIChatModel(id: string): boolean {
   if (id.startsWith('grok-')) {
     if (/-(imagine|embed|tts|stt|whisper)/.test(id)) return false
@@ -572,7 +602,7 @@ function isOpenRouterChatModel(id: string): boolean {
   if (/(-embed|-tts|-stt|-whisper|-vision-gen|-diffusion|-stable|flux|dall-e|midjourney)/.test(id))
     return false
   if (
-    /^(anthropic\/|openai\/|google\/|meta-llama\/|deepseek\/|mistralai\/|qwen\/|x-ai\/|cohere\/|microsoft\/|perplexity\/|amazon\/|nousresearch\/|xiaomi\/|moonshotai\/|minimax\/|stepfun\/)/.test(
+    /^(anthropic\/|openai\/|google\/|meta-llama\/|deepseek\/|mistralai\/|qwen\/|x-ai\/|cohere\/|microsoft\/|perplexity\/|amazon\/|nousresearch\/|xiaomi\/|moonshotai\/|minimax\/|stepfun\/|z-ai\/)/.test(
       id
     )
   )

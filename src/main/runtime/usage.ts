@@ -203,6 +203,20 @@ const STEPFUN_PRICING: Record<string, ModelPricing> = {
   'step-1': { input: 1.25 / 1e6, output: 8.33 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 }
 }
 
+// https://docs.z.ai/guides/overview/pricing
+// Z.ai (Zhipu) GLM. Context caching auto-applies with no write fee;
+// cacheRead = cached-input price / input price (~0.18 across the lineup).
+const ZAI_PRICING: Record<string, ModelPricing> = {
+  'glm-5.2': { input: 1.4 / 1e6, output: 4.4 / 1e6, cacheWrite: 1.0, cacheRead: 0.26 / 1.4 },
+  'glm-5.1': { input: 1.4 / 1e6, output: 4.4 / 1e6, cacheWrite: 1.0, cacheRead: 0.26 / 1.4 },
+  'glm-5-turbo': { input: 1.2 / 1e6, output: 4.0 / 1e6, cacheWrite: 1.0, cacheRead: 0.24 / 1.2 },
+  'glm-5': { input: 1.0 / 1e6, output: 3.2 / 1e6, cacheWrite: 1.0, cacheRead: 0.2 },
+  'glm-4.7': { input: 0.6 / 1e6, output: 2.2 / 1e6, cacheWrite: 1.0, cacheRead: 0.11 / 0.6 },
+  'glm-4.6': { input: 0.6 / 1e6, output: 2.2 / 1e6, cacheWrite: 1.0, cacheRead: 0.11 / 0.6 },
+  'glm-4.5-air': { input: 0.2 / 1e6, output: 1.1 / 1e6, cacheWrite: 1.0, cacheRead: 0.03 / 0.2 },
+  'glm-4.5': { input: 0.6 / 1e6, output: 2.2 / 1e6, cacheWrite: 1.0, cacheRead: 0.11 / 0.6 }
+}
+
 // https://docs.x.ai/docs/pricing
 // xAI auto-caches; no write premium. Reasoning tokens billed at output rate.
 const XAI_PRICING: Record<string, ModelPricing> = {
@@ -418,7 +432,8 @@ export class Usage {
       'minimax',
       'xai',
       'qwen',
-      'stepfun'
+      'stepfun',
+      'zai'
     ] as ProviderId[]) {
       const bucket = byProvider.get(pid)
       if (!bucket) {
@@ -624,6 +639,7 @@ export class Usage {
       { file: 'xai.md', provider: 'xai' },
       { file: 'qwen.md', provider: 'qwen' },
       { file: 'stepfun.md', provider: 'stepfun' },
+      { file: 'zai.md', provider: 'zai' },
       { file: 'openrouter.md', provider: 'openrouter' }
     ]
 
@@ -710,9 +726,11 @@ export function calculateCost(
                   ? QWEN_PRICING
                   : provider === 'stepfun'
                     ? STEPFUN_PRICING
-                    : provider === 'openrouter'
-                      ? OPENROUTER_PRICING
-                      : OPENAI_PRICING
+                    : provider === 'zai'
+                      ? ZAI_PRICING
+                      : provider === 'openrouter'
+                        ? OPENROUTER_PRICING
+                        : OPENAI_PRICING
   const pricing = findPricing(model, table)
   return (
     inputTokens * pricing.input +
@@ -788,6 +806,7 @@ function providerLabel(provider: ProviderId): string {
   if (provider === 'xai') return 'xAI'
   if (provider === 'qwen') return 'Qwen'
   if (provider === 'stepfun') return 'Stepfun'
+  if (provider === 'zai') return 'Z.ai'
   if (provider === 'openrouter') return 'OpenRouter'
   return 'OpenAI'
 }

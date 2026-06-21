@@ -29,6 +29,7 @@ export type CloudProviderConfig = {
     | 'xai'
     | 'qwen'
     | 'stepfun'
+    | 'zai'
   model: string
   apiKey: string
   // Cached from the provider's /v1/models endpoint. Refreshed on app

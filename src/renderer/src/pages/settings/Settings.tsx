@@ -15,7 +15,8 @@ import {
   QwenLogo,
   StepfunLogo,
   TelegramLogo,
-  XAILogo
+  XAILogo,
+  ZaiLogo
 } from '@components/core/ProviderLogos'
 import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
@@ -504,6 +505,9 @@ export function Settings(): React.JSX.Element {
         <TabPanel active={active === 'model' && provider === 'openai'}>
           <CloudProviderPanel provider="openai" />
         </TabPanel>
+        <TabPanel active={active === 'model' && provider === 'zai'}>
+          <CloudProviderPanel provider="zai" />
+        </TabPanel>
         <TabPanel active={active === 'model' && provider === 'deepseek'}>
           <CloudProviderPanel provider="deepseek" />
         </TabPanel>
@@ -597,9 +601,11 @@ type Provider =
   | 'xai'
   | 'qwen'
   | 'stepfun'
+  | 'zai'
 const PROVIDERS: Provider[] = [
   'qwen',
   'mimo',
+  'zai',
   'deepseek',
   'kimi',
   'minimax',
@@ -625,7 +631,8 @@ const PROVIDER_ICONS: Record<
   minimax: MiniMaxLogo,
   xai: XAILogo,
   qwen: QwenLogo,
-  stepfun: StepfunLogo
+  stepfun: StepfunLogo,
+  zai: ZaiLogo
 }
 
 type Channel = 'telegram' | 'whatsapp'

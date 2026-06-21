@@ -11,6 +11,7 @@ import { OpenRouterProvider } from '@main/runtime/providers/openrouter'
 import { QwenProvider } from '@main/runtime/providers/qwen'
 import { StepfunProvider } from '@main/runtime/providers/stepfun'
 import { XAIProvider } from '@main/runtime/providers/xai'
+import { ZaiProvider } from '@main/runtime/providers/zai'
 import {
   cloudModelSupportsVision,
   hasVisualContent,
@@ -69,6 +70,7 @@ export type ProviderId =
   | 'xai'
   | 'qwen'
   | 'stepfun'
+  | 'zai'
   | 'local'
 
 export type ToolDefinition = {
@@ -189,6 +191,7 @@ export type CloudProviderConfig = {
     | 'xai'
     | 'qwen'
     | 'stepfun'
+    | 'zai'
   model: string
   apiKey: string
   models?: string[]
@@ -235,6 +238,7 @@ const PROVIDER_LOGO: Record<ProviderId, string> = {
   xai: 'xai',
   qwen: 'qwen',
   stepfun: 'stepfun',
+  zai: 'zai',
   local: 'ollama'
 }
 
@@ -1037,6 +1041,12 @@ export class Thalamus {
           model: cfg.model,
           provider: new StepfunProvider(cfg.apiKey, cfg.model)
         })
+      } else if (id === 'zai') {
+        out.push({
+          id: 'zai',
+          model: cfg.model,
+          provider: new ZaiProvider(cfg.apiKey, cfg.model)
+        })
       } else if (id === 'openrouter') {
         out.push({
           id: 'openrouter',
@@ -1216,6 +1226,16 @@ function contextWindowForModel(model: string): number {
   if (m.includes('step-1-200k')) return 200_000
   if (m.includes('step-1-128k')) return 128_000
   if (m.includes('step-1')) return 64_000
+  // Z.ai / GLM (Zhipu). Specific versions before the bare-family checks
+  // since "glm-5" is a substring of glm-5.1 / glm-5.2 / glm-5-turbo.
+  if (m.includes('glm-5.2')) return 1_000_000
+  if (m.includes('glm-5.1')) return 204_800
+  if (m.includes('glm-5-turbo')) return 204_800
+  if (m.includes('glm-5')) return 204_800
+  if (m.includes('glm-4.7')) return 204_800
+  if (m.includes('glm-4.6')) return 204_800
+  if (m.includes('glm-4.5')) return 131_072
+  if (m.includes('glm')) return 131_072
   // OpenRouter — model IDs are prefixed with provider slug (e.g. "anthropic/claude-…")
   // so the checks above for bare model names won't match. Catch the common ones here.
   if (m.includes('anthropic/claude')) return 200_000
@@ -1279,6 +1299,10 @@ function maxOutputForModel(model: string): number {
   // Stepfun
   if (m.includes('step-3')) return 32_768
   if (m.includes('step-2') || m.includes('step-1')) return 8_192
+  // Z.ai / GLM — uniform 65,536 output budget (under every model's cap:
+  // glm-4.5/4.5-air = 98,304, glm-4.6+ = 131,072). Matches maxTokensFor
+  // in providers/zai.ts.
+  if (m.includes('glm')) return 65_536
   // xAI / Grok
   if (m.includes('grok-4.3') || m.includes('grok-4.20')) return 65_536
   if (m.includes('grok-4') || m.includes('grok-build')) return 32_768

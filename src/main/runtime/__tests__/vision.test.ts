@@ -78,6 +78,16 @@ const CASES: Array<[provider: string, model: string, vision: boolean]> = [
   ['stepfun', 'step-1v-32k', true],
   ['stepfun', 'step-1.5v-mini', true],
   ['stepfun', 'step-1o-turbo-vision', true],
+  // zai / GLM — bare chat models are text-only (verified live: glm-5.2
+  // rejects image parts); only the glm-*v variants are multimodal
+  ['zai', 'glm-4.5', false],
+  ['zai', 'glm-4.5-air', false],
+  ['zai', 'glm-4.6', false],
+  ['zai', 'glm-5.2', false],
+  ['zai', 'glm-5-turbo', false],
+  ['zai', 'glm-4.5v', true],
+  ['zai', 'glm-4.6v', true],
+  ['zai', 'glm-5v-turbo', true],
   // openrouter — namespaced ids route to family rules
   ['openrouter', 'anthropic/claude-opus-4.1', true],
   ['openrouter', 'google/gemini-2.5-flash', true],
