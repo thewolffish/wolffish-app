@@ -1,4 +1,12 @@
-## v1.0.177 — 2026-06-21 `Latest`
+## v1.0.179 — 2026-06-21 `Latest`
+
+### Z.ai Logo Adapts to the Theme
+
+The Z.ai provider logo now renders as a single-color "Z" mark that tints to match light and dark mode, matching the other provider logos.
+
+---
+
+## v1.0.177 — 2026-06-21
 
 ### New Cloud Provider: Z.ai (GLM)
 
