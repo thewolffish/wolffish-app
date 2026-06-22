@@ -27,6 +27,10 @@ export function TelegramPanel(): React.JSX.Element {
   const [botToken, setBotToken] = useState('')
   const [hasSavedToken, setHasSavedToken] = useState(false)
   const [allowedUsersInput, setAllowedUsersInput] = useState('')
+  // Last persisted token + allow-list, so the Test/save button can disable
+  // when nothing has changed since the last successful connect.
+  const [savedBotToken, setSavedBotToken] = useState('')
+  const [savedAllowedUsers, setSavedAllowedUsers] = useState('')
   const [tokenVisible, setTokenVisible] = useState(false)
   const [status, setStatus] = useState<TelegramChannelStatus>({
     status: 'stopped',
@@ -37,6 +41,7 @@ export function TelegramPanel(): React.JSX.Element {
   })
   const [autoRefresh, setAutoRefresh] = useState<boolean | null>(null)
   const [staleHours, setStaleHours] = useState(3)
+  const [verbose, setVerbose] = useState<boolean | null>(null)
   // Remembered bot identity so the connected-bot card stays visible when the
   // channel is toggled off (a stopped bot reports a null username). Cleared
   // only on disconnect, when the token — and thus the bot — is actually gone.
@@ -58,8 +63,11 @@ export function TelegramPanel(): React.JSX.Element {
       setBotToken(cfg.botToken)
       setHasSavedToken(cfg.botToken.length > 0)
       setAllowedUsersInput(cfg.allowedUserIds.join(', '))
+      setSavedBotToken(cfg.botToken)
+      setSavedAllowedUsers(cfg.allowedUserIds.join(', '))
       setAutoRefresh(cfg.autoRefresh ?? true)
       setStaleHours(cfg.staleHours ?? 3)
+      setVerbose(cfg.verbose ?? false)
       setStatus(live)
       if (live.botUsername) setLastBot({ username: live.botUsername, name: live.botName })
       // Set `enabled` last so the first render with a real boolean
@@ -109,6 +117,15 @@ export function TelegramPanel(): React.JSX.Element {
     setStatus(response.status)
   }, [])
 
+  // Verbosity is a prefs-only patch — the main process persists it without
+  // restarting the bot. Read fresh per turn in the channel. Off (default) =
+  // clean feed (agent messages + file results + errors only).
+  const handleVerbose = useCallback(async (value: boolean) => {
+    setVerbose(value)
+    const response = await window.api.telegram.setConfig({ verbose: value })
+    setStatus(response.status)
+  }, [])
+
   const translateError = useCallback(
     (kind: TelegramErrorKind, message?: string | null): string => {
       if (kind === 'unknown') {
@@ -153,6 +170,8 @@ export function TelegramPanel(): React.JSX.Element {
         setStatus(response.status)
         setEnabled(true)
         setHasSavedToken(true)
+        setSavedBotToken(botToken.trim())
+        setSavedAllowedUsers(allowedUsersInput.trim())
         toast.show({
           message: t('settings.services.telegram.testSuccess'),
           tone: 'success'
@@ -181,6 +200,9 @@ export function TelegramPanel(): React.JSX.Element {
       await window.api.telegram.setConfig({ enabled: false, botToken: '' })
       setBotToken('')
       setHasSavedToken(false)
+      // Token is cleared; the allow-list is intentionally kept, so only the
+      // saved token resets here.
+      setSavedBotToken('')
       setEnabled(false)
       // Token is gone, so the bot is too — drop the remembered identity.
       setLastBot(null)
@@ -222,6 +244,19 @@ export function TelegramPanel(): React.JSX.Element {
   // set up. First-time setup (no saved token yet) keeps the fields editable
   // so the user can enter a token and Save to come online.
   const configLocked = enabled === false && hasSavedToken
+  // Mirrors WhatsApp's Save guard: the Test/save button stays disabled until
+  // the token or allow-list actually differs from what's persisted.
+  const hasChanges =
+    botToken.trim() !== savedBotToken.trim() ||
+    allowedUsersInput.trim() !== savedAllowedUsers.trim()
+  // Disconnect only clears a real session: a saved token, or a live/error
+  // status to reset. A typed-but-unsaved token doesn't count — the user can
+  // just clear the field. Nothing saved + stopped → nothing to clear, disable.
+  const canDisconnect = hasSavedToken || status.status !== 'stopped'
+  // Verbose only governs an active task feed, so it's editable once the
+  // channel is on and a session (saved token) exists. Off or token-less,
+  // there's nothing to relay — lock and dim it.
+  const verboseLocked = enabled === false || !hasSavedToken
 
   // Segmented toggle: matches the Off | On pattern in WolffishPanel and
   // is RTL-safe by construction (flex layout reflows with `dir`). The
@@ -294,7 +329,7 @@ export function TelegramPanel(): React.JSX.Element {
                       disabled={cantEnable}
                       onClick={() => void handleToggle(opt.value)}
                       className={cn(
-                        'rounded-md px-3 py-1 text-xs font-medium transition-colors',
+                        'rounded-md px-3 py-1 text-xs font-medium',
                         'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
                         cantEnable
                           ? 'text-muted/50 cursor-not-allowed'
@@ -340,7 +375,7 @@ export function TelegramPanel(): React.JSX.Element {
             {lastBot && (
               <div
                 className={cn(
-                  'bg-bg/40 border-border flex items-center gap-3 rounded-xl border px-3 py-2.5 transition-opacity',
+                  'bg-bg/40 border-border flex items-center gap-3 rounded-xl border px-3 py-2.5',
                   !connected && 'opacity-40'
                 )}
               >
@@ -437,7 +472,7 @@ export function TelegramPanel(): React.JSX.Element {
               disable the whole group until the connection is running. */}
           <div
             className={cn(
-              'flex flex-col gap-5 transition-opacity',
+              'flex flex-col gap-5',
               !connected && 'pointer-events-none opacity-40'
             )}
           >
@@ -471,7 +506,7 @@ export function TelegramPanel(): React.JSX.Element {
                         disabled={!connected}
                         onClick={() => setAutoRefresh(opt.value)}
                         className={cn(
-                          'rounded-md px-3 py-1 text-xs font-medium transition-colors',
+                          'rounded-md px-3 py-1 text-xs font-medium',
                           'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
                           active
                             ? 'bg-primary text-primary-fg shadow-sm'
@@ -497,6 +532,66 @@ export function TelegramPanel(): React.JSX.Element {
             />
           </div>
 
+          <div className="border-border/60 border-t" />
+
+          {/* Verbose task results — off (default) sends a clean feed:
+              agent messages, file-bearing tool results, and errors only.
+              On relays every tool call/result/activity. Persists without a
+              bot restart and affects sending only, never history. Gated on a
+              session: locked while the channel is off or has no saved token,
+              since there's no feed to relay until then. */}
+          <div
+            className={cn(
+              'flex items-center justify-between gap-4',
+              verboseLocked && 'pointer-events-none opacity-40'
+            )}
+          >
+            <div className="flex flex-col gap-1">
+              <span className="text-fg text-sm font-medium">
+                {t('settings.services.telegram.verbose.label')}
+              </span>
+              <p className="text-muted text-xs">
+                {t('settings.services.telegram.verbose.description')}
+              </p>
+            </div>
+            {verbose === null ? (
+              <div
+                aria-hidden="true"
+                className="bg-border/30 h-7 w-[78px] shrink-0 animate-pulse rounded-lg"
+              />
+            ) : (
+              <div
+                role="tablist"
+                className="border-border bg-bg/40 inline-flex shrink-0 items-center rounded-lg border p-0.5"
+              >
+                {toggleOptions.map((opt) => {
+                  const active = opt.value === verbose
+                  return (
+                    <button
+                      key={String(opt.value)}
+                      role="tab"
+                      type="button"
+                      aria-selected={active}
+                      disabled={busy !== 'idle' || !loaded || verboseLocked}
+                      onClick={() => {
+                        if (opt.value !== verbose) void handleVerbose(opt.value)
+                      }}
+                      className={cn(
+                        'rounded-md px-3 py-1 text-xs font-medium',
+                        'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+                        active
+                          ? 'bg-primary text-primary-fg shadow-sm'
+                          : 'text-muted hover:text-fg cursor-pointer'
+                      )}
+                    >
+                      {opt.label}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+
           {validation && (
             <p className="text-rose-500 text-xs" role="alert">
               {validation}
@@ -514,18 +609,19 @@ export function TelegramPanel(): React.JSX.Element {
                 !loaded ||
                 botToken.trim().length === 0 ||
                 allowedUsersInput.trim().length === 0 ||
-                configLocked
+                configLocked ||
+                !hasChanges
               }
             >
               {t('settings.services.telegram.test')}
             </Button>
-            {/* Always available and clickable, even when offline — lets the
-                user clear a saved token/connection regardless of state. */}
+            {/* Reachable even when offline so the user can clear a saved
+                token/connection — but disabled when there's nothing to clear. */}
             <Button
               type="button"
               variant="danger"
               onClick={() => void handleDisconnect()}
-              disabled={busy !== 'idle'}
+              disabled={busy !== 'idle' || !canDisconnect}
             >
               {t('settings.services.telegram.disconnect')}
             </Button>
@@ -572,7 +668,10 @@ function CommandsSection(): React.JSX.Element {
       <ul className="divide-border/40 divide-y">
         {commands.map((cmd) => (
           <li key={cmd.name} className="flex items-baseline gap-3 py-2 first:pt-0 last:pb-0">
-            <code className="text-fg bg-border/40 rounded-md px-1.5 py-0.5 font-mono text-xs">
+            <code
+              dir="ltr"
+              className="text-fg bg-border/40 rounded-md px-1.5 py-0.5 font-mono text-xs"
+            >
               {cmd.name}
             </code>
             <span className="text-muted text-xs leading-relaxed">{cmd.description}</span>

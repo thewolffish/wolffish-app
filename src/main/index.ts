@@ -1123,10 +1123,21 @@ app.whenReady().then(async () => {
         botToken: '',
         allowedUserIds: []
       }
+      // A patch that touches only runtime preferences (verbose,
+      // autoRefresh, staleHours) needs no bot restart — those are read
+      // fresh per message/turn. Restart stays reserved for connection
+      // changes (token, allow-list, enable transitions). No existing
+      // caller sends a prefs-only patch, so this only adds a new path.
+      const touchesConnection =
+        patch.enabled !== undefined ||
+        patch.botToken !== undefined ||
+        patch.allowedUserIds !== undefined
       if (next.enabled) {
-        // Re-running start with a different token must restart the
-        // long-poll loop, otherwise the old bot keeps replying.
-        await telegramChannel.restart(next).catch(() => undefined)
+        if (touchesConnection) {
+          // Re-running start with a different token must restart the
+          // long-poll loop, otherwise the old bot keeps replying.
+          await telegramChannel.restart(next).catch(() => undefined)
+        }
       } else {
         await telegramChannel.stop('config disabled').catch(() => undefined)
       }
@@ -1638,19 +1649,41 @@ app.whenReady().then(async () => {
     async (
       _e,
       payload: { filePath: string; conversationId?: string }
-    ): Promise<{ ok: true; transcript: string } | { ok: false; error: string }> => {
+    ): Promise<
+      { ok: true; transcript: string; language?: string } | { ok: false; error: string }
+    > => {
       try {
         if (payload.conversationId) {
           agent.cerebellum.setCurrentConversationId(payload.conversationId)
         }
-        const result = await agent.cerebellum.executeTool('stt_transcribe', {
+        // Whisper decodes audio through ffmpeg. On a fresh machine ffmpeg is
+        // absent, so transcription would dead-end with a long install-it-yourself
+        // error. This IPC path calls the tool directly (bypassing the agent
+        // loop's dependency resolution), so ensure ffmpeg here first — it
+        // self-installs silently and continues.
+        await agent.cerebellum.ensureSystemTool('ffmpeg')
+        let result = await agent.cerebellum.executeTool('stt_transcribe', {
           filePath: payload.filePath
         })
+        // Belt-and-suspenders: if it still failed on ffmpeg (e.g. a stale PATH),
+        // ensure once more and retry exactly once.
+        if (!result.success && /ffmpeg/i.test(result.error ?? '')) {
+          await agent.cerebellum.ensureSystemTool('ffmpeg')
+          result = await agent.cerebellum.executeTool('stt_transcribe', {
+            filePath: payload.filePath
+          })
+        }
         if (payload.conversationId) {
           agent.cerebellum.setCurrentConversationId(null)
         }
         if (!result.success) {
-          return { ok: false, error: result.error ?? 'Transcription failed' }
+          // Keep the toast to one line — collapse the multi-line plugin message
+          // (which spells out manual brew/winget steps) into a short summary.
+          const raw = result.error ?? 'Transcription failed'
+          const error = /ffmpeg/i.test(raw)
+            ? 'Couldn’t set up ffmpeg automatically — please install it and try again.'
+            : raw.split('\n')[0]
+          return { ok: false, error }
         }
         const raw = result.output ?? ''
         const match =
@@ -1659,7 +1692,11 @@ app.whenReady().then(async () => {
         if (!transcript) {
           return { ok: false, error: 'Transcription returned empty' }
         }
-        return { ok: true, transcript }
+        // Whisper's detected language (ISO 639-1) — surfaced so the renderer
+        // can tag the <voice_note lang="…"> history entry, giving the model a
+        // deterministic reply-language signal instead of guessing.
+        const language = raw.match(/"language"\s*:\s*"([^"]*)"/)?.[1] ?? ''
+        return { ok: true, transcript, language }
       } catch (err) {
         if (payload.conversationId) {
           agent.cerebellum.setCurrentConversationId(null)

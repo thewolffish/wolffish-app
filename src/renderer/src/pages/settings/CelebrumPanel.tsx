@@ -150,7 +150,7 @@ export function CelebrumPanel(): React.JSX.Element {
             disabled={resyncing}
             aria-label={t('settings.cellebrum.resync')}
             className={cn(
-              'inline-flex items-center gap-1 rounded-md text-xs cursor-pointer transition-colors',
+              'inline-flex items-center gap-1 rounded-md text-xs cursor-pointer',
               'text-muted hover:text-fg px-1.5 py-0.5',
               'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
               'disabled:cursor-not-allowed disabled:opacity-40'
@@ -334,7 +334,7 @@ function ImportSection({
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
         className={cn(
-          'flex flex-col items-center gap-2 rounded-xl border-2 border-dashed px-6 py-8 text-center transition-colors',
+          'flex flex-col items-center gap-2 rounded-xl border-2 border-dashed px-6 py-8 text-center',
           'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
           importing
             ? 'border-border pointer-events-none opacity-60'
@@ -388,7 +388,7 @@ function ImportErrorAlert({
           type="button"
           onClick={onDismiss}
           className={cn(
-            'rounded-md px-1.5 py-0.5 text-xs font-medium cursor-pointer transition-colors',
+            'rounded-md px-1.5 py-0.5 text-xs font-medium cursor-pointer',
             'text-rose-500 hover:bg-rose-500/10 hover:text-rose-600',
             'focus-visible:ring-2 focus-visible:ring-rose-500 focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
           )}
@@ -502,7 +502,7 @@ function CapabilityRow({
               title={t('settings.cellebrum.delete.action')}
               aria-label={t('settings.cellebrum.delete.action', { name: cap.name })}
               className={cn(
-                'flex h-8 w-8 items-center justify-center rounded-md transition-colors cursor-pointer',
+                'flex h-8 w-8 items-center justify-center rounded-md cursor-pointer',
                 'text-muted hover:bg-rose-500/10 hover:text-rose-500',
                 'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
               )}
@@ -524,7 +524,7 @@ function CapabilityRow({
                   aria-selected={active}
                   onClick={() => onToggle(val)}
                   className={cn(
-                    'rounded-md px-3 py-1 text-xs font-medium transition-colors',
+                    'rounded-md px-3 py-1 text-xs font-medium',
                     'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
                     active
                       ? 'bg-primary text-primary-fg shadow-sm'

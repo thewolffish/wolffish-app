@@ -247,7 +247,7 @@ function WeekStartChoice({
                 aria-selected={active}
                 onClick={() => onChange(opt.value)}
                 className={cn(
-                  'rounded-md px-3 py-1 text-xs font-medium transition-colors',
+                  'rounded-md px-3 py-1 text-xs font-medium',
                   'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
                   active
                     ? 'bg-primary text-primary-fg shadow-sm'
@@ -308,7 +308,7 @@ function SettingToggle({
                 aria-selected={active}
                 onClick={() => onChange(opt.value)}
                 className={cn(
-                  'rounded-md px-3 py-1 text-xs font-medium transition-colors',
+                  'rounded-md px-3 py-1 text-xs font-medium',
                   'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
                   active
                     ? 'bg-primary text-primary-fg shadow-sm'
@@ -381,7 +381,7 @@ function StartupSetting({
                 aria-selected={isActive}
                 onClick={() => onChange(opt.value)}
                 className={cn(
-                  'rounded-md px-3 py-1 text-xs font-medium transition-colors',
+                  'rounded-md px-3 py-1 text-xs font-medium',
                   'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
                   isActive
                     ? 'bg-primary text-primary-fg shadow-sm'

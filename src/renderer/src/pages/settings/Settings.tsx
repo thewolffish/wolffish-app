@@ -315,7 +315,7 @@ export function Settings(): React.JSX.Element {
                 {tab.key === 'model' && (
                   <div
                     className={cn(
-                      'grid transition-[grid-template-rows,opacity] duration-200 ease-out',
+                      'grid transition-[grid-template-rows] duration-200 ease-out',
                       isActive ? 'mt-1 grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'
                     )}
                   >
@@ -359,7 +359,7 @@ export function Settings(): React.JSX.Element {
                 {tab.key === 'channels' && (
                   <div
                     className={cn(
-                      'grid transition-[grid-template-rows,opacity] duration-200 ease-out',
+                      'grid transition-[grid-template-rows] duration-200 ease-out',
                       isActive ? 'mt-1 grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'
                     )}
                   >
@@ -395,7 +395,7 @@ export function Settings(): React.JSX.Element {
                 {tab.key === 'services' && (
                   <div
                     className={cn(
-                      'grid transition-[grid-template-rows,opacity] duration-200 ease-out',
+                      'grid transition-[grid-template-rows] duration-200 ease-out',
                       isActive ? 'mt-1 grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'
                     )}
                   >
@@ -431,7 +431,7 @@ export function Settings(): React.JSX.Element {
                 {tab.key === 'hippocampus' && (
                   <div
                     className={cn(
-                      'grid transition-[grid-template-rows,opacity] duration-200 ease-out',
+                      'grid transition-[grid-template-rows] duration-200 ease-out',
                       isActive ? 'mt-1 grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'
                     )}
                   >

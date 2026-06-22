@@ -429,7 +429,7 @@ export function BrowserExtensionPanel(): React.JSX.Element {
                     type="button"
                     onClick={() => handleScreenshotSave({ screenshotMaxWidth: w })}
                     className={cn(
-                      'rounded-lg border px-3 py-1.5 text-sm cursor-pointer transition-colors',
+                      'rounded-lg border px-3 py-1.5 text-sm cursor-pointer',
                       config.screenshotMaxWidth === w
                         ? 'bg-primary text-primary-fg border-primary'
                         : 'border-border text-muted hover:bg-border/40 hover:text-fg'
@@ -455,7 +455,7 @@ export function BrowserExtensionPanel(): React.JSX.Element {
                     type="button"
                     onClick={() => handleScreenshotSave({ screenshotFormat: fmt })}
                     className={cn(
-                      'rounded-lg border px-3 py-1.5 text-sm cursor-pointer transition-colors uppercase',
+                      'rounded-lg border px-3 py-1.5 text-sm cursor-pointer uppercase',
                       config.screenshotFormat === fmt
                         ? 'bg-primary text-primary-fg border-primary'
                         : 'border-border text-muted hover:bg-border/40 hover:text-fg'
@@ -538,7 +538,7 @@ export function BrowserExtensionPanel(): React.JSX.Element {
           </button>
           <div
             className={cn(
-              'grid transition-[grid-template-rows,opacity] duration-200 ease-out',
+              'grid transition-[grid-template-rows] duration-200 ease-out',
               debuggerGuideOpen ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'
             )}
           >

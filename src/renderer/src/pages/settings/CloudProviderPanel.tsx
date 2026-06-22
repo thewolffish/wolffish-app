@@ -1218,7 +1218,9 @@ export function CloudProviderPanel({ provider }: { provider: ProviderId }): Reac
   // something different counts as an edit.
   const enteringNewKey = trimmedKey.length > 0 && trimmedKey !== stored?.apiKey
 
-  const canTest = !saving && status !== 'testing' && trimmedKey.length > 0
+  // enteringNewKey already requires a non-empty key that differs from the
+  // saved one, so Test stays disabled until the user actually changes the key.
+  const canTest = !saving && status !== 'testing' && enteringNewKey
   const canRemove = stored !== null && !saving
 
   const showKeyWorksToast = (): void => {

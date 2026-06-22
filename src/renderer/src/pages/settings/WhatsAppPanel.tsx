@@ -35,6 +35,7 @@ export function WhatsAppPanel(): React.JSX.Element {
   const [busy, setBusy] = useState(false)
   const [autoRefresh, setAutoRefresh] = useState<boolean | null>(null)
   const [staleHours, setStaleHours] = useState(3)
+  const [verbose, setVerbose] = useState<boolean | null>(null)
   const loggingOut = useRef(false)
   const loaded = enabled !== null
 
@@ -51,6 +52,7 @@ export function WhatsAppPanel(): React.JSX.Element {
       if (live.qr) setQrCode(live.qr)
       setAutoRefresh(cfg.autoRefresh ?? true)
       setStaleHours(cfg.staleHours ?? 3)
+      setVerbose(cfg.verbose ?? false)
       setEnabled(cfg.enabled)
     })()
     return () => {
@@ -184,6 +186,13 @@ export function WhatsAppPanel(): React.JSX.Element {
     await window.api.whatsapp.setConfig({ staleHours: hours })
   }, [])
 
+  // Verbosity persists immediately and is read fresh per turn in the
+  // channel — no socket restart. Off (default) = clean feed.
+  const handleVerbose = useCallback(async (value: boolean) => {
+    setVerbose(value)
+    await window.api.whatsapp.setConfig({ verbose: value })
+  }, [])
+
   const staleHoursOptions: readonly SelectOption<string>[] = useMemo(
     () =>
       Array.from({ length: 24 }, (_, i) => {
@@ -198,10 +207,19 @@ export function WhatsAppPanel(): React.JSX.Element {
 
   const showConnected = status.status === 'connected' && status.connectedPhone
   const hasChanges = allowedPhonesInput !== savedPhones
+  // Disconnect only has something to do when there's a stored session on disk
+  // or a live socket (connecting/qr/connected/error) to tear down. Nothing
+  // stored and already disconnected → there's nothing to clear, so disable it.
+  const canDisconnect = status.hasSession || status.status !== 'disconnected'
   // A 'connecting' state for an already-linked account is a reconnect (a
   // network blip or a fresh launch of a paired session) — no QR needed.
   // Show just the pulsing status dot + "Connecting" label, not the QR box.
   const reconnecting = status.status === 'connecting' && status.hasSession
+  // Verbose only governs an active task feed, so it's editable once the
+  // channel is on and a linked session exists. Off or session-less, there's
+  // nothing to relay — lock it. The parent block already dims the off case,
+  // so the row itself only re-dims the enabled-but-session-less state.
+  const verboseLocked = enabled === false || !status.hasSession
 
   return (
     <div className="flex min-h-full w-full items-start justify-center px-6 py-10">
@@ -249,7 +267,7 @@ export function WhatsAppPanel(): React.JSX.Element {
                         if (opt.value !== enabled) void handleToggle(opt.value)
                       }}
                       className={cn(
-                        'rounded-md px-3 py-1 text-xs font-medium transition-colors',
+                        'rounded-md px-3 py-1 text-xs font-medium',
                         'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
                         active
                           ? 'bg-primary text-primary-fg shadow-sm'
@@ -268,7 +286,7 @@ export function WhatsAppPanel(): React.JSX.Element {
 
           <div
             className={cn(
-              'flex flex-col gap-5 transition-opacity',
+              'flex flex-col gap-5',
               !enabled && 'pointer-events-none opacity-40'
             )}
           >
@@ -397,7 +415,7 @@ export function WhatsAppPanel(): React.JSX.Element {
                 as Telegram. Gated on a live connection like the phones field. */}
             <div
               className={cn(
-                'flex flex-col gap-5 transition-opacity',
+                'flex flex-col gap-5',
                 !showConnected && 'pointer-events-none opacity-40'
               )}
             >
@@ -433,7 +451,7 @@ export function WhatsAppPanel(): React.JSX.Element {
                             if (opt.value !== autoRefresh) void handleAutoRefresh(opt.value)
                           }}
                           className={cn(
-                            'rounded-md px-3 py-1 text-xs font-medium transition-colors',
+                            'rounded-md px-3 py-1 text-xs font-medium',
                             'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
                             active
                               ? 'bg-primary text-primary-fg shadow-sm'
@@ -458,14 +476,74 @@ export function WhatsAppPanel(): React.JSX.Element {
                 />
               )}
             </div>
+
+            <div className="border-border/60 border-t" />
+
+            {/* Verbose task results — off (default) sends a clean feed:
+                agent messages, file-bearing tool results, and errors only.
+                On relays every tool call/result/activity. Read fresh per
+                turn in the channel; affects sending only, never history.
+                Locked while the channel is off (parent block dims it) or
+                there's no linked session, since there's no feed to relay. */}
+            <div
+              className={cn(
+                'flex items-center justify-between gap-4',
+                enabled === true && !status.hasSession && 'pointer-events-none opacity-40'
+              )}
+            >
+              <div className="flex flex-col gap-1">
+                <span className="text-fg text-sm font-medium">
+                  {t('settings.services.whatsapp.verbose.label')}
+                </span>
+                <p className="text-muted text-xs">
+                  {t('settings.services.whatsapp.verbose.description')}
+                </p>
+              </div>
+              {verbose === null ? (
+                <div
+                  aria-hidden="true"
+                  className="bg-border/30 h-7 w-[78px] shrink-0 animate-pulse rounded-lg"
+                />
+              ) : (
+                <div
+                  role="tablist"
+                  className="border-border bg-bg/40 inline-flex shrink-0 items-center rounded-lg border p-0.5"
+                >
+                  {toggleOptions.map((opt) => {
+                    const active = opt.value === verbose
+                    return (
+                      <button
+                        key={String(opt.value)}
+                        role="tab"
+                        type="button"
+                        aria-selected={active}
+                        disabled={busy || !loaded || verboseLocked}
+                        onClick={() => {
+                          if (opt.value !== verbose) void handleVerbose(opt.value)
+                        }}
+                        className={cn(
+                          'rounded-md px-3 py-1 text-xs font-medium',
+                          'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+                          active
+                            ? 'bg-primary text-primary-fg shadow-sm'
+                            : 'text-muted hover:text-fg cursor-pointer'
+                        )}
+                      >
+                        {opt.label}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
           </div>
 
           <div className="border-border/60 border-t" />
 
           {/* Actions — kept outside the off-gate above so Disconnect stays
-              available and clickable even when the channel is toggled off
-              (lets the user clear a stored session). Save governs its own
-              enabled state via `disabled`. */}
+              reachable even when the channel is toggled off (lets the user
+              clear a stored session). Disconnect disables itself when there's
+              nothing to clear; Save governs its own enabled state. */}
           <div className="flex items-center justify-between gap-2">
             <Button
               type="button"
@@ -478,7 +556,7 @@ export function WhatsAppPanel(): React.JSX.Element {
               type="button"
               variant="danger"
               onClick={() => void handleLogout()}
-              disabled={busy}
+              disabled={busy || !canDisconnect}
             >
               {t('settings.services.whatsapp.logout')}
             </Button>
@@ -523,7 +601,10 @@ function CommandsSection(): React.JSX.Element {
       <ul className="divide-border/40 divide-y">
         {commands.map((cmd) => (
           <li key={cmd.name} className="flex items-baseline gap-3 py-2 first:pt-0 last:pb-0">
-            <code className="text-fg bg-border/40 rounded-md px-1.5 py-0.5 font-mono text-xs">
+            <code
+              dir="ltr"
+              className="text-fg bg-border/40 rounded-md px-1.5 py-0.5 font-mono text-xs"
+            >
               {cmd.name}
             </code>
             <span className="text-muted text-xs leading-relaxed">{cmd.description}</span>

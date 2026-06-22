@@ -56,6 +56,12 @@ export type TelegramConfig = {
   allowedUserIds: number[]
   autoRefresh?: boolean
   staleHours?: number
+  /**
+   * When true, every tool call/result/activity is relayed to the chat.
+   * When false (default), only agent messages, file-bearing tool results,
+   * and errors are sent. Gates sending only; history is unaffected.
+   */
+  verbose?: boolean
 }
 
 /**
@@ -69,6 +75,12 @@ export type WhatsAppConfig = {
   allowedPhoneNumbers: string[]
   autoRefresh?: boolean
   staleHours?: number
+  /**
+   * When true, every tool call/result/activity is relayed to the chat.
+   * When false (default), only agent messages, file-bearing tool results,
+   * and errors are sent. Gates sending only; history is unaffected.
+   */
+  verbose?: boolean
 }
 
 export type BraveConfig = {
@@ -1135,7 +1147,8 @@ const EMPTY_TELEGRAM_CONFIG: TelegramConfig = {
   botToken: '',
   allowedUserIds: [],
   autoRefresh: true,
-  staleHours: 3
+  staleHours: 3,
+  verbose: false
 }
 
 export async function getTelegramConfig(): Promise<TelegramConfig> {
@@ -1151,7 +1164,8 @@ export async function setTelegramConfig(patch: Partial<TelegramConfig>): Promise
       botToken: patch.botToken ?? current.botToken,
       allowedUserIds: patch.allowedUserIds ?? current.allowedUserIds,
       autoRefresh: patch.autoRefresh ?? current.autoRefresh,
-      staleHours: patch.staleHours ?? current.staleHours
+      staleHours: patch.staleHours ?? current.staleHours,
+      verbose: patch.verbose ?? current.verbose
     }
     return { ...c, telegram: next }
   })
@@ -1161,7 +1175,8 @@ const EMPTY_WHATSAPP_CONFIG: WhatsAppConfig = {
   enabled: false,
   allowedPhoneNumbers: [],
   autoRefresh: true,
-  staleHours: 3
+  staleHours: 3,
+  verbose: false
 }
 
 export async function getWhatsAppConfig(): Promise<WhatsAppConfig> {
@@ -1176,7 +1191,8 @@ export async function setWhatsAppConfig(patch: Partial<WhatsAppConfig>): Promise
       enabled: patch.enabled ?? current.enabled,
       allowedPhoneNumbers: patch.allowedPhoneNumbers ?? current.allowedPhoneNumbers,
       autoRefresh: patch.autoRefresh ?? current.autoRefresh,
-      staleHours: patch.staleHours ?? current.staleHours
+      staleHours: patch.staleHours ?? current.staleHours,
+      verbose: patch.verbose ?? current.verbose
     }
     return { ...c, whatsapp: next }
   })

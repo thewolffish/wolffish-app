@@ -604,6 +604,57 @@ export class Cerebellum {
   }
 
   /**
+   * Ensure a single system-tool capability (e.g. `ffmpeg`) is installed,
+   * for the code paths that invoke a plugin tool DIRECTLY via executeTool
+   * and therefore bypass the agent loop's ensureDependencies() resolution —
+   * the in-app STT IPC handler and the Telegram/WhatsApp voice handlers.
+   * Without this, transcription on a fresh machine dead-ends with
+   * "ffmpeg is required for transcription" instead of self-healing.
+   *
+   * Mirrors the per-dependency block of ensureDependencies (check → install
+   * → refreshPath → cache) but runs the install through executeTool, NOT
+   * executeWithApproval — so it is SILENT (no amygdala approval card). That's
+   * deliberate: this is an internal prerequisite the user never asked to
+   * confirm, on a single-user machine. Idempotent and cached per session, so
+   * it's cheap to call before every transcription. Never throws — returns a
+   * result the caller can fall through on.
+   */
+  async ensureSystemTool(capName: string): Promise<{ ok: boolean; error?: string }> {
+    if (this.dependencyCache.get(capName)) return { ok: true }
+    const cap = this.capabilities.get(capName)
+    // Unknown/failed capability — don't block the caller; let the tool run
+    // and surface its own error (mirrors ensureDependencies' lenient stance).
+    if (!cap || cap.status !== 'ok') return { ok: true }
+
+    const checkTool = cap.tools.find((t) => t.name.endsWith('_check'))
+    if (!checkTool) {
+      this.dependencyCache.set(capName, true)
+      return { ok: true }
+    }
+    const checkResult = await this.executeTool(checkTool.name, {})
+    const parsed = checkResult.success ? safeJsonParse(checkResult.output) : null
+    if (parsed?.installed) {
+      this.dependencyCache.set(capName, true)
+      return { ok: true }
+    }
+
+    const installTool =
+      cap.tools.find((t) => t.name.endsWith('_install_manager')) ??
+      cap.tools.find((t) => t.name.endsWith('_install'))
+    if (!installTool) {
+      return { ok: false, error: `${capName} is not installed and has no install tool` }
+    }
+    // executeTool() calls refreshPath() after a successful *_install, so the
+    // freshly installed binary is on PATH for the very next spawn.
+    const installResult = await this.executeTool(installTool.name, {})
+    if (!installResult.success) {
+      return { ok: false, error: installResult.error ?? `failed to install ${capName}` }
+    }
+    this.dependencyCache.set(capName, true)
+    return { ok: true }
+  }
+
+  /**
    * If the capability has a package.json with declared deps, run `npm
    * install` in its folder once per session. Idempotent: a marker file in
    * <capability>/node_modules/.wolffish-installed records the package.json

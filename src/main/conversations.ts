@@ -38,6 +38,15 @@ export type ConversationMessage = {
    */
   voicePrompt?: boolean
   /**
+   * For a voice-note user message, the language Whisper detected in the
+   * audio (ISO 639-1, e.g. "en", "ar"). Threaded into the `<voice_note
+   * lang="…">` history tag so the model has a deterministic signal of
+   * which language to reply in — Whisper's detection beats the model
+   * guessing from a short transcript. Absent when detection returned
+   * nothing or for non-voice messages.
+   */
+  voiceLang?: string
+  /**
    * Full segment stream for assistant messages — text deltas, tool
    * calls, tool results, active_model chips, turn_end. Saved by the
    * Electron channel (via the renderer's persistConversation) and

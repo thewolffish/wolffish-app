@@ -146,7 +146,7 @@ function ErrorDetailBlock({ text }: { text: string }): React.JSX.Element {
           'absolute bottom-1.5 right-1.5 p-1 rounded-md cursor-pointer',
           'bg-red-200/80 text-red-700 hover:bg-red-300/80',
           'dark:bg-red-800/80 dark:text-red-200 dark:hover:bg-red-700/80',
-          'opacity-0 group-hover/detail:opacity-100 transition-opacity',
+          'opacity-0 group-hover/detail:opacity-100',
           copied && 'opacity-100'
         )}
       >
@@ -201,7 +201,7 @@ function SingleErrorCard({ payload }: { payload: NoProviderAvailablePayload }): 
             onClick={() => setShowDetail((v) => !v)}
             className={cn(
               'mt-1 text-[11px] underline underline-offset-2 opacity-60',
-              'hover:opacity-90 transition-opacity'
+              'hover:opacity-90'
             )}
           >
             {t('errors.provider.viewDetails')}

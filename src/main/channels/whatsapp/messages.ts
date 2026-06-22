@@ -75,6 +75,19 @@ export function extractTextBody(raw: proto.IWebMessageInfo): string | null {
 }
 
 /**
+ * True when the message is a push-to-talk voice note (the mic button),
+ * which we download + transcribe. Forwarded music / attached audio files
+ * (audioMessage without ptt) are intentionally excluded — they keep the
+ * '<media:audio>' placeholder behaviour, mirroring Telegram which only
+ * transcribes `message:voice` and treats `message:audio` as a plain file.
+ */
+export function isInboundVoiceNote(raw: proto.IWebMessageInfo): boolean {
+  const msg = raw.message
+  if (!msg) return false
+  return unwrapMessage(msg).audioMessage?.ptt === true
+}
+
+/**
  * Determine whether an inbound message should be forwarded to the
  * agent pipeline or silently dropped. Mirrors OpenClaw's filter chain.
  */

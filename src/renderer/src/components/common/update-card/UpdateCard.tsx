@@ -72,7 +72,7 @@ export function UpdateCard(): React.JSX.Element | null {
           disabled={installing}
           aria-label={t('common.close', 'Close')}
           className={cn(
-            'text-muted hover:text-fg rounded-lg p-1 transition-colors',
+            'text-muted hover:text-fg rounded-lg p-1',
             'hover:bg-border/40',
             'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
             installing ? 'cursor-not-allowed opacity-40' : 'cursor-pointer'
@@ -86,7 +86,7 @@ export function UpdateCard(): React.JSX.Element | null {
           onClick={handleInstall}
           disabled={installing}
           className={cn(
-            'bg-primary text-primary-fg flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-medium shadow-sm transition-colors',
+            'bg-primary text-primary-fg flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-medium shadow-sm',
             'hover:bg-primary/90',
             'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
             installing ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'

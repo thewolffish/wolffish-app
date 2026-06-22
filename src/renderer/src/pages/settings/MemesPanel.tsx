@@ -24,6 +24,12 @@ export function MemesPanel(): React.JSX.Element {
   const [imgflipPassword, setImgflipPassword] = useState('')
   const [imgflipPasswordVisible, setImgflipPasswordVisible] = useState(false)
 
+  // Last persisted credentials, so each Test/save button can disable when its
+  // inputs match what's already saved (no change to apply).
+  const [savedGiphyKey, setSavedGiphyKey] = useState('')
+  const [savedImgflipUsername, setSavedImgflipUsername] = useState('')
+  const [savedImgflipPassword, setSavedImgflipPassword] = useState('')
+
   const [status, setStatus] = useState<MemesStatus>({
     memegen: 'available',
     giphy: 'disabled',
@@ -44,6 +50,9 @@ export function MemesPanel(): React.JSX.Element {
       setGiphyKey(cfg.giphy.apiKey)
       setImgflipUsername(cfg.imgflip.username)
       setImgflipPassword(cfg.imgflip.password)
+      setSavedGiphyKey(cfg.giphy.apiKey)
+      setSavedImgflipUsername(cfg.imgflip.username)
+      setSavedImgflipPassword(cfg.imgflip.password)
       setStatus(live)
     })()
     return () => {
@@ -75,6 +84,7 @@ export function MemesPanel(): React.JSX.Element {
       if (result.ok) {
         const response = await window.api.memes.setConfig({ giphy: { apiKey: giphyKey.trim() } })
         setStatus(response.status)
+        setSavedGiphyKey(giphyKey.trim())
         toast.show({ message: t('settings.services.memes.testGiphySuccess'), tone: 'success' })
       } else {
         toast.show({
@@ -110,6 +120,8 @@ export function MemesPanel(): React.JSX.Element {
           imgflip: { username: imgflipUsername.trim(), password: imgflipPassword.trim() }
         })
         setStatus(response.status)
+        setSavedImgflipUsername(imgflipUsername.trim())
+        setSavedImgflipPassword(imgflipPassword.trim())
         toast.show({ message: t('settings.services.memes.testImgflipSuccess'), tone: 'success' })
       } else {
         toast.show({
@@ -237,7 +249,11 @@ export function MemesPanel(): React.JSX.Element {
             <Button
               type="button"
               onClick={() => void handleTestGiphy()}
-              disabled={busy !== 'idle' || giphyKey.trim().length === 0}
+              disabled={
+                busy !== 'idle' ||
+                giphyKey.trim().length === 0 ||
+                giphyKey.trim() === savedGiphyKey.trim()
+              }
             >
               {t('settings.services.memes.testConnection')}
             </Button>
@@ -339,7 +355,13 @@ export function MemesPanel(): React.JSX.Element {
             <Button
               type="button"
               onClick={() => void handleTestImgflip()}
-              disabled={busy !== 'idle' || !imgflipUsername.trim() || !imgflipPassword.trim()}
+              disabled={
+                busy !== 'idle' ||
+                !imgflipUsername.trim() ||
+                !imgflipPassword.trim() ||
+                (imgflipUsername.trim() === savedImgflipUsername.trim() &&
+                  imgflipPassword.trim() === savedImgflipPassword.trim())
+              }
             >
               {t('settings.services.memes.testConnection')}
             </Button>

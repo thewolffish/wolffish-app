@@ -230,7 +230,7 @@ export function OllamaSetup(): React.JSX.Element {
           <button
             type="button"
             onClick={() => goTo(returnTo ?? 'chat', null)}
-            className="text-muted hover:text-fg cursor-pointer text-sm underline underline-offset-2 transition-colors self-center"
+            className="text-muted hover:text-fg cursor-pointer text-sm underline underline-offset-2 self-center"
           >
             {t('ollamaSetup.skip')}
           </button>

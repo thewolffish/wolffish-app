@@ -101,7 +101,7 @@ export function CompactionPanel(): React.JSX.Element {
             disabled={resyncing}
             aria-label={t('settings.hippocampus.compaction.resync')}
             className={cn(
-              'inline-flex items-center gap-1 rounded-md text-xs cursor-pointer transition-colors',
+              'inline-flex items-center gap-1 rounded-md text-xs cursor-pointer',
               'text-muted hover:text-fg px-1.5 py-0.5',
               'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
               'disabled:cursor-not-allowed disabled:opacity-40'

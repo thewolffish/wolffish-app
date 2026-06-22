@@ -9,10 +9,13 @@ import {
   CloudUploadIcon,
   Copy01Icon,
   Delete02Icon,
-  InformationCircleIcon
+  InformationCircleIcon,
+  LinkSquare02Icon
 } from 'hugeicons-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
+
+const GOOGLE_CONSOLE_URL = 'https://console.cloud.google.com/auth/clients'
 
 const STATUS_DOT: Record<GoogleStatus['status'], string> = {
   active: 'bg-emerald-500',
@@ -117,10 +120,8 @@ export function GooglePanel(): React.JSX.Element {
     }
   }, [t, toast])
 
-  const handleFileChange = useCallback(
-    async (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0]
-      if (!file) return
+  const processCredentialsFile = useCallback(
+    async (file: File) => {
       setStage('validating')
       try {
         const text = await file.text()
@@ -153,6 +154,14 @@ export function GooglePanel(): React.JSX.Element {
       }
     },
     [t, toast]
+  )
+
+  const handleFileChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0]
+      if (file) void processCredentialsFile(file)
+    },
+    [processCredentialsFile]
   )
 
   const handleDeleteCredentials = useCallback(async () => {
@@ -300,9 +309,23 @@ export function GooglePanel(): React.JSX.Element {
     <div className="flex min-h-full w-full items-start justify-center px-6 py-10">
       <div className="flex w-full max-w-2xl flex-col gap-6">
         <header className="flex flex-col gap-2">
-          <h1 className="text-fg text-2xl font-semibold tracking-tight">
-            {t('settings.services.google.title')}
-          </h1>
+          <div className="flex items-center justify-between gap-3">
+            <h1 className="text-fg text-2xl font-semibold tracking-tight">
+              {t('settings.services.google.title')}
+            </h1>
+            <a
+              href={GOOGLE_CONSOLE_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={cn(
+                'text-muted hover:text-fg flex items-center gap-1.5 text-xs',
+                'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg rounded-md px-1.5 py-1'
+              )}
+            >
+              <span>{t('settings.services.google.platform')}</span>
+              <LinkSquare02Icon size={13} className="shrink-0" />
+            </a>
+          </div>
           <p className="text-muted text-sm leading-relaxed">
             {t('settings.services.google.subtitle')}
           </p>
@@ -323,6 +346,7 @@ export function GooglePanel(): React.JSX.Element {
           config={config}
           fileInputRef={fileInputRef}
           onFile={handleFileChange}
+          onUpload={(file) => void processCredentialsFile(file)}
           onDelete={() => void handleDeleteCredentials()}
         />
 
@@ -422,6 +446,7 @@ function CredentialsSection({
   config,
   fileInputRef,
   onFile,
+  onUpload,
   onDelete
 }: {
   enabled: boolean
@@ -430,10 +455,44 @@ function CredentialsSection({
   config: GoogleConfig | null
   fileInputRef: React.RefObject<HTMLInputElement | null>
   onFile: (e: React.ChangeEvent<HTMLInputElement>) => void
+  onUpload: (file: File) => void
   onDelete: () => void
 }): React.JSX.Element {
   const { t } = useTranslation()
   const validating = stage === 'validating'
+  const [dragActive, setDragActive] = useState(false)
+  const dropDisabled = validating || !enabled
+
+  const handleDragOver = useCallback(
+    (e: React.DragEvent<HTMLElement>) => {
+      if (dropDisabled) return
+      // Only react to actual file drags, not text selections.
+      if (!Array.from(e.dataTransfer.types).includes('Files')) return
+      e.preventDefault()
+      e.stopPropagation()
+      e.dataTransfer.dropEffect = 'copy'
+      setDragActive(true)
+    },
+    [dropDisabled]
+  )
+
+  const handleDragLeave = useCallback((e: React.DragEvent<HTMLElement>) => {
+    const related = e.relatedTarget as Node | null
+    if (related && (e.currentTarget as Node).contains(related)) return
+    setDragActive(false)
+  }, [])
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent<HTMLElement>) => {
+      e.preventDefault()
+      e.stopPropagation()
+      setDragActive(false)
+      if (dropDisabled) return
+      const file = e.dataTransfer.files?.[0]
+      if (file) onUpload(file)
+    },
+    [dropDisabled, onUpload]
+  )
 
   return (
     <section
@@ -464,7 +523,7 @@ function CredentialsSection({
               title={t('settings.services.google.credentials.delete')}
               aria-label={t('settings.services.google.credentials.delete')}
               className={cn(
-                'flex h-8 w-8 items-center justify-center rounded-md transition-colors cursor-pointer',
+                'flex h-8 w-8 items-center justify-center rounded-md cursor-pointer',
                 'text-muted hover:bg-rose-500/10 hover:text-rose-500',
                 'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
               )}
@@ -489,11 +548,16 @@ function CredentialsSection({
             )}
           </dl>
           <label
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
             className={cn(
-              'border-border flex items-center gap-2 rounded-md border border-dashed px-3 py-2 transition-colors',
+              'flex items-center gap-2 rounded-md border border-dashed px-3 py-2',
               validating
-                ? 'pointer-events-none cursor-default'
-                : 'hover:border-muted cursor-pointer'
+                ? 'border-border pointer-events-none cursor-default'
+                : dragActive
+                  ? 'border-primary bg-primary/5 cursor-copy'
+                  : 'border-border hover:border-muted cursor-pointer'
             )}
           >
             <input
@@ -504,17 +568,29 @@ function CredentialsSection({
               className="hidden"
               disabled={validating}
             />
-            <CloudUploadIcon size={14} className="text-muted shrink-0" />
-            <span className="text-muted text-xs">
-              {t('settings.services.google.credentials.rotate')}
+            <CloudUploadIcon
+              size={14}
+              className={cn('shrink-0', dragActive ? 'text-primary' : 'text-muted')}
+            />
+            <span className={cn('text-xs', dragActive ? 'text-primary' : 'text-muted')}>
+              {dragActive
+                ? t('settings.services.google.credentials.dropzoneActive')
+                : t('settings.services.google.credentials.rotate')}
             </span>
           </label>
         </div>
       ) : (
         <label
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
           className={cn(
-            'border-border hover:border-muted flex cursor-pointer flex-col items-center gap-2 rounded-xl border-2 border-dashed px-6 py-8 transition-colors',
-            (validating || !enabled) && 'pointer-events-none opacity-60'
+            'flex cursor-pointer flex-col items-center gap-2 rounded-xl border-2 border-dashed px-6 py-8',
+            dropDisabled
+              ? 'border-border pointer-events-none opacity-60'
+              : dragActive
+                ? 'border-primary bg-primary/5 cursor-copy'
+                : 'border-border hover:border-muted'
           )}
         >
           <input
@@ -524,11 +600,13 @@ function CredentialsSection({
             onChange={onFile}
             className="hidden"
           />
-          <CloudUploadIcon size={24} className="text-muted" />
-          <span className="text-muted text-sm">
+          <CloudUploadIcon size={24} className={dragActive ? 'text-primary' : 'text-muted'} />
+          <span className={cn('text-sm', dragActive ? 'text-primary' : 'text-muted')}>
             {validating
               ? t('settings.services.google.credentials.validating')
-              : t('settings.services.google.credentials.dropzone')}
+              : dragActive
+                ? t('settings.services.google.credentials.dropzoneActive')
+                : t('settings.services.google.credentials.dropzone')}
           </span>
         </label>
       )}
@@ -603,7 +681,7 @@ function AuthSection({
                 title={t('settings.services.google.auth.remove')}
                 aria-label={t('settings.services.google.auth.remove')}
                 className={cn(
-                  'flex h-9 w-9 items-center justify-center rounded-md transition-colors cursor-pointer',
+                  'flex h-9 w-9 items-center justify-center rounded-md cursor-pointer',
                   'text-muted hover:bg-rose-500/10 hover:text-rose-500',
                   'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
                 )}
@@ -683,7 +761,7 @@ function AuthSection({
             title={t('settings.services.google.auth.copyLink')}
             aria-label={t('settings.services.google.auth.copyLink')}
             className={cn(
-              'flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors cursor-pointer',
+              'flex h-7 w-7 shrink-0 items-center justify-center rounded-md cursor-pointer',
               'text-muted hover:bg-border/40 hover:text-fg',
               'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
             )}

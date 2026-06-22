@@ -133,7 +133,8 @@ tools:
         description: Absolute path or workspace-relative path to the audio file.
 danger_patterns: []
 confirm_patterns: []
-requires: []
+requires:
+  - ffmpeg
 ---
 
 # Speech-to-text
@@ -179,7 +180,7 @@ Models download once on first use and cache to `~/.cache/whisper/`.
 ## Setup notes
 
 - Whisper installs automatically through pip on first use; the install pulls PyTorch (~2GB), so the first run can take a few minutes.
-- ffmpeg must be installed manually:
+- ffmpeg is a hard dependency (declared in `requires`) and installs automatically via the bundled `ffmpeg` capability (brew / winget / static download) the first time transcription runs. Manual fallback if auto-install ever fails:
   - macOS: `brew install ffmpeg`
   - Windows: `winget install ffmpeg` or download from ffmpeg.org
   - Linux: `sudo apt install ffmpeg` (or your distro's package manager)

@@ -71,6 +71,13 @@ export type TelegramConfig = {
   allowedUserIds: number[]
   autoRefresh?: boolean
   staleHours?: number
+  /**
+   * When true, every tool call/result/activity is relayed to the chat
+   * (full transparency). When false (default), only agent messages,
+   * file-bearing tool results, and errors are sent — a clean feed.
+   * Affects sending only; history persistence is unchanged.
+   */
+  verbose?: boolean
 }
 
 export type WhatsAppConfig = {
@@ -78,6 +85,13 @@ export type WhatsAppConfig = {
   allowedPhoneNumbers: string[]
   autoRefresh?: boolean
   staleHours?: number
+  /**
+   * When true, every tool call/result/activity is relayed to the chat
+   * (full transparency). When false (default), only agent messages,
+   * file-bearing tool results, and errors are sent — a clean feed.
+   * Affects sending only; history persistence is unchanged.
+   */
+  verbose?: boolean
 }
 
 export type WhatsAppConnectionStatus = 'disconnected' | 'connecting' | 'qr' | 'connected' | 'error'
@@ -1036,7 +1050,9 @@ export type UpdaterApi = {
   onReady: (listener: (event: UpdateReadyEvent) => void) => () => void
 }
 
-export type SttTranscribeResult = { ok: true; transcript: string } | { ok: false; error: string }
+export type SttTranscribeResult =
+  | { ok: true; transcript: string; language?: string }
+  | { ok: false; error: string }
 
 export type MicApi = {
   checkAccess: () => Promise<'granted' | 'denied' | 'not-determined' | 'restricted'>

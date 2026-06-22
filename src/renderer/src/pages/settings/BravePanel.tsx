@@ -3,9 +3,26 @@ import { Input } from '@components/core/Input'
 import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn'
 import type { BraveErrorKind, BraveStatus } from '@preload/index'
-import { EyeIcon, ViewOffIcon } from 'hugeicons-react'
+import { EyeIcon, LinkSquare02Icon, ViewOffIcon } from 'hugeicons-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useTranslation } from 'react-i18next'
+import { Trans, useTranslation } from 'react-i18next'
+
+const BRAVE_API_URL = 'https://api.search.brave.com'
+
+const TRANS_COMPONENTS = {
+  link: (
+    <a
+      href={BRAVE_API_URL}
+      target="_blank"
+      rel="noreferrer"
+      onClick={(e) => {
+        e.preventDefault()
+        window.open(BRAVE_API_URL, '_blank', 'noopener,noreferrer')
+      }}
+      className="text-accent hover:underline"
+    />
+  )
+}
 
 const STATUS_DOT: Record<BraveStatus['status'], string> = {
   configured: 'bg-emerald-500',
@@ -21,6 +38,9 @@ export function BravePanel(): React.JSX.Element {
   // avoid flicker when the toggle resolves from "guess" to actual value.
   const [enabled, setEnabled] = useState<boolean | null>(null)
   const [apiKey, setApiKey] = useState('')
+  // Last persisted key, so the Test/save button can disable when the input
+  // matches what's already saved (no change to apply).
+  const [savedApiKey, setSavedApiKey] = useState('')
   const [hasSavedKey, setHasSavedKey] = useState(false)
   const [keyVisible, setKeyVisible] = useState(false)
   const [status, setStatus] = useState<BraveStatus>({
@@ -38,6 +58,7 @@ export function BravePanel(): React.JSX.Element {
       const live = await window.api.brave.status()
       if (cancelled) return
       setApiKey(cfg.apiKey)
+      setSavedApiKey(cfg.apiKey)
       setHasSavedKey(cfg.apiKey.length > 0)
       setStatus(live)
       setEnabled(cfg.enabled)
@@ -63,6 +84,27 @@ export function BravePanel(): React.JSX.Element {
     [t]
   )
 
+  // Plain persist — stores the key without spending quota on a live query.
+  // Lets the user save (and then enable) a key they trust, or keep editing
+  // before verifying. Test connection is the explicit verify-and-connect path.
+  const handleSave = useCallback(async () => {
+    if (apiKey.trim().length === 0) {
+      setValidation(t('settings.services.brave.validation.keyRequired'))
+      return
+    }
+    setValidation(null)
+    setBusy('saving')
+    try {
+      const response = await window.api.brave.setConfig({ apiKey: apiKey.trim() })
+      setStatus(response.status)
+      setHasSavedKey(true)
+      setSavedApiKey(apiKey.trim())
+      toast.show({ message: t('settings.services.brave.saveSuccess'), tone: 'success' })
+    } finally {
+      setBusy('idle')
+    }
+  }, [apiKey, t, toast])
+
   const handleTest = useCallback(async () => {
     if (apiKey.trim().length === 0) {
       setValidation(t('settings.services.brave.validation.keyRequired'))
@@ -80,6 +122,7 @@ export function BravePanel(): React.JSX.Element {
         setStatus(response.status)
         setEnabled(true)
         setHasSavedKey(true)
+        setSavedApiKey(apiKey.trim())
         toast.show({
           message: t('settings.services.brave.testSuccess', { count: result.resultsCount }),
           tone: 'success'
@@ -121,9 +164,23 @@ export function BravePanel(): React.JSX.Element {
     <div className="flex min-h-full w-full items-start justify-center px-6 py-10">
       <div className="flex w-full max-w-2xl flex-col gap-6">
         <header className="flex flex-col gap-2">
-          <h1 className="text-fg text-2xl font-semibold tracking-tight">
-            {t('settings.services.brave.title')}
-          </h1>
+          <div className="flex items-center justify-between gap-3">
+            <h1 className="text-fg text-2xl font-semibold tracking-tight">
+              {t('settings.services.brave.title')}
+            </h1>
+            <a
+              href={BRAVE_API_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={cn(
+                'text-muted hover:text-fg flex items-center gap-1.5 text-xs',
+                'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg rounded-md px-1.5 py-1'
+              )}
+            >
+              <span>{t('settings.services.brave.platform')}</span>
+              <LinkSquare02Icon size={13} className="shrink-0" />
+            </a>
+          </div>
           <p className="text-muted text-sm leading-relaxed">
             {t('settings.services.brave.subtitle')}
           </p>
@@ -159,7 +216,7 @@ export function BravePanel(): React.JSX.Element {
                       disabled={cantEnable}
                       onClick={() => void handleToggle(opt.value)}
                       className={cn(
-                        'rounded-md px-3 py-1 text-xs font-medium transition-colors',
+                        'rounded-md px-3 py-1 text-xs font-medium',
                         'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
                         cantEnable
                           ? 'text-muted/50 cursor-not-allowed'
@@ -235,7 +292,9 @@ export function BravePanel(): React.JSX.Element {
                 {keyVisible ? <ViewOffIcon size={16} /> : <EyeIcon size={16} />}
               </button>
             </div>
-            <p className="text-muted text-xs">{t('settings.services.brave.apiKeyHint')}</p>
+            <p className="text-muted text-xs">
+              <Trans i18nKey="settings.services.brave.apiKeyHint" components={TRANS_COMPONENTS} />
+            </p>
           </div>
 
           {validation && (
@@ -246,14 +305,33 @@ export function BravePanel(): React.JSX.Element {
 
           <div className="border-border/60 border-t" />
 
-          <div className="flex items-center justify-end">
+          <div className="flex items-center justify-between gap-2">
             <Button
               type="button"
-              onClick={() => void handleTest()}
-              disabled={busy !== 'idle' || apiKey.trim().length === 0}
+              onClick={() => void handleSave()}
+              disabled={
+                busy !== 'idle' ||
+                apiKey.trim().length === 0 ||
+                apiKey.trim() === savedApiKey.trim()
+              }
             >
-              {t('settings.services.brave.test')}
+              {t('settings.services.brave.save')}
             </Button>
+            <button
+              type="button"
+              disabled={busy !== 'idle' || apiKey.trim().length === 0}
+              onClick={() => void handleTest()}
+              className={cn(
+                'text-xs font-medium capitalize',
+                busy === 'testing'
+                  ? 'text-muted animate-pulse cursor-wait'
+                  : busy !== 'idle' || apiKey.trim().length === 0
+                    ? 'text-muted cursor-not-allowed'
+                    : 'text-primary hover:text-primary/80 cursor-pointer'
+              )}
+            >
+              {t('settings.services.brave.testConnection')}
+            </button>
           </div>
 
           <p className="text-muted text-xs">{t('settings.services.brave.testHint')}</p>

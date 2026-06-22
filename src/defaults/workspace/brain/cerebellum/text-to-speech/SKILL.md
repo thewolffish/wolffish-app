@@ -77,11 +77,11 @@ tools:
       voice:
         type: string
         required: false
-        description: "Voice name (default: en-US-AriaNeural). Options: en-US-AriaNeural (female), en-US-GuyNeural (male), ar-SA-HamedNeural (Arabic male), ar-SA-ZariyahNeural (Arabic female). Run edge-tts --list-voices for all options."
+        description: "OMIT to use the user's configured default voice (Settings → Text-to-Speech). Only set it to reply in a DIFFERENT language than that default (e.g. fr-FR-DeniseNeural when replying in French), or when the user explicitly names a voice — never to pick a same-language alternative yourself. Run edge-tts --list-voices for all options."
       speed:
         type: string
         required: false
-        description: "Speech rate (default: +0%). Options: -50% (slow), +0% (normal), +50% (fast), +100% (very fast)"
+        description: "Speech rate. Omit to use the user's configured default. Options: -50% (slow), +0% (normal), +50% (fast), +100% (very fast)"
   - name: voice_respond
     description: Respond to the user entirely as a voice memo. The voice IS the response — do not also send the same text as a regular message. Include only a brief label like "Voice memo" so something appears while audio loads.
     parameters:
@@ -91,11 +91,11 @@ tools:
       voice:
         type: string
         required: false
-        description: "Voice name (default: en-US-AriaNeural)"
+        description: "OMIT to use the user's configured default voice (Settings → Text-to-Speech). Only set it to reply in a DIFFERENT language than that default, or when the user explicitly names a voice — never to pick a same-language alternative yourself."
       speed:
         type: string
         required: false
-        description: "Speech rate (default: +0%)"
+        description: "Speech rate. Omit to use the user's configured default."
   - name: voice_list
     description: List all voice memo files in the workspace voice directory with their timestamps and sizes.
     parameters: {}
@@ -149,5 +149,6 @@ If the user asks for a voice not listed, run `edge-tts --list-voices` via shell 
 ## Rules
 
 - Always pass text that reads naturally when spoken. Strip markdown formatting, code blocks, and special characters before sending to TTS.
+- **Leave `voice` unset by default.** The user picks their voice in Settings → Text-to-Speech and it's applied automatically. Only pass `voice` to reply in a different language than that default, or when the user explicitly names one. Don't pick a same-language voice yourself — doing so overrides the user's choice (and is how a configured female voice ends up sounding male).
 - For long texts (2000+ words), the engine handles them in one pass. No chunking needed.
 - Voice files are stored in the workspace and persist across sessions.

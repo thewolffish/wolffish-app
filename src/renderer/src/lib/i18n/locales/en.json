@@ -521,6 +521,10 @@
           "hours_one": "{{count}} hour",
           "hours_other": "{{count}} hours"
         },
+        "verbose": {
+          "label": "Verbose task results",
+          "description": "Relay every tool call and step to the chat. Off (the default) sends a clean feed — agent replies, files, and errors only."
+        },
         "commandsTitle": "Available commands",
         "commandsSubtitle": "Slash commands users send from Telegram. Type each one exactly.",
         "commands": {
@@ -545,6 +549,7 @@
       },
       "brave": {
         "title": "Brave Search",
+        "platform": "Platform",
         "subtitle": "Use Brave Search API as the primary web-search provider, with DuckDuckGo as fallback.",
         "enable": "Enable Brave Search",
         "enableDescription": "When on, web searches go through Brave first. When off, DuckDuckGo is used directly.",
@@ -554,10 +559,11 @@
         },
         "apiKey": "API key",
         "apiKeyPlaceholder": "BSA_…",
-        "apiKeyHint": "Get a key from api.search.brave.com (free tier: 2,000 queries/month). Stored in config.json on your machine — never sent anywhere except api.search.brave.com.",
+        "apiKeyHint": "Free key (2,000/mo) from <link>api.search.brave.com</link>. Stored locally in config.json.",
         "showKey": "Show",
         "hideKey": "Hide",
         "test": "Save",
+        "testConnection": "Test connection",
         "testHint": "Sends a tiny query to Brave to verify the key works. Counts toward your monthly quota.",
         "save": "Save",
         "status": {
@@ -631,6 +637,7 @@
       },
       "github": {
         "title": "GitHub",
+        "platform": "Platform",
         "subtitle": "Manage repos, issues, PRs, branches, CI, releases, and gists via your Personal Access Token.",
         "token": "Personal Access Token",
         "tokenPlaceholder": "ghp_… or github_pat_…",
@@ -638,6 +645,7 @@
         "showToken": "Show",
         "hideToken": "Hide",
         "test": "Save",
+        "testConnection": "Test connection",
         "testHint": "Calls GitHub's <code>/user</code> endpoint to verify the token is valid and shows your username.",
         "save": "Save",
         "status": {
@@ -685,6 +693,7 @@
       },
       "google": {
         "title": "Google Workspace",
+        "platform": "Platform",
         "subtitle": "Gmail, Drive, Calendar, Contacts, Tasks, and Sheets — drop your OAuth JSON to connect.",
         "toasts": {
           "installed": "gogcli {{version}} installed",
@@ -714,6 +723,7 @@
           "label": "OAuth Credentials",
           "hint": "OAuth Desktop client JSON from console.cloud.google.com → APIs & Services → Credentials.",
           "dropzone": "Drop OAuth client JSON here or click to browse",
+          "dropzoneActive": "Release to upload",
           "validating": "Validating credentials…",
           "stored": "Credentials stored",
           "rotate": "Drop a new JSON to replace credentials",
@@ -899,6 +909,10 @@
           "staleLabel": "Idle timeout",
           "hours_one": "{{count}} hour",
           "hours_other": "{{count}} hours"
+        },
+        "verbose": {
+          "label": "Verbose task results",
+          "description": "Relay every tool call and step to the chat. Off (the default) sends a clean feed — agent replies, files, and errors only."
         },
         "commandsTitle": "Available commands",
         "commandsSubtitle": "Send these commands in your WhatsApp chat.",

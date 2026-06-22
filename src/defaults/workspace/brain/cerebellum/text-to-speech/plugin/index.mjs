@@ -10,6 +10,31 @@ const execFileP = promisify(execFile)
 const PROBE_TIMEOUT_MS = 10_000
 const MAX_OUTPUT = 50_000
 
+// Last-resort voice when neither the user's Settings nor the model specify
+// one. Female US English — matches the Settings panel's default.
+const DEFAULT_VOICE = 'en-US-AriaNeural'
+
+// Two edge-tts voice ids share a language when their leading language subtag
+// matches (e.g. en-US-AriaNeural and en-GB-RyanNeural are both 'en').
+function sameLanguage(a, b) {
+  return a.split('-')[0].trim().toLowerCase() === b.split('-')[0].trim().toLowerCase()
+}
+
+// Decide which voice actually gets used. The user's Settings voice is the
+// source of truth for THEIR language: the model must not swap it for a
+// different same-language voice — that's the bug where a configured female
+// voice came out male because the model picked one on every call. The model's
+// argument only wins when it targets a DIFFERENT language (so a reply in
+// another language still gets a fitting voice) or when no default is
+// configured at all. Falls back to DEFAULT_VOICE when nothing is set.
+function resolveVoice(argVoice, cfgVoice) {
+  const arg = (argVoice ?? '').trim()
+  const cfg = (cfgVoice ?? '').trim()
+  if (!cfg) return arg || DEFAULT_VOICE
+  if (!arg) return cfg
+  return sameLanguage(arg, cfg) ? cfg : arg
+}
+
 let workspaceRoot = ''
 // One of: { type: 'binary', path: string } | { type: 'module', python: string }
 let executor = null
@@ -28,8 +53,12 @@ const toolDefinitions = [
       type: 'object',
       properties: {
         text: { type: 'string', description: 'The text to convert to speech' },
-        voice: { type: 'string', description: 'Voice name (default: en-US-AriaNeural)' },
-        speed: { type: 'string', description: 'Speech rate (default: +0%)' }
+        voice: {
+          type: 'string',
+          description:
+            "Voice name (e.g. en-US-AriaNeural). OMIT this to use the user's configured default voice from Settings. Only set it to reply in a DIFFERENT language than that default, or when the user explicitly asks for a specific voice — never to pick a same-language alternative yourself."
+        },
+        speed: { type: 'string', description: 'Speech rate (default: +0%). Omit to use the default.' }
       },
       required: ['text']
     }
@@ -41,8 +70,12 @@ const toolDefinitions = [
       type: 'object',
       properties: {
         text: { type: 'string', description: 'The full response text to speak' },
-        voice: { type: 'string', description: 'Voice name (default: en-US-AriaNeural)' },
-        speed: { type: 'string', description: 'Speech rate (default: +0%)' }
+        voice: {
+          type: 'string',
+          description:
+            "Voice name (e.g. en-US-AriaNeural). OMIT this to use the user's configured default voice from Settings. Only set it to reply in a DIFFERENT language than that default, or when the user explicitly asks for a specific voice — never to pick a same-language alternative yourself."
+        },
+        speed: { type: 'string', description: 'Speech rate (default: +0%). Omit to use the default.' }
       },
       required: ['text']
     }
@@ -355,7 +388,7 @@ async function generateVoice(text, voice, speed, isResponse) {
   const trimmed = (text ?? '').trim()
   if (!trimmed) return { success: false, error: 'Text is required' }
 
-  const voiceName = voice || 'en-US-AriaNeural'
+  const voiceName = voice || DEFAULT_VOICE
   const rate = speed || '+0%'
   const dir = speechDir()
   await mkdir(dir, { recursive: true })
@@ -531,7 +564,10 @@ const plugin = {
     } catch {
       // keep empty fallbacks
     }
-    const voice = args?.voice || cfgVoice || undefined
+    // The user's Settings voice wins for their own language; the model's arg
+    // only overrides for a different language (see resolveVoice). Speed keeps
+    // the simpler arg-then-config precedence — it has no gender/language axis.
+    const voice = resolveVoice(args?.voice, cfgVoice)
     const speed = args?.speed || cfgSpeed || undefined
     switch (toolName) {
       case 'voice_generate':

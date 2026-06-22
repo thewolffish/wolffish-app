@@ -105,7 +105,7 @@ export function ComputerUsePanel(): React.JSX.Element {
                       type="button"
                       onClick={() => handleResolution(opt.value)}
                       className={cn(
-                        'rounded-lg border px-3 py-1.5 text-sm cursor-pointer transition-colors',
+                        'rounded-lg border px-3 py-1.5 text-sm cursor-pointer',
                         config!.screenshotMaxWidth === opt.value
                           ? 'bg-primary text-primary-fg border-primary'
                           : 'border-border text-muted hover:bg-border/40 hover:text-fg'
@@ -132,7 +132,7 @@ export function ComputerUsePanel(): React.JSX.Element {
                       type="button"
                       onClick={() => handleFormat(fmt)}
                       className={cn(
-                        'rounded-lg border px-3 py-1.5 text-sm cursor-pointer transition-colors uppercase',
+                        'rounded-lg border px-3 py-1.5 text-sm cursor-pointer uppercase',
                         config!.screenshotFormat === fmt
                           ? 'bg-primary text-primary-fg border-primary'
                           : 'border-border text-muted hover:bg-border/40 hover:text-fg'

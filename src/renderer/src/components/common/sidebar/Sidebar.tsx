@@ -38,8 +38,8 @@ export function Sidebar({ items, className }: SidebarProps): React.JSX.Element {
   const { status } = useFlow()
   const saved = status?.config?.lastSettingsState?.sidebarCollapsed
   const [collapsed, setCollapsed] = useState(() => {
-    // Default to collapsed unless explicitly persisted as expanded.
-    if (liveCollapsed === null) liveCollapsed = saved !== 'false'
+    // Default to open (expanded) unless explicitly persisted as collapsed.
+    if (liveCollapsed === null) liveCollapsed = saved === 'true'
     return liveCollapsed
   })
 
@@ -55,27 +55,23 @@ export function Sidebar({ items, className }: SidebarProps): React.JSX.Element {
   return (
     <aside
       className={cn(
-        'pointer-events-none fixed top-0 z-30 flex h-full flex-col items-center overflow-x-hidden overflow-y-auto pt-8 transition-[width] duration-200',
+        'pointer-events-none fixed top-0 z-30 flex h-full flex-col items-center gap-1.5 overflow-x-hidden overflow-y-auto px-2 pt-8 transition-[width] duration-200',
         isRtl ? 'right-0' : 'left-0',
-        collapsed ? 'w-12 gap-1 px-1.5' : 'w-44 gap-1.5 px-3',
+        collapsed ? 'w-12' : 'w-44',
         className
       )}
     >
       <div
         aria-hidden
-        className={cn(
-          'pointer-events-none absolute top-0 bottom-18 w-px bg-border/40',
-          isRtl ? 'inset-s-0' : 'inset-e-0'
-        )}
+        className="pointer-events-none absolute inset-e-0 top-0 bottom-18 w-px bg-border/40"
       />
       <button
         type="button"
         onClick={toggle}
         aria-label="Toggle sidebar"
         className={cn(
-          'pointer-events-auto text-muted hover:text-fg flex shrink-0 cursor-pointer items-center rounded-lg p-2',
-          'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-          !collapsed && 'self-start'
+          'pointer-events-auto text-muted hover:text-fg flex shrink-0 cursor-pointer items-center self-start rounded-lg p-2',
+          'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
         )}
       >
         <SidebarLeftIcon size={16} />
@@ -93,14 +89,15 @@ export function Sidebar({ items, className }: SidebarProps): React.JSX.Element {
                 aria-label={item.label}
                 title={collapsed ? item.label : undefined}
                 className={cn(
-                  'text-muted hover:text-fg flex w-full cursor-pointer items-center rounded-lg text-sm',
+                  'text-muted hover:text-fg flex w-full cursor-pointer items-center gap-2.5 overflow-hidden rounded-lg px-2 py-2 text-sm',
                   'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-                  'disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-muted',
-                  collapsed ? 'justify-center p-2' : 'gap-2.5 px-2.5 py-2'
+                  'disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-muted'
                 )}
               >
-                <Icon size={16} />
-                {!collapsed && <span>{item.label}</span>}
+                <span className="flex shrink-0 items-center">
+                  <Icon size={16} />
+                </span>
+                <span className="shrink-0 whitespace-nowrap">{item.label}</span>
               </button>
             )
           })}

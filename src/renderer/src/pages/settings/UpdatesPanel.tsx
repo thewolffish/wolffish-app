@@ -160,7 +160,7 @@ export function UpdatesPanel(): React.JSX.Element {
                       aria-selected={active}
                       onClick={() => onToggleAutoUpdates(opt.value)}
                       className={cn(
-                        'rounded-md px-3 py-1 text-xs font-medium transition-colors',
+                        'rounded-md px-3 py-1 text-xs font-medium',
                         'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
                         active
                           ? 'bg-primary text-primary-fg shadow-sm'
@@ -242,7 +242,7 @@ export function UpdatesPanel(): React.JSX.Element {
                   onClick={onInstall}
                   disabled={phase === 'installing'}
                   className={cn(
-                    'bg-primary text-primary-fg flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium shadow-sm transition-colors',
+                    'bg-primary text-primary-fg flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium shadow-sm',
                     'hover:bg-primary/90 cursor-pointer',
                     'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
                     phase === 'installing' && 'cursor-not-allowed opacity-60'

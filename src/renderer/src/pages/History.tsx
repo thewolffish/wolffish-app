@@ -149,7 +149,7 @@ export function History(): React.JSX.Element {
                 <div
                   key={conv.id}
                   className={cn(
-                    'group flex items-center gap-3 rounded-xl px-4 py-3 transition-colors',
+                    'group flex items-center gap-3 rounded-xl px-4 py-3',
                     'hover:bg-surface cursor-pointer',
                     activeConversationId === conv.id && 'bg-surface border-border border'
                   )}
@@ -197,7 +197,7 @@ export function History(): React.JSX.Element {
                     }}
                     aria-label={t('history.delete')}
                     className={cn(
-                      'text-muted cursor-pointer rounded-lg p-1.5 opacity-0 transition-[opacity,color]',
+                      'text-muted cursor-pointer rounded-lg p-1.5 opacity-0',
                       'hover:text-red-600 dark:hover:text-red-400',
                       'group-hover:opacity-100',
                       'focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-accent'

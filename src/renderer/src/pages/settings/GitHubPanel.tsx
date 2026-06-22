@@ -3,11 +3,12 @@ import { Input } from '@components/core/Input'
 import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn'
 import type { GitHubErrorKind, GitHubStatus } from '@preload/index'
-import { EyeIcon, GithubIcon, ViewOffIcon } from 'hugeicons-react'
+import { EyeIcon, GithubIcon, LinkSquare02Icon, ViewOffIcon } from 'hugeicons-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
 
 const PAT_URL = 'https://github.com/settings/personal-access-tokens'
+const TOKENS_URL = 'https://github.com/settings/tokens'
 
 const TRANS_COMPONENTS = {
   link: (
@@ -43,6 +44,9 @@ export function GitHubPanel(): React.JSX.Element {
   const toast = useToast()
 
   const [token, setToken] = useState('')
+  // Last persisted token, so the Test/save button can disable when the input
+  // matches what's already saved (no change to apply).
+  const [savedToken, setSavedToken] = useState('')
   const [login, setLogin] = useState('')
   const [name, setName] = useState('')
   const [tokenVisible, setTokenVisible] = useState(false)
@@ -61,6 +65,7 @@ export function GitHubPanel(): React.JSX.Element {
       const live = await window.api.github.status()
       if (cancelled) return
       setToken(cfg.token)
+      setSavedToken(cfg.token)
       setLogin(cfg.login)
       setName(cfg.name)
       setStatus(live)
@@ -79,6 +84,35 @@ export function GitHubPanel(): React.JSX.Element {
     },
     [t]
   )
+
+  // Plain persist — stores the token without spending an API call to resolve
+  // identity. We can't know the account without testing, so clear any
+  // previously-resolved login/name; otherwise the "connected as" chip could
+  // show a stale account that doesn't match the newly saved token. Test
+  // connection is the explicit verify-and-resolve-identity path.
+  const handleSave = useCallback(async () => {
+    if (token.trim().length === 0) {
+      setValidation(t('settings.services.github.validation.tokenRequired'))
+      return
+    }
+    setValidation(null)
+    setBusy('saving')
+    try {
+      const trimmed = token.trim()
+      const response = await window.api.github.setConfig({
+        token: trimmed,
+        login: '',
+        name: ''
+      })
+      setStatus(response.status)
+      setLogin(response.config.login)
+      setName(response.config.name)
+      setSavedToken(trimmed)
+      toast.show({ message: t('settings.services.github.saveSuccess'), tone: 'success' })
+    } finally {
+      setBusy('idle')
+    }
+  }, [token, t, toast])
 
   const handleTest = useCallback(async () => {
     if (token.trim().length === 0) {
@@ -102,6 +136,7 @@ export function GitHubPanel(): React.JSX.Element {
         setLogin(response.config.login)
         setName(response.config.name)
         setStatus(response.status)
+        setSavedToken(trimmed)
         toast.show({
           message: t('settings.services.github.testSuccess', {
             login: result.login,
@@ -144,9 +179,23 @@ export function GitHubPanel(): React.JSX.Element {
     <div className="flex min-h-full w-full items-start justify-center px-6 py-10">
       <div className="flex w-full max-w-2xl flex-col gap-6">
         <header className="flex flex-col gap-2">
-          <h1 className="text-fg text-2xl font-semibold tracking-tight">
-            {t('settings.services.github.title')}
-          </h1>
+          <div className="flex items-center justify-between gap-3">
+            <h1 className="text-fg text-2xl font-semibold tracking-tight">
+              {t('settings.services.github.title')}
+            </h1>
+            <a
+              href={TOKENS_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={cn(
+                'text-muted hover:text-fg flex items-center gap-1.5 text-xs',
+                'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg rounded-md px-1.5 py-1'
+              )}
+            >
+              <span>{t('settings.services.github.platform')}</span>
+              <LinkSquare02Icon size={13} className="shrink-0" />
+            </a>
+          </div>
           <p className="text-muted text-sm leading-relaxed">
             {t('settings.services.github.subtitle')}
           </p>
@@ -242,14 +291,31 @@ export function GitHubPanel(): React.JSX.Element {
 
           <div className="border-border/60 border-t" />
 
-          <div className="flex items-center justify-end">
+          <div className="flex items-center justify-between gap-2">
             <Button
               type="button"
-              onClick={() => void handleTest()}
-              disabled={busy !== 'idle' || token.trim().length === 0}
+              onClick={() => void handleSave()}
+              disabled={
+                busy !== 'idle' || token.trim().length === 0 || token.trim() === savedToken.trim()
+              }
             >
-              {t('settings.services.github.test')}
+              {t('settings.services.github.save')}
             </Button>
+            <button
+              type="button"
+              disabled={busy !== 'idle' || token.trim().length === 0}
+              onClick={() => void handleTest()}
+              className={cn(
+                'text-xs font-medium capitalize',
+                busy === 'testing'
+                  ? 'text-muted animate-pulse cursor-wait'
+                  : busy !== 'idle' || token.trim().length === 0
+                    ? 'text-muted cursor-not-allowed'
+                    : 'text-primary hover:text-primary/80 cursor-pointer'
+              )}
+            >
+              {t('settings.services.github.testConnection')}
+            </button>
           </div>
 
           <p className="text-muted text-xs">

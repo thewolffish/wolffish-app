@@ -255,12 +255,27 @@ type ActiveTurn = {
    *  provider_change fire, or across back-to-back iterations. */
   lastFlushedModel: string | null
   /**
+   * Resolved absolute paths of every file already sent this turn. Prevents the
+   * same file being transmitted twice when it's reachable from more than one
+   * parse point (e.g. a tool_result AND the trailing prose that flushes after
+   * it). Turn-scoped, so a legitimate re-send in a later turn isn't suppressed.
+   */
+  sentFiles: Set<string>
+  /**
    * Promise chain that serializes renderSegment calls. Each call
    * chains onto the previous one so concurrent fire-and-forget
    * invocations execute in arrival order — prevents text segments
    * from interleaving when an earlier segment yields at an await.
    */
   renderChain: Promise<void>
+  /**
+   * Resolved once at turn start from TelegramConfig.verbose. When false
+   * (the default), renderSegment relays only agent messages, file-bearing
+   * tool results, and errors — every other tool call/result/activity send
+   * is skipped. Persistence and ordering are unaffected; this gates the
+   * outbound send only.
+   */
+  verbose: boolean
 }
 
 /**
@@ -1223,6 +1238,10 @@ export class TelegramChannel {
       // agent's respond() does this for in-turn tool calls, but this
       // path runs the tool directly, outside any turn.
       this.agent.cerebellum.setCurrentConversationId(conversation.id)
+      // This path runs the tool directly, outside the agent loop, so its
+      // ffmpeg dependency isn't auto-resolved. Ensure it (silent self-install)
+      // before transcribing so a fresh machine self-heals instead of erroring.
+      await this.agent.cerebellum.ensureSystemTool('ffmpeg')
       let result: Awaited<ReturnType<typeof this.agent.cerebellum.executeTool>>
       try {
         result = await this.agent.cerebellum.executeTool('stt_transcribe', {
@@ -1243,6 +1262,11 @@ export class TelegramChannel {
         await this.safeSend(chatId, '⚠️ Voice message transcribed to nothing.')
         return
       }
+      // Whisper's detected language — a deterministic signal of which
+      // language to reply in, threaded into the <voice_note lang="…"> tag
+      // so the model doesn't guess (and drift to the user's native tongue)
+      // from a short transcript.
+      const voiceLang = extractVoiceLanguage(result.output ?? '')
 
       // Echo the transcript back so the user sees exactly what we
       // heard before the agent responds — italics + mic emoji to
@@ -1256,7 +1280,8 @@ export class TelegramChannel {
       // voicePrompt:true tells the history builder to keep the audio
       // out of the LLM-bound history — the transcript IS the prompt.
       await this.dispatchTurn(chatId, userId, transcript, [attachment], ctx, conversation, {
-        voicePrompt: true
+        voicePrompt: true,
+        voiceLang
       })
     } finally {
       this.stopPreTyping(chatId)
@@ -1378,7 +1403,7 @@ export class TelegramChannel {
     attachments: MessageAttachment[],
     ctx: BotContext,
     preloadedConversation?: ConversationFile,
-    options: { voicePrompt?: boolean } = {}
+    options: { voicePrompt?: boolean; voiceLang?: string } = {}
   ): Promise<void> {
     void userId
     // Cover the gap between dispatch entry and onTurnStarted — load,
@@ -1389,13 +1414,17 @@ export class TelegramChannel {
     this.startPreTyping(chatId, ctx)
     try {
       const conversation = preloadedConversation ?? (await this.loadOrCreateConversation(chatId))
+      // Resolve the verbosity preference once per turn. false (default) =
+      // clean feed (agent messages + file results + errors only).
+      const verbose = (await getTelegramConfig()).verbose ?? false
 
       const userMessage: ConversationMessage = {
         role: 'user',
         content: userText,
         timestamp: Date.now(),
         ...(attachments.length > 0 ? { attachments } : {}),
-        ...(options.voicePrompt ? { voicePrompt: true } : {})
+        ...(options.voicePrompt ? { voicePrompt: true } : {}),
+        ...(options.voiceLang ? { voiceLang: options.voiceLang } : {})
       }
       conversation.messages.push(userMessage)
       conversation.updatedAt = userMessage.timestamp
@@ -1411,7 +1440,10 @@ export class TelegramChannel {
       // in-app channel uses).
       const history: ChatHistoryMessage[] = conversation.messages.flatMap((m) => {
         if (m.role !== 'user') return assistantSegmentsToHistory(m)
-        if (m.voicePrompt) return [{ role: 'user' as const, content: `<voice_note>\n${m.content}` }]
+        if (m.voicePrompt) {
+          const langAttr = m.voiceLang ? ` lang="${m.voiceLang}"` : ''
+          return [{ role: 'user' as const, content: `<voice_note${langAttr}>\n${m.content}` }]
+        }
         const atts = m.attachments ?? []
         const entry: ChatHistoryMessage = {
           role: 'user',
@@ -1452,7 +1484,9 @@ export class TelegramChannel {
             toolCallNames: new Map(),
             pendingActiveModel: null,
             lastFlushedModel: null,
-            renderChain: Promise.resolve()
+            sentFiles: new Set(),
+            renderChain: Promise.resolve(),
+            verbose
           }
           this.activeByChat.set(chatId, active)
           // Hand off from the pre-turn heartbeat — the turn timer below
@@ -1653,6 +1687,10 @@ export class TelegramChannel {
       active.toolTimings.set(segment.toolCallId, { startedAt: Date.now() })
       await this.flushPendingActiveModel(chatId)
       await this.flushBufferedText(chatId)
+      // Clean feed: skip the tool-call card. Prose preceding the call has
+      // already been flushed above; bookkeeping (names/timings) stands so a
+      // file-bearing result can still render its heading.
+      if (!active.verbose) return
       const heading = `⚙️ <b>${escapeHtml(segment.name)}</b>`
       const args = formatArgsForTelegram(segment.args)
       const html = args.length > 0 ? `${heading}\n<pre>${escapeHtml(args)}</pre>` : heading
@@ -1719,6 +1757,22 @@ export class TelegramChannel {
         return
       }
 
+      // Generic files (any extension) explicitly delivered via send_file —
+      // upload them as native documents.
+      const filePaths = extractGenericFilePaths(output)
+      if (filePaths.length > 0) {
+        await this.sendHtml(chatId, heading)
+        for (const filePath of filePaths) {
+          await this.sendDocumentFile(chatId, filePath)
+        }
+        return
+      }
+
+      // Clean feed: file-bearing results returned above. A plain, successful
+      // result is routine activity — skip it. Failed/denied results fall
+      // through (they read as errors, which always surface).
+      if (!active.verbose && segment.status === 'success') return
+
       if (output.length === 0) {
         await this.sendHtml(chatId, heading)
         return
@@ -1737,6 +1791,8 @@ export class TelegramChannel {
     }
 
     if (segment.kind === 'compaction') {
+      // Clean feed: compaction is internal activity, not a result.
+      if (!active.verbose) return
       const saved =
         segment.tokensSaved >= 1000
           ? `${Math.round(segment.tokensSaved / 1000)}k`
@@ -1780,6 +1836,11 @@ export class TelegramChannel {
   private async flushPendingActiveModel(chatId: number): Promise<void> {
     const active = this.activeByChat.get(chatId)
     if (!active) return
+    // Clean feed: the model chip is activity, not content — drop it.
+    if (!active.verbose) {
+      active.pendingActiveModel = null
+      return
+    }
     const model = active.pendingActiveModel
     if (!model) return
     active.pendingActiveModel = null
@@ -1793,10 +1854,14 @@ export class TelegramChannel {
     voice: { filePath: string; fileName: string }
   ): Promise<void> {
     if (!this.bot) return
+    const resolved = path.resolve(voice.filePath)
+    const active = this.activeByChat.get(chatId)
+    if (active?.sentFiles.has(resolved)) return
     try {
       const buffer = await fs.readFile(voice.filePath)
       const file = new InputFile(buffer, voice.fileName || path.basename(voice.filePath))
       await this.bot.api.sendAudio(chatId, file)
+      active?.sentFiles.add(resolved)
     } catch (err) {
       await this.sendHtml(
         chatId,
@@ -1807,6 +1872,9 @@ export class TelegramChannel {
 
   private async sendImageFile(chatId: number, filePath: string): Promise<void> {
     if (!this.bot) return
+    const resolved = path.resolve(filePath)
+    const active = this.activeByChat.get(chatId)
+    if (active?.sentFiles.has(resolved)) return
     try {
       const buffer = await fs.readFile(filePath)
       const file = new InputFile(buffer, path.basename(filePath))
@@ -1816,6 +1884,7 @@ export class TelegramChannel {
       } else {
         await this.bot.api.sendPhoto(chatId, file)
       }
+      active?.sentFiles.add(resolved)
     } catch {
       // best-effort — file may not exist or bot may have dropped
     }
@@ -1823,11 +1892,15 @@ export class TelegramChannel {
 
   private async sendDocumentFile(chatId: number, filePath: string): Promise<void> {
     if (!this.bot) return
+    const resolved = path.resolve(filePath)
+    const active = this.activeByChat.get(chatId)
+    if (active?.sentFiles.has(resolved)) return
     try {
       const buffer = await fs.readFile(filePath)
       const file = new InputFile(buffer, path.basename(filePath))
       const sent = await this.bot.api.sendDocument(chatId, file)
       this.trackMessageId(chatId, sent.message_id)
+      active?.sentFiles.add(resolved)
     } catch {
       // best-effort
     }
@@ -1835,10 +1908,14 @@ export class TelegramChannel {
 
   private async sendAudioFile(chatId: number, filePath: string): Promise<void> {
     if (!this.bot) return
+    const resolved = path.resolve(filePath)
+    const active = this.activeByChat.get(chatId)
+    if (active?.sentFiles.has(resolved)) return
     try {
       const buffer = await fs.readFile(filePath)
       const file = new InputFile(buffer, path.basename(filePath))
       await this.bot.api.sendAudio(chatId, file)
+      active?.sentFiles.add(resolved)
     } catch {
       // best-effort
     }
@@ -1846,10 +1923,14 @@ export class TelegramChannel {
 
   private async sendVideoFile(chatId: number, filePath: string): Promise<void> {
     if (!this.bot) return
+    const resolved = path.resolve(filePath)
+    const active = this.activeByChat.get(chatId)
+    if (active?.sentFiles.has(resolved)) return
     try {
       const buffer = await fs.readFile(filePath)
       const file = new InputFile(buffer, path.basename(filePath))
       await this.bot.api.sendVideo(chatId, file)
+      active?.sentFiles.add(resolved)
     } catch {
       // best-effort
     }
@@ -2084,6 +2165,23 @@ function extractTranscript(rawOutput: string): string {
 }
 
 /**
+ * Pull Whisper's detected language (ISO 639-1, e.g. "en") out of an
+ * stt_transcribe result. Returns '' when absent or unparseable — callers
+ * treat that as "no signal" and fall back to the plain <voice_note> tag.
+ */
+function extractVoiceLanguage(rawOutput: string): string {
+  const trimmed = rawOutput.trim()
+  if (trimmed.length === 0) return ''
+  try {
+    const parsed = JSON.parse(trimmed) as { language?: unknown }
+    if (parsed && typeof parsed.language === 'string') return parsed.language.trim()
+  } catch {
+    // not JSON
+  }
+  return ''
+}
+
+/**
  * Parse a number-only reply for picker selection. Accepts a 1-2
  * digit number, optionally surrounded by whitespace. Returns null
  * if the message is anything else, including text that contains a
@@ -2300,8 +2398,21 @@ function parseVoiceToolOutput(output: string): { filePath: string; fileName: str
 
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.tiff', '.tif'])
 const DOCUMENT_EXTS = new Set(['.pdf', '.docx', '.xlsx', '.pptx', '.doc', '.xls', '.csv'])
-const AUDIO_EXTS = new Set(['.mp3', '.wav', '.m4a', '.ogg', '.flac', '.aac', '.wma', '.opus'])
-const VIDEO_EXTS = new Set(['.mp4', '.mov', '.avi', '.mkv', '.m4v', '.wmv', '.flv', '.webm'])
+// webm is treated as audio: wolffish's own webm outputs are voice/TTS. A real
+// webm *video* still routes correctly via the explicit (video) marker, which
+// extractAudioVideoPaths honours before this extension fallback.
+const AUDIO_EXTS = new Set([
+  '.mp3',
+  '.wav',
+  '.m4a',
+  '.ogg',
+  '.flac',
+  '.aac',
+  '.wma',
+  '.opus',
+  '.webm'
+])
+const VIDEO_EXTS = new Set(['.mp4', '.mov', '.avi', '.mkv', '.m4v', '.wmv', '.flv'])
 
 function extractWolffishMediaPaths(output: string): string[] {
   const paths: string[] = []
@@ -2413,6 +2524,27 @@ function extractDocumentPaths(output: string): string[] {
     addIfDocument(match[1])
   }
 
+  return paths
+}
+
+// Generic files explicitly delivered via send_file carry a `(file)` marker
+// (any extension that isn't an image/audio/video/document). Only the
+// explicit marker is matched — no bare-path fallback — so incidental paths
+// in tool output are never mistaken for a delivery.
+function extractGenericFilePaths(output: string): string[] {
+  const paths: string[] = []
+  const seen = new Set<string>()
+  const home = os.homedir()
+  const markerRegex = /\[wolffish-output:\s*([^\]]+?)\s+\(file\)\]/g
+  let match: RegExpExecArray | null
+  while ((match = markerRegex.exec(output)) !== null) {
+    const raw = match[1].trim()
+    const abs = raw.startsWith('~/') ? path.join(home, raw.slice(2)) : raw
+    if (!seen.has(abs)) {
+      seen.add(abs)
+      paths.push(abs)
+    }
+  }
   return paths
 }
 

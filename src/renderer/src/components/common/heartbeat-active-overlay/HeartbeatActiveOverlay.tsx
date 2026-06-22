@@ -109,7 +109,7 @@ export function HeartbeatActiveOverlay(): React.JSX.Element | null {
                     <div
                       key={`${entry.timestamp}-${i}`}
                       className={cn(
-                        'flex items-start gap-2 rounded px-1 py-0.5 text-[11px] leading-relaxed transition-opacity',
+                        'flex items-start gap-2 rounded px-1 py-0.5 text-[11px] leading-relaxed',
                         isLast ? 'text-fg' : 'text-muted/40'
                       )}
                     >

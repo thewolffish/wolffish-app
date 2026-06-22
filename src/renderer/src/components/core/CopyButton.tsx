@@ -41,7 +41,7 @@ export function CopyButton({
   }
 
   const base =
-    'inline-flex items-center gap-1 rounded-md text-xs cursor-pointer transition-colors ' +
+    'inline-flex items-center gap-1 rounded-md text-xs cursor-pointer ' +
     'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
   const styles =
     variant === 'overlay'

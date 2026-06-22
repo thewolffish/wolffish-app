@@ -19,6 +19,9 @@ export function NotionPanel(): React.JSX.Element {
   const toast = useToast()
 
   const [token, setToken] = useState('')
+  // Last persisted token, so the Test/save button can disable when the input
+  // matches what's already saved (no change to apply).
+  const [savedToken, setSavedToken] = useState('')
   const [tokenVisible, setTokenVisible] = useState(false)
   const [connectedAccount, setConnectedAccount] = useState<Pick<
     NotionConfig,
@@ -39,6 +42,7 @@ export function NotionPanel(): React.JSX.Element {
       const live = await window.api.notion.status()
       if (cancelled) return
       setToken(cfg.token)
+      setSavedToken(cfg.token)
       setStatus(live)
       if (cfg.name) setConnectedAccount({ name: cfg.name, email: cfg.email })
     })()
@@ -72,6 +76,7 @@ export function NotionPanel(): React.JSX.Element {
         if (result.email) patch.email = result.email
         const response = await window.api.notion.setConfig(patch)
         setStatus(response.status)
+        setSavedToken(token.trim())
         if (result.name) {
           setConnectedAccount({ name: result.name, email: result.email ?? '' })
         }
@@ -212,7 +217,9 @@ export function NotionPanel(): React.JSX.Element {
             <Button
               type="button"
               onClick={() => void handleTest()}
-              disabled={busy !== 'idle' || token.trim().length === 0}
+              disabled={
+                busy !== 'idle' || token.trim().length === 0 || token.trim() === savedToken.trim()
+              }
             >
               {t('settings.services.notion.test')}
             </Button>

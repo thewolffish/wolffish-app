@@ -54,7 +54,7 @@ export function CodeBlock({
           text={content}
           variant="overlay"
           ariaLabelKey="chat.copy"
-          className="absolute inset-e-1.5 top-1.5 opacity-0 transition-opacity group-hover/code:opacity-100 focus-visible:opacity-100"
+          className="absolute inset-e-1.5 top-1.5 opacity-0 group-hover/code:opacity-100 focus-visible:opacity-100"
         />
       )}
     </div>

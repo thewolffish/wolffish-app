@@ -1089,10 +1089,13 @@ export function Chat(): React.JSX.Element {
 
       // Now trigger the LLM — mirrors sendContent's tail. We use the
       // raw transcript (no 🎙 prefix) for the model-facing history so
-      // the agent doesn't echo our UI marker back.
+      // the agent doesn't echo our UI marker back. The <voice_note lang="…">
+      // tag carries Whisper's detected language so the model replies in it
+      // instead of guessing from a short transcript.
       const workspaceRoot = status?.rootPath ?? null
       const previousFolders = sentFolderByConvRef.current.get(conversationId) ?? []
-      const historyContent = `<voice_note>\n${composeHistoryContent(
+      const langAttr = sttResult.language ? ` lang="${sttResult.language}"` : ''
+      const historyContent = `<voice_note${langAttr}>\n${composeHistoryContent(
         transcript,
         [attachment],
         workspaceRoot,
@@ -1570,7 +1573,7 @@ export function Chat(): React.JSX.Element {
                   type="button"
                   onClick={() => setTimelineOpen(true)}
                   className={cn(
-                    'border-border bg-surface text-muted hover:text-fg absolute bottom-full mb-6 flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-1.5 text-xs shadow-sm transition-colors',
+                    'border-border bg-surface text-muted hover:text-fg absolute bottom-full mb-6 flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-1.5 text-xs shadow-sm',
                     'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
                   )}
                 >
@@ -1686,7 +1689,7 @@ export function Chat(): React.JSX.Element {
                             <button
                               type="button"
                               onClick={() => void removeWorkingFolder(folder)}
-                              className="text-muted/40 hover:text-red-500 shrink-0 cursor-pointer transition-colors"
+                              className="text-muted/40 hover:text-red-500 shrink-0 cursor-pointer"
                               title="Remove"
                             >
                               <Delete02Icon size={12} />
@@ -2060,7 +2063,7 @@ function TimelineList({
             <div
               key={entry.id}
               className={cn(
-                'rounded-lg px-3 py-2 text-xs transition-opacity',
+                'rounded-lg px-3 py-2 text-xs',
                 isLast ? 'text-fg bg-accent/5' : 'text-muted/70'
               )}
             >
@@ -2094,7 +2097,7 @@ function TimelineList({
                   >
                     {content}
                   </pre>
-                  <div className="absolute right-1.5 top-1.5 opacity-0 transition-opacity group-hover/tl:opacity-100">
+                  <div className="absolute right-1.5 top-1.5 opacity-0 group-hover/tl:opacity-100">
                     <CopyButton text={content} />
                   </div>
                 </div>
@@ -2503,6 +2506,16 @@ function renderSegments(
   // never show the same provider name twice — covers active_model +
   // provider_change naming the same model, and back-to-back iterations.
   const renderedModelChips = new Set<string>()
+  // Generic guard: every file path already rendered as a player/viewer in this
+  // message. Prevents the same file showing twice when it's reachable from more
+  // than one detector (e.g. a voice result that also matches the generic media
+  // extractor). Rebuilt every render, so the per-render scope IS the TTL.
+  const emittedFiles = new Set<string>()
+  const emitOnce = (filePath: string): boolean => {
+    if (emittedFiles.has(filePath)) return false
+    emittedFiles.add(filePath)
+    return true
+  }
 
   const flushText = (): void => {
     if (textBuffer.length === 0) return
@@ -2610,15 +2623,17 @@ function renderSegments(
           const imgFileName = imagePath.split('/').pop() ?? 'image'
           const imgExt = (imagePath.match(/\.[^./\\]+$/) || [''])[0].toLowerCase()
           const imgMime = `image/${imgExt === '.jpg' ? 'jpeg' : imgExt.slice(1)}`
-          blocks.push(
-            <ImageViewer
-              key={`img_${seg.segmentId}`}
-              filePath={imgRelPath}
-              fileExists={imgReachable}
-              mimeType={imgMime}
-              fileName={imgFileName}
-            />
-          )
+          if (emitOnce(imgRelPath)) {
+            blocks.push(
+              <ImageViewer
+                key={`img_${seg.segmentId}`}
+                filePath={imgRelPath}
+                fileExists={imgReachable}
+                mimeType={imgMime}
+                fileName={imgFileName}
+              />
+            )
+          }
         }
 
         const docResults = extractToolResultDocuments(result)
@@ -2672,7 +2687,13 @@ function renderSegments(
           }
         }
 
-        const media = extractToolResultMedia(result)
+        // Skip the generic media extractor for voice_respond / voice_generate:
+        // their audio already rendered as the dedicated voice player above, and
+        // the same workspace path would otherwise match here and render a SECOND
+        // player (a native <video> card when the file is webm). This is the
+        // voice-"double" fix. emitOnce is the generic backstop for any other
+        // overlap within a message.
+        const media = voiceData ? null : extractToolResultMedia(result)
         if (media) {
           const mediaFileName = media.path.split('/').pop() ?? 'media'
           const mediaExt = (media.path.match(/\.[^./\\]+$/) || [''])[0].toLowerCase()
@@ -2686,27 +2707,50 @@ function renderSegments(
           // the player shows an "unavailable" placeholder.
           const relPath = media.path.replace(/^.*?\.wolffish\/workspace\//, '')
           const fileReachable = !relPath.startsWith('/')
-          if (media.type === 'audio') {
-            blocks.push(
-              <AudioPlayer
-                key={`media_${seg.segmentId}`}
-                filePath={relPath}
-                fileExists={fileReachable}
-                mimeType={mediaMime}
-                fileName={mediaFileName}
-              />
-            )
-          } else {
-            blocks.push(
-              <VideoPlayer
-                key={`media_${seg.segmentId}`}
-                filePath={relPath}
-                fileExists={fileReachable}
-                mimeType={mediaMime}
-                fileName={mediaFileName}
-              />
-            )
+          if (emitOnce(relPath)) {
+            if (media.type === 'audio') {
+              blocks.push(
+                <AudioPlayer
+                  key={`media_${seg.segmentId}`}
+                  filePath={relPath}
+                  fileExists={fileReachable}
+                  mimeType={mediaMime}
+                  fileName={mediaFileName}
+                />
+              )
+            } else {
+              blocks.push(
+                <VideoPlayer
+                  key={`media_${seg.segmentId}`}
+                  filePath={relPath}
+                  fileExists={fileReachable}
+                  mimeType={mediaMime}
+                  fileName={mediaFileName}
+                />
+              )
+            }
           }
+        }
+
+        // Generic files (any extension) explicitly delivered via send_file —
+        // render a file card with reveal/download, same as a non-previewable
+        // attachment. send_file copies out-of-workspace files into files/ so
+        // the absolute path is always reachable.
+        const genericFiles = extractToolResultGenericFiles(result)
+        for (let gi = 0; gi < genericFiles.length; gi++) {
+          const gPath = genericFiles[gi]
+          const gName = gPath.split('/').pop() ?? 'file'
+          const gExt = gName.split('.').pop()?.toLowerCase() ?? ''
+          blocks.push(
+            <FileCard
+              key={`file_${seg.segmentId}_${gi}`}
+              filePath={gPath}
+              fileExists={true}
+              fileName={gName}
+              sizeBytes={0}
+              mimeType={docMimeType(gExt)}
+            />
+          )
         }
       }
     } else if (seg.kind === 'tool_result') {
@@ -3176,17 +3220,45 @@ function extractToolResultMedia(
   // image extractor uses — so incidental media URLs embedded in tool output
   // (e.g. a web_search result snippet linking a .mp4) aren't mis-detected and
   // rendered as a broken "deleted or unavailable" player.
+  //
+  // webm is matched as AUDIO here (tested before video): wolffish's own webm
+  // outputs are voice/TTS, and a native <video> card for a voice clip is the
+  // "weird card" we're fixing. A genuine webm *video* still renders correctly
+  // because it carries the explicit (video) marker handled above.
   const audioMatch = output.match(
-    /(\/[^\s",:)]*\.wolffish\/workspace\/[^\s",:)]+\.(?:mp3|wav|m4a|ogg|flac|aac|wma|opus))\b/i
+    /(\/[^\s",:)]*\.wolffish\/workspace\/[^\s",:)]+\.(?:mp3|wav|m4a|ogg|flac|aac|wma|opus|webm))\b/i
   )
   if (audioMatch) return { path: audioMatch[1], type: 'audio' }
 
   const videoMatch = output.match(
-    /(\/[^\s",:)]*\.wolffish\/workspace\/[^\s",:)]+\.(?:mp4|mov|avi|mkv|m4v|wmv|flv|webm))\b/i
+    /(\/[^\s",:)]*\.wolffish\/workspace\/[^\s",:)]+\.(?:mp4|mov|avi|mkv|m4v|wmv|flv))\b/i
   )
   if (videoMatch) return { path: videoMatch[1], type: 'video' }
 
   return null
+}
+
+/**
+ * Extract generic file paths explicitly delivered via send_file. These carry
+ * a `[wolffish-output: /path (file)]` marker — the catch-all type for any
+ * extension that isn't an image/audio/video/document. Only the explicit
+ * marker is matched (no bare-path fallback) so incidental paths in tool
+ * output are never mistaken for a delivery.
+ */
+function extractToolResultGenericFiles(result?: ToolResultSegment): string[] {
+  if (!result?.output || result.status !== 'success') return []
+  const paths: string[] = []
+  const seen = new Set<string>()
+  const markerRegex = /\[wolffish-output:\s*([^\]]+?)\s+\(file\)\]/g
+  let match: RegExpExecArray | null
+  while ((match = markerRegex.exec(result.output)) !== null) {
+    const p = match[1].trim()
+    if (!seen.has(p)) {
+      seen.add(p)
+      paths.push(p)
+    }
+  }
+  return paths
 }
 
 function collectText(segments: Segment[]): string {

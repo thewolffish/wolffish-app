@@ -5,7 +5,11 @@ import {
   getConversationIdForJid,
   setConversationIdForJid
 } from '@main/channels/whatsapp/conversations'
-import { extractTextBody, shouldProcessMessage } from '@main/channels/whatsapp/messages'
+import {
+  extractTextBody,
+  isInboundVoiceNote,
+  shouldProcessMessage
+} from '@main/channels/whatsapp/messages'
 import { buildWhatsAppCapability, WHATSAPP_CAPABILITY_NAME } from '@main/channels/whatsapp/tools'
 import {
   createConversation,
@@ -16,7 +20,8 @@ import {
   saveConversation,
   type ConversationFile,
   type ConversationMessage,
-  type ConversationMeta
+  type ConversationMeta,
+  type MessageAttachment
 } from '@main/conversations'
 import type { Agent } from '@main/runtime/agent'
 import type { ApprovalDecision, ApprovalRequest } from '@main/runtime/amygdala'
@@ -24,6 +29,7 @@ import type { Segment, SegmentTurnEndReason } from '@main/runtime/broca'
 import type { CorpusEvents } from '@main/runtime/corpus'
 import type { LocalProvider } from '@main/runtime/providers/local'
 import { composeAttachmentContext } from '@main/uploads/compose-attachments'
+import { saveUploadFromBuffer } from '@main/uploads/uploads'
 import {
   getWhatsAppConfig,
   setLocalOnly as persistLocalOnly,
@@ -37,12 +43,14 @@ import type {
 } from '@preload/index'
 import {
   DisconnectReason,
+  downloadMediaMessage,
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
   makeWASocket,
   useMultiFileAuthState,
   type BaileysEventMap,
   type proto,
+  type WAMessage,
   type WASocket
 } from '@whiskeysockets/baileys'
 import fs from 'node:fs/promises'
@@ -112,7 +120,21 @@ type ActiveTurn = {
   toolCallNames: Map<string, string>
   pendingActiveModel: string | null
   lastFlushedModel: string | null
-  sentImages: Set<string>
+  /**
+   * Resolved absolute paths of every file already sent this turn. Prevents the
+   * same file being transmitted twice when it's reachable from more than one
+   * parse point (e.g. a tool_result AND the trailing prose). Turn-scoped, so a
+   * legitimate re-send in a later turn is not suppressed.
+   */
+  sentFiles: Set<string>
+  /**
+   * Resolved once at turn start from WhatsAppConfig.verbose. When false
+   * (the default), renderSegment relays only agent messages, file-bearing
+   * tool results, and errors — every other tool call/result/activity send
+   * is skipped. Persistence and ordering are unaffected; this gates the
+   * outbound send only.
+   */
+  verbose: boolean
 }
 
 type PendingSelection = {
@@ -606,6 +628,15 @@ export class WhatsAppChannel {
       )
       if (!isAllowed) continue
 
+      // Voice notes (push-to-talk) get downloaded + transcribed, then
+      // dispatched as a normal text turn. Sits after the allow-list/sentIds/
+      // timestamp guards so only authorized, live messages trigger a download.
+      // Non-voice messages fall through to the existing text path untouched.
+      if (isInboundVoiceNote(msg)) {
+        void this.handleInboundVoice(jid, msg)
+        continue
+      }
+
       this.agent.corpus.emit('whatsapp.message.received', { remoteJid: jid, body })
 
       void this.handleInboundMessage(jid, body)
@@ -847,15 +878,112 @@ export class WhatsAppChannel {
     }
   }
 
+  /**
+   * Inbound voice note: download the OGG/Opus blob into the conversation's
+   * uploads folder (so it lands in ~/.wolffish and the in-app history can
+   * replay it), transcribe it via the cerebellum, then dispatch a normal text
+   * turn with the transcript as content and voicePrompt:true. Mirrors
+   * Telegram's handleVoiceMessage. Every early-return surfaces a friendly
+   * message; nothing throws back into the upsert loop.
+   */
+  private async handleInboundVoice(jid: string, msg: WAMessage): Promise<void> {
+    // One turn per chat at a time — mirrors Telegram's busy-guard.
+    if (this.activeByJid.size > 0) {
+      await this.sendBusyReply(jid, '(voice message)')
+      return
+    }
+    const sock = this.sock
+    if (!sock) return
+
+    try {
+      const conversation = await this.loadOrCreateConversation(jid)
+
+      let attachment: MessageAttachment
+      try {
+        // The raw `msg` carries the encrypted media keys; reuploadRequest lets
+        // baileys re-fetch keys if the first decrypt attempt fails.
+        const buffer = await downloadMediaMessage(
+          msg,
+          'buffer',
+          {},
+          { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage }
+        )
+        attachment = await saveUploadFromBuffer(
+          conversation.id,
+          buffer,
+          `voice_${msg.key.id ?? Date.now()}.ogg`
+        )
+        this.agent.corpus.emit('whatsapp.message.received', {
+          remoteJid: jid,
+          body: '<voice_note>'
+        })
+      } catch (err) {
+        const errMessage = err instanceof Error ? err.message : String(err)
+        await this.safeSend(jid, `⚠️ Voice download failed: ${errMessage}`)
+        return
+      }
+
+      // Stamp the conversation id so the transcript persists under the right
+      // folder, and ensure ffmpeg (silent self-install) since this direct tool
+      // call bypasses the agent loop's dependency resolution.
+      this.agent.cerebellum.setCurrentConversationId(conversation.id)
+      await this.agent.cerebellum.ensureSystemTool('ffmpeg')
+      let result: Awaited<ReturnType<typeof this.agent.cerebellum.executeTool>>
+      try {
+        result = await this.agent.cerebellum.executeTool('stt_transcribe', {
+          filePath: attachment.filePath
+        })
+      } finally {
+        this.agent.cerebellum.setCurrentConversationId(null)
+      }
+      if (!result.success) {
+        await this.safeSend(
+          jid,
+          `⚠️ Couldn't transcribe voice message: ${result.error ?? 'unknown error'}`
+        )
+        return
+      }
+      const transcript = extractTranscriptText(result.output ?? '')
+      if (!transcript) {
+        await this.safeSend(jid, '⚠️ Voice message transcribed to nothing.')
+        return
+      }
+      // Whisper's detected language — a deterministic reply-language signal
+      // threaded into the <voice_note lang="…"> tag (see telegram channel).
+      const voiceLang = extractVoiceLanguage(result.output ?? '')
+
+      // Echo what we heard, then dispatch with the transcript as the prompt and
+      // the audio attached. voicePrompt:true keeps the audio out of the
+      // LLM-bound history (the transcript IS the prompt) while preserving the
+      // file on disk for replay.
+      await this.safeSend(jid, `🎙 ${transcript}`)
+      await this.dispatchTurn(jid, transcript, [attachment], { voicePrompt: true, voiceLang })
+    } catch (err) {
+      const errMessage = err instanceof Error ? err.message : String(err)
+      await this.safeSend(jid, `⚠️ Voice message failed: ${errMessage}`)
+    }
+  }
+
   // --- Turn dispatch (mirrors Telegram's pattern) ---
 
-  private async dispatchTurn(jid: string, userText: string): Promise<void> {
+  private async dispatchTurn(
+    jid: string,
+    userText: string,
+    attachments: MessageAttachment[] = [],
+    options: { voicePrompt?: boolean; voiceLang?: string } = {}
+  ): Promise<void> {
     const conversation = await this.loadOrCreateConversation(jid)
+    // Resolve the verbosity preference once per turn. false (default) =
+    // clean feed (agent messages + file results + errors only).
+    const verbose = (await getWhatsAppConfig()).verbose ?? false
 
     const userMessage: ConversationMessage = {
       role: 'user',
       content: userText,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      ...(attachments.length > 0 ? { attachments } : {}),
+      ...(options.voicePrompt ? { voicePrompt: true } : {}),
+      ...(options.voiceLang ? { voiceLang: options.voiceLang } : {})
     }
     conversation.messages.push(userMessage)
     conversation.updatedAt = userMessage.timestamp
@@ -863,7 +991,10 @@ export class WhatsAppChannel {
 
     const history: ChatHistoryMessage[] = conversation.messages.flatMap((m) => {
       if (m.role !== 'user') return assistantSegmentsToHistory(m)
-      if (m.voicePrompt) return [{ role: 'user' as const, content: `<voice_note>\n${m.content}` }]
+      if (m.voicePrompt) {
+        const langAttr = m.voiceLang ? ` lang="${m.voiceLang}"` : ''
+        return [{ role: 'user' as const, content: `<voice_note${langAttr}>\n${m.content}` }]
+      }
       const atts = m.attachments ?? []
       const entry: ChatHistoryMessage = {
         role: 'user',
@@ -902,7 +1033,8 @@ export class WhatsAppChannel {
           toolCallNames: new Map(),
           pendingActiveModel: null,
           lastFlushedModel: null,
-          sentImages: new Set()
+          sentFiles: new Set(),
+          verbose
         }
         this.activeByJid.set(jid, active)
       },
@@ -1056,6 +1188,10 @@ export class WhatsAppChannel {
       active.toolTimings.set(segment.toolCallId, { startedAt: Date.now() })
       await this.flushPendingActiveModel(jid)
       await this.flushBufferedText(jid)
+      // Clean feed: skip the tool-call card. Prose preceding the call has
+      // already been flushed above; bookkeeping (names/timings) stands so a
+      // file-bearing result can still render its heading.
+      if (!active.verbose) return
       const args = formatArgs(segment.args)
       const msg =
         args.length > 0 ? `⚙️ *${segment.name}*\n\`\`\`\n${args}\n\`\`\`` : `⚙️ *${segment.name}*`
@@ -1106,6 +1242,22 @@ export class WhatsAppChannel {
         return
       }
 
+      // Generic files (any extension) explicitly delivered via send_file —
+      // upload them as native documents.
+      const filePaths = extractGenericFilePaths(output)
+      if (filePaths.length > 0) {
+        await this.safeSend(jid, heading)
+        for (const filePath of filePaths) {
+          await this.sendDocumentFile(jid, filePath)
+        }
+        return
+      }
+
+      // Clean feed: file-bearing results returned above. A plain, successful
+      // result is routine activity — skip it. Failed/denied results fall
+      // through (they read as errors, which always surface).
+      if (!active.verbose && segment.status === 'success') return
+
       if (output.length === 0) {
         await this.safeSend(jid, heading)
         return
@@ -1115,6 +1267,8 @@ export class WhatsAppChannel {
     }
 
     if (segment.kind === 'compaction') {
+      // Clean feed: compaction is internal activity, not a result.
+      if (!active.verbose) return
       const saved =
         segment.tokensSaved >= 1000
           ? `${Math.round(segment.tokensSaved / 1000)}k`
@@ -1150,6 +1304,11 @@ export class WhatsAppChannel {
   private async flushPendingActiveModel(jid: string): Promise<void> {
     const active = this.activeByJid.get(jid)
     if (!active) return
+    // Clean feed: the model chip is activity, not content — drop it.
+    if (!active.verbose) {
+      active.pendingActiveModel = null
+      return
+    }
     const model = active.pendingActiveModel
     if (!model) return
     active.pendingActiveModel = null
@@ -1279,7 +1438,7 @@ export class WhatsAppChannel {
     if (!this.sock) return
     const resolved = path.resolve(filePath)
     const active = this.activeByJid.get(jid)
-    if (active?.sentImages.has(resolved)) return
+    if (active?.sentFiles.has(resolved)) return
     try {
       await fs.access(resolved)
       const buffer = await fs.readFile(resolved)
@@ -1300,7 +1459,7 @@ export class WhatsAppChannel {
       if (sent?.key.id) {
         this.sentIds.add(sent.key.id)
       }
-      if (active) active.sentImages.add(resolved)
+      if (active) active.sentFiles.add(resolved)
     } catch {
       // best-effort
     }
@@ -1309,6 +1468,8 @@ export class WhatsAppChannel {
   private async sendDocumentFile(jid: string, filePath: string): Promise<void> {
     if (!this.sock) return
     const resolved = path.resolve(filePath)
+    const active = this.activeByJid.get(jid)
+    if (active?.sentFiles.has(resolved)) return
     try {
       await fs.access(resolved)
       const buffer = await fs.readFile(resolved)
@@ -1332,6 +1493,7 @@ export class WhatsAppChannel {
       if (sent?.key.id) {
         this.sentIds.add(sent.key.id)
       }
+      if (active) active.sentFiles.add(resolved)
     } catch {
       // best-effort
     }
@@ -1340,6 +1502,8 @@ export class WhatsAppChannel {
   private async sendAudioFile(jid: string, filePath: string): Promise<void> {
     if (!this.sock) return
     const resolved = path.resolve(filePath)
+    const active = this.activeByJid.get(jid)
+    if (active?.sentFiles.has(resolved)) return
     try {
       await fs.access(resolved)
       const buffer = await fs.readFile(resolved)
@@ -1352,7 +1516,8 @@ export class WhatsAppChannel {
         '.flac': 'audio/flac',
         '.aac': 'audio/aac',
         '.wma': 'audio/x-ms-wma',
-        '.opus': 'audio/opus'
+        '.opus': 'audio/opus',
+        '.webm': 'audio/webm'
       }
       const mimetype = AUDIO_MIME[ext] ?? 'audio/mpeg'
       const sent = await this.sock.sendMessage(jid, {
@@ -1363,6 +1528,7 @@ export class WhatsAppChannel {
       if (sent?.key.id) {
         this.sentIds.add(sent.key.id)
       }
+      if (active) active.sentFiles.add(resolved)
     } catch {
       // best-effort
     }
@@ -1371,6 +1537,8 @@ export class WhatsAppChannel {
   private async sendVideoFile(jid: string, filePath: string): Promise<void> {
     if (!this.sock) return
     const resolved = path.resolve(filePath)
+    const active = this.activeByJid.get(jid)
+    if (active?.sentFiles.has(resolved)) return
     try {
       await fs.access(resolved)
       const buffer = await fs.readFile(resolved)
@@ -1394,6 +1562,7 @@ export class WhatsAppChannel {
       if (sent?.key.id) {
         this.sentIds.add(sent.key.id)
       }
+      if (active) active.sentFiles.add(resolved)
     } catch {
       // best-effort
     }
@@ -1491,8 +1660,55 @@ function parseSelectionNumber(text: string): number | null {
 
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.tiff', '.tif'])
 const DOCUMENT_EXTS = new Set(['.pdf', '.docx', '.xlsx', '.pptx', '.doc', '.xls', '.csv'])
-const AUDIO_EXTS = new Set(['.mp3', '.wav', '.m4a', '.ogg', '.flac', '.aac', '.wma', '.opus'])
-const VIDEO_EXTS = new Set(['.mp4', '.mov', '.avi', '.mkv', '.m4v', '.wmv', '.flv', '.webm'])
+// webm is treated as audio here: wolffish's own webm outputs are voice/TTS.
+// A genuine webm *video* tool output still routes correctly via the explicit
+// [wolffish-output: path (video)] marker, which extractAudioVideoPaths honours
+// before this extension-based fallback.
+const AUDIO_EXTS = new Set([
+  '.mp3',
+  '.wav',
+  '.m4a',
+  '.ogg',
+  '.flac',
+  '.aac',
+  '.wma',
+  '.opus',
+  '.webm'
+])
+const VIDEO_EXTS = new Set(['.mp4', '.mov', '.avi', '.mkv', '.m4v', '.wmv', '.flv'])
+
+/**
+ * Pull the transcript text out of an stt_transcribe tool result (a JSON blob
+ * with a `text` field). Falls back to the raw trimmed output. Mirrors the
+ * Telegram channel's extractTranscript.
+ */
+function extractTranscriptText(rawOutput: string): string {
+  const trimmed = rawOutput.trim()
+  if (trimmed.length === 0) return ''
+  try {
+    const parsed = JSON.parse(trimmed) as { text?: unknown }
+    if (parsed && typeof parsed.text === 'string') return parsed.text.trim()
+  } catch {
+    // not JSON; fall through to raw
+  }
+  return trimmed
+}
+
+/**
+ * Pull Whisper's detected language (ISO 639-1) out of an stt_transcribe
+ * result. Returns '' when absent — callers fall back to a plain <voice_note>.
+ */
+function extractVoiceLanguage(rawOutput: string): string {
+  const trimmed = rawOutput.trim()
+  if (trimmed.length === 0) return ''
+  try {
+    const parsed = JSON.parse(trimmed) as { language?: unknown }
+    if (parsed && typeof parsed.language === 'string') return parsed.language.trim()
+  } catch {
+    // not JSON
+  }
+  return ''
+}
 
 function extractWolffishMediaPaths(output: string): string[] {
   const paths: string[] = []
@@ -1604,6 +1820,27 @@ function extractDocumentPaths(output: string): string[] {
     addIfDocument(match[1])
   }
 
+  return paths
+}
+
+// Generic files explicitly delivered via send_file carry a `(file)` marker
+// (any extension that isn't an image/audio/video/document). Only the
+// explicit marker is matched — no bare-path fallback — so incidental paths
+// in tool output are never mistaken for a delivery.
+function extractGenericFilePaths(output: string): string[] {
+  const paths: string[] = []
+  const seen = new Set<string>()
+  const home = os.homedir()
+  const markerRegex = /\[wolffish-output:\s*([^\]]+?)\s+\(file\)\]/g
+  let match: RegExpExecArray | null
+  while ((match = markerRegex.exec(output)) !== null) {
+    const raw = match[1].trim()
+    const abs = raw.startsWith('~/') ? path.join(home, raw.slice(2)) : raw
+    if (!seen.has(abs)) {
+      seen.add(abs)
+      paths.push(abs)
+    }
+  }
   return paths
 }
 

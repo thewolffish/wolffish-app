@@ -1,4 +1,36 @@
-## v1.0.179 — 2026-06-21 `Latest`
+## v1.0.180 — 2026-06-22 `Latest`
+
+### Voice Notes on WhatsApp
+
+WhatsApp now handles push-to-talk voice notes the same way Telegram does: the clip is downloaded, transcribed, and answered as a normal turn — and the audio is saved so you can replay it in the in-app history. Across every channel (in-app, Telegram, WhatsApp), Wolffish also replies in the language it actually heard now — Whisper's detected language is passed straight to the model, so a short English voice note no longer drifts into your native tongue.
+
+### A Cleaner Telegram & WhatsApp Feed
+
+By default, Telegram and WhatsApp now relay only what matters — the agent's replies, the files it produces, and any errors — instead of narrating every tool call and intermediate step. A new **Verbose task results** toggle in each channel's settings turns the full play-by-play back on. History and ordering are unchanged; this only gates what gets sent to the chat.
+
+### Wolffish Hands You the File
+
+When a task produces a file, you now actually receive it. A new **send_file** capability delivers any file — document, image, audio, video, archive, code — as a native attachment in the conversation you're in: a download card in the app, a real upload on WhatsApp and Telegram (up to 50 MB). No more "saved to …/report.pdf" with nothing attached.
+
+### Voice Transcription Self-Heals
+
+Transcription needs FFmpeg, which previously dead-ended with a manual install message on a fresh machine. Now the in-app mic, Telegram, and WhatsApp all install FFmpeg silently the first time you send a voice note, then carry on — no setup, no restart. If it genuinely can't, you get a single friendly line instead of a wall of shell commands.
+
+### Your Configured Voice, Respected
+
+Voice replies now use the voice you picked in **Settings → Text-to-Speech** and stop there. Previously the agent could substitute its own same-language voice and override your choice — which is how a configured female voice could come out sounding male. It still switches voices when it's deliberately replying in another language.
+
+### Settings Polish
+
+**Save vs. Test connection.** Brave and GitHub now pair a plain **Save** button with a separate **Test connection** link, so you can store a key you trust without spending an API call (or quota) to verify it. Buttons grey out when nothing has changed. **Drag-and-drop Google credentials.** Drop your OAuth JSON straight onto the Google panel instead of click-to-browse only. **Quick links out.** The Brave, GitHub, and Google panels gained a header link to the provider's console.
+
+### Fixes & Polish
+
+Dropping a file anywhere outside a dropzone no longer navigates the window away and blanks the app. A voice memo no longer renders a second, broken "video" card next to its player. Saving only a Telegram preference (verbose, auto-refresh) no longer needlessly restarts the bot. The bundled starter identity file now ships as a fill-in-the-blanks template instead of placeholder data, with guidance that costs zero context. Several laggy opacity/colour transitions were trimmed across menus, cards, and settings for a snappier feel.
+
+---
+
+## v1.0.179 — 2026-06-21
 
 ### Z.ai Logo Adapts to the Theme
 

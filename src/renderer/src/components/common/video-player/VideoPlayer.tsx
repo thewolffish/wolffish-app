@@ -103,7 +103,7 @@ function ActiveVideo({
           className="bg-border/30 flex w-full items-center justify-center"
           style={{ aspectRatio: '16 / 9' }}
         >
-          <span className="text-muted text-xs">Loading video…</span>
+          <span className="text-muted animate-pulse text-xs">Loading video</span>
         </div>
       )}
       <div className="flex items-center gap-2 px-3 pb-2">

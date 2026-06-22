@@ -119,7 +119,7 @@ export function MarkdownEditorPage({
               onClick={() => void handleRefresh()}
               disabled={loading}
               className={cn(
-                'text-muted hover:text-fg inline-flex cursor-pointer items-center gap-1 rounded-md px-1.5 py-0.5 text-xs transition-colors',
+                'text-muted hover:text-fg inline-flex cursor-pointer items-center gap-1 rounded-md px-1.5 py-0.5 text-xs',
                 'disabled:cursor-not-allowed disabled:opacity-40'
               )}
             >

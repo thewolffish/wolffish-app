@@ -105,7 +105,9 @@ const MEDIA_EXTENSIONS: Record<string, MediaType> = {
   ico: 'image',
   heic: 'image',
   mp4: 'video',
-  webm: 'video',
+  // webm → audio: wolffish's webm files are voice/TTS clips, shown with the
+  // audio player (consistent with the chat + upload classifiers).
+  webm: 'audio',
   mov: 'video',
   avi: 'video',
   mkv: 'video',
@@ -456,7 +458,7 @@ export function ViewerPage(): React.JSX.Element {
                     onClick={() => void handleReveal()}
                     aria-label={t('workspace.reveal')}
                     className={cn(
-                      'inline-flex items-center gap-1 rounded-md text-xs cursor-pointer transition-colors',
+                      'inline-flex items-center gap-1 rounded-md text-xs cursor-pointer',
                       'text-muted hover:text-fg px-1.5 py-0.5',
                       'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
                     )}
@@ -469,7 +471,7 @@ export function ViewerPage(): React.JSX.Element {
                     onClick={() => void handleDownload()}
                     aria-label={t('workspace.download')}
                     className={cn(
-                      'inline-flex items-center gap-1 rounded-md text-xs cursor-pointer transition-colors',
+                      'inline-flex items-center gap-1 rounded-md text-xs cursor-pointer',
                       'text-muted hover:text-fg px-1.5 py-0.5',
                       'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
                     )}
@@ -483,7 +485,7 @@ export function ViewerPage(): React.JSX.Element {
                     disabled={resyncing}
                     aria-label={t('workspace.resync')}
                     className={cn(
-                      'inline-flex items-center gap-1 rounded-md text-xs cursor-pointer transition-colors',
+                      'inline-flex items-center gap-1 rounded-md text-xs cursor-pointer',
                       'text-muted hover:text-fg px-1.5 py-0.5',
                       'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
                       'disabled:cursor-not-allowed disabled:opacity-40'

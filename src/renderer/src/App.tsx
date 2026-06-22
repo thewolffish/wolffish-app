@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { ThemeProvider } from '@providers/theme/ThemeProvider'
 import { LocaleProvider } from '@providers/locale/LocaleProvider'
 import { FlowProvider } from '@providers/flow/FlowProvider'
@@ -51,7 +52,29 @@ function Screens(): React.JSX.Element {
   }
 }
 
+// Electron's default action for a file dropped anywhere in the window is to
+// navigate to it (file://…), which blanks the app. Registered dropzones handle
+// their own drops; this guard swallows every other drop so a near-miss can't
+// hijack the window. React's onDrop handlers still fire — they run on the root
+// container during bubbling, before this window-level listener.
+function useGlobalDropGuard(): void {
+  useEffect(() => {
+    const prevent = (e: DragEvent): void => {
+      if (e.dataTransfer && Array.from(e.dataTransfer.types).includes('Files')) {
+        e.preventDefault()
+      }
+    }
+    window.addEventListener('dragover', prevent)
+    window.addEventListener('drop', prevent)
+    return () => {
+      window.removeEventListener('dragover', prevent)
+      window.removeEventListener('drop', prevent)
+    }
+  }, [])
+}
+
 function App(): React.JSX.Element {
+  useGlobalDropGuard()
   return (
     <ThemeProvider>
       <LocaleProvider>

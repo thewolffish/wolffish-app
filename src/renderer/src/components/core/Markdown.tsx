@@ -79,7 +79,7 @@ const components: Components = {
           text={text}
           variant="overlay"
           ariaLabelKey="chat.copyCode"
-          className="absolute inset-e-2 top-2 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+          className="absolute inset-e-2 top-2 opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
         />
         <pre
           dir="ltr"
@@ -124,7 +124,7 @@ const components: Components = {
           <span
             className={cn(
               'absolute inset-e-2 top-2 flex items-center gap-1',
-              'opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100'
+              'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'
             )}
           >
             <button
