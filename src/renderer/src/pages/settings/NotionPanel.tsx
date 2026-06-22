@@ -4,9 +4,11 @@ import { NotionLogo } from '@components/core/ProviderLogos'
 import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn'
 import type { NotionConfig, NotionErrorKind, NotionStatus } from '@preload/index'
-import { EyeIcon, ViewOffIcon } from 'hugeicons-react'
+import { EyeIcon, LinkSquare02Icon, ViewOffIcon } from 'hugeicons-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
+const NOTION_CONNECTIONS_URL = 'https://app.notion.com/developers/connections'
 
 const STATUS_DOT: Record<NotionStatus['status'], string> = {
   configured: 'bg-emerald-500',
@@ -117,9 +119,23 @@ export function NotionPanel(): React.JSX.Element {
     <div className="flex min-h-full w-full items-start justify-center px-6 py-10">
       <div className="flex w-full max-w-2xl flex-col gap-6">
         <header className="flex flex-col gap-2">
-          <h1 className="text-fg text-2xl font-semibold tracking-tight">
-            {t('settings.services.notion.title')}
-          </h1>
+          <div className="flex items-center justify-between gap-3">
+            <h1 className="text-fg text-2xl font-semibold tracking-tight">
+              {t('settings.services.notion.title')}
+            </h1>
+            <a
+              href={NOTION_CONNECTIONS_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={cn(
+                'text-muted hover:text-fg flex items-center gap-1.5 text-xs',
+                'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg rounded-md px-1.5 py-1'
+              )}
+            >
+              <span>{t('settings.services.notion.platform')}</span>
+              <LinkSquare02Icon size={13} className="shrink-0" />
+            </a>
+          </div>
           <p className="text-muted text-sm leading-relaxed">
             {t('settings.services.notion.subtitle')}
           </p>
@@ -213,7 +229,7 @@ export function NotionPanel(): React.JSX.Element {
 
           <div className="border-border/60 border-t" />
 
-          <div className="flex items-center justify-end">
+          <div className="flex items-center justify-between gap-2">
             <Button
               type="button"
               onClick={() => void handleTest()}
@@ -223,6 +239,21 @@ export function NotionPanel(): React.JSX.Element {
             >
               {t('settings.services.notion.test')}
             </Button>
+            <button
+              type="button"
+              disabled={busy !== 'idle' || token.trim().length === 0}
+              onClick={() => void handleTest()}
+              className={cn(
+                'text-xs font-medium capitalize',
+                busy === 'testing'
+                  ? 'text-muted animate-pulse cursor-wait'
+                  : busy !== 'idle' || token.trim().length === 0
+                    ? 'text-muted cursor-not-allowed'
+                    : 'text-primary hover:text-primary/80 cursor-pointer'
+              )}
+            >
+              {t('settings.services.notion.testConnection')}
+            </button>
           </div>
 
           <p className="text-muted text-xs">{t('settings.services.notion.testHint')}</p>

@@ -1282,6 +1282,30 @@ export function CloudProviderPanel({ provider }: { provider: ProviderId }): Reac
     }
   }
 
+  // Re-verify the already-saved key without re-fetching or re-saving — a
+  // simple connection check, mirroring the "Test connection" affordance on
+  // the Notion/Brave service panels. Only offered once a key is stored;
+  // entering a new key is verified through the primary Save button instead.
+  const canTestConnection = !!stored?.apiKey && !enteringNewKey && !saving && status !== 'testing'
+
+  const onTestConnection = async (): Promise<void> => {
+    if (!canTestConnection) return
+    setStatus('testing')
+    setError(null)
+    const result: ProviderTestResult = await window.api.provider.test({ id: provider })
+    if (!result.ok) {
+      const message = formatTestError(result, providerLabel, t)
+      setStatus('invalid')
+      setError(message)
+      if (result.kind === 'invalid_key') setKeyInvalid(true)
+      toast.show({ tone: 'error', message: t('settings.model.cloud.errors.generic', { message }) })
+      return
+    }
+    setStatus('untested')
+    setKeyInvalid(false)
+    showKeyWorksToast()
+  }
+
   // Picking a different model on an already-saved provider auto-saves
   // silently — the dropdown already reflects the new selection.
   const onSelectModel = async (next: string): Promise<void> => {
@@ -1487,15 +1511,32 @@ export function CloudProviderPanel({ provider }: { provider: ProviderId }): Reac
               {t('settings.model.cloud.test')}
             </Button>
             {stored?.apiKey && (
-              <Button
-                variant="ghost"
-                size="md"
-                onClick={() => void onRemove()}
-                disabled={!canRemove}
-                className="text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/30"
-              >
-                {t('settings.model.cloud.remove')}
-              </Button>
+              <div className="flex items-center gap-4">
+                <button
+                  type="button"
+                  disabled={!canTestConnection}
+                  onClick={() => void onTestConnection()}
+                  className={cn(
+                    'text-sm font-medium capitalize',
+                    status === 'testing'
+                      ? 'text-muted animate-pulse cursor-wait'
+                      : !canTestConnection
+                        ? 'text-muted cursor-not-allowed'
+                        : 'text-primary hover:text-primary/80 cursor-pointer'
+                  )}
+                >
+                  {t('settings.model.cloud.testConnection')}
+                </button>
+                <Button
+                  variant="ghost"
+                  size="md"
+                  onClick={() => void onRemove()}
+                  disabled={!canRemove}
+                  className="text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/30"
+                >
+                  {t('settings.model.cloud.remove')}
+                </Button>
+              </div>
             )}
           </div>
         </section>
