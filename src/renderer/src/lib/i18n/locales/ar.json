@@ -1197,11 +1197,17 @@
       "checkManual": "التحقق من التحديثات",
       "checkManualDescription": "التحقق يدوياً من الإصدارات الجديدة.",
       "check": "تحقق",
+      "retry": "إعادة المحاولة",
+      "checkError": "فشل التحديث. يرجى المحاولة مرة أخرى.",
       "install": "تحديث",
       "upToDate": "محدّث",
       "updateFound": "يوجد تحديث",
       "checkFailed": "تعذّر التحقق من التحديثات",
       "downloading": "جارٍ تحميل التحديث {{version}}…",
+      "downloadingTitle": "جارٍ تحميل التحديث",
+      "downloadingSubtitle": "يتم تحميل تحديثك",
+      "verifyingTitle": "جارٍ التحقق من التحديث",
+      "verifyingSubtitle": "أوشكنا على الانتهاء — يتم التحقق من تحديثك",
       "installReady": "تثبيت التحديث المحمّل",
       "updateAvailable": "جاهز للتثبيت"
     }

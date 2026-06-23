@@ -42,6 +42,35 @@ export const DEFAULT_BUDGET_TOKENS = 8000
 // FTS5 hits to leak into context for queries unrelated to the workspace.
 export const MEMORY_RELEVANCE_THRESHOLD = 0.25
 
+// Upper bound on the token budget handed to context assembly, independent of
+// how large the model's context window is. Modern models advertise windows of
+// 200k–1M tokens; spending all of that on a system prompt that is rebuilt on
+// every tool-loop iteration is what choked the runtime (a 114k-token prompt
+// re-sent dozens of times per task). The discretionary pool (memory, history,
+// skills) is capped here; mandatory identity/prefrontal/tools are never
+// trimmed, and the live conversation gets the rest of the window.
+export const MAX_ASSEMBLY_BUDGET_TOKENS = 48_000
+
+// No single scored candidate may occupy more than this. A genuinely huge file
+// is head+tail trimmed with a marker pointing at wolffish_recall, rather than
+// either swallowing the whole budget or being dropped wholesale. Generous on
+// purpose — real memory/knowledge files sit well under it, so quality is not
+// degraded; it only bites pathological blobs.
+export const PER_CANDIDATE_MAX_TOKENS = 6_000
+
+// Below this, a leftover budget slice is too small to carry useful signal —
+// skip rather than inject a meaningless fragment.
+const MIN_CANDIDATE_TOKENS = 256
+
+/**
+ * Clamp the model-derived context budget down to the assembly ceiling. Keeps
+ * the system prompt lean and stable regardless of the active model's window.
+ */
+export function clampAssemblyBudget(modelBudget: number): number {
+  if (!Number.isFinite(modelBudget) || modelBudget <= 0) return MAX_ASSEMBLY_BUDGET_TOKENS
+  return Math.min(modelBudget, MAX_ASSEMBLY_BUDGET_TOKENS)
+}
+
 const BUDGET_RATIOS: BudgetAllocation = {
   identity: 0.15,
   prefrontal: 0.1,
@@ -187,14 +216,44 @@ export class RAS {
         }
         if (category === 'memory' && item.score < MEMORY_RELEVANCE_THRESHOLD) continue
         if (item.score <= 0) continue
-        if (used + item.tokens > cap) continue
-        out.push(item)
-        used += item.tokens
+
+        // How much room is left in this category, capped per-candidate so one
+        // relevant-but-huge file can't crowd out everything behind it.
+        const room = Math.min(cap - used, PER_CANDIDATE_MAX_TOKENS)
+        if (room < MIN_CANDIDATE_TOKENS) continue
+
+        if (item.tokens <= room) {
+          out.push(item)
+          used += item.tokens
+          continue
+        }
+
+        // Oversized: keep the highest-signal head+tail, mark the cut, and
+        // point the model at recall for the rest. Beats dropping it entirely.
+        const content = truncateToTokens(item.content, room)
+        const tokens = this.estimateTokens(content)
+        out.push({ ...item, content, tokens })
+        used += tokens
       }
     }
 
     return out
   }
+}
+
+/**
+ * Trim content to roughly `maxTokens` by keeping a head and a smaller tail,
+ * separated by a marker that tells the model content was elided and how to
+ * retrieve it. ~4 chars/token, mirroring estimateTokens.
+ */
+function truncateToTokens(content: string, maxTokens: number): string {
+  const maxChars = Math.max(maxTokens * 4, 400)
+  if (content.length <= maxChars) return content
+  const marker = '\n\n[… trimmed to fit context — use wolffish_recall for the full content …]\n\n'
+  const room = maxChars - marker.length
+  const headChars = Math.floor(room * 0.7)
+  const tailChars = room - headChars
+  return content.slice(0, headChars) + marker + content.slice(content.length - tailChars)
 }
 
 function tokenize(message: string): string[] {

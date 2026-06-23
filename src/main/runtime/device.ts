@@ -94,6 +94,11 @@ export class Device {
    */
   async getBlockBody(): Promise<string> {
     const info = await this.getInfo()
+    // Only STATIC facts go in this block. It sits before the <runtime> cache
+    // breakpoint, i.e. inside the prefix the provider caches across turns —
+    // so anything that changes between turns (free RAM, free disk) would bust
+    // that cache and re-bill the whole system prompt every follow-up message.
+    // Live headroom is reachable on demand via wolffish_status when needed.
     const lines = [
       `os: ${info.osLabel}`,
       `arch: ${info.arch}`,
@@ -101,12 +106,10 @@ export class Device {
       `user: ${info.username}`,
       `home: ${info.homeDir}`,
       `shell: ${info.shell}`,
-      `ram: ${formatBytes(info.ramTotalBytes)} total, ${formatBytes(info.ramFreeBytes)} free`
+      `ram: ${formatBytes(info.ramTotalBytes)} total`
     ]
     if (info.disk) {
-      lines.push(
-        `disk (${info.homeDir}): ${formatBytes(info.disk.totalBytes)} total, ${formatBytes(info.disk.freeBytes)} free`
-      )
+      lines.push(`disk (${info.homeDir}): ${formatBytes(info.disk.totalBytes)} total`)
     }
     return lines.join('\n')
   }

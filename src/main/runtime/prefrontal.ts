@@ -5,6 +5,7 @@ import { Cortex, type CortexSearchResult } from '@main/runtime/cortex'
 import type { Device } from '@main/runtime/device'
 import type { Hippocampus } from '@main/runtime/hippocampus'
 import {
+  clampAssemblyBudget,
   DEFAULT_BUDGET_TOKENS,
   RAS,
   type ContextCandidate,
@@ -81,6 +82,11 @@ const ALWAYS_INCLUDED: Array<{ category: ContextCategory; rel: string; tag: stri
 ]
 
 const SECTION_ORDER: ContextCategory[] = ['identity', 'prefrontal', 'memory', 'skills', 'history']
+
+// Non-sensitive config variables longer than this are previewed, not dumped
+// verbatim, into the (RAS-bypassing) <variables> block. Generous enough that
+// real values — URLs, names, IDs, keys — are never touched.
+const VARIABLE_VALUE_MAX_CHARS = 400
 
 const SECTION_TAGS: Record<ContextCategory, string> = {
   identity: 'identity',
@@ -163,7 +169,11 @@ export class Prefrontal {
     runtime?: RuntimeContext,
     providerContext?: ProviderContext
   ): Promise<ContextBundle> {
-    const budget = this.ras.allocateBudget(this.getTokenBudget())
+    // Assemble against a clamped budget, not the raw model window. A 200k–1M
+    // window is for the live conversation, not a system prompt that gets
+    // rebuilt every iteration — capping it here is what keeps the prompt lean
+    // and its prefix stable enough for the provider to cache.
+    const budget = this.ras.allocateBudget(clampAssemblyBudget(this.getTokenBudget()))
     const candidates: ContextCandidate[] = []
     const includedPaths = new Set<string>()
 
@@ -351,9 +361,11 @@ export class Prefrontal {
       // Past tasks stay reachable on demand via insula tools and through
       // hippocampus episodes; task minutiae never belong in every prompt.
       if (hit.path.startsWith('brain/motor/')) continue
-      // Basal-ganglia day files are byte-duplicates of the recent.md
-      // feedback candidate injected by collectFeedbackCandidate below,
-      // and they grow with every recorded tool outcome mid-task.
+      // Basal-ganglia day files are the raw tool-outcome log. Their learning
+      // signal is already folded into context as the bounded preference digest
+      // (collectFeedbackCandidate below); pulling the raw days in here would
+      // re-introduce the firehose the digest exists to replace. They stay
+      // reachable verbatim on demand via wolffish_recall.
       if (hit.path.startsWith('brain/basalganglia/')) continue
       const content = await this.readFile(hit.path)
       if (!content) continue
@@ -406,9 +418,13 @@ export class Prefrontal {
     if (!this.basalganglia) return null
     const content = await this.basalganglia.getPreferences(windowDays).catch(() => '')
     if (!content || content.trim().length === 0) return null
+    // Mandatory (prefrontal) so the synthesized habit digest is always present
+    // — it's tiny and represents standing behavioural guidance, not a
+    // query-dependent memory. The source label is deliberately not a real path
+    // (the digest is synthesized, not a file the model should try to read).
     return {
-      category: 'memory',
-      source: 'brain/basalganglia/recent.md',
+      category: 'prefrontal',
+      source: 'synthesized: learned preferences',
       content
     }
   }
@@ -418,7 +434,18 @@ export class Prefrontal {
       const config = await readConfig()
       const vars = config?.variables ?? []
       if (vars.length === 0) return ''
-      const lines = vars.map((v) => `- ${v.name} = ${v.value}${v.sensitive ? ' (sensitive)' : ''}`)
+      // This block bypasses RAS, so an oversized pasted value (a JSON blob, a
+      // cert) would land in the prefix uncapped on every turn — the same
+      // unbounded-source failure mode this work hardened elsewhere. Cap
+      // non-sensitive values; keep sensitive ones whole so the agent can still
+      // use a secret verbatim in a tool call (keys are short anyway).
+      const lines = vars.map((v) => {
+        const value =
+          v.sensitive || v.value.length <= VARIABLE_VALUE_MAX_CHARS
+            ? v.value
+            : `${v.value.slice(0, VARIABLE_VALUE_MAX_CHARS).trimEnd()}… (${v.value.length} chars; read config.json for the full value)`
+        return `- ${v.name} = ${value}${v.sensitive ? ' (sensitive)' : ''}`
+      })
       return [
         'The user has defined the following variables in Settings > Variables.',
         'Use these values when the user references them or when a task requires them.',

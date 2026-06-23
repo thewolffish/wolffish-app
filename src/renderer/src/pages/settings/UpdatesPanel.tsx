@@ -4,14 +4,32 @@ import { cn } from '@lib/utils/cn'
 import type { UpdateCheckResult } from '@preload/index'
 import { useFlow } from '@providers/flow/useFlow'
 import { Download01Icon } from 'hugeicons-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-type UpdatePhase = 'idle' | 'checking' | 'downloading' | 'ready' | 'installing'
+type UpdatePhase =
+  | 'idle'
+  | 'checking'
+  | 'downloading'
+  | 'verifying'
+  | 'ready'
+  | 'installing'
+  | 'error'
 
-let cachedReadyVersion: string | null = null
+// Main owns the real state; this module-level snapshot mirrors it so a panel
+// remounted after page navigation restores instantly (before getState resolves).
+// These subscriptions are registered once at import and intentionally never
+// torn down — they outlive any single mount of the panel.
+let cachedState: { phase: UpdatePhase; version: string | null; percent: number } = {
+  phase: 'idle',
+  version: null,
+  percent: 0
+}
+window.api.updater.onState((s) => {
+  cachedState = { phase: s.phase, version: s.version, percent: s.percent }
+})
 window.api.updater.onReady((event) => {
-  cachedReadyVersion = event.version
+  cachedState = { phase: 'ready', version: event.version, percent: 100 }
 })
 
 export function UpdatesPanel(): React.JSX.Element {
@@ -22,35 +40,53 @@ export function UpdatesPanel(): React.JSX.Element {
 
   const [appVersion, setAppVersion] = useState<string | null>(null)
   const [autoUpdates, setAutoUpdates] = useState(updatesEnabled)
-  const [phase, setPhase] = useState<UpdatePhase>(cachedReadyVersion ? 'ready' : 'idle')
-  const [updateVersion, setUpdateVersion] = useState<string | null>(cachedReadyVersion)
-  const [downloadPercent, setDownloadPercent] = useState(0)
+  const [phase, setPhase] = useState<UpdatePhase>(cachedState.phase)
+  const [updateVersion, setUpdateVersion] = useState<string | null>(cachedState.version)
+  const [downloadPercent, setDownloadPercent] = useState(cachedState.percent)
   const [saving, setSaving] = useState(false)
+  // Flipped once any live updater:state broadcast lands, so the async getState
+  // seed below never clobbers fresher state (e.g. reverting 'ready' back to
+  // 'verifying' if its snapshot resolves after the ready broadcast).
+  const liveSeen = useRef(false)
 
   useEffect(() => {
     void window.api.updater.getVersion().then(setAppVersion)
+    // Authoritative recovery from main on (re)mount. The panel is fully
+    // unmounted when switching settings tabs or leaving Settings, so without
+    // this a download in progress would be lost and the user would have to
+    // click "Check" again. getState() restores live phase/version/percent —
+    // but only if no live broadcast has already superseded the snapshot.
+    let cancelled = false
+    void window.api.updater.getState().then((s) => {
+      if (cancelled || liveSeen.current) return
+      setPhase((prev) => (prev === 'installing' ? prev : s.phase))
+      setUpdateVersion(s.version)
+      setDownloadPercent(s.percent)
+    })
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   useEffect(() => {
-    const unsubAvailable = window.api.updater.onAvailable((event) => {
-      setUpdateVersion(event.version)
-      setDownloadPercent(0)
-      setPhase('downloading')
+    const unsubState = window.api.updater.onState((s) => {
+      liveSeen.current = true
+      setUpdateVersion(s.version)
+      // Mirror main directly — it is the source of truth: monotonic within a
+      // download and reset to 0 on a fresh one. Clamping here would pin the bar
+      // at the previous peak when a retry restarts the download.
+      setDownloadPercent(s.percent)
+      // A late 'ready' broadcast must not yank the user out of the install view.
+      setPhase((prev) => (prev === 'installing' && s.phase === 'ready' ? 'installing' : s.phase))
     })
-    const unsubProgress = window.api.updater.onProgress((event) => {
-      setDownloadPercent(Math.round(event.percent))
-    })
-    const unsubReady = window.api.updater.onReady((event) => {
-      cachedReadyVersion = event.version
-      setUpdateVersion(event.version)
-      setPhase('ready')
+    const unsubError = window.api.updater.onError((event) => {
+      show({ message: event.message, tone: 'error' })
     })
     return () => {
-      unsubAvailable()
-      unsubProgress()
-      unsubReady()
+      unsubState()
+      unsubError()
     }
-  }, [])
+  }, [show])
 
   const onToggleAutoUpdates = useCallback(
     async (next: boolean) => {
@@ -68,12 +104,14 @@ export function UpdatesPanel(): React.JSX.Element {
   )
 
   const onCheckForUpdates = useCallback(async () => {
-    if (phase !== 'idle') return
+    // Allow a retry from idle/error, but never re-check during an active
+    // transfer — that would reset the bar to 0% and disable Install.
+    if (phase === 'checking' || phase === 'downloading' || phase === 'verifying') return
     setPhase('checking')
     try {
       const result: UpdateCheckResult = await window.api.updater.check()
       if (result.ok && result.version) {
-        // onAvailable event will transition to 'downloading'
+        // the updater:state broadcast will transition phase to 'downloading'
         setUpdateVersion(result.version)
       } else if (result.ok) {
         show({ message: t('settings.updates.upToDate', 'Up to date'), tone: 'success' })
@@ -185,17 +223,24 @@ export function UpdatesPanel(): React.JSX.Element {
           <div className="border-border/60 border-t" />
 
           <div className="flex flex-col gap-3 min-h-[68px]">
-            {phase === 'downloading' ? (
+            {phase === 'downloading' || phase === 'verifying' ? (
               <>
                 <div className="flex items-center justify-between gap-4">
                   <div className="flex flex-col gap-1">
                     <span className="text-fg text-sm font-medium">
-                      {t('settings.updates.downloadingTitle', 'Downloading update')}
+                      {phase === 'verifying'
+                        ? t('settings.updates.verifyingTitle', 'Verifying update')
+                        : t('settings.updates.downloadingTitle', 'Downloading update')}
                     </span>
                     <p className="text-muted text-xs flex items-center gap-1.5 animate-pulse">
                       <Download01Icon size={12} className="shrink-0" />
-                      {t('settings.updates.downloadingSubtitle', 'Your update is downloading')}
-                      {downloadPercent > 0 && ` ${downloadPercent}%`}
+                      {phase === 'verifying'
+                        ? t(
+                            'settings.updates.verifyingSubtitle',
+                            'Almost done — verifying your update'
+                          )
+                        : t('settings.updates.downloadingSubtitle', 'Your update is downloading')}
+                      {phase === 'downloading' && downloadPercent > 0 && ` ${downloadPercent}%`}
                     </p>
                   </div>
                   <button
@@ -213,12 +258,12 @@ export function UpdatesPanel(): React.JSX.Element {
                   role="progressbar"
                   aria-valuemin={0}
                   aria-valuemax={100}
-                  aria-valuenow={downloadPercent}
+                  aria-valuenow={phase === 'verifying' ? 100 : downloadPercent}
                   className="bg-border/40 h-1 w-full overflow-hidden rounded-full"
                 >
                   <div
                     className="bg-primary h-full rounded-full transition-[width] duration-300 ease-out"
-                    style={{ width: `${downloadPercent}%` }}
+                    style={{ width: `${phase === 'verifying' ? 100 : downloadPercent}%` }}
                   />
                 </div>
               </>
@@ -257,11 +302,13 @@ export function UpdatesPanel(): React.JSX.Element {
                   <span className="text-fg text-sm font-medium">
                     {t('settings.updates.checkManual', 'Check for updates')}
                   </span>
-                  <p className="text-muted text-xs">
-                    {t(
-                      'settings.updates.checkManualDescription',
-                      'Manually check for new versions.'
-                    )}
+                  <p className={cn('text-xs', phase === 'error' ? 'text-red-500' : 'text-muted')}>
+                    {phase === 'error'
+                      ? t('settings.updates.checkError', 'Update failed. Please try again.')
+                      : t(
+                          'settings.updates.checkManualDescription',
+                          'Manually check for new versions.'
+                        )}
                   </p>
                 </div>
                 <Button
@@ -270,7 +317,9 @@ export function UpdatesPanel(): React.JSX.Element {
                   onClick={() => void onCheckForUpdates()}
                   disabled={phase === 'checking'}
                 >
-                  {t('settings.updates.check', 'Check')}
+                  {phase === 'error'
+                    ? t('settings.updates.retry', 'Retry')
+                    : t('settings.updates.check', 'Check')}
                 </Button>
               </div>
             )}

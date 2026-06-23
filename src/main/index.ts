@@ -60,6 +60,8 @@ import {
   checkForUpdatesIfEnabled,
   initUpdater,
   installUpdate,
+  isUpdateReady,
+  markInstalling,
   stampPreUpdateVersion
 } from '@main/updater'
 import {
@@ -2132,7 +2134,17 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('updater:install', async () => {
     if (is.dev || updateInstallInProgress) return
+    // Bail before tearing anything down if there's no verified artifact —
+    // otherwise a failed arm would force-exit the app with nothing installed.
+    // installUpdate() surfaces the error to the renderer so it can recover.
+    if (!isUpdateReady()) {
+      installUpdate()
+      return
+    }
     updateInstallInProgress = true
+    // Broadcast 'installing' so a panel remounted during the grace window
+    // (page navigation) restores the disabled state instead of re-enabling.
+    markInstalling()
     await stampPreUpdateVersion()
     void shutdownGracefully()
     // Grace period: let in-flight work finish, then force through

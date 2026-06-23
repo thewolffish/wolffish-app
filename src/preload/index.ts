@@ -1035,6 +1035,25 @@ export type UpdateReadyEvent = {
   releaseNotes: string | null
 }
 
+export type UpdaterPhase =
+  | 'idle'
+  | 'checking'
+  | 'downloading'
+  | 'verifying'
+  | 'ready'
+  | 'installing'
+  | 'error'
+
+export type UpdaterState = {
+  phase: UpdaterPhase
+  version: string | null
+  percent: number
+  releaseNotes: string | null
+  error: string | null
+}
+
+export type UpdaterErrorEvent = { message: string }
+
 export type UpdateCheckResult = { ok: true; version: string | null } | { ok: false; error: string }
 
 export type UpdaterApi = {
@@ -1042,12 +1061,15 @@ export type UpdaterApi = {
   check: () => Promise<UpdateCheckResult>
   getVersion: () => Promise<string>
   getReady: () => Promise<UpdateReadyEvent | null>
+  getState: () => Promise<UpdaterState>
   consumePostUpdate: () => Promise<boolean>
   listChangelogMonths: () => Promise<string[]>
   readChangelog: (month: string, locale?: string) => Promise<string>
   onAvailable: (listener: (event: UpdateAvailableEvent) => void) => () => void
   onProgress: (listener: (event: UpdateDownloadProgressEvent) => void) => () => void
   onReady: (listener: (event: UpdateReadyEvent) => void) => () => void
+  onState: (listener: (state: UpdaterState) => void) => () => void
+  onError: (listener: (event: UpdaterErrorEvent) => void) => () => void
 }
 
 export type SttTranscribeResult =
@@ -1393,13 +1415,16 @@ const api: WolffishApi = {
     check: () => ipcRenderer.invoke('updater:check'),
     getVersion: () => ipcRenderer.invoke('updater:getVersion'),
     getReady: () => ipcRenderer.invoke('updater:getReady'),
+    getState: () => ipcRenderer.invoke('updater:getState'),
     consumePostUpdate: () => ipcRenderer.invoke('updater:consumePostUpdate'),
     listChangelogMonths: () => ipcRenderer.invoke('updater:listChangelogMonths'),
     readChangelog: (month: string, locale?: string) =>
       ipcRenderer.invoke('updater:readChangelog', month, locale),
     onAvailable: (listener) => subscribe('updater:available', listener),
     onProgress: (listener) => subscribe('updater:progress', listener),
-    onReady: (listener) => subscribe('updater:ready', listener)
+    onReady: (listener) => subscribe('updater:ready', listener),
+    onState: (listener) => subscribe('updater:state', listener),
+    onError: (listener) => subscribe('updater:error', listener)
   }
 }
 

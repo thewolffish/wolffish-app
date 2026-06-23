@@ -60,6 +60,12 @@ export type HippocampusOptions = {
 
 const RESPONSE_PREVIEW_CHARS = 200
 const HEADLINE_PREVIEW_CHARS = 80
+// Episodes are a log of WHAT happened, not a verbatim archive — the full
+// message lives in brain/conversations/*.json and is reachable via
+// wolffish_recall. Capping the user line keeps a single giant prompt (e.g. a
+// multi-KB "role" brief) from bloating the history section of every future
+// system prompt for the next two days.
+const USER_PREVIEW_CHARS = 280
 
 export class Hippocampus {
   private workspaceRoot: string | null
@@ -243,7 +249,7 @@ export class Hippocampus {
 function renderTurn(turn: TurnSummary): string {
   const time = formatTime(turn.timestamp)
   const head = `## ${time} — ${headline(turn.userMessage)}\n`
-  const userLine = `- **User:** ${oneLine(turn.userMessage) || '(empty)'}\n`
+  const userLine = `- **User:** ${truncate(oneLine(turn.userMessage), USER_PREVIEW_CHARS) || '(empty)'}\n`
   const toolLine =
     turn.toolCalls.length > 0
       ? `- **Tools:** ${turn.toolCalls.map(formatToolCall).join(', ')}\n`

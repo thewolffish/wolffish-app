@@ -33,6 +33,29 @@ export type FeedbackEntry = {
 }
 
 const OUTPUT_PREVIEW_CHARS = 200
+// Args are logged for traceability, not for replay — the full fidelity copy
+// lives in brain/conversations/*.json. Capping them keeps the day files (and
+// anything that reads them, including wolffish_recall) from ballooning when a
+// single call carries a large payload (e.g. a 700-char voice_respond text).
+const ARGS_PREVIEW_CHARS = 200
+
+// Hard ceiling on the preference digest folded into every system prompt. The
+// digest is a learned-behaviour summary, not a transcript — keeping it small
+// is the whole point (the raw day files used to dump ~60k tokens into context).
+const DIGEST_MAX_CHARS = 2400
+// How many recent corrections (denials + failures) the digest enumerates. The
+// rest are recoverable on demand via wolffish_recall.
+const DIGEST_MAX_CORRECTIONS = 12
+const DIGEST_DETAIL_CHARS = 140
+
+/** A single parsed feedback entry with its enclosing day. */
+type ParsedEntry = {
+  date: string
+  time: string
+  tool: string
+  outcome: FeedbackOutcome
+  detail: string
+}
 
 export type FeedbackSummary = {
   totalCalls: number
@@ -107,10 +130,19 @@ export class BasalGanglia {
   }
 
   /**
-   * Concatenate the last N days of feedback files. Returned as plain text
-   * so the prefrontal can fold it into the memory section of context.
+   * Build a compact, bounded **preference digest** from the last N days of
+   * feedback — NOT the raw transcript. The digest carries the learning
+   * signal the planner actually needs (reliability stats, habitual tools,
+   * and recent corrections to avoid repeating) in ~1-2k tokens instead of
+   * the ~60k the verbatim concatenation used to inject on every prompt.
+   *
+   * Today's file is excluded by default: today's actions are already visible
+   * in the live message thread, and excluding them keeps this block
+   * byte-stable across a turn's tool-loop iterations so the provider can
+   * reuse the cached system-prompt prefix. The full transcript stays on disk
+   * and is reachable on demand via wolffish_recall.
    */
-  async getPreferences(days = 7): Promise<string> {
+  async getPreferences(days = 7, opts: { excludeToday?: boolean } = {}): Promise<string> {
     if (!this.workspaceRoot) return ''
     const dir = path.join(this.workspaceRoot, 'brain', 'basalganglia')
     let entries: string[]
@@ -120,22 +152,23 @@ export class BasalGanglia {
       return ''
     }
 
-    const dated = entries
-      .filter((name) => /^\d{4}-\d{2}-\d{2}\.md$/.test(name))
-      .sort()
-      .slice(-days)
+    const todayKey = formatDate(new Date())
+    const dated = entries.filter((name) => /^\d{4}-\d{2}-\d{2}\.md$/.test(name)).sort()
+    // Exclude today only when there's prior history to summarise — on a fresh
+    // install (today is the only file) an empty digest helps no one.
+    const excludeToday = (opts.excludeToday ?? true) && dated.some((n) => n !== `${todayKey}.md`)
+    const window = dated.filter((name) => !(excludeToday && name === `${todayKey}.md`)).slice(-days)
 
-    const chunks: string[] = []
-    for (const name of dated) {
+    const files: Array<{ date: string; raw: string }> = []
+    for (const name of window) {
       try {
         const raw = await fs.readFile(path.join(dir, name), 'utf8')
-        const trimmed = raw.trim()
-        if (trimmed.length > 0) chunks.push(trimmed)
+        if (raw.trim().length > 0) files.push({ date: name.replace(/\.md$/, ''), raw })
       } catch {
         // skip unreadable files
       }
     }
-    return chunks.join('\n\n')
+    return summarizePreferences(files)
   }
 
   /**
@@ -206,7 +239,7 @@ export class BasalGanglia {
 function renderEntry(entry: FeedbackEntry): string {
   const time = formatTime(entry.timestamp)
   const lines = [`- ${time} | ${entry.tool} | ${entry.outcome}`]
-  lines.push(`  - Args: ${codeSpan(jsonInline(entry.args))}`)
+  lines.push(`  - Args: ${codeSpan(truncate(jsonInline(entry.args), ARGS_PREVIEW_CHARS))}`)
   if (entry.outcome === 'denied' || entry.outcome === 'blocked') {
     if (entry.reason && entry.reason.trim().length > 0) {
       lines.push(`  - Reason: ${oneLine(entry.reason)}`)
@@ -219,6 +252,106 @@ function renderEntry(entry: FeedbackEntry): string {
     lines.push(`  - Output: ${codeSpan(truncate(oneLine(entry.output), OUTPUT_PREVIEW_CHARS))}`)
   }
   return `${lines.join('\n')}\n\n`
+}
+
+/**
+ * Collapse a window of raw day files into a bounded preference digest.
+ * Pure — takes the file contents so it can be unit-tested without disk.
+ *
+ * The digest has three parts, all size-capped:
+ *   1. Reliability line — call count, success rate, most-used tools.
+ *   2. Recently-denied line — tools the user rejected (avoid unless asked).
+ *   3. Corrections list — the most recent failures/denials with their reason,
+ *      so the planner doesn't repeat a known dead end.
+ * Successful calls are deliberately NOT enumerated — that was the firehose.
+ */
+export function summarizePreferences(files: Array<{ date: string; raw: string }>): string {
+  const parsed: ParsedEntry[] = []
+  for (const f of files) parsed.push(...parseDayEntries(f.date, f.raw))
+  if (parsed.length === 0) return ''
+
+  const toolCounts = new Map<string, number>()
+  const deniedCounts = new Map<string, number>()
+  let success = 0
+  for (const e of parsed) {
+    toolCounts.set(e.tool, (toolCounts.get(e.tool) ?? 0) + 1)
+    if (e.outcome === 'success' || e.outcome === 'approved') success += 1
+    else if (e.outcome === 'denied') deniedCounts.set(e.tool, (deniedCounts.get(e.tool) ?? 0) + 1)
+  }
+
+  const total = parsed.length
+  const rate = Math.round((success / total) * 100)
+  const span = files.length
+  const topTools = rank(toolCounts, 6)
+    .map((t) => `${t.tool} (${t.count})`)
+    .join(', ')
+
+  const lines: string[] = [`## Learned preferences (last ${span} day${span === 1 ? '' : 's'})`, '']
+  lines.push(`- Reliability: ${total} tool calls, ${rate}% success. Most used: ${topTools}.`)
+
+  const denied = rank(deniedCounts, 5)
+  if (denied.length > 0) {
+    const list = denied.map((t) => `${t.tool} ×${t.count}`).join(', ')
+    lines.push(`- Recently denied (don't repeat unless the user asks again): ${list}.`)
+  }
+
+  // Most-recent corrections first. These are the actual learning signal.
+  const corrections = parsed
+    .filter((e) => e.outcome === 'failed' || e.outcome === 'denied' || e.outcome === 'blocked')
+    .reverse()
+    .slice(0, DIGEST_MAX_CORRECTIONS)
+  if (corrections.length > 0) {
+    lines.push('', '### Recent corrections & failures (avoid repeating)')
+    for (const c of corrections) {
+      const detail = c.detail ? ` — ${truncate(c.detail, DIGEST_DETAIL_CHARS)}` : ''
+      lines.push(`- ${c.date} ${c.tool} ${c.outcome}${detail}`)
+    }
+  }
+
+  lines.push(
+    '',
+    '(Summary only. For the full step-by-step history of any day, use wolffish_recall.)'
+  )
+
+  let out = lines.join('\n')
+  if (out.length > DIGEST_MAX_CHARS) out = `${out.slice(0, DIGEST_MAX_CHARS - 1).trimEnd()}…`
+  return out
+}
+
+/**
+ * Parse a day file into structured entries, capturing the reason/error/output
+ * detail line that follows each header. Tolerant of malformed input.
+ */
+function parseDayEntries(date: string, raw: string): ParsedEntry[] {
+  const out: ParsedEntry[] = []
+  const lines = raw.split(/\r?\n/)
+  for (let i = 0; i < lines.length; i++) {
+    const head = parseEntryHeader(lines[i])
+    if (!head) continue
+    let detail = ''
+    // The detail sits on an indented `- Reason:`/`- Error:`/`- Output:` line
+    // within the next few lines, before the next entry header.
+    for (let j = i + 1; j < Math.min(i + 5, lines.length); j++) {
+      if (parseEntryHeader(lines[j])) break
+      const m = /^\s+-\s+(Reason|Error|Output):\s+(.*)$/.exec(lines[j])
+      if (m) {
+        detail = m[2].replace(/^`+\s?|\s?`+$/g, '').trim()
+        break
+      }
+    }
+    out.push({ date, time: head.time, tool: head.tool, outcome: head.outcome, detail })
+  }
+  return out
+}
+
+function parseEntryHeader(
+  line: string
+): { time: string; tool: string; outcome: FeedbackOutcome } | null {
+  const m = /^-\s+(\d{2}:\d{2})\s+\|\s+([^|]+?)\s+\|\s+(\S+)\s*$/.exec(line)
+  if (!m) return null
+  const outcome = m[3].trim() as FeedbackOutcome
+  if (!['success', 'failed', 'denied', 'approved', 'blocked'].includes(outcome)) return null
+  return { time: m[1], tool: m[2].trim(), outcome }
 }
 
 function parseEntryLine(line: string): { tool: string; outcome: FeedbackOutcome } | null {

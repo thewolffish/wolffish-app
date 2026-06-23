@@ -1205,11 +1205,17 @@
       "checkManual": "Check for updates",
       "checkManualDescription": "Manually check for new versions.",
       "check": "Check",
+      "retry": "Retry",
+      "checkError": "Update failed. Please try again.",
       "install": "Update",
       "upToDate": "Up to date",
       "updateFound": "Update found",
       "checkFailed": "Could not check for updates",
       "downloading": "Downloading update {{version}}…",
+      "downloadingTitle": "Downloading update",
+      "downloadingSubtitle": "Your update is downloading",
+      "verifyingTitle": "Verifying update",
+      "verifyingSubtitle": "Almost done — verifying your update",
       "installReady": "Install downloaded update",
       "updateAvailable": "Ready to install"
     }

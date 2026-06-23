@@ -28,11 +28,61 @@ const toolDefinitions = [
   {
     name: 'wolffish_memory',
     description:
-      "Get a summary of what Wolffish remembers — recent conversation topics and knowledge areas.",
+      'Get a summary of what Wolffish remembers — recent conversation topics and knowledge areas.',
     parameters: {
       type: 'object',
       properties: {
         days: { type: 'number', description: 'Number of days to look back (default 7)' }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'wolffish_recall',
+    description:
+      "Precisely retrieve something from your own memory that is NOT in your current context: what you did on a specific date, the steps of a past task, an earlier conversation, a learned fact, or a past tool outcome. Search by keyword (`query`) and/or pin a day (`date`). Use this instead of guessing or saying you don't remember — your context only carries a lean summary, but the full history is on disk and this reads it.",
+    parameters: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'Keywords to search for (case-insensitive). Optional if `date` is given.'
+        },
+        date: {
+          type: 'string',
+          description: 'Pin results to a single day, format YYYY-MM-DD. Optional.'
+        },
+        source: {
+          type: 'string',
+          description:
+            'Where to look: episodes (daily logs), tasks (past multi-step runs), feedback (tool outcomes), knowledge (long-term facts), conversations (full transcripts), or all (default).',
+          enum: ['episodes', 'tasks', 'feedback', 'knowledge', 'conversations', 'all']
+        },
+        limit: { type: 'number', description: 'Max matches to return (default 8, max 30).' }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'wolffish_list_files',
+    description:
+      "List files inside the Wolffish workspace ONLY (~/.wolffish/workspace — your own memory, generated files, capabilities, logs) as a structured tree with sizes. NOT a general file browser: it refuses paths outside the workspace. For the user's files anywhere else (Desktop, Documents, projects, any absolute path), use the filesystem tools or shell instead.",
+    parameters: {
+      type: 'object',
+      properties: {
+        dir: {
+          type: 'string',
+          description:
+            "Subdirectory relative to the workspace root (e.g. 'files', 'brain/hippocampus/episodes'). Defaults to the workspace root."
+        },
+        depth: {
+          type: 'number',
+          description: 'How many levels deep to descend (default 2, max 5).'
+        },
+        pattern: {
+          type: 'string',
+          description: 'Only include files whose name contains this substring (case-insensitive).'
+        }
       },
       required: []
     }
@@ -44,17 +94,25 @@ const toolDefinitions = [
 // ---------------------------------------------------------------------------
 
 async function getStatus() {
-  const [mem, diskFree, cortexDbSize, capabilities, providers, bootTime, connectivity, feedbackCounts] =
-    await Promise.all([
-      getMemoryInfo(),
-      getDiskFree(),
-      fileSize(path.join(workspaceRoot, 'brain', 'cortex.db')),
-      listCapabilities(),
-      readProviders(),
-      getSystemBootTime(),
-      checkConnectivity(),
-      countFeedback()
-    ])
+  const [
+    mem,
+    diskFree,
+    cortexDbSize,
+    capabilities,
+    providers,
+    bootTime,
+    connectivity,
+    feedbackCounts
+  ] = await Promise.all([
+    getMemoryInfo(),
+    getDiskFree(),
+    fileSize(path.join(workspaceRoot, 'brain', 'cortex.db')),
+    listCapabilities(),
+    readProviders(),
+    getSystemBootTime(),
+    checkConnectivity(),
+    countFeedback()
+  ])
 
   const uptimeSec = Math.floor(process.uptime())
   const startedAt = new Date(Date.now() - uptimeSec * 1000)
@@ -98,7 +156,9 @@ async function getStatus() {
 
   if (bootTime) {
     const sysUptimeSec = Math.floor((Date.now() - bootTime.getTime()) / 1000)
-    lines.push(`- **OS restarted:** ${formatTimestamp(bootTime)} (up ${formatUptime(sysUptimeSec)})`)
+    lines.push(
+      `- **OS restarted:** ${formatTimestamp(bootTime)} (up ${formatUptime(sysUptimeSec)})`
+    )
   } else {
     const sysUp = os.uptime()
     if (Number.isFinite(sysUp) && sysUp > 0) {
@@ -181,9 +241,7 @@ async function getMemory(args) {
       .join(', ')
     lines.push(`- **Knowledge files:** ${summary}`)
   }
-  lines.push(
-    `- **Feedback entries:** ${feedbackCounts.today} today, ${feedbackCounts.total} total`
-  )
+  lines.push(`- **Feedback entries:** ${feedbackCounts.today} today, ${feedbackCounts.total} total`)
 
   return { success: true, output: lines.join('\n') }
 }
@@ -250,7 +308,13 @@ async function getMemoryInfo() {
 
       if (memAvailable !== null) {
         const used = memTotal - memAvailable
-        return { total: memTotal, used, available: memAvailable, pressure: memTotal > 0 ? used / memTotal : 0, swap }
+        return {
+          total: memTotal,
+          used,
+          available: memAvailable,
+          pressure: memTotal > 0 ? used / memTotal : 0,
+          swap
+        }
       }
     } catch {
       // fall through
@@ -261,7 +325,11 @@ async function getMemoryInfo() {
     try {
       const { stdout } = await execFileAsync(
         'powershell',
-        ['-NoProfile', '-Command', 'Get-CimInstance Win32_OperatingSystem | Select-Object FreePhysicalMemory,TotalVisibleMemorySize,FreeVirtualMemory,TotalVirtualMemorySize | ConvertTo-Json'],
+        [
+          '-NoProfile',
+          '-Command',
+          'Get-CimInstance Win32_OperatingSystem | Select-Object FreePhysicalMemory,TotalVisibleMemorySize,FreeVirtualMemory,TotalVirtualMemorySize | ConvertTo-Json'
+        ],
         { timeout: 8000 }
       )
       const info = JSON.parse(stdout)
@@ -279,7 +347,13 @@ async function getMemoryInfo() {
           const pagefileFree = (virtualFreeKb - availableKb) * 1024
           if (pagefileTotal > 0) swap = Math.max(0, pagefileTotal - pagefileFree)
         }
-        return { total: memTotal, used, available: memAvailable, pressure: memTotal > 0 ? used / memTotal : 0, swap }
+        return {
+          total: memTotal,
+          used,
+          available: memAvailable,
+          pressure: memTotal > 0 ? used / memTotal : 0,
+          swap
+        }
       }
     } catch {
       // fall through
@@ -330,7 +404,11 @@ async function getSystemBootTime() {
     try {
       const { stdout } = await execFileAsync(
         'powershell',
-        ['-NoProfile', '-Command', '(Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToString("o")'],
+        [
+          '-NoProfile',
+          '-Command',
+          '(Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToString("o")'
+        ],
         { timeout: 5000 }
       )
       const d = new Date(stdout.trim())
@@ -626,6 +704,405 @@ async function listCapabilities() {
 }
 
 // ---------------------------------------------------------------------------
+// wolffish_recall — precise on-demand retrieval from memory
+// ---------------------------------------------------------------------------
+
+const RECALL_MAX_OUTPUT_CHARS = 6000
+const RECALL_SNIPPET_CHARS = 320
+// Most records/messages pulled from any single file.
+const RECALL_PER_FILE = 6
+// Cap on files actually read per source, so a cold miss (no match) over a heavy
+// user's history doesn't read+parse hundreds of files (esp. large conversation
+// JSON). Files skipped by the filename date-gate don't count against this.
+const RECALL_FILES_PER_SOURCE = 80
+
+const RECALL_SOURCES = {
+  episodes: ['brain', 'hippocampus', 'episodes'],
+  knowledge: ['brain', 'hippocampus', 'knowledge'],
+  tasks: ['brain', 'motor', 'tasks'],
+  feedback: ['brain', 'basalganglia'],
+  conversations: ['brain', 'conversations']
+}
+
+// Sources whose filenames embed the YYYY-MM-DD (episodes 2026-06-18.md,
+// feedback day files, conv-2026-06-18_…json). For these a date filter can be
+// applied cheaply to the filename before reading. Tasks (TASK-<base36>.md) and
+// knowledge files carry no date in the name — their date lives in the body
+// (e.g. `**Created:** 2026-06-18T…`), so they must be date-matched on content.
+const RECALL_DATE_STAMPED = new Set(['episodes', 'feedback', 'conversations'])
+
+async function recall(args) {
+  const query = typeof args?.query === 'string' ? args.query.trim() : ''
+  const date =
+    typeof args?.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(args.date) ? args.date : ''
+  const requested = typeof args?.source === 'string' ? args.source : 'all'
+  const limit =
+    typeof args?.limit === 'number' && args.limit > 0 ? Math.min(Math.floor(args.limit), 30) : 8
+
+  if (!query && !date) {
+    const index = await recallIndex()
+    return {
+      success: true,
+      output:
+        'Provide a `query` (keywords) and/or a `date` (YYYY-MM-DD) to recall something specific.\n\n' +
+        index
+    }
+  }
+
+  const sources =
+    requested === 'all'
+      ? ['episodes', 'tasks', 'feedback', 'knowledge', 'conversations']
+      : [requested]
+  // Tokenized AND match — every whitespace-separated term must appear (in any
+  // order). So "world cup" and "cup world" both hit. Empty for a date-only
+  // recall (the whole file's head is returned then).
+  const terms = query ? query.toLowerCase().split(/\s+/).filter(Boolean) : []
+
+  // Gather each source's matches independently (up to `limit` each), THEN
+  // distribute the global limit round-robin across sources. Without this a busy
+  // source processed first (episodes) could consume every slot and shadow a
+  // real hit in tasks/feedback/conversations under source:"all".
+  const groups = []
+  let anyCapped = false
+  for (const src of sources) {
+    const { matches, capped } = await gatherSource(src, terms, date, limit)
+    if (capped) anyCapped = true
+    if (matches.length > 0) groups.push(matches)
+  }
+
+  const matches = []
+  let progressed = true
+  while (matches.length < limit && progressed) {
+    progressed = false
+    for (const g of groups) {
+      if (matches.length >= limit) break
+      const next = g.shift()
+      if (next) {
+        matches.push(next)
+        progressed = true
+      }
+    }
+  }
+  // Lower-bound count of what we found but couldn't show (round-robin leftovers
+  // + any per-file/per-source caps hit during gathering).
+  let omitted = groups.reduce((n, g) => n + g.length, 0)
+
+  if (matches.length === 0) {
+    const scope = date ? ` on ${date}` : ''
+    const q = query ? ` matching "${query}"` : ''
+    return {
+      success: true,
+      output: `No memory found${q}${scope}. ${await recallIndex()}`
+    }
+  }
+
+  const lines = [`## Recall — ${matches.length} match${matches.length === 1 ? '' : 'es'}`, '']
+  let used = lines.join('\n').length
+  let shown = 0
+  for (const m of matches) {
+    const block = `### ${m.path}\n${m.snippet}\n`
+    if (used + block.length > RECALL_MAX_OUTPUT_CHARS && shown > 0) break
+    lines.push(block)
+    used += block.length
+    shown += 1
+  }
+  omitted += matches.length - shown
+  if (omitted > 0 || anyCapped) {
+    const n = omitted > 0 ? `${omitted}+ ` : ''
+    lines.push(
+      `\n(${n}more match(es) not shown — narrow the query, or pin a \`date\`/\`source\`, to see them.)`
+    )
+  }
+  return { success: true, output: lines.join('\n') }
+}
+
+/**
+ * Collect up to `cap` matches from one source, newest-likely-first. Returns
+ * `capped: true` if a per-file cap or the per-source scan budget was hit (i.e.
+ * more matches may exist than were returned).
+ */
+async function gatherSource(src, terms, date, cap) {
+  const segs = RECALL_SOURCES[src]
+  if (!segs) return { matches: [], capped: false }
+  const dir = path.join(workspaceRoot, ...segs)
+  let names
+  try {
+    names = await fs.readdir(dir)
+  } catch {
+    return { matches: [], capped: false }
+  }
+  // Descending filename order. For date-named sources (episodes/feedback/
+  // conversations) that's genuine recency; for tasks (TASK-<base36>) and
+  // knowledge it's only reverse-alphabetical — best-effort, not true recency.
+  names = names
+    .filter((n) => !n.startsWith('.'))
+    .sort()
+    .reverse()
+  const dateStamped = RECALL_DATE_STAMPED.has(src)
+  const matches = []
+  let capped = false
+  let scanned = 0
+  for (const name of names) {
+    if (matches.length >= cap) break
+    // Cheap filename date-gate for date-stamped sources (doesn't count against
+    // the scan budget); others are gated on content after the read.
+    if (date && dateStamped && !name.includes(date)) continue
+    if (scanned >= RECALL_FILES_PER_SOURCE) {
+      capped = true
+      break
+    }
+    let raw
+    try {
+      raw = await fs.readFile(path.join(dir, name), 'utf8')
+    } catch {
+      continue
+    }
+    scanned++
+    if (date && !dateStamped && !fileMatchesDate(src, raw, date)) continue
+    const relPath = path.posix.join(...segs, name)
+    const res =
+      src === 'conversations'
+        ? matchConversation(raw, terms)
+        : terms.length > 0
+          ? matchMarkdown(raw, terms)
+          : { snippets: [headExcerpt(raw)], capped: false }
+    if (res.capped) capped = true
+    for (const snippet of res.snippets) {
+      if (matches.length >= cap) break
+      matches.push({ source: src, path: relPath, snippet })
+    }
+  }
+  return { matches, capped }
+}
+
+/** True when every term is a substring of the (already-lowercased) haystack. */
+function termsMatch(hayLower, terms) {
+  for (const t of terms) {
+    if (!hayLower.includes(t)) return false
+  }
+  return true
+}
+
+/**
+ * Date-gate a non-date-stamped source on content. Tasks carry their date in
+ * the `**Created:**`/`**Updated:**` header lines, so match those specifically
+ * (a task that merely mentions a date in a step output shouldn't surface for
+ * "what did we do on that day"). Knowledge files are timeless — a date filter
+ * can't meaningfully match them, so they're excluded when a date is pinned.
+ */
+function fileMatchesDate(src, raw, date) {
+  if (src === 'tasks') {
+    return raw.includes(`**Created:** ${date}`) || raw.includes(`**Updated:** ${date}`)
+  }
+  if (src === 'knowledge') return false
+  return raw.includes(date)
+}
+
+/** Pull matching records out of a markdown memory file (terms required). */
+function matchMarkdown(raw, terms) {
+  const snippets = []
+  let capped = false
+  for (const record of splitRecords(raw)) {
+    if (!termsMatch(record.toLowerCase(), terms)) continue
+    if (snippets.length >= RECALL_PER_FILE) {
+      capped = true
+      break
+    }
+    snippets.push(truncate(record.trim(), RECALL_SNIPPET_CHARS))
+  }
+  return { snippets, capped }
+}
+
+/**
+ * Break a memory file into the smallest meaningful records so a keyword hit
+ * returns just that entry, not the whole day. Episodes/tasks use `## ` blocks;
+ * basal-ganglia day files use `- HH:MM | tool | outcome` entries; anything
+ * else falls back to blank-line-separated paragraphs.
+ */
+function splitRecords(raw) {
+  if (/\n##\s/.test(raw)) return raw.split(/\n(?=##\s)/)
+  if (/\n-\s\d{2}:\d{2}\s\|/.test(raw)) return raw.split(/\n(?=-\s\d{2}:\d{2}\s\|)/)
+  return raw.split(/\n\s*\n/)
+}
+
+/** Head excerpt of a whole file — used for date-only recall (no keyword). */
+function headExcerpt(raw) {
+  return truncate(raw.trim(), RECALL_SNIPPET_CHARS * 4)
+}
+
+/** Pull matching messages out of a conversation transcript JSON. */
+function matchConversation(raw, terms) {
+  const snippets = []
+  let data
+  try {
+    data = JSON.parse(raw)
+  } catch {
+    return { snippets, capped: false }
+  }
+  const messages = Array.isArray(data?.messages) ? data.messages : Array.isArray(data) ? data : []
+  let capped = false
+  for (const msg of messages) {
+    const text = extractText(msg?.content)
+    if (!text) continue
+    if (terms.length > 0 && !termsMatch(text.toLowerCase(), terms)) continue
+    if (snippets.length >= RECALL_PER_FILE) {
+      capped = true
+      break
+    }
+    const role = msg?.role ?? 'unknown'
+    snippets.push(`[${role}] ${truncate(oneLine(text), RECALL_SNIPPET_CHARS)}`)
+  }
+  return { snippets, capped }
+}
+
+function extractText(content) {
+  if (typeof content === 'string') return content
+  if (Array.isArray(content)) {
+    return content.map((b) => (typeof b === 'string' ? b : (b?.text ?? ''))).join(' ')
+  }
+  return ''
+}
+
+/** A short listing of what date-stamped memory exists, for empty results. */
+async function recallIndex() {
+  const episodes = await safeReaddir(path.join(workspaceRoot, 'brain', 'hippocampus', 'episodes'))
+  const dates = episodes
+    .filter((n) => /^\d{4}-\d{2}-\d{2}\.md$/.test(n))
+    .map((n) => n.replace(/\.md$/, ''))
+    .sort()
+    .reverse()
+    .slice(0, 14)
+  const tasks = (await safeReaddir(path.join(workspaceRoot, 'brain', 'motor', 'tasks'))).filter(
+    (n) => /^TASK-.*\.md$/.test(n)
+  ).length
+  const convos = (await safeReaddir(path.join(workspaceRoot, 'brain', 'conversations'))).filter(
+    (n) => n.endsWith('.json')
+  ).length
+  const parts = []
+  if (dates.length > 0) parts.push(`Days with episodes: ${dates.join(', ')}.`)
+  parts.push(`${tasks} past task(s), ${convos} saved conversation(s) on disk.`)
+  return `Available memory — ${parts.join(' ')}`
+}
+
+// ---------------------------------------------------------------------------
+// wolffish_list_files — structured workspace tree, no shelling out
+// ---------------------------------------------------------------------------
+
+const LIST_MAX_ENTRIES = 400
+
+async function listFiles(args) {
+  const sub = typeof args?.dir === 'string' ? args.dir : ''
+  const depth =
+    typeof args?.depth === 'number' && args.depth > 0 ? Math.min(Math.floor(args.depth), 5) : 2
+  const pattern = typeof args?.pattern === 'string' ? args.pattern.toLowerCase() : ''
+
+  // Resolve and confine to the workspace root — never traverse outside it.
+  // String-prefix alone is not enough: path.resolve doesn't follow symlinks,
+  // so an in-workspace symlink pointing outside would pass a textual check.
+  // realpath both sides and compare the canonical paths.
+  const root = await fs.realpath(workspaceRoot).catch(() => path.resolve(workspaceRoot))
+  const requested = path.resolve(root, sub)
+  let target
+  try {
+    target = await fs.realpath(requested)
+  } catch {
+    return { success: false, error: `list_files: not found: ${sub || '.'}` }
+  }
+  if (target !== root && !target.startsWith(root + path.sep)) {
+    return { success: false, error: `list_files: path escapes the workspace: ${sub}` }
+  }
+
+  let stat
+  try {
+    stat = await fs.stat(target)
+  } catch {
+    return { success: false, error: `list_files: not found: ${sub || '.'}` }
+  }
+  if (!stat.isDirectory()) {
+    return {
+      success: true,
+      output: `${path.relative(root, target) || '.'} — ${formatBytes(stat.size)} (file)`
+    }
+  }
+
+  const lines = [`## ${path.relative(root, target) || 'workspace root'}`, '']
+  let count = 0
+  let truncated = false
+
+  async function walk(dir, level, prefix) {
+    if (level > depth || count >= LIST_MAX_ENTRIES) return
+    let entries
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    entries.sort((a, b) => {
+      if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1
+      return a.name.localeCompare(b.name)
+    })
+    for (const e of entries) {
+      if (e.name === '.DS_Store') continue
+      if (count >= LIST_MAX_ENTRIES) {
+        truncated = true
+        return
+      }
+      const full = path.join(dir, e.name)
+      // Symlinks are listed but never followed — a link could point outside the
+      // workspace, and following it (recursing or stat-ing the target) would
+      // leak out-of-tree contents/sizes past the confinement check above.
+      if (e.isSymbolicLink()) {
+        if (pattern && !e.name.toLowerCase().includes(pattern)) continue
+        lines.push(`${prefix}${e.name} -> (symlink, not followed)`)
+        count += 1
+      } else if (e.isDirectory()) {
+        lines.push(`${prefix}${e.name}/`)
+        count += 1
+        await walk(full, level + 1, prefix + '  ')
+      } else {
+        if (pattern && !e.name.toLowerCase().includes(pattern)) continue
+        let size = ''
+        try {
+          // lstat (not stat) so a regular entry reports its own size and we
+          // never dereference anything unexpected.
+          size = ` (${formatBytes((await fs.lstat(full)).size)})`
+        } catch {
+          // size optional
+        }
+        lines.push(`${prefix}${e.name}${size}`)
+        count += 1
+      }
+    }
+  }
+
+  await walk(target, 1, '- ')
+  if (truncated)
+    lines.push(
+      `\n(listing capped at ${LIST_MAX_ENTRIES} entries — narrow with \`dir\` or \`pattern\`.)`
+    )
+  if (count === 0) lines.push(pattern ? `(no files matching "${pattern}")` : '(empty)')
+  return { success: true, output: lines.join('\n') }
+}
+
+async function safeReaddir(dir) {
+  try {
+    return await fs.readdir(dir)
+  } catch {
+    return []
+  }
+}
+
+function oneLine(text) {
+  return String(text).replace(/\s+/g, ' ').trim()
+}
+
+function truncate(text, max) {
+  const s = String(text)
+  if (s.length <= max) return s
+  return `${s.slice(0, max - 1).trimEnd()}…`
+}
+
+// ---------------------------------------------------------------------------
 // Utilities
 // ---------------------------------------------------------------------------
 
@@ -715,6 +1192,10 @@ const plugin = {
         return getPerformance()
       case 'wolffish_memory':
         return getMemory(args ?? {})
+      case 'wolffish_recall':
+        return recall(args ?? {})
+      case 'wolffish_list_files':
+        return listFiles(args ?? {})
       default:
         return { success: false, error: `introspect: unknown tool ${toolName}` }
     }

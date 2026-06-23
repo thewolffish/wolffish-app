@@ -1,4 +1,28 @@
-## v1.0.180 — 2026-06-22 `Latest`
+## v1.0.181 — 2026-06-23 `Latest`
+
+### Recall — Ask Wolffish What It Did
+
+Wolffish can now pull a specific detail out of its own past instead of guessing. A new **wolffish_recall** capability searches its episodes, past tasks, tool-outcome history, knowledge files, and full conversation transcripts by keyword and/or date — so "what did we do on the 18th?" or "did that World Cup task finish?" gets a real answer drawn from disk, not a shrug. A companion **wolffish_list_files** tool returns a structured, sized tree of Wolffish's own workspace — its memory, generated files, logs, and capabilities (workspace-only; your own files anywhere else are read with the regular filesystem tools). When the agent is about to say "I don't remember," it recalls instead.
+
+### A Leaner, Faster Brain
+
+The system prompt rebuilt on every step of a task no longer carries Wolffish's entire history. Three things used to bloat it, and each is now bounded: the raw tool-outcome day files — tens of thousands of tokens re-sent every iteration — collapse into a compact **learned-preferences digest** (reliability stats, habitual tools, recent corrections) instead of the full firehose; only static device facts go in the cached prefix, so live RAM/disk readouts no longer change the prompt every turn; and any single oversized file is trimmed to a head-and-tail with a pointer to `wolffish_recall` for the rest. The whole assembly budget is now capped to a lean ceiling regardless of how large the model's context window is. The result is dramatically smaller prompts, a stable prefix the provider can cache, and much faster, cheaper follow-up messages — with the full detail still on disk, reachable via recall.
+
+### Open & Control Your Machine
+
+A new **system** capability lets Wolffish drive your computer with native OS commands — no browser or screen automation needed. It can open and quit apps, list what's running, open a file, folder, or URL in its default handler (or reveal it in the file manager), and control power: restart, shut down, sleep, lock, or log out. Destructive power actions (restart, shutdown, logout) and force-quitting an app ask for confirmation first; sleep and lock just run.
+
+### Save a Key by Just Asking
+
+A new **secrets** capability lets Wolffish save and look up your variables — API keys, tokens, base URLs — in the very same **Settings > Variables** store you use from the UI. Paste a key and say "save this" and it's stored (and appears in Settings); ask "what keys do I have?" and it lists them. Wolffish now uses a stored value directly instead of asking you for it again, and writes it atomically rather than hand-editing `config.json`.
+
+### A Sturdier Updater
+
+The Updates panel no longer loses an in-progress download when you navigate away and back — the main process owns the progress now, and the panel restores the live phase, version, and percent on return. After the bytes land, a new **Verifying update** phase covers the post-download work (on Windows, signature checks and antivirus retries that run after 100%), backed by a watchdog: if it hangs, you get a clear, retryable error instead of an eternal "Downloading 100%." Updates now always fetch the full artifact (the differential/blockmap path — a known source of stalled Windows downloads — is disabled), a manual **Check** during an active download is a safe no-op instead of snapping the bar back to 0%, and a missing or failed artifact surfaces an error with a **Retry** button rather than force-quitting with nothing to install.
+
+---
+
+## v1.0.180 — 2026-06-22
 
 ### Voice Notes on WhatsApp
 
