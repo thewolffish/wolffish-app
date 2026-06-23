@@ -1507,6 +1507,15 @@
     "download": "Download",
     "reveal": "Reveal"
   },
+  "reindex": {
+    "overlay": {
+      "title": "Rebuilding memory index",
+      "startedAt": "Started at {{time}}",
+      "body": "Wolffish is rebuilding the search index over your memory so recall stays accurate and complete. It runs after an update or when your memory has grown — chat resumes automatically the moment it's done.",
+      "progress": "Indexing files",
+      "blocked": "Chat is paused until the rebuild finishes — it's a one-time wait, not a hang."
+    }
+  },
   "heartbeat": {
     "title": "Heartbeat",
     "noJobs": "No automations active. Add schedule headings to heartbeat.md to get started.",

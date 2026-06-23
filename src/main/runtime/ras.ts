@@ -62,6 +62,11 @@ export const PER_CANDIDATE_MAX_TOKENS = 6_000
 // skip rather than inject a meaningless fragment.
 const MIN_CANDIDATE_TOKENS = 256
 
+// Cap on keywords used for relevance scoring. A huge pasted message must not
+// turn keyword-overlap scoring into an unbounded per-candidate scan; the most
+// discriminating ~48 terms are plenty for an overlap heuristic.
+const SCORING_MAX_KEYWORDS = 48
+
 /**
  * Clamp the model-derived context budget down to the assembly ceiling. Keeps
  * the system prompt lean and stable regardless of the active model's window.
@@ -141,14 +146,7 @@ export class RAS {
    * signal.
    */
   scoreRelevance(message: string, content: string): number {
-    const keywords = tokenize(message)
-    if (keywords.length === 0) return 0
-    const haystack = content.toLowerCase()
-    let hits = 0
-    for (const kw of keywords) {
-      if (haystack.includes(kw)) hits++
-    }
-    return hits / keywords.length
+    return scoreAgainstKeywords(tokenize(message).slice(0, SCORING_MAX_KEYWORDS), content)
   }
 
   /**
@@ -183,12 +181,18 @@ export class RAS {
     candidates: ContextCandidate[],
     budget: BudgetAllocation = this.allocateBudget()
   ): ScoredCandidate[] {
+    // Tokenize the message ONCE (capped), then reuse the keyword set across
+    // every candidate. Previously scoreRelevance re-tokenized the full message
+    // per candidate, so cost scaled with (message length × candidate count) —
+    // the same synchronous-main-thread-work-scales-with-input smell as the
+    // cortex freeze, just smaller. Capping + hoisting keeps the scan flat.
+    const keywords = tokenize(message).slice(0, SCORING_MAX_KEYWORDS)
     const scored: ScoredCandidate[] = candidates.map((c) => ({
       ...c,
       score:
         c.category === 'identity' || c.category === 'prefrontal'
           ? 1
-          : this.scoreRelevance(message, c.content),
+          : scoreAgainstKeywords(keywords, c.content),
       tokens: this.estimateTokens(c.content)
     }))
 
@@ -254,6 +258,19 @@ function truncateToTokens(content: string, maxTokens: number): string {
   const headChars = Math.floor(room * 0.7)
   const tailChars = room - headChars
   return content.slice(0, headChars) + marker + content.slice(content.length - tailChars)
+}
+
+// Keyword-overlap score: fraction of the (pre-tokenized, capped) keyword set
+// that appears in the content. Shared by scoreRelevance and filterContext so
+// the keyword set can be computed once and reused across candidates.
+function scoreAgainstKeywords(keywords: string[], content: string): number {
+  if (keywords.length === 0) return 0
+  const haystack = content.toLowerCase()
+  let hits = 0
+  for (const kw of keywords) {
+    if (haystack.includes(kw)) hits++
+  }
+  return hits / keywords.length
 }
 
 function tokenize(message: string): string[] {

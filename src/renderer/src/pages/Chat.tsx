@@ -8,6 +8,7 @@ import { ContextMeter } from '@components/common/context-meter/ContextMeter'
 import { DocxViewer } from '@components/common/docx-viewer/DocxViewer'
 import { FileCard } from '@components/common/file-card/FileCard'
 import { HeartbeatActiveOverlay } from '@components/common/heartbeat-active-overlay/HeartbeatActiveOverlay'
+import { ReindexActiveOverlay } from '@components/common/reindex-active-overlay/ReindexActiveOverlay'
 import { ImageViewer } from '@components/common/image-viewer/ImageViewer'
 import { PageViewer } from '@components/common/page-viewer/PageViewer'
 import { PdfViewer } from '@components/common/pdf-viewer/PdfViewer'
@@ -285,6 +286,21 @@ export function Chat(): React.JSX.Element {
     })
     const offStarted = window.api.heartbeat.onJobStarted(() => setHeartbeatActive(true))
     const offEnded = window.api.heartbeat.onJobEnded(() => setHeartbeatActive(false))
+    return () => {
+      cancelled = true
+      offStarted()
+      offEnded()
+    }
+  }, [])
+
+  const [reindexActive, setReindexActive] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    window.api.reindex.getStatus().then((s) => {
+      if (!cancelled) setReindexActive(!!s)
+    })
+    const offStarted = window.api.reindex.onStarted(() => setReindexActive(true))
+    const offEnded = window.api.reindex.onEnded(() => setReindexActive(false))
     return () => {
       cancelled = true
       offStarted()
@@ -1342,6 +1358,7 @@ export function Chat(): React.JSX.Element {
   const hasMessages = messages.length > 0
   const placeholderAlign = useMemo(() => (isRtl ? 'text-right' : 'text-left'), [isRtl])
 
+  if (reindexActive) return <ReindexActiveOverlay />
   if (heartbeatActive) return <HeartbeatActiveOverlay />
 
   return (

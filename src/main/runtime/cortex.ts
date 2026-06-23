@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 import type { Corpus } from '@main/runtime/corpus'
+import { toFtsMatchQuery } from '@main/runtime/cortexQuery'
 
 /**
  * Cortex is the fast retrieval index over every markdown file in the
@@ -22,7 +23,6 @@ import type { Corpus } from '@main/runtime/corpus'
 
 export type CortexSearchResult = {
   path: string
-  snippet: string
   score: number
 }
 
@@ -77,11 +77,20 @@ CREATE INDEX IF NOT EXISTS memory_entries_source ON memory_entries(source_file);
 CREATE INDEX IF NOT EXISTS tasks_source ON tasks(source_file);
 `
 
+/** Files indexed per synchronous batch before yielding the event loop. */
+const REINDEX_BATCH = 8
+/** Only surface the blocking overlay once a rebuild has run this long. */
+const REINDEX_NOTICE_MS = 500
+
+/** Progress of an in-flight full reindex, surfaced to the renderer overlay. */
+export type ReindexStatus = { startedAt: number; total: number; done: number }
+
 export class Cortex {
   private db: Db | null = null
   private workspaceRoot: string | null
   private corpus: Corpus | null
   private dbFile: string | null
+  private reindexStatus: ReindexStatus | null = null
 
   constructor(options: CortexOptions = {}) {
     this.workspaceRoot = options.workspaceRoot ?? null
@@ -114,8 +123,25 @@ export class Cortex {
   }
 
   /**
-   * Walk the workspace, drop existing rows, and reindex every markdown
-   * file. Markdown is the source of truth.
+   * Current reindex status, or null when no rebuild is in flight (or it's
+   * still below the notice threshold). Drives the blocking "Rebuilding memory"
+   * overlay in the renderer.
+   */
+  getReindexStatus(): ReindexStatus | null {
+    return this.reindexStatus
+  }
+
+  /**
+   * Walk the workspace, drop existing rows, and reindex every markdown file.
+   * Markdown is the source of truth.
+   *
+   * better-sqlite3 is synchronous, so indexing the whole workspace in one
+   * transaction froze the Electron main thread for the entire rebuild (minutes
+   * on a large workspace — the UI, IPC, and any overlay all locked up). Instead
+   * we index in batches and yield the event loop between them: the loop stays
+   * cooperative so the "Rebuilding memory" overlay renders with a live timer,
+   * and callers that await readiness (the agent gates on `cortexReady`) still
+   * get a fully-built index before the next turn runs.
    */
   async reindex(): Promise<void> {
     const db = this.requireDb()
@@ -127,16 +153,39 @@ export class Cortex {
     db.exec('DELETE FROM memory_entries; DELETE FROM tasks; DELETE FROM search_index;')
 
     const files = await collectMarkdownFiles(root)
-    const insert = db.transaction((paths: string[]) => {
-      for (const abs of paths) {
-        this.indexFileSync(abs)
-      }
-    })
-    insert(files)
+    const total = files.length
+    let done = 0
+    let notified = false
 
+    for (let i = 0; i < files.length; i += REINDEX_BATCH) {
+      const batch = files.slice(i, i + REINDEX_BATCH)
+      const insert = db.transaction((paths: string[]) => {
+        for (const abs of paths) this.indexFileSync(abs)
+      })
+      insert(batch)
+      done += batch.length
+
+      // Only raise the blocking overlay once the rebuild has proven slow enough
+      // to be worth interrupting the user for — a fast reindex on a small
+      // workspace finishes invisibly, no flashed overlay.
+      if (!notified && Date.now() - startedAt >= REINDEX_NOTICE_MS) {
+        notified = true
+        this.reindexStatus = { startedAt, total, done }
+        this.corpus?.emit('index.reindexStarted', { startedAt, total })
+      }
+      if (notified) {
+        this.reindexStatus = { startedAt, total, done }
+        this.corpus?.emit('index.reindexProgress', { done, total })
+      }
+
+      // Yield so IPC and the overlay timer keep flowing during the rebuild.
+      await new Promise((resolve) => setImmediate(resolve))
+    }
+
+    this.reindexStatus = null
     if (this.corpus) {
       this.corpus.emit('index.reindexed', {
-        filesCount: files.length,
+        filesCount: total,
         durationMs: Date.now() - startedAt
       })
     }
@@ -177,11 +226,15 @@ export class Cortex {
     const ftsQuery = toFtsMatchQuery(trimmed)
     if (!ftsQuery) return []
 
+    // NOTE: deliberately NO snippet(). The only caller (prefrontal) reads the
+    // matched file by `path` and never touches the excerpt, but snippet() is
+    // ~99% of FTS5's cost and explodes super-linearly with query terms — it
+    // turned a multi-term search into a multi-SECOND (here, multi-minute) main-
+    // thread freeze. Dropping it makes the search effectively free (~1ms).
     let stmt: Statement
     try {
       stmt = db.prepare(
         `SELECT source_file AS path,
-                snippet(search_index, 1, '[', ']', ' … ', 12) AS snippet,
                 bm25(search_index) AS rank
          FROM search_index
          WHERE search_index MATCH ?
@@ -192,20 +245,15 @@ export class Cortex {
       return []
     }
 
-    let rows: Array<{ path: string; snippet: string; rank: number }>
+    let rows: Array<{ path: string; rank: number }>
     try {
-      rows = stmt.all(ftsQuery, limit) as Array<{
-        path: string
-        snippet: string
-        rank: number
-      }>
+      rows = stmt.all(ftsQuery, limit) as Array<{ path: string; rank: number }>
     } catch {
       return []
     }
 
     return rows.map((row) => ({
       path: row.path,
-      snippet: row.snippet,
       score: bm25ToScore(row.rank)
     }))
   }
@@ -436,18 +484,6 @@ function parseTaskHeader(raw: string): ParsedTaskHeader {
     stepsTotal,
     stepsDone
   }
-}
-
-// Build a defensive FTS5 MATCH query: tokenize the user's input, drop
-// punctuation that the FTS5 grammar treats as operators, and quote each
-// remaining term so a stray hyphen or colon doesn't blow up the parse.
-function toFtsMatchQuery(input: string): string | null {
-  const tokens = input
-    .toLowerCase()
-    .split(/[^\p{L}\p{N}_]+/u)
-    .filter((t) => t.length > 0)
-  if (tokens.length === 0) return null
-  return tokens.map((t) => `"${t.replace(/"/g, '""')}"`).join(' OR ')
 }
 
 function bm25ToScore(rank: number): number {

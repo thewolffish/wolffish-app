@@ -284,12 +284,7 @@ export function WhatsAppPanel(): React.JSX.Element {
 
           <div className="border-border/60 border-t" />
 
-          <div
-            className={cn(
-              'flex flex-col gap-5',
-              !enabled && 'pointer-events-none opacity-40'
-            )}
-          >
+          <div className={cn('flex flex-col gap-5', !enabled && 'pointer-events-none opacity-40')}>
             {/* Status row — always visible so layout is stable */}
             <div className="flex flex-col gap-3">
               <div className="flex items-center justify-between gap-3">

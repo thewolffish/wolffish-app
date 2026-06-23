@@ -2276,6 +2276,14 @@ app.whenReady().then(async () => {
     onJobLog: (entry) => broadcast('heartbeat:jobLog', entry)
   })
 
+  // Memory reindex — the cortex search index is rebuilt from scratch after an
+  // app update (and on launch). On a large workspace that takes a while, so we
+  // surface a blocking overlay with live progress, mirroring the heartbeat one.
+  ipcMain.handle('reindex:getStatus', () => agent.cortex.getReindexStatus())
+  agent.corpus.on('index.reindexStarted', (p) => broadcast('reindex:started', p))
+  agent.corpus.on('index.reindexProgress', (p) => broadcast('reindex:progress', p))
+  agent.corpus.on('index.reindexed', (p) => broadcast('reindex:ended', p))
+
   // Conversations
   ipcMain.handle('conversation:list', (): Promise<ConversationMeta[]> => listConversations())
   ipcMain.handle(

@@ -1,4 +1,16 @@
-## v1.0.181 — 2026-06-23 `Latest`
+## v1.0.182 — 2026-06-23 `Latest`
+
+### Big Prompts No Longer Freeze It
+
+Pasting a very large prompt — a multi-page brief, a giant instruction block — could lock Wolffish up for minutes with no sign of life. The cause was in how it searched its own memory before answering: it turned your entire message into a thousand-term query and generated highlighted excerpts it never actually used, then ran the whole thing synchronously. That work is now bounded — the memory search drops the unused excerpt step entirely and caps the query to the salient keywords, and every other step that scans your message is capped too. A huge paste that used to freeze the app for minutes is handled in milliseconds now, and the search results are sharper for it.
+
+### A Clear "Rebuilding Memory" Screen
+
+After an update, Wolffish rebuilds the search index over its memory — and on a large workspace that can take a moment. Instead of an unexplained pause, you now get a clean full-screen notice with a live elapsed timer and progress while it works, in the same style as a running heartbeat job, so a normal rebuild never reads as a hang. It only appears when the rebuild is actually slow, and chat resumes automatically the moment it's done.
+
+---
+
+## v1.0.181 — 2026-06-23
 
 ### Recall — Ask Wolffish What It Did
 

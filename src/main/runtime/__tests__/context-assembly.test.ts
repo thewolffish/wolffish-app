@@ -21,6 +21,7 @@ import path from 'node:path'
 
 import { summarizePreferences } from '../basalganglia'
 import { BasalGanglia } from '../basalganglia'
+import { toFtsMatchQuery, FTS_MAX_TERMS } from '../cortexQuery'
 import { Device } from '../device'
 import { Hippocampus } from '../hippocampus'
 import {
@@ -240,6 +241,38 @@ async function testDevice(): Promise<void> {
   ok('device: reports total RAM (static fact kept)', /ram: .*total/.test(a))
   ok('device: omits volatile free figures', !/free/i.test(a))
 }
+
+// ---------------------------------------------------------------------------
+// toFtsMatchQuery — bounded query (the fix for the 6-minute main-thread freeze)
+// ---------------------------------------------------------------------------
+
+// A long multi-section prompt like the one that froze the app: ~1,400 tokens.
+const hugePrompt = (
+  'You are my World Cup analyst. Research EVERYTHING about the FIFA World Cup 2026 — ' +
+  'every team, every player, every match, every stat — and build one print-ready PDF. ' +
+  'group standings goals assists yellow red cards possession fixtures win probability. '
+).repeat(40)
+
+const hugeQuery = toFtsMatchQuery(hugePrompt) ?? ''
+const hugeTermCount = hugeQuery ? hugeQuery.split(' OR ').length : 0
+
+ok('fts: huge prompt produced a query', hugeQuery.length > 0)
+ok('fts: term count capped at the max', hugeTermCount <= FTS_MAX_TERMS)
+ok('fts: terms are quoted', /^"[^"]+"( OR "[^"]+")*$/.test(hugeQuery))
+// the old code emitted ~1,400 OR-terms for the real prompt; this is the regression guard
+ok('fts: nowhere near the old unbounded ~1,400 terms', hugeTermCount < 100)
+
+// dedupe + stopwords + min-length
+const q = toFtsMatchQuery('the World World cup CUP a an of to PDF pdf goalkeeper') ?? ''
+const terms = q.split(' OR ').map((t) => t.replace(/"/g, ''))
+ok('fts: deduped (world once)', terms.filter((t) => t === 'world').length === 1)
+ok('fts: stop words dropped (the/of/to gone)', !terms.includes('the') && !terms.includes('to'))
+ok('fts: sub-3-char tokens dropped (a/an gone)', !terms.includes('a') && !terms.includes('an'))
+ok('fts: case-folded dedupe (cup once)', terms.filter((t) => t === 'cup').length === 1)
+ok('fts: real keywords kept', terms.includes('goalkeeper') && terms.includes('pdf'))
+
+check('fts: empty input → null', toFtsMatchQuery('   '), null)
+check('fts: only stop words → null', toFtsMatchQuery('the a of to is are'), null)
 
 async function main(): Promise<void> {
   await testHippo()

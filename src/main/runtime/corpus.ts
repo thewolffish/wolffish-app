@@ -115,6 +115,8 @@ export type CorpusEvents = {
   'health.warning': { resource: string; usage: number; threshold: number }
   'health.critical': { resource: string; message: string }
 
+  'index.reindexStarted': { startedAt: number; total: number }
+  'index.reindexProgress': { done: number; total: number }
   'index.reindexed': { filesCount: number; durationMs: number }
 
   'brainstem.jobStarted': { job: string; type: string; label: string; timestamp: string }

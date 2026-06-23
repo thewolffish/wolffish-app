@@ -635,6 +635,19 @@ export type HeartbeatApi = {
   onJobLog: (listener: (entry: HeartbeatLogEntry) => void) => () => void
 }
 
+export type ReindexStatus = {
+  startedAt: number
+  total: number
+  done: number
+}
+
+export type ReindexApi = {
+  getStatus: () => Promise<ReindexStatus | null>
+  onStarted: (listener: (status: { startedAt: number; total: number }) => void) => () => void
+  onProgress: (listener: (status: { done: number; total: number }) => void) => () => void
+  onEnded: (listener: (payload: { filesCount: number; durationMs: number }) => void) => () => void
+}
+
 export type CapabilityEntry = {
   name: string
   description: string
@@ -1144,6 +1157,7 @@ export type WolffishApi = {
   conversation: ConversationApi
   viewer: ViewerApi
   heartbeat: HeartbeatApi
+  reindex: ReindexApi
   app: AppApi
   data: DataApi
   runtime: RuntimeApi
@@ -1259,6 +1273,12 @@ const api: WolffishApi = {
     onJobStarted: (listener) => subscribe('heartbeat:jobStarted', listener),
     onJobEnded: (listener) => subscribe('heartbeat:jobEnded', listener),
     onJobLog: (listener) => subscribe('heartbeat:jobLog', listener)
+  },
+  reindex: {
+    getStatus: () => ipcRenderer.invoke('reindex:getStatus'),
+    onStarted: (listener) => subscribe('reindex:started', listener),
+    onProgress: (listener) => subscribe('reindex:progress', listener),
+    onEnded: (listener) => subscribe('reindex:ended', listener)
   },
   app: {
     factoryReset: () => ipcRenderer.invoke('app:factoryReset'),

@@ -471,10 +471,7 @@ export function TelegramPanel(): React.JSX.Element {
               are no live conversations to roll over otherwise. Dim and
               disable the whole group until the connection is running. */}
           <div
-            className={cn(
-              'flex flex-col gap-5',
-              !connected && 'pointer-events-none opacity-40'
-            )}
+            className={cn('flex flex-col gap-5', !connected && 'pointer-events-none opacity-40')}
           >
             <div className="flex items-center justify-between gap-4">
               <div className="flex flex-col gap-1">
