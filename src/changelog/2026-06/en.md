@@ -1,4 +1,12 @@
-## v1.0.184 — 2026-06-24 `Latest`
+## v1.0.185 — 2026-06-24 `Latest`
+
+### Select & Copy in the Markdown Viewer
+
+Rendered markdown that Wolffish shows you now has a right-click menu — **Select all** and **Copy** — in both the inline chat card and the full-size expanded view. It's the same menu you already get in every text field, trimmed to the two actions that make sense for read-only content (no paste or clear). Grab the whole document in a click, or copy just the lines you highlighted.
+
+---
+
+## v1.0.184 — 2026-06-24
 
 ### Markdown Renders Right in the Chat
 

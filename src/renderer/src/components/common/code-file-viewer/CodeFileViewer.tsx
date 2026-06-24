@@ -1,6 +1,6 @@
+import { MarkdownContent } from '@components/common/markdown-content/MarkdownContent'
 import { CopyButton } from '@components/core/CopyButton'
 import { ExpandedSheet } from '@components/core/ExpandedSheet'
-import { Markdown } from '@components/core/Markdown'
 import { cn } from '@lib/utils/cn'
 import { formatBytes } from '@lib/utils/format'
 import hljs from 'highlight.js/lib/common'
@@ -118,9 +118,7 @@ export function CodeFileViewer({
   // line-numbered source. Shared verbatim between the inline card (clamped to
   // a max height) and the full-size expanded sheet.
   const body = isMarkdown ? (
-    <div className="text-fg px-4 py-2.5 text-sm leading-relaxed wrap-break-word">
-      <Markdown content={content} />
-    </div>
+    <MarkdownContent content={content} />
   ) : (
     <div className="flex min-w-max">
       <pre
