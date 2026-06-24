@@ -1,4 +1,16 @@
-## v1.0.182 — 2026-06-23 `Latest`
+## v1.0.183 — 2026-06-24 `Latest`
+
+### Sending Media on WhatsApp Stops Freezing — and Reaches Anyone
+
+Asking Wolffish to send a meme or file to someone on WhatsApp could lock it up completely. To attach an image it had to encode the entire file into its own working memory and hand that back as text — and on anything bigger than a thumbnail that overflowed and froze the turn outright, with no error and no recovery. The WhatsApp image, document, and voice-note tools now take a file path and read it off disk themselves, exactly the way Telegram already did, so sending media is instant and can't freeze. A new lookup also lets Wolffish confirm any phone number is registered on WhatsApp and resolve it before sending — so "send this to my wife on WhatsApp" works for any contact or group, not just people who've messaged first.
+
+### Memes Always Pick the Right Source
+
+Generating a meme could fail when a template from one library was handed to another — the meme services speak different "id" languages, and a template found in one wouldn't render in the other. Wolffish now routes every template to the service that can actually produce it, based on the template id itself, so a template you found always generates. Three more rough edges are gone too: meme and GIF lookups have real timeouts now, so a slow service can't hang a request; blank caption boxes keep their position instead of shifting the text; and an empty Imgflip search explains itself and points you to the larger library instead of coming back silently empty.
+
+---
+
+## v1.0.182 — 2026-06-23
 
 ### Big Prompts No Longer Freeze It
 

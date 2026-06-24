@@ -78,30 +78,30 @@ triggers:
   - something funny
 tools:
   - name: add_to_chat
-    description: Insert the most recently generated meme or GIF into the chat as an inline image. No arguments needed. Always call this after meme_generate, gif_search, or gif_trending.
+    description: Insert the most recently generated meme or GIF into the CURRENT chat as an inline image. No arguments needed. Call after meme_generate, gif_search, or gif_trending when the image should appear here. To send it to someone on a channel instead, pass the wolffish-media:// path from the generate result to send_file / whatsapp_send_image — never base64 it.
     parameters: {}
   - name: meme_generate
-    description: Generate a captioned meme image using a template. Returns a local file path to the generated image.
+    description: Generate a captioned meme image from a template. Pass template_id exactly as returned by meme_templates — the id determines the provider on its own. Returns a wolffish-media:// path to the saved image.
     parameters:
       template_id:
         type: string
-        description: "Template key (e.g. drake, fry, buzz, distracted-boyfriend, this-is-fine)"
+        description: "Template id from meme_templates. A slug (e.g. drake, fry, distracted-boyfriend) renders via memegen; an all-numeric id renders via Imgflip. Reuse the id as-is."
       lines:
         type: array
         description: "Caption text for each box in the meme template, in order (top to bottom)"
       provider:
         type: string
-        description: "Which API to use: memegen (default, zero-config) or imgflip (requires credentials)"
+        description: "Optional and usually unnecessary — the provider is inferred from template_id. Don't pass a provider that disagrees with the id; the id wins."
         enum:
           - memegen
           - imgflip
         required: false
   - name: meme_templates
-    description: List available meme templates. Optionally filter by name.
+    description: List available meme templates, each tagged with its provider. Pass a returned id straight to meme_generate. Default (no provider) queries memegen's large searchable library; Imgflip only exposes ~100 popular templates.
     parameters:
       provider:
         type: string
-        description: "Which API to query: memegen (default) or imgflip"
+        description: "Which API to query: memegen (default, large + searchable) or imgflip (~100 popular only)"
         enum:
           - memegen
           - imgflip
@@ -118,14 +118,14 @@ tools:
         description: "What to search for (e.g. frustrated developer, celebration, facepalm)"
       limit:
         type: number
-        description: "Max results to return (default 3)"
+        description: "Max results to return, 1-25 (default 3)"
         required: false
   - name: gif_trending
     description: Get trending GIFs from Giphy. Requires Giphy API key in config.
     parameters:
       limit:
         type: number
-        description: "Max results to return (default 5)"
+        description: "Max results to return, 1-25 (default 5)"
         required: false
 ---
 
@@ -143,7 +143,9 @@ tools:
 
 - **Giphy** — **preferred first choice.** If a Giphy API key is configured, search for a relevant GIF before generating a captioned meme. Giphy results are fast, expressive, and usually land better than generated text memes. Use `gif_search` with a descriptive query matching the mood or topic.
 - **memegen.link** — fallback for captioned memes. Use when Giphy has no good match, the user explicitly asks for a captioned/template meme, or no Giphy API key is configured.
-- **Imgflip** — only if user has configured credentials AND specifically asks for it.
+- **Imgflip** — only if the user has configured credentials AND specifically asks for it. Its library is just ~100 popular templates with no real search, so `meme_templates` with `provider: imgflip` often comes back empty — drop the provider to search memegen instead.
+
+**One rule that prevents wasted calls: never mix provider and id.** The id from `meme_templates` already carries its provider (slug = memegen, all-numeric = Imgflip). Pass that id straight to `meme_generate` and leave `provider` off — `meme_generate` routes by the id. Don't take a memegen slug like `db` and call it with `provider: imgflip`; that combination is what used to fail.
 
 ## Popular templates and when to use them
 
@@ -184,7 +186,9 @@ tools:
 
 ## Delivering the image
 
-**Always call `add_to_chat()` after generating or finding an image.** It takes no arguments and automatically injects whatever was just generated.
+Where the image should land decides how you deliver it:
+
+**Into the current chat** — call `add_to_chat()` after generating or finding an image. It takes no arguments and automatically injects whatever was just generated.
 
 Workflow:
 1. If Giphy is configured, try `gif_search` first with a descriptive query. Fall back to `meme_generate` only if no good result or if a captioned meme is specifically needed.
@@ -192,3 +196,5 @@ Workflow:
 3. Add a short comment in your text response
 
 Do **not** copy the markdown URL into your prose — `add_to_chat` handles delivery automatically.
+
+**To someone on a channel** (e.g. "send this meme to my wife on WhatsApp") — do NOT use `add_to_chat` (that only posts to the current chat). Take the `wolffish-media://…` path from the `meme_generate` / `gif_search` result and pass it as the `path` to the channel's send tool — `whatsapp_send_image`, `telegram_send_photo`, or `send_file`. Those tools read the file off disk themselves. **Never** `base64`-encode the image to send it: that floods the context and hangs the turn. The path is all you need.

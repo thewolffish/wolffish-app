@@ -4,7 +4,12 @@ import type {
   ToolExecutionResult,
   WolffishPlugin
 } from '@main/runtime/cerebellum'
+import { workspaceRoot } from '@main/workspace/workspace'
 import type { WASocket } from '@whiskeysockets/baileys'
+import type { Stats } from 'node:fs'
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 
 export const WHATSAPP_CAPABILITY_NAME = 'whatsapp'
 
@@ -13,20 +18,77 @@ type ToolDeps = {
   trackSentId: (id: string) => void
 }
 
+// WhatsApp practical upload ceilings. Images/audio are sent inline; documents
+// can be much larger. These are guards so we fail fast with a clear message
+// instead of choking the socket.
+const MAX_IMAGE_BYTES = 16 * 1024 * 1024
+const MAX_AUDIO_BYTES = 16 * 1024 * 1024
+const MAX_DOCUMENT_BYTES = 100 * 1024 * 1024
+
+const IMAGE_MIME: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.bmp': 'image/bmp',
+  '.tiff': 'image/tiff',
+  '.tif': 'image/tiff'
+}
+
+const AUDIO_MIME: Record<string, string> = {
+  '.ogg': 'audio/ogg; codecs=opus',
+  '.oga': 'audio/ogg; codecs=opus',
+  '.opus': 'audio/ogg; codecs=opus',
+  '.mp3': 'audio/mpeg',
+  '.wav': 'audio/wav',
+  '.m4a': 'audio/mp4',
+  '.aac': 'audio/aac',
+  '.flac': 'audio/flac',
+  '.webm': 'audio/webm'
+}
+
+const DOCUMENT_MIME: Record<string, string> = {
+  '.pdf': 'application/pdf',
+  '.doc': 'application/msword',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.xls': 'application/vnd.ms-excel',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.ppt': 'application/vnd.ms-powerpoint',
+  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  '.csv': 'text/csv',
+  '.txt': 'text/plain',
+  '.json': 'application/json',
+  '.zip': 'application/zip'
+}
+
 export function buildWhatsAppCapability(deps: ToolDeps): {
   capability: Capability
   plugin: WolffishPlugin
 } {
   const tools: SkillToolDescriptor[] = [
     {
+      name: 'whatsapp_check',
+      description:
+        'Look up whether one or more phone numbers are registered on WhatsApp and resolve them to the canonical JID to send to. Pass numbers in international format, with or without a leading "+" (e.g. "+966505349989"); separate multiple numbers with commas. Always run this before messaging a number you have not messaged before, then use the returned JID with the other whatsapp_* tools — do not hand-build the JID yourself.',
+      parameters: {
+        number: {
+          type: 'string',
+          description:
+            'One phone number in international format (e.g. "+966505349989"), or several separated by commas.',
+          required: true
+        }
+      }
+    },
+    {
       name: 'whatsapp_send',
       description:
-        'Send a plain text message to a WhatsApp JID. Use the full JID format: <phone>@s.whatsapp.net for individuals, <id>@g.us for groups. Returns the message ID on success.',
+        'Send a plain text message to a WhatsApp JID. Use the full JID format: <phone>@s.whatsapp.net for individuals, <id>@g.us for groups. If you only have a phone number, resolve it with whatsapp_check first. Returns the message ID on success.',
       parameters: {
         jid: {
           type: 'string',
           description:
-            'The recipient JID — e.g. "15551234567@s.whatsapp.net" for a person or "120363012345@g.us" for a group.',
+            'The recipient JID — e.g. "966505349989@s.whatsapp.net" for a person or "120363012345@g.us" for a group.',
           required: true
         },
         message: {
@@ -39,17 +101,24 @@ export function buildWhatsAppCapability(deps: ToolDeps): {
     {
       name: 'whatsapp_send_image',
       description:
-        'Send an image to a WhatsApp JID. Provide the image as a base64-encoded string. Returns the message ID.',
+        'Send an image to a WhatsApp JID. PREFERRED: pass "path" — a workspace-relative path to the image file (e.g. "uploads/memes/foo.png" or a "wolffish-media://…" URL from a tool result). Never read a file and base64-encode it yourself just to send it — pass the path and WhatsApp reads it directly. Only use "imageBase64" for image bytes you generated in memory and never wrote to disk. Returns the message ID.',
       parameters: {
         jid: {
           type: 'string',
           description: 'The recipient JID.',
           required: true
         },
+        path: {
+          type: 'string',
+          description:
+            'Workspace-relative path (or wolffish-media:// URL) to the image file. Preferred over imageBase64.',
+          required: false
+        },
         imageBase64: {
           type: 'string',
-          description: 'Base64-encoded image data.',
-          required: true
+          description:
+            'Base64-encoded image data. Only for in-memory bytes — if the image is a file on disk, use "path" instead.',
+          required: false
         },
         caption: {
           type: 'string',
@@ -58,7 +127,8 @@ export function buildWhatsAppCapability(deps: ToolDeps): {
         },
         mimetype: {
           type: 'string',
-          description: 'MIME type of the image (default: image/jpeg).',
+          description:
+            'MIME type of the image. Inferred from the file extension when "path" is used.',
           required: false
         }
       }
@@ -66,22 +136,30 @@ export function buildWhatsAppCapability(deps: ToolDeps): {
     {
       name: 'whatsapp_send_document',
       description:
-        'Send a file/document to a WhatsApp JID. Provide the file as a base64-encoded string. Returns the message ID.',
+        'Send a file/document to a WhatsApp JID. PREFERRED: pass "path" — a workspace-relative path to the file (e.g. "files/report.pdf"). Never base64-encode a file on disk just to send it — pass the path. Only use "documentBase64" for bytes you generated in memory. Returns the message ID.',
       parameters: {
         jid: {
           type: 'string',
           description: 'The recipient JID.',
           required: true
         },
+        path: {
+          type: 'string',
+          description:
+            'Workspace-relative path (or wolffish-media:// URL) to the file. Preferred over documentBase64.',
+          required: false
+        },
         documentBase64: {
           type: 'string',
-          description: 'Base64-encoded file data.',
-          required: true
+          description:
+            'Base64-encoded file data. Only for in-memory bytes — if the file is on disk, use "path" instead.',
+          required: false
         },
         fileName: {
           type: 'string',
-          description: 'The filename shown to the recipient.',
-          required: true
+          description:
+            'The filename shown to the recipient. Defaults to the basename of "path" when provided.',
+          required: false
         },
         caption: {
           type: 'string',
@@ -90,7 +168,8 @@ export function buildWhatsAppCapability(deps: ToolDeps): {
         },
         mimetype: {
           type: 'string',
-          description: 'MIME type of the document (default: application/octet-stream).',
+          description:
+            'MIME type of the document. Inferred from the file extension when "path" is used.',
           required: false
         }
       }
@@ -98,21 +177,29 @@ export function buildWhatsAppCapability(deps: ToolDeps): {
     {
       name: 'whatsapp_send_audio',
       description:
-        'Send a voice note (push-to-talk audio) to a WhatsApp JID. Provide the audio as a base64-encoded string. Always sent as PTT (voice note). Returns the message ID.',
+        'Send a voice note (push-to-talk audio) to a WhatsApp JID. PREFERRED: pass "path" — a workspace-relative path to the audio file. Never base64-encode a file on disk just to send it — pass the path. Only use "audioBase64" for bytes you generated in memory. Always sent as PTT (voice note). Returns the message ID.',
       parameters: {
         jid: {
           type: 'string',
           description: 'The recipient JID.',
           required: true
         },
+        path: {
+          type: 'string',
+          description:
+            'Workspace-relative path (or wolffish-media:// URL) to the audio file. Preferred over audioBase64.',
+          required: false
+        },
         audioBase64: {
           type: 'string',
-          description: 'Base64-encoded audio data (OGG/Opus preferred).',
-          required: true
+          description:
+            'Base64-encoded audio data (OGG/Opus preferred). Only for in-memory bytes — if the audio is on disk, use "path" instead.',
+          required: false
         },
         mimetype: {
           type: 'string',
-          description: 'MIME type of the audio (default: audio/ogg; codecs=opus).',
+          description:
+            'MIME type of the audio. Inferred from the file extension when "path" is used (default: audio/ogg; codecs=opus).',
           required: false
         }
       }
@@ -166,7 +253,7 @@ export function buildWhatsAppCapability(deps: ToolDeps): {
     name: WHATSAPP_CAPABILITY_NAME,
     dir: '<in-process>',
     description:
-      'WhatsApp messaging via Baileys (Web client). Send text, images, documents, audio, reply to messages, and react to messages. Messages arrive via the WhatsApp Web socket; the agent can respond to inbound messages and proactively send outbound messages to any linked WhatsApp contact or group.',
+      'WhatsApp messaging via Baileys (Web client). Look up any phone number to confirm it is on WhatsApp and resolve its JID, then send text, images, documents, and voice notes — by file path, no manual base64 needed — reply to messages, and react. Works for any WhatsApp contact or group, not just people who have messaged first.',
     triggers: { keywords: ['whatsapp', 'wa', 'send whatsapp', 'message on whatsapp'] },
     tools,
     body: '',
@@ -190,6 +277,8 @@ export function buildWhatsAppCapability(deps: ToolDeps): {
 
       const track = deps.trackSentId
       switch (toolName) {
+        case 'whatsapp_check':
+          return checkNumbers(sock, args)
         case 'whatsapp_send':
           return sendText(sock, args, track)
         case 'whatsapp_send_image':
@@ -209,6 +298,44 @@ export function buildWhatsAppCapability(deps: ToolDeps): {
   }
 
   return { capability, plugin }
+}
+
+async function checkNumbers(
+  sock: WASocket,
+  args: Record<string, unknown>
+): Promise<ToolExecutionResult> {
+  const raw = stringArg(args.number)
+  if (!raw) return failure('number is required')
+  const numbers = raw
+    .split(',')
+    .map((n) => n.trim())
+    .filter((n) => n.length > 0)
+  if (numbers.length === 0) return failure('no valid number provided')
+  try {
+    const results = (await sock.onWhatsApp(...numbers)) ?? []
+    const lines: string[] = []
+    const matchedDigits = new Set<string>()
+    for (const r of results) {
+      const digits = r.jid.replace(/@.*/, '')
+      matchedDigits.add(digits)
+      lines.push(
+        r.exists ? `✓ ${digits} → on WhatsApp, jid=${r.jid}` : `✗ ${digits} → not on WhatsApp`
+      )
+    }
+    // Numbers WhatsApp returned nothing for are not registered. Both sides are
+    // normalized to bare digits (input via the regex, JID via the @-strip), so
+    // match by exact equality — a substring/endsWith test would wrongly clear
+    // e.g. "100" against a returned "5100".
+    for (const n of numbers) {
+      const digits = n.replace(/[^0-9]/g, '')
+      if (!matchedDigits.has(digits)) lines.push(`✗ ${n} → not registered on WhatsApp`)
+    }
+    return success(
+      `Lookup results:\n${lines.join('\n')}\n\nUse the jid (…@s.whatsapp.net) with whatsapp_send / whatsapp_send_image / whatsapp_send_document.`
+    )
+  } catch (err) {
+    return failure(`lookup failed: ${errMessage(err)}`)
+  }
 }
 
 async function sendText(
@@ -236,13 +363,15 @@ async function sendImage(
 ): Promise<ToolExecutionResult> {
   const jid = stringArg(args.jid)
   if (!jid) return failure('jid is required')
-  const b64 = stringArg(args.imageBase64)
-  if (!b64) return failure('imageBase64 is required')
+  const media = await loadMedia(args, 'imageBase64', 'image')
+  if ('error' in media) return failure(media.error)
   const caption = stringArg(args.caption) ?? undefined
-  const mimetype = stringArg(args.mimetype) ?? 'image/jpeg'
   try {
-    const buffer = Buffer.from(b64, 'base64')
-    const result = await sock.sendMessage(jid, { image: buffer, caption, mimetype })
+    const result = await sock.sendMessage(jid, {
+      image: media.buffer,
+      caption,
+      mimetype: media.mimetype
+    })
     if (result?.key.id) track(result.key.id)
     return success(`Sent image. messageId=${result?.key.id} to=${jid}`)
   } catch (err) {
@@ -257,14 +386,17 @@ async function sendDocument(
 ): Promise<ToolExecutionResult> {
   const jid = stringArg(args.jid)
   if (!jid) return failure('jid is required')
-  const b64 = stringArg(args.documentBase64)
-  if (!b64) return failure('documentBase64 is required')
-  const fileName = stringArg(args.fileName) ?? 'file'
+  const media = await loadMedia(args, 'documentBase64', 'document')
+  if ('error' in media) return failure(media.error)
+  const fileName = stringArg(args.fileName) ?? media.basename ?? 'file'
   const caption = stringArg(args.caption) ?? undefined
-  const mimetype = stringArg(args.mimetype) ?? 'application/octet-stream'
   try {
-    const buffer = Buffer.from(b64, 'base64')
-    const result = await sock.sendMessage(jid, { document: buffer, fileName, caption, mimetype })
+    const result = await sock.sendMessage(jid, {
+      document: media.buffer,
+      fileName,
+      caption,
+      mimetype: media.mimetype
+    })
     if (result?.key.id) track(result.key.id)
     return success(`Sent document. messageId=${result?.key.id} to=${jid}`)
   } catch (err) {
@@ -279,12 +411,14 @@ async function sendAudio(
 ): Promise<ToolExecutionResult> {
   const jid = stringArg(args.jid)
   if (!jid) return failure('jid is required')
-  const b64 = stringArg(args.audioBase64)
-  if (!b64) return failure('audioBase64 is required')
-  const mimetype = stringArg(args.mimetype) ?? 'audio/ogg; codecs=opus'
+  const media = await loadMedia(args, 'audioBase64', 'audio')
+  if ('error' in media) return failure(media.error)
   try {
-    const buffer = Buffer.from(b64, 'base64')
-    const result = await sock.sendMessage(jid, { audio: buffer, ptt: true, mimetype })
+    const result = await sock.sendMessage(jid, {
+      audio: media.buffer,
+      ptt: true,
+      mimetype: media.mimetype
+    })
     if (result?.key.id) track(result.key.id)
     return success(`Sent audio. messageId=${result?.key.id} to=${jid}`)
   } catch (err) {
@@ -339,6 +473,88 @@ async function reactTo(
   } catch (err) {
     return failure(`react failed: ${errMessage(err)}`)
   }
+}
+
+type MediaKind = 'image' | 'audio' | 'document'
+type LoadedMedia = { buffer: Buffer; mimetype: string; basename: string | null }
+
+/**
+ * Resolve a file argument (workspace-relative path, `wolffish-media://` URL,
+ * `~`-prefixed path, or an absolute path that lives inside the workspace) into
+ * a Buffer + mimetype. Falls back to a base64 string arg for bytes generated in
+ * memory. This is the key fix for the freeze-on-send bug: the agent passes a
+ * path and WhatsApp reads the file here, instead of base64-encoding a large
+ * image into its own context just to hand it back as a tool argument.
+ */
+async function loadMedia(
+  args: Record<string, unknown>,
+  base64Key: string,
+  kind: MediaKind
+): Promise<LoadedMedia | { error: string }> {
+  const explicitMime = stringArg(args.mimetype) ?? undefined
+
+  const pathArg = stringArg(args.path)
+  if (pathArg) {
+    const abs = resolveWorkspaceMediaPath(pathArg)
+    if (!abs) {
+      return { error: `path must point inside the workspace (got "${pathArg}")` }
+    }
+    let stat: Stats
+    try {
+      stat = await fs.stat(abs)
+    } catch {
+      return { error: `file not found: ${pathArg}` }
+    }
+    if (!stat.isFile()) return { error: `not a file: ${pathArg}` }
+    const cap =
+      kind === 'document'
+        ? MAX_DOCUMENT_BYTES
+        : kind === 'audio'
+          ? MAX_AUDIO_BYTES
+          : MAX_IMAGE_BYTES
+    if (stat.size > cap) {
+      return {
+        error: `file too large (${mb(stat.size)} MB); WhatsApp ${kind} max is ${mb(cap)} MB`
+      }
+    }
+    const buffer = await fs.readFile(abs)
+    const ext = path.extname(abs).toLowerCase()
+    const mimetype = explicitMime ?? mimeFor(kind, ext)
+    return { buffer, mimetype, basename: path.basename(abs) }
+  }
+
+  const b64 = stringArg(args[base64Key])
+  if (b64) {
+    const buffer = Buffer.from(b64, 'base64')
+    if (buffer.length === 0) return { error: `${base64Key} did not decode to any data` }
+    return { buffer, mimetype: explicitMime ?? mimeFor(kind, ''), basename: null }
+  }
+
+  return {
+    error: `provide either "path" (workspace-relative, preferred) or "${base64Key}"`
+  }
+}
+
+function resolveWorkspaceMediaPath(input: string): string | null {
+  const root = workspaceRoot()
+  let p = input.trim()
+  if (p.startsWith('wolffish-media://')) p = p.slice('wolffish-media://'.length)
+  if (p === '~') p = os.homedir()
+  else if (p.startsWith('~/')) p = path.join(os.homedir(), p.slice(2))
+  const abs = path.isAbsolute(p) ? path.resolve(p) : path.resolve(root, p)
+  // Sandbox: the resolved path must stay within the workspace root.
+  if (abs !== root && !abs.startsWith(root + path.sep)) return null
+  return abs
+}
+
+function mimeFor(kind: MediaKind, ext: string): string {
+  if (kind === 'image') return IMAGE_MIME[ext] ?? 'image/jpeg'
+  if (kind === 'audio') return AUDIO_MIME[ext] ?? 'audio/ogg; codecs=opus'
+  return DOCUMENT_MIME[ext] ?? 'application/octet-stream'
+}
+
+function mb(bytes: number): number {
+  return Math.round((bytes / 1024 / 1024) * 10) / 10
 }
 
 function stringArg(value: unknown): string | null {

@@ -148,6 +148,14 @@ How to satisfy it:
 
 Never finish a file-producing task with the file undelivered. When a file is involved, delivering it IS the task.
 
+### Never base64-encode a file into your own context to send it
+
+When you send media on a channel — a WhatsApp image, a Telegram document, a voice note — **pass the file's path, not its bytes.** Every media tool that sends a file accepts a workspace-relative `path` (e.g. `whatsapp_send_image` takes `path: "uploads/memes/foo.png"`, `telegram_send_photo` takes a `path`). The channel reads the file off disk itself.
+
+Do **not** do this: `shell_exec` `base64 some-image.png` → take the output → pass it as `imageBase64`. A real image is tens to hundreds of kilobytes of base64. That blob is **truncated** when it comes back as a tool result (outputs are capped at 100,000 chars, so the base64 is already corrupt), and then re-emitting it as a tool argument floods your output and **hangs the turn**. This is a hard failure mode, not an inefficiency — it is the single most common way to freeze a send.
+
+**The rule:** if the media is a file on disk, you already have everything you need — its path. Pass the path. The base64 parameters on the media tools exist only for bytes you generated in memory and never wrote to disk; if it's on disk, never base64 it.
+
 ## Tool selection
 
 Pick the most specific tool for the job. More specific tools produce better results and burn fewer tokens.
