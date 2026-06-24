@@ -1,10 +1,12 @@
 import { CopyButton } from '@components/core/CopyButton'
+import { ExpandedSheet } from '@components/core/ExpandedSheet'
 import { Markdown } from '@components/core/Markdown'
 import { cn } from '@lib/utils/cn'
 import { formatBytes } from '@lib/utils/format'
 import hljs from 'highlight.js/lib/common'
 import {
   ArrowDown01Icon,
+  ArrowExpandIcon,
   ArrowRight01Icon,
   CodeIcon,
   Download01Icon,
@@ -87,6 +89,7 @@ export function CodeFileViewer({
 }): React.JSX.Element {
   const { t } = useTranslation()
   const [expanded, setExpanded] = useState(false)
+  const [sheetOpen, setSheetOpen] = useState(false)
 
   const ext = fileName.split('.').pop()?.toLowerCase() ?? ''
   const lang = language ?? langHintFromExt(ext)
@@ -110,6 +113,98 @@ export function CodeFileViewer({
   const lines = content.split('\n')
   const lineCount = lines.length
   const gutterWidth = String(lineCount).length
+
+  // The rendered body — markdown as rich text, everything else as
+  // line-numbered source. Shared verbatim between the inline card (clamped to
+  // a max height) and the full-size expanded sheet.
+  const body = isMarkdown ? (
+    <div className="text-fg px-4 py-2.5 text-sm leading-relaxed wrap-break-word">
+      <Markdown content={content} />
+    </div>
+  ) : (
+    <div className="flex min-w-max">
+      <pre
+        dir="ltr"
+        aria-hidden
+        className="bg-bg/50 border-border sticky left-0 z-1 shrink-0 border-e py-2 text-right font-mono text-[11px] leading-5 select-none"
+      >
+        {lines.map((_, i) => (
+          <div key={i} className="text-muted/60 px-2" style={{ minWidth: `${gutterWidth + 2}ch` }}>
+            {i + 1}
+          </div>
+        ))}
+      </pre>
+      {highlighted ? (
+        <pre
+          dir="ltr"
+          className="hljs flex-1 py-2 pe-3 ps-3 font-mono text-xs leading-5"
+          dangerouslySetInnerHTML={{ __html: highlighted }}
+        />
+      ) : (
+        <pre dir="ltr" className="text-fg flex-1 py-2 pe-3 ps-3 font-mono text-xs leading-5">
+          {content}
+        </pre>
+      )}
+    </div>
+  )
+
+  // Individual action controls, composed in opposite orders per surface.
+  const iconButton =
+    'text-muted hover:text-fg flex shrink-0 cursor-pointer items-center justify-center rounded p-1 focus-visible:ring-2 focus-visible:ring-accent'
+
+  // Expand opens the sheet — footer only (meaningless inside the already-
+  // expanded sheet).
+  const expandButton = (
+    <button
+      type="button"
+      onClick={() => setSheetOpen(true)}
+      title={t('chat.fileCard.expand')}
+      aria-label={t('chat.fileCard.expand')}
+      className={cn(iconButton)}
+    >
+      <ArrowExpandIcon size={14} />
+    </button>
+  )
+  const copyButton = (
+    <CopyButton
+      text={content}
+      variant="inline"
+      ariaLabelKey="chat.copy"
+      className="text-muted hover:text-fg"
+    />
+  )
+  const downloadButton = onDownload ? (
+    <button
+      type="button"
+      onClick={onDownload}
+      title={t('chat.fileCard.download')}
+      className={cn(iconButton)}
+    >
+      <Download01Icon size={14} />
+    </button>
+  ) : null
+  const revealButton = onReveal ? (
+    <button
+      type="button"
+      onClick={onReveal}
+      title={t('chat.fileCard.reveal')}
+      className={cn(iconButton)}
+    >
+      <FolderOpenIcon size={14} />
+    </button>
+  ) : null
+
+  // Expanded sheet header: copy · download · open (close is appended by
+  // ExpandedSheet). The card footer renders the same controls mirrored —
+  // open · download · copy · expand — so the row reads identically from the
+  // card's trailing edge.
+  const sheetActions = (
+    <>
+      {copyButton}
+      {downloadButton}
+      {revealButton}
+    </>
+  )
 
   return (
     <div
@@ -159,40 +254,7 @@ export function CodeFileViewer({
           isMarkdown ? 'max-h-80' : expanded ? 'max-h-80' : 'max-h-40'
         )}
       >
-        {isMarkdown ? (
-          <div className="text-fg px-4 py-2.5 text-sm leading-relaxed wrap-break-word">
-            <Markdown content={content} />
-          </div>
-        ) : (
-          <div className="flex min-w-max">
-            <pre
-              dir="ltr"
-              aria-hidden
-              className="bg-bg/50 border-border sticky left-0 z-1 shrink-0 border-e py-2 text-right font-mono text-[11px] leading-5 select-none"
-            >
-              {lines.map((_, i) => (
-                <div
-                  key={i}
-                  className="text-muted/60 px-2"
-                  style={{ minWidth: `${gutterWidth + 2}ch` }}
-                >
-                  {i + 1}
-                </div>
-              ))}
-            </pre>
-            {highlighted ? (
-              <pre
-                dir="ltr"
-                className="hljs flex-1 py-2 pe-3 ps-3 font-mono text-xs leading-5"
-                dangerouslySetInnerHTML={{ __html: highlighted }}
-              />
-            ) : (
-              <pre dir="ltr" className="text-fg flex-1 py-2 pe-3 ps-3 font-mono text-xs leading-5">
-                {content}
-              </pre>
-            )}
-          </div>
-        )}
+        {body}
       </div>
 
       <div className="border-border flex items-center gap-2 border-t px-3 py-1.5">
@@ -200,39 +262,20 @@ export function CodeFileViewer({
           {lang ?? ext}
           {sizeBytes != null ? ` · ${formatBytes(sizeBytes)}` : ''}
         </span>
-        {onReveal && (
-          <button
-            type="button"
-            onClick={onReveal}
-            title={t('chat.fileCard.reveal')}
-            className={cn(
-              'text-muted hover:text-fg flex shrink-0 cursor-pointer items-center justify-center rounded p-1',
-              'focus-visible:ring-2 focus-visible:ring-accent'
-            )}
-          >
-            <FolderOpenIcon size={14} />
-          </button>
-        )}
-        {onDownload && (
-          <button
-            type="button"
-            onClick={onDownload}
-            title={t('chat.fileCard.download')}
-            className={cn(
-              'text-muted hover:text-fg flex shrink-0 cursor-pointer items-center justify-center rounded p-1',
-              'focus-visible:ring-2 focus-visible:ring-accent'
-            )}
-          >
-            <Download01Icon size={14} />
-          </button>
-        )}
-        <CopyButton
-          text={content}
-          variant="inline"
-          ariaLabelKey="chat.copy"
-          className="text-muted hover:text-fg"
-        />
+        {revealButton}
+        {downloadButton}
+        {copyButton}
+        {expandButton}
       </div>
+
+      <ExpandedSheet
+        open={sheetOpen}
+        onClose={() => setSheetOpen(false)}
+        title={fileName}
+        actions={sheetActions}
+      >
+        {body}
+      </ExpandedSheet>
     </div>
   )
 }

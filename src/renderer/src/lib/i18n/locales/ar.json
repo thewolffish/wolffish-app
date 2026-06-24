@@ -1293,7 +1293,9 @@
     "fileCard": {
       "deleted": "تم حذف الملف",
       "download": "تنزيل",
-      "reveal": "إظهار في المجلد"
+      "reveal": "إظهار في المجلد",
+      "expand": "توسيع",
+      "close": "إغلاق"
     },
     "audioPlayer": {
       "deleted": "ملف الصوت محذوف أو غير متاح"

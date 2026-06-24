@@ -1,4 +1,20 @@
-## v1.0.183 — 2026-06-24 `Latest`
+## v1.0.184 — 2026-06-24 `Latest`
+
+### Markdown Renders Right in the Chat
+
+When Wolffish generated a markdown file and handed it to you, it arrived as a plain "open me" file card — the headings, tables, and lists rendered nowhere, even though the chat already knew how to display markdown beautifully. The catch was that a generated file delivered through the catch-all attachment path skipped the markdown renderer entirely. Now any generated `.md` renders inline as rich markdown in a tidy, scrollable card — the same way a README you attach yourself already looked.
+
+### Open Any File at Full Size
+
+Every markdown and code card now has an **expand** button that opens its contents in a large, centered sheet — 90% of the window — so you can read a long document in comfort instead of squinting at a thumbnail-sized card. Copy, download, and reveal-in-folder sit in the header alongside a close button, and a stray click on the backdrop won't dismiss it — only the ✕ or the Escape key — so you never lose your place mid-read.
+
+### Tidier Copy Buttons
+
+The copy control in every viewer is now a clean icon that matches the reveal, download, and expand buttons beside it. The "Copy" label moved into a hover tooltip, and a checkmark still flashes to confirm — same action, less clutter.
+
+---
+
+## v1.0.183 — 2026-06-24
 
 ### Sending Media on WhatsApp Stops Freezing — and Reaches Anyone
 

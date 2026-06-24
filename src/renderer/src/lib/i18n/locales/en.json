@@ -1302,7 +1302,9 @@
     "fileCard": {
       "deleted": "File was deleted",
       "download": "Download",
-      "reveal": "Reveal in folder"
+      "reveal": "Reveal in folder",
+      "expand": "Expand",
+      "close": "Close"
     },
     "audioPlayer": {
       "deleted": "Audio file was deleted or unavailable"

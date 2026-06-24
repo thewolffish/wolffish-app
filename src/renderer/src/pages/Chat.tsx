@@ -10,6 +10,7 @@ import { FileCard } from '@components/common/file-card/FileCard'
 import { HeartbeatActiveOverlay } from '@components/common/heartbeat-active-overlay/HeartbeatActiveOverlay'
 import { ReindexActiveOverlay } from '@components/common/reindex-active-overlay/ReindexActiveOverlay'
 import { ImageViewer } from '@components/common/image-viewer/ImageViewer'
+import { MarkdownFileViewer } from '@components/common/markdown-file-viewer/MarkdownFileViewer'
 import { PageViewer } from '@components/common/page-viewer/PageViewer'
 import { PdfViewer } from '@components/common/pdf-viewer/PdfViewer'
 import { ProviderErrorCards } from '@components/common/provider-error-card/ProviderErrorCard'
@@ -2758,16 +2759,31 @@ function renderSegments(
           const gPath = genericFiles[gi]
           const gName = gPath.split('/').pop() ?? 'file'
           const gExt = gName.split('.').pop()?.toLowerCase() ?? ''
-          blocks.push(
-            <FileCard
-              key={`file_${seg.segmentId}_${gi}`}
-              filePath={gPath}
-              fileExists={true}
-              fileName={gName}
-              sizeBytes={0}
-              mimeType={docMimeType(gExt)}
-            />
-          )
+          // Markdown delivered via the (file) catch-all renders inline as rich
+          // markdown — same card attachments use — instead of a bare file card.
+          if (gExt === 'md' || gExt === 'mdx' || gExt === 'markdown') {
+            blocks.push(
+              <MarkdownFileViewer
+                key={`file_${seg.segmentId}_${gi}`}
+                filePath={gPath}
+                fileExists={true}
+                fileName={gName}
+                sizeBytes={0}
+                mimeType="text/markdown"
+              />
+            )
+          } else {
+            blocks.push(
+              <FileCard
+                key={`file_${seg.segmentId}_${gi}`}
+                filePath={gPath}
+                fileExists={true}
+                fileName={gName}
+                sizeBytes={0}
+                mimeType={docMimeType(gExt)}
+              />
+            )
+          }
         }
       }
     } else if (seg.kind === 'tool_result') {
@@ -3083,11 +3099,21 @@ function docMimeType(ext: string): string {
 
 type ToolCallSegment = Extract<Segment, { kind: 'tool_call' }>
 
+// A tool result whose entire output is a `[wolffish-output: <path> (<type>)]`
+// delivery marker is a file *delivery*, not file *content* — the path-keyed
+// viewers (image/doc/media/generic) own those. send_file accepts both `file`
+// and `path` args, so a `{path: 'report.md'}` mis-call would otherwise make
+// extractToolResultCodeFile treat the marker string as code and render it as a
+// code block, shadowing the correct MarkdownFileViewer/FileCard rendering.
+const DELIVERY_MARKER_ONLY_RE =
+  /^\[wolffish-output:\s*[^\]]+?\s+\((?:image|audio|video|document|file)\)\]$/
+
 function extractToolResultCodeFile(
   call: ToolCallSegment,
   result?: ToolResultSegment
 ): { fileName: string; content: string } | null {
   if (!result?.output || result.status !== 'success') return null
+  if (DELIVERY_MARKER_ONLY_RE.test(result.output.trim())) return null
   const argsPath = typeof call.args?.path === 'string' ? call.args.path : null
   if (!argsPath || !CODE_EXTS_RE.test(argsPath)) return null
   return {

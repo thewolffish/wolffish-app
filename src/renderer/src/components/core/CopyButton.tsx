@@ -40,35 +40,28 @@ export function CopyButton({
     }
   }
 
+  // Icon only — matches the icon-only reveal/download/expand controls in the
+  // viewers. The label lives in the tooltip + aria-label instead, and the
+  // checkmark icon is the "copied" confirmation.
   const base =
-    'inline-flex items-center gap-1 rounded-md text-xs cursor-pointer ' +
+    'inline-flex items-center rounded-md cursor-pointer ' +
     'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
   const styles =
     variant === 'overlay'
-      ? 'bg-surface/80 text-muted hover:text-fg border border-border/60 px-2 py-1 backdrop-blur'
-      : 'text-muted hover:text-fg px-1.5 py-0.5'
+      ? 'bg-surface/80 text-muted hover:text-fg border border-border/60 p-1 backdrop-blur'
+      : 'text-muted hover:text-fg p-1'
+
+  const label = t(copied ? 'chat.copied' : ariaLabelKey)
 
   return (
     <button
       type="button"
       onClick={() => void onCopy()}
-      aria-label={t(ariaLabelKey)}
+      aria-label={label}
+      title={label}
       className={cn(base, styles, className)}
     >
       {copied ? <Tick02Icon size={size} /> : <Copy01Icon size={size} />}
-      {/* Both labels share a single grid cell so the button reserves the
-          wider of the two and never resizes when the state flips. */}
-      <span className="grid text-center">
-        <span
-          aria-hidden={!copied}
-          className={cn('col-start-1 row-start-1', !copied && 'invisible')}
-        >
-          {t('chat.copied')}
-        </span>
-        <span aria-hidden={copied} className={cn('col-start-1 row-start-1', copied && 'invisible')}>
-          {t('chat.copy')}
-        </span>
-      </span>
     </button>
   )
 }
