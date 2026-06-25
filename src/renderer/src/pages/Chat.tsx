@@ -8,6 +8,7 @@ import { ContextMeter } from '@components/common/context-meter/ContextMeter'
 import { DocxViewer } from '@components/common/docx-viewer/DocxViewer'
 import { FileCard } from '@components/common/file-card/FileCard'
 import { HeartbeatActiveOverlay } from '@components/common/heartbeat-active-overlay/HeartbeatActiveOverlay'
+import { HtmlFileViewer } from '@components/common/html-file-viewer/HtmlFileViewer'
 import { ReindexActiveOverlay } from '@components/common/reindex-active-overlay/ReindexActiveOverlay'
 import { ImageViewer } from '@components/common/image-viewer/ImageViewer'
 import { MarkdownFileViewer } from '@components/common/markdown-file-viewer/MarkdownFileViewer'
@@ -112,8 +113,9 @@ type ToolResultSegment = Extract<Segment, { kind: 'tool_result' }>
 // In-app verbose display preference, mirroring the Telegram / WhatsApp
 // channel toggle but for what the renderer DISPLAYS (history is untouched).
 // false (default) = clean feed: agent replies, file-bearing tool results,
-// errors, and the model chip; tool-activity and compaction cards hidden.
-// true = the full activity feed. Provided by Chat, read in AssistantBubble.
+// and errors only; the model/provider chip, tool-activity and compaction
+// cards are hidden. true = the full activity feed (chip included). Provided
+// by Chat, read in AssistantBubble.
 const InAppVerboseContext = createContext(false)
 
 export function Chat(): React.JSX.Element {
@@ -2685,6 +2687,7 @@ function renderSegments(
               key={`code_${seg.segmentId}`}
               content={codeFile.content}
               fileName={codeFile.fileName}
+              htmlPreview={/\.html?$/i.test(codeFile.fileName)}
             />
           )
         }
@@ -2841,6 +2844,20 @@ function renderSegments(
                 mimeType="text/markdown"
               />
             )
+          } else if (gExt === 'html' || gExt === 'htm') {
+            // HTML delivered via the (file) catch-all renders inline as
+            // highlighted source with a live, sandboxed preview on expand —
+            // same card attachments use — instead of a bare file card.
+            blocks.push(
+              <HtmlFileViewer
+                key={`file_${seg.segmentId}_${gi}`}
+                filePath={gPath}
+                fileExists={true}
+                fileName={gName}
+                sizeBytes={0}
+                mimeType="text/html"
+              />
+            )
           } else {
             blocks.push(
               <FileCard
@@ -2863,6 +2880,9 @@ function renderSegments(
       // continue — the next text segment starts a new bubble.
       flushText()
     } else if (seg.kind === 'active_model') {
+      // Clean feed: the model/provider chip is verbose-only. Off (default)
+      // hides which model answered; on shows it.
+      if (!verbose) continue
       if (!hasCommitted) continue
       if (!hasFollowingContent(segments, segIdx)) continue
       if (renderedModelChips.has(seg.model)) continue
@@ -2870,6 +2890,8 @@ function renderSegments(
       flushText()
       blocks.push(<ActiveModelChip key={seg.segmentId} provider={seg.provider} model={seg.model} />)
     } else if (seg.kind === 'provider_change') {
+      // Clean feed: the mid-turn provider-switch chip is verbose-only too.
+      if (!verbose) continue
       if (!hasCommitted) continue
       if (!hasFollowingContent(segments, segIdx)) continue
       if (renderedModelChips.has(seg.model)) continue

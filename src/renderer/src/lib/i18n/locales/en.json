@@ -494,7 +494,7 @@
         },
         "verbose": {
           "label": "Verbose task results",
-          "description": "Show every tool call and step in the chat. Off (the default) keeps a clean feed — agent replies, files, errors, and the model in use only."
+          "description": "Show every tool call and step in the chat, plus the model/provider chip. Off (the default) keeps a clean feed — agent replies, files, and errors only."
         }
       },
       "telegram": {
@@ -1335,6 +1335,10 @@
       "reveal": "Reveal in folder",
       "expand": "Expand",
       "close": "Close"
+    },
+    "htmlViewer": {
+      "preview": "Preview",
+      "source": "Source"
     },
     "audioPlayer": {
       "deleted": "Audio file was deleted or unavailable"

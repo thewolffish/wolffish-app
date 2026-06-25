@@ -1,4 +1,24 @@
-## v1.0.188 — 2026-06-25 `Latest`
+## v1.0.189 — 2026-06-25 `Latest`
+
+### HTML Files Render In-Chat
+
+HTML files you receive or attach now open in a clean, minimal viewer with syntax-highlighted source — and an expandable preview that renders the page itself, just like Markdown already does. The preview is safely sandboxed and shows the page's structure and styling; flip between the rendered **Preview** and the **Source** whenever you like.
+
+### Cleaner Feed: Model Chip Is Now Verbose-Only
+
+The little chip showing which model or provider answered now appears only when verbose mode is on. With verbose off — the default — the feed stays focused on replies, files, and errors.
+
+### The Agent Narrates Its Work
+
+No more staring at a silent spinner during long tasks. The agent now gives you a warm, plain-language heads-up before it starts and at each milestone, so you always know what it's doing — without narrating every single step.
+
+### Simpler File & Code Cards
+
+File and code cards no longer need a click to expand. They open at full height by default so you can read the content right away. The full-screen expand button is still there when you want it.
+
+---
+
+## v1.0.188 — 2026-06-25
 
 ### ARM64 Linux Builds Dropped
 

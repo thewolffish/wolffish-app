@@ -87,9 +87,9 @@ export type WhatsAppConfig = {
  * In-app (desktop) chat display preferences. Unlike Telegram / WhatsApp
  * this is not a remote relay channel — it's the primary renderer feed.
  * `verbose` gates what the in-app chat DISPLAYS: false (default) = a clean
- * feed (agent replies, file-bearing tool results, errors, and the model
- * chip); true = every tool call/result/activity card. Display-only — never
- * affects history persistence.
+ * feed (agent replies, file-bearing tool results, errors); true = the
+ * model/provider chip plus every tool call/result/activity card. Display-only
+ * — never affects history persistence.
  */
 export type InAppConfig = {
   verbose?: boolean
