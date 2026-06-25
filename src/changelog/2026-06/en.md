@@ -1,4 +1,12 @@
-## v1.0.187 — 2026-06-25 `Latest`
+## v1.0.188 — 2026-06-25 `Latest`
+
+### ARM64 Linux Builds Dropped
+
+The experimental ARM64 Linux build has been removed. It's a niche desktop target whose packaging kept breaking on dependencies that don't ship ARM64 binaries, and the upkeep wasn't worth it for the handful of users it reached. macOS (Intel and Apple Silicon), Windows, and standard x86-64 Linux are all unaffected.
+
+---
+
+## v1.0.187 — 2026-06-25
 
 ### Linux ARM64 Builds Fixed
 
