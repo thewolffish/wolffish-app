@@ -8,6 +8,27 @@ const MAX_OUTPUT = 200_000
 const MAX_FILE_BYTES = 500 * 1024 * 1024
 const PLUGIN_DIR = path.dirname(fileURLToPath(import.meta.url))
 const SCRIPT = path.join(PLUGIN_DIR, 'transcribe.py')
+const IS_WIN = process.platform === 'win32'
+
+// On Windows, a stale Microsoft Visual C++ runtime makes the native engine fail
+// to load — onnxruntime as "DLL load failed ... initialization routine failed",
+// or CTranslate2 as a 0xC0000005 crash inside MSVCP140.dll at model load. The
+// python runtime backfills a current VC++ runtime automatically; if that ever
+// couldn't run (e.g. offline first use), translate the cryptic failure into the
+// real cause and remedy instead of a raw crash code.
+function vcRuntimeHint(detail, code) {
+  if (!IS_WIN) return null
+  const sig = /DLL load failed|initialization routine failed|onnxruntime_pybind11_state/i.test(
+    detail || ''
+  )
+  const crashed = code === 3221225477 || code === -1073741819 // 0xC0000005
+  if (!sig && !crashed) return null
+  return (
+    "Couldn't load the local speech-to-text engine — this PC's Microsoft Visual C++ " +
+    'Redistributable is likely out of date. Install the latest x64 build from ' +
+    'https://aka.ms/vs/17/release/vc_redist.x64.exe and try again.'
+  )
+}
 
 // Engine: faster-whisper (CTranslate2 + PyAV). No PyTorch, no external ffmpeg.
 const FW_PACKAGES = ['faster-whisper']
@@ -270,8 +291,13 @@ function runScript(args, timeoutMs, label) {
     })
     child.on('error', (err) => finish({ ok: false, error: err?.message ?? String(err) }))
     child.on('close', (code) => {
-      if (code === 0) finish({ ok: true, stdout })
-      else finish({ ok: false, error: stderr.slice(-2000) || `${label} exited with code ${code}` })
+      if (code === 0) {
+        finish({ ok: true, stdout })
+        return
+      }
+      const base = stderr.slice(-2000) || `${label} exited with code ${code}`
+      const hint = vcRuntimeHint(base, code)
+      finish({ ok: false, error: hint ? `${hint}\n\n(engine error: ${base})` : base })
     })
   })
 }

@@ -373,6 +373,25 @@ function runSpawn(cmd, args, env = process.env) {
   })
 }
 
+// On Windows, a stale Microsoft Visual C++ runtime makes the native engine fail
+// to load — onnxruntime as "DLL load failed ... initialization routine failed",
+// or a 0xC0000005 crash. The python runtime backfills a current VC++ runtime
+// automatically; if that ever couldn't run (e.g. offline first use), translate
+// the cryptic failure into the real cause and remedy instead of a raw DLL dump.
+function vcRuntimeHint(detail, code) {
+  if (!IS_WIN) return null
+  const sig = /DLL load failed|initialization routine failed|onnxruntime_pybind11_state/i.test(
+    detail || ''
+  )
+  const crashed = code === 3221225477 || code === -1073741819 // 0xC0000005
+  if (!sig && !crashed) return null
+  return (
+    "Couldn't load the local voice engine — this PC's Microsoft Visual C++ " +
+    'Redistributable is likely out of date. Install the latest x64 build from ' +
+    'https://aka.ms/vs/17/release/vc_redist.x64.exe and try again.'
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Core synthesis
 // ---------------------------------------------------------------------------
@@ -464,9 +483,11 @@ async function generateVoice(text, voice, speed, isResponse) {
       String(rate)
     ])
     if (synth.code !== 0) {
+      const detail = synth.stderr.slice(-500) || synth.stdout.slice(-500)
+      const hint = vcRuntimeHint(detail, synth.code)
       return {
         success: false,
-        error: `Kokoro synthesis failed: ${synth.stderr.slice(-500) || synth.stdout.slice(-500)}`
+        error: hint ? `${hint}\n\n(engine error: ${detail})` : `Kokoro synthesis failed: ${detail}`
       }
     }
 

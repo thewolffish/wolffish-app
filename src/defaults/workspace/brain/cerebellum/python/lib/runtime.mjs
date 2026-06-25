@@ -26,7 +26,7 @@
 import { execFile, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createWriteStream, existsSync } from 'node:fs'
-import { access, chmod, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { access, chmod, copyFile, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import https from 'node:https'
 import os from 'node:os'
 import path from 'node:path'
@@ -239,6 +239,7 @@ export function platformInfo() {
     arch: process.arch,
     isMuslLinux: isMuslLinux(),
     isIntelMac: process.platform === 'darwin' && process.arch === 'x64',
+    isWindows: process.platform === 'win32',
     isWindowsArm: process.platform === 'win32' && process.arch === 'arm64'
   }
 }
@@ -248,6 +249,96 @@ export function platformInfo() {
 // faster-whisper's VAD) install. It satisfies kokoro-onnx (>=1.20.1) and
 // faster-whisper (>=1.14,<2). Verified against PyPI, June 2026.
 export const ONNXRUNTIME_INTEL_MAC = 'onnxruntime==1.23.2'
+
+// --- Windows Visual C++ runtime backfill ------------------------------------
+//
+// The onnxruntime / CTranslate2 wheels that Kokoro TTS and faster-whisper STT
+// depend on are built with the MSVC v14.44 (VS2022 17.14) toolset. They fail to
+// load against an older Visual C++ 2015-2022 redistributable — onnxruntime as
+// `WinError 1114` (DLL init failed) at import, CTranslate2 as a `0xC0000005`
+// access violation inside MSVCP140.dll during model load. Plenty of Windows
+// machines ship only the VS2019-era runtime (14.28), so the engines break there
+// while working everywhere else (macOS/Linux have no MSVC runtime dependency).
+//
+// The fix stays inside ~/.wolffish, with no admin and no system-wide installer:
+// fetch the redistributable DLLs via the `msvc-runtime` wheel and drop them
+// DLL-local next to each native extension in the venv. Windows resolves a loaded
+// module's imports from the module's OWN directory first, so the bundled-newer
+// DLLs win over the stale System32 copies with no PATH change or elevation.
+// Gated on the system runtime actually being too old, so healthy machines are
+// never touched. Verified: minimum that loads onnxruntime 1.27 / CTranslate2 4.8.
+const VC_RUNTIME_MIN = [14, 44, 35211, 0]
+
+// The runtime DLLs we backfill. msvcp140* (the C++ standard library) is the part
+// that is actually stale on affected machines, but the full set is bundled so a
+// partial/older system runtime can never half-satisfy a wheel.
+const VC_RUNTIME_DLLS = [
+  'msvcp140.dll',
+  'msvcp140_1.dll',
+  'msvcp140_2.dll',
+  'msvcp140_atomic_wait.dll',
+  'msvcp140_codecvt_ids.dll',
+  'vcruntime140.dll',
+  'vcruntime140_1.dll',
+  'vcomp140.dll',
+  'concrt140.dll'
+]
+
+// Read a Windows PE file's version from its VS_FIXEDFILEINFO resource with no
+// native dependency: scan for the 0xFEEF04BD signature and decode the two
+// version DWORDs that follow it. Returns [major, minor, build, revision] or null
+// (on read error, a missing/garbled resource, or an implausible major version).
+async function readDllFileVersion(filePath) {
+  let buf
+  try {
+    buf = await readFile(filePath)
+  } catch {
+    return null
+  }
+  // dwSignature 0xFEEF04BD, stored little-endian.
+  const at = buf.indexOf(Buffer.from([0xbd, 0x04, 0xef, 0xfe]))
+  if (at < 0 || at + 16 > buf.length) return null
+  const ms = buf.readUInt32LE(at + 8) // dwFileVersionMS = major<<16 | minor
+  const ls = buf.readUInt32LE(at + 12) // dwFileVersionLS = build<<16 | revision
+  const major = ms >>> 16
+  if (major === 0 || major > 1000) return null // signature matched noise
+  return [major, ms & 0xffff, ls >>> 16, ls & 0xffff]
+}
+
+// Lexicographic compare of numeric version tuples: >0 if a>b, <0 if a<b, 0 equal.
+function compareVersionTuples(a, b) {
+  const n = Math.max(a.length, b.length)
+  for (let i = 0; i < n; i++) {
+    const d = (a[i] ?? 0) - (b[i] ?? 0)
+    if (d !== 0) return d < 0 ? -1 : 1
+  }
+  return 0
+}
+
+// Collect every directory under `root` holding a native CPython extension (a
+// *.pyd), capped in depth. These are exactly the dirs whose dependent-DLL
+// imports Windows resolves from the module's own directory first — so a fresh
+// msvcp140 beside them is preferred over a stale System32 copy.
+async function findNativeExtensionDirs(root, depth = 0, acc = new Set()) {
+  if (depth > 8) return acc
+  let entries
+  try {
+    entries = await readdir(root, { withFileTypes: true })
+  } catch {
+    return acc
+  }
+  if (entries.some((e) => e.isFile() && e.name.toLowerCase().endsWith('.pyd'))) acc.add(root)
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue
+    if (entry.name === '__pycache__' || entry.name.endsWith('.dist-info')) continue
+    await findNativeExtensionDirs(path.join(root, entry.name), depth + 1, acc)
+  }
+  return acc
+}
+
+// Cached result of probing the system VC++ runtime (it can't change within a
+// process). undefined = not yet checked; true = recent enough; false = too old.
+let systemVcRuntimeOk
 
 // The uv release asset target triple for this OS/arch. uv ships fully-static
 // musl builds too, so an Alpine host gets a working binary.
@@ -276,6 +367,8 @@ export function pythonRuntime(workspaceRoot = '') {
   const CPYTHON_DIR = path.join(HOME, 'cpython')
   const CACHE_DIR = path.join(HOME, 'cache')
   const VENVS_DIR = path.join(HOME, 'venvs')
+  // Flat cache of backfilled Visual C++ runtime DLLs (Windows only; see below).
+  const VC_RUNTIME_DIR = path.join(HOME, 'vcruntime')
   // Passive integrity of a uv we DOWNLOADED this session; null when uv was
   // reused from the system (nothing fetched to verify).
   let lastUvIntegrity = null
@@ -387,7 +480,13 @@ export function pythonRuntime(workspaceRoot = '') {
     const key = venvDir(name)
     const inflight = inFlightVenvs.get(key)
     if (inflight) return inflight
-    const promise = provisionVenv(name, packages, python)
+    const promise = (async () => {
+      const result = await provisionVenv(name, packages, python)
+      // Windows: backfill a current Visual C++ runtime for the native wheels
+      // (no-op elsewhere and on machines whose system runtime is already new).
+      await ensureWindowsNativeRuntime(name)
+      return result
+    })()
     inFlightVenvs.set(key, promise)
     try {
       return await promise
@@ -436,6 +535,98 @@ export function pythonRuntime(workspaceRoot = '') {
 
     await writeFile(marker, want, 'utf8')
     return { python: venvPython(name), uv }
+  }
+
+  // Fetch the redistributable Visual C++ runtime DLLs once — via the
+  // `msvc-runtime` wheel, resolved by uv into a scratch dir — and stage them
+  // flat under HOME/vcruntime. Cached forever after; returns the staging dir.
+  async function ensureVcRuntimeCache(uv, pythonForResolve) {
+    const staged = path.join(VC_RUNTIME_DIR, 'msvcp140.dll')
+    if (await fileExists(staged)) {
+      const ver = await readDllFileVersion(staged)
+      if (ver && compareVersionTuples(ver, VC_RUNTIME_MIN) >= 0) return VC_RUNTIME_DIR
+      await rm(VC_RUNTIME_DIR, { recursive: true, force: true }).catch(() => {})
+    }
+    const raw = path.join(VC_RUNTIME_DIR, '.raw')
+    await rm(raw, { recursive: true, force: true }).catch(() => {})
+    await mkdir(raw, { recursive: true })
+    const res = await runSpawn(
+      uv,
+      ['pip', 'install', '--python', pythonForResolve, '--target', raw, 'msvc-runtime'],
+      { env: uvEnv() }
+    )
+    if (res.code !== 0) {
+      throw new Error(
+        `could not fetch msvc-runtime: ${res.stderr.slice(-400) || res.stdout.slice(-400)}`
+      )
+    }
+    await mkdir(VC_RUNTIME_DIR, { recursive: true })
+    // The wheel drops the DLLs at its root and/or a Scripts/ subdir — take the
+    // first copy of each that exists.
+    for (const name of VC_RUNTIME_DLLS) {
+      for (const sub of ['', 'Scripts']) {
+        const from = path.join(raw, sub, name)
+        if (await fileExists(from)) {
+          await copyFile(from, path.join(VC_RUNTIME_DIR, name))
+          break
+        }
+      }
+    }
+    await rm(raw, { recursive: true, force: true }).catch(() => {})
+    if (!(await fileExists(staged))) throw new Error('msvc-runtime did not yield msvcp140.dll')
+    return VC_RUNTIME_DIR
+  }
+
+  // Copy the staged runtime DLLs next to every native extension in a venv so the
+  // loader resolves them before the stale System32 copies. Idempotent: skips a
+  // target that already has an equal-or-newer DLL. Best-effort per file.
+  async function bundleVcRuntimeIntoVenv(name, dllDir) {
+    const site = path.join(venvDir(name), 'Lib', 'site-packages')
+    const dirs = await findNativeExtensionDirs(site)
+    if (!dirs.size) return
+    const available = []
+    for (const dll of VC_RUNTIME_DLLS) {
+      if (await fileExists(path.join(dllDir, dll))) available.push(dll)
+    }
+    for (const dir of dirs) {
+      for (const dll of available) {
+        const dest = path.join(dir, dll)
+        if (await fileExists(dest)) {
+          const ver = await readDllFileVersion(dest)
+          if (ver && compareVersionTuples(ver, VC_RUNTIME_MIN) >= 0) continue
+        }
+        await copyFile(path.join(dllDir, dll), dest).catch(() => {})
+      }
+    }
+  }
+
+  // Windows-only backfill: when the system Visual C++ 2015-2022 runtime is older
+  // than the native wheels require (or absent), bundle a current copy DLL-local
+  // into the venv. No-op on a healthy machine and on every other platform. Never
+  // throws — on failure the engine simply surfaces its own error as before.
+  async function ensureWindowsNativeRuntime(name) {
+    if (!IS_WIN) return
+    try {
+      if (systemVcRuntimeOk === undefined) {
+        const sysDll = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'msvcp140.dll')
+        const sysVer = await readDllFileVersion(sysDll)
+        systemVcRuntimeOk = !!(sysVer && compareVersionTuples(sysVer, VC_RUNTIME_MIN) >= 0)
+      }
+      if (systemVcRuntimeOk) return
+
+      // Already backfilled for this venv build? (The marker is wiped whenever the
+      // venv is rebuilt, so a package change correctly re-triggers the backfill.)
+      const marker = path.join(venvDir(name), '.wolffish-vcrt.json')
+      if (await fileExists(marker)) return
+
+      const uv = await findUv()
+      if (!uv) return
+      const dllDir = await ensureVcRuntimeCache(uv, venvPython(name))
+      await bundleVcRuntimeIntoVenv(name, dllDir)
+      await writeFile(marker, JSON.stringify({ min: VC_RUNTIME_MIN }), 'utf8')
+    } catch (err) {
+      console.warn(`[python] could not backfill VC++ runtime for venv '${name}': ${err?.message ?? err}`)
+    }
   }
 
   // Run a script/args with the venv's interpreter.
