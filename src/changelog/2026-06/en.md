@@ -1,4 +1,12 @@
-## v1.0.186 — 2026-06-25 `Latest`
+## v1.0.187 — 2026-06-25 `Latest`
+
+### Linux ARM64 Builds Fixed
+
+Wolffish now packages cleanly for **ARM64 Linux**. A leftover, unused build-time dependency was pulling in a native library with no ARM64 binary, which failed to compile from source and broke that build. It's been removed — nothing in the app ever used it — so ARM64 Linux builds now ship alongside every other platform.
+
+---
+
+## v1.0.186 — 2026-06-25
 
 ### Your Voice, Now Fully Local
 
