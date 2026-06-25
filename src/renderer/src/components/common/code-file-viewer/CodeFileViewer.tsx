@@ -5,9 +5,7 @@ import { cn } from '@lib/utils/cn'
 import { formatBytes } from '@lib/utils/format'
 import hljs from 'highlight.js/lib/common'
 import {
-  ArrowDown01Icon,
   ArrowExpandIcon,
-  ArrowRight01Icon,
   CodeIcon,
   Download01Icon,
   File01Icon,
@@ -74,6 +72,7 @@ export function CodeFileViewer({
   fileName,
   language,
   sizeBytes,
+  htmlPreview = false,
   onDownload,
   onReveal
 }: {
@@ -82,14 +81,25 @@ export function CodeFileViewer({
   language?: string
   /** When set, shown next to the language label in the footer. */
   sizeBytes?: number
+  /**
+   * HTML files only. When true, the expanded sheet gains a Source⇄Preview
+   * toggle that renders the markup in a sandboxed iframe — a clean, static
+   * render of the page's structure and styles (the HTML analogue of the
+   * markdown card; inline page scripts don't run, see the iframe below). The
+   * inline card stays as clean, syntax-highlighted source.
+   */
+  htmlPreview?: boolean
   /** When set, a download button appears in the footer (attachment cards). */
   onDownload?: () => void
   /** When set, a "reveal in folder" button appears in the footer (attachment cards). */
   onReveal?: () => void
 }): React.JSX.Element {
   const { t } = useTranslation()
-  const [expanded, setExpanded] = useState(false)
   const [sheetOpen, setSheetOpen] = useState(false)
+  // HTML expanded sheet view: 'preview' renders the markup live (sandboxed
+  // iframe), 'source' shows the same highlighted body. Defaults to preview so
+  // expanding an HTML file shows the rendered page, which is the whole point.
+  const [sheetView, setSheetView] = useState<'preview' | 'source'>('preview')
 
   const ext = fileName.split('.').pop()?.toLowerCase() ?? ''
   const lang = language ?? langHintFromExt(ext)
@@ -196,8 +206,32 @@ export function CodeFileViewer({
   // ExpandedSheet). The card footer renders the same controls mirrored —
   // open · download · copy · expand — so the row reads identically from the
   // card's trailing edge.
+  // For HTML, the sheet leads with a Source⇄Preview toggle so the user can
+  // flip between the rendered page and the highlighted markup.
+  const sheetViewToggle = htmlPreview ? (
+    <div className="border-border bg-bg/40 inline-flex shrink-0 items-center rounded-lg border p-0.5">
+      {(['preview', 'source'] as const).map((v) => (
+        <button
+          key={v}
+          type="button"
+          onClick={() => setSheetView(v)}
+          aria-pressed={sheetView === v}
+          className={cn(
+            'rounded-md px-2 py-0.5 text-[11px] font-medium',
+            sheetView === v
+              ? 'bg-primary text-primary-fg shadow-sm'
+              : 'text-muted hover:text-fg cursor-pointer'
+          )}
+        >
+          {t(`chat.htmlViewer.${v}`)}
+        </button>
+      ))}
+    </div>
+  ) : null
+
   const sheetActions = (
     <>
+      {sheetViewToggle}
       {copyButton}
       {downloadButton}
       {revealButton}
@@ -211,49 +245,21 @@ export function CodeFileViewer({
         'overflow-hidden rounded-2xl border'
       )}
     >
-      {isMarkdown ? (
-        <div className="flex w-full items-center gap-2 px-3 py-2">
+      <div className="flex w-full items-center gap-2 px-3 py-2">
+        {isMarkdown ? (
           <File01Icon size={14} className="text-muted shrink-0" />
-          <span className="text-fg truncate text-xs font-medium" title={fileName}>
-            {fileName}
-          </span>
-          <span className="text-muted shrink-0 text-[10px]">
-            {lineCount} {lineCount === 1 ? 'line' : 'lines'}
-          </span>
-        </div>
-      ) : (
-        <button
-          type="button"
-          onClick={() => setExpanded((v) => !v)}
-          className="flex w-full cursor-pointer items-center justify-between gap-2 px-3 py-2"
-        >
-          <div className="flex min-w-0 items-center gap-2">
-            <CodeIcon size={14} className="text-muted shrink-0" />
-            <span className="text-fg truncate text-xs font-medium" title={fileName}>
-              {fileName}
-            </span>
-            <span className="text-muted shrink-0 text-[10px]">
-              {lineCount} {lineCount === 1 ? 'line' : 'lines'}
-            </span>
-          </div>
-          <div className="flex shrink-0 items-center gap-1.5">
-            {expanded ? (
-              <ArrowDown01Icon size={14} className="text-muted" aria-hidden />
-            ) : (
-              <ArrowRight01Icon size={14} className="text-muted" aria-hidden />
-            )}
-          </div>
-        </button>
-      )}
-
-      <div
-        className={cn(
-          'overflow-auto',
-          isMarkdown ? 'max-h-80' : expanded ? 'max-h-80' : 'max-h-40'
+        ) : (
+          <CodeIcon size={14} className="text-muted shrink-0" />
         )}
-      >
-        {body}
+        <span className="text-fg truncate text-xs font-medium" title={fileName}>
+          {fileName}
+        </span>
+        <span className="text-muted shrink-0 text-[10px]">
+          {lineCount} {lineCount === 1 ? 'line' : 'lines'}
+        </span>
       </div>
+
+      <div className="max-h-80 overflow-auto">{body}</div>
 
       <div className="border-border flex items-center gap-2 border-t px-3 py-1.5">
         <span className="text-muted min-w-0 flex-1 truncate text-[10px]">
@@ -272,7 +278,23 @@ export function CodeFileViewer({
         title={fileName}
         actions={sheetActions}
       >
-        {body}
+        {htmlPreview && sheetView === 'preview' ? (
+          // Static, sandboxed preview. Two layers keep it safe: the frame has
+          // an opaque origin (no allow-same-origin) so it can't touch the
+          // renderer, its storage, or IPC; and the app's own CSP
+          // (script-src 'self') is inherited by the srcDoc document, so inline
+          // page scripts don't execute either. The result is a clean render of
+          // the markup and styles. Never add allow-same-origin next to
+          // allow-scripts — that would defeat the sandbox.
+          <iframe
+            title={fileName}
+            srcDoc={content}
+            sandbox="allow-scripts allow-popups allow-forms allow-modals"
+            className="h-full w-full border-0 bg-white"
+          />
+        ) : (
+          body
+        )}
       </ExpandedSheet>
     </div>
   )

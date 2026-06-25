@@ -1,5 +1,6 @@
 import { AudioPlayer } from '@components/common/audio-player/AudioPlayer'
 import { FileCard } from '@components/common/file-card/FileCard'
+import { HtmlFileViewer } from '@components/common/html-file-viewer/HtmlFileViewer'
 import { ImageViewer } from '@components/common/image-viewer/ImageViewer'
 import { MarkdownFileViewer } from '@components/common/markdown-file-viewer/MarkdownFileViewer'
 import { PdfViewer } from '@components/common/pdf-viewer/PdfViewer'
@@ -107,6 +108,18 @@ export function AttachmentList({
             />
           )
         }
+        if (isHtmlAttachment(att)) {
+          return (
+            <HtmlFileViewer
+              key={key}
+              filePath={att.filePath}
+              fileExists={exists}
+              fileName={att.originalName}
+              sizeBytes={att.sizeBytes}
+              mimeType={att.mimeType}
+            />
+          )
+        }
         return (
           <FileCard
             key={key}
@@ -124,6 +137,10 @@ export function AttachmentList({
 
 function isMarkdownAttachment(att: MessageAttachment): boolean {
   return att.mimeType === 'text/markdown' || /\.(md|mdx|markdown)$/i.test(att.originalName)
+}
+
+function isHtmlAttachment(att: MessageAttachment): boolean {
+  return att.mimeType === 'text/html' || /\.(html|htm)$/i.test(att.originalName)
 }
 
 function useExistenceMap(attachments: MessageAttachment[]): Record<string, boolean> {

@@ -49,9 +49,9 @@ export function InAppPanel(): React.JSX.Element {
 
         <section className="bg-surface border-border flex flex-col gap-5 rounded-2xl border p-6">
           {/* Verbose task results — off (default) shows a clean feed: agent
-              replies, file-bearing tool results, errors, and the model chip
-              only. On shows every tool call/result/activity and compaction
-              card. Display-only — never affects history. */}
+              replies, file-bearing tool results, and errors only. On adds the
+              model/provider chip plus every tool call/result/activity and
+              compaction card. Display-only — never affects history. */}
           <div className="flex items-center justify-between gap-4">
             <div className="flex flex-col gap-1">
               <span className="text-fg text-sm font-medium">
