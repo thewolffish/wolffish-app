@@ -99,41 +99,8 @@ jobs:
             dist/*.rpm
             dist/latest-linux.yml
 
-  build-linux-arm64:
-    runs-on: ubuntu-24.04-arm
-    # Niche platform on a separate arm64 runner. continue-on-error so a failed
-    # arm64 build can NEVER block a release of the mac/win/linux-x64 artifacts.
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 24
-          cache: npm
-
-      - run: npm ci
-
-      - run: npm run build
-
-      - name: Install RPM build tooling
-        run: sudo apt-get update && sudo apt-get install -y rpm
-
-      - run: npx electron-builder --linux --arm64 AppImage deb rpm
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - uses: actions/upload-artifact@v6
-        with:
-          name: linux-arm64-artifacts
-          path: |
-            dist/*.AppImage
-            dist/*.deb
-            dist/*.rpm
-            dist/latest-linux-arm64.yml
-
   release:
-    needs: [build-macos, build-windows, build-linux, build-linux-arm64]
+    needs: [build-macos, build-windows, build-linux]
     runs-on: ubuntu-latest
     environment: Production
     steps:
@@ -163,12 +130,6 @@ jobs:
           aws s3 cp --endpoint-url "$R2_ENDPOINT" "./artifacts/latest-mac.yml" "s3://$R2_BUCKET/latest-mac.yml"
           aws s3 cp --endpoint-url "$R2_ENDPOINT" "./artifacts/latest.yml" "s3://$R2_BUCKET/latest.yml"
           aws s3 cp --endpoint-url "$R2_ENDPOINT" "./artifacts/latest-linux.yml" "s3://$R2_BUCKET/latest-linux.yml"
-          # arm64 Linux ships its own manifest; the arm64 build is non-blocking,
-          # so tolerate its absence on releases where it was skipped/failed.
-          if [ -f ./artifacts/latest-linux-arm64.yml ]; then
-            sed -i "s|url: |url: $VERSION/|g" ./artifacts/latest-linux-arm64.yml
-            aws s3 cp --endpoint-url "$R2_ENDPOINT" "./artifacts/latest-linux-arm64.yml" "s3://$R2_BUCKET/latest-linux-arm64.yml"
-          fi
           aws s3 cp --endpoint-url "$R2_ENDPOINT" "./install/install.sh" "s3://$R2_BUCKET/install.sh" --content-type "text/plain"
           aws s3 cp --endpoint-url "$R2_ENDPOINT" "./install/install.ps1" "s3://$R2_BUCKET/install.ps1" --content-type "text/plain"
 
