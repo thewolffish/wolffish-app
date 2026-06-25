@@ -1,6 +1,6 @@
 ---
 name: speech-to-text
-description: Transcribe audio files into text using OpenAI Whisper. Supports 99+ languages with automatic detection. Runs entirely locally — no API keys, no cloud, fully offline after setup.
+description: Transcribe audio files into text using faster-whisper (CTranslate2). Supports 99+ languages with automatic detection. Runs entirely locally — no API keys, no cloud, fully offline after setup.
 triggers:
   - transcribe
   - transcription
@@ -134,7 +134,7 @@ tools:
 danger_patterns: []
 confirm_patterns: []
 requires:
-  - ffmpeg
+  - python
 ---
 
 # Speech-to-text
@@ -142,11 +142,16 @@ requires:
 ## Interface
 
 - Tools: `stt_transcribe`, `stt_transcribe_upload`, `stt_transcribe_voice_memo`, `stt_detect_language`
-- Engine: OpenAI Whisper (free, open-source, 100% local)
+- Engine: faster-whisper (CTranslate2 + PyAV) — free, open-source, 100% local,
+  and far lighter than reference Whisper (no PyTorch, no external ffmpeg).
 - Models: tiny → base → small → medium → large (accuracy vs. speed tradeoff)
-- Setup: requires Python 3 and ffmpeg installed on the host machine
+- Setup: fully automatic — the `python` capability provisions a hermetic Python
+  runtime and installs faster-whisper into an isolated venv on first use (no host
+  Python and no ffmpeg required). The chosen model is downloaded on first use.
 
 ## When to use each tool
+
+> **Never transcribe the user's own voice note.** When the user's message is tagged `<voice_note>`, it was ALREADY transcribed before the agent ran — the visible message text IS the transcript. The audio attached to that message is only the source of that transcript. Do NOT call any `stt_*` tool on it; just respond to the text (with a voice memo, per the voice-note rules). These tools are for a *separate* audio file the user hands you to transcribe — not for their own spoken message.
 
 - **"transcribe this"**, **"what does this audio say?"**, **"what did they say?"** with an uploaded audio file → `stt_transcribe_upload` using the uploaded file's name. The `<attachments>` block in the user message lists every uploaded filename and type.
 - **"transcribe the last voice memo"**, **"transcribe what you just said"** → `stt_transcribe_voice_memo` with the filename from the most recent text-to-speech tool result.
@@ -163,7 +168,7 @@ When the user uploads an audio file without explicit instruction (no "transcribe
 
 ## Supported formats
 
-MP3, WAV, M4A, OGG, FLAC, WEBM, AAC. Whisper decodes via ffmpeg, so anything ffmpeg can read works in practice.
+MP3, WAV, M4A, OGG, FLAC, WEBM, AAC. faster-whisper decodes via PyAV (bundled ffmpeg libraries), so no separate ffmpeg install is needed.
 
 ## Model sizes
 
@@ -175,13 +180,11 @@ MP3, WAV, M4A, OGG, FLAC, WEBM, AAC. Whisper decodes via ffmpeg, so anything ffm
 | medium | ~1.5GB | slow | high | high-stakes transcription |
 | large | ~3GB | very slow | best | research-grade accuracy |
 
-Models download once on first use and cache to `~/.cache/whisper/`.
+Models download once on first use and cache to `~/.wolffish/bin/whisper-models/`.
 
 ## Setup notes
 
-- Whisper installs automatically through pip on first use; the install pulls PyTorch (~2GB), so the first run can take a few minutes.
-- ffmpeg is a hard dependency (declared in `requires`) and installs automatically via the bundled `ffmpeg` capability (brew / winget / static download) the first time transcription runs. Manual fallback if auto-install ever fails:
-  - macOS: `brew install ffmpeg`
-  - Windows: `winget install ffmpeg` or download from ffmpeg.org
-  - Linux: `sudo apt install ffmpeg` (or your distro's package manager)
+- faster-whisper installs automatically into a managed Python venv on first use (no system Python, no pip/pipx). The engine is lightweight — **no PyTorch** — so the install is quick; only the chosen model is downloaded (cached after).
+- **No ffmpeg required:** faster-whisper decodes audio via PyAV (bundled ffmpeg libraries). There is nothing to install for media decoding.
+- Everything is provisioned managed-first with no admin rights. Do NOT propose `sudo apt` / `brew` / `winget` installs for speech-to-text.
 - All transcription output is saved to `workspace/speech/{conversationDirName}/{originalFileName}.txt` so cortex can index it for later semantic search.

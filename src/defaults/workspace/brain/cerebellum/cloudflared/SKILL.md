@@ -40,19 +40,16 @@ triggers:
   - access from outside
   - access from phone
   - access remotely
-requires:
-  - package-manager
-packages:
-  brew: cloudflared
-  winget_id: Cloudflare.cloudflared
-  apt: cloudflared
-  dnf: cloudflared
+requires: []
 tools:
   - name: cloudflared_check
     description: Check if cloudflared is installed
     parameters: {}
   - name: cloudflared_install
-    description: Install cloudflared via the system package manager
+    description: Install cloudflared with no admin rights — reuse a global cloudflared, else download the official no-root binary into ~/.wolffish/bin
+    parameters: {}
+  - name: cloudflared_install_system
+    description: Optional — install cloudflared system-wide via the OS (brew / winget / apt|dnf; admin on Linux)
     parameters: {}
   - name: cloudflared_tunnel
     description: Create a quick tunnel to expose a local port
@@ -63,6 +60,8 @@ tools:
 confirm_patterns:
   - pattern: "cloudflared_install"
     reason: Installing cloudflared
+  - pattern: "cloudflared_install_system"
+    reason: Installing cloudflared system-wide (needs admin)
   - pattern: "cloudflared_tunnel"
     reason: Exposing a local port to the internet
 ---
@@ -72,7 +71,10 @@ confirm_patterns:
 ## Usage
 
 Use `cloudflared_check` to verify cloudflared is installed. If missing,
-call `cloudflared_install` (requires user approval).
+call `cloudflared_install` (requires user approval) — it's managed-first and
+needs no admin rights: it reuses a global cloudflared if present, else downloads
+the official no-root binary into `~/.wolffish/bin/cloudflared`. Only use
+`cloudflared_install_system` if the user explicitly wants a global install.
 
 Use `cloudflared_tunnel` with a local port number to create a quick tunnel.
 This starts cloudflared in the background and returns a public URL like

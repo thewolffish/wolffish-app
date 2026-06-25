@@ -79,6 +79,8 @@ triggers:
   - control my computer
   - click on
   - move mouse to
+requires:
+  - node
 tools:
   - name: computer_screenshot
     description: Take a screenshot of the full screen. Returns the screenshot as an image the model can see. Always call this first to understand the current screen state before taking any action.

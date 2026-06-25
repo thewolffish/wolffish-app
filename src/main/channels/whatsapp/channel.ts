@@ -135,6 +135,12 @@ type ActiveTurn = {
    * outbound send only.
    */
   verbose: boolean
+  /**
+   * Set once the turn's voice_respond reply has been sent. A turn delivers at
+   * most ONE voice memo reply — a model that responds, then redoes the reply,
+   * has the duplicate suppressed. voice_generate assets are unaffected.
+   */
+  voiceReplySent: boolean
 }
 
 type PendingSelection = {
@@ -1034,7 +1040,8 @@ export class WhatsAppChannel {
           pendingActiveModel: null,
           lastFlushedModel: null,
           sentFiles: new Set(),
-          verbose
+          verbose,
+          voiceReplySent: false
         }
         this.activeByJid.set(jid, active)
       },
@@ -1206,6 +1213,17 @@ export class WhatsAppChannel {
       const name = active.toolCallNames.get(segment.toolCallId)
       const heading = name ? `${icon} *${name}*` : icon
       const output = segment.output?.trim() ?? ''
+      // An stt_* result's file payload is the user's SOURCE recording (an
+      // input, already transcribed), not a deliverable — never echo its audio.
+      const isSttResult = name?.startsWith('stt_') ?? false
+      // One voice memo reply per turn: suppress a redone voice_respond so the
+      // model responding twice can't send two memos. Gated on success so a
+      // FAILED duplicate still falls through to the normal error-surfacing path
+      // (failures always surface). voice_generate assets (isResponse:false) are
+      // unaffected — they fall through and each send.
+      if (name === 'voice_respond' && active.voiceReplySent && segment.status === 'success') {
+        return
+      }
 
       const imagePaths = extractWolffishMediaPaths(output)
       if (imagePaths.length > 0) {
@@ -1229,7 +1247,7 @@ export class WhatsAppChannel {
         return
       }
 
-      const avPaths = extractAudioVideoPaths(output)
+      const avPaths = isSttResult ? [] : extractAudioVideoPaths(output)
       if (avPaths.length > 0) {
         await this.safeSend(jid, heading)
         for (const av of avPaths) {
@@ -1239,6 +1257,8 @@ export class WhatsAppChannel {
             await this.sendVideoFile(jid, av.path)
           }
         }
+        // Mark the single voice reply as delivered (last-write dedup above).
+        if (name === 'voice_respond') active.voiceReplySent = true
         return
       }
 

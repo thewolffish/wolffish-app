@@ -62,6 +62,15 @@ detect_os() {
   esac
 }
 
+# arm64 Linux auto-updates from a separate manifest (latest-linux-arm64.yml);
+# x86_64 uses latest-linux.yml.
+linux_manifest() {
+  case "$(uname -m)" in
+    aarch64|arm64) echo "latest-linux-arm64.yml" ;;
+    *)             echo "latest-linux.yml" ;;
+  esac
+}
+
 fetch_manifest() {
   local url="$1"
   if command -v curl >/dev/null 2>&1; then
@@ -312,7 +321,7 @@ main() {
         os=$(detect_os)
         case "$os" in
           macos)   manifest=$(fetch_manifest "$RELEASES_BASE/latest-mac.yml") ;;
-          linux)   manifest=$(fetch_manifest "$RELEASES_BASE/latest-linux.yml") ;;
+          linux)   manifest=$(fetch_manifest "$RELEASES_BASE/$(linux_manifest)") ;;
           windows) manifest=$(fetch_manifest "$RELEASES_BASE/latest.yml") ;;
         esac
         version=$(parse_version "$manifest")
@@ -334,7 +343,7 @@ main() {
       extension="dmg"
       ;;
     linux)
-      manifest=$(fetch_manifest "$RELEASES_BASE/latest-linux.yml")
+      manifest=$(fetch_manifest "$RELEASES_BASE/$(linux_manifest)")
       extension=$(choose_linux_extension "$manifest")
       info "Selected Linux package: .$extension"
       ;;

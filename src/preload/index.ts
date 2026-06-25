@@ -94,6 +94,17 @@ export type WhatsAppConfig = {
   verbose?: boolean
 }
 
+/**
+ * In-app (desktop) chat display preferences. Mirrors the Telegram /
+ * WhatsApp verbose toggle, but for the primary renderer feed: when false
+ * (default) the in-app chat shows a clean feed — agent replies,
+ * file-bearing tool results, errors, and the model chip — and hides
+ * tool-activity and compaction cards. Display-only; history is unaffected.
+ */
+export type InAppConfig = {
+  verbose?: boolean
+}
+
 export type WhatsAppConnectionStatus = 'disconnected' | 'connecting' | 'qr' | 'connected' | 'error'
 
 export type WhatsAppChannelStatus = {
@@ -121,6 +132,12 @@ export type WhatsAppApi = {
   requestQr: () => Promise<void>
   onQr: (callback: (qr: string) => void) => () => void
   onStatusChange: (callback: (status: WhatsAppChannelStatus) => void) => () => void
+}
+
+export type InAppApi = {
+  getConfig: () => Promise<InAppConfig>
+  setConfig: (patch: Partial<InAppConfig>) => Promise<{ ok: true; config: InAppConfig }>
+  onConfigChange: (callback: (config: InAppConfig) => void) => () => void
 }
 
 export type SttConfig = {
@@ -160,6 +177,7 @@ export type WorkspaceConfig = {
   variables?: Variable[]
   telegram?: TelegramConfig
   whatsapp?: WhatsAppConfig
+  inapp?: InAppConfig
   stt?: SttConfig
   tts?: TtsConfig
   computerUse?: ComputerUseConfig
@@ -843,7 +861,7 @@ export type GoogleUpdateResult =
     }
   | { ok: false; kind: GoogleErrorKind; message?: string }
 
-export type GoogleSetupProgressEvent = { percent: number }
+export type GoogleSetupStateEvent = { stage: 'idle' | 'setup' | 'updating'; percent: number }
 export type GoogleAuthUrlEvent = { url: string }
 
 export type GoogleCredentialsResult =
@@ -865,7 +883,8 @@ export type GoogleApi = {
   checkBinary: () => Promise<GoogleBinaryStatus>
   setup: () => Promise<GoogleSetupResult>
   update: () => Promise<GoogleUpdateResult>
-  onSetupProgress: (listener: (event: GoogleSetupProgressEvent) => void) => () => void
+  getSetupState: () => Promise<GoogleSetupStateEvent>
+  onSetupState: (listener: (event: GoogleSetupStateEvent) => void) => () => void
   onAuthUrl: (listener: (event: GoogleAuthUrlEvent) => void) => () => void
   uploadCredentials: (jsonContent: string) => Promise<GoogleCredentialsResult>
   deleteCredentials: () => Promise<{ ok: true } | { ok: false; message: string }>
@@ -1094,6 +1113,22 @@ export type MicApi = {
   requestAccess: () => Promise<boolean>
 }
 
+// Local voice-engine provisioning (Kokoro TTS / faster-whisper STT) exposed to
+// the Settings panels: a manual install with streamed progress + a readiness
+// check so the panels can gate voice/model selection until installed.
+export type EngineInstallPhase = 'python' | 'engine' | 'ffmpeg' | 'model' | 'done'
+export type EngineInstallProgressEvent = { phase: EngineInstallPhase; percent: number }
+export type EngineStatus = { installed: boolean }
+export type EngineInstallResult = { ok: true } | { ok: false; error: string }
+export type TtsPreviewResult = { ok: true; filePath: string } | { ok: false; error: string }
+// Queryable in-flight install state — lets a panel recover progress after the
+// user navigates away and back (the install keeps running in main).
+export type EngineInstallRuntimeState = {
+  installing: boolean
+  progress: EngineInstallProgressEvent | null
+  error: string | null
+}
+
 export type SttApi = {
   getConfig: () => Promise<SttConfig>
   setConfig: (patch: Partial<SttConfig>) => Promise<{ ok: true; config: SttConfig }>
@@ -1101,11 +1136,20 @@ export type SttApi = {
     filePath: string
     conversationId?: string
   }) => Promise<SttTranscribeResult>
+  installStatus: () => Promise<EngineStatus>
+  install: () => Promise<EngineInstallResult>
+  onInstallProgress: (listener: (event: EngineInstallProgressEvent) => void) => () => void
+  getInstallState: () => Promise<EngineInstallRuntimeState>
 }
 
 export type TtsApi = {
   getConfig: () => Promise<TtsConfig>
   setConfig: (patch: Partial<TtsConfig>) => Promise<{ ok: true; config: TtsConfig }>
+  installStatus: () => Promise<EngineStatus>
+  install: () => Promise<EngineInstallResult>
+  onInstallProgress: (listener: (event: EngineInstallProgressEvent) => void) => () => void
+  getInstallState: () => Promise<EngineInstallRuntimeState>
+  preview: (payload: { text?: string; voice?: string; speed?: string }) => Promise<TtsPreviewResult>
 }
 
 export type UploadValidationError =
@@ -1168,6 +1212,7 @@ export type WolffishApi = {
   upload: UploadApi
   telegram: TelegramApi
   whatsapp: WhatsAppApi
+  inapp: InAppApi
   brave: BraveApi
   notion: NotionApi
   github: GitHubApi
@@ -1360,6 +1405,11 @@ const api: WolffishApi = {
     onQr: (callback) => subscribe('whatsapp:qr', callback),
     onStatusChange: (callback) => subscribe('whatsapp:statusChange', callback)
   },
+  inapp: {
+    getConfig: () => ipcRenderer.invoke('inapp:getConfig'),
+    setConfig: (patch) => ipcRenderer.invoke('inapp:setConfig', patch),
+    onConfigChange: (callback) => subscribe('inapp:configChange', callback)
+  },
   brave: {
     getConfig: () => ipcRenderer.invoke('brave:getConfig'),
     setConfig: (patch) => ipcRenderer.invoke('brave:setConfig', patch),
@@ -1392,7 +1442,8 @@ const api: WolffishApi = {
     checkBinary: () => ipcRenderer.invoke('google:checkBinary'),
     setup: () => ipcRenderer.invoke('google:setup'),
     update: () => ipcRenderer.invoke('google:update'),
-    onSetupProgress: (listener) => subscribe('google:setupProgress', listener),
+    getSetupState: () => ipcRenderer.invoke('google:getSetupState'),
+    onSetupState: (listener) => subscribe('google:setupState', listener),
     onAuthUrl: (listener) => subscribe('google:authUrl', listener),
     uploadCredentials: (jsonContent) => ipcRenderer.invoke('google:uploadCredentials', jsonContent),
     deleteCredentials: () => ipcRenderer.invoke('google:deleteCredentials'),
@@ -1408,11 +1459,20 @@ const api: WolffishApi = {
   stt: {
     getConfig: () => ipcRenderer.invoke('stt:getConfig'),
     setConfig: (patch) => ipcRenderer.invoke('stt:setConfig', patch),
-    transcribe: (payload) => ipcRenderer.invoke('stt:transcribe', payload)
+    transcribe: (payload) => ipcRenderer.invoke('stt:transcribe', payload),
+    installStatus: () => ipcRenderer.invoke('stt:installStatus'),
+    install: () => ipcRenderer.invoke('stt:install'),
+    onInstallProgress: (listener) => subscribe('stt:installProgress', listener),
+    getInstallState: () => ipcRenderer.invoke('stt:getInstallState')
   },
   tts: {
     getConfig: () => ipcRenderer.invoke('tts:getConfig'),
-    setConfig: (patch) => ipcRenderer.invoke('tts:setConfig', patch)
+    setConfig: (patch) => ipcRenderer.invoke('tts:setConfig', patch),
+    installStatus: () => ipcRenderer.invoke('tts:installStatus'),
+    install: () => ipcRenderer.invoke('tts:install'),
+    onInstallProgress: (listener) => subscribe('tts:installProgress', listener),
+    getInstallState: () => ipcRenderer.invoke('tts:getInstallState'),
+    preview: (payload) => ipcRenderer.invoke('tts:preview', payload)
   },
   computerUse: {
     getConfig: () => ipcRenderer.invoke('computerUse:getConfig'),

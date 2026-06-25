@@ -1,4 +1,24 @@
-## v1.0.185 — 2026-06-24 `Latest`
+## v1.0.186 — 2026-06-25 `Latest`
+
+### Your Voice, Now Fully Local
+
+Text-to-speech and speech-to-text no longer touch the cloud. Wolffish now speaks with **Kokoro**, a local neural voice engine, and listens with **faster-whisper** — both running entirely on your machine, with no API keys and nothing sent to Microsoft or anyone else. Voice memos work fully offline after a one-time setup. The default voice is **Bella** (English, US), and every voice in the picker is labeled with its accent so you know exactly what you're choosing.
+
+### Install Voice Engines On Demand — With a Real Preview
+
+Settings → **Text-to-Speech** and **Speech-to-Text** now have an **Install** button with a live progress bar, so you can set the engine up whenever you like instead of waiting on your first voice memo. Until it's installed, the voice and model pickers stay disabled — no picking something that isn't ready yet. And the **Preview** button plays the *actual* Kokoro voice you selected, not a browser stand-in, so what you hear is what you'll get.
+
+### Progress That Survives Navigation
+
+Start an install — or a Google Workspace setup or update — then switch to another tab or reload the window, and it keeps right on going. Come back and the progress bar picks up exactly where the real work is, instead of resetting to the start. The status reads "Installing" with a pulsing indicator while it runs, and the button no longer flickers as you move around the app.
+
+### One Voice Memo Per Reply
+
+Sending a voice note used to occasionally come back as a cluttered stack — two generated memos plus a copy of your own recording echoed back. Now you get **exactly one** voice memo in reply. If your message asked Wolffish to actually do something, it does that work first, then closes with a single spoken answer. This applies everywhere — the desktop app, Telegram, and WhatsApp.
+
+---
+
+## v1.0.185 — 2026-06-24
 
 ### Select & Copy in the Markdown Viewer
 

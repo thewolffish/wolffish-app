@@ -246,6 +246,62 @@ export function buildWhatsAppCapability(deps: ToolDeps): {
           required: true
         }
       }
+    },
+    {
+      name: 'whatsapp_list_groups',
+      description:
+        'List every WhatsApp group you are a member of, with each group\'s name, member count, and JID (…@g.us). Use this to discover a group\'s JID before sending to it — you cannot enumerate groups any other way. Optionally pass "query" to filter by name (case-insensitive substring).',
+      parameters: {
+        query: {
+          type: 'string',
+          description:
+            'Optional case-insensitive substring to filter group names (e.g. "family"). Omit to list all groups.',
+          required: false
+        }
+      }
+    },
+    {
+      name: 'whatsapp_group_info',
+      description:
+        "Get full details for one WhatsApp group: name, description, settings, and the participant list with each member's phone number, name, and admin role. Use this to look up the phone numbers / JIDs of people in a group. Get the group JID from whatsapp_list_groups first.",
+      parameters: {
+        jid: {
+          type: 'string',
+          description: 'The group JID, ending in @g.us (e.g. "120363012345@g.us").',
+          required: true
+        },
+        includeParticipants: {
+          type: 'boolean',
+          description:
+            'Whether to include the full member list (default true). Set false for just the group summary on large groups.',
+          required: false
+        }
+      }
+    },
+    {
+      name: 'whatsapp_group_invite',
+      description:
+        'Get the shareable invite link for a WhatsApp group. You must be an admin of the group. Returns a https://chat.whatsapp.com/… link.',
+      parameters: {
+        jid: {
+          type: 'string',
+          description: 'The group JID, ending in @g.us.',
+          required: true
+        }
+      }
+    },
+    {
+      name: 'whatsapp_profile',
+      description:
+        'Look up public profile info for a WhatsApp contact or group: profile picture URL, the "about"/status text, and — for business accounts — the business profile (description, category, email, website, address, hours). Pass a JID (resolve a phone number with whatsapp_check first). Fields the user has hidden from non-contacts come back empty.',
+      parameters: {
+        jid: {
+          type: 'string',
+          description:
+            'The JID to look up — <phone>@s.whatsapp.net for a person or <id>@g.us for a group.',
+          required: true
+        }
+      }
     }
   ]
 
@@ -253,8 +309,18 @@ export function buildWhatsAppCapability(deps: ToolDeps): {
     name: WHATSAPP_CAPABILITY_NAME,
     dir: '<in-process>',
     description:
-      'WhatsApp messaging via Baileys (Web client). Look up any phone number to confirm it is on WhatsApp and resolve its JID, then send text, images, documents, and voice notes — by file path, no manual base64 needed — reply to messages, and react. Works for any WhatsApp contact or group, not just people who have messaged first.',
-    triggers: { keywords: ['whatsapp', 'wa', 'send whatsapp', 'message on whatsapp'] },
+      "WhatsApp messaging via Baileys (Web client). Look up any phone number to confirm it is on WhatsApp and resolve its JID, list the groups you belong to and inspect a group's members, settings, and invite link, read a contact's profile picture and status — then send text, images, documents, and voice notes (by file path, no manual base64 needed), reply to messages, and react. Works for any WhatsApp contact or group, not just people who have messaged first.",
+    triggers: {
+      keywords: [
+        'whatsapp',
+        'wa',
+        'send whatsapp',
+        'message on whatsapp',
+        'whatsapp group',
+        'group id',
+        'group jid'
+      ]
+    },
     tools,
     body: '',
     hasPlugin: true,
@@ -291,6 +357,14 @@ export function buildWhatsAppCapability(deps: ToolDeps): {
           return replyTo(sock, args, track)
         case 'whatsapp_react':
           return reactTo(sock, args)
+        case 'whatsapp_list_groups':
+          return listGroups(sock, args)
+        case 'whatsapp_group_info':
+          return groupInfo(sock, args)
+        case 'whatsapp_group_invite':
+          return groupInvite(sock, args)
+        case 'whatsapp_profile':
+          return getProfile(sock, args)
         default:
           return failure(`unknown whatsapp tool: ${toolName}`)
       }
@@ -473,6 +547,130 @@ async function reactTo(
   } catch (err) {
     return failure(`react failed: ${errMessage(err)}`)
   }
+}
+
+async function listGroups(
+  sock: WASocket,
+  args: Record<string, unknown>
+): Promise<ToolExecutionResult> {
+  const query = stringArg(args.query)?.toLowerCase() ?? null
+  try {
+    const all = await sock.groupFetchAllParticipating()
+    let groups = Object.values(all)
+    if (query) groups = groups.filter((g) => (g.subject ?? '').toLowerCase().includes(query))
+    if (groups.length === 0) {
+      return success(
+        query
+          ? `No groups match "${stringArg(args.query)}". (You may not be in a group with that name.)`
+          : 'You are not a member of any WhatsApp groups.'
+      )
+    }
+    groups.sort((a, b) => (a.subject ?? '').localeCompare(b.subject ?? ''))
+    const lines = groups.map((g) => {
+      const size = g.size ?? g.participants?.length ?? '?'
+      const tag = g.isCommunity ? ' [community]' : ''
+      return `• ${g.subject || '(no name)'}${tag} — ${size} members — jid=${g.id}`
+    })
+    return success(
+      `${groups.length} group(s):\n${lines.join('\n')}\n\nUse a jid (…@g.us) with whatsapp_send, whatsapp_group_info, or whatsapp_group_invite.`
+    )
+  } catch (err) {
+    return failure(`list groups failed: ${errMessage(err)}`)
+  }
+}
+
+async function groupInfo(
+  sock: WASocket,
+  args: Record<string, unknown>
+): Promise<ToolExecutionResult> {
+  const jid = stringArg(args.jid)
+  if (!jid) return failure('jid is required')
+  const includeParticipants = args.includeParticipants !== false
+  try {
+    const meta = await sock.groupMetadata(jid)
+    const lines: string[] = []
+    lines.push(`Group: ${meta.subject || '(no name)'}`)
+    lines.push(`jid: ${meta.id}`)
+    if (meta.desc) lines.push(`description: ${meta.desc}`)
+    lines.push(`members: ${meta.size ?? meta.participants?.length ?? 0}`)
+    if (meta.owner) lines.push(`owner: ${meta.ownerPn ?? meta.owner}`)
+    if (meta.creation) lines.push(`created: ${new Date(meta.creation * 1000).toISOString()}`)
+    const settings: string[] = []
+    if (meta.announce) settings.push('admins-only messages')
+    if (meta.restrict) settings.push('admins-only settings')
+    if (meta.joinApprovalMode) settings.push('join approval required')
+    if (meta.isCommunity) settings.push('community')
+    if (settings.length) lines.push(`settings: ${settings.join(', ')}`)
+    if (includeParticipants && meta.participants?.length) {
+      lines.push('', 'Participants:')
+      for (const p of meta.participants) {
+        const num = p.phoneNumber ?? p.id
+        const name = p.name ?? p.notify ?? ''
+        const role = p.isSuperAdmin ? ' (owner)' : p.isAdmin || p.admin ? ' (admin)' : ''
+        lines.push(`  • ${num}${name ? ` — ${name}` : ''}${role}`)
+      }
+    }
+    return success(lines.join('\n'))
+  } catch (err) {
+    return failure(
+      `group info failed: ${errMessage(err)} (check that "${jid}" is a group jid ending in @g.us and that you are a member)`
+    )
+  }
+}
+
+async function groupInvite(
+  sock: WASocket,
+  args: Record<string, unknown>
+): Promise<ToolExecutionResult> {
+  const jid = stringArg(args.jid)
+  if (!jid) return failure('jid is required')
+  try {
+    const code = await sock.groupInviteCode(jid)
+    if (!code) return failure('no invite code returned — you must be an admin of the group')
+    return success(`Invite link: https://chat.whatsapp.com/${code}`)
+  } catch (err) {
+    return failure(`get invite failed: ${errMessage(err)} (you must be an admin of the group)`)
+  }
+}
+
+async function getProfile(
+  sock: WASocket,
+  args: Record<string, unknown>
+): Promise<ToolExecutionResult> {
+  const jid = stringArg(args.jid)
+  if (!jid) return failure('jid is required')
+  const lines: string[] = [`Profile for ${jid}:`]
+  try {
+    const pic = await sock.profilePictureUrl(jid, 'image')
+    lines.push(pic ? `picture: ${pic}` : 'picture: (none or hidden)')
+  } catch {
+    lines.push('picture: (none or hidden)')
+  }
+  try {
+    const statuses = await sock.fetchStatus(jid)
+    const entry = statuses?.[0]?.status as { status?: string | null } | undefined
+    const text = entry?.status ?? null
+    lines.push(text ? `about: ${text}` : 'about: (none or hidden)')
+  } catch {
+    lines.push('about: (none or hidden)')
+  }
+  try {
+    const biz = await sock.getBusinessProfile(jid)
+    if (biz) {
+      lines.push('', 'Business profile:')
+      if (biz.description) lines.push(`  description: ${biz.description}`)
+      if (biz.category) lines.push(`  category: ${biz.category}`)
+      if (biz.email) lines.push(`  email: ${biz.email}`)
+      const sites = (biz.website ?? []).filter(Boolean)
+      if (sites.length) lines.push(`  website: ${sites.join(', ')}`)
+      if (biz.address) lines.push(`  address: ${biz.address}`)
+      const tz = biz.business_hours?.timezone
+      if (tz) lines.push(`  hours timezone: ${tz}`)
+    }
+  } catch {
+    // Not a business account, or hours/profile not shared — silently skip.
+  }
+  return success(lines.join('\n'))
 }
 
 type MediaKind = 'image' | 'audio' | 'document'

@@ -1,5 +1,6 @@
 import {
   createConversation,
+  generateTitle,
   saveConversation,
   type ConversationFile,
   type ConversationMessage
@@ -1088,9 +1089,18 @@ export class Agent {
   async processAutonomous(opts: AutonomousTurnOptions): Promise<AutonomousTurnResult> {
     await this.init().catch(() => undefined)
 
+    const summary = generateTitle({
+      id: '',
+      title: 'Untitled',
+      model: null,
+      messages: [{ role: 'user', content: opts.instruction, timestamp: 0 }],
+      createdAt: 0,
+      updatedAt: 0
+    })
+
     const conv: ConversationFile = {
       ...createConversation(null),
-      title: opts.jobLabel,
+      title: summary === 'Untitled' ? opts.jobLabel : `${opts.jobLabel}: ${summary}`,
       channel: 'heartbeat',
       sealed: true
     }

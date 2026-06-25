@@ -31,6 +31,7 @@ import { DataPanel } from '@pages/settings/DataPanel'
 import { GitHubPanel } from '@pages/settings/GitHubPanel'
 import { GooglePanel } from '@pages/settings/GooglePanel'
 import { prefetchGooglePanel } from '@pages/settings/googleSnapshot'
+import { InAppPanel } from '@pages/settings/InAppPanel'
 import { MemesPanel } from '@pages/settings/MemesPanel'
 import { NotionPanel } from '@pages/settings/NotionPanel'
 import { SpeechToTextPanel } from '@pages/settings/SpeechToTextPanel'
@@ -117,7 +118,7 @@ function restoreSnapshot(
         ? (s.provider as Provider)
         : 'ollama',
     channel:
-      s?.channel && CHANNELS.includes(s.channel as Channel) ? (s.channel as Channel) : 'telegram',
+      s?.channel && CHANNELS.includes(s.channel as Channel) ? (s.channel as Channel) : 'inapp',
     service: s?.service ? (s.service as Service) : 'browserExtension',
     hippocampusTab:
       s?.hippocampusTab && HIPPOCAMPUS_TABS.includes(s.hippocampusTab as HippocampusTab)
@@ -544,6 +545,9 @@ export function Settings(): React.JSX.Element {
         <TabPanel active={active === 'channels' && channel === 'whatsapp'}>
           <WhatsAppPanel />
         </TabPanel>
+        <TabPanel active={active === 'channels' && channel === 'inapp'}>
+          <InAppPanel />
+        </TabPanel>
         <TabPanel active={active === 'services' && effectiveService === 'browserExtension'}>
           <BrowserExtensionPanel />
         </TabPanel>
@@ -635,10 +639,11 @@ const PROVIDER_ICONS: Record<
   zai: ZaiLogo
 }
 
-type Channel = 'telegram' | 'whatsapp'
-const CHANNELS: Channel[] = ['telegram', 'whatsapp']
+type Channel = 'inapp' | 'telegram' | 'whatsapp'
+const CHANNELS: Channel[] = ['inapp', 'telegram', 'whatsapp']
 
 const CHANNEL_ICONS: Record<Channel, React.ComponentType<{ size?: number }>> = {
+  inapp: ComputerIcon,
   telegram: TelegramLogo,
   whatsapp: WhatsappIcon
 }

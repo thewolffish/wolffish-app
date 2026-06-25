@@ -112,6 +112,7 @@ triggers:
   - lines changed
 requires:
   - shell
+  - node
 tools:
   - name: github_list_repos
     description: List the authenticated user's repositories. Returns name, description, visibility, default branch, and last pushed date.

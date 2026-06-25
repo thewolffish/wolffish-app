@@ -276,6 +276,12 @@ type ActiveTurn = {
    * outbound send only.
    */
   verbose: boolean
+  /**
+   * Set once the turn's voice_respond reply has been sent. A turn delivers at
+   * most ONE voice memo reply — if the model responds, then redoes the reply,
+   * the duplicate is suppressed. voice_generate assets are unaffected.
+   */
+  voiceReplySent: boolean
 }
 
 /**
@@ -1486,7 +1492,8 @@ export class TelegramChannel {
             lastFlushedModel: null,
             sentFiles: new Set(),
             renderChain: Promise.resolve(),
-            verbose
+            verbose,
+            voiceReplySent: false
           }
           this.activeByChat.set(chatId, active)
           // Hand off from the pre-turn heartbeat — the turn timer below
@@ -1705,6 +1712,18 @@ export class TelegramChannel {
       const name = active.toolCallNames.get(segment.toolCallId)
       const heading = name ? `${icon} <b>${escapeHtml(name)}</b>` : icon
       const output = segment.output?.trim() ?? ''
+      // An stt_* result's file payload is the user's SOURCE recording (an
+      // input, already transcribed), never a deliverable — so its audio path
+      // must not be echoed back as a voice message below.
+      const isSttResult = name?.startsWith('stt_') ?? false
+      // One voice memo reply per turn: suppress a redone voice_respond no matter
+      // which send path it would take (parsed voice branch OR the av fallback).
+      // Gated on success so a FAILED duplicate still falls through to the normal
+      // error-surfacing path (failures always surface). voice_generate assets
+      // are unaffected and always delivered.
+      if (name === 'voice_respond' && active.voiceReplySent && segment.status === 'success') {
+        return
+      }
 
       // voice_respond / voice_generate produce a JSON blob whose only
       // useful payload is the MP3 path — render a clean result line
@@ -1713,6 +1732,7 @@ export class TelegramChannel {
       if (segment.status === 'success' && (name === 'voice_respond' || name === 'voice_generate')) {
         const voice = parseVoiceToolOutput(output)
         if (voice) {
+          if (name === 'voice_respond') active.voiceReplySent = true
           await this.sendHtml(chatId, heading)
           await this.sendVoiceAudio(chatId, voice)
           return
@@ -1744,7 +1764,7 @@ export class TelegramChannel {
         return
       }
 
-      const avPaths = extractAudioVideoPaths(output)
+      const avPaths = isSttResult ? [] : extractAudioVideoPaths(output)
       if (avPaths.length > 0) {
         await this.sendHtml(chatId, heading)
         for (const av of avPaths) {
@@ -1754,6 +1774,8 @@ export class TelegramChannel {
             await this.sendVideoFile(chatId, av.path)
           }
         }
+        // Mark the single voice reply as delivered even on this fallback path.
+        if (name === 'voice_respond') active.voiceReplySent = true
         return
       }
 

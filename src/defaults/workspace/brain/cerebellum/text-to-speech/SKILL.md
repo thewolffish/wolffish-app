@@ -1,6 +1,6 @@
 ---
 name: text-to-speech
-description: Generate voice memos from text using neural TTS. Convert any text to spoken audio, respond with voice memos, or create voice summaries.
+description: Generate voice memos from text using a fully local neural TTS engine (Kokoro). Convert any text to spoken audio, respond with voice memos, or create voice summaries — entirely on-device, no cloud.
 triggers:
   - voice
   - speak
@@ -43,7 +43,6 @@ triggers:
   - voice actor
   - narrator
   - announcer
-  - robot voice
   - ai voice
   - natural voice
   - human voice
@@ -53,14 +52,9 @@ triggers:
   - pitch
   - speed
   - rate
-  - volume
-  - whisper
-  - shout
-  - intonation
   - recording
   - audio output
   - sound file
-  - wav file
   - save as audio
   - export audio
   - respond with voice
@@ -77,11 +71,11 @@ tools:
       voice:
         type: string
         required: false
-        description: "OMIT to use the user's configured default voice (Settings → Text-to-Speech). Only set it to reply in a DIFFERENT language than that default (e.g. fr-FR-DeniseNeural when replying in French), or when the user explicitly names a voice — never to pick a same-language alternative yourself. Run edge-tts --list-voices for all options."
+        description: "Kokoro voice id (e.g. af_bella). OMIT to use the user's configured default voice (Settings → Text-to-Speech). American voices start af_ (female) / am_ (male); British voices bf_ / bm_."
       speed:
         type: string
         required: false
-        description: "Speech rate. Omit to use the user's configured default. Options: -50% (slow), +0% (normal), +50% (fast), +100% (very fast)"
+        description: "Speech rate multiplier between 0.5 and 1.5 (default 1.0). Omit to use the user's configured default."
   - name: voice_respond
     description: Respond to the user entirely as a voice memo. The voice IS the response — do not also send the same text as a regular message. Include only a brief label like "Voice memo" so something appears while audio loads.
     parameters:
@@ -91,17 +85,19 @@ tools:
       voice:
         type: string
         required: false
-        description: "OMIT to use the user's configured default voice (Settings → Text-to-Speech). Only set it to reply in a DIFFERENT language than that default, or when the user explicitly names a voice — never to pick a same-language alternative yourself."
+        description: "Kokoro voice id (e.g. af_bella). OMIT to use the user's configured default voice."
       speed:
         type: string
         required: false
-        description: "Speech rate. Omit to use the user's configured default."
+        description: "Speech rate multiplier between 0.5 and 1.5 (default 1.0). Omit to use the user's configured default."
   - name: voice_list
     description: List all voice memo files in the workspace voice directory with their timestamps and sizes.
     parameters: {}
 danger_patterns: []
 confirm_patterns: []
-requires: []
+requires:
+  - python
+  - ffmpeg
 ---
 
 # Voice
@@ -109,46 +105,53 @@ requires: []
 ## Interface
 
 - Tools: `voice_generate`, `voice_respond`, `voice_list`
-- Engine: Microsoft Edge TTS (free, neural voices, no API key)
-- Output: MP3 files stored in the workspace voice directory
+- Engine: **Kokoro** — a local 82M-parameter neural TTS model. Runs entirely
+  on-device (CPU) via a managed Python runtime; no cloud, no API key, no account.
+- Output: MP3 files stored in the workspace voice directory.
+
+The first voice memo provisions the engine (a hermetic Python runtime, the
+kokoro-onnx package, and the ~310 MB model) — this is a one-time download. Every
+voice memo after that is fully offline.
 
 ## When to use each tool
 
 - **"convert this to a voice memo"**, **"read this aloud"**, **"say this"** → `voice_generate` with the specified text. The voice memo attaches below your text response.
-- **"respond in voice"**, **"reply with audio"**, **"voice memo only"**, **"answer in audio"** → `voice_respond` with your full response. Do NOT also send the text as a regular message — the voice IS the response. Write only a brief label like "Voice memo" as your text output.
-- **"summarize the last response as a voice memo"** → Take your most recent response, condense it into spoken form, and use `voice_respond`.
+- **"respond in voice"**, **"reply with audio"**, **"voice memo only"** → `voice_respond` with your full response. Do NOT also send the text as a regular message — the voice IS the response. Write only a brief label like "Voice memo" as your text output.
+- **"summarize the last response as a voice memo"** → Condense your most recent response into spoken form and use `voice_respond`.
 - **"from now on reply with voice memos"** → Use `voice_respond` for all subsequent responses until told otherwise.
-- **"list my voice memos"** → `voice_list` to show all generated voice files.
+- **"list my voice memos"** → `voice_list`.
 
 ## Available voices
 
+English only. American (`af_`/`am_`) and British (`bf_`/`bm_`) accents.
+
 | Voice | Language | Gender |
 |---|---|---|
-| en-US-AriaNeural | English (US) | Female |
-| en-US-GuyNeural | English (US) | Male |
-| en-US-JennyNeural | English (US) | Female |
-| en-GB-SoniaNeural | English (UK) | Female |
-| en-GB-RyanNeural | English (UK) | Male |
-| ar-SA-HamedNeural | Arabic (SA) | Male |
-| ar-SA-ZariyahNeural | Arabic (SA) | Female |
-| fr-FR-DeniseNeural | French | Female |
-| de-DE-KatjaNeural | German | Female |
-| es-ES-ElviraNeural | Spanish | Female |
-| ja-JP-NanamiNeural | Japanese | Female |
-| zh-CN-XiaoxiaoNeural | Chinese | Female |
+| af_bella (default) | English (US) | Female |
+| af_heart | English (US) | Female |
+| af_nicole | English (US) | Female |
+| af_sarah | English (US) | Female |
+| am_adam | English (US) | Male |
+| am_michael | English (US) | Male |
+| am_onyx | English (US) | Male |
+| bf_emma | English (UK) | Female |
+| bf_isabella | English (UK) | Female |
+| bm_george | English (UK) | Male |
+| bm_lewis | English (UK) | Male |
 
-If the user asks for a voice not listed, run `edge-tts --list-voices` via shell to see all available voices.
+The user picks a default in Settings → Text-to-Speech; the full list is shown
+there. Leave `voice` unset unless the user explicitly names one.
 
-## Speed options
+## Speed
 
-- `-50%` — slow
-- `+0%` — normal (default)
-- `+50%` — fast
-- `+100%` — very fast
+A multiplier from `0.5` (slow) to `1.5` (fast); `1.0` is normal. Omit to use the
+user's configured default.
 
 ## Rules
 
-- Always pass text that reads naturally when spoken. Strip markdown formatting, code blocks, and special characters before sending to TTS.
-- **Leave `voice` unset by default.** The user picks their voice in Settings → Text-to-Speech and it's applied automatically. Only pass `voice` to reply in a different language than that default, or when the user explicitly names one. Don't pick a same-language voice yourself — doing so overrides the user's choice (and is how a configured female voice ends up sounding male).
-- For long texts (2000+ words), the engine handles them in one pass. No chunking needed.
+- Always pass text that reads naturally when spoken. Strip markdown formatting,
+  code blocks, and special characters before sending to TTS.
+- **Leave `voice` unset by default.** The user picks their voice in Settings and
+  it's applied automatically. Only pass `voice` when the user explicitly names one.
+- For long texts the engine handles them in one pass. No chunking needed.
 - Voice files are stored in the workspace and persist across sessions.

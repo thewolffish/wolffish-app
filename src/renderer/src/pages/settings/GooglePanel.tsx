@@ -3,7 +3,12 @@ import { Input } from '@components/core/Input'
 import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn'
 import { getCachedGoogleSnapshot, prefetchGooglePanel } from '@pages/settings/googleSnapshot'
-import type { GoogleBinaryStatus, GoogleConfig, GoogleStatus } from '@preload/index'
+import type {
+  GoogleBinaryStatus,
+  GoogleConfig,
+  GoogleSetupStateEvent,
+  GoogleStatus
+} from '@preload/index'
 import {
   CheckmarkCircle02Icon,
   CloudUploadIcon,
@@ -31,6 +36,15 @@ const EMPTY_STATUS: GoogleStatus = {
   error: null
 }
 
+// Main owns the real setup/update progress; this module-level snapshot mirrors
+// it so a panel remounted after navigation restores the running install instead
+// of resetting. Registered once at import, never torn down — outlives any mount.
+// Same pattern as UpdatesPanel for the app updater.
+let cachedSetup: GoogleSetupStateEvent = { stage: 'idle', percent: 0 }
+window.api.google.onSetupState((s) => {
+  cachedSetup = s
+})
+
 export function GooglePanel(): React.JSX.Element {
   const { t } = useTranslation()
   const toast = useToast()
@@ -45,13 +59,21 @@ export function GooglePanel(): React.JSX.Element {
   const [config, setConfig] = useState<GoogleConfig | null>(initial?.config ?? null)
   const [status, setStatus] = useState<GoogleStatus>(initial?.status ?? EMPTY_STATUS)
   const [email, setEmail] = useState('')
-  const [stage, setStage] = useState<Stage>('idle')
+  // Seed setup/update progress from the module cache so navigating away and back
+  // mid-install restores instantly rather than resetting to idle.
+  const setupBusy = cachedSetup.stage !== 'idle'
+  const [stage, setStage] = useState<Stage>(setupBusy ? cachedSetup.stage : 'idle')
   const [credsDone, setCredsDone] = useState(initial?.config?.credentialsStored ?? false)
-  const [progress, setProgress] = useState(initial?.binary.gogInstalled ? 100 : 0)
+  const [progress, setProgress] = useState(
+    setupBusy ? cachedSetup.percent : initial?.binary.gogInstalled ? 100 : 0
+  )
   const [accounts, setAccounts] = useState<string[]>(initial?.accounts ?? [])
   const [authUrl, setAuthUrl] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const authCanceledRef = useRef(false)
+  // Flipped once a live setup-state event lands, so the async getSetupState seed
+  // never clobbers fresher state.
+  const liveSeen = useRef(false)
 
   useEffect(() => {
     let cancelled = false
@@ -69,8 +91,43 @@ export function GooglePanel(): React.JSX.Element {
     }
   }, [])
 
+  // Recover a setup/update that's still running in main after a remount (covers
+  // a full renderer reload too), unless a live event already superseded it.
   useEffect(() => {
-    return window.api.google.onSetupProgress((evt) => setProgress(evt.percent))
+    let cancelled = false
+    liveSeen.current = false
+    void window.api.google.getSetupState().then((s) => {
+      if (cancelled || liveSeen.current) return
+      if (s.stage === 'setup' || s.stage === 'updating') {
+        // Never knock a transient OAuth stage (validating/authorizing) into a
+        // setup/update view. Today these never overlap, but the guard keeps it
+        // correct if that ever changes.
+        setStage((prev) => (prev === 'validating' || prev === 'authorizing' ? prev : s.stage))
+        setProgress(s.percent)
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // Live setup/update progress, broadcast from main so it tracks regardless of
+  // which surface started the install. An 'idle' event means the install just
+  // finished — clear the busy stage and refresh the binary (the local
+  // handleSetup/handleUpdate also do this for the initiating panel; both are
+  // idempotent, and this covers a panel that remounted mid-install).
+  useEffect(() => {
+    return window.api.google.onSetupState((s) => {
+      liveSeen.current = true
+      if (s.stage === 'setup' || s.stage === 'updating') {
+        setStage((prev) => (prev === 'validating' || prev === 'authorizing' ? prev : s.stage))
+        setProgress(s.percent)
+      } else {
+        setProgress(s.percent)
+        setStage((prev) => (prev === 'setup' || prev === 'updating' ? 'idle' : prev))
+        void window.api.google.checkBinary().then((b) => setBinary(b))
+      }
+    })
   }, [])
 
   useEffect(() => {

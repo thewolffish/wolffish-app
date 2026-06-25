@@ -93,8 +93,10 @@ import {
   StopCircleIcon
 } from 'hugeicons-react'
 import {
+  createContext,
   Fragment,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -106,6 +108,13 @@ import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 
 type ToolResultSegment = Extract<Segment, { kind: 'tool_result' }>
+
+// In-app verbose display preference, mirroring the Telegram / WhatsApp
+// channel toggle but for what the renderer DISPLAYS (history is untouched).
+// false (default) = clean feed: agent replies, file-bearing tool results,
+// errors, and the model chip; tool-activity and compaction cards hidden.
+// true = the full activity feed. Provided by Chat, read in AssistantBubble.
+const InAppVerboseContext = createContext(false)
 
 export function Chat(): React.JSX.Element {
   const { t } = useTranslation()
@@ -319,6 +328,22 @@ export function Chat(): React.JSX.Element {
     })
     return off
   }, [refreshStatus])
+
+  // In-app verbose display preference. Read once on mount and kept live via
+  // the broadcast the settings panel triggers on save, so toggling it
+  // re-renders an open feed immediately. Off (default) = clean feed.
+  const [inAppVerbose, setInAppVerbose] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    void window.api.inapp.getConfig().then((cfg) => {
+      if (!cancelled) setInAppVerbose(cfg.verbose ?? false)
+    })
+    const off = window.api.inapp.onConfigChange((cfg) => setInAppVerbose(cfg.verbose ?? false))
+    return () => {
+      cancelled = true
+      off()
+    }
+  }, [])
 
   const onModeChange = useCallback(
     async (next: boolean) => {
@@ -1488,15 +1513,17 @@ export function Chat(): React.JSX.Element {
               )}
             </div>
           )}
-          {messages.map((m) => (
-            <ChatItem
-              key={m.id}
-              message={m}
-              t={t}
-              awaitingApproval={awaitingApproval}
-              onApprovalDecision={respondApproval}
-            />
-          ))}
+          <InAppVerboseContext.Provider value={inAppVerbose}>
+            {messages.map((m) => (
+              <ChatItem
+                key={m.id}
+                message={m}
+                t={t}
+                awaitingApproval={awaitingApproval}
+                onApprovalDecision={respondApproval}
+              />
+            ))}
+          </InAppVerboseContext.Provider>
           {hasMessages && !hasAnyModel && (
             <div
               className={cn(
@@ -2385,6 +2412,7 @@ function AssistantBubble({
   onApprovalDecision: (id: string, decision: 'approved' | 'denied') => void
 }): React.JSX.Element {
   const { t } = useTranslation()
+  const verbose = useContext(InAppVerboseContext)
   const isStreaming = message.status === 'streaming'
   const isError = message.status === 'error'
   const [typedText, setTypedText] = useState('')
@@ -2433,7 +2461,8 @@ function AssistantBubble({
     message.segments,
     message.approvals,
     message.toolTimings,
-    onApprovalDecision
+    onApprovalDecision,
+    verbose
   )
   const showThinking = isStreaming && renderable.empty
   const fullText = useMemo(() => collectText(message.segments), [message.segments])
@@ -2512,7 +2541,8 @@ function renderSegments(
   segments: Segment[],
   approvals: Record<string, ApprovalCardState> | undefined,
   toolTimings: Record<string, ToolTiming> | undefined,
-  onApprovalDecision: (id: string, decision: 'approved' | 'denied') => void
+  onApprovalDecision: (id: string, decision: 'approved' | 'denied') => void,
+  verbose: boolean
 ): RenderResult {
   const blocks: ReactNode[] = []
   let textBuffer = ''
@@ -2570,6 +2600,18 @@ function renderSegments(
     textBuffer = ''
   }
 
+  // Voice replies: a turn surfaces at most ONE voice_respond memo — the LAST
+  // one. The model occasionally replies, then redoes the reply; only the final
+  // voice_respond is the real answer, so earlier ones are superseded.
+  // voice_generate ASSETS (isResponse:false) are unaffected and each render.
+  let lastVoiceReplyId: string | null = null
+  for (const s of segments) {
+    if (s.kind !== 'tool_call') continue
+    const r = findResult(segments, s.toolCallId)
+    const v = r?.status === 'success' ? parseVoiceResult(r.output) : null
+    if (v?.isResponse) lastVoiceReplyId = s.toolCallId
+  }
+
   for (let segIdx = 0; segIdx < segments.length; segIdx++) {
     const seg = segments[segIdx]
     if (seg.kind === 'text') {
@@ -2581,22 +2623,41 @@ function renderSegments(
       const timing = toolTimings?.[seg.toolCallId]
 
       const voiceData = result?.status === 'success' ? parseVoiceResult(result.output) : null
+      // An stt_* result's filePath is the user's SOURCE recording (an input),
+      // never a deliverable — don't echo it back as an audio card.
+      const isSttResult = (seg.name ?? '').startsWith('stt_')
 
       const codeFile = extractToolResultCodeFile(seg, result)
 
+      // Clean feed (verbose off): the activity card is dropped for plain
+      // successful tool calls — the file viewers below still render, so
+      // file-bearing results survive. Failed/denied results keep the card
+      // (errors must surface); a still-running call (no result yet) stays
+      // hidden until it completes. Mirrors the channel renderSegment rules.
+      const cardVisible = verbose || (result != null && result.status !== 'success')
+
       if (voiceData) {
-        blocks.push(<ToolCard key={seg.segmentId} call={seg} result={result} timing={timing} />)
-        blocks.push(
-          <AudioPlayer
-            key={`voice_${seg.segmentId}`}
-            source="voice"
-            filePath={voiceData.filePath}
-            fileExists={true}
-            mimeType="audio/mpeg"
-            fileName={voiceData.fileName}
-          />
-        )
+        if (cardVisible) {
+          blocks.push(<ToolCard key={seg.segmentId} call={seg} result={result} timing={timing} />)
+        }
+        // Render every voice_generate asset, but for the voice_respond REPLY
+        // only the final one — a redone reply must not show as a second memo.
+        const supersededReply = voiceData.isResponse && seg.toolCallId !== lastVoiceReplyId
+        if (!supersededReply) {
+          blocks.push(
+            <AudioPlayer
+              key={`voice_${seg.segmentId}`}
+              source="voice"
+              filePath={voiceData.filePath}
+              fileExists={true}
+              mimeType="audio/mpeg"
+              fileName={voiceData.fileName}
+            />
+          )
+        }
       } else if (approval) {
+        // Approval cards always render — the user must be able to act on a
+        // pending tool call regardless of the verbose preference.
         blocks.push(
           <ApprovalCard
             key={`appr_${seg.segmentId}`}
@@ -2604,33 +2665,41 @@ function renderSegments(
             onDecision={(d) => onApprovalDecision(approval.approvalId, d)}
           />
         )
-        if (approval.decision !== undefined) {
+        if (approval.decision !== undefined && cardVisible) {
           blocks.push(<ToolCard key={seg.segmentId} call={seg} result={result} timing={timing} />)
         }
-      } else {
+      } else if (cardVisible) {
         blocks.push(<ToolCard key={seg.segmentId} call={seg} result={result} timing={timing} />)
       }
 
       const page = codeFile ? null : extractToolResultPage(seg, result)
 
+      // Code-file content and fetched-page content are renderings of routine
+      // successful output, not delivered files — the channel clean feed skips
+      // them, so we only show them when verbose. They still own the branch
+      // (no fall-through to the delivered-file viewers, which never coincide).
       if (codeFile) {
-        blocks.push(
-          <CodeFileViewer
-            key={`code_${seg.segmentId}`}
-            content={codeFile.content}
-            fileName={codeFile.fileName}
-          />
-        )
+        if (verbose) {
+          blocks.push(
+            <CodeFileViewer
+              key={`code_${seg.segmentId}`}
+              content={codeFile.content}
+              fileName={codeFile.fileName}
+            />
+          )
+        }
       } else if (page) {
-        blocks.push(
-          <PageViewer
-            key={`page_${seg.segmentId}`}
-            content={page.content}
-            title={page.title}
-            url={page.url}
-            format={page.format}
-          />
-        )
+        if (verbose) {
+          blocks.push(
+            <PageViewer
+              key={`page_${seg.segmentId}`}
+              content={page.content}
+              title={page.title}
+              url={page.url}
+              format={page.format}
+            />
+          )
+        }
       } else {
         const imagePath = extractToolResultImage(result)
         if (imagePath) {
@@ -2711,7 +2780,7 @@ function renderSegments(
         // player (a native <video> card when the file is webm). This is the
         // voice-"double" fix. emitOnce is the generic backstop for any other
         // overlap within a message.
-        const media = voiceData ? null : extractToolResultMedia(result)
+        const media = voiceData || isSttResult ? null : extractToolResultMedia(result)
         if (media) {
           const mediaFileName = media.path.split('/').pop() ?? 'media'
           const mediaExt = (media.path.match(/\.[^./\\]+$/) || [''])[0].toLowerCase()
@@ -2808,6 +2877,8 @@ function renderSegments(
       flushText()
       blocks.push(<ActiveModelChip key={seg.segmentId} provider={seg.to} model={seg.model} />)
     } else if (seg.kind === 'compaction_started') {
+      // Clean feed: compaction is internal activity, not a result — hide it.
+      if (!verbose) continue
       const hasCompletion = segments.some((s, j) => j > segIdx && s.kind === 'compaction')
       if (!hasCompletion) {
         flushText()
@@ -2823,6 +2894,8 @@ function renderSegments(
         )
       }
     } else if (seg.kind === 'compaction') {
+      // Clean feed: compaction is internal activity, not a result — hide it.
+      if (!verbose) continue
       flushText()
       blocks.push(
         <CompactionCard
@@ -3565,7 +3638,7 @@ function composeHistoryContent(
     const hasVideo = attachments.some((a) => a.type === 'video')
     if (hasVideo) {
       parts.push(
-        `<video_instructions>\nOne or more attached files are videos. You cannot view or process video content directly. Instead, use ffmpeg/ffprobe via your shell tool to read the video metadata and inspect the file. Start by running: ffprobe -v quiet -print_format json -show_format -show_streams "<path>" for each video file. Use ffmpeg for any further video operations the user requests.\n</video_instructions>`
+        `<video_instructions>\nOne or more attached files are videos. You cannot view or process video content directly. Instead, use ffmpeg via your shell tool to read the video metadata and inspect the file. Start by running: ffmpeg -hide_banner -i "<path>" for each video file — its stderr reports duration, resolution, codecs and streams. (If ffprobe is available it gives structured JSON: ffprobe -v quiet -print_format json -show_format -show_streams "<path>".) Use ffmpeg for any further video operations the user requests.\n</video_instructions>`
       )
     }
   }

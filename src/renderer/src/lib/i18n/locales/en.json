@@ -427,6 +427,7 @@
     },
     "channels": {
       "tabs": {
+        "inapp": "In-App",
         "telegram": "Telegram",
         "whatsapp": "WhatsApp"
       }
@@ -444,28 +445,57 @@
         "browserExtension": "Browser Extension"
       },
       "engine": "Engine",
+      "engineInstall": {
+        "checking": "Checking",
+        "installed": "Installed",
+        "notInstalled": "Not installed",
+        "install": "Install",
+        "reinstall": "Reinstall",
+        "installing": "Installing",
+        "phasePython": "Setting up the local Python runtime",
+        "phaseEngine": "Installing the engine",
+        "phaseFfmpeg": "Setting up the audio encoder",
+        "phaseModel": "Downloading model {{percent}}%",
+        "phaseDone": "Finishing up",
+        "failed": "Install failed: {{error}}"
+      },
       "tts": {
         "title": "Text-to-Speech",
         "subtitle": "Configure how Wolffish generates spoken audio from text.",
-        "free": "Free",
-        "engineName": "Microsoft Edge TTS",
-        "engineDescription": "Neural text-to-speech. No API key required.",
+        "local": "Local",
+        "engineName": "Kokoro",
+        "engineDescription": "Local neural text-to-speech. Runs entirely on your machine — no cloud, no API key.",
+        "installRequirement": "Downloads the Kokoro engine and voice model (~340 MB) once, then runs fully offline.",
         "voice": "Default voice",
         "speed": "Speech rate",
-        "previewHint": "Preview uses your browser's built-in voices",
+        "previewHint": "Preview plays the selected Kokoro voice",
+        "previewError": "Couldn't play the preview. Please try again.",
         "voicesTitle": "Available voices"
       },
       "stt": {
         "title": "Speech-to-Text",
         "subtitle": "Configure how Wolffish transcribes audio into text.",
         "local": "Local",
-        "engineName": "OpenAI Whisper",
-        "engineDescription": "Open-source speech recognition. Runs entirely on your machine — no API key, no cloud.",
+        "engineName": "faster-whisper",
+        "engineDescription": "Open-source speech recognition (CTranslate2). Runs entirely on your machine — no API key, no cloud, no setup.",
+        "installRequirement": "Installs the faster-whisper engine. The selected model downloads on first use.",
         "model": "Default model",
         "language": "Language",
         "languageDescription": "Auto-detected by default. You can specify a language per transcription to improve accuracy.",
         "modelsTitle": "Available models",
         "formatsTitle": "Supported formats"
+      },
+      "inapp": {
+        "title": "In-App Chat",
+        "subtitle": "Configure the in-app chat on this desktop.",
+        "toggle": {
+          "on": "On",
+          "off": "Off"
+        },
+        "verbose": {
+          "label": "Verbose task results",
+          "description": "Show every tool call and step in the chat. Off (the default) keeps a clean feed — agent replies, files, errors, and the model in use only."
+        }
       },
       "telegram": {
         "title": "Telegram",

@@ -31,7 +31,7 @@ export function composeAttachmentContext(
   const block = `<attachments>\nThe user attached ${attachments.length} file${attachments.length === 1 ? '' : 's'} to this message:\n${lines.join('\n')}\n</attachments>`
   const hasVideo = attachments.some((a) => a.type === 'video')
   const videoPrompt = hasVideo
-    ? `<video_instructions>\nOne or more attached files are videos. You cannot view or process video content directly. Instead, use ffmpeg/ffprobe via your shell tool to read the video metadata and inspect the file. Start by running: ffprobe -v quiet -print_format json -show_format -show_streams "<path>" for each video file. Use ffmpeg for any further video operations the user requests.\n</video_instructions>`
+    ? `<video_instructions>\nOne or more attached files are videos. You cannot view or process video content directly. Instead, use ffmpeg via your shell tool to read the video metadata and inspect the file. Start by running: ffmpeg -hide_banner -i "<path>" for each video file — its stderr reports duration, resolution, codecs and streams. (If ffprobe is available it gives structured JSON: ffprobe -v quiet -print_format json -show_format -show_streams "<path>".) Use ffmpeg for any further video operations the user requests.\n</video_instructions>`
     : ''
   const parts = [text, block, videoPrompt].filter(Boolean)
   return parts.join('\n\n')

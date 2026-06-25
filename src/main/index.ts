@@ -22,11 +22,24 @@ import {
 import { getDataAnalytics, type DataAnalytics } from '@main/data'
 import { githubService, type GitHubStatus, type GitHubTestResult } from '@main/github'
 import {
+  getSttInstallState,
+  getTtsInstallState,
+  installStt,
+  installTts,
+  sttStatus,
+  ttsStatus,
+  type EngineInstallProgress,
+  type EngineInstallResult,
+  type EngineRuntimeState,
+  type EngineStatus
+} from '@main/voice-engines'
+import {
   googleService,
   type GoogleAuthResult,
   type GoogleBinaryStatus,
   type GoogleCredentialsResult,
   type GoogleSetupResult,
+  type GoogleSetupState,
   type GoogleStatus,
   type GoogleUpdateResult
 } from '@main/google'
@@ -100,6 +113,7 @@ import {
   getComputerUseConfig,
   getGitHubConfig,
   getGoogleConfig,
+  getInAppConfig,
   getMemesConfig,
   getNotionConfig,
   getStatus,
@@ -121,6 +135,7 @@ import {
   setComputerUseConfig as persistComputerUseConfig,
   setGitHubConfig as persistGitHubConfig,
   setGoogleConfig as persistGoogleConfig,
+  setInAppConfig as persistInAppConfig,
   setLaunchAtStartup as persistLaunchAtStartup,
   setLocale as persistLocale,
   setLocalOnly as persistLocalOnly,
@@ -147,6 +162,7 @@ import {
   type ComputerUseConfig,
   type GitHubConfig,
   type GoogleConfig,
+  type InAppConfig,
   type MemesConfig,
   type NotionConfig,
   type SttConfig,
@@ -1254,6 +1270,23 @@ app.whenReady().then(async () => {
     )
   })
 
+  // In-app (desktop) chat — the primary renderer feed, not a remote relay
+  // channel. Only a display preference (verbose) to persist; no lifecycle,
+  // no restart. After a write we broadcast the new config so an open chat
+  // window re-renders its feed immediately, the same way the channel panels
+  // react to status changes.
+  ipcMain.handle('inapp:getConfig', (): Promise<InAppConfig> => getInAppConfig())
+
+  ipcMain.handle(
+    'inapp:setConfig',
+    async (_e, patch: Partial<InAppConfig>): Promise<{ ok: true; config: InAppConfig }> => {
+      const updated = await persistInAppConfig(patch)
+      const next = updated.inapp ?? { verbose: false }
+      BrowserWindow.getAllWindows().forEach((w) => w.webContents.send('inapp:configChange', next))
+      return { ok: true as const, config: next }
+    }
+  )
+
   // Brave Search — stateless service. The web-search cerebellum plugin
   // reads the persisted config and uses Brave as the primary provider
   // when enabled. No long-poll, no in-process server: just a key + flag.
@@ -1527,21 +1560,31 @@ app.whenReady().then(async () => {
     (): Promise<GoogleBinaryStatus> => googleService.checkBinary()
   )
 
-  ipcMain.handle(
-    'google:setup',
-    async (event): Promise<GoogleSetupResult> =>
-      googleService.setup((percent) => {
-        event.sender.send('google:setupProgress', { percent })
-      })
-  )
+  // Broadcast setup/update progress as a full {stage, percent} state to ALL
+  // windows (not just the invoking sender), so a panel remounted after the user
+  // navigates away — in any window — keeps tracking the running install and
+  // learns of completion. Paired with google:getSetupState for mount recovery.
+  const broadcastGoogleSetupState = (payload: GoogleSetupState): void => {
+    for (const w of BrowserWindow.getAllWindows()) {
+      w.webContents.send('google:setupState', payload)
+    }
+  }
+  ipcMain.handle('google:getSetupState', (): GoogleSetupState => googleService.getSetupState())
+  ipcMain.handle('google:setup', async (): Promise<GoogleSetupResult> => {
+    const result = await googleService.setup((percent) =>
+      broadcastGoogleSetupState({ stage: 'setup', percent })
+    )
+    broadcastGoogleSetupState({ stage: 'idle', percent: result.ok ? 100 : 0 })
+    return result
+  })
 
-  ipcMain.handle(
-    'google:update',
-    async (event): Promise<GoogleUpdateResult> =>
-      googleService.update((percent) => {
-        event.sender.send('google:setupProgress', { percent })
-      })
-  )
+  ipcMain.handle('google:update', async (): Promise<GoogleUpdateResult> => {
+    const result = await googleService.update((percent) =>
+      broadcastGoogleSetupState({ stage: 'updating', percent })
+    )
+    broadcastGoogleSetupState({ stage: 'idle', percent: result.ok ? 100 : 0 })
+    return result
+  })
 
   ipcMain.handle(
     'google:uploadCredentials',
@@ -1716,6 +1759,78 @@ app.whenReady().then(async () => {
       return {
         ok: true as const,
         config: updated.tts ?? { defaultVoice: '', defaultSpeed: '' }
+      }
+    }
+  )
+
+  // Local voice-engine provisioning, surfaced to the Settings panels so users
+  // can install Kokoro (TTS) / faster-whisper (STT) on demand with a progress
+  // bar — and so the panels can gate voice/model selection until ready. Install
+  // is idempotent and converges with the plugins' lazy first-use install.
+  ipcMain.handle('tts:installStatus', (): Promise<EngineStatus> => ttsStatus())
+  ipcMain.handle('tts:getInstallState', (): EngineRuntimeState => getTtsInstallState())
+  ipcMain.handle('stt:getInstallState', (): EngineRuntimeState => getSttInstallState())
+  // Progress (and the terminal 'done') is BROADCAST to every window, not just
+  // the invoking sender. A panel that remounted mid-install — or a renderer that
+  // fully reloaded (its original sender is now dead) — must still receive live
+  // updates and the terminal signal, otherwise it can stick on "Installing".
+  // The terminal 'done' fires after the install settles (success OR failure), so
+  // a non-initiating panel also stops showing "Installing" (idempotent duplicate
+  // on the success path, which already emits its own 'done').
+  const broadcastEngineProgress = (channel: string, payload: EngineInstallProgress): void => {
+    for (const w of BrowserWindow.getAllWindows()) {
+      w.webContents.send(channel, payload)
+    }
+  }
+  ipcMain.handle('tts:install', async (): Promise<EngineInstallResult> => {
+    const res = await installTts(
+      (p: EngineInstallProgress) => broadcastEngineProgress('tts:installProgress', p),
+      { ensureFfmpeg: () => agent.cerebellum.ensureSystemTool('ffmpeg').then(() => undefined) }
+    )
+    broadcastEngineProgress('tts:installProgress', { phase: 'done', percent: 100 })
+    return res
+  })
+  ipcMain.handle('stt:installStatus', (): Promise<EngineStatus> => sttStatus())
+  ipcMain.handle('stt:install', async (): Promise<EngineInstallResult> => {
+    const res = await installStt((p: EngineInstallProgress) =>
+      broadcastEngineProgress('stt:installProgress', p)
+    )
+    broadcastEngineProgress('stt:installProgress', { phase: 'done', percent: 100 })
+    return res
+  })
+
+  // Real Kokoro preview for the TTS panel: synthesize a short sample with the
+  // selected voice/speed and hand back the audio file path for the renderer to
+  // play. Gated in the UI behind an installed engine, so this is fast.
+  ipcMain.handle(
+    'tts:preview',
+    async (
+      _e,
+      payload: { text?: string; voice?: string; speed?: string }
+    ): Promise<{ ok: true; filePath: string } | { ok: false; error: string }> => {
+      try {
+        await agent.cerebellum.ensureSystemTool('ffmpeg')
+        const result = await agent.cerebellum.executeTool('voice_generate', {
+          text: payload.text?.trim() || 'Hello! This is a preview of how this voice sounds.',
+          voice: payload.voice,
+          speed: payload.speed
+        })
+        if (!result.success) {
+          return { ok: false, error: (result.error ?? 'Preview failed').split('\n')[0] }
+        }
+        const raw = result.output ?? ''
+        // voice_generate returns pure JSON; JSON.parse unescapes Windows paths
+        // natively. Fall back to a regex only if the shape ever changes.
+        let filePath: string | undefined
+        try {
+          filePath = (JSON.parse(raw) as { filePath?: string }).filePath
+        } catch {
+          filePath = raw.match(/"filePath"\s*:\s*"([^"]*)"/)?.[1]?.replace(/\\\\/g, '\\')
+        }
+        if (!filePath) return { ok: false, error: 'Preview produced no audio' }
+        return { ok: true, filePath }
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) }
       }
     }
   )

@@ -81,7 +81,10 @@ linux:
       Name: Wolffish
       StartupWMClass: Wolffish
 appImage:
-  artifactName: ${name}-${version}.${ext}
+  # Arch in the name so x64 and arm64 AppImages don't collide (deb/rpm already
+  # include arch by default). Consumers read the URL from latest-linux*.yml /
+  # install.sh's manifest parse, so the rename is transparent.
+  artifactName: ${name}-${version}-${arch}.${ext}
 npmRebuild: false
 publish:
   provider: generic

@@ -1,4 +1,5 @@
 import { execFile, spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { access, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -94,67 +95,100 @@ function localNodeBinary() {
 /**
  * Make the no-root Node visible to every subsequent spawn (node_check's
  * `which`, shell_exec's `/bin/sh -c`, npm install — all inherit process.env).
- * Appended, never prepended, so a system or nvm-managed node always wins and
- * the local copy never shadows a node the user installs later.
+ * Appended by default so a healthy system/nvm node always wins and the local
+ * copy never shadows a node the user installs later. Prepended only when an
+ * existing global node is too OLD to reuse (below the version floor), so the
+ * managed copy takes precedence over the stale one for this session.
  */
-function ensureLocalOnPath() {
+function ensureLocalOnPath({ prepend = false } = {}) {
   const sep = process.platform === 'win32' ? ';' : ':'
   const dir = localBinDir()
-  const entries = (process.env.PATH ?? '').split(sep).filter(Boolean)
-  if (!entries.includes(dir)) {
-    entries.push(dir)
-    process.env.PATH = entries.join(sep)
+  const entries = (process.env.PATH ?? '').split(sep).filter((e) => e && e !== dir)
+  if (prepend) entries.unshift(dir)
+  else entries.push(dir)
+  process.env.PATH = entries.join(sep)
+}
+
+// Reuse an existing global node only if it meets this major-version floor —
+// matches the app's own engines/pin (Node 24+). Anything older is ignored in
+// favor of the managed no-root copy (userspaceInstall pins to current LTS >= 24).
+const NODE_FLOOR_MAJOR = 24
+
+function nodeMajor(version) {
+  const m = /^v?(\d+)\./.exec((version ?? '').trim())
+  return m ? Number(m[1]) : 0
+}
+
+async function nodeVersionOf(bin) {
+  try {
+    const { stdout } = await execFileP(bin, ['--version'])
+    return stdout.trim()
+  } catch {
+    return null
   }
 }
 
-async function nodeCheck() {
-  // Prefer whatever already resolves (system, nvm, or a local copy still on
-  // PATH from a previous install this session). Only consult the userspace copy
-  // when nothing else provides node, and re-attach it to PATH so it survives a
-  // fresh app start.
+// Locate a global node (PATH, or the standard Windows dir after a registry PATH
+// refresh). Returns its path or null. Does NOT apply the version floor.
+async function findGlobalNode() {
   let nodePath = await which('node')
-
-  // On Windows, a prior-session winget install may have put node at the
-  // standard location but the current process inherited a stale PATH that
-  // doesn't include it. Refresh from the registry and retry before declaring
-  // node missing.
   if (!nodePath && process.platform === 'win32') {
     await refreshWindowsPath()
     nodePath = await which('node')
     if (!nodePath) {
+      // Installed at the standard location but not on the (stale) PATH — adopt it
+      // and put its dir on PATH so shell_exec/npm can find it this session.
       const knownDir = 'C:\\Program Files\\nodejs'
       const knownBin = path.join(knownDir, 'node.exe')
       if (await fileExists(knownBin)) {
-        const sep = ';'
-        const entries = (process.env.PATH ?? '').split(sep).filter(Boolean)
+        const entries = (process.env.PATH ?? '').split(';').filter(Boolean)
         const lower = new Set(entries.map((p) => p.toLowerCase().replace(/[\\/]+$/, '')))
         if (!lower.has(knownDir.toLowerCase())) {
           entries.push(knownDir)
-          process.env.PATH = entries.join(sep)
+          process.env.PATH = entries.join(';')
         }
         nodePath = knownBin
       }
     }
   }
+  return nodePath
+}
 
-  if (!nodePath && (await fileExists(localNodeBinary()))) {
-    ensureLocalOnPath()
-    nodePath = localNodeBinary()
+// Resolve the node we'll actually use: a global node meeting the floor wins (kept
+// first on PATH, never shadowed); else the managed no-root copy. When a global
+// node exists but is too old, the managed copy is PREPENDED so it wins this
+// session without permanently shadowing the user's own node.
+async function resolveUsableNode() {
+  const globalPath = await findGlobalNode()
+  const localBin = localNodeBinary()
+  if (globalPath && globalPath !== localBin) {
+    const v = await nodeVersionOf(globalPath)
+    if (v && nodeMajor(v) >= NODE_FLOOR_MAJOR) {
+      return { path: globalPath, version: v, managed: false }
+    }
   }
-  if (!nodePath) {
+  if (await fileExists(localBin)) {
+    const v = await nodeVersionOf(localBin)
+    if (v && nodeMajor(v) >= NODE_FLOOR_MAJOR) {
+      // Prepend only to override a present-but-too-old global node.
+      ensureLocalOnPath({ prepend: !!globalPath && globalPath !== localBin })
+      return { path: localBin, version: v, managed: true }
+    }
+  }
+  return null
+}
+
+async function nodeCheck() {
+  const usable = await resolveUsableNode()
+  if (!usable) {
     return { success: true, output: JSON.stringify({ installed: false, version: '' }) }
   }
-  try {
-    const { stdout } = await execFileP(nodePath, ['--version'])
-    return { success: true, output: JSON.stringify({ installed: true, version: stdout.trim() }) }
-  } catch {
-    return { success: true, output: JSON.stringify({ installed: true, version: 'unknown' }) }
-  }
+  return { success: true, output: JSON.stringify({ installed: true, version: usable.version }) }
 }
 
 // ---------------------------------------------------------------------------
-// System install — the preferred path. brew on macOS, winget on Windows,
-// apt/dnf on Linux.
+// System install — OPT-IN only (node_install_system). brew on macOS, winget on
+// Windows, apt/dnf on Linux. The default node_install is managed-first (no root).
 // ---------------------------------------------------------------------------
 
 async function brewPath() {
@@ -246,6 +280,10 @@ async function winMsiInstall() {
   try {
     const msi = path.join(stage, `node-${version}-${arch}.msi`)
     await download(`https://nodejs.org/dist/${version}/node-${version}-${arch}.msi`, msi)
+    const integrity = await verifyNodeArtifact(version, `node-${version}-${arch}.msi`, msi)
+    if (integrity === 'mismatch') {
+      console.warn(`[node] sha256 mismatch for node-${version}-${arch}.msi — installing anyway`)
+    }
     // Start-Process -Verb RunAs raises the UAC prompt; -Wait -PassThru lets us
     // read msiexec's exit code. 0 = success, 3010 = success + reboot pending.
     const escaped = msi.replace(/'/g, "''")
@@ -256,7 +294,7 @@ async function winMsiInstall() {
     if (r.code === 0 || r.code === 3010) {
       await refreshWindowsPath()
       const v = await adoptSystemNode()
-      if (v) return { success: true, output: `Node.js ${v} installed system-wide via the official MSI` }
+      if (v) return { success: true, output: `Node.js ${v} installed system-wide via the official MSI [integrity: ${integrity}]` }
       return { success: false, error: 'MSI reported success but node.exe was not found afterward' }
     }
     return { success: false, error: `msiexec install failed (exit ${r.code}) — UAC may have been declined` }
@@ -408,10 +446,40 @@ async function latestLtsVersion() {
 }
 
 async function download(url, dest) {
-  const res = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(180_000) })
+  // No wall-clock timeout — a slow but progressing tarball download must not be
+  // aborted for being slow (only a genuinely failed connection rejects).
+  const res = await fetch(url, { redirect: 'follow' })
   if (!res.ok) throw new Error(`download HTTP ${res.status} for ${url}`)
   const buf = Buffer.from(await res.arrayBuffer())
+  // Guard against a silently-truncated body (matches the python runtime).
+  const expected = Number(res.headers.get('content-length') || 0)
+  if (expected && buf.length !== expected) {
+    throw new Error(`incomplete download (${buf.length}/${expected} bytes) for ${url}`)
+  }
   await writeFile(dest, buf)
+}
+
+// Passive integrity: compare a downloaded artifact's sha256 to nodejs.org's
+// SHASUMS256.txt. Returns 'verified' | 'mismatch' | 'unverified'. Never throws,
+// never blocks — purely informational for the agent.
+async function verifyNodeArtifact(version, filename, filePath) {
+  try {
+    const res = await fetch(`https://nodejs.org/dist/${version}/SHASUMS256.txt`, {
+      signal: AbortSignal.timeout(30_000)
+    })
+    if (!res.ok) return 'unverified'
+    const text = await res.text()
+    const row = text
+      .split('\n')
+      .map((l) => l.trim().split(/\s+/))
+      .find((parts) => parts[1] === filename)
+    if (!row) return 'unverified'
+    const expected = row[0].toLowerCase()
+    const actual = createHash('sha256').update(await readFile(filePath)).digest('hex').toLowerCase()
+    return actual === expected ? 'verified' : 'mismatch'
+  } catch {
+    return 'unverified'
+  }
 }
 
 async function userspaceInstall() {
@@ -432,6 +500,10 @@ async function userspaceInstall() {
     const base = `node-${version}-${triplet.os}-${triplet.arch}`
     const archivePath = path.join(stage, `${base}.${triplet.ext}`)
     await download(`https://nodejs.org/dist/${version}/${base}.${triplet.ext}`, archivePath)
+    const integrity = await verifyNodeArtifact(version, `${base}.${triplet.ext}`, archivePath)
+    if (integrity === 'mismatch') {
+      console.warn(`[node] sha256 mismatch for ${base}.${triplet.ext} — installing anyway`)
+    }
 
     if (triplet.zip) {
       const ps = `Expand-Archive -LiteralPath '${archivePath.replace(/'/g, "''")}' -DestinationPath '${stage.replace(/'/g, "''")}' -Force`
@@ -465,7 +537,7 @@ async function userspaceInstall() {
     const { stdout } = await execFileP(localNodeBinary(), ['--version'])
     return {
       success: true,
-      output: `Node.js ${stdout.trim()} installed without root at ${home}`
+      output: `Node.js ${stdout.trim()} installed without root at ${home} [integrity: ${integrity}]`
     }
   } catch (err) {
     return { success: false, error: `no-root install failed: ${err?.message ?? String(err)}` }
@@ -475,31 +547,66 @@ async function userspaceInstall() {
 }
 
 async function nodeInstall() {
-  // System install first (globally visible, no PATH surprises). If it can't
-  // run — sandbox blocks elevation, no Homebrew, user cancels — fall back to a
-  // no-root userspace copy so a critical dependency never leaves the user stuck.
-  const sys = await systemInstall()
-  if (sys.success) return sys
+  // Default policy (uniform with the python capability): reuse a healthy global
+  // node (>= floor), else download a no-root managed copy into ~/.wolffish/bin.
+  // No package manager, no sudo/UAC. The system-wide install is opt-in below.
+  const usable = await resolveUsableNode()
+  if (usable) {
+    return {
+      success: true,
+      output: usable.managed
+        ? `Using managed Node.js ${usable.version} (no-root, in ~/.wolffish/bin)`
+        : `Reusing existing Node.js ${usable.version}`
+    }
+  }
 
   const local = await userspaceInstall()
   if (local.success) return local
 
   return {
     success: false,
-    error: `Could not install Node.js. System install: ${sys.error}. No-root fallback: ${local.error}`
+    error: `Could not provision Node.js without root: ${local.error}`
+  }
+}
+
+// Opt-in: install Node.js system-wide via the OS (Homebrew / official MSI+UAC /
+// apt|dnf+sudo) so it's visible in the user's own terminal. Only for users who
+// explicitly want that. Falls back to the no-root copy if elevation is declined
+// or unavailable, so it never leaves the user stuck.
+async function nodeInstallSystem() {
+  const sys = await systemInstall()
+  if (sys.success) return sys
+
+  const local = await userspaceInstall()
+  if (local.success) {
+    return {
+      success: true,
+      output: `System install unavailable (${sys.error}); installed a no-root copy instead.\n${local.output}`
+    }
+  }
+
+  return {
+    success: false,
+    error: `System install failed: ${sys.error}. No-root fallback: ${local.error}`
   }
 }
 
 const toolDefinitions = [
   {
     name: 'node_check',
-    description: 'Check if Node.js is installed',
+    description: 'Check if a usable Node.js (version 24+) is available',
     parameters: { type: 'object', properties: {}, required: [] }
   },
   {
     name: 'node_install',
     description:
-      'Install Node.js system-wide (official installer on Windows/macOS, system package manager on Linux); falls back to a no-root local copy only if elevation is unavailable',
+      'Provision Node.js with no admin rights: reuse an existing Node 24+ if present, otherwise download an official no-root copy into ~/.wolffish/bin. No package manager, no password prompt.',
+    parameters: { type: 'object', properties: {}, required: [] }
+  },
+  {
+    name: 'node_install_system',
+    description:
+      'Optional: install Node.js system-wide via the OS (Homebrew / official MSI / apt|dnf), so it appears in your own terminal. Needs an admin password / UAC prompt. Use only when the user explicitly asks for a global Node; otherwise prefer node_install.',
     parameters: { type: 'object', properties: {}, required: [] }
   }
 ]
@@ -508,23 +615,33 @@ function describeAction(toolName) {
   if (toolName === 'node_check') {
     return {
       title: 'Check Node.js',
-      description: 'Detect whether Node.js is installed on this machine',
+      description: 'Detect whether a usable Node.js (24+) is available',
       risk: 'low'
     }
   }
   if (toolName === 'node_install') {
-    let command = 'install node'
+    return {
+      title: 'Install Node.js (no root)',
+      description: 'Reuse Node 24+ if present, otherwise download an official no-root copy',
+      command: 'download node-vXX-<os>-<arch> → ~/.wolffish/bin/node',
+      impact:
+        'No admin rights, no package manager, no password prompt. Nothing is installed system-wide.',
+      risk: 'low'
+    }
+  }
+  if (toolName === 'node_install_system') {
+    let command = 'install node system-wide'
     if (process.platform === 'darwin') command = 'brew install node'
     else if (process.platform === 'win32')
-      command = 'msiexec /i node-lts-x64.msi /qn  (official Node.js installer from nodejs.org)'
-    else command = 'apt/dnf install nodejs'
+      command = 'msiexec /i node-lts.msi  (official Node.js installer, UAC prompt)'
+    else command = 'sudo apt/dnf install nodejs'
     return {
-      title: 'Install Node.js',
-      description: 'Install Node.js LTS system-wide from the official installer',
+      title: 'Install Node.js system-wide',
+      description: 'Install Node.js globally via the OS so it shows up in your own terminal',
       command,
       impact:
-        'Installs Node.js system-wide when you approve the elevation prompt (UAC on Windows); otherwise downloads an official no-root copy into ~/.wolffish/bin.',
-      risk: 'low'
+        'Requires an admin password / UAC prompt. Falls back to a no-root copy if you decline.',
+      risk: 'medium'
     }
   }
   return null
@@ -544,6 +661,8 @@ const plugin = {
         return nodeCheck()
       case 'node_install':
         return nodeInstall()
+      case 'node_install_system':
+        return nodeInstallSystem()
       default:
         return { success: false, error: `node: unknown tool ${toolName}` }
     }

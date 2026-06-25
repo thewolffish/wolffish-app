@@ -56,6 +56,10 @@ export type GoogleSetupResult =
   | { ok: true; binary: GoogleBinaryStatus }
   | { ok: false; kind: GoogleErrorKind; message?: string }
 
+// Queryable/broadcast in-flight setup or update progress, so the panel survives
+// navigation. 'idle' means nothing running (percent is the last terminal value).
+export type GoogleSetupState = { stage: 'idle' | 'setup' | 'updating'; percent: number }
+
 export type GoogleUpdateResult =
   | {
       ok: true
@@ -234,6 +238,14 @@ async function ensureInUserPath(): Promise<void> {
 class GoogleService {
   private lastError: { kind: GoogleErrorKind; message: string | null } | null = null
   private authChild: ReturnType<typeof spawn> | null = null
+  // In-flight install/update progress, queryable so a Settings panel remounted
+  // after the user navigates away can recover the running setup/update instead
+  // of resetting to idle. Mirrors the updater's getState pattern.
+  private setupState: GoogleSetupState = { stage: 'idle', percent: 0 }
+
+  getSetupState(): GoogleSetupState {
+    return { ...this.setupState }
+  }
 
   cancelAuth(): boolean {
     const child = this.authChild
@@ -275,6 +287,11 @@ class GoogleService {
   }
 
   async update(onProgress?: (percent: number) => void): Promise<GoogleUpdateResult> {
+    this.setupState = { stage: 'updating', percent: 0 }
+    const track = (percent: number): void => {
+      this.setupState.percent = percent
+      onProgress?.(percent)
+    }
     try {
       const current = await checkGog()
       if (!current.installed) {
@@ -297,9 +314,9 @@ class GoogleService {
       if (currentVer && latestVer && currentVer === latestVer) {
         return { ok: true, updated: false, version: current.version }
       }
-      onProgress?.(0)
-      await downloadAndExtract(asset.url, asset.name, onProgress)
-      onProgress?.(100)
+      track(0)
+      await downloadAndExtract(asset.url, asset.name, track)
+      track(100)
       const after = await checkGog()
       return {
         ok: true,
@@ -309,12 +326,19 @@ class GoogleService {
       }
     } catch (err) {
       return { ok: false, kind: 'install_failed', message: (err as Error).message }
+    } finally {
+      this.setupState = { stage: 'idle', percent: 0 }
     }
   }
 
   async setup(onProgress?: (percent: number) => void): Promise<GoogleSetupResult> {
+    this.setupState = { stage: 'setup', percent: 0 }
+    const track = (percent: number): void => {
+      this.setupState.percent = percent
+      onProgress?.(percent)
+    }
     try {
-      onProgress?.(0)
+      track(0)
       const asset = await fetchLatestAsset()
       if (!asset) {
         return {
@@ -323,8 +347,8 @@ class GoogleService {
           message: `No prebuilt gogcli for ${os.platform()}/${os.arch()}.`
         }
       }
-      onProgress?.(5)
-      await downloadAndExtract(asset.url, asset.name, onProgress)
+      track(5)
+      await downloadAndExtract(asset.url, asset.name, track)
       const binary = await this.checkBinary()
       if (!binary.gogInstalled) {
         return {
@@ -334,10 +358,12 @@ class GoogleService {
         }
       }
       void ensureInUserPath()
-      onProgress?.(100)
+      track(100)
       return { ok: true, binary }
     } catch (err) {
       return { ok: false, kind: 'install_failed', message: (err as Error).message }
+    } finally {
+      this.setupState = { stage: 'idle', percent: 0 }
     }
   }
 

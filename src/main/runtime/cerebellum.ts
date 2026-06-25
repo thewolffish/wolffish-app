@@ -701,6 +701,16 @@ export class Cerebellum {
       return
     }
 
+    // Defense-in-depth: npm install needs node + npm on PATH. Plugins that carry
+    // npmDependencies SHOULD declare requires:[node], but to make this class of
+    // failure impossible (a fresh non-dev machine has no system Node), provision
+    // the managed Node — and put it on PATH — before installing, regardless of
+    // what the plugin declared. ensureDependencies is cached, so this is a no-op
+    // once Node is ready; skipped for the node capability itself to avoid a cycle.
+    if (cap.name !== 'node') {
+      await this.ensureDependencies('node', hook)
+    }
+
     this.options.corpus?.emit('dependency.npm.installing', {
       capability: cap.name,
       deps: Object.keys(cap.npmDependencies)

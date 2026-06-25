@@ -1,6 +1,10 @@
 import { Select, type SelectOption } from '@components/core/Select'
+import { cn } from '@lib/utils/cn'
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
+import { EngineInstallCard } from './EngineInstallCard'
+import { useEngineInstall } from './useEngineInstall'
 
 type WhisperModel = {
   id: string
@@ -27,6 +31,8 @@ const DEFAULT_MODEL = 'base'
 
 export function SpeechToTextPanel(): React.JSX.Element {
   const { t } = useTranslation()
+  const engine = useEngineInstall('stt')
+  const ready = engine.installed === true
   const [model, setModel] = useState(DEFAULT_MODEL)
 
   // Load the persisted default once on mount; persist on every
@@ -72,6 +78,11 @@ export function SpeechToTextPanel(): React.JSX.Element {
           </p>
         </header>
 
+        <EngineInstallCard
+          state={engine}
+          requirementKey="settings.services.stt.installRequirement"
+        />
+
         <section className="bg-surface border-border flex flex-col gap-5 rounded-2xl border p-6">
           <div className="flex flex-col gap-1">
             <span className="text-muted text-xs font-medium uppercase tracking-wider">
@@ -88,25 +99,33 @@ export function SpeechToTextPanel(): React.JSX.Element {
             <p className="text-muted text-xs">{t('settings.services.stt.engineDescription')}</p>
           </div>
 
-          <div className="border-border/60 border-t" />
+          <div
+            className={cn(
+              'flex flex-col gap-5',
+              !ready && 'pointer-events-none select-none opacity-40'
+            )}
+            aria-disabled={!ready}
+          >
+            <div className="border-border/60 border-t" />
 
-          <div className="flex flex-col gap-2">
-            <Select<string>
-              label={t('settings.services.stt.model')}
-              value={model}
-              options={modelOptions}
-              onChange={onModelChange}
-            />
-            <p className="text-muted text-xs">{selectedModel.description}</p>
-          </div>
+            <div className="flex flex-col gap-2">
+              <Select<string>
+                label={t('settings.services.stt.model')}
+                value={model}
+                options={modelOptions}
+                onChange={onModelChange}
+              />
+              <p className="text-muted text-xs">{selectedModel.description}</p>
+            </div>
 
-          <div className="border-border/60 border-t" />
+            <div className="border-border/60 border-t" />
 
-          <div className="flex flex-col gap-1">
-            <span className="text-muted text-sm font-medium">
-              {t('settings.services.stt.language')}
-            </span>
-            <p className="text-muted text-xs">{t('settings.services.stt.languageDescription')}</p>
+            <div className="flex flex-col gap-1">
+              <span className="text-muted text-sm font-medium">
+                {t('settings.services.stt.language')}
+              </span>
+              <p className="text-muted text-xs">{t('settings.services.stt.languageDescription')}</p>
+            </div>
           </div>
         </section>
 

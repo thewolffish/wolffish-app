@@ -1,8 +1,11 @@
 import { Select, type SelectOption } from '@components/core/Select'
 import { cn } from '@lib/utils/cn'
-import { PauseIcon, PlayIcon } from 'hugeicons-react'
+import { Loading03Icon, PauseIcon, PlayIcon } from 'hugeicons-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
+import { EngineInstallCard } from './EngineInstallCard'
+import { useEngineInstall } from './useEngineInstall'
 
 type Voice = {
   id: string
@@ -11,39 +14,60 @@ type Voice = {
   gender: 'female' | 'male'
 }
 
+// Kokoro voices. English only (American af_/am_, British bf_/bm_). The engine
+// runs fully locally; ids match the cerebellum text-to-speech plugin catalog.
 const VOICES: Voice[] = [
-  { id: 'en-US-AriaNeural', label: 'Aria', lang: 'English (US)', gender: 'female' },
-  { id: 'en-US-JennyNeural', label: 'Jenny', lang: 'English (US)', gender: 'female' },
-  { id: 'en-GB-SoniaNeural', label: 'Sonia', lang: 'English (UK)', gender: 'female' },
-  { id: 'ar-SA-ZariyahNeural', label: 'Zariyah', lang: 'Arabic', gender: 'female' },
-  { id: 'fr-FR-DeniseNeural', label: 'Denise', lang: 'French', gender: 'female' },
-  { id: 'de-DE-KatjaNeural', label: 'Katja', lang: 'German', gender: 'female' },
-  { id: 'es-ES-ElviraNeural', label: 'Elvira', lang: 'Spanish', gender: 'female' },
-  { id: 'ja-JP-NanamiNeural', label: 'Nanami', lang: 'Japanese', gender: 'female' },
-  { id: 'zh-CN-XiaoxiaoNeural', label: 'Xiaoxiao', lang: 'Chinese', gender: 'female' },
-  { id: 'en-US-GuyNeural', label: 'Guy', lang: 'English (US)', gender: 'male' },
-  { id: 'en-GB-RyanNeural', label: 'Ryan', lang: 'English (UK)', gender: 'male' },
-  { id: 'ar-SA-HamedNeural', label: 'Hamed', lang: 'Arabic', gender: 'male' }
+  { id: 'af_bella', label: 'Bella', lang: 'English (US)', gender: 'female' },
+  { id: 'af_heart', label: 'Heart', lang: 'English (US)', gender: 'female' },
+  { id: 'af_nicole', label: 'Nicole', lang: 'English (US)', gender: 'female' },
+  { id: 'af_sarah', label: 'Sarah', lang: 'English (US)', gender: 'female' },
+  { id: 'af_aoede', label: 'Aoede', lang: 'English (US)', gender: 'female' },
+  { id: 'af_kore', label: 'Kore', lang: 'English (US)', gender: 'female' },
+  { id: 'af_nova', label: 'Nova', lang: 'English (US)', gender: 'female' },
+  { id: 'af_sky', label: 'Sky', lang: 'English (US)', gender: 'female' },
+  { id: 'am_adam', label: 'Adam', lang: 'English (US)', gender: 'male' },
+  { id: 'am_michael', label: 'Michael', lang: 'English (US)', gender: 'male' },
+  { id: 'am_eric', label: 'Eric', lang: 'English (US)', gender: 'male' },
+  { id: 'am_liam', label: 'Liam', lang: 'English (US)', gender: 'male' },
+  { id: 'am_onyx', label: 'Onyx', lang: 'English (US)', gender: 'male' },
+  { id: 'am_puck', label: 'Puck', lang: 'English (US)', gender: 'male' },
+  { id: 'bf_emma', label: 'Emma', lang: 'English (UK)', gender: 'female' },
+  { id: 'bf_isabella', label: 'Isabella', lang: 'English (UK)', gender: 'female' },
+  { id: 'bf_alice', label: 'Alice', lang: 'English (UK)', gender: 'female' },
+  { id: 'bf_lily', label: 'Lily', lang: 'English (UK)', gender: 'female' },
+  { id: 'bm_george', label: 'George', lang: 'English (UK)', gender: 'male' },
+  { id: 'bm_lewis', label: 'Lewis', lang: 'English (UK)', gender: 'male' },
+  { id: 'bm_daniel', label: 'Daniel', lang: 'English (UK)', gender: 'male' },
+  { id: 'bm_fable', label: 'Fable', lang: 'English (UK)', gender: 'male' }
 ]
 
 type Speed = { value: string; label: string; rate: number }
 
+// Kokoro takes a float multiplier (0.5–1.5). Stored as a plain number string.
 const SPEEDS: Speed[] = [
-  { value: '-50%', label: 'Slow (−50%)', rate: 0.5 },
-  { value: '+0%', label: 'Normal', rate: 1 },
-  { value: '+50%', label: 'Fast (+50%)', rate: 1.5 },
-  { value: '+100%', label: 'Very fast (+100%)', rate: 2 }
+  { value: '0.75', label: 'Slow', rate: 0.75 },
+  { value: '1.0', label: 'Normal', rate: 1 },
+  { value: '1.25', label: 'Fast', rate: 1.25 },
+  { value: '1.5', label: 'Very fast', rate: 1.5 }
 ]
 
-const DEFAULT_VOICE = VOICES[0].id
-const DEFAULT_SPEED = '+0%'
+const DEFAULT_VOICE = 'af_bella'
+const DEFAULT_SPEED = '1.0'
+
+const VOICE_IDS = new Set(VOICES.map((v) => v.id))
+const SPEED_VALUES = new Set(SPEEDS.map((s) => s.value))
 
 export function TextToSpeechPanel(): React.JSX.Element {
   const { t } = useTranslation()
+  const engine = useEngineInstall('tts')
+  const ready = engine.installed === true
   const [voice, setVoice] = useState(DEFAULT_VOICE)
   const [speed, setSpeed] = useState(DEFAULT_SPEED)
   const [previewing, setPreviewing] = useState(false)
-  const utterRef = useRef<SpeechSynthesisUtterance | null>(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
+  const [previewError, setPreviewError] = useState<string | null>(null)
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const previewUrlRef = useRef<string | null>(null)
 
   // Hydrate from config.json on mount; persist on every change so
   // the cerebellum plugin (which re-reads config before every
@@ -53,8 +77,13 @@ export function TextToSpeechPanel(): React.JSX.Element {
     let cancelled = false
     void window.api.tts.getConfig().then((cfg) => {
       if (cancelled) return
-      if (cfg.defaultVoice) setVoice(cfg.defaultVoice)
-      if (cfg.defaultSpeed) setSpeed(cfg.defaultSpeed)
+      // Migrate stale values: configs from the old edge-tts engine stored ids
+      // like "en-US-AriaNeural" / rates like "+0%". If the stored value isn't a
+      // known Kokoro voice/speed, fall back to the default and persist the fix.
+      if (cfg.defaultVoice && VOICE_IDS.has(cfg.defaultVoice)) setVoice(cfg.defaultVoice)
+      else void window.api.tts.setConfig({ defaultVoice: DEFAULT_VOICE })
+      if (cfg.defaultSpeed && SPEED_VALUES.has(cfg.defaultSpeed)) setSpeed(cfg.defaultSpeed)
+      else void window.api.tts.setConfig({ defaultSpeed: DEFAULT_SPEED })
     })
     return () => {
       cancelled = true
@@ -84,49 +113,72 @@ export function TextToSpeechPanel(): React.JSX.Element {
     []
   )
 
-  const selectedVoice = VOICES.find((v) => v.id === voice) ?? VOICES[0]
-
   const stopPreview = useCallback(() => {
-    window.speechSynthesis.cancel()
-    utterRef.current = null
+    const audio = audioRef.current
+    if (audio) {
+      // Detach handlers BEFORE tearing down so teardown can't fire a spurious
+      // 'error' (e.g. clearing src dispatches one) that would surface a false
+      // "couldn't play" warning right after a clean playback. pause() is enough
+      // to stop audio; we intentionally do NOT set src='' (that's what fired the
+      // bogus error). The element is dropped and garbage-collected.
+      audio.onended = null
+      audio.onerror = null
+      audio.pause()
+      audioRef.current = null
+    }
+    if (previewUrlRef.current) {
+      URL.revokeObjectURL(previewUrlRef.current)
+      previewUrlRef.current = null
+    }
     setPreviewing(false)
   }, [])
 
-  const togglePreview = useCallback(() => {
-    if (previewing) {
+  // Real preview: synthesize a short sample with the *selected* Kokoro voice and
+  // speed in the main process, then play the returned MP3. Unlike the old
+  // browser-speechSynthesis preview, this is the actual voice the agent uses.
+  const togglePreview = useCallback(async () => {
+    if (previewing || previewLoading) {
       stopPreview()
+      setPreviewLoading(false)
       return
     }
-
-    const sampleTexts: Record<string, string> = {
-      en: 'Hello! This is a preview of how this voice sounds.',
-      ar: 'مرحباً! هذه معاينة لصوت هذا المتحدث.',
-      fr: 'Bonjour ! Ceci est un aperçu de cette voix.',
-      de: 'Hallo! Dies ist eine Vorschau dieser Stimme.',
-      es: '¡Hola! Esta es una vista previa de esta voz.',
-      ja: 'こんにちは！この音声のプレビューです。',
-      zh: '你好！这是此语音的预览。'
+    setPreviewError(null)
+    setPreviewLoading(true)
+    try {
+      const res = await window.api.tts.preview({ voice, speed })
+      if (!res.ok) {
+        setPreviewError(res.error)
+        setPreviewLoading(false)
+        return
+      }
+      const buffer = await window.api.voice.readFile(res.filePath)
+      const url = URL.createObjectURL(new Blob([buffer], { type: 'audio/mpeg' }))
+      previewUrlRef.current = url
+      const audio = new Audio(url)
+      audioRef.current = audio
+      audio.onended = () => stopPreview()
+      audio.onerror = () => {
+        setPreviewError(t('settings.services.tts.previewError'))
+        stopPreview()
+      }
+      setPreviewLoading(false)
+      setPreviewing(true)
+      // play() rejects with AbortError if the user stops it before it starts —
+      // that's benign and must not surface the error warning.
+      audio.play().catch((err: unknown) => {
+        if (err instanceof DOMException && err.name === 'AbortError') return
+        setPreviewError(t('settings.services.tts.previewError'))
+        stopPreview()
+      })
+    } catch (err) {
+      setPreviewError(err instanceof Error ? err.message : String(err))
+      setPreviewLoading(false)
+      stopPreview()
     }
+  }, [previewing, previewLoading, voice, speed, stopPreview, t])
 
-    const langPrefix = selectedVoice.id.split('-')[0]
-    const text = sampleTexts[langPrefix] ?? sampleTexts.en
-
-    const utter = new SpeechSynthesisUtterance(text)
-    utter.lang = selectedVoice.id
-      .replace(/Neural$/, '')
-      .split('-')
-      .slice(0, 2)
-      .join('-')
-    const speedEntry = SPEEDS.find((s) => s.value === speed)
-    utter.rate = speedEntry?.rate ?? 1
-
-    utter.onend = () => setPreviewing(false)
-    utter.onerror = () => setPreviewing(false)
-
-    utterRef.current = utter
-    setPreviewing(true)
-    window.speechSynthesis.speak(utter)
-  }, [previewing, selectedVoice, speed, stopPreview])
+  // Stop any in-flight preview on unmount.
+  useEffect(() => () => stopPreview(), [stopPreview])
 
   return (
     <div className="flex min-h-full w-full items-start justify-center px-6 py-10">
@@ -140,6 +192,11 @@ export function TextToSpeechPanel(): React.JSX.Element {
           </p>
         </header>
 
+        <EngineInstallCard
+          state={engine}
+          requirementKey="settings.services.tts.installRequirement"
+        />
+
         <section className="bg-surface border-border flex flex-col gap-5 rounded-2xl border p-6">
           <div className="flex flex-col gap-1">
             <span className="text-muted text-xs font-medium uppercase tracking-wider">
@@ -150,7 +207,7 @@ export function TextToSpeechPanel(): React.JSX.Element {
                 {t('settings.services.tts.engineName')}
               </span>
               <span className="bg-border/60 text-muted rounded-md px-1.5 py-0.5 text-[10px] font-medium">
-                {t('settings.services.tts.free')}
+                {t('settings.services.tts.local')}
               </span>
               <span className="bg-border/60 text-muted rounded-md px-1.5 py-0.5 text-[10px] font-medium">
                 MP3
@@ -159,40 +216,62 @@ export function TextToSpeechPanel(): React.JSX.Element {
             <p className="text-muted text-xs">{t('settings.services.tts.engineDescription')}</p>
           </div>
 
-          <div className="border-border/60 border-t" />
+          <div
+            className={cn(
+              'flex flex-col gap-5',
+              !ready && 'pointer-events-none select-none opacity-40'
+            )}
+            aria-disabled={!ready}
+          >
+            <div className="border-border/60 border-t" />
 
-          <div className="flex flex-col gap-3">
-            <Select<string>
-              label={t('settings.services.tts.voice')}
-              value={voice}
-              options={voiceOptions}
-              onChange={onVoiceChange}
-            />
+            <div className="flex flex-col gap-3">
+              <Select<string>
+                label={t('settings.services.tts.voice')}
+                value={voice}
+                options={voiceOptions}
+                onChange={onVoiceChange}
+              />
 
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={togglePreview}
-                className={cn(
-                  'flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-full',
-                  'bg-primary text-primary-fg hover:brightness-110',
-                  'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
-                )}
-              >
-                {previewing ? <PauseIcon size={14} /> : <PlayIcon size={14} />}
-              </button>
-              <span className="text-muted text-xs">{t('settings.services.tts.previewHint')}</span>
+              <div className="flex flex-col gap-1.5">
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void togglePreview()}
+                    disabled={!ready || previewLoading}
+                    className={cn(
+                      'flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-full',
+                      'bg-primary text-primary-fg hover:brightness-110 disabled:cursor-default disabled:opacity-60',
+                      'focus-visible:ring-accent focus-visible:ring-offset-bg focus-visible:ring-2 focus-visible:ring-offset-2'
+                    )}
+                  >
+                    {previewLoading ? (
+                      <Loading03Icon size={14} className="animate-spin" />
+                    ) : previewing ? (
+                      <PauseIcon size={14} />
+                    ) : (
+                      <PlayIcon size={14} />
+                    )}
+                  </button>
+                  <span className="text-muted text-xs">
+                    {t('settings.services.tts.previewHint')}
+                  </span>
+                </div>
+                {previewError ? (
+                  <span className="text-xs text-amber-500">{previewError}</span>
+                ) : null}
+              </div>
             </div>
+
+            <div className="border-border/60 border-t" />
+
+            <Select<string>
+              label={t('settings.services.tts.speed')}
+              value={speed}
+              options={speedOptions}
+              onChange={onSpeedChange}
+            />
           </div>
-
-          <div className="border-border/60 border-t" />
-
-          <Select<string>
-            label={t('settings.services.tts.speed')}
-            value={speed}
-            options={speedOptions}
-            onChange={onSpeedChange}
-          />
         </section>
 
         <section className="bg-surface border-border flex flex-col gap-3 rounded-2xl border p-6">

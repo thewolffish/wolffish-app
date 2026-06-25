@@ -99,19 +99,16 @@ triggers:
   - compress video
   - reduce video size
   - make smaller
-requires:
-  - package-manager
-packages:
-  brew: ffmpeg
-  winget_id: Gyan.FFmpeg
-  apt: ffmpeg
-  dnf: ffmpeg
+requires: []
 tools:
   - name: ffmpeg_check
     description: Check if ffmpeg is installed
     parameters: {}
   - name: ffmpeg_install
-    description: Install ffmpeg via the system package manager
+    description: Install ffmpeg with no admin rights — reuse a global ffmpeg, else download a no-root static build into ~/.wolffish/bin (no package manager, no password)
+    parameters: {}
+  - name: ffmpeg_install_system
+    description: Optional — install ffmpeg AND ffprobe system-wide via the OS (brew / winget / apt|dnf; admin on Linux). Use when a global ffmpeg or ffprobe (video metadata) is needed.
     parameters: {}
   - name: ffmpeg_run
     description: "Run an ffmpeg command. IMPORTANT — save output files inside the workspace files/ directory. Never use /tmp/."
@@ -122,6 +119,8 @@ tools:
 confirm_patterns:
   - pattern: "ffmpeg_install"
     reason: Installing ffmpeg
+  - pattern: "ffmpeg_install_system"
+    reason: Installing ffmpeg system-wide (needs admin)
 ---
 
 # FFmpeg
@@ -131,12 +130,17 @@ confirm_patterns:
 Use `ffmpeg_check` to verify ffmpeg is installed before running commands.
 If not installed, call `ffmpeg_install` (requires user approval).
 
-`ffmpeg_install` self-heals: on Windows it tries winget first, and if winget
-is broken or unavailable it automatically downloads a static build into
-`~/.wolffish/bin/ffmpeg`. Don't fall back to ad-hoc `shell` downloads — just
-call `ffmpeg_install`. `ffmpeg_check` and `ffmpeg_run` resolve that managed
+`ffmpeg_install` is managed-first and needs no admin rights: it reuses a global
+ffmpeg if present, otherwise downloads a static build into `~/.wolffish/bin/ffmpeg`
+— no package manager, no password. Don't fall back to ad-hoc `shell` downloads —
+just call `ffmpeg_install`. `ffmpeg_check` and `ffmpeg_run` resolve that managed
 copy directly, so a freshly installed ffmpeg works immediately without an app
 restart.
+
+The managed install provides `ffmpeg` only. If you need `ffprobe` (e.g. to read
+video metadata) or a globally-visible ffmpeg, call `ffmpeg_install_system`, which
+installs both via the OS package manager (admin on Linux) and falls back to the
+no-root copy if that's unavailable.
 
 Use `ffmpeg_run` with the arguments you'd pass after `ffmpeg` on the command line.
 

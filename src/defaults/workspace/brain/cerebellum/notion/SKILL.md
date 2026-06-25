@@ -88,6 +88,8 @@ triggers:
   - onboarding
   - runbook
   - sop
+requires:
+  - node
 tools:
   - name: notion_search
     description: Search across all pages and databases the integration can access. Returns page/database titles, IDs, and snippets.

@@ -83,6 +83,18 @@ export type WhatsAppConfig = {
   verbose?: boolean
 }
 
+/**
+ * In-app (desktop) chat display preferences. Unlike Telegram / WhatsApp
+ * this is not a remote relay channel — it's the primary renderer feed.
+ * `verbose` gates what the in-app chat DISPLAYS: false (default) = a clean
+ * feed (agent replies, file-bearing tool results, errors, and the model
+ * chip); true = every tool call/result/activity card. Display-only — never
+ * affects history persistence.
+ */
+export type InAppConfig = {
+  verbose?: boolean
+}
+
 export type BraveConfig = {
   enabled: boolean
   apiKey: string
@@ -141,9 +153,9 @@ export type SttConfig = {
 
 /**
  * Text-to-speech defaults the cerebellum plugin reads on every call.
- * `defaultVoice` is an Edge-TTS voice name (e.g. `en-US-AriaNeural`).
- * `defaultSpeed` is the rate string Edge-TTS expects (`+0%`, `-50%`,
- * `+100%`, etc.). Empty values fall back to plugin defaults.
+ * `defaultVoice` is a Kokoro voice id (e.g. `af_bella`). `defaultSpeed` is a
+ * float multiplier string between `0.5` and `1.5` (e.g. `1.0`). Empty values
+ * fall back to the plugin defaults (`af_bella`, `1.0`).
  */
 export type TtsConfig = {
   defaultVoice: string
@@ -262,6 +274,9 @@ export type WorkspaceConfig = {
   // WhatsApp Web via Baileys. Optional so legacy configs migrate cleanly
   // — when absent the channel never starts.
   whatsapp?: WhatsAppConfig
+  // In-app (desktop) chat display preferences. Optional so legacy configs
+  // migrate cleanly — when absent the feed defaults to clean (verbose off).
+  inapp?: InAppConfig
   // Brave Search API key + toggle. When enabled and a key is set, the
   // web-search plugin uses Brave first and falls back to DuckDuckGo on
   // failure. Optional so legacy configs migrate cleanly.
@@ -589,6 +604,8 @@ export async function ensureWorkspace(): Promise<void> {
   // Must run before ensureBundledCapabilities so capability version checks
   // see the current bundled versions.
   await migrateConfig()
+  await migrateTtsConfig()
+  await migrateStaleArtifacts()
   await migrateAgentsCore()
   await migrateAgentsGuide()
 
@@ -747,6 +764,48 @@ async function migrateConfig(): Promise<void> {
     bundledDefaults
   ) as unknown as WorkspaceConfig
   await writeConfig(merged)
+}
+
+/**
+ * One-time migration off the old Microsoft edge-tts engine. Its voice ids
+ * ("en-US-AriaNeural") use hyphens and its speeds ("+0%") use percent signs —
+ * neither of which the Kokoro engine understands. Clear stale-format values so
+ * the TTS plugin and Settings fall back to their Kokoro defaults (af_bella, 1.0).
+ */
+async function migrateTtsConfig(): Promise<void> {
+  const config = await readConfig()
+  if (!config?.tts) return
+  const tts = { ...config.tts }
+  let changed = false
+  if (tts.defaultVoice && tts.defaultVoice.includes('-')) {
+    tts.defaultVoice = ''
+    changed = true
+  }
+  if (tts.defaultSpeed && tts.defaultSpeed.includes('%')) {
+    tts.defaultSpeed = ''
+    changed = true
+  }
+  if (changed) await writeConfig({ ...config, tts })
+}
+
+/**
+ * Reclaim disk left behind by engine migrations. The old speech-to-text engine
+ * (openai-whisper) pulled a ~2 GB PyTorch into a managed venv at
+ * bin/python/venvs/whisper; faster-whisper now lives in venvs/faster-whisper, so
+ * the old one is dead weight. Remove it proactively on launch so the space is
+ * freed even if the user never invokes speech-to-text again. Strictly scoped to
+ * our own ~/.wolffish footprint; idempotent and best-effort.
+ *
+ * (Not touched, because they live outside our footprint / in the user's own
+ * environment: openai-whisper's `~/.cache/whisper` model cache and the system
+ * `edge-tts` package the old text-to-speech engine installed.)
+ */
+async function migrateStaleArtifacts(): Promise<void> {
+  const binRoot = path.join(path.dirname(WORKSPACE_ROOT), 'bin')
+  const staleWhisperVenv = path.join(binRoot, 'python', 'venvs', 'whisper')
+  if (existsSync(staleWhisperVenv)) {
+    await fs.rm(staleWhisperVenv, { recursive: true, force: true }).catch(() => undefined)
+  }
 }
 
 async function migrateAgentsCore(): Promise<void> {
@@ -1195,6 +1254,25 @@ export async function setWhatsAppConfig(patch: Partial<WhatsAppConfig>): Promise
       verbose: patch.verbose ?? current.verbose
     }
     return { ...c, whatsapp: next }
+  })
+}
+
+const EMPTY_INAPP_CONFIG: InAppConfig = {
+  verbose: false
+}
+
+export async function getInAppConfig(): Promise<InAppConfig> {
+  const config = await readConfig()
+  return config?.inapp ?? EMPTY_INAPP_CONFIG
+}
+
+export async function setInAppConfig(patch: Partial<InAppConfig>): Promise<WorkspaceConfig> {
+  return patchConfig((c) => {
+    const current = c.inapp ?? EMPTY_INAPP_CONFIG
+    const next: InAppConfig = {
+      verbose: patch.verbose ?? current.verbose
+    }
+    return { ...c, inapp: next }
   })
 }
 

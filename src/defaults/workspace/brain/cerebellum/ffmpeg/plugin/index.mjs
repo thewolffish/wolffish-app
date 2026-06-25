@@ -1,9 +1,12 @@
 import { execFile, spawn } from 'node:child_process'
-import { existsSync, readdirSync } from 'node:fs'
-import { copyFile, mkdir } from 'node:fs/promises'
+import { createWriteStream, existsSync, readdirSync } from 'node:fs'
+import { chmod, copyFile, mkdir, rename, rm } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import path from 'node:path'
+import { Readable } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
 import { promisify } from 'node:util'
+import { createGunzip } from 'node:zlib'
 
 const execFileP = promisify(execFile)
 
@@ -273,9 +276,11 @@ async function persistUserPathWindows(dir) {
   }
 }
 
-// Run a PowerShell script, honoring the abort signal and a hard timeout so a
-// stalled download can't hang the install forever.
-function runPowerShell(script, signal, timeoutMs = 300_000) {
+// Run a PowerShell script, honoring the abort signal. NO hard-coded timeout —
+// a slow but progressing download must not be killed; pass a positive timeoutMs
+// only when a bound is explicitly wanted (the install can be cancelled via the
+// signal, which now also carries any model-supplied timeout).
+function runPowerShell(script, signal, timeoutMs = 0) {
   return new Promise((resolve) => {
     const child = spawn('powershell', ['-NoProfile', '-NonInteractive', '-Command', script], {
       env: process.env,
@@ -296,7 +301,7 @@ function runPowerShell(script, signal, timeoutMs = 300_000) {
       signal.addEventListener('abort', onAbort, { once: true })
       if (signal.aborted) onAbort()
     }
-    const timer = setTimeout(onAbort, timeoutMs)
+    const timer = timeoutMs > 0 ? setTimeout(onAbort, timeoutMs) : null
 
     child.stdout?.on('data', (c) => {
       stdout = clampOutput(stdout, c)
@@ -360,7 +365,77 @@ async function installFfmpegWindowsManual(signal) {
   }
 }
 
+// Single managed source covering every OS/arch incl Apple Silicon, as one
+// gzipped binary at a stable "latest" URL. Provides ffmpeg only — ffprobe (used
+// for video metadata) comes from a system install or a pre-existing copy.
+const FFMPEG_STATIC_BASE =
+  'https://github.com/eugeneware/ffmpeg-static/releases/latest/download'
+
+function ffmpegStaticAsset() {
+  const plat = process.platform === 'win32' ? 'win32' : process.platform // darwin | linux | win32
+  // No win-arm64 static build exists; Windows ARM runs the x64 build under
+  // emulation (mirrors the cloudflared windows-amd64 guard).
+  const arch = plat === 'win32' ? 'x64' : process.arch === 'arm64' ? 'arm64' : 'x64'
+  return `ffmpeg-${plat}-${arch}.gz`
+}
+
+// Managed (no-root) install: download the static ffmpeg into FFMPEG_DIR.
+async function downloadManagedFfmpeg(signal) {
+  await mkdir(FFMPEG_DIR, { recursive: true })
+  const url = `${FFMPEG_STATIC_BASE}/${ffmpegStaticAsset()}`
+  const exe = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg'
+  const dest = path.join(FFMPEG_DIR, exe)
+  const tmp = `${dest}.part`
+  try {
+    // No hard-coded timeout — a slow but progressing download must never be
+    // aborted. Bounded only by `signal` (user/agent cancel, plus an OPTIONAL
+    // model-supplied timeout combined into it by execute()).
+    const res = await fetch(url, { redirect: 'follow', signal })
+    if (!res.ok || !res.body) {
+      return { success: false, error: `ffmpeg download failed: HTTP ${res.status} for ${url}` }
+    }
+    await pipeline(Readable.fromWeb(res.body), createGunzip(), createWriteStream(tmp))
+    if (process.platform !== 'win32') await chmod(tmp, 0o755).catch(() => {})
+    await rm(dest, { force: true }).catch(() => {})
+    await rename(tmp, dest)
+  } catch (err) {
+    await rm(tmp, { force: true }).catch(() => {})
+    return { success: false, error: `ffmpeg download failed: ${err?.message ?? err}` }
+  }
+  // A corrupt/partial binary won't run — this doubles as the integrity check.
+  try {
+    await execFileP(dest, ['-version'])
+  } catch (err) {
+    return { success: false, error: `downloaded ffmpeg is not runnable: ${err?.message ?? err}` }
+  }
+  return { success: true, output: `ffmpeg installed (no root) at ${dest}` }
+}
+
+// Default policy (uniform with node/python): reuse a global/managed ffmpeg, else
+// download a no-root static build. No package manager, no sudo. System install
+// is opt-in via ffmpeg_install_system.
 async function ffmpegInstall(signal) {
+  const existing = await resolveBin('ffmpeg')
+  if (existing) return { success: true, output: `Using existing ffmpeg at ${existing}` }
+  return downloadManagedFfmpeg(signal)
+}
+
+// Opt-in: install ffmpeg AND ffprobe system-wide via the OS. Falls back to the
+// no-root ffmpeg copy if the system path is unavailable, so it never gets stuck.
+async function ffmpegInstallSystem(signal) {
+  const sys = await ffmpegSystemInstall(signal)
+  if (sys.success) return sys
+  const managed = await downloadManagedFfmpeg(signal)
+  if (managed.success) {
+    return {
+      success: true,
+      output: `System install unavailable (${sys.error}); installed a no-root ffmpeg instead.\n${managed.output}`
+    }
+  }
+  return { success: false, error: `System install failed: ${sys.error}. No-root fallback: ${managed.error}` }
+}
+
+async function ffmpegSystemInstall(signal) {
   const platform = process.platform
 
   if (platform === 'darwin') {
@@ -556,6 +631,22 @@ async function ffmpegRun(args, signal) {
   })
 }
 
+// Combine the caller's abort signal with an OPTIONAL, model-supplied timeout.
+// We NEVER hard-code a timeout — a slow but progressing download must not be
+// killed. A wall-clock bound is added only when the model explicitly passes one.
+function combineSignal(signal, timeoutMs) {
+  const ms = Number(timeoutMs)
+  if (!Number.isFinite(ms) || ms <= 0) return signal
+  const t = AbortSignal.timeout(ms)
+  return signal ? AbortSignal.any([signal, t]) : t
+}
+
+const TIMEOUT_PARAM = {
+  type: 'number',
+  description:
+    'Optional. Abort the download after this many milliseconds. Omit for no time limit (recommended on slow connections — the install can be cancelled regardless).'
+}
+
 const toolDefinitions = [
   {
     name: 'ffmpeg_check',
@@ -564,8 +655,15 @@ const toolDefinitions = [
   },
   {
     name: 'ffmpeg_install',
-    description: 'Install ffmpeg via the system package manager',
-    parameters: { type: 'object', properties: {}, required: [] }
+    description:
+      'Install ffmpeg with no admin rights: reuse a global ffmpeg, else download a no-root static build into ~/.wolffish/bin. No package manager, no password.',
+    parameters: { type: 'object', properties: { timeoutMs: TIMEOUT_PARAM }, required: [] }
+  },
+  {
+    name: 'ffmpeg_install_system',
+    description:
+      'Optional: install ffmpeg AND ffprobe system-wide via the OS (brew / winget / apt|dnf). Use when the user wants a global ffmpeg or needs ffprobe for video metadata; needs admin on Linux. Otherwise prefer ffmpeg_install.',
+    parameters: { type: 'object', properties: { timeoutMs: TIMEOUT_PARAM }, required: [] }
   },
   {
     name: 'ffmpeg_run',
@@ -592,21 +690,27 @@ function describeAction(toolName, args) {
     }
   }
   if (toolName === 'ffmpeg_install') {
-    let command = 'install ffmpeg'
-    let impact = 'Video/audio processing tool, typically 50-80MB download'
-    if (process.platform === 'darwin') command = 'brew install ffmpeg'
-    else if (process.platform === 'win32') {
-      command =
-        'winget install --id Gyan.FFmpeg -e --accept-source-agreements --accept-package-agreements'
-      impact =
-        'Video/audio processing tool, typically 50-80MB download. If winget is unavailable, falls back to a direct download into ~/.wolffish/bin/ffmpeg.'
-    } else command = 'apt install -y ffmpeg (or dnf install -y ffmpeg)'
     return {
-      title: 'Install FFmpeg',
-      description: 'Install the FFmpeg multimedia framework via your system package manager',
-      command,
-      impact,
+      title: 'Install FFmpeg (no root)',
+      description: 'Reuse a global ffmpeg if present, else download a no-root static build',
+      command: 'download ffmpeg → ~/.wolffish/bin/ffmpeg',
+      impact:
+        'No admin rights, no package manager, no password prompt (~30-80MB). Provides ffmpeg; ffprobe (video metadata) needs a system install.',
       risk: 'low'
+    }
+  }
+  if (toolName === 'ffmpeg_install_system') {
+    let command = 'install ffmpeg system-wide'
+    if (process.platform === 'darwin') command = 'brew install ffmpeg'
+    else if (process.platform === 'win32')
+      command = 'winget install --id Gyan.FFmpeg (or a direct static-build download)'
+    else command = 'sudo apt/dnf install ffmpeg'
+    return {
+      title: 'Install FFmpeg system-wide',
+      description: 'Install ffmpeg + ffprobe globally via the OS package manager',
+      command,
+      impact: 'Provides both ffmpeg and ffprobe. Needs admin on Linux; falls back to a no-root copy.',
+      risk: 'medium'
     }
   }
   if (toolName === 'ffmpeg_run') {
@@ -626,11 +730,14 @@ const plugin = {
   tools: toolDefinitions,
   describeAction,
   async execute(toolName, args, signal) {
+    const sig = combineSignal(signal, args?.timeoutMs)
     switch (toolName) {
       case 'ffmpeg_check':
         return ffmpegCheck()
       case 'ffmpeg_install':
-        return ffmpegInstall(signal)
+        return ffmpegInstall(sig)
+      case 'ffmpeg_install_system':
+        return ffmpegInstallSystem(sig)
       case 'ffmpeg_run':
         return ffmpegRun(args, signal)
       default:
