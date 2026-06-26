@@ -3,6 +3,7 @@ process.noDeprecation = true
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import { braveService, type BraveStatus, type BraveTestResult } from '@main/brave'
 import { turnRouter } from '@main/channels/channel'
+import { collectChannelStatus } from '@main/channels/status'
 import { ElectronChannel } from '@main/channels/electron/channel'
 import { ExtensionServer } from '@main/channels/extension/server'
 import { TelegramChannel } from '@main/channels/telegram/channel'
@@ -60,6 +61,7 @@ import {
 } from '@main/ollama'
 import { Agent } from '@main/runtime/agent'
 import type { ApprovalDecision } from '@main/runtime/amygdala'
+import type { AskUserResponse } from '@main/runtime/cerebellum'
 import { deleteCapabilityFolder, importCapability } from '@main/runtime/capabilityImport'
 import { MODEL_CATALOG } from '@main/runtime/models'
 import { localProvider } from '@main/runtime/providers/local'
@@ -193,7 +195,7 @@ import {
 } from 'electron'
 import { execFileSync } from 'node:child_process'
 import os from 'node:os'
-import { join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 
 // Redirect Chromium/Electron-managed state into ~/.wolffish so a single
 // `rm -rf ~/.wolffish` wipes every byte the app touches. Must run before
@@ -201,6 +203,18 @@ import { join } from 'node:path'
 const WOLFFISH_ROOT = join(os.homedir(), '.wolffish')
 app.setPath('userData', join(WOLFFISH_ROOT, 'runtime'))
 app.setAppLogsPath(join(WOLFFISH_ROOT, 'logs'))
+
+// Resolve a path the assistant mentioned in chat (which may start with ~) to an
+// absolute path. Returns null for anything that isn't a real absolute/home path
+// — the renderer only ever passes such paths, but this guards against junk.
+function resolveDevicePath(p: string): string | null {
+  if (!p || typeof p !== 'string') return null
+  const trimmed = p.trim()
+  let resolved = trimmed
+  if (trimmed === '~') resolved = os.homedir()
+  else if (trimmed.startsWith('~/')) resolved = join(os.homedir(), trimmed.slice(2))
+  return isAbsolute(resolved) ? resolved : null
+}
 
 // Wolffish is a full-access local agent — it runs shell commands, installs
 // software, and elevates with sudo on the user's behalf. Chromium's sandbox
@@ -689,6 +703,16 @@ const whatsappChannel = new WhatsAppChannel(agent, turnRunner, localProvider)
 const extensionServer = new ExtensionServer()
 
 agent.amygdala.setApprovalBridge((req) => turnRouter.dispatchApproval(req))
+agent.cerebellum.setAskBridge((req) => turnRouter.dispatchAskUser(req))
+// Feed live channel connectivity to the introspect capability so the agent can
+// check whether Telegram/WhatsApp are reachable (via `channel_status` /
+// `wolffish_status`) and tell the user how to reconnect a disconnected one.
+agent.cerebellum.setChannelStatusProvider(() =>
+  collectChannelStatus({
+    telegram: () => telegramChannel.getStatus(),
+    whatsapp: () => whatsappChannel.getStatus()
+  })
+)
 
 function currentThemeState(): ThemeState {
   return {
@@ -1984,6 +2008,73 @@ app.whenReady().then(async () => {
     return { ok: true as const, capabilities: await serializeCapabilities() }
   })
 
+  // Capability-management bridge handed to the `skills` capability's plugin
+  // via its init context. Every method mirrors a `cerebellum:*` IPC handler
+  // above so the agent manages skills through the exact same atomic config
+  // writes, official-capability guards, and reload path the settings panel
+  // uses — there is one implementation of "disable a skill", not two.
+  agent.cerebellum.setPluginHost({
+    listCapabilities: async () => {
+      const bundled = await bundledCapabilityNames()
+      return agent.cerebellum.getCapabilities().map((c) => ({
+        name: c.name,
+        description: c.description,
+        triggers: c.triggers.keywords,
+        tools: c.tools.map((t) => ({ name: t.name, description: t.description })),
+        hasPlugin: c.hasPlugin,
+        status: c.status,
+        enabled: !agent.cerebellum.isDisabled(c.name),
+        official: Boolean(c.inProcess) || bundled.has(c.name),
+        inProcess: Boolean(c.inProcess),
+        dir: c.dir,
+        error: c.error
+      }))
+    },
+    setCapabilityEnabled: async (name, enabled) => {
+      const cfg = await readConfig()
+      const disabled = new Set(cfg?.disabledCapabilities ?? [])
+      if (enabled) disabled.delete(name)
+      else disabled.add(name)
+      const list = [...disabled]
+      await patchConfig((c) => ({ ...c, disabledCapabilities: list }))
+      agent.cerebellum.setDisabled(list)
+    },
+    deleteCapability: async (name) => {
+      const cap = agent.cerebellum.getCapabilities().find((c) => c.name === name)
+      if (!cap) return { ok: false, error: `Capability "${name}" not found.` }
+      const bundled = await bundledCapabilityNames()
+      const outcome = await deleteCapabilityFolder({
+        name,
+        dir: cap.dir,
+        cerebellumDir: join(workspaceRoot(), 'brain', 'cerebellum'),
+        isOfficial: bundled.has(name),
+        isInProcess: Boolean(cap.inProcess)
+      })
+      if (!outcome.ok) return outcome
+      await patchConfig((c) => ({
+        ...c,
+        disabledCapabilities: (c.disabledCapabilities ?? []).filter((n) => n !== name)
+      }))
+      await agent.cerebellum.reload()
+      const cfg = await readConfig()
+      agent.cerebellum.setDisabled(cfg?.disabledCapabilities ?? [])
+      return { ok: true }
+    },
+    importCapability: async (sourcePath) => {
+      const existingNames = new Set(agent.cerebellum.getCapabilities().map((c) => c.name))
+      return importCapability({
+        sourcePath,
+        cerebellumDir: join(workspaceRoot(), 'brain', 'cerebellum'),
+        existingNames
+      })
+    },
+    reload: async () => {
+      await agent.cerebellum.reload()
+      const cfg = await readConfig()
+      agent.cerebellum.setDisabled(cfg?.disabledCapabilities ?? [])
+    }
+  })
+
   // Voice — read TTS-generated audio files for the renderer's AudioPlayer
   // (source="voice"), download via save dialog, and check existence for
   // past conversations.
@@ -2186,6 +2277,49 @@ app.whenReady().then(async () => {
       try {
         const error = await shell.openPath(abs)
         if (error) return { ok: false, error }
+        return { ok: true }
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      }
+    }
+  )
+
+  // Stat a path the assistant mentioned in chat so the renderer can decide
+  // whether to show a card (and which kind). Resolves a leading ~. Not
+  // workspace-scoped: assistant-referenced paths live anywhere on the user's
+  // own machine, and this only reads existence/type, never contents.
+  ipcMain.handle(
+    'upload:statPath',
+    async (_e, p: string): Promise<{ exists: boolean; isDirectory: boolean }> => {
+      const abs = resolveDevicePath(p)
+      if (!abs) return { exists: false, isDirectory: false }
+      try {
+        const { stat } = await import('node:fs/promises')
+        const st = await stat(abs)
+        return { exists: true, isDirectory: st.isDirectory() }
+      } catch {
+        return { exists: false, isDirectory: false }
+      }
+    }
+  )
+
+  // Reveal a path in the OS file manager: a directory opens directly, a file is
+  // revealed in its parent folder (selected), like "Reveal in Finder". Resolves
+  // a leading ~. Intentionally not workspace-scoped — see statPath.
+  ipcMain.handle(
+    'upload:revealPath',
+    async (_e, p: string): Promise<{ ok: boolean; error?: string }> => {
+      const abs = resolveDevicePath(p)
+      if (!abs) return { ok: false, error: 'invalid path' }
+      try {
+        const { stat } = await import('node:fs/promises')
+        const st = await stat(abs)
+        if (st.isDirectory()) {
+          const error = await shell.openPath(abs)
+          if (error) return { ok: false, error }
+        } else {
+          shell.showItemInFolder(abs)
+        }
         return { ok: true }
       } catch (err) {
         return { ok: false, error: err instanceof Error ? err.message : String(err) }
@@ -2735,6 +2869,10 @@ app.whenReady().then(async () => {
     'chat:approvalRespond',
     (_e, payload: { id: string; decision: ApprovalDecision }) =>
       electronChannel.respondApproval(payload)
+  )
+
+  ipcMain.handle('chat:askRespond', (_e, payload: { id: string; response: AskUserResponse }) =>
+    electronChannel.respondAsk(payload)
   )
 
   // Usage — aggregated token & cost data from markdown files.

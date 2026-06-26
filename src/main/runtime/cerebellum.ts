@@ -1,4 +1,5 @@
 import type { Amygdala, DangerLevel, DangerPattern } from '@main/runtime/amygdala'
+import type { ChannelStatusSnapshot } from '@main/channels/status'
 import type { Corpus } from '@main/runtime/corpus'
 import { sudoSession, type SudoSession } from '@main/runtime/sudoSession'
 import type { ToolDefinition } from '@main/runtime/thalamus'
@@ -32,6 +33,15 @@ export type ToolParameterSpec = {
   description?: string
   enum?: string[]
   required?: boolean
+  /**
+   * JSON Schema for array items / object shape, passed through verbatim to
+   * the model-facing schema. Lets a frontmatter param declare a precise
+   * nested structure (e.g. an array of `{ label, description }` objects)
+   * instead of an opaque `type: array`. Some strict providers also reject an
+   * array param that has no `items`.
+   */
+  items?: Record<string, unknown>
+  properties?: Record<string, unknown>
 }
 
 export type SkillTrigger = {
@@ -128,6 +138,56 @@ export type ApprovalDescription = {
   risk: RiskLevel
 }
 
+/** The single tool the `ask` capability exposes. */
+export const ASK_USER_TOOL = 'ask_user'
+
+/** One selectable choice on an ask-the-user question card. */
+export type AskUserOption = {
+  /** The choice shown to the user (e.g. "Use PostgreSQL"). */
+  label: string
+  /** Optional one-line explanation rendered under the label. */
+  description?: string
+}
+
+/**
+ * What a plugin hands `context.askUser` to pose a question to the user.
+ * Built by the `ask` capability from the model's tool args; the toolCallId
+ * is injected by Cerebellum so the renderer can anchor the question card to
+ * the right tool_call segment.
+ */
+export type AskUserRequestInput = {
+  question: string
+  details?: string
+  options: AskUserOption[]
+  /** Show the free-text "something else" escape hatch (default true). */
+  allowOther: boolean
+  /** Override the default label/description of the free-text option. */
+  otherLabel?: string
+  otherDescription?: string
+}
+
+export type AskUserRequest = AskUserRequestInput & { toolCallId: string }
+
+/**
+ * The user's answer to an ask-the-user question. `option` = they picked
+ * listed choice N; `custom` = they wrote their own instructions in the
+ * free-text field; `canceled` = the question was dismissed (run stopped /
+ * window closed); `unsupported` = the active channel can't render the card.
+ */
+export type AskUserResponse =
+  | { kind: 'option'; index: number }
+  | { kind: 'custom'; text: string }
+  | { kind: 'canceled' }
+  | { kind: 'unsupported' }
+
+/**
+ * Bridge that bounces an ask-the-user request to whichever channel owns the
+ * active turn (mirrors the amygdala approval bridge). Wired in main over the
+ * singleton turnRouter; absent in headless/test runtimes, where asking
+ * resolves `unsupported`.
+ */
+export type AskUserBridge = (request: AskUserRequest & { id: string }) => Promise<AskUserResponse>
+
 /**
  * Optional hook the agent passes into ensureDependencies so the dependency
  * resolver can emit broca segments for synthetic install calls. Without
@@ -143,6 +203,61 @@ export type DependencyEmitHook = {
     output: string,
     error?: string
   ) => void
+}
+
+/**
+ * Compact, serializable view of a capability handed to the `skills`
+ * management plugin so it can list / search / manage capabilities without
+ * reaching into Cerebellum internals. `official` capabilities ship with the
+ * app (bundled, or in-process core channels) and can never be deleted; `dir`
+ * is the on-disk folder.
+ */
+export type ManagedCapability = {
+  name: string
+  description: string
+  triggers: string[]
+  tools: Array<{ name: string; description: string }>
+  hasPlugin: boolean
+  status: CapabilityStatus
+  enabled: boolean
+  official: boolean
+  inProcess: boolean
+  dir: string
+  error?: string
+}
+
+/**
+ * Result of importing/creating a capability — the subset of
+ * CapabilityImportResult the `skills` plugin needs.
+ */
+export type ManagedImportResult = {
+  ok: boolean
+  error?: string
+  name?: string
+  hasPlugin?: boolean
+  toolCount?: number
+}
+
+/**
+ * Management surface injected into the `skills` capability's plugin via its
+ * init context (PluginContext.host). Implemented in the main process
+ * (index.ts) over the very same helpers the Cerebellum settings panel uses,
+ * so agent-driven skill management and UI-driven management stay in lockstep:
+ * config persistence is atomic, official capabilities are protected, and a
+ * disk change is applied live via reload. Optional on PluginContext — every
+ * plugin other than `skills` ignores it.
+ */
+export type CerebellumPluginHost = {
+  /** Live snapshot of every loaded capability with enabled/official flags. */
+  listCapabilities: () => Promise<ManagedCapability[]>
+  /** Enable/disable a capability: persists `disabledCapabilities` AND applies live. */
+  setCapabilityEnabled: (name: string, enabled: boolean) => Promise<void>
+  /** Delete a non-official capability folder, prune config, and reload. */
+  deleteCapability: (name: string) => Promise<{ ok: boolean; error?: string }>
+  /** Validate + copy a staged capability (SKILL.md / folder / zip) into place. */
+  importCapability: (sourcePath: string) => Promise<ManagedImportResult>
+  /** Re-scan brain/cerebellum/ from disk so new/changed skills take effect. */
+  reload: () => Promise<void>
 }
 
 export type PluginContext = {
@@ -164,6 +279,30 @@ export type PluginContext = {
    * gate on platform and fall back to their own elevation path elsewhere.
    */
   sudo: SudoSession
+  /**
+   * Capability-management surface. Present only when the host wired one in
+   * via setPluginHost — used by the `skills` capability to list, enable,
+   * disable, delete, and create other capabilities. Undefined for every
+   * other plugin.
+   */
+  host?: CerebellumPluginHost
+  /**
+   * Ask the user a multiple-choice question and block until they answer.
+   * Used by the `ask` capability to pause the agent loop, render an
+   * interactive question card in the chat, and resume with the user's
+   * choice (a listed option or free-text instructions). Resolves
+   * `unsupported` when no channel can render the card (e.g. a headless
+   * runtime), and `canceled` if the run is stopped before they answer.
+   */
+  askUser: (request: AskUserRequestInput) => Promise<AskUserResponse>
+  /**
+   * Live connection status for every messaging channel (Telegram, WhatsApp,
+   * in-app chat). Used by the `introspect` capability to report whether a
+   * channel is reachable and, when it isn't, how the user can reconnect it.
+   * Returns an empty array until the host wires a provider via
+   * setChannelStatusProvider; every plugin other than `introspect` ignores it.
+   */
+  getChannelStatus: () => ChannelStatusSnapshot[]
 }
 
 export type WolffishPlugin = {
@@ -211,11 +350,90 @@ export class Cerebellum {
   private loaded = false
   private currentConversationId: string | null = null
   private disabled = new Set<string>()
+  private pluginHost?: CerebellumPluginHost
+  /**
+   * Bumped every time the live tool surface changes — a reload (skills
+   * added/edited/removed) or an enable/disable toggle. The agent loop pins
+   * the system prompt + tool list once per turn for cache efficiency; it
+   * re-reads this counter each iteration and rebuilds the pin when it moves,
+   * so a skill created or edited mid-turn becomes callable on the very next
+   * step instead of only on the next user turn. Also drives the plugin
+   * import cache-buster so an edited plugin re-evaluates instead of resolving
+   * to Node's stale ESM module cache.
+   */
+  private generation = 0
+  private askBridge?: AskUserBridge
+  private channelStatusProvider?: () => ChannelStatusSnapshot[]
+  /**
+   * The toolCallId of the tool currently executing, set by executeTool for
+   * the duration of one plugin.execute call. The `ask` capability needs it
+   * to anchor its question card to the right tool_call segment, but
+   * plugin.execute isn't handed the id. Save/restore around each call keeps
+   * nested executeTool invocations (dependency checks) from clobbering it.
+   */
+  private activeToolCallId: string | null = null
 
   constructor(private options: CerebellumOptions = {}) {}
 
+  /**
+   * Wire the ask-the-user bridge after construction (mirrors amygdala's
+   * setApprovalBridge). Used by main to route question cards to whichever
+   * channel owns the active turn. Without it, `context.askUser` resolves
+   * `unsupported`.
+   */
+  setAskBridge(bridge: AskUserBridge | null): void {
+    this.askBridge = bridge ?? undefined
+  }
+
+  /**
+   * Wire a provider that reports live channel connection status. Set by main
+   * once the channels exist; backs `PluginContext.getChannelStatus` so the
+   * introspect capability can tell the model which channels are reachable and
+   * how to reconnect a disconnected one. Resolved at call time, so the
+   * provider can be set after plugins have already loaded.
+   */
+  setChannelStatusProvider(provider: (() => ChannelStatusSnapshot[]) | null): void {
+    this.channelStatusProvider = provider ?? undefined
+  }
+
+  /**
+   * Build the full ask request (injecting the active toolCallId + a fresh
+   * id) and bounce it through the bridge. Backs `PluginContext.askUser`.
+   */
+  private async dispatchAskUser(input: AskUserRequestInput): Promise<AskUserResponse> {
+    const bridge = this.askBridge
+    const toolCallId = this.activeToolCallId
+    if (!bridge || !toolCallId) return { kind: 'unsupported' }
+    const id = `ask_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+    try {
+      return await bridge({ ...input, toolCallId, id })
+    } catch {
+      return { kind: 'canceled' }
+    }
+  }
+
   setDisabled(names: string[]): void {
     this.disabled = new Set(names)
+    this.generation++
+  }
+
+  /**
+   * Monotonic tool-surface version. Changes whenever capabilities are
+   * reloaded or a skill is enabled/disabled. The agent loop compares this
+   * against the value it pinned at turn start to decide whether to rebuild.
+   */
+  getGeneration(): number {
+    return this.generation
+  }
+
+  /**
+   * Wire the capability-management host (implemented in the main process)
+   * that the `skills` capability's plugin receives in its init context.
+   * Set once at startup; survives reload() so the bridge keeps working
+   * after the `skills` plugin is re-imported.
+   */
+  setPluginHost(host: CerebellumPluginHost): void {
+    this.pluginHost = host
   }
 
   isDisabled(name: string): boolean {
@@ -413,6 +631,24 @@ export class Cerebellum {
   async executeTool(
     name: string,
     args: Record<string, unknown>,
+    signal?: AbortSignal,
+    toolCallId?: string
+  ): Promise<ToolExecutionResult> {
+    // Expose the toolCallId to plugins that ask the user a question (the
+    // `ask` capability anchors its card to it). Save/restore so a nested
+    // executeTool (e.g. a dependency check) can't strand a stale id.
+    const prevToolCallId = this.activeToolCallId
+    if (toolCallId) this.activeToolCallId = toolCallId
+    try {
+      return await this.executeToolInner(name, args, signal)
+    } finally {
+      this.activeToolCallId = prevToolCallId
+    }
+  }
+
+  private async executeToolInner(
+    name: string,
+    args: Record<string, unknown>,
     signal?: AbortSignal
   ): Promise<ToolExecutionResult> {
     const capName = this.toolToCapability.get(name)
@@ -444,7 +680,13 @@ export class Cerebellum {
       }
     }
     try {
-      const result = await plugin.execute(name, args, signal)
+      // Normalize whatever the plugin returned into a proper
+      // ToolExecutionResult. Plugins authored at runtime (the `skills`
+      // capability) commonly return a bare string or put their payload on a
+      // non-standard field (`return { result }` instead of `{ success, output }`);
+      // without this, a successful call renders an EMPTY tool card and the model
+      // can't see what happened. Well-formed results pass through untouched.
+      const result = normalizeToolResult(await plugin.execute(name, args, signal))
       // A successful *_install can place a binary on the persistent PATH that
       // this long-lived process didn't inherit (Windows: a new registry entry;
       // macOS/Linux: a brand-new bin dir such as a first Homebrew install).
@@ -772,10 +1014,16 @@ export class Cerebellum {
     if (this.plugins.has(cap.name)) return
     if (!cap.pluginEntryPath) return
 
-    const plugin = await this.importPlugin(cap.pluginEntryPath, cap.name)
-    if (!plugin) {
+    let plugin: WolffishPlugin
+    try {
+      plugin = await this.importPlugin(cap.pluginEntryPath, cap.name)
+    } catch (err) {
+      // Surface the ACTUAL reason (syntax error, wrong export shape, …) instead
+      // of a generic "exports a valid Wolffish plugin" — the model needs the
+      // specific mistake to fix its own skill on the next step.
+      const message = err instanceof Error ? err.message : String(err)
       throw new Error(
-        `Failed to load plugin for "${cap.name}". Check that ${cap.pluginEntryPath} exports a valid Wolffish plugin.`
+        `Failed to load plugin for "${cap.name}": ${message} (${cap.pluginEntryPath})`
       )
     }
 
@@ -784,7 +1032,10 @@ export class Cerebellum {
         pluginDir: path.dirname(cap.pluginEntryPath),
         workspaceRoot: this.options.workspaceRoot ?? '',
         getCurrentConversationId: () => this.currentConversationId,
-        sudo: sudoSession
+        sudo: sudoSession,
+        host: this.pluginHost,
+        askUser: (input) => this.dispatchAskUser(input),
+        getChannelStatus: () => this.channelStatusProvider?.() ?? []
       })
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
@@ -861,6 +1112,9 @@ export class Cerebellum {
     this.toolToCapability.clear()
     this.dependencyCache.clear()
     this.loaded = false
+    // New tool surface, and any re-imported plugin must dodge Node's ESM
+    // cache (see importPlugin) — both ride on this bump.
+    this.generation++
     return this.loadAll()
   }
 
@@ -960,23 +1214,49 @@ export class Cerebellum {
     return cap
   }
 
-  private async importPlugin(file: string, capName: string): Promise<WolffishPlugin | null> {
+  /**
+   * Import a plugin module and validate its export shape. Throws a descriptive
+   * error on failure (caught by ensurePluginLoaded) so the model sees the real
+   * reason — a syntax error, or the most common mistake: `tools` declared as an
+   * object with inline handlers instead of an array plus a separate execute().
+   */
+  private async importPlugin(file: string, capName: string): Promise<WolffishPlugin> {
+    let mod: { default?: WolffishPlugin } | WolffishPlugin
     try {
       // pathToFileURL keeps Windows happy and bypasses the loader's
-      // resolve-from-cwd behaviour for plain string paths.
-      const mod = (await import(pathToFileURL(file).href)) as
-        | { default?: WolffishPlugin }
-        | WolffishPlugin
-      const plugin = (mod as { default?: WolffishPlugin }).default ?? (mod as WolffishPlugin)
-      if (!plugin || typeof plugin.execute !== 'function') {
-        throw new Error(`plugin ${capName} missing execute()`)
-      }
-      return plugin
+      // resolve-from-cwd behaviour for plain string paths. The `?v=`
+      // generation suffix busts Node's ESM module cache so a plugin edited
+      // on disk and reloaded actually re-evaluates instead of resolving to
+      // the stale first-import — without it, the create→edit→reload→retest
+      // loop would silently keep running the original code. fileURLToPath
+      // ignores the query, so plugins that locate bundled files via
+      // import.meta.url (speech-to-text, text-to-speech) are unaffected.
+      const href = `${pathToFileURL(file).href}?v=${this.generation}`
+      mod = (await import(href)) as { default?: WolffishPlugin } | WolffishPlugin
     } catch (err) {
-      void err
       void capName
-      return null
+      const message = err instanceof Error ? err.message : String(err)
+      throw new Error(`module failed to import (${message})`)
     }
+    const plugin = (mod as { default?: WolffishPlugin }).default ?? (mod as WolffishPlugin)
+    // Be liberal in what we accept (Postel's law): model-authored plugins
+    // routinely use a different convention from some other tool framework.
+    // If `execute` is missing, synthesize one from whatever dispatcher the
+    // plugin DID provide — a top-level alias (MCP `handleToolCall`, `run`, …)
+    // or per-tool inline handlers (`tools: [{ name, handler }]`, array or
+    // object). Result shapes are normalized in normalizeToolResult.
+    if (plugin && typeof plugin.execute !== 'function') {
+      const synthesized = synthesizeExecute(plugin)
+      if (synthesized) plugin.execute = synthesized
+    }
+    if (!plugin || typeof plugin.execute !== 'function') {
+      throw new Error(
+        'no dispatcher found — export `async execute(toolName, args)` (an MCP-style `handleToolCall`, ' +
+          'or per-tool `handler` functions on the tools, are also accepted). ' +
+          'Canonical shape: export default { name, tools: [...], async execute(toolName, args) {...} }'
+      )
+    }
+    return plugin
   }
 
   private async installCapability(
@@ -1121,6 +1401,144 @@ function titleCase(toolName: string): string {
     .join(' ')
 }
 
+/**
+ * Coerce whatever a plugin's execute() returned into a well-formed
+ * ToolExecutionResult. The contract is `{ success, output }`, but a plugin
+ * authored at runtime by the model often returns a bare value or stashes its
+ * payload on a different key. Rather than render an empty card (success with
+ * no visible output — exactly the confusing failure mode the coinflip test
+ * hit), surface the payload:
+ *
+ *  - a bare string/number/bool        → { success: true, output: <stringified> }
+ *  - `{ result: 'heads' }`            → output becomes "heads" (lone scalar field)
+ *  - `{ foo: 1, bar: 2 }`             → output becomes the JSON of the extra fields
+ *  - `{ error: 'boom' }`              → success: false
+ *  - already `{ success, output }`    → passed through unchanged
+ *
+ * A deliberate empty success (`{ success: true }` with no other data) stays
+ * empty — we only synthesize output when the plugin clearly returned data on
+ * the wrong field.
+ */
+/**
+ * When a plugin doesn't export `execute`, build one from whatever dispatcher
+ * convention it DID use, so model-authored plugins that mirror another tool
+ * framework still load. Returns null if no usable dispatcher is found.
+ *
+ * Recognized, in order: a top-level alias (handleToolCall/run/call/…), then
+ * per-tool inline handlers on `tools` — an array (`[{ name, handler }]`) or an
+ * object keyed by tool name (`{ toolName: { handler } }`). Handlers may be
+ * named handler/run/fn/execute/callback. Kept in sync with the skills
+ * capability's smoke-test (DISPATCHER_NAMES / per-tool handler detection).
+ */
+function synthesizeExecute(plugin: WolffishPlugin): WolffishPlugin['execute'] | null {
+  const p = plugin as unknown as Record<string, unknown>
+
+  const aliasKey = [
+    'handleToolCall',
+    'handle',
+    'run',
+    'call',
+    'invoke',
+    'onToolCall',
+    'dispatch'
+  ].find((k) => typeof p[k] === 'function')
+  if (aliasKey) {
+    const alias = p[aliasKey] as (...a: unknown[]) => unknown
+    return (toolName, args, signal) =>
+      Promise.resolve(alias.call(plugin, toolName, args, signal)) as ReturnType<
+        WolffishPlugin['execute']
+      >
+  }
+
+  const handlerOf = (t: unknown): unknown => {
+    if (!t || typeof t !== 'object') return undefined
+    const o = t as Record<string, unknown>
+    return o.handler ?? o.run ?? o.fn ?? o.execute ?? o.callback
+  }
+  const tools = p.tools
+  let lookup: ((name: string) => unknown) | null = null
+  let sample: unknown[] = []
+  if (Array.isArray(tools)) {
+    lookup = (name) => tools.find((t) => (t as Record<string, unknown>)?.name === name)
+    sample = tools
+  } else if (tools && typeof tools === 'object') {
+    const o = tools as Record<string, unknown>
+    lookup = (name) => o[name]
+    sample = Object.values(o)
+  }
+  if (lookup && sample.some((t) => typeof handlerOf(t) === 'function')) {
+    const find = lookup
+    return ((toolName: string, args: Record<string, unknown>, signal?: AbortSignal) => {
+      const tool = find(toolName)
+      const fn = handlerOf(tool)
+      if (typeof fn !== 'function') {
+        return Promise.resolve({ success: false, error: `unknown or unhandled tool: ${toolName}` })
+      }
+      return Promise.resolve((fn as (...a: unknown[]) => unknown).call(tool, args, signal))
+    }) as WolffishPlugin['execute']
+  }
+
+  return null
+}
+
+function normalizeToolResult(raw: unknown): ToolExecutionResult {
+  if (raw === null || raw === undefined) {
+    return {
+      success: false,
+      error: 'plugin returned no result — execute() must return { success, output }'
+    }
+  }
+  if (typeof raw === 'string') return { success: true, output: raw }
+  if (typeof raw !== 'object') return { success: true, output: String(raw) }
+
+  const r = raw as Record<string, unknown>
+  const success =
+    typeof r.success === 'boolean' ? r.success : r.error != null && r.error !== '' ? false : true
+
+  let output = typeof r.output === 'string' ? r.output : r.output != null ? String(r.output) : ''
+
+  // Plugin returned data but not on `output`/`error`: pull it onto output so
+  // the call isn't a silent blank.
+  if (success && output === '' && (r.error == null || r.error === '')) {
+    // MCP-style result: { content: [{ type: 'text', text }] }. Flatten the
+    // text blocks so a plugin written to the MCP tool contract renders cleanly
+    // instead of dumping raw JSON.
+    if (Array.isArray(r.content)) {
+      const text = (r.content as unknown[])
+        .map((c) => (c && typeof c === 'object' ? (c as Record<string, unknown>).text : undefined))
+        .filter((t): t is string => typeof t === 'string')
+        .join('\n')
+      if (text) output = text
+    }
+    if (output === '') {
+      const known = new Set(['success', 'output', 'error', 'images', 'exitCode', 'partial'])
+      const extra: Record<string, unknown> = {}
+      for (const k of Object.keys(r)) if (!known.has(k)) extra[k] = r[k]
+      const keys = Object.keys(extra)
+      if (keys.length === 1 && ['string', 'number', 'boolean'].includes(typeof extra[keys[0]])) {
+        output = String(extra[keys[0]])
+      } else if (keys.length > 0) {
+        try {
+          output = JSON.stringify(extra)
+        } catch {
+          // non-serializable — leave output empty rather than throw
+        }
+      }
+    }
+  }
+
+  const out: ToolExecutionResult = { success, output }
+  if (r.error != null && r.error !== '') {
+    out.error = typeof r.error === 'string' ? r.error : String(r.error)
+  }
+  if (Array.isArray(r.images)) out.images = r.images as ToolResultImage[]
+  if (typeof r.exitCode === 'number' || r.exitCode === null) {
+    out.exitCode = r.exitCode as number | null
+  }
+  if (typeof r.partial === 'boolean') out.partial = r.partial
+  return out
+}
+
 function safeJsonParse(str?: string): Record<string, unknown> | null {
   if (!str) return null
   try {
@@ -1140,6 +1558,10 @@ function toJSONSchema(parameters: Record<string, ToolParameterSpec>): Record<str
     }
     if (spec.description) prop.description = spec.description
     if (spec.enum) prop.enum = spec.enum
+    // Pass nested array/object schemas through so the model sees the precise
+    // shape (and strict providers don't reject an item-less array).
+    if (spec.items) prop.items = spec.items
+    if (spec.properties) prop.properties = spec.properties
     properties[key] = prop
     // Default required so existing skills (which omit the field) keep their
     // current schema. Opt out per-param with `required: false` in frontmatter.

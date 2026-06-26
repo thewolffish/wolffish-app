@@ -2,6 +2,7 @@ import type { TurnSink } from '@main/channels/channel'
 import type { TurnRunner, TurnSendOptions } from '@main/channels/turn-runner'
 import type { Agent } from '@main/runtime/agent'
 import type { ApprovalDecision, ApprovalRequest } from '@main/runtime/amygdala'
+import type { AskUserRequest, AskUserResponse } from '@main/runtime/cerebellum'
 import type { CorpusEvents } from '@main/runtime/corpus'
 import type { ChatHistoryMessage } from '@preload/index'
 import type { WebContents } from 'electron'
@@ -24,6 +25,7 @@ import type { WebContents } from 'electron'
  */
 export class ElectronChannel {
   private readonly pendingApprovals = new Map<string, (decision: ApprovalDecision) => void>()
+  private readonly pendingAsks = new Map<string, (response: AskUserResponse) => void>()
   private activeController: AbortController | null = null
   private activeTurnId: string | null = null
   private activeTaskId: string | null = null
@@ -66,6 +68,12 @@ export class ElectronChannel {
           resolve('denied')
           this.pendingApprovals.delete(id)
         }
+        // Same for any unanswered question — resolve canceled so the
+        // ask tool's execute returns and the run can finish.
+        for (const [id, resolve] of this.pendingAsks.entries()) {
+          resolve({ kind: 'canceled' })
+          this.pendingAsks.delete(id)
+        }
       }
     })
 
@@ -91,6 +99,15 @@ export class ElectronChannel {
     if (!resolve) return { ok: false as const }
     this.pendingApprovals.delete(payload.id)
     resolve(payload.decision)
+    return { ok: true as const }
+  }
+
+  /** chat:askRespond IPC handler — the user answered a question card. */
+  respondAsk(payload: { id: string; response: AskUserResponse }): { ok: true } | { ok: false } {
+    const resolve = this.pendingAsks.get(payload.id)
+    if (!resolve) return { ok: false as const }
+    this.pendingAsks.delete(payload.id)
+    resolve(payload.response)
     return { ok: true as const }
   }
 
@@ -143,6 +160,26 @@ export class ElectronChannel {
             level: req.level,
             reason: req.reason,
             description: req.description
+          })
+        })
+      },
+      onAskUserRequest: (req: AskUserRequest & { id: string }) => {
+        return new Promise<AskUserResponse>((resolve) => {
+          if (!sender || sender.isDestroyed()) {
+            resolve({ kind: 'canceled' })
+            return
+          }
+          this.pendingAsks.set(req.id, resolve)
+          safeSend('chat:askRequest', {
+            turnId: this.activeTurnId,
+            id: req.id,
+            toolCallId: req.toolCallId,
+            question: req.question,
+            details: req.details,
+            options: req.options,
+            allowOther: req.allowOther,
+            otherLabel: req.otherLabel,
+            otherDescription: req.otherDescription
           })
         })
       },

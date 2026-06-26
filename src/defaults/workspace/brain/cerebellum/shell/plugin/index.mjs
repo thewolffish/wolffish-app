@@ -562,6 +562,21 @@ function execForeground({ command, cwd, shell, timeoutMs, env, signal }) {
         finish({ success: true, output: '(no matches — command exited 1 with no output)' })
         return
       }
+      // `grep -c` (and `grep -c -r`) print a tally and exit 1 when the total
+      // count is zero — "0" for a single file, "<file>:0" per file with -r.
+      // The number IS the result, not an error, so the no-output guard above
+      // misses it (stdout is "0", not empty) and the command lands in the
+      // failure path, handing the model a blind "exited with code 1: 0". Treat
+      // a stderr-free exit-1 whose stdout is only zero-counts as a clean empty
+      // result and return the tally itself. grep only exits 1 here when every
+      // count is zero (any match exits 0), so this never masks a real hit.
+      if (code === 1 && !stderr.trim() && stdout.trim()) {
+        const lines = stdout.trim().split(/\r?\n/)
+        if (lines.every((l) => /^(?:.+:)?0$/.test(l.trim()))) {
+          finish({ success: true, output: stdout.trim() })
+          return
+        }
+      }
       const diagnostic = buildDiagnostic(stdout, stderr, command)
       const partial = stdout.trim().length > 100
       finish({

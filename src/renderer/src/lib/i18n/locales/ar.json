@@ -1298,6 +1298,7 @@
       "يتبيّن"
     ],
     "awaitingPermission": "بانتظار الإذن…",
+    "awaitingAnswer": "بانتظار إجابتك…",
     "errorPrefix": "حدث خطأ",
     "newChat": "محادثة جديدة",
     "attachFile": "إرفاق ملف",
@@ -1326,6 +1327,19 @@
       "reveal": "إظهار في المجلد",
       "expand": "توسيع",
       "close": "إغلاق"
+    },
+    "pathCard": {
+      "folder": "مجلد",
+      "file": "ملف",
+      "open": "فتح",
+      "reveal": "إظهار في المجلد"
+    },
+    "questionCard": {
+      "otherLabel": "شيء آخر",
+      "otherDescription": "أخبر وولفش بما يجب فعله بالضبط بدلاً من ذلك",
+      "otherPlaceholder": "اكتب تعليماتك…",
+      "submit": "إرسال",
+      "yourAnswer": "إجابتك"
     },
     "htmlViewer": {
       "preview": "معاينة",

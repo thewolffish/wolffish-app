@@ -161,6 +161,24 @@ async function testPlugin(): Promise<void> {
   ok('exit 1 with output stays failure', exit1WithOutput.success === false)
   ok('exit 1 with output preserves the output', (exit1WithOutput.output ?? '').includes('boom'))
 
+  // grep -c prints a zero tally and exits 1 when nothing matched — the number
+  // IS the result, not an error. Verbatim shape of the reported failure
+  // (`grep -c '…' file.html` → "Command exited with code 1: 0"). Now a clean
+  // success that returns the count instead of a masked "unknown" failure.
+  const grepCount = await run('grep -c adobe /dev/null')
+  ok('grep -c zero count → success', grepCount.success === true, grepCount.error)
+  ok('grep -c zero count → returns the tally', (grepCount.output ?? '').trim() === '0')
+
+  // The -r form prints "<file>:0" per file and still exits 1 when every count
+  // is zero. All-zero counts are a clean no-match.
+  const grepCountMulti = await run("sh -c 'printf \"a.txt:0\\nb.txt:0\\n\"; exit 1'")
+  ok('grep -c -r all-zero counts → success', grepCountMulti.success === true, grepCountMulti.error)
+
+  // Guard: a non-zero number on exit 1 is NOT a zero count — must stay a
+  // failure so genuine errors that happen to print a number aren't swallowed.
+  const exit1NonZeroNumber = await run("sh -c 'echo 5; exit 1'")
+  ok('exit 1 with non-zero number stays failure', exit1NonZeroNumber.success === false)
+
   // Boundary: exit code >= 2 is a real error (e.g. grep read error). Unchanged.
   const exit2 = await run("sh -c 'exit 2'")
   ok('exit 2 stays failure', exit2.success === false && exit2.exitCode === 2)

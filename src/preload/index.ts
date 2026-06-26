@@ -374,6 +374,32 @@ export type ChatApprovalRequestEvent = {
   description?: ApprovalDescription
 }
 
+/** One selectable choice on an ask-the-user question card. */
+export type AskUserOption = {
+  label: string
+  description?: string
+}
+
+/** The user's answer to a question card, sent back to the main process. */
+export type AskUserResponse =
+  | { kind: 'option'; index: number }
+  | { kind: 'custom'; text: string }
+  | { kind: 'canceled' }
+  | { kind: 'unsupported' }
+
+/** Emitted when the agent asks the user a multiple-choice question. */
+export type ChatAskRequestEvent = {
+  turnId: string | null
+  id: string
+  toolCallId: string
+  question: string
+  details?: string
+  options: AskUserOption[]
+  allowOther: boolean
+  otherLabel?: string
+  otherDescription?: string
+}
+
 export type ChatCredentialBlockedEvent = {
   turnId: string
   type: string
@@ -534,11 +560,13 @@ export type ChatApi = {
   }) => Promise<{ turnId: string; ok: boolean; error?: string }>
   cancel: () => Promise<{ canceled: boolean }>
   respondApproval: (payload: { id: string; decision: ApprovalDecision }) => Promise<{ ok: boolean }>
+  respondAsk: (payload: { id: string; response: AskUserResponse }) => Promise<{ ok: boolean }>
   onSegment: (listener: (segment: Segment) => void) => () => void
   onDone: (listener: (event: ChatDoneEvent) => void) => () => void
   onError: (listener: (event: ChatErrorEvent) => void) => () => void
   onTurnEvent: (listener: (event: ChatTurnEvent) => void) => () => void
   onApprovalRequest: (listener: (event: ChatApprovalRequestEvent) => void) => () => void
+  onAskRequest: (listener: (event: ChatAskRequestEvent) => void) => () => void
   onCredentialBlocked: (listener: (event: ChatCredentialBlockedEvent) => void) => () => void
 }
 
@@ -1182,6 +1210,10 @@ export type UploadApi = {
     currentTotalBytes: number
   }) => Promise<UploadValidationError | null>
   openExternal: (relativePath: string) => Promise<{ ok: boolean; error?: string }>
+  /** Existence + type of a device path (resolves a leading ~), for chat path cards. */
+  statPath: (path: string) => Promise<{ exists: boolean; isDirectory: boolean }>
+  /** Open a directory, or reveal a file in its parent folder (resolves a leading ~). */
+  revealPath: (path: string) => Promise<{ ok: boolean; error?: string }>
   download: (relativePath: string) => Promise<{ ok: boolean }>
   /** Reveal the file in the OS file manager (Finder/Explorer). */
   revealInFolder: (relativePath: string) => Promise<{ ok: boolean }>
@@ -1285,11 +1317,13 @@ const api: WolffishApi = {
     send: (payload) => ipcRenderer.invoke('chat:send', payload),
     cancel: () => ipcRenderer.invoke('chat:cancel'),
     respondApproval: (payload) => ipcRenderer.invoke('chat:approvalRespond', payload),
+    respondAsk: (payload) => ipcRenderer.invoke('chat:askRespond', payload),
     onSegment: (listener) => subscribe('chat:segment', listener),
     onDone: (listener) => subscribe('chat:done', listener),
     onError: (listener) => subscribe('chat:error', listener),
     onTurnEvent: (listener) => subscribe('chat:turnEvent', listener),
     onApprovalRequest: (listener) => subscribe('chat:approvalRequest', listener),
+    onAskRequest: (listener) => subscribe('chat:askRequest', listener),
     onCredentialBlocked: (listener) => subscribe('chat:credentialBlocked', listener)
   },
   conversation: {
@@ -1385,6 +1419,8 @@ const api: WolffishApi = {
     isSupported: (fileName) => ipcRenderer.invoke('upload:isSupported', fileName),
     validate: (payload) => ipcRenderer.invoke('upload:validate', payload),
     openExternal: (relativePath) => ipcRenderer.invoke('upload:openExternal', relativePath),
+    statPath: (path) => ipcRenderer.invoke('upload:statPath', path),
+    revealPath: (path) => ipcRenderer.invoke('upload:revealPath', path),
     download: (relativePath) => ipcRenderer.invoke('upload:download', relativePath),
     revealInFolder: (relativePath) => ipcRenderer.invoke('upload:revealInFolder', relativePath),
     getPathForFile: (file) => webUtils.getPathForFile(file)

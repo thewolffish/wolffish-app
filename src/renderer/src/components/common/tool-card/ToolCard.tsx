@@ -106,11 +106,14 @@ export function ToolCard({
       {expanded && argsKeys.length > 0 && (
         <CodeBlock content={jsonInline(call.args)} language="json" className="mt-2" />
       )}
-      {expanded && hasOutput && result && (
+      {/* On failure the error block below carries the full raw original, so
+          suppress the output block to avoid showing the classified message
+          and the raw dump as two near-identical blocks. */}
+      {expanded && hasOutput && !result?.error && result && (
         <CodeBlock content={result.output} maxH="max-h-48" className="mt-2" />
       )}
       {expanded && result?.error && (
-        <CodeBlock content={result.error} tone="error" className="mt-2" />
+        <CodeBlock content={result.error} tone="error" maxH="max-h-72" className="mt-2" />
       )}
     </div>
   )

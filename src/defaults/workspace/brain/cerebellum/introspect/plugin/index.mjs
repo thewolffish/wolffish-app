@@ -11,12 +11,21 @@ const dnsResolveAsync = promisify(dns.resolve)
 const KNOWLEDGE_FILES = ['projects', 'people', 'preferences', 'technical', 'decisions']
 
 let workspaceRoot = ''
+// Wired by the host (PluginContext.getChannelStatus) — returns a live snapshot
+// of each messaging channel's connectivity. Null until init captures it.
+let getChannelStatusBridge = null
 
 const toolDefinitions = [
   {
     name: 'wolffish_status',
     description:
-      'Get current Wolffish status including uptime, active provider, loaded capabilities, and system health.',
+      'Get current Wolffish status including uptime, active provider, loaded capabilities, channel connectivity, and system health.',
+    parameters: { type: 'object', properties: {}, required: [] }
+  },
+  {
+    name: 'channel_status',
+    description:
+      'Check whether each messaging channel — Telegram, WhatsApp, and the in-app chat — is currently connected, and when one is not, exactly how the user can reconnect it. Telegram and WhatsApp are connected channels reached via their own tools (telegram_send / whatsapp_send), NOT desktop apps. Call this before sending the user an out-of-band message on a channel, or right after a channel send fails, so you can fail gracefully and relay the reconnect steps instead of guessing.',
     parameters: { type: 'object', properties: {}, required: [] }
   },
   {
@@ -135,6 +144,15 @@ async function getStatus() {
   lines.push(`- **Capabilities:** ${capList} (${capabilities.length} loaded)`)
   lines.push(`- **Tool calls:** ${feedbackCounts.total} total, ${feedbackCounts.today} today`)
 
+  const channels = safeChannelSnapshots()
+  if (channels && channels.length > 0) {
+    const summary = channels.map((c) => `${c.connected ? '🟢' : '🔴'} ${c.label}`).join(', ')
+    const anyDown = channels.some((c) => !c.connected)
+    lines.push(
+      `- **Channels:** ${summary}${anyDown ? ' — run `channel_status` for reconnect steps' : ''}`
+    )
+  }
+
   if (mem.total > 0) {
     lines.push(
       `- **RAM used:** ${formatBytes(mem.used)} / ${formatBytes(mem.total)} (${formatPercent(mem.pressure)})`
@@ -175,6 +193,48 @@ async function getStatus() {
   }
 
   return { success: true, output: lines.join('\n') }
+}
+
+// ---------------------------------------------------------------------------
+// channel_status — connectivity of each messaging channel + how to reconnect
+// ---------------------------------------------------------------------------
+
+async function getChannelStatusReport() {
+  const channels = safeChannelSnapshots()
+  if (!channels || channels.length === 0) {
+    return {
+      success: true,
+      output: 'Channel connectivity is unavailable in this runtime (no channels are wired up).'
+    }
+  }
+  const lines = ['## Channels', '']
+  for (const c of channels) {
+    const dot = c.connected ? '🟢' : '🔴'
+    lines.push(`### ${dot} ${c.label}`)
+    lines.push(`- **Status:** ${c.connected ? 'connected' : 'not connected'} (${c.state})`)
+    lines.push(`- **Detail:** ${c.detail}`)
+    if (!c.connected && c.reconnect) {
+      lines.push(`- **Reconnect:** ${c.reconnect}`)
+    }
+    lines.push('')
+  }
+  lines.push(
+    'To message the user on a channel, use that channel’s send tools (e.g. `telegram_send`, `whatsapp_send`) — these are connected channels, not desktop apps, so never `app_open` or osascript them. A channel’s send tools are only available while it is connected; if a channel is not connected, tell the user and relay the reconnect steps above instead of retrying.'
+  )
+  return { success: true, output: lines.join('\n').trim() }
+}
+
+// Returns the live channel snapshots from the host bridge, or null when the
+// bridge isn't wired (older runtime) or throws. Function declaration so both
+// getStatus and getChannelStatusReport can call it regardless of order.
+function safeChannelSnapshots() {
+  if (typeof getChannelStatusBridge !== 'function') return null
+  try {
+    const snaps = getChannelStatusBridge()
+    return Array.isArray(snaps) ? snaps : null
+  } catch {
+    return null
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1183,11 +1243,15 @@ const plugin = {
   tools: toolDefinitions,
   async init(context) {
     workspaceRoot = context?.workspaceRoot ?? ''
+    getChannelStatusBridge =
+      typeof context?.getChannelStatus === 'function' ? context.getChannelStatus : null
   },
   async execute(toolName, args) {
     switch (toolName) {
       case 'wolffish_status':
         return getStatus()
+      case 'channel_status':
+        return getChannelStatusReport()
       case 'wolffish_performance':
         return getPerformance()
       case 'wolffish_memory':

@@ -1307,6 +1307,7 @@
       "Discerning"
     ],
     "awaitingPermission": "Awaiting permission…",
+    "awaitingAnswer": "Awaiting your answer…",
     "errorPrefix": "Something went wrong",
     "newChat": "New chat",
     "attachFile": "Attach file",
@@ -1335,6 +1336,19 @@
       "reveal": "Reveal in folder",
       "expand": "Expand",
       "close": "Close"
+    },
+    "pathCard": {
+      "folder": "Folder",
+      "file": "File",
+      "open": "Open",
+      "reveal": "Reveal in folder"
+    },
+    "questionCard": {
+      "otherLabel": "Something else",
+      "otherDescription": "Tell wolffish exactly what to do instead",
+      "otherPlaceholder": "Type your instructions…",
+      "submit": "Send",
+      "yourAnswer": "Your answer"
     },
     "htmlViewer": {
       "preview": "Preview",

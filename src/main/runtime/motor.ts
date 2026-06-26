@@ -49,6 +49,14 @@ export type StepResult = {
   output: string
   attempts: number
   images?: Array<{ mediaType: string; data: string }>
+  // The raw, unclassified failure text — full captured stdout+stderr (or the
+  // plugin's error when no output was produced), without the
+  // "tool failed (category, non-retryable):" wrapper the model needs. Routed
+  // to the tool_result segment's UI-only `error` field so the user sees the
+  // original error as-is in a scrollable block, while `output` (the classified
+  // message) stays the only thing replayed into model context. Undefined on
+  // success and on failures with nothing extra to surface.
+  verbose?: string
 }
 
 export type MotorOptions = {
@@ -306,7 +314,7 @@ export class Motor {
 
       let result: ToolExecutionResult
       try {
-        result = await this.cerebellum.executeTool(call.name, attemptArgs, abort?.signal)
+        result = await this.cerebellum.executeTool(call.name, attemptArgs, abort?.signal, call.id)
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
         result = { success: false, error: message }
@@ -382,7 +390,12 @@ export class Motor {
         const finalMessage = failureOutput ? `${errorPart}\n${failureOutput}` : errorPart
         step.error = finalMessage
         await this.writeTranscript(task)
-        return { ok: false, output: finalMessage, attempts: attempt }
+        return {
+          ok: false,
+          output: finalMessage,
+          attempts: attempt,
+          verbose: failureOutput || result.error || 'unknown error'
+        }
       }
 
       // Partial success with an unclassified error — useful output was
@@ -397,7 +410,12 @@ export class Motor {
         const finalMessage = failureOutput ? `${errorPart}\n${failureOutput}` : errorPart
         step.error = finalMessage
         await this.writeTranscript(task)
-        return { ok: false, output: finalMessage, attempts: attempt }
+        return {
+          ok: false,
+          output: finalMessage,
+          attempts: attempt,
+          verbose: failureOutput || result.error || 'unknown error'
+        }
       }
 
       // Unknown, timeout, and network errors get a shorter leash — 3
@@ -416,7 +434,12 @@ export class Motor {
         const finalMessage = failureOutput ? `${errorPart}\n${failureOutput}` : errorPart
         step.error = finalMessage
         await this.writeTranscript(task)
-        return { ok: false, output: finalMessage, attempts: attempt }
+        return {
+          ok: false,
+          output: finalMessage,
+          attempts: attempt,
+          verbose: failureOutput || result.error || 'unknown error'
+        }
       }
 
       if (attempt < this.maxRetries) {
@@ -445,7 +468,12 @@ export class Motor {
     const exhausted = lastOutput ? `${errorPart}\n${lastOutput}` : errorPart
     step.error = exhausted
     await this.writeTranscript(task)
-    return { ok: false, output: exhausted, attempts: this.maxRetries }
+    return {
+      ok: false,
+      output: exhausted,
+      attempts: this.maxRetries,
+      verbose: lastOutput || lastError
+    }
   }
 
   /**

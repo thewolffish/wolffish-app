@@ -1,8 +1,24 @@
-## v1.0.190 — 2026-06-25 `Latest`
+## v1.0.190 — 2026-06-26 `Latest`
 
-### Local Voice Now Works on More Windows PCs
+### Wolffish Asks You — With Real Choices
 
-On some Windows machines the local voice engines wouldn't start — text-to-speech failed to load and speech-to-text crashed — because the PC's Microsoft Visual C++ runtime was older than the engines' native components required. Wolffish now detects this and sets up a compatible runtime right beside the engine, inside its own folder: no admin rights, no system-wide installer, and nothing for you to download or click. PCs that already have a current runtime are left untouched, and macOS and Linux were never affected. If the automatic setup ever can't run, the error now spells out the real cause and the one-line fix instead of a cryptic DLL message.
+When a decision is genuinely yours to make, Wolffish now shows an interactive question card — a clear question, 2–5 options, and a free-text "something else" box — and waits for your pick instead of guessing or burying the ask in prose. On Telegram and WhatsApp you just reply with the option number, or type your own instructions.
+
+### Wolffish Manages Its Own Skills
+
+A new **skills** capability lets Wolffish list, search, enable, disable, delete, and even author its own capabilities at runtime. Say "do this every time" and it can write itself a reusable skill; say "turn off the browser" and it can disable that capability — built-ins included. It's how Wolffish extends itself without a code change.
+
+### Channels Are Connections, Not Apps
+
+Asked to message you on Telegram or WhatsApp, Wolffish used to try launching or clicking a phantom "Telegram"/"WhatsApp" desktop app that doesn't exist — wasting the whole turn. It now knows channels are reached only through their own send tools, and a new **channel_status** tool reports which channels are connected and the exact steps to reconnect one that isn't, so it fails gracefully instead of guessing.
+
+### Openable Path Cards
+
+File and folder paths Wolffish mentions in a reply now render as a card with a one-click "open in file manager" button — folders open directly, files reveal in their parent. Paths are verified against your disk first, so only real locations get a card; invented or deleted ones show nothing.
+
+### grep Counts No Longer Read as Errors
+
+A `grep -c` that finds zero matches exits with code 1 and prints "0" — which used to reach the model as a failed command and trigger needless retries. That tally is now read as the valid zero-count it is.
 
 ---
 

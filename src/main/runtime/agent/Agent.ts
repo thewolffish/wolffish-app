@@ -387,6 +387,12 @@ export class Agent {
     let pinnedSystemPrompt: string | null = null
     let pinnedTools: ToolDefinition[] | null = null
     let pinnedWithFallback = false
+    // Cerebellum tool-surface version captured when the pin was built. When a
+    // skill is created/edited/enabled/disabled mid-turn (via the `skills`
+    // capability), the cerebellum's generation moves and we rebuild the pin
+    // on the next iteration — so the new/edited tool is callable in the SAME
+    // turn, enabling create→load→test→edit→retest without ending the turn.
+    let pinnedGeneration = -1
 
     broca.beginTurn(turn.turnId, turn.onSegment)
     this.cerebellum.setCurrentConversationId(turn.conversationId ?? null, turn.conversationTitle)
@@ -424,10 +430,12 @@ export class Agent {
           // fallback prompt carries the <provider> notice and a different
           // tool surface.
           const isFallback = providerContext !== undefined
+          const currentGeneration = this.cerebellum.getGeneration()
           if (
             pinnedSystemPrompt === null ||
             pinnedTools === null ||
-            pinnedWithFallback !== isFallback
+            pinnedWithFallback !== isFallback ||
+            pinnedGeneration !== currentGeneration
           ) {
             pinnedSystemPrompt = await this.prefrontal.buildSystemPrompt(
               userContent,
@@ -439,6 +447,7 @@ export class Agent {
               userContent
             )
             pinnedWithFallback = isFallback
+            pinnedGeneration = currentGeneration
           }
           systemPrompt = pinnedSystemPrompt
           filteredTools = pinnedTools
@@ -844,10 +853,11 @@ export class Agent {
             ok: boolean
             output: string
             images?: Array<{ mediaType: string; data: string }>
+            verbose?: string
           }
           try {
             const r = await this.motor.executeStep(task.id, call, turn.signal)
-            result = { ok: r.ok, output: r.output, images: r.images }
+            result = { ok: r.ok, output: r.output, images: r.images, verbose: r.verbose }
           } catch (err) {
             if (err instanceof SafetyBlockedError) {
               result = { ok: false, output: `Blocked: ${err.reason}` }
@@ -877,7 +887,11 @@ export class Agent {
               call.id,
               status,
               result.output,
-              result.ok ? undefined : result.output
+              // UI-only `error` carries the raw original (full stdout+stderr)
+              // so the user sees it as-is in a scrollable block. `output` keeps
+              // the classified message — the only field replayed into model
+              // context — so the verbose dump never clouds the conversation.
+              result.ok ? undefined : (result.verbose ?? result.output)
             )
           }
 

@@ -1,5 +1,6 @@
 import { ActiveModelChip } from '@components/common/active-model-chip/ActiveModelChip'
 import { ApprovalCard } from '@components/common/approval-card/ApprovalCard'
+import { QuestionCard } from '@components/common/question-card/QuestionCard'
 import { AttachmentList } from '@components/common/attachment-list/AttachmentList'
 import { AudioPlayer } from '@components/common/audio-player/AudioPlayer'
 import { CodeFileViewer } from '@components/common/code-file-viewer/CodeFileViewer'
@@ -7,6 +8,8 @@ import { CompactionCard } from '@components/common/compaction-card/CompactionCar
 import { ContextMeter } from '@components/common/context-meter/ContextMeter'
 import { DocxViewer } from '@components/common/docx-viewer/DocxViewer'
 import { FileCard } from '@components/common/file-card/FileCard'
+import { PathCard } from '@components/common/path-card/PathCard'
+import { canonicalPath } from '@components/common/path-card/pathStat'
 import { HeartbeatActiveOverlay } from '@components/common/heartbeat-active-overlay/HeartbeatActiveOverlay'
 import { HtmlFileViewer } from '@components/common/html-file-viewer/HtmlFileViewer'
 import { ReindexActiveOverlay } from '@components/common/reindex-active-overlay/ReindexActiveOverlay'
@@ -52,6 +55,7 @@ import { cn } from '@lib/utils/cn'
 import { formatBytes } from '@lib/utils/format'
 import { preselectSettingsTab } from '@pages/settings/settingsNav'
 import type {
+  AskUserResponse,
   ChatHistoryMessage,
   ConversationChannel,
   ConversationFile,
@@ -63,6 +67,7 @@ import type {
 import {
   useFlow,
   type ApprovalCardState,
+  type AskCardState,
   type AssistantMessage,
   type ChatMessage,
   type ToolTiming
@@ -369,6 +374,15 @@ export function Chat(): React.JSX.Element {
     }
     return false
   })
+  // While the agent is paused on an ask_user question, the streaming bubble
+  // shows "Awaiting your answer…" instead of the thinking shimmer.
+  const awaitingAsk = messages.some((m) => {
+    if (!isAssistant(m) || !m.asks) return false
+    for (const ask of Object.values(m.asks)) {
+      if (!ask.answered) return true
+    }
+    return false
+  })
 
   const [draft, setDraft] = useState('')
   const [draftExpanded, setDraftExpanded] = useState(false)
@@ -513,6 +527,16 @@ export function Chat(): React.JSX.Element {
   const pendingTurnIdRef = useRef<string | null>(null)
   const conversationRef = useRef<ConversationFile | null>(null)
   const modelContextWindowRef = useRef<number | null>(null)
+  // Mirror of the per-turn token/context aggregates, kept in a ref so the
+  // `task.completed` timeline entry can read final totals synchronously.
+  // The onTurnEvent closure is created once, so reading the token state
+  // directly there would see stale (turn-start) values — the ref does not.
+  const turnStatsRef = useRef<TurnStats>({
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    contextTokens: 0
+  })
   // Tracks the last working-folder value we communicated to the model
   // per conversation. Lets us emit a one-shot "cleared" notice on the
   // transition from set→null so the model stops referring to the old
@@ -858,6 +882,7 @@ export function Chat(): React.JSX.Element {
         const cacheRead = typeof payload.cacheReadTokens === 'number' ? payload.cacheReadTokens : 0
         const cacheCreated =
           typeof payload.cacheCreationTokens === 'number' ? payload.cacheCreationTokens : 0
+        const out = typeof payload.outputTokens === 'number' ? payload.outputTokens : 0
         setContextTokens(uncached + cacheRead + cacheCreated)
         if (typeof payload.inputTokens === 'number') {
           const v = payload.inputTokens
@@ -871,6 +896,13 @@ export function Chat(): React.JSX.Element {
           const v = payload.cacheReadTokens
           setCacheReadTokens((prev) => (prev ?? 0) + v)
         }
+        // Mirror into the ref (final context size is absolute; the rest
+        // accumulate) so task.completed can report end-of-turn totals.
+        const stats = turnStatsRef.current
+        stats.inputTokens += uncached
+        stats.outputTokens += out
+        stats.cacheReadTokens += cacheRead
+        stats.contextTokens = uncached + cacheRead + cacheCreated
       }
       if (
         type !== 'tool.called' &&
@@ -878,7 +910,11 @@ export function Chat(): React.JSX.Element {
         type !== 'tool.failed' &&
         type !== 'compaction.applied'
       ) {
-        const { summary: tlSummary, detail: tlDetail } = timelineEventSummary(type, payload)
+        const { summary: tlSummary, detail: tlDetail } = timelineEventSummary(
+          type,
+          payload,
+          turnStatsRef.current
+        )
         setTimelineEntries((prev) => [
           ...prev,
           {
@@ -905,12 +941,28 @@ export function Chat(): React.JSX.Element {
         })
       )
     })
+    const offAskRequest = window.api.chat.onAskRequest((event) => {
+      if (event.turnId !== null && pendingTurnIdRef.current !== event.turnId) return
+      setMessages((prev) =>
+        attachAsk(prev, {
+          askId: event.id,
+          toolCallId: event.toolCallId,
+          question: event.question,
+          details: event.details,
+          options: event.options,
+          allowOther: event.allowOther,
+          otherLabel: event.otherLabel,
+          otherDescription: event.otherDescription
+        })
+      )
+    })
     return () => {
       offSegment()
       offDone()
       offError()
       offTurnEvent()
       offApprovalRequest()
+      offAskRequest()
     }
   }, [setMessages])
 
@@ -939,6 +991,36 @@ export function Chat(): React.JSX.Element {
         })
       )
       await window.api.chat.respondApproval({ id: approvalId, decision })
+    },
+    [setMessages]
+  )
+
+  const respondAsk = useCallback(
+    async (askId: string, response: AskUserResponse) => {
+      // Optimistically mark the card answered so the chosen option highlights
+      // the instant it's clicked — the tool_result lands a beat later.
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (!isAssistant(m) || !m.asks) return m
+          let changed = false
+          const next: Record<string, AskCardState> = {}
+          for (const [key, ask] of Object.entries(m.asks)) {
+            if (ask.askId === askId) {
+              next[key] = {
+                ...ask,
+                answered: true,
+                selectedIndex: response.kind === 'option' ? response.index : undefined,
+                customText: response.kind === 'custom' ? response.text : undefined
+              }
+              changed = true
+            } else {
+              next[key] = ask
+            }
+          }
+          return changed ? { ...m, asks: next } : m
+        })
+      )
+      await window.api.chat.respondAsk({ id: askId, response })
     },
     [setMessages]
   )
@@ -1027,6 +1109,12 @@ export function Chat(): React.JSX.Element {
       setInputTokens(0)
       setOutputTokens(0)
       setCacheReadTokens(0)
+      turnStatsRef.current = {
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        contextTokens: 0
+      }
       setTimelineEntries([])
       setTimelineOpen(false)
 
@@ -1168,6 +1256,12 @@ export function Chat(): React.JSX.Element {
       setInputTokens(0)
       setOutputTokens(0)
       setCacheReadTokens(0)
+      turnStatsRef.current = {
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        contextTokens: 0
+      }
       setTimelineEntries([])
       setTimelineOpen(false)
 
@@ -1522,7 +1616,9 @@ export function Chat(): React.JSX.Element {
                 message={m}
                 t={t}
                 awaitingApproval={awaitingApproval}
+                awaitingAsk={awaitingAsk}
                 onApprovalDecision={respondApproval}
+                onAskRespond={respondAsk}
               />
             ))}
           </InAppVerboseContext.Provider>
@@ -2066,6 +2162,30 @@ function fmtNum(n: number): string {
   return String(n)
 }
 
+// Per-turn aggregates mirrored from the live token state (see turnStatsRef)
+// so terminal timeline entries can report end-of-turn totals.
+type TurnStats = {
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  contextTokens: number
+}
+
+// Render a millisecond duration in the largest sensible unit. Raw ms is only
+// useful sub-second; past that, seconds/minutes/hours read far better in the
+// logs (108679ms → "1m 49s").
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`
+  const totalSec = Math.round(ms / 1000)
+  if (totalSec < 60) return `${totalSec}s`
+  const min = Math.floor(totalSec / 60)
+  const sec = totalSec % 60
+  if (min < 60) return sec === 0 ? `${min}m` : `${min}m ${sec}s`
+  const hr = Math.floor(min / 60)
+  const remMin = min % 60
+  return remMin === 0 ? `${hr}h` : `${hr}h ${remMin}m`
+}
+
 function TimelineList({
   entries,
   locale
@@ -2226,7 +2346,8 @@ function buildSegmentTimelineEntry(segment: Segment): TimelineEntry | null {
 
 function timelineEventSummary(
   type: string,
-  payload: Record<string, unknown>
+  payload: Record<string, unknown>,
+  turnStats?: TurnStats
 ): { summary?: string; detail?: string } {
   switch (type) {
     case 'context.built': {
@@ -2255,7 +2376,7 @@ function timelineEventSummary(
       if (cache > 0) lines.push(`Cache read: ${fmtNum(cache)} tokens`)
       if (cacheCreated > 0) lines.push(`Cache created: ${fmtNum(cacheCreated)} tokens`)
       if (provider) lines.push(`Provider: ${provider}`)
-      if (dur != null) lines.push(`Duration: ${dur}ms`)
+      if (dur != null) lines.push(`Duration: ${formatDuration(dur)}`)
       return { summary: `${fmtNum(inp)} in / ${fmtNum(out)} out`, detail: lines.join('\n') }
     }
     case 'safety.blocked':
@@ -2293,11 +2414,24 @@ function timelineEventSummary(
             ? `Step ${payload.step}/${payload.total}`
             : undefined
       }
-    case 'task.completed':
-      return {
-        detail:
-          typeof payload.durationMs === 'number' ? `Duration: ${payload.durationMs}ms` : undefined
+    case 'task.completed': {
+      const lines: string[] = []
+      if (typeof payload.durationMs === 'number')
+        lines.push(`Duration: ${formatDuration(payload.durationMs)}`)
+      // End-of-turn roll-up from the live token aggregates — only what was
+      // actually recorded, so a no-LLM turn stays a bare duration line.
+      if (turnStats) {
+        if (turnStats.inputTokens > 0 || turnStats.outputTokens > 0)
+          lines.push(
+            `Tokens: ${fmtNum(turnStats.inputTokens)} in / ${fmtNum(turnStats.outputTokens)} out`
+          )
+        if (turnStats.cacheReadTokens > 0)
+          lines.push(`Cache read: ${fmtNum(turnStats.cacheReadTokens)} tokens`)
+        if (turnStats.contextTokens > 0)
+          lines.push(`Context: ${fmtNum(turnStats.contextTokens)} tokens`)
       }
+      return { detail: lines.length > 0 ? lines.join('\n') : undefined }
+    }
     case 'task.failed':
       return { detail: typeof payload.error === 'string' ? payload.error : undefined }
     case 'task.stopped':
@@ -2322,12 +2456,16 @@ function ChatItem({
   message,
   t,
   awaitingApproval,
-  onApprovalDecision
+  awaitingAsk,
+  onApprovalDecision,
+  onAskRespond
 }: {
   message: ChatMessage
   t: (k: string, opts?: Record<string, unknown>) => string
   awaitingApproval: boolean
+  awaitingAsk: boolean
   onApprovalDecision: (id: string, decision: 'approved' | 'denied') => void
+  onAskRespond: (askId: string, response: AskUserResponse) => void
 }): React.JSX.Element {
   if (message.role === 'user') {
     return (
@@ -2344,7 +2482,9 @@ function ChatItem({
     <AssistantBubble
       message={message}
       awaitingApproval={awaitingApproval}
+      awaitingAsk={awaitingAsk}
       onApprovalDecision={onApprovalDecision}
+      onAskRespond={onAskRespond}
     />
   )
 }
@@ -2407,11 +2547,15 @@ function UserBubble({
 function AssistantBubble({
   message,
   awaitingApproval,
-  onApprovalDecision
+  awaitingAsk,
+  onApprovalDecision,
+  onAskRespond
 }: {
   message: AssistantMessage
   awaitingApproval: boolean
+  awaitingAsk: boolean
   onApprovalDecision: (id: string, decision: 'approved' | 'denied') => void
+  onAskRespond: (askId: string, response: AskUserResponse) => void
 }): React.JSX.Element {
   const { t } = useTranslation()
   const verbose = useContext(InAppVerboseContext)
@@ -2462,9 +2606,12 @@ function AssistantBubble({
   const renderable = renderSegments(
     message.segments,
     message.approvals,
+    message.asks,
     message.toolTimings,
     onApprovalDecision,
-    verbose
+    onAskRespond,
+    verbose,
+    isStreaming
   )
   const showThinking = isStreaming && renderable.empty
   const fullText = useMemo(() => collectText(message.segments), [message.segments])
@@ -2509,6 +2656,8 @@ function AssistantBubble({
           <span className="text-muted italic">
             {awaitingApproval ? (
               <span className="animate-pulse">{t('chat.awaitingPermission')}</span>
+            ) : awaitingAsk ? (
+              <span className="animate-pulse">{t('chat.awaitingAnswer')}</span>
             ) : (
               <span className="animate-pulse">{typedText}…</span>
             )}
@@ -2539,12 +2688,19 @@ function AssistantBubble({
 
 type RenderResult = { blocks: ReactNode; empty: boolean }
 
+// The `ask` capability's single tool. Its tool_call renders as an interactive
+// QuestionCard rather than a generic tool card.
+const ASK_USER_TOOL = 'ask_user'
+
 function renderSegments(
   segments: Segment[],
   approvals: Record<string, ApprovalCardState> | undefined,
+  asks: Record<string, AskCardState> | undefined,
   toolTimings: Record<string, ToolTiming> | undefined,
   onApprovalDecision: (id: string, decision: 'approved' | 'denied') => void,
-  verbose: boolean
+  onAskRespond: (askId: string, response: AskUserResponse) => void,
+  verbose: boolean,
+  isStreaming: boolean
 ): RenderResult {
   const blocks: ReactNode[] = []
   let textBuffer = ''
@@ -2565,6 +2721,27 @@ function renderSegments(
     if (emittedFiles.has(filePath)) return false
     emittedFiles.add(filePath)
     return true
+  }
+
+  // Filesystem paths named anywhere in this turn (assistant prose or a tool
+  // result), collected in order and deduped. Rendered once as openable cards at
+  // the END of the message rather than inline at the first mention: in a long
+  // agentic turn the first mention is often a mid-message "plan" line, and a
+  // resumed chat auto-scrolls to the bottom — so an inline card ends up scrolled
+  // off-screen. The end is where the closing summary points and where the eye
+  // lands, and it's identical whether the message is live or restored.
+  const pathCandidates: string[] = []
+  const pathSeen = new Set<string>()
+  const collectPaths = (text: string): void => {
+    if (isStreaming) return
+    for (const candidate of extractPathCandidates(text)) {
+      // Dedup on the canonical (home-folded) path so `~/x` and `/Users/me/x`
+      // don't both render; keep the first-seen spelling for display.
+      const key = canonicalPath(candidate)
+      if (pathSeen.has(key)) continue
+      pathSeen.add(key)
+      pathCandidates.push(candidate)
+    }
   }
 
   const flushText = (): void => {
@@ -2599,6 +2776,10 @@ function renderSegments(
         <Markdown content={textBuffer} />
       </div>
     )
+    // Collect any filesystem paths named in this bubble; the cards render at the
+    // end of the message (see collectPaths). Skipped mid-stream — a partial path
+    // token would resolve to nothing — and verified on-device by PathCard.
+    collectPaths(textBuffer)
     textBuffer = ''
   }
 
@@ -2621,6 +2802,27 @@ function renderSegments(
     } else if (seg.kind === 'tool_call') {
       flushText()
       const result = findResult(segments, seg.toolCallId)
+
+      // ask_user renders a dedicated interactive question card instead of a
+      // tool card — always visible (the user must be able to answer), even
+      // on the clean feed. Rendered while pending (live ask state) and after
+      // answering (the tool_result). Skip everything else for this call.
+      if (seg.name === ASK_USER_TOOL) {
+        const ask = asks?.[seg.toolCallId]
+        if (ask || result) {
+          blocks.push(
+            <QuestionCard
+              key={`ask_${seg.segmentId}`}
+              args={seg.args}
+              result={result}
+              ask={ask}
+              onRespond={onAskRespond}
+            />
+          )
+        }
+        continue
+      }
+
       const approval = approvals?.[seg.toolCallId]
       const timing = toolTimings?.[seg.toolCallId]
 
@@ -2871,6 +3073,19 @@ function renderSegments(
             )
           }
         }
+
+        // Collect paths from tool output too — a short, successful result that
+        // names an absolute/home path (a created folder, an output file) earns
+        // the same end-of-message card as a path in assistant prose. Delivery
+        // markers are stripped first so a file already shown as a card isn't
+        // repeated, and big dumps (listings, logs) are skipped so they don't
+        // spray cards.
+        if (result?.status === 'success' && result.output) {
+          const toolText = result.output.replace(/\[wolffish-output:[^\]]+\]/g, '').trim()
+          if (toolText.length > 0 && toolText.length <= 2000) {
+            collectPaths(toolText)
+          }
+        }
       }
     } else if (seg.kind === 'tool_result') {
       // Already rendered alongside its tool_call.
@@ -2939,6 +3154,15 @@ function renderSegments(
   }
 
   flushText()
+
+  // Openable cards for every filesystem path named this turn, rendered together
+  // at the end so they sit with the closing summary and survive a resumed chat's
+  // auto-scroll to the bottom. Each verifies on-device and renders nothing if the
+  // path no longer exists.
+  for (const candidate of pathCandidates) {
+    blocks.push(<PathCard key={`path-${candidate}`} path={candidate} />)
+  }
+
   return { blocks: <>{blocks}</>, empty: blocks.length === 0 }
 }
 
@@ -3399,6 +3623,43 @@ function extractToolResultGenericFiles(result?: ToolResultSegment): string[] {
   return paths
 }
 
+/**
+ * Find filesystem paths mentioned in assistant prose worth surfacing as an
+ * openable card: home-anchored (`~/...`) or absolute (`/...`) paths, drawn from
+ * both inline-code spans (which may contain spaces) and bare text. URLs/schemes
+ * are excluded; existence is verified later by PathCard. Deduped within the call.
+ */
+function extractPathCandidates(text: string): string[] {
+  const out: string[] = []
+  const seen = new Set<string>()
+
+  const add = (raw: string): void => {
+    const p = raw
+      .trim()
+      .replace(/^[`'"(]+/, '')
+      .replace(/[`'".,;:!?)\]]+$/, '')
+    if (!p || p === '/' || p === '~/') return
+    if (/[a-z][a-z0-9+.-]*:\/\//i.test(p)) return // http://, wolffish-media://, …
+    if (!/^(~\/|\/)/.test(p)) return // only home- or root-anchored paths
+    if (seen.has(p)) return
+    seen.add(p)
+    out.push(p)
+  }
+
+  // Inline-code spans can hold paths with spaces: `~/My Folder/sub`.
+  const codeRe = /`([^`\n]+)`/g
+  let m: RegExpExecArray | null
+  while ((m = codeRe.exec(text)) !== null) {
+    const c = m[1].trim()
+    if (/^(~\/|\/)/.test(c)) add(c)
+  }
+  // Bare paths (no spaces), anchored at a boundary so "and/or" isn't matched.
+  const bareRe = /(?:^|[\s(])((?:~\/|\/)[^\s`'")\]<>|]+)/gm
+  while ((m = bareRe.exec(text)) !== null) add(m[1])
+
+  return out
+}
+
 function collectText(segments: Segment[]): string {
   let out = ''
   for (const s of segments) {
@@ -3574,6 +3835,19 @@ function attachApproval(messages: ChatMessage[], approval: ApprovalCardState): C
     if (isAssistant(m) && m.status === 'streaming') {
       const approvals = { ...(m.approvals ?? {}), [approval.toolCallId]: approval }
       out[i] = { ...m, approvals }
+      return out
+    }
+  }
+  return out
+}
+
+function attachAsk(messages: ChatMessage[], ask: AskCardState): ChatMessage[] {
+  const out = [...messages]
+  for (let i = out.length - 1; i >= 0; i--) {
+    const m = out[i]
+    if (isAssistant(m) && m.status === 'streaming') {
+      const asks = { ...(m.asks ?? {}), [ask.toolCallId]: ask }
+      out[i] = { ...m, asks }
       return out
     }
   }

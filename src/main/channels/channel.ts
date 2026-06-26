@@ -1,4 +1,5 @@
 import type { ApprovalDecision, ApprovalRequest } from '@main/runtime/amygdala'
+import type { AskUserRequest, AskUserResponse } from '@main/runtime/cerebellum'
 import type { Segment } from '@main/runtime/broca'
 import type { CorpusEvent, CorpusEvents } from '@main/runtime/corpus'
 import type { ConversationMessage } from '@main/conversations'
@@ -44,6 +45,16 @@ export interface TurnSink {
    */
   onApprovalRequest(req: ApprovalRequest & { id: string }): Promise<ApprovalDecision>
 
+  /**
+   * Ask the user a multiple-choice question and resolve with their answer.
+   * Optional: only channels with an interactive surface (the Electron
+   * renderer) implement it. When absent, dispatchAskUser resolves
+   * `unsupported` so the `ask` tool degrades to a plain-text prompt rather
+   * than wedging the pipeline. Like onApprovalRequest, the channel must
+   * resolve (not hang) on timeout / channel close.
+   */
+  onAskUserRequest?(req: AskUserRequest & { id: string }): Promise<AskUserResponse>
+
   /** Turn finished cleanly. */
   onDone(): void
 
@@ -78,6 +89,11 @@ class TurnRouter {
   async dispatchApproval(req: ApprovalRequest & { id: string }): Promise<ApprovalDecision> {
     if (!this.active) return 'denied'
     return this.active.onApprovalRequest(req)
+  }
+
+  async dispatchAskUser(req: AskUserRequest & { id: string }): Promise<AskUserResponse> {
+    if (!this.active || !this.active.onAskUserRequest) return { kind: 'unsupported' }
+    return this.active.onAskUserRequest(req)
   }
 }
 

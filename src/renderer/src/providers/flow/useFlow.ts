@@ -2,6 +2,7 @@ import { createContext, useContext, type Dispatch, type SetStateAction } from 'r
 import type {
   ApprovalDecision,
   ApprovalDescription,
+  AskUserOption,
   DangerLevel,
   DataAnalytics,
   MessageAttachment,
@@ -56,6 +57,28 @@ export type ApprovalCardState = {
   decision?: ApprovalDecision
 }
 
+/**
+ * Live state for an ask-the-user question card, keyed by toolCallId on the
+ * assistant message (like approvals). Carries the question/options the agent
+ * posed plus the user's optimistic answer (`selectedIndex` / `customText`)
+ * so the card reflects the choice the instant it's clicked, before the
+ * tool_result lands. Not persisted — a resumed conversation rebuilds the
+ * answered card from the tool_call args + tool_result segments instead.
+ */
+export type AskCardState = {
+  askId: string
+  toolCallId: string
+  question: string
+  details?: string
+  options: AskUserOption[]
+  allowOther: boolean
+  otherLabel?: string
+  otherDescription?: string
+  selectedIndex?: number
+  customText?: string
+  answered?: boolean
+}
+
 export type AssistantStatus = 'streaming' | 'complete' | 'error'
 
 export type UserMessage = {
@@ -88,6 +111,12 @@ export type AssistantMessage = {
    * floating above or below the bubble.
    */
   approvals?: Record<string, ApprovalCardState>
+  /**
+   * Per-tool-call ask-the-user state, keyed by toolCallId. Mirrors
+   * `approvals`: the question card renders inline next to its tool_call
+   * segment while the agent loop is paused waiting for the user's answer.
+   */
+  asks?: Record<string, AskCardState>
   /**
    * Wall-clock timestamps captured when tool_call / tool_result segments
    * arrive in the renderer. Used purely to display elapsed time on the

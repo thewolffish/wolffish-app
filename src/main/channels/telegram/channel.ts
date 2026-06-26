@@ -1,3 +1,4 @@
+import { interpretAskReply } from '@main/channels/ask-reply'
 import { assistantSegmentsToHistory, type TurnSink } from '@main/channels/channel'
 import {
   getConversationIdForChat,
@@ -31,6 +32,12 @@ import {
 } from '@main/conversations'
 import type { Agent } from '@main/runtime/agent'
 import type { ApprovalDecision, ApprovalRequest } from '@main/runtime/amygdala'
+import {
+  ASK_USER_TOOL,
+  type AskUserOption,
+  type AskUserRequest,
+  type AskUserResponse
+} from '@main/runtime/cerebellum'
 import type { Segment, SegmentTurnEndReason } from '@main/runtime/broca'
 import type { CorpusEvents } from '@main/runtime/corpus'
 import type { LocalProvider } from '@main/runtime/providers/local'
@@ -231,6 +238,15 @@ type ActiveTurn = {
   pendingApprovalId: string | null
   /** Resolves the approval Promise once the user replies. */
   pendingApprovalResolve: ((decision: ApprovalDecision) => void) | null
+  /**
+   * Outstanding ask_user question, if the agent is paused waiting for the
+   * user to answer. The next inbound message is interpreted as the answer:
+   * a number in 1–options.length picks that option; any other text becomes
+   * "something else" (custom instructions) when allowOther is set.
+   */
+  pendingAsk: { id: string; options: AskUserOption[]; allowOther: boolean } | null
+  /** Resolves the ask_user Promise once the user answers. */
+  pendingAskResolve: ((response: AskUserResponse) => void) | null
   /** Cleared once the assistant message has been pushed to disk. */
   done: Promise<void> | null
   /** setInterval handle for the typing-indicator heartbeat. */
@@ -895,6 +911,16 @@ export class TelegramChannel {
       this.pendingSelections.delete(chatId)
     }
 
+    // Outstanding ask_user question for this chat: the user's reply IS the
+    // answer. A number in range picks that option; any other text becomes
+    // custom instructions ("something else"). Slash commands were handled
+    // above, so only genuine answers reach here. Sits before the busy-check
+    // so the reply isn't bounced as "I'm busy" while the agent waits on it.
+    if (active && active.pendingAsk && active.pendingAskResolve) {
+      await this.resolvePendingAsk(chatId, active, trimmed)
+      return
+    }
+
     // Only one Telegram conversation processes at a time. If anything
     // is in flight (this chat or another allowed user's chat), the
     // local model produces a polite "I'm busy" reply. Active turn
@@ -1485,6 +1511,8 @@ export class TelegramChannel {
             controller,
             pendingApprovalId: null,
             pendingApprovalResolve: null,
+            pendingAsk: null,
+            pendingAskResolve: null,
             done: null,
             typingTimer: null,
             toolCallNames: new Map(),
@@ -1510,7 +1538,7 @@ export class TelegramChannel {
           active.typingTimer = setInterval(() => {
             const turn = this.activeByChat.get(chatId)
             if (!turn) return
-            if (turn.pendingApprovalId) return
+            if (turn.pendingApprovalId || turn.pendingAsk) return
             void ctx.api.sendChatAction(chatId, 'typing').catch(() => undefined)
           }, TYPING_HEARTBEAT_MS)
           // unref so this timer doesn't keep node.js alive on its own
@@ -1569,6 +1597,13 @@ export class TelegramChannel {
               finished.pendingApprovalResolve('denied')
               finished.pendingApprovalId = null
               finished.pendingApprovalResolve = null
+            }
+            // An unanswered question at end-of-turn resolves canceled so the
+            // ask tool's execute() unwinds and the run can finish.
+            if (finished.pendingAskResolve) {
+              finished.pendingAskResolve({ kind: 'canceled' })
+              finished.pendingAsk = null
+              finished.pendingAskResolve = null
             }
           }
           this.activeByChat.delete(chatId)
@@ -1647,6 +1682,7 @@ export class TelegramChannel {
         }
       },
       onApprovalRequest: (req) => this.handleApprovalRequest(chatId, req),
+      onAskUserRequest: (req) => this.handleAskRequest(chatId, req),
       onDone: () => {
         const active = this.activeByChat.get(chatId)
         if (active) {
@@ -1694,6 +1730,9 @@ export class TelegramChannel {
       active.toolTimings.set(segment.toolCallId, { startedAt: Date.now() })
       await this.flushPendingActiveModel(chatId)
       await this.flushBufferedText(chatId)
+      // ask_user posts its own formatted question via onAskUserRequest — never
+      // surface the raw tool call (even in verbose), or the question doubles up.
+      if (segment.name === ASK_USER_TOOL) return
       // Clean feed: skip the tool-call card. Prose preceding the call has
       // already been flushed above; bookkeeping (names/timings) stands so a
       // file-bearing result can still render its heading.
@@ -1710,6 +1749,9 @@ export class TelegramChannel {
       if (timing) timing.endedAt = Date.now()
       const icon = segment.status === 'success' ? '✅' : segment.status === 'denied' ? '❌' : '⚠️'
       const name = active.toolCallNames.get(segment.toolCallId)
+      // ask_user's result is the user's own answer, already acknowledged inline
+      // when they replied — don't echo it back as a tool-result block.
+      if (name === ASK_USER_TOOL) return
       const heading = name ? `${icon} <b>${escapeHtml(name)}</b>` : icon
       const output = segment.output?.trim() ?? ''
       // An stt_* result's file payload is the user's SOURCE recording (an
@@ -2034,6 +2076,65 @@ export class TelegramChannel {
   }
 
   /**
+   * Ask the user a multiple-choice question and resolve once they reply.
+   * Posts a numbered list; the user's next message answers it (a number
+   * picks an option, other text becomes custom instructions). Mirrors
+   * handleApprovalRequest — the resolver lives on the active turn and is
+   * fired by resolvePendingAsk / drained canceled at turn end.
+   */
+  private handleAskRequest(
+    chatId: number,
+    req: AskUserRequest & { id: string }
+  ): Promise<AskUserResponse> {
+    return new Promise<AskUserResponse>((resolve) => {
+      const active = this.activeByChat.get(chatId)
+      if (!active) {
+        resolve({ kind: 'canceled' })
+        return
+      }
+      // A new question supersedes any prior unanswered one.
+      if (active.pendingAskResolve) active.pendingAskResolve({ kind: 'canceled' })
+      active.pendingAsk = { id: req.id, options: req.options, allowOther: req.allowOther }
+      active.pendingAskResolve = resolve
+      void this.sendHtml(chatId, formatAskRequestHtml(req))
+    })
+  }
+
+  /** Interpret the user's reply to an outstanding ask_user question. */
+  private async resolvePendingAsk(chatId: number, active: ActiveTurn, text: string): Promise<void> {
+    const pending = active.pendingAsk
+    const resolve = active.pendingAskResolve
+    if (!pending || !resolve) return
+    const n = pending.options.length
+    const outcome = interpretAskReply(text, n, pending.allowOther)
+
+    if (outcome.kind === 'option') {
+      active.pendingAsk = null
+      active.pendingAskResolve = null
+      resolve({ kind: 'option', index: outcome.index })
+      await this.safeSend(
+        chatId,
+        `✅ Option ${outcome.index + 1}: ${pending.options[outcome.index].label}`
+      )
+      return
+    }
+    if (outcome.kind === 'custom') {
+      active.pendingAsk = null
+      active.pendingAskResolve = null
+      resolve({ kind: 'custom', text: outcome.text })
+      await this.safeSend(chatId, '✅ Got it — using your instructions.')
+      return
+    }
+    // reprompt — keep the question pending and tell the user how to answer.
+    await this.safeSend(
+      chatId,
+      outcome.reason === 'out-of-range'
+        ? `⚠️ That isn't one of the options (1–${n}). Reply with a valid number${pending.allowOther ? ', or type your own instructions' : ''}.`
+        : `Please reply with a number between 1 and ${n}.`
+    )
+  }
+
+  /**
    * Send a Markdown-formatted message. Converts the text to the
    * subset of HTML Telegram supports — plain prose passes through
    * with HTML entities escaped; Markdown markup (`**bold**`, fenced
@@ -2214,6 +2315,31 @@ function parseSelectionNumber(text: string): number | null {
   if (!m) return null
   const n = parseInt(m[1], 10)
   return Number.isFinite(n) ? n : null
+}
+
+/**
+ * Render an ask_user question as a Telegram HTML message: bold question,
+ * optional details, a numbered list (label + description), and a hint on how
+ * to answer. The free-text "something else" option isn't numbered — the hint
+ * tells the user they can just type their own instructions instead.
+ */
+function formatAskRequestHtml(req: AskUserRequest): string {
+  const parts: string[] = [`❓ <b>${escapeHtml(req.question)}</b>`]
+  if (req.details) parts.push(escapeHtml(req.details))
+  const list = req.options
+    .map((opt, i) => {
+      const head = `<b>${i + 1}.</b> ${escapeHtml(opt.label)}`
+      return opt.description ? `${head}\n${escapeHtml(opt.description)}` : head
+    })
+    .join('\n\n')
+  parts.push(list)
+  const n = req.options.length
+  parts.push(
+    req.allowOther
+      ? `<i>Reply with a number (1–${n}) to choose — or just type what you'd rather do.</i>`
+      : `<i>Reply with a number (1–${n}) to choose.</i>`
+  )
+  return parts.join('\n\n')
 }
 
 /**
