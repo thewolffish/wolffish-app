@@ -24,7 +24,16 @@ export default defineConfig({
   },
   preload: {
     plugins: [externalizeDepsPlugin()],
-    resolve: { alias: srcAlias }
+    resolve: { alias: srcAlias },
+    build: {
+      rollupOptions: {
+        input: {
+          index: resolve('src/preload/index.ts'),
+          // Dedicated preload for the custom Windows tray popup menu.
+          trayMenu: resolve('src/preload/trayMenu.ts')
+        }
+      }
+    }
   },
   renderer: {
     resolve: { alias: srcAlias },

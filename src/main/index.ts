@@ -189,6 +189,7 @@ import {
   nativeTheme,
   net,
   protocol,
+  screen,
   shell,
   systemPreferences,
   Tray
@@ -269,16 +270,7 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 app.on('second-instance', () => {
-  const win = BrowserWindow.getAllWindows()[0]
-  if (win) {
-    if (win.isMinimized()) win.restore()
-    win.show()
-    win.focus()
-    showDock()
-  } else {
-    createWindow()
-    showDock()
-  }
+  restoreMainWindow()
 })
 
 protocol.registerSchemesAsPrivileged([
@@ -755,9 +747,142 @@ function backgroundColor(): string {
 
 let tray: Tray | null = null
 
+// --- Custom Windows tray popup menu -----------------------------------------
+// Native Win32 tray context menus are sized by the OS, so Electron can't make
+// them bigger. On Windows we instead draw our own menu in a small frameless,
+// transparent popup window (see src/preload/trayMenu.ts) scaled ~30% larger.
+// The window size is fixed to that popup's CSS: a 244px card plus a 14px
+// transparent margin on every side for the drop shadow.
+const TRAY_POPUP_WIDTH = 272
+const TRAY_POPUP_HEIGHT = 136
+
+let trayPopup: BrowserWindow | null = null
+let trayPopupShownAt = 0
+let trayMenuLocale: Locale = 'en'
+
+// The main app window — never the tray popup. Adding the popup means a bare
+// `getAllWindows()[0]` could grab the wrong window, so restore/show paths use
+// this helper instead.
+function mainBrowserWindow(): BrowserWindow | null {
+  return BrowserWindow.getAllWindows().find((w) => w !== trayPopup && !w.isDestroyed()) ?? null
+}
+
+function restoreMainWindow(): void {
+  const win = mainBrowserWindow()
+  if (win) {
+    if (win.isMinimized()) win.restore()
+    win.show()
+    win.focus()
+    showDock()
+  } else {
+    createWindow()
+    showDock()
+  }
+}
+
+function buildTrayPopup(): BrowserWindow {
+  const popup = new BrowserWindow({
+    width: TRAY_POPUP_WIDTH,
+    height: TRAY_POPUP_HEIGHT,
+    show: false,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    hasShadow: false,
+    backgroundColor: '#00000000',
+    webPreferences: {
+      preload: join(__dirname, '../preload/trayMenu.js'),
+      sandbox: false,
+      contextIsolation: true
+    }
+  })
+  popup.setMenu(null)
+  // Dismiss on click-away. Ignore the blur that can fire as the window first
+  // takes focus, otherwise it would hide itself the instant it opens.
+  popup.on('blur', () => {
+    if (Date.now() - trayPopupShownAt > 120) popup.hide()
+  })
+  void popup.loadURL(
+    'data:text/html;charset=UTF-8,' +
+      encodeURIComponent(
+        '<!doctype html><html><head><meta charset="utf-8"><title>Wolffish</title></head><body></body></html>'
+      )
+  )
+  return popup
+}
+
+function showTrayPopup(bounds: Electron.Rectangle): void {
+  const popup = trayPopup ?? (trayPopup = buildTrayPopup())
+  const state = { locale: trayMenuLocale, dark: nativeTheme.shouldUseDarkColors }
+
+  const area = screen.getDisplayMatching(bounds).workArea
+  // Anchor to the tray icon: right-aligned, opening upward from a bottom
+  // taskbar (downward if the tray sits in the top half of the screen).
+  let x = Math.round(bounds.x + bounds.width - TRAY_POPUP_WIDTH)
+  const openUp = bounds.y + bounds.height / 2 > area.y + area.height / 2
+  let y = openUp ? Math.round(bounds.y - TRAY_POPUP_HEIGHT) : Math.round(bounds.y + bounds.height)
+  x = Math.min(Math.max(x, area.x), area.x + area.width - TRAY_POPUP_WIDTH)
+  y = Math.min(Math.max(y, area.y), area.y + area.height - TRAY_POPUP_HEIGHT)
+  popup.setBounds({ x, y, width: TRAY_POPUP_WIDTH, height: TRAY_POPUP_HEIGHT })
+
+  const sendState = (): void => popup.webContents.send('tray-menu:render', state)
+  if (popup.webContents.isLoading()) popup.webContents.once('did-finish-load', sendState)
+  else sendState()
+
+  trayPopupShownAt = Date.now()
+  popup.show()
+  popup.focus()
+}
+
+// The tray artwork (icon_transparent.png) sits on a large transparent canvas —
+// the fish fills only ~79% of the width and ~65% of the height — so at tray
+// size it rendered noticeably smaller than neighboring app icons. Trim to the
+// opaque content and pad back out to a centered square so Windows draws the
+// logo edge-to-edge like other apps, without distorting its aspect ratio.
+function trayIconImage(size: number): Electron.NativeImage {
+  const source = nativeImage.createFromPath(trayIconDefault)
+  const { width, height } = source.getSize()
+  const bitmap = source.toBitmap() // BGRA, 4 bytes per pixel; we only read alpha
+  const ALPHA = 16
+  let minX = width
+  let minY = height
+  let maxX = -1
+  let maxY = -1
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (bitmap[(y * width + x) * 4 + 3] > ALPHA) {
+        if (x < minX) minX = x
+        if (x > maxX) maxX = x
+        if (y < minY) minY = y
+        if (y > maxY) maxY = y
+      }
+    }
+  }
+  let cropped = source
+  if (maxX >= minX && maxY >= minY) {
+    // Square holding the content + a little breathing room so the outline
+    // isn't clipped, centered on the content's midpoint and clamped to canvas.
+    const side = Math.round(Math.max(maxX - minX + 1, maxY - minY + 1) * 1.03)
+    const cx = (minX + maxX) / 2
+    const cy = (minY + maxY) / 2
+    const x = Math.max(0, Math.min(Math.round(cx - side / 2), width - side))
+    const y = Math.max(0, Math.min(Math.round(cy - side / 2), height - side))
+    const clamped = Math.min(side, width - x, height - y)
+    cropped = source.crop({ x, y, width: clamped, height: clamped })
+  }
+  return cropped.resize({ width: size, height: size })
+}
+
 function createTray(locale: Locale = 'en'): void {
   if (tray) return
   const isAr = locale === 'ar'
+  trayMenuLocale = locale
   let img: Electron.NativeImage
   if (process.platform === 'darwin') {
     // Unified with Windows/Linux: show the transparent colored logo (not the white template),
@@ -777,53 +902,51 @@ function createTray(locale: Locale = 'en'): void {
       buffer: base.resize({ width: 44, height: 44 }).toPNG()
     })
   } else {
-    img = nativeImage.createFromPath(trayIconDefault).resize({ width: 32, height: 32 })
+    img = trayIconImage(32)
   }
   tray = new Tray(img)
   tray.setToolTip('Wolffish')
-  const contextMenu = Menu.buildFromTemplate([
-    {
-      label: isAr ? 'إظهار وولف فيش' : 'Show Wolffish',
-      click: () => {
-        const win = BrowserWindow.getAllWindows()[0]
-        if (win) {
-          win.show()
-          showDock()
-        } else {
-          createWindow()
-          showDock()
-        }
-      }
-    },
-    { type: 'separator' },
-    {
-      label: isAr ? 'إغلاق' : 'Quit',
-      click: () => {
+
+  if (process.platform === 'win32') {
+    // Windows: open the custom, larger popup on right-click instead of the
+    // un-resizable native menu. Left/double click still restore the window.
+    ipcMain.on('tray-menu:action', (_event, action: 'show' | 'quit') => {
+      trayPopup?.hide()
+      if (action === 'quit') {
         isQuittingFromTray = true
         app.quit()
+      } else {
+        restoreMainWindow()
       }
-    }
-  ])
-  tray.setContextMenu(contextMenu)
+    })
+    ipcMain.on('tray-menu:close', () => trayPopup?.hide())
+    tray.on('right-click', (_event, bounds) => showTrayPopup(bounds))
+  } else {
+    // macOS/Linux keep the OS-native context menu (on macOS it also handles
+    // left-click).
+    const contextMenu = Menu.buildFromTemplate([
+      {
+        label: isAr ? 'إظهار وولف فيش' : 'Show Wolffish',
+        click: () => restoreMainWindow()
+      },
+      { type: 'separator' },
+      {
+        label: isAr ? 'إغلاق' : 'Quit',
+        click: () => {
+          isQuittingFromTray = true
+          app.quit()
+        }
+      }
+    ])
+    tray.setContextMenu(contextMenu)
+  }
 
-  // On macOS, setContextMenu handles both left and right click — no extra
-  // handler needed. On Windows/Linux, right-click opens the menu but
-  // left-click fires 'click' — wire it up so a single click restores the
-  // window (standard tray behavior on those platforms).
-  const restoreWindow = (): void => {
-    const win = BrowserWindow.getAllWindows()[0]
-    if (win) {
-      win.show()
-      showDock()
-    } else {
-      createWindow()
-      showDock()
-    }
-  }
+  // On Windows/Linux a single left-click restores the window (standard tray
+  // behavior); macOS routes clicks through the context menu above.
   if (process.platform !== 'darwin') {
-    tray.on('click', restoreWindow)
+    tray.on('click', restoreMainWindow)
   }
-  tray.on('double-click', restoreWindow)
+  tray.on('double-click', restoreMainWindow)
 }
 
 function showDock(): void {
@@ -2982,7 +3105,7 @@ app.whenReady().then(async () => {
   createWindow()
 
   app.on('activate', () => {
-    const win = BrowserWindow.getAllWindows()[0]
+    const win = mainBrowserWindow()
     if (win) {
       win.show()
       showDock()
