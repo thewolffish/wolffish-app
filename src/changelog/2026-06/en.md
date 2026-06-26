@@ -1,4 +1,4 @@
-## v1.0.190 — 2026-06-26 `Latest`
+## v1.0.191 — 2026-06-26 `Latest`
 
 ### Wolffish Asks You — With Real Choices
 
@@ -19,6 +19,14 @@ File and folder paths Wolffish mentions in a reply now render as a card with a o
 ### grep Counts No Longer Read as Errors
 
 A `grep -c` that finds zero matches exits with code 1 and prints "0" — which used to reach the model as a failed command and trigger needless retries. That tally is now read as the valid zero-count it is.
+
+---
+
+## v1.0.190 — 2026-06-25
+
+### Local Voice Now Works on More Windows PCs
+
+On some Windows machines the local voice engines wouldn't start — text-to-speech failed to load and speech-to-text crashed — because the PC's Microsoft Visual C++ runtime was older than the engines' native components required. Wolffish now detects this and sets up a compatible runtime right beside the engine, inside its own folder: no admin rights, no system-wide installer, and nothing for you to download or click. PCs that already have a current runtime are left untouched, and macOS and Linux were never affected. If the automatic setup ever can't run, the error now spells out the real cause and the one-line fix instead of a cryptic DLL message.
 
 ---
 
