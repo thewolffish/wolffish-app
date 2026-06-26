@@ -1493,7 +1493,8 @@
     },
     "thinkingMode": {
       "ariaLabel": "Thinking mode",
-      "none": "Normal",
+      "none": "Off",
+      "on": "On",
       "noneTooltip": "Standard response without extended thinking",
       "basic": "Think",
       "basicTooltip": "Enable basic thinking",
@@ -1507,6 +1508,14 @@
       "fastTooltip": "Quick responses with minimal thinking",
       "budget": "Budget",
       "budgetTooltip": "Cost-optimized thinking mode"
+    },
+    "reasoning": {
+      "ariaLabel": "Reasoning mode",
+      "off": "Thinking off — answers directly, no reasoning.",
+      "on": "Thinking on — reasons before answering.",
+      "high": "High effort — more thorough reasoning.",
+      "max": "Max effort — deepest, most thorough reasoning.",
+      "unsupported": "Reasoning is not supported by this model."
     },
     "newChatShort": "New",
     "approval": {

@@ -6,6 +6,7 @@ import type {
   ToolDefinition,
   UserContentBlock
 } from '@main/runtime/thalamus'
+import { effortFromMode } from '@main/runtime/reasoning'
 
 const QWEN_ENDPOINT = 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions'
 
@@ -16,6 +17,7 @@ function maxTokensFor(model: string): number {
   if (m.includes('qwen3.6-max') || m.includes('qwen3.6-plus')) return 65536
   if (m.includes('qwen3.6-flash')) return 65536
   if (m.includes('qwen3.5-plus') || m.includes('qwen3.5-flash')) return 65536
+  if (m.includes('qwq') || m.includes('qvq')) return 65536
   if (m.includes('qwen3-max') || m.includes('qwen3-coder')) return 32768
   if (m.includes('qwen-max')) return 8192
   if (m.includes('qwen-plus')) return 32768
@@ -28,7 +30,7 @@ function maxTokensFor(model: string): number {
 // and accept max_completion_tokens. Older models (qwen-max, qwen-plus,
 // qwen-turbo) use max_tokens and don't reason.
 function isReasoningModel(model: string): boolean {
-  return /^qwen3/i.test(model) || /^qwq/i.test(model)
+  return /^qwen3/i.test(model) || /^qwq/i.test(model) || /^qvq/i.test(model)
 }
 
 export class QwenProvider {
@@ -54,19 +56,16 @@ export class QwenProvider {
 
     if (isReasoningModel(this.model)) {
       body.max_completion_tokens = maxOutput
-
-      const RESPONSE_RESERVE = 32768
-      const thinkingRoom = maxOutput - RESPONSE_RESERVE
-      const mode = options.thinkingMode ?? 'basic'
-
-      if (mode === 'none' || thinkingRoom <= 0) {
+      const effort = effortFromMode(options.thinkingMode)
+      if (effort === 'off') {
         body.enable_thinking = false
-      } else if (mode === 'max') {
-        body.enable_thinking = true
-        body.thinking_budget = Math.max(4096, thinkingRoom)
       } else {
         body.enable_thinking = true
-        body.thinking_budget = Math.min(10240, thinkingRoom)
+        // Cap the thinking budget to what fits under the model's output ceiling
+        // (leave room for the answer). Previously a fixed 32768 reserve forced
+        // enable_thinking off for models with a ≤32768 ceiling (e.g. qwen3-max).
+        const cap = Math.max(1024, maxOutput - 4096)
+        body.thinking_budget = effort === 'max' ? Math.min(32768, cap) : Math.min(10240, cap)
       }
     } else {
       body.max_tokens = maxOutput

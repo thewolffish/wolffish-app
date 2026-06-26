@@ -79,7 +79,10 @@ export type ToolDefinition = {
   parameters: Record<string, unknown>
 }
 
-export type ThinkingMode = 'none' | 'basic' | 'extended' | 'max' | 'fast' | 'budget'
+// Canonical reasoning scale lives in reasoning.ts. ThinkingMode is kept as an
+// alias so the many existing references continue to resolve.
+export type { ReasoningMode } from '@main/runtime/reasoning'
+export type ThinkingMode = import('@main/runtime/reasoning').ReasoningMode
 
 export type ProviderStreamOptions = {
   system: string

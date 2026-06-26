@@ -20,6 +20,7 @@ import {
 } from '@components/core/ProviderLogos'
 import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
+import { pageTopPadding } from '@lib/utils/platform'
 import { ModelPicker } from '@pages/ModelPicker'
 import { BravePanel } from '@pages/settings/BravePanel'
 import { BrowserExtensionPanel } from '@pages/settings/BrowserExtensionPanel'
@@ -268,12 +269,7 @@ export function Settings(): React.JSX.Element {
   const computerUseAvailable = visibleServices.includes('computerUse')
 
   return (
-    <main
-      className={cn(
-        'bg-bg flex h-full w-full',
-        navigator.platform.startsWith('Win') ? 'pt-5' : 'pt-10'
-      )}
-    >
+    <main className={cn('bg-bg flex h-full w-full', pageTopPadding)}>
       <aside className="flex w-56 min-w-56 shrink-0 flex-col gap-2 overflow-y-auto p-3">
         <button
           type="button"

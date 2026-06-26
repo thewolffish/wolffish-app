@@ -101,7 +101,7 @@ export type AgentTurnOptions = {
    * Used by autonomous heartbeat jobs that cannot prompt a human.
    */
   bypassApproval?: boolean
-  thinkingMode?: 'none' | 'basic' | 'extended' | 'max' | 'fast' | 'budget'
+  thinkingMode?: 'off' | 'on' | 'high' | 'max'
 }
 
 export type AgentTurnResult = {

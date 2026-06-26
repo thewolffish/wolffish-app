@@ -6,6 +6,7 @@ import type {
   ToolDefinition,
   UserContentBlock
 } from '@main/runtime/thalamus'
+import { thinkingEnabled } from '@main/runtime/reasoning'
 
 const KIMI_ENDPOINT = 'https://api.moonshot.ai/v1/chat/completions'
 
@@ -39,9 +40,12 @@ export class KimiProvider {
       stream_options: { include_usage: true }
     }
 
-    // Kimi thinking: enabled by default on k2 models, ignored on moonshot-v1.
-    const mode = options.thinkingMode ?? 'basic'
-    body.thinking = { type: mode === 'none' ? 'disabled' : 'enabled' }
+    // Kimi thinking is binary. k2.x-code variants reason always-on (never
+    // disabled); moonshot-v1 ignores the field.
+    const ml = this.model.toLowerCase()
+    const alwaysOn = ml.includes('k2.7') && ml.includes('code')
+    const on = alwaysOn || thinkingEnabled(options.thinkingMode)
+    body.thinking = { type: on ? 'enabled' : 'disabled' }
 
     if (options.tools && options.tools.length > 0) {
       body.tools = options.tools.map(toTool)

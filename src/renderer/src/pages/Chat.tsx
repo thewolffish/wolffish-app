@@ -20,10 +20,7 @@ import { PdfViewer } from '@components/common/pdf-viewer/PdfViewer'
 import { ProviderErrorCards } from '@components/common/provider-error-card/ProviderErrorCard'
 import { Sidebar } from '@components/common/sidebar/Sidebar'
 import { SpreadsheetViewer } from '@components/common/spreadsheet-viewer/SpreadsheetViewer'
-import {
-  ThinkingModeSelect,
-  type ThinkingModeOption
-} from '@components/common/thinking-mode-select/ThinkingModeSelect'
+import { BrainButton } from '@components/common/brain-button/BrainButton'
 import { ToolCard } from '@components/common/tool-card/ToolCard'
 import { TurnFooter } from '@components/common/turn-footer/TurnFooter'
 import { UpdateCard } from '@components/common/update-card/UpdateCard'
@@ -53,17 +50,24 @@ import { Tooltip } from '@components/core/Tooltip'
 import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
 import { formatBytes } from '@lib/utils/format'
+import { pageTopPadding } from '@lib/utils/platform'
 import { preselectSettingsTab } from '@pages/settings/settingsNav'
 import type {
   AskUserResponse,
   ChatHistoryMessage,
   ConversationChannel,
   ConversationFile,
+  FolderListing,
   MessageAttachment,
   Segment,
   ThinkingMode,
   TimelineEntry
 } from '@preload/index'
+import {
+  normalizeReasoningMode,
+  reasoningModesFor,
+  type ReasoningMode
+} from '@main/runtime/reasoning'
 import {
   useFlow,
   type ApprovalCardState,
@@ -164,9 +168,31 @@ export function Chat(): React.JSX.Element {
     [cloudProviders, activeCloudProvider]
   )
   const persistedThinkingModes = status?.config?.llm.thinkingModes
-  const thinkingMode = useMemo(
-    () => (activeCloudModel ? (persistedThinkingModes?.[activeCloudModel] ?? 'basic') : 'basic'),
-    [activeCloudModel, persistedThinkingModes]
+
+  // Ordered reasoning modes this model honours (canonical scale). Drives the
+  // brain button. Source of truth is reasoningModesFor — corrected to live
+  // provider behaviour during verification.
+  const reasoningModes = useMemo<ReasoningMode[]>(() => {
+    if (localOnly) return []
+    const provider = activeCloudProvider
+    const model = activeCloudModel
+    if (!provider || !model) return []
+    const openrouterReasoning =
+      provider === 'openrouter'
+        ? (cloudProviders.find((p) => p.id === 'openrouter')?.reasoningModels?.includes(model) ??
+          false)
+        : false
+    return reasoningModesFor(provider, model, { openrouterReasoning })
+  }, [localOnly, activeCloudProvider, activeCloudModel, cloudProviders])
+
+  // Active mode, clamped/migrated to a value valid for this model's modes.
+  const thinkingMode = useMemo<ReasoningMode>(
+    () =>
+      normalizeReasoningMode(
+        activeCloudModel ? persistedThinkingModes?.[activeCloudModel] : undefined,
+        reasoningModes
+      ),
+    [activeCloudModel, persistedThinkingModes, reasoningModes]
   )
 
   // Persist via API — the source of truth is persistedThinkingModes, which
@@ -178,8 +204,9 @@ export function Chat(): React.JSX.Element {
       // autonomously on every status/model transition (including starting a
       // new chat), so persisting an unchanged value just adds config.json
       // write churn — and that write contention is what surfaced the
-      // config-wipe race in the first place.
-      const current = persistedThinkingModes?.[activeCloudModel] ?? 'basic'
+      // config-wipe race in the first place. A never-seen model has no
+      // persisted value (undefined), so the default still gets written once.
+      const current = persistedThinkingModes?.[activeCloudModel]
       if (mode === current) return
       await window.api.runtime.setThinkingMode(activeCloudModel, mode as ThinkingMode)
       await refreshStatus()
@@ -187,113 +214,15 @@ export function Chat(): React.JSX.Element {
     [activeCloudModel, persistedThinkingModes, refreshStatus]
   )
 
-  const thinkingModeOptions = useMemo<ThinkingModeOption[]>(() => {
-    if (localOnly) return []
-
-    const provider = activeCloudProvider
-    const model = activeCloudModel
-
-    if (!provider || !model) return []
-
-    const none: ThinkingModeOption = {
-      value: 'none',
-      labelKey: 'chat.thinkingMode.none',
-      tooltipKey: 'chat.thinkingMode.noneTooltip'
-    }
-    const max: ThinkingModeOption = {
-      value: 'max',
-      labelKey: 'chat.thinkingMode.max',
-      tooltipKey: 'chat.thinkingMode.maxTooltip'
-    }
-
-    const high: ThinkingModeOption = {
-      value: 'basic',
-      labelKey: 'chat.thinkingMode.high',
-      tooltipKey: 'chat.thinkingMode.highTooltip'
-    }
-
-    // ── Anthropic: adaptive on Fable 5 and 4-6+, manual on 4-5/4-1 ──
-    if (provider === 'anthropic') {
-      const ml = model.toLowerCase()
-      const is46Plus =
-        ml.includes('fable') ||
-        ml.includes('opus-4-8') ||
-        ml.includes('opus-4-7') ||
-        ml.includes('sonnet-4-6') ||
-        ml.includes('opus-4-6')
-      if (is46Plus) return [none, high, max]
-      return [none, high]
-    }
-
-    // ── MiMo: binary toggle (enabled / disabled) on all chat models ──
-    if (provider === 'mimo') {
-      const isTts = /tts|voiceclone|voicedesign|asr/.test(model)
-      if (isTts) return []
-      return [none, high]
-    }
-
-    // ── DeepSeek: disabled / high / max on V4 models ──
-    if (provider === 'deepseek') {
-      return [none, high, max]
-    }
-
-    // ── Kimi: binary toggle on k2 models, no thinking on moonshot-v1 ──
-    if (provider === 'kimi') {
-      if (model.startsWith('kimi-k2')) return [none, high]
-      return []
-    }
-
-    // ── MiniMax: only M3 can toggle, M2.x always thinks ──
-    if (provider === 'minimax') {
-      if (model === 'MiniMax-M3') return [none, high]
-      return []
-    }
-
-    // ── Z.ai: binary thinking toggle on every GLM model (verified live —
-    // reasoning_effort is ignored, only thinking.type enabled/disabled) ──
-    if (provider === 'zai') {
-      return [none, high]
-    }
-
-    // ── Qwen: thinking on qwen3+ and qwq models ──
-    if (provider === 'qwen') {
-      if (/^(qwen3|qwq|qvq)/i.test(model)) return [none, high, max]
-      return []
-    }
-
-    // ── xAI: reasoning_effort on grok-4.3, grok-build, grok-3-mini ──
-    if (provider === 'xai') {
-      if (/^grok-(4\.3|4\.20|build)/i.test(model)) return [none, high, max]
-      if (/^grok-(3|4)/i.test(model)) return [none, high]
-      return []
-    }
-
-    // ── OpenAI: reasoning_effort on GPT-5.x models ──
-    if (provider === 'openai') {
-      if (/^gpt-5/i.test(model)) return [none, high, max]
-      return []
-    }
-
-    // ── OpenRouter: use reasoningModels from API metadata ──
-    if (provider === 'openrouter') {
-      const entry = cloudProviders.find((p) => p.id === 'openrouter')
-      const supportsReasoning = entry?.reasoningModels?.includes(model) ?? false
-      if (supportsReasoning) return [none, high, max]
-      return []
-    }
-
-    return []
-  }, [localOnly, activeCloudProvider, activeCloudModel, cloudProviders])
-
+  // Migrate/clamp the persisted mode to a value valid for this model. Runs on
+  // load and on every model switch so a stale or legacy token (e.g. 'basic')
+  // is rewritten to a canonical one. No write when the model has no modes.
   useEffect(() => {
-    if (thinkingModeOptions.length === 0) {
-      setThinkingMode('basic')
-    } else if (!thinkingModeOptions.some((o) => o.value === thinkingMode)) {
-      // Default to 'basic' (thinking on) when available, otherwise first option
-      const preferred = thinkingModeOptions.find((o) => o.value === 'basic')
-      setThinkingMode(preferred?.value ?? thinkingModeOptions[0].value)
-    }
-  }, [thinkingModeOptions, thinkingMode, setThinkingMode])
+    if (!activeCloudModel || reasoningModes.length === 0) return
+    const persisted = persistedThinkingModes?.[activeCloudModel]
+    const normalized = normalizeReasoningMode(persisted, reasoningModes)
+    if (persisted !== normalized) void setThinkingMode(normalized)
+  }, [reasoningModes, activeCloudModel, persistedThinkingModes, setThinkingMode])
 
   const [heartbeatActive, setHeartbeatActive] = useState(false)
   useEffect(() => {
@@ -1086,12 +1015,15 @@ export function Chat(): React.JSX.Element {
       // stt_transcribe_upload can then pick up the file from this hint.
       const workspaceRoot = status?.rootPath ?? null
       const previousFolders = sentFolderByConvRef.current.get(conversationId) ?? []
+      const folderListings =
+        workingFolders.length > 0 ? await fetchFolderListings(workingFolders) : undefined
       const historyContent = composeHistoryContent(
         trimmed,
         attachments,
         workspaceRoot,
         workingFolders,
-        previousFolders
+        previousFolders,
+        folderListings
       )
       sentFolderByConvRef.current.set(conversationId, workingFolders)
       const currentEntry: {
@@ -1227,12 +1159,15 @@ export function Chat(): React.JSX.Element {
       const workspaceRoot = status?.rootPath ?? null
       const previousFolders = sentFolderByConvRef.current.get(conversationId) ?? []
       const langAttr = sttResult.language ? ` lang="${sttResult.language}"` : ''
+      const folderListings =
+        workingFolders.length > 0 ? await fetchFolderListings(workingFolders) : undefined
       const historyContent = `<voice_note${langAttr}>\n${composeHistoryContent(
         transcript,
         [attachment],
         workspaceRoot,
         workingFolders,
-        previousFolders
+        previousFolders,
+        folderListings
       )}`
       sentFolderByConvRef.current.set(conversationId, workingFolders)
       const currentEntry: {
@@ -1485,7 +1420,7 @@ export function Chat(): React.JSX.Element {
 
   return (
     <main
-      className="bg-bg relative flex h-full w-full flex-col pt-10"
+      className={cn('bg-bg relative flex h-full w-full flex-col', pageTopPadding)}
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
       onDragOver={handleDragOver}
@@ -1755,14 +1690,6 @@ export function Chat(): React.JSX.Element {
                 cloudModel={cloudProviders.find((p) => p.id === activeCloudProvider)?.model ?? null}
                 localModel={currentModel}
               />
-              {thinkingModeOptions.length > 0 && (
-                <ThinkingModeSelect
-                  value={thinkingMode}
-                  options={thinkingModeOptions}
-                  onChange={setThinkingMode}
-                  disabled={savingMode || streaming}
-                />
-              )}
             </div>
             <button
               type="button"
@@ -1909,6 +1836,12 @@ export function Chat(): React.JSX.Element {
                     <ArrowExpandIcon size={14} />
                   </button>
                 </div>
+                <BrainButton
+                  modes={reasoningModes}
+                  value={thinkingMode}
+                  onCycle={setThinkingMode}
+                  disabled={savingMode || streaming}
+                />
                 <button
                   type="submit"
                   disabled={
@@ -3892,6 +3825,49 @@ function toAbsoluteUploadPath(relativePath: string, workspaceRoot: string | null
 }
 
 /**
+ * Read the top-level entries of every working folder in parallel so the
+ * current turn can ship the folder structure to the model. Runs on every
+ * send (cheap — one shallow readdir per folder) so the listing reflects the
+ * folder as it is right now, not when it was first selected. Unreadable
+ * folders resolve to an error entry rather than rejecting the whole turn.
+ */
+async function fetchFolderListings(folders: string[]): Promise<Map<string, FolderListing>> {
+  const map = new Map<string, FolderListing>()
+  await Promise.all(
+    folders.map(async (f) => {
+      try {
+        map.set(f, await window.api.upload.listFolder(f))
+      } catch {
+        map.set(f, { entries: [], truncated: false, error: 'unreadable' })
+      }
+    })
+  )
+  return map
+}
+
+/**
+ * Render one working folder as a bullet with its top-level contents indented
+ * beneath. Directories get a trailing slash so the model can tell them from
+ * files at a glance. Falls back to the bare path when no listing is available
+ * (e.g. the read failed or hasn't run).
+ */
+function formatWorkingFolder(folder: string, listing?: FolderListing): string {
+  if (!listing) return `- ${folder}`
+  if (listing.error) return `- ${folder} (could not read contents: ${listing.error})`
+  if (listing.entries.length === 0) return `- ${folder} (empty)`
+  const items = listing.entries
+    .map((e) => `    ${e.isDirectory ? `${e.name}/` : e.name}`)
+    .join('\n')
+  let more = ''
+  if (listing.truncated) {
+    const files = listing.omittedFiles ?? 0
+    const folders = listing.omittedDirectories ?? 0
+    more = `\n    … and ${files} more file${files === 1 ? '' : 's'} and ${folders} more folder${folders === 1 ? '' : 's'} omitted`
+  }
+  return `- ${folder}\n${items}${more}`
+}
+
+/**
  * Build the LLM-facing content string for a user turn. Text comes first
  * (when present); attachments are appended as a bullet list under a
  * sentinel header so the model has unambiguous metadata to act on
@@ -3906,13 +3882,16 @@ function composeHistoryContent(
   attachments: MessageAttachment[],
   workspaceRoot: string | null,
   workingFolders?: string[],
-  previousFolders?: string[]
+  previousFolders?: string[],
+  folderListings?: Map<string, FolderListing>
 ): string {
   const parts: string[] = []
   if (workingFolders && workingFolders.length > 0) {
-    const folderList = workingFolders.map((f) => `- ${f}`).join('\n')
+    const folderList = workingFolders
+      .map((f) => formatWorkingFolder(f, folderListings?.get(f)))
+      .join('\n')
     parts.push(
-      `<working_folders>\nThe user has set the following working directories:\n${folderList}\nBe attentive that the user has pointed you to these folders. When the user references files, paths, or project context, assume they are relative to these directories unless stated otherwise.\n</working_folders>`
+      `<working_folders>\nThe user has set the following working directories. The top-level contents of each are listed so you already have the structure — you don't need to list these again unless you need deeper levels or suspect they changed:\n${folderList}\nBe attentive that the user has pointed you to these folders. When the user references files, paths, or project context, assume they are relative to these directories unless stated otherwise.\n</working_folders>`
     )
   } else if (previousFolders && previousFolders.length > 0) {
     parts.push(

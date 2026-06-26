@@ -6,6 +6,7 @@ import type {
   ToolDefinition,
   UserContentBlock
 } from '@main/runtime/thalamus'
+import { effortFromMode } from '@main/runtime/reasoning'
 
 const DEEPSEEK_ENDPOINT = 'https://api.deepseek.com/chat/completions'
 
@@ -37,15 +38,13 @@ export class DeepSeekProvider {
       stream_options: { include_usage: true }
     }
 
-    // DeepSeek thinking: enabled with high effort by default.
-    // Supports 'high' and 'max' reasoning effort.
-    const mode = options.thinkingMode ?? 'basic'
-    if (mode === 'none') {
+    // DeepSeek reasoning: coarse effort. off → disabled; high/max → enabled
+    // with reasoning_effort (low/med collapse to high, xhigh to max upstream).
+    const effort = effortFromMode(options.thinkingMode)
+    if (effort === 'off') {
       body.thinking = { type: 'disabled' }
-    } else if (mode === 'max') {
-      body.thinking = { type: 'enabled', reasoning_effort: 'max' }
     } else {
-      body.thinking = { type: 'enabled', reasoning_effort: 'high' }
+      body.thinking = { type: 'enabled', reasoning_effort: effort }
     }
 
     if (options.tools && options.tools.length > 0) {

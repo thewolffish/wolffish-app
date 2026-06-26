@@ -6,6 +6,7 @@ import type {
   StreamChunk,
   ToolDefinition
 } from '@main/runtime/thalamus'
+import { thinkingEnabled } from '@main/runtime/reasoning'
 
 export type { ChatMessage }
 
@@ -18,9 +19,13 @@ export class LocalProvider {
   private model: string | null = null
   private endpoint: string = DEFAULT_ENDPOINT
   private visionCache = new Map<string, boolean>()
+  private thinkingCache = new Map<string, boolean>()
 
   configure(model: string | null, endpoint: string = DEFAULT_ENDPOINT): void {
-    if (model !== this.model) this.visionCache.clear()
+    if (model !== this.model) {
+      this.visionCache.clear()
+      this.thinkingCache.clear()
+    }
     this.model = model
     this.endpoint = endpoint
   }
@@ -66,6 +71,31 @@ export class LocalProvider {
     return supports
   }
 
+  /**
+   * Whether the active local model is a reasoning model. Reads Ollama's
+   * /api/show `capabilities` array and looks for "thinking". Newer reasoning
+   * models accept a top-level `think` field on /api/chat; non-reasoning models
+   * don't, so we gate on this to avoid sending an unsupported param.
+   */
+  async supportsThinking(): Promise<boolean> {
+    const model = this.model
+    if (!model) return false
+    const cached = this.thinkingCache.get(model)
+    if (cached !== undefined) return cached
+
+    let supports = false
+    try {
+      const info = await showModel(model, this.endpoint)
+      if (info?.capabilities && Array.isArray(info.capabilities)) {
+        supports = info.capabilities.includes('thinking')
+      }
+    } catch {
+      supports = false
+    }
+    this.thinkingCache.set(model, supports)
+    return supports
+  }
+
   async *stream(options: ProviderStreamOptions): AsyncGenerator<StreamChunk> {
     if (!this.model) throw new Error('no local model selected')
 
@@ -87,6 +117,11 @@ export class LocalProvider {
       // single step runs long, forcing a full prefill of the entire
       // conversation on the next call.
       keep_alive: '30m'
+    }
+    // Ollama reasoning toggle: send `think` only for models that advertise the
+    // capability. Binary on/off — off explicitly suppresses thinking output.
+    if (await this.supportsThinking()) {
+      body.think = thinkingEnabled(options.thinkingMode)
     }
     if (options.tools && options.tools.length > 0) {
       body.tools = options.tools.map(toOllamaTool)

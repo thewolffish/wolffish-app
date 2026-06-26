@@ -6,6 +6,7 @@ import { Modal } from '@components/core/Modal'
 import { useToast } from '@components/core/toast/useToast'
 import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
+import { pageTopPadding } from '@lib/utils/platform'
 import type { ViewerTreeNode } from '@preload/index'
 import { useFlow } from '@providers/flow/useFlow'
 import { useLocale } from '@providers/locale/useLocale'
@@ -385,7 +386,7 @@ export function ViewerPage(): React.JSX.Element {
   const hasContent = language || mediaType
 
   return (
-    <main className="bg-bg flex h-full w-full flex-col pt-10">
+    <main className={cn('bg-bg flex h-full w-full flex-col', pageTopPadding)}>
       <header className="border-border flex items-center justify-between gap-4 border-b px-4 py-3">
         <button
           type="button"

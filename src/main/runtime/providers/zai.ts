@@ -6,6 +6,7 @@ import type {
   ToolDefinition,
   UserContentBlock
 } from '@main/runtime/thalamus'
+import { effortFromMode, thinkingEnabled } from '@main/runtime/reasoning'
 
 // Z.ai (Zhipu) GLM models, OpenAI-compatible chat API. The wire format is
 // identical to Kimi/Moonshot: `reasoning_content` for thinking deltas,
@@ -44,10 +45,20 @@ export class ZaiProvider {
       stream_options: { include_usage: true }
     }
 
-    // GLM thinking is binary (enabled/disabled) — there are no effort
-    // levels in the API, so every non-'none' mode maps to enabled.
-    const mode = options.thinkingMode ?? 'basic'
-    body.thinking = { type: mode === 'none' ? 'disabled' : 'enabled' }
+    // Z.ai reasoning is PER-MODEL: glm-5+ honours reasoning_effort (high|max);
+    // older GLM (4.6, 4.5-air, …) is a binary thinking toggle with no effort.
+    const ml = this.model.toLowerCase()
+    if (/glm-5/.test(ml)) {
+      const effort = effortFromMode(options.thinkingMode)
+      if (effort === 'off') {
+        body.thinking = { type: 'disabled' }
+      } else {
+        body.thinking = { type: 'enabled' }
+        body.reasoning_effort = effort
+      }
+    } else {
+      body.thinking = { type: thinkingEnabled(options.thinkingMode) ? 'enabled' : 'disabled' }
+    }
 
     if (options.tools && options.tools.length > 0) {
       body.tools = options.tools.map(toTool)

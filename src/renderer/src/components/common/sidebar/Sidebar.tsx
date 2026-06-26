@@ -1,5 +1,6 @@
 import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
+import { pageTopPadding } from '@lib/utils/platform'
 import { useFlow } from '@providers/flow/useFlow'
 import { useLocale } from '@providers/locale/useLocale'
 import { SidebarLeftIcon } from 'hugeicons-react'
@@ -55,7 +56,8 @@ export function Sidebar({ items, className }: SidebarProps): React.JSX.Element {
   return (
     <aside
       className={cn(
-        'pointer-events-none fixed top-0 z-30 flex h-full flex-col items-center gap-1.5 overflow-x-hidden overflow-y-auto px-2 pt-8 transition-[width] duration-200',
+        'pointer-events-none fixed top-0 z-30 flex h-full flex-col items-center gap-1.5 overflow-x-hidden overflow-y-auto px-2 transition-[width] duration-200',
+        pageTopPadding,
         isRtl ? 'right-0' : 'left-0',
         collapsed ? 'w-12' : 'w-44',
         className
@@ -70,7 +72,7 @@ export function Sidebar({ items, className }: SidebarProps): React.JSX.Element {
         onClick={toggle}
         aria-label="Toggle sidebar"
         className={cn(
-          'pointer-events-auto text-muted hover:text-fg flex shrink-0 cursor-pointer items-center self-start rounded-lg p-2',
+          'pointer-events-auto text-muted hover:text-fg mt-3 flex shrink-0 cursor-pointer items-center self-start rounded-lg p-2',
           'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
         )}
       >

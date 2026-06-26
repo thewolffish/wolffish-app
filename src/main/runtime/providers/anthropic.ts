@@ -6,6 +6,7 @@ import type {
   ToolDefinition,
   UserContentBlock
 } from '@main/runtime/thalamus'
+import { effortFromMode } from '@main/runtime/reasoning'
 
 const ANTHROPIC_VERSION = '2023-06-01'
 const ANTHROPIC_ENDPOINT = 'https://api.anthropic.com/v1/messages'
@@ -55,32 +56,27 @@ export class AnthropicProvider {
       stream: true
     }
 
-    // Anthropic thinking modes:
-    // - fable-5: adaptive or omitted — an explicit {type:'disabled'} is an
-    //   HTTP 400 on fable; leaving the field out is its off-mode
-    // - 4-8/4-7/4-6: adaptive (model decides depth) or disabled
-    // - 4-5/4-1/haiku: enabled + budget_tokens or disabled
-    const mode = options.thinkingMode ?? 'basic'
+    // Anthropic extended thinking — per-model, verified live:
+    //  • Newest models (opus-4-8/4-7, fable) REJECT thinking.type:enabled (HTTP
+    //    400); they require thinking.type:adaptive + output_config.effort, and
+    //    effort alone (without adaptive) produces no thinking.
+    //  • 4-6 and earlier (sonnet-4-6, opus-4-6, opus-4-5/4-1, sonnet-4-5, haiku)
+    //    use the classic thinking.type:enabled + budget_tokens (max gets a
+    //    larger budget, capped to the model's output ceiling — so small-ceiling
+    //    Haiku can't exceed high and is [off, high] in the registry).
+    //  • off is thinking.type:disabled on every model.
     const m = this.model.toLowerCase()
-    const isFable = m.includes('fable')
-    const supportsAdaptive =
-      isFable ||
-      m.includes('opus-4-8') ||
-      m.includes('opus-4-7') ||
-      m.includes('sonnet-4-6') ||
-      m.includes('opus-4-6')
-
-    if (mode === 'none') {
-      if (!isFable) body.thinking = { type: 'disabled' }
-    } else if (supportsAdaptive) {
+    const adaptiveOnly =
+      m.includes('opus-4-8') || m.includes('opus-4-7') || m.includes('fable')
+    const effort = effortFromMode(options.thinkingMode)
+    if (effort === 'off') {
+      body.thinking = { type: 'disabled' }
+    } else if (adaptiveOnly) {
       body.thinking = { type: 'adaptive' }
-      if (mode === 'max') {
-        body.output_config = { effort: 'max' }
-      }
+      body.output_config = { effort }
     } else {
-      // 4-5 / 4-1 / haiku: manual thinking with budget
       const budget =
-        mode === 'max'
+        effort === 'max'
           ? Math.min(32768, this.maxTokens - 1024)
           : Math.min(10240, this.maxTokens - 1024)
       body.thinking = { type: 'enabled', budget_tokens: budget }

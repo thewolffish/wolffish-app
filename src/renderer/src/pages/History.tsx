@@ -3,6 +3,7 @@ import { Modal } from '@components/core/Modal'
 import { TelegramLogo, WhatsAppLogo } from '@components/core/ProviderLogos'
 import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
+import { pageTopPadding } from '@lib/utils/platform'
 import type { ConversationMeta, PersistedApproval } from '@preload/index'
 import { useFlow, type ApprovalCardState, type AssistantStatus } from '@providers/flow/useFlow'
 import { useLocale } from '@providers/locale/useLocale'
@@ -114,8 +115,8 @@ export function History(): React.JSX.Element {
   }, [goTo, setMessages, setActiveConversationId])
 
   return (
-    <main className="bg-bg flex h-full w-full flex-col pt-10">
-      <div className="flex items-center gap-3 px-6 pb-4 pt-2">
+    <main className={cn('bg-bg flex h-full w-full flex-col', pageTopPadding)}>
+      <div className="flex items-center gap-3 px-6 pb-4 pt-3">
         <button
           type="button"
           onClick={() => goTo('chat')}

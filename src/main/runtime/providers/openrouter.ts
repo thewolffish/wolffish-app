@@ -6,6 +6,7 @@ import type {
   ToolDefinition,
   UserContentBlock
 } from '@main/runtime/thalamus'
+import { effortFromMode } from '@main/runtime/reasoning'
 
 const OPENROUTER_ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions'
 
@@ -32,8 +33,12 @@ function isReasoningModel(model: string): boolean {
   )
 }
 
+// These OpenRouter endpoints reason mandatorily — reasoning_effort:'none' (and
+// reasoning:{enabled:false}) return HTTP 400 "Reasoning is mandatory ... cannot
+// be disabled". For "off" we send the minimum 'low' instead of disabling.
+// Verified live: openai/gpt-5* and o-series + deepseek-r are mandatory.
 function reasoningMandatory(model: string): boolean {
-  return /^(openai\/o[134]|deepseek\/deepseek-r)/i.test(model)
+  return /^(openai\/(o[134]|gpt-5)|deepseek\/deepseek-r)/i.test(model)
 }
 
 export class OpenRouterProvider {
@@ -79,21 +84,22 @@ export class OpenRouterProvider {
 
     if (this.supportsReasoning()) {
       body.max_completion_tokens = maxOutput
-      const mode = options.thinkingMode ?? 'basic'
+      const effort = effortFromMode(options.thinkingMode)
       const isAnthropic = this.model.startsWith('anthropic/')
 
-      if (mode === 'none') {
+      if (effort === 'off') {
         if (isAnthropic) {
           // Anthropic via OpenRouter: no reasoning object = thinking disabled
         } else {
           body.reasoning_effort = reasoningMandatory(this.model) ? 'low' : 'none'
         }
       } else {
-        const effort = mode === 'max' ? 'high' : 'medium'
+        // OpenRouter normalises effort to low|medium|high; high and max both
+        // resolve to 'high' (the routed model can't expose a distinct max here).
         if (isAnthropic) {
-          body.reasoning = { effort }
+          body.reasoning = { effort: 'high' }
         } else {
-          body.reasoning_effort = effort
+          body.reasoning_effort = 'high'
         }
         body.include_reasoning = true
       }

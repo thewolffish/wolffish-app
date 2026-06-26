@@ -6,6 +6,7 @@ import type {
   ToolDefinition,
   UserContentBlock
 } from '@main/runtime/thalamus'
+import { thinkingEnabled } from '@main/runtime/reasoning'
 
 const MIMO_ENDPOINT = 'https://api.xiaomimimo.com/v1/chat/completions'
 
@@ -37,9 +38,10 @@ export class MimoProvider {
       stream_options: { include_usage: true }
     }
 
-    // MiMo thinking: enabled by default, disable only when explicitly set to 'none'
-    const mode = options.thinkingMode ?? 'basic'
-    body.thinking = { type: mode === 'none' ? 'disabled' : 'enabled' }
+    // MiMo thinking is binary via thinking.type. Verified live: enable_thinking
+    // is IGNORED (false still reasons); only thinking.type:disabled turns it off.
+    // No effort levels / thinking_budget.
+    body.thinking = { type: thinkingEnabled(options.thinkingMode) ? 'enabled' : 'disabled' }
 
     if (options.tools && options.tools.length > 0) {
       body.tools = options.tools.map(toTool)

@@ -1,4 +1,20 @@
-## v1.0.191 — 2026-06-26 `Latest`
+## v1.0.192 — 2026-06-26 `Latest`
+
+### A Per-Model Reasoning Brain Button
+
+The thinking-mode dropdown is now a single brain icon beside the send button. One click cycles only the reasoning levels the current model actually honors — **off**, **on**, **high**, or **max** — and it lights up by tier (gray off, accent when thinking, purple at max). Models that can't be turned down (always-on reasoners) or don't reason at all show the button locked rather than hidden, so its place never shifts as you switch models.
+
+Under the hood, two separate knobs control reasoning: **thinking** — whether the model reasons at all before answering — and **effort** — how hard it reasons when it does. Different providers expose one, the other, or both, each in their own wording. The brain button folds both into one escalating scale, so you just dial intelligence up or down on demand — off for a fast, direct answer; up through higher effort for deeper reasoning — without needing to know which knob a given model uses.
+
+Every cloud and local provider was verified against its live API so the button never offers a level the model will reject: Claude Haiku stops at high while Opus and Sonnet reach max, Grok 4 and the QwQ/QvQ models reason always-on, GLM-5 takes effort levels while GLM-4 is a plain on/off, and so on across all twelve providers.
+
+### Right Logo for Every Provider
+
+The active-model chip now shows each provider's own logo — xAI, Qwen, Stepfun, and OpenRouter included — instead of a generic cloud icon.
+
+---
+
+## v1.0.191 — 2026-06-26
 
 ### Wolffish Asks You — With Real Choices
 

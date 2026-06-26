@@ -6,6 +6,7 @@ import type {
   ToolDefinition,
   UserContentBlock
 } from '@main/runtime/thalamus'
+import { thinkingEnabled } from '@main/runtime/reasoning'
 
 const MINIMAX_ENDPOINT = 'https://api.minimaxi.chat/v1/chat/completions'
 
@@ -37,13 +38,12 @@ export class MiniMaxProvider {
       stream_options: { include_usage: true }
     }
 
-    // MiniMax thinking: only M3 can disable; M2.x always thinks (param ignored).
-    // 'adaptive' = model decides depth (default), 'disabled' = no thinking.
-    const mode = options.thinkingMode ?? 'basic'
-    if (mode === 'none') {
-      body.thinking = { type: 'disabled' }
-    } else {
+    // MiniMax thinking is binary; reasoning_effort is IGNORED (never sent).
+    // 'adaptive' = model decides depth (the on-value), 'disabled' = no thinking.
+    if (thinkingEnabled(options.thinkingMode)) {
       body.thinking = { type: 'adaptive' }
+    } else {
+      body.thinking = { type: 'disabled' }
     }
 
     if (options.tools && options.tools.length > 0) {

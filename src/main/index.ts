@@ -353,6 +353,7 @@ async function fetchProviderModels(
         data?: Array<{ id: string; created_at?: string }>
       }
       const models = (body.data ?? [])
+        .filter((m) => isAnthropicChatModel(m.id))
         .slice()
         .sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''))
         .map((m) => m.id)
@@ -392,6 +393,7 @@ async function fetchProviderModels(
         data?: Array<{ id: string; created?: number }>
       }
       const models = (body.data ?? [])
+        .filter((m) => isMiMoChatModel(m.id))
         .slice()
         .sort((a, b) => (b.created ?? 0) - (a.created ?? 0))
         .map((m) => m.id)
@@ -564,17 +566,29 @@ async function fetchProviderModels(
   }
 }
 
-// OpenAI's /v1/models returns embeddings, audio, image, moderation, etc.
-// Filter to chat-completion-capable models — gpt-* and the o-series
-// reasoning models. Exclude obvious non-chat variants (audio/realtime/tts).
+// Anthropic /v1/models returns the full historical catalog (claude-2, the
+// claude-3.x generations, dated snapshots, etc.). Wolffish supports the current
+// generation — the Claude 4.x family (opus-4 / sonnet-4 / haiku-4) and Fable —
+// which are the models with verified thinking/effort behaviour. Hide the rest so
+// the picker stays focused and the user isn't offered unvalidated models.
+function isAnthropicChatModel(id: string): boolean {
+  return /^claude-(fable|opus-4|sonnet-4|haiku-4)/.test(id)
+}
+
+// OpenAI's /v1/models returns 60+ entries. Keep ANY chat-completions-capable
+// model — reasoning OR not (non-reasoning models just show the brain button
+// off). Omit only what genuinely can't work in Wolffish or adds no value:
+//  • non-chat endpoints (image/audio/tts/realtime/etc.)
+//  • -pro tiers — Responses-API only, 404 on /v1/chat/completions (verified)
+//  • gpt-3.5 — too weak for an agentic assistant
+//  • dated snapshots (…-YYYY-MM-DD or -MMDD) — exact duplicates of the alias
 function isOpenAIChatModel(id: string): boolean {
   if (id.startsWith('gpt-image-') || id.startsWith('chatgpt-image')) return false
-  if (id.startsWith('gpt-') || id.startsWith('chatgpt-')) {
-    if (/-(audio|tts|whisper|search|realtime|transcribe|instruct)/.test(id)) return false
-    return true
-  }
-  if (/^o\d/.test(id)) return true
-  return false
+  if (/-(audio|tts|whisper|search|realtime|transcribe|image|instruct)/.test(id)) return false
+  if (/-pro($|-)/.test(id)) return false
+  if (/(\d{4}-\d{2}-\d{2}|-\d{4})$/.test(id)) return false
+  if (/^gpt-3\.5/.test(id)) return false
+  return /^(gpt-|chatgpt-|o\d)/.test(id)
 }
 
 function isDeepSeekChatModel(id: string): boolean {
@@ -588,28 +602,31 @@ function isMiniMaxChatModel(id: string): boolean {
 function isStepfunChatModel(id: string): boolean {
   if (id.startsWith('step-')) {
     if (/-(image|tts|asr|embed)/.test(id)) return false
+    if (/-\d{4}$/.test(id)) return false // dated snapshot (e.g. step-3.5-flash-2603)
     return true
   }
   return false
 }
 
+// DashScope returns 150+ models. Keep only the clean Qwen chat/reasoning API
+// tiers and drop the noise: non-chat modalities (image/tts/asr/omni/vl/mt/…),
+// open-weight size variants (…-8b, -235b-a22b, -next), dated snapshots,
+// preview/latest aliases, legacy qwen2 / qwen-coder.
 function isQwenChatModel(id: string): boolean {
-  // Include qwen chat/reasoning models, exclude image/video/audio/embedding/translate/asr/tts/omni-realtime
-  if (/^(qwen|qwq|qvq)/.test(id)) {
-    if (
-      /-(image|tts|asr|realtime|embed|livetranslate|captioner|ocr|character)/.test(id) ||
-      /^(wan|z-image|text-embedding|ccai|tongyi)/.test(id) ||
-      id.startsWith('qwen-image') ||
-      id.startsWith('qwen-vl-ocr') ||
-      id.startsWith('qwen-mt') ||
-      id.startsWith('qwen-omni') ||
-      id.startsWith('qwen3-omni') ||
-      id.startsWith('qwen3.5-omni')
+  if (!/^(qwen|qwq|qvq)/.test(id)) return false
+  if (
+    /-(image|tts|asr|realtime|embed|livetranslate|captioner|ocr|character|omni|vl|mt|s2s|vc|vd|tingwu)/.test(
+      id
     )
-      return false
-    return true
-  }
-  return false
+  )
+    return false
+  if (/^(wan|z-image|text-embedding|ccai|tongyi)/.test(id)) return false
+  if (id.startsWith('qwen-image') || id.startsWith('qwen-vl') || id.startsWith('qwen-mt')) return false
+  if (id.startsWith('qwen-coder')) return false // legacy; superseded by qwen3-coder
+  if (/(\d{4}-\d{2}-\d{2})$/.test(id) || /-preview$/.test(id) || /-latest$/.test(id)) return false
+  if (/-\d+b(-a\d+b)?($|-)/.test(id) || /-next($|-)/.test(id)) return false // open-weight sizes
+  if (/^qwen2/.test(id)) return false
+  return true
 }
 
 function isZaiChatModel(id: string): boolean {
@@ -623,11 +640,10 @@ function isZaiChatModel(id: string): boolean {
 }
 
 function isXAIChatModel(id: string): boolean {
-  if (id.startsWith('grok-')) {
-    if (/-(imagine|embed|tts|stt|whisper)/.test(id)) return false
-    return true
-  }
-  return false
+  if (!id.startsWith('grok-')) return false
+  if (/-(imagine|embed|tts|stt|whisper)/.test(id)) return false
+  if (id.includes('multi-agent')) return false // not allowed on /chat/completions
+  return true
 }
 
 function isOpenRouterChatModel(id: string): boolean {
@@ -642,9 +658,21 @@ function isOpenRouterChatModel(id: string): boolean {
   return false
 }
 
+// MiMo /v1/models is unfiltered and includes TTS / voice-clone / voice-design /
+// ASR endpoints, which are not chat models and can't drive Wolffish's agentic
+// loop. Keep only the text/omni chat models.
+function isMiMoChatModel(id: string): boolean {
+  if (!id.startsWith('mimo-')) return false
+  if (/-(tts|voiceclone|voicedesign|asr|embed)/.test(id)) return false
+  return true
+}
+
 function isKimiChatModel(id: string): boolean {
   if (id.startsWith('kimi-') || id.startsWith('moonshot-v1-')) {
-    if (/-(tts|asr|embedding|whisper)/.test(id)) return false
+    // Drop non-chat endpoints and the redundant vision-preview variants —
+    // Kimi's vision is covered by the general k2.x models, so the moonshot
+    // *-vision-preview duplicates just clutter the picker.
+    if (/-(tts|asr|embedding|whisper|vision)/.test(id)) return false
     return true
   }
   return false
@@ -2299,6 +2327,53 @@ app.whenReady().then(async () => {
         return { exists: true, isDirectory: st.isDirectory() }
       } catch {
         return { exists: false, isDirectory: false }
+      }
+    }
+  )
+
+  // List the immediate (top-level) contents of a directory so the chat can
+  // attach a working folder's structure to each turn's context. Resolves a
+  // leading ~. Not workspace-scoped — working folders are arbitrary absolute
+  // paths the user picked. Directories sort first, then alphabetical; the entry
+  // count is capped so a huge directory can't blow up the prompt.
+  ipcMain.handle(
+    'upload:listFolder',
+    async (
+      _e,
+      p: string
+    ): Promise<{
+      entries: { name: string; isDirectory: boolean }[]
+      truncated: boolean
+      omittedDirectories?: number
+      omittedFiles?: number
+      error?: string
+    }> => {
+      const abs = resolveDevicePath(p)
+      if (!abs) return { entries: [], truncated: false, error: 'invalid path' }
+      try {
+        const { readdir } = await import('node:fs/promises')
+        const dirents = await readdir(abs, { withFileTypes: true })
+        const sorted = dirents
+          .map((d) => ({ name: d.name, isDirectory: d.isDirectory() }))
+          .sort((a, b) => {
+            if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1
+            return a.name.localeCompare(b.name)
+          })
+        const LIMIT = 200
+        const omitted = sorted.slice(LIMIT)
+        const omittedDirectories = omitted.filter((e) => e.isDirectory).length
+        return {
+          entries: sorted.slice(0, LIMIT),
+          truncated: omitted.length > 0,
+          omittedDirectories,
+          omittedFiles: omitted.length - omittedDirectories
+        }
+      } catch (err) {
+        return {
+          entries: [],
+          truncated: false,
+          error: err instanceof Error ? err.message : String(err)
+        }
       }
     }
   )

@@ -7,6 +7,7 @@ import type {
   ToolDefinition,
   UserContentBlock
 } from '@main/runtime/thalamus'
+import { effortFromMode } from '@main/runtime/reasoning'
 
 const OPENAI_ENDPOINT = 'https://api.openai.com/v1/chat/completions'
 
@@ -68,15 +69,9 @@ export class OpenAIProvider {
       body.max_completion_tokens = maxOutput
 
       // OpenAI reasoning: reasoning_effort controls depth.
-      // 'none' disables reasoning, 'high' is standard, 'xhigh' is maximum.
-      const mode = options.thinkingMode ?? 'basic'
-      if (mode === 'none') {
-        body.reasoning_effort = 'none'
-      } else if (mode === 'max') {
-        body.reasoning_effort = 'xhigh'
-      } else {
-        body.reasoning_effort = 'high'
-      }
+      // off → 'none' (disabled), high → 'high', max → 'xhigh' (maximum).
+      const effort = effortFromMode(options.thinkingMode)
+      body.reasoning_effort = effort === 'off' ? 'none' : effort === 'max' ? 'xhigh' : 'high'
     } else {
       body.max_tokens = maxOutput
     }

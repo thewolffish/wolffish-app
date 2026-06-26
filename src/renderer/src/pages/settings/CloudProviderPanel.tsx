@@ -131,7 +131,7 @@ const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       output: '$25.00',
       cached: '$0.50',
       badges: ['reasoning'],
-      modes: ['none', 'high']
+      modes: ['none', 'high', 'max']
     },
     {
       name: 'claude-sonnet-4-5-20250929',
@@ -140,7 +140,7 @@ const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       output: '$15.00',
       cached: '$0.30',
       badges: ['reasoning'],
-      modes: ['none', 'high']
+      modes: ['none', 'high', 'max']
     },
     {
       name: 'claude-haiku-4-5-20251001',
@@ -158,26 +158,17 @@ const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       output: '$75.00',
       cached: '$1.50',
       badges: ['reasoning'],
-      modes: ['none', 'high']
+      modes: ['none', 'high', 'max']
     }
   ],
   openai: [
-    {
-      name: 'gpt-5.5-pro',
-      context: '1M',
-      input: '$30.00',
-      output: '$180.00',
-      cached: null,
-      badges: ['frontier', 'reasoning'],
-      modes: ['none', 'high', 'max']
-    },
     {
       name: 'gpt-5.5',
       context: '1M',
       input: '$5.00',
       output: '$30.00',
       cached: '$0.50',
-      badges: ['reasoning'],
+      badges: ['frontier', 'reasoning'],
       modes: ['none', 'high', 'max']
     },
     {
@@ -206,6 +197,139 @@ const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       cached: '$0.02',
       badges: ['fast', 'reasoning'],
       modes: ['none', 'high', 'max']
+    },
+    {
+      name: 'gpt-5.2',
+      context: '1M',
+      input: '—',
+      output: '—',
+      cached: null,
+      badges: ['reasoning'],
+      modes: ['none', 'high', 'max']
+    },
+    {
+      name: 'gpt-5.1',
+      context: '1M',
+      input: '—',
+      output: '—',
+      cached: null,
+      badges: ['reasoning'],
+      modes: ['none', 'high', 'max']
+    },
+    {
+      name: 'gpt-5',
+      context: '1M',
+      input: '$2.50',
+      output: '$10.00',
+      cached: '$1.25',
+      badges: ['reasoning'],
+      modes: ['none', 'high', 'max']
+    },
+    {
+      name: 'gpt-5-mini',
+      context: '1M',
+      input: '$0.25',
+      output: '$2.00',
+      cached: '$0.03',
+      badges: ['fast', 'reasoning'],
+      modes: ['none', 'high', 'max']
+    },
+    {
+      name: 'gpt-5-nano',
+      context: '1M',
+      input: '$0.05',
+      output: '$0.40',
+      cached: '$0.01',
+      badges: ['fast', 'reasoning'],
+      modes: ['none', 'high', 'max']
+    },
+    {
+      name: 'o3',
+      context: '200K',
+      input: '$10.00',
+      output: '$40.00',
+      cached: '$5.00',
+      badges: ['reasoning'],
+      modes: ['none', 'high', 'max']
+    },
+    {
+      name: 'o4-mini',
+      context: '200K',
+      input: '$1.10',
+      output: '$4.40',
+      cached: '$0.55',
+      badges: ['fast', 'reasoning'],
+      modes: ['none', 'high', 'max']
+    },
+    {
+      name: 'o3-mini',
+      context: '200K',
+      input: '$1.10',
+      output: '$4.40',
+      cached: '$0.55',
+      badges: ['fast', 'reasoning'],
+      modes: ['none', 'high', 'max']
+    },
+    {
+      name: 'o1',
+      context: '200K',
+      input: '$15.00',
+      output: '$60.00',
+      cached: '$7.50',
+      badges: ['reasoning'],
+      modes: ['none', 'high', 'max']
+    },
+    {
+      name: 'gpt-4.1',
+      context: '1M',
+      input: '$2.00',
+      output: '$8.00',
+      cached: '$0.50'
+    },
+    {
+      name: 'gpt-4.1-mini',
+      context: '1M',
+      input: '$0.40',
+      output: '$1.60',
+      cached: '$0.10',
+      badges: ['fast']
+    },
+    {
+      name: 'gpt-4.1-nano',
+      context: '1M',
+      input: '$0.10',
+      output: '$0.40',
+      cached: '$0.03',
+      badges: ['fast']
+    },
+    {
+      name: 'gpt-4o',
+      context: '128K',
+      input: '$2.50',
+      output: '$10.00',
+      cached: '$1.25'
+    },
+    {
+      name: 'gpt-4o-mini',
+      context: '128K',
+      input: '$0.15',
+      output: '$0.60',
+      cached: '$0.08',
+      badges: ['fast']
+    },
+    {
+      name: 'gpt-4-turbo',
+      context: '128K',
+      input: '$10.00',
+      output: '$30.00',
+      cached: null
+    },
+    {
+      name: 'gpt-4',
+      context: '8K',
+      input: '$30.00',
+      output: '$60.00',
+      cached: null
     }
   ],
   zai: [
@@ -216,7 +340,7 @@ const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       output: '$4.40',
       cached: '$0.26',
       badges: ['frontier', 'reasoning'],
-      modes: ['none', 'high']
+      modes: ['none', 'high', 'max']
     },
     {
       name: 'glm-5.1',
@@ -225,7 +349,7 @@ const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       output: '$4.40',
       cached: '$0.26',
       badges: ['reasoning'],
-      modes: ['none', 'high']
+      modes: ['none', 'high', 'max']
     },
     {
       name: 'glm-5-turbo',
@@ -234,7 +358,7 @@ const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       output: '$4.00',
       cached: '$0.24',
       badges: ['fast', 'reasoning'],
-      modes: ['none', 'high']
+      modes: ['none', 'high', 'max']
     },
     {
       name: 'glm-5',
@@ -243,7 +367,7 @@ const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       output: '$3.20',
       cached: '$0.20',
       badges: ['reasoning'],
-      modes: ['none', 'high']
+      modes: ['none', 'high', 'max']
     },
     {
       name: 'glm-4.7',
@@ -252,7 +376,7 @@ const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       output: '$2.20',
       cached: '$0.11',
       badges: ['reasoning'],
-      modes: ['none', 'high']
+      modes: ['none', 'on']
     },
     {
       name: 'glm-4.6',
@@ -261,7 +385,7 @@ const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       output: '$2.20',
       cached: '$0.11',
       badges: ['reasoning'],
-      modes: ['none', 'high']
+      modes: ['none', 'on']
     },
     {
       name: 'glm-4.5',
@@ -270,7 +394,7 @@ const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       output: '$2.20',
       cached: '$0.11',
       badges: ['reasoning'],
-      modes: ['none', 'high']
+      modes: ['none', 'on']
     },
     {
       name: 'glm-4.5-air',
@@ -279,7 +403,7 @@ const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       output: '$1.10',
       cached: '$0.03',
       badges: ['fast', 'reasoning'],
-      modes: ['none', 'high']
+      modes: ['none', 'on']
     }
   ],
   deepseek: [
@@ -310,7 +434,7 @@ const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       output: '$2.00',
       cached: 'Free',
       badges: ['frontier', 'reasoning'],
-      modes: ['none', 'high']
+      modes: ['none', 'on']
     },
     {
       name: 'mimo-v2.5',
@@ -319,7 +443,7 @@ const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       output: '$0.80',
       cached: 'Free',
       badges: ['reasoning'],
-      modes: ['none', 'high']
+      modes: ['none', 'on']
     },
     {
       name: 'mimo-v2-pro',
@@ -328,7 +452,7 @@ const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       output: '$2.00',
       cached: 'Free',
       badges: ['reasoning'],
-      modes: ['none', 'high']
+      modes: ['none', 'on']
     },
     {
       name: 'mimo-v2-omni',
@@ -337,7 +461,7 @@ const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       output: '$0.80',
       cached: 'Free',
       badges: ['vision', 'reasoning'],
-      modes: ['none', 'high']
+      modes: ['none', 'on']
     },
     {
       name: 'mimo-v2-flash',
@@ -346,33 +470,8 @@ const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       output: '$0.30',
       cached: null,
       badges: ['fast', 'reasoning'],
-      modes: ['none', 'high']
-    },
-    {
-      name: 'mimo-v2.5-tts',
-      context: '—',
-      input: '—',
-      output: '—',
-      cached: null,
-      badges: ['voice']
-    },
-    {
-      name: 'mimo-v2.5-tts-voiceclone',
-      context: '—',
-      input: '—',
-      output: '—',
-      cached: null,
-      badges: ['voice']
-    },
-    {
-      name: 'mimo-v2.5-tts-voicedesign',
-      context: '—',
-      input: '—',
-      output: '—',
-      cached: null,
-      badges: ['voice']
-    },
-    { name: 'mimo-v2-tts', context: '—', input: '—', output: '—', cached: null, badges: ['voice'] }
+      modes: ['none', 'on']
+    }
   ],
   kimi: [
     {
@@ -382,7 +481,7 @@ const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       output: '$4.00',
       cached: '$0.16',
       badges: ['frontier', 'vision', 'reasoning'],
-      modes: ['none', 'high']
+      modes: ['none', 'on']
     },
     {
       name: 'kimi-k2.5',
@@ -391,35 +490,29 @@ const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       output: '$3.00',
       cached: '$0.10',
       badges: ['vision', 'reasoning'],
-      modes: ['none', 'high']
+      modes: ['none', 'on']
+    },
+    {
+      name: 'kimi-k2.7-code',
+      context: '256K',
+      input: '—',
+      output: '—',
+      cached: null,
+      badges: ['code', 'reasoning'],
+      modes: ['on']
+    },
+    {
+      name: 'kimi-k2.7-code-highspeed',
+      context: '256K',
+      input: '—',
+      output: '—',
+      cached: null,
+      badges: ['code', 'fast', 'reasoning'],
+      modes: ['on']
     },
     { name: 'moonshot-v1-auto', context: '128K', input: '$1.00', output: '$3.00', cached: null },
-    {
-      name: 'moonshot-v1-128k-vision-preview',
-      context: '128K',
-      input: '$2.00',
-      output: '$5.00',
-      cached: null,
-      badges: ['vision']
-    },
     { name: 'moonshot-v1-128k', context: '128K', input: '$2.00', output: '$5.00', cached: null },
-    {
-      name: 'moonshot-v1-32k-vision-preview',
-      context: '32K',
-      input: '$1.00',
-      output: '$3.00',
-      cached: null,
-      badges: ['vision']
-    },
     { name: 'moonshot-v1-32k', context: '32K', input: '$1.00', output: '$3.00', cached: null },
-    {
-      name: 'moonshot-v1-8k-vision-preview',
-      context: '8K',
-      input: '$0.20',
-      output: '$2.00',
-      cached: null,
-      badges: ['vision']
-    },
     { name: 'moonshot-v1-8k', context: '8K', input: '$0.20', output: '$2.00', cached: null }
   ],
   minimax: [
@@ -430,7 +523,7 @@ const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       output: '$1.20',
       cached: '$0.06',
       badges: ['frontier', 'reasoning'],
-      modes: ['none', 'high']
+      modes: ['none', 'on']
     },
     {
       name: 'MiniMax-M2.7',
@@ -438,7 +531,8 @@ const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       input: '$0.30',
       output: '$1.20',
       cached: '$0.06',
-      badges: ['reasoning']
+      badges: ['reasoning'],
+      modes: ['on']
     },
     {
       name: 'MiniMax-M2.7-highspeed',
@@ -446,7 +540,8 @@ const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       input: '$0.60',
       output: '$2.40',
       cached: '$0.06',
-      badges: ['fast']
+      badges: ['fast', 'reasoning'],
+      modes: ['on']
     },
     {
       name: 'MiniMax-M2.5',
@@ -454,7 +549,8 @@ const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       input: '$0.30',
       output: '$1.20',
       cached: '$0.03',
-      badges: ['code']
+      badges: ['code', 'reasoning'],
+      modes: ['on']
     },
     {
       name: 'MiniMax-M2.5-highspeed',
@@ -462,7 +558,8 @@ const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       input: '$0.60',
       output: '$2.40',
       cached: '$0.03',
-      badges: ['code', 'fast']
+      badges: ['code', 'fast', 'reasoning'],
+      modes: ['on']
     },
     {
       name: 'MiniMax-M2.1',
@@ -470,7 +567,8 @@ const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       input: '$0.30',
       output: '$1.20',
       cached: '$0.03',
-      badges: ['reasoning']
+      badges: ['reasoning'],
+      modes: ['on']
     },
     {
       name: 'MiniMax-M2.1-highspeed',
@@ -478,9 +576,18 @@ const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       input: '$0.60',
       output: '$2.40',
       cached: '$0.03',
-      badges: ['fast']
+      badges: ['fast', 'reasoning'],
+      modes: ['on']
     },
-    { name: 'MiniMax-M2', context: '200K', input: '$0.30', output: '$1.20', cached: '$0.03' }
+    {
+      name: 'MiniMax-M2',
+      context: '200K',
+      input: '$0.30',
+      output: '$1.20',
+      cached: '$0.03',
+      badges: ['reasoning'],
+      modes: ['on']
+    }
   ],
   xai: [
     {
@@ -490,7 +597,24 @@ const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       output: '$2.50',
       cached: null,
       badges: ['frontier', 'vision', 'reasoning'],
-      modes: ['none', 'high', 'max']
+      modes: ['none', 'high']
+    },
+    {
+      name: 'grok-4.20-0309-reasoning',
+      context: '256K',
+      input: '$1.25',
+      output: '$2.50',
+      cached: null,
+      badges: ['vision', 'reasoning'],
+      modes: ['on']
+    },
+    {
+      name: 'grok-4.20-0309-non-reasoning',
+      context: '256K',
+      input: '$1.25',
+      output: '$2.50',
+      cached: null,
+      badges: ['vision']
     },
     {
       name: 'grok-build-0.1',
@@ -499,34 +623,7 @@ const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       output: '$2.00',
       cached: null,
       badges: ['code', 'reasoning'],
-      modes: ['none', 'high', 'max']
-    },
-    {
-      name: 'grok-4',
-      context: '256K',
-      input: '$3.00',
-      output: '$15.00',
-      cached: null,
-      badges: ['reasoning'],
-      modes: ['none', 'high']
-    },
-    {
-      name: 'grok-3',
-      context: '131K',
-      input: '$2.00',
-      output: '$10.00',
-      cached: null,
-      badges: ['reasoning'],
-      modes: ['none', 'high']
-    },
-    {
-      name: 'grok-3-mini',
-      context: '131K',
-      input: '$0.30',
-      output: '$0.50',
-      cached: null,
-      badges: ['fast', 'reasoning'],
-      modes: ['none', 'high']
+      modes: ['on']
     }
   ],
   qwen: [
@@ -603,12 +700,38 @@ const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       modes: ['none', 'high', 'max']
     },
     {
-      name: 'qwen-max',
+      name: 'qwen3-coder-flash',
+      context: '131K',
+      input: '$0.40',
+      output: '$1.60',
+      cached: '$0.04',
+      badges: ['code', 'fast', 'reasoning'],
+      modes: ['none', 'high', 'max']
+    },
+    {
+      name: 'qwq-plus',
+      context: '131K',
+      input: '$0.40',
+      output: '$1.60',
+      cached: '$0.04',
+      badges: ['reasoning'],
+      modes: ['on']
+    },
+    {
+      name: 'qvq-max',
       context: '131K',
       input: '$1.60',
       output: '$6.40',
       cached: '$0.16',
-      badges: ['reasoning']
+      badges: ['vision', 'reasoning'],
+      modes: ['on']
+    },
+    {
+      name: 'qwen-max',
+      context: '131K',
+      input: '$1.60',
+      output: '$6.40',
+      cached: '$0.16'
     },
     {
       name: 'qwen-plus',
@@ -616,6 +739,22 @@ const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       input: '$0.40',
       output: '$1.60',
       cached: '$0.04',
+      badges: ['fast']
+    },
+    {
+      name: 'qwen-turbo',
+      context: '1M',
+      input: '$0.30',
+      output: '$0.60',
+      cached: '$0.03',
+      badges: ['fast']
+    },
+    {
+      name: 'qwen-flash',
+      context: '1M',
+      input: '$0.06',
+      output: '$0.24',
+      cached: '$0.006',
       badges: ['fast']
     }
   ],
@@ -626,7 +765,8 @@ const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       input: '$0.83',
       output: '$6.94',
       cached: null,
-      badges: ['frontier', 'reasoning']
+      badges: ['frontier', 'reasoning'],
+      modes: ['on']
     },
     {
       name: 'step-3.5-flash',
@@ -634,424 +774,180 @@ const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       input: '$0.83',
       output: '$6.94',
       cached: null,
-      badges: ['fast', 'reasoning']
+      badges: ['fast', 'reasoning'],
+      modes: ['on']
     }
   ],
   openrouter: [
-    // ── Anthropic ──
     {
-      name: 'anthropic/claude-sonnet-4',
-      context: '200K',
-      input: '$3.00',
-      output: '$15.00',
-      cached: '$0.30',
-      badges: ['frontier', 'reasoning'],
-      modes: ['none', 'high', 'max']
-    },
-    {
-      name: 'anthropic/claude-opus-4',
+      name: 'anthropic/claude-opus-4.1',
       context: '200K',
       input: '$15.00',
       output: '$75.00',
-      cached: '$1.50',
-      badges: ['frontier', 'reasoning'],
-      modes: ['none', 'high', 'max']
+      cached: null,
+      badges: ['reasoning'],
+      modes: ['none', 'high']
     },
     {
-      name: 'anthropic/claude-3.5-sonnet',
-      context: '200K',
-      input: '$3.00',
-      output: '$15.00',
-      cached: '$0.30',
-      badges: ['reasoning']
-    },
-    {
-      name: 'anthropic/claude-3.5-haiku',
-      context: '200K',
-      input: '$0.80',
-      output: '$4.00',
-      cached: '$0.08',
-      badges: ['fast']
-    },
-    {
-      name: 'anthropic/claude-3-opus',
-      context: '200K',
-      input: '$15.00',
-      output: '$75.00',
-      cached: '$1.50',
-      badges: ['reasoning']
-    },
-    // ── OpenAI ──
-    {
-      name: 'openai/gpt-4.1',
+      name: 'anthropic/claude-sonnet-4.5',
       context: '1M',
+      input: '$3.00',
+      output: '$15.00',
+      cached: null,
+      badges: ['reasoning'],
+      modes: ['none', 'high']
+    },
+    {
+      name: 'openai/gpt-5',
+      context: '400K',
+      input: '$1.25',
+      output: '$10.00',
+      cached: null,
+      badges: ['reasoning'],
+      modes: ['none', 'high']
+    },
+    {
+      name: 'openai/gpt-5-mini',
+      context: '400K',
+      input: '$0.25',
+      output: '$2.00',
+      cached: null,
+      badges: ['fast', 'reasoning'],
+      modes: ['none', 'high']
+    },
+    {
+      name: 'openai/o3',
+      context: '200K',
       input: '$2.00',
       output: '$8.00',
-      cached: '$0.50',
-      badges: ['reasoning']
-    },
-    {
-      name: 'openai/gpt-4.1-mini',
-      context: '1M',
-      input: '$0.40',
-      output: '$1.60',
-      cached: '$0.10',
-      badges: ['fast']
-    },
-    {
-      name: 'openai/gpt-4.1-nano',
-      context: '1M',
-      input: '$0.10',
-      output: '$0.40',
-      cached: '$0.025',
-      badges: ['fast']
+      cached: null,
+      badges: ['reasoning'],
+      modes: ['none', 'high']
     },
     {
       name: 'openai/o4-mini',
       context: '200K',
       input: '$1.10',
       output: '$4.40',
-      cached: '$0.275',
-      badges: ['reasoning'],
-      modes: ['none', 'high', 'max']
-    },
-    {
-      name: 'openai/o3-mini',
-      context: '200K',
-      input: '$1.10',
-      output: '$4.40',
-      cached: '$0.55',
-      badges: ['reasoning'],
-      modes: ['none', 'high', 'max']
+      cached: null,
+      badges: ['fast', 'reasoning'],
+      modes: ['none', 'high']
     },
     {
       name: 'openai/gpt-4o',
       context: '128K',
       input: '$2.50',
       output: '$10.00',
-      cached: '$1.25',
-      badges: ['vision']
-    },
-    {
-      name: 'openai/gpt-4o-mini',
-      context: '128K',
-      input: '$0.15',
-      output: '$0.60',
-      cached: '$0.075',
-      badges: ['fast', 'vision']
-    },
-    {
-      name: 'openai/chatgpt-4o-latest',
-      context: '128K',
-      input: '$5.00',
-      output: '$15.00',
       cached: null,
       badges: ['vision']
     },
-    // ── Google ──
     {
-      name: 'google/gemini-2.5-pro-preview',
+      name: 'openai/gpt-4.1',
+      context: '1M',
+      input: '$2.00',
+      output: '$8.00',
+      cached: null
+    },
+    {
+      name: 'google/gemini-2.5-pro',
       context: '1M',
       input: '$1.25',
       output: '$10.00',
-      cached: '$0.3125',
-      badges: ['frontier', 'reasoning'],
-      modes: ['none', 'high', 'max']
-    },
-    {
-      name: 'google/gemini-2.5-flash-preview',
-      context: '1M',
-      input: '$0.15',
-      output: '$0.60',
-      cached: '$0.0375',
-      badges: ['fast', 'reasoning'],
+      cached: null,
+      badges: ['vision', 'reasoning'],
       modes: ['none', 'high']
     },
     {
-      name: 'google/gemini-2.0-flash-001',
+      name: 'google/gemini-2.5-flash',
       context: '1M',
-      input: '$0.10',
-      output: '$0.40',
-      cached: '$0.025',
-      badges: ['fast', 'vision']
-    },
-    {
-      name: 'google/gemini-2.0-flash-lite-001',
-      context: '1M',
-      input: '$0.075',
-      output: '$0.30',
+      input: '$0.30',
+      output: '$2.50',
       cached: null,
-      badges: ['fast']
-    },
-    {
-      name: 'google/gemini-pro-1.5',
-      context: '2M',
-      input: '$1.25',
-      output: '$5.00',
-      cached: '$0.3125',
-      badges: ['vision']
-    },
-    {
-      name: 'google/gemini-flash-1.5',
-      context: '1M',
-      input: '$0.075',
-      output: '$0.30',
-      cached: '$0.01875',
-      badges: ['fast', 'vision']
-    },
-    // ── DeepSeek ──
-    {
-      name: 'deepseek/deepseek-r1-0528',
-      context: '128K',
-      input: '$0.55',
-      output: '$2.19',
-      cached: '$0.14',
-      badges: ['frontier', 'reasoning'],
+      badges: ['fast', 'vision', 'reasoning'],
       modes: ['none', 'high']
     },
     {
       name: 'deepseek/deepseek-r1',
-      context: '128K',
-      input: '$0.55',
-      output: '$2.19',
-      cached: '$0.14',
+      context: '164K',
+      input: '$0.70',
+      output: '$2.50',
+      cached: null,
       badges: ['reasoning'],
       modes: ['none', 'high']
     },
     {
-      name: 'deepseek/deepseek-chat-v3-0324',
-      context: '128K',
-      input: '$0.27',
-      output: '$1.10',
-      cached: '$0.07',
-      badges: ['reasoning']
+      name: 'deepseek/deepseek-chat-v3.1',
+      context: '164K',
+      input: '$0.21',
+      output: '$0.79',
+      cached: null,
+      badges: ['reasoning'],
+      modes: ['none', 'high']
     },
     {
-      name: 'deepseek/deepseek-chat',
-      context: '64K',
-      input: '$0.14',
-      output: '$0.28',
-      cached: '$0.014',
-      badges: ['fast']
+      name: 'x-ai/grok-4.3',
+      context: '1M',
+      input: '$1.25',
+      output: '$2.50',
+      cached: null,
+      badges: ['vision', 'reasoning'],
+      modes: ['none', 'high']
     },
-    // ── Meta Llama ──
+    {
+      name: 'qwen/qwen3-235b-a22b',
+      context: '131K',
+      input: '$0.45',
+      output: '$1.82',
+      cached: null,
+      badges: ['reasoning'],
+      modes: ['none', 'high']
+    },
+    {
+      name: 'z-ai/glm-4.6',
+      context: '203K',
+      input: '$0.43',
+      output: '$1.74',
+      cached: null,
+      badges: ['reasoning'],
+      modes: ['none', 'high']
+    },
     {
       name: 'meta-llama/llama-4-maverick',
       context: '1M',
-      input: '$0.20',
-      output: '$0.85',
-      cached: null,
-      badges: ['vision']
-    },
-    {
-      name: 'meta-llama/llama-4-scout',
-      context: '512K',
-      input: '$0.11',
-      output: '$0.34',
-      cached: null,
-      badges: ['fast', 'vision']
-    },
-    {
-      name: 'meta-llama/llama-3.3-70b-instruct',
-      context: '128K',
-      input: '$0.12',
-      output: '$0.30',
-      cached: null,
-      badges: ['reasoning']
-    },
-    {
-      name: 'meta-llama/llama-3.1-405b-instruct',
-      context: '128K',
-      input: '$0.90',
-      output: '$0.90',
-      cached: null,
-      badges: ['reasoning']
-    },
-    {
-      name: 'meta-llama/llama-3.1-70b-instruct',
-      context: '128K',
-      input: '$0.12',
-      output: '$0.30',
-      cached: null
-    },
-    {
-      name: 'meta-llama/llama-3.1-8b-instruct',
-      context: '128K',
-      input: '$0.02',
-      output: '$0.05',
-      cached: null,
-      badges: ['fast']
-    },
-    // ── Mistral ──
-    {
-      name: 'mistralai/mistral-large-2411',
-      context: '128K',
-      input: '$2.00',
-      output: '$6.00',
-      cached: null,
-      badges: ['reasoning']
-    },
-    {
-      name: 'mistralai/mistral-medium-3',
-      context: '128K',
-      input: '$0.40',
-      output: '$2.00',
-      cached: null
-    },
-    {
-      name: 'mistralai/mistral-small-3.1-24b-instruct',
-      context: '128K',
-      input: '$0.10',
-      output: '$0.30',
-      cached: null,
-      badges: ['fast']
-    },
-    {
-      name: 'mistralai/codestral-2501',
-      context: '256K',
-      input: '$0.30',
-      output: '$0.90',
-      cached: null,
-      badges: ['code']
-    },
-    {
-      name: 'mistralai/ministral-8b',
-      context: '128K',
-      input: '$0.10',
-      output: '$0.10',
-      cached: null,
-      badges: ['fast']
-    },
-    // ── Qwen ──
-    {
-      name: 'qwen/qwq-32b',
-      context: '128K',
-      input: '$0.12',
-      output: '$0.18',
-      cached: null,
-      badges: ['reasoning'],
-      modes: ['none', 'high']
-    },
-    {
-      name: 'qwen/qwen-2.5-72b-instruct',
-      context: '128K',
-      input: '$0.18',
-      output: '$0.18',
-      cached: null,
-      badges: ['reasoning']
-    },
-    {
-      name: 'qwen/qwen-2.5-coder-32b-instruct',
-      context: '32K',
-      input: '$0.07',
-      output: '$0.16',
-      cached: null,
-      badges: ['code']
-    },
-    {
-      name: 'qwen/qwen-2.5-vl-72b-instruct',
-      context: '128K',
-      input: '$0.18',
-      output: '$0.18',
-      cached: null,
-      badges: ['vision']
-    },
-    // ── xAI ──
-    {
-      name: 'x-ai/grok-4.3',
-      context: '256K',
-      input: '$2.00',
-      output: '$10.00',
-      cached: null,
-      badges: ['frontier', 'reasoning'],
-      modes: ['none', 'high']
-    },
-    {
-      name: 'x-ai/grok-3-beta',
-      context: '131K',
-      input: '$3.00',
-      output: '$15.00',
-      cached: null,
-      badges: ['reasoning'],
-      modes: ['none', 'high']
-    },
-    { name: 'x-ai/grok-2-1212', context: '131K', input: '$2.00', output: '$10.00', cached: null },
-    // ── Cohere ──
-    {
-      name: 'cohere/command-r-plus-08-2024',
-      context: '128K',
-      input: '$2.50',
-      output: '$10.00',
-      cached: null,
-      badges: ['reasoning']
-    },
-    {
-      name: 'cohere/command-r-08-2024',
-      context: '128K',
       input: '$0.15',
       output: '$0.60',
       cached: null,
       badges: ['fast']
     },
-    // ── Microsoft ──
     {
-      name: 'microsoft/phi-4',
-      context: '16K',
-      input: '$0.07',
-      output: '$0.14',
+      name: 'meta-llama/llama-3.3-70b-instruct',
+      context: '131K',
+      input: '$0.10',
+      output: '$0.32',
       cached: null,
       badges: ['fast']
     },
     {
-      name: 'microsoft/phi-4-multimodal-instruct',
+      name: 'mistralai/mistral-large',
       context: '128K',
-      input: '$0.07',
-      output: '$0.14',
-      cached: null,
-      badges: ['fast', 'vision']
-    },
-    // ── Perplexity ──
-    {
-      name: 'perplexity/sonar-pro',
-      context: '200K',
-      input: '$3.00',
-      output: '$15.00',
-      cached: null,
-      badges: ['reasoning']
+      input: '$2.00',
+      output: '$6.00',
+      cached: null
     },
     {
-      name: 'perplexity/sonar',
-      context: '128K',
-      input: '$1.00',
-      output: '$1.00',
+      name: 'mistralai/mistral-medium-3',
+      context: '131K',
+      input: '$0.40',
+      output: '$2.00',
       cached: null,
       badges: ['fast']
     },
-    // ── Amazon ──
     {
-      name: 'amazon/nova-pro-v1',
-      context: '300K',
-      input: '$0.80',
-      output: '$3.20',
-      cached: null,
-      badges: ['vision']
-    },
-    {
-      name: 'amazon/nova-lite-v1',
-      context: '300K',
-      input: '$0.06',
-      output: '$0.24',
-      cached: null,
-      badges: ['fast', 'vision']
-    },
-    // ── NousResearch ──
-    {
-      name: 'nousresearch/hermes-3-llama-3.1-405b',
-      context: '128K',
-      input: '$0.90',
-      output: '$0.90',
-      cached: null,
-      badges: ['reasoning']
+      name: 'moonshotai/kimi-k2',
+      context: '131K',
+      input: '$0.57',
+      output: '$2.30',
+      cached: null
     }
   ]
 }

@@ -550,7 +550,9 @@ export type ProviderApi = {
   onUpdated: (listener: (event: ProviderUpdatedEvent) => void) => () => void
 }
 
-export type ThinkingMode = 'none' | 'basic' | 'extended' | 'max' | 'fast' | 'budget'
+// Canonical reasoning scale (see src/main/runtime/reasoning.ts). Inlined here
+// to keep the preload bundle decoupled from main.
+export type ThinkingMode = 'off' | 'on' | 'high' | 'max'
 
 export type ChatApi = {
   send: (payload: {
@@ -1187,6 +1189,21 @@ export type UploadValidationError =
   | { code: 'type_not_supported' }
   | { code: 'vision_not_supported'; model: string }
 
+/** One top-level entry of a working folder, for attaching folder structure to chat context. */
+export type FolderEntry = { name: string; isDirectory: boolean }
+/**
+ * The top-level listing of a working folder (capped). When `truncated`,
+ * `omittedDirectories`/`omittedFiles` count what was dropped past the cap.
+ * `error` is set when the dir was unreadable.
+ */
+export type FolderListing = {
+  entries: FolderEntry[]
+  truncated: boolean
+  omittedDirectories?: number
+  omittedFiles?: number
+  error?: string
+}
+
 export type UploadApi = {
   pickFile: () => Promise<string[]>
   pickFolder: () => Promise<string | null>
@@ -1212,6 +1229,8 @@ export type UploadApi = {
   openExternal: (relativePath: string) => Promise<{ ok: boolean; error?: string }>
   /** Existence + type of a device path (resolves a leading ~), for chat path cards. */
   statPath: (path: string) => Promise<{ exists: boolean; isDirectory: boolean }>
+  /** Top-level contents of a directory (resolves a leading ~), for attaching working-folder structure to chat context. */
+  listFolder: (path: string) => Promise<FolderListing>
   /** Open a directory, or reveal a file in its parent folder (resolves a leading ~). */
   revealPath: (path: string) => Promise<{ ok: boolean; error?: string }>
   download: (relativePath: string) => Promise<{ ok: boolean }>
@@ -1420,6 +1439,7 @@ const api: WolffishApi = {
     validate: (payload) => ipcRenderer.invoke('upload:validate', payload),
     openExternal: (relativePath) => ipcRenderer.invoke('upload:openExternal', relativePath),
     statPath: (path) => ipcRenderer.invoke('upload:statPath', path),
+    listFolder: (path) => ipcRenderer.invoke('upload:listFolder', path),
     revealPath: (path) => ipcRenderer.invoke('upload:revealPath', path),
     download: (relativePath) => ipcRenderer.invoke('upload:download', relativePath),
     revealInFolder: (relativePath) => ipcRenderer.invoke('upload:revealInFolder', relativePath),

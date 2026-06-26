@@ -5,6 +5,7 @@ import { Modal } from '@components/core/Modal'
 import { useToast } from '@components/core/toast/useToast'
 import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
+import { pageTopPadding } from '@lib/utils/platform'
 import type { HeartbeatJobView } from '@preload/index'
 import { useFlow } from '@providers/flow/useFlow'
 import { useLocale } from '@providers/locale/useLocale'
@@ -356,7 +357,7 @@ export function Heartbeat(): React.JSX.Element {
   const sidebarJobs = useMemo(() => parseSidebarJobs(content, jobs, now), [content, jobs, now])
 
   return (
-    <main className="bg-bg flex h-full w-full flex-col pt-10">
+    <main className={cn('bg-bg flex h-full w-full flex-col', pageTopPadding)}>
       <header className="border-border flex items-center justify-between gap-2 border-b px-6 py-3">
         <div className="flex items-center gap-2">
           <button

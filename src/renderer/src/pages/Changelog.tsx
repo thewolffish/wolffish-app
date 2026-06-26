@@ -1,6 +1,7 @@
 import { Markdown } from '@components/core/Markdown'
 import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
+import { pageTopPadding } from '@lib/utils/platform'
 import { useFlow } from '@providers/flow/useFlow'
 import { useLocale } from '@providers/locale/useLocale'
 import { ArrowLeft02Icon, ArrowRight02Icon } from 'hugeicons-react'
@@ -52,8 +53,8 @@ export function Changelog(): React.JSX.Element {
   }, [])
 
   return (
-    <main className="bg-bg flex h-full w-full flex-col pt-10">
-      <header className="border-border flex items-center gap-2 border-b px-6 py-3">
+    <main className={cn('bg-bg flex h-full w-full flex-col', pageTopPadding)}>
+      <header className="border-border flex items-center gap-2 border-b px-3 py-3">
         <button
           type="button"
           onClick={() => goTo(returnTo ?? 'chat')}

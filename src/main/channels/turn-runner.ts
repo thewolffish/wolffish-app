@@ -33,7 +33,7 @@ export type TurnSendOptions = {
   history: ChatHistoryMessage[]
   conversationId?: string | null
   conversationTitle?: string | null
-  thinkingMode?: 'none' | 'basic' | 'extended' | 'max' | 'fast' | 'budget'
+  thinkingMode?: 'off' | 'on' | 'high' | 'max'
   /**
    * External controller. Lets channels tie cancellation to a parent
    * lifecycle (e.g. closing the renderer window aborts every pending

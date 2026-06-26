@@ -3,6 +3,7 @@ import { CopyButton } from '@components/core/CopyButton'
 import { useToast } from '@components/core/toast/useToast'
 import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
+import { pageTopPadding } from '@lib/utils/platform'
 import { useFlow } from '@providers/flow/useFlow'
 import { useLocale } from '@providers/locale/useLocale'
 import { useTheme } from '@providers/theme/useTheme'
@@ -89,7 +90,7 @@ export function MarkdownEditorPage({
   const isDirty = content !== originalContent
 
   return (
-    <main className="bg-bg flex h-full w-full flex-col pt-10">
+    <main className={cn('bg-bg flex h-full w-full flex-col', pageTopPadding)}>
       <header className="border-border flex items-center justify-between gap-2 border-b px-6 py-3">
         <div className="flex items-center gap-2">
           <button

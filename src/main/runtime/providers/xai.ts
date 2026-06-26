@@ -6,6 +6,7 @@ import type {
   ToolDefinition,
   UserContentBlock
 } from '@main/runtime/thalamus'
+import { effortFromMode } from '@main/runtime/reasoning'
 
 const XAI_ENDPOINT = 'https://api.x.ai/v1/chat/completions'
 
@@ -18,8 +19,19 @@ function maxTokensFor(model: string): number {
   return 65536
 }
 
-function isReasoningModel(model: string): boolean {
-  return /^grok-(3-mini|4|build)/i.test(model)
+// grok-4.3 / grok-3-mini accept reasoning_effort (none/low/high — grok-4.3
+// REJECTS 'max' with "Invalid reasoning effort"). grok-4 / grok-4.20-reasoning
+// / grok-build reason ALWAYS-ON and 400 ("does not support reasoningEffort") if
+// the param is sent. -non-reasoning variants don't reason at all.
+function supportsReasoningEffort(model: string): boolean {
+  const m = model.toLowerCase()
+  return m.includes('grok-4.3') || m.includes('grok-3-mini')
+}
+
+function reasons(model: string): boolean {
+  const m = model.toLowerCase()
+  if (m.includes('non-reasoning')) return false
+  return supportsReasoningEffort(m) || m.includes('grok-build') || /^grok-4/.test(m)
 }
 
 export class XAIProvider {
@@ -43,16 +55,13 @@ export class XAIProvider {
       stream_options: { include_usage: true }
     }
 
-    if (isReasoningModel(this.model)) {
+    if (reasons(this.model)) {
       body.max_completion_tokens = maxOutput
-
-      const mode = options.thinkingMode ?? 'basic'
-      if (mode === 'none') {
-        body.reasoning_effort = 'none'
-      } else if (mode === 'max') {
-        body.reasoning_effort = 'high'
-      } else {
-        body.reasoning_effort = 'low'
+      if (supportsReasoningEffort(this.model)) {
+        // grok accepts none/low/high but rejects 'max'; the always-on grok-4 /
+        // grok-build models reject the reasoning_effort param entirely.
+        const effort = effortFromMode(options.thinkingMode)
+        body.reasoning_effort = effort === 'off' ? 'none' : 'high'
       }
     } else {
       body.max_tokens = maxOutput
