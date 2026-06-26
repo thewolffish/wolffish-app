@@ -66,8 +66,7 @@ export class AnthropicProvider {
     //    Haiku can't exceed high and is [off, high] in the registry).
     //  • off is thinking.type:disabled on every model.
     const m = this.model.toLowerCase()
-    const adaptiveOnly =
-      m.includes('opus-4-8') || m.includes('opus-4-7') || m.includes('fable')
+    const adaptiveOnly = m.includes('opus-4-8') || m.includes('opus-4-7') || m.includes('fable')
     const effort = effortFromMode(options.thinkingMode)
     if (effort === 'off') {
       body.thinking = { type: 'disabled' }

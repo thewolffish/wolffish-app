@@ -613,7 +613,8 @@ function isQwenChatModel(id: string): boolean {
   )
     return false
   if (/^(wan|z-image|text-embedding|ccai|tongyi)/.test(id)) return false
-  if (id.startsWith('qwen-image') || id.startsWith('qwen-vl') || id.startsWith('qwen-mt')) return false
+  if (id.startsWith('qwen-image') || id.startsWith('qwen-vl') || id.startsWith('qwen-mt'))
+    return false
   if (id.startsWith('qwen-coder')) return false // legacy; superseded by qwen3-coder
   if (/(\d{4}-\d{2}-\d{2})$/.test(id) || /-preview$/.test(id) || /-latest$/.test(id)) return false
   if (/-\d+b(-a\d+b)?($|-)/.test(id) || /-next($|-)/.test(id)) return false // open-weight sizes
