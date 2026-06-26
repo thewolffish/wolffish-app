@@ -171,7 +171,7 @@ async function testPlugin(): Promise<void> {
 
   // The -r form prints "<file>:0" per file and still exits 1 when every count
   // is zero. All-zero counts are a clean no-match.
-  const grepCountMulti = await run("sh -c 'printf \"a.txt:0\\nb.txt:0\\n\"; exit 1'")
+  const grepCountMulti = await run('sh -c \'printf "a.txt:0\\nb.txt:0\\n"; exit 1\'')
   ok('grep -c -r all-zero counts → success', grepCountMulti.success === true, grepCountMulti.error)
 
   // Guard: a non-zero number on exit 1 is NOT a zero count — must stay a
