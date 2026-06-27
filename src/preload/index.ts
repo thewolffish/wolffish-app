@@ -1106,15 +1106,21 @@ export type UpdaterPhase =
   | 'installing'
   | 'error'
 
+export type UpdaterErrorCode = 'checksum' | 'network' | 'timeout' | 'filesystem' | 'unknown'
+
+export type UpdaterErrorInfo = {
+  code: UpdaterErrorCode
+  message: string
+  detail: string | null
+}
+
 export type UpdaterState = {
   phase: UpdaterPhase
   version: string | null
   percent: number
   releaseNotes: string | null
-  error: string | null
+  error: UpdaterErrorInfo | null
 }
-
-export type UpdaterErrorEvent = { message: string }
 
 export type UpdateCheckResult = { ok: true; version: string | null } | { ok: false; error: string }
 
@@ -1131,7 +1137,6 @@ export type UpdaterApi = {
   onProgress: (listener: (event: UpdateDownloadProgressEvent) => void) => () => void
   onReady: (listener: (event: UpdateReadyEvent) => void) => () => void
   onState: (listener: (state: UpdaterState) => void) => () => void
-  onError: (listener: (event: UpdaterErrorEvent) => void) => () => void
 }
 
 export type SttTranscribeResult =
@@ -1559,8 +1564,7 @@ const api: WolffishApi = {
     onAvailable: (listener) => subscribe('updater:available', listener),
     onProgress: (listener) => subscribe('updater:progress', listener),
     onReady: (listener) => subscribe('updater:ready', listener),
-    onState: (listener) => subscribe('updater:state', listener),
-    onError: (listener) => subscribe('updater:error', listener)
+    onState: (listener) => subscribe('updater:state', listener)
   }
 }
 

@@ -1,9 +1,9 @@
 import { Button } from '@components/core/Button'
 import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn'
-import type { UpdateCheckResult } from '@preload/index'
+import type { UpdateCheckResult, UpdaterErrorInfo } from '@preload/index'
 import { useFlow } from '@providers/flow/useFlow'
-import { Download01Icon } from 'hugeicons-react'
+import { Alert02Icon, Download01Icon } from 'hugeicons-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -20,16 +20,22 @@ type UpdatePhase =
 // remounted after page navigation restores instantly (before getState resolves).
 // These subscriptions are registered once at import and intentionally never
 // torn down — they outlive any single mount of the panel.
-let cachedState: { phase: UpdatePhase; version: string | null; percent: number } = {
+let cachedState: {
+  phase: UpdatePhase
+  version: string | null
+  percent: number
+  error: UpdaterErrorInfo | null
+} = {
   phase: 'idle',
   version: null,
-  percent: 0
+  percent: 0,
+  error: null
 }
 window.api.updater.onState((s) => {
-  cachedState = { phase: s.phase, version: s.version, percent: s.percent }
+  cachedState = { phase: s.phase, version: s.version, percent: s.percent, error: s.error }
 })
 window.api.updater.onReady((event) => {
-  cachedState = { phase: 'ready', version: event.version, percent: 100 }
+  cachedState = { phase: 'ready', version: event.version, percent: 100, error: null }
 })
 
 export function UpdatesPanel(): React.JSX.Element {
@@ -43,6 +49,7 @@ export function UpdatesPanel(): React.JSX.Element {
   const [phase, setPhase] = useState<UpdatePhase>(cachedState.phase)
   const [updateVersion, setUpdateVersion] = useState<string | null>(cachedState.version)
   const [downloadPercent, setDownloadPercent] = useState(cachedState.percent)
+  const [errorInfo, setErrorInfo] = useState<UpdaterErrorInfo | null>(cachedState.error)
   const [saving, setSaving] = useState(false)
   // Flipped once any live updater:state broadcast lands, so the async getState
   // seed below never clobbers fresher state (e.g. reverting 'ready' back to
@@ -62,6 +69,7 @@ export function UpdatesPanel(): React.JSX.Element {
       setPhase((prev) => (prev === 'installing' ? prev : s.phase))
       setUpdateVersion(s.version)
       setDownloadPercent(s.percent)
+      setErrorInfo(s.phase === 'error' ? s.error : null)
     })
     return () => {
       cancelled = true
@@ -78,15 +86,14 @@ export function UpdatesPanel(): React.JSX.Element {
       setDownloadPercent(s.percent)
       // A late 'ready' broadcast must not yank the user out of the install view.
       setPhase((prev) => (prev === 'installing' && s.phase === 'ready' ? 'installing' : s.phase))
-    })
-    const unsubError = window.api.updater.onError((event) => {
-      show({ message: event.message, tone: 'error' })
+      // The error rides along in state and renders as an inline alert (no toast):
+      // surface its detail while in error, clear it the moment a retry advances.
+      setErrorInfo(s.phase === 'error' ? s.error : null)
     })
     return () => {
       unsubState()
-      unsubError()
     }
-  }, [show])
+  }, [])
 
   const onToggleAutoUpdates = useCallback(
     async (next: boolean) => {
@@ -296,19 +303,28 @@ export function UpdatesPanel(): React.JSX.Element {
                   <span>{t('settings.updates.install', 'Update')}</span>
                 </button>
               </div>
+            ) : phase === 'error' ? (
+              <UpdateErrorAlert
+                title={t('settings.updates.errorTitle', 'Update failed')}
+                reason={t(
+                  `settings.updates.errors.${errorInfo?.code ?? 'unknown'}`,
+                  errorInfo?.message ?? 'The update failed to download.'
+                )}
+                detail={errorInfo?.detail ?? null}
+                retryLabel={t('settings.updates.retry', 'Retry')}
+                onRetry={() => void onCheckForUpdates()}
+              />
             ) : (
               <div className="flex items-center justify-between gap-4">
                 <div className="flex flex-col gap-1">
                   <span className="text-fg text-sm font-medium">
                     {t('settings.updates.checkManual', 'Check for updates')}
                   </span>
-                  <p className={cn('text-xs', phase === 'error' ? 'text-red-500' : 'text-muted')}>
-                    {phase === 'error'
-                      ? t('settings.updates.checkError', 'Update failed. Please try again.')
-                      : t(
-                          'settings.updates.checkManualDescription',
-                          'Manually check for new versions.'
-                        )}
+                  <p className="text-muted text-xs">
+                    {t(
+                      'settings.updates.checkManualDescription',
+                      'Manually check for new versions.'
+                    )}
                   </p>
                 </div>
                 <Button
@@ -317,14 +333,55 @@ export function UpdatesPanel(): React.JSX.Element {
                   onClick={() => void onCheckForUpdates()}
                   disabled={phase === 'checking'}
                 >
-                  {phase === 'error'
-                    ? t('settings.updates.retry', 'Retry')
-                    : t('settings.updates.check', 'Check')}
+                  {t('settings.updates.check', 'Check')}
                 </Button>
               </div>
             )}
           </div>
         </section>
+      </div>
+    </div>
+  )
+}
+
+function UpdateErrorAlert({
+  title,
+  reason,
+  detail,
+  retryLabel,
+  onRetry
+}: {
+  title: string
+  reason: string
+  detail: string | null
+  retryLabel: string
+  onRetry: () => void
+}): React.JSX.Element {
+  return (
+    <div
+      role="alert"
+      className={cn(
+        'flex flex-col gap-3 rounded-xl border px-4 py-3',
+        'border-red-300 bg-red-50 text-red-900',
+        'dark:border-red-700 dark:bg-red-900/30 dark:text-red-100'
+      )}
+    >
+      <div className="flex items-start gap-2.5">
+        <Alert02Icon size={16} className="mt-0.5 shrink-0" />
+        <div className="flex min-w-0 flex-col gap-1">
+          <span className="text-sm font-medium">{title}</span>
+          <p className="text-xs leading-relaxed break-words opacity-90">{reason}</p>
+          {detail && (
+            <p className="mt-0.5 max-h-24 overflow-y-auto font-mono text-[11px] leading-relaxed break-words opacity-70">
+              {detail}
+            </p>
+          )}
+        </div>
+      </div>
+      <div className="flex justify-end">
+        <Button type="button" variant="outline" onClick={onRetry}>
+          {retryLabel}
+        </Button>
       </div>
     </div>
   )

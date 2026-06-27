@@ -30,12 +30,63 @@ export type UpdaterPhase =
   | 'installing'
   | 'error'
 
+// Coarse failure category so the renderer can show a friendly, translatable
+// reason instead of electron-updater's raw exception text.
+export type UpdaterErrorCode = 'checksum' | 'network' | 'timeout' | 'filesystem' | 'unknown'
+
+export type UpdaterErrorInfo = {
+  code: UpdaterErrorCode
+  /** Short English summary; the renderer translates by `code` and falls back to this. */
+  message: string
+  /** Sanitized technical detail (long digests shortened) for diagnostics, or null. */
+  detail: string | null
+}
+
 export type UpdaterState = {
   phase: UpdaterPhase
   version: string | null
   percent: number
   releaseNotes: string | null
-  error: string | null
+  error: UpdaterErrorInfo | null
+}
+
+// A sha512 mismatch error embeds two 88-char base64 digests; left raw they blow
+// out the toast/alert width. Collapse any long base64/hex run to a short prefix
+// so the detail stays readable.
+function shortenDigests(text: string): string {
+  return text.replace(/[A-Za-z0-9+/]{20,}={0,2}/g, (m) => `${m.slice(0, 10)}…`)
+}
+
+// Map electron-updater's raw error into a friendly category + sanitized detail.
+function classifyUpdaterError(err: unknown): UpdaterErrorInfo {
+  const raw = (err instanceof Error ? err.message : String(err)).trim()
+  const detail = raw ? shortenDigests(raw) : null
+  const lower = raw.toLowerCase()
+  if (lower.includes('checksum') || lower.includes('sha512') || lower.includes('sha256')) {
+    return {
+      code: 'checksum',
+      message: 'The downloaded update was corrupted and could not be verified.',
+      detail
+    }
+  }
+  if (
+    lower.includes('timed out') ||
+    lower.includes('etimedout') ||
+    lower.includes('esockettimedout')
+  ) {
+    return { code: 'timeout', message: 'The update timed out before it finished.', detail }
+  }
+  if (
+    /enotfound|econnrefused|econnreset|eai_again|getaddrinfo|enetunreach|net::|network|socket hang up/.test(
+      lower
+    )
+  ) {
+    return { code: 'network', message: 'Could not reach the update server.', detail }
+  }
+  if (/ebusy|eperm|eacces|enospc|locked|being used by another/.test(lower)) {
+    return { code: 'filesystem', message: 'Could not save the update to disk.', detail }
+  }
+  return { code: 'unknown', message: 'The update failed to download.', detail }
 }
 
 function extractReleaseNotes(info: UpdateInfo): string | null {
@@ -72,8 +123,12 @@ function setState(patch: Partial<UpdaterState>): void {
   broadcast<UpdaterState>('updater:state', state)
 }
 
-function emitError(message: string): void {
-  broadcast<{ message: string }>('updater:error', { message })
+// Drive the renderer into the error phase. The structured error rides along in
+// `updater:state`, so the panel renders its alert straight from state — no
+// separate error channel to keep in sync.
+function failWith(error: UpdaterErrorInfo): void {
+  lastReady = null
+  setState({ phase: 'error', error })
 }
 
 // Post-100% verification hang watchdog. On Windows the bytes can be fully on
@@ -178,9 +233,11 @@ export function initUpdater(): void {
         verifyWatchdog = null
         if (state.phase === 'verifying') {
           wlog.warn(tag, 'verification timed out')
-          lastReady = null
-          setState({ phase: 'error', error: 'Update verification timed out' })
-          emitError('Update verification timed out')
+          failWith({
+            code: 'timeout',
+            message: 'The update timed out while being verified.',
+            detail: null
+          })
         }
       }, VERIFY_TIMEOUT_MS)
     }
@@ -215,21 +272,19 @@ export function initUpdater(): void {
   autoUpdater.on('error', (err) => {
     wlog.error(tag, err)
     clearVerifyWatchdog()
-    const message = err instanceof Error ? err.message : String(err)
+    const info = classifyUpdaterError(err)
     if (state.phase === 'downloading' || state.phase === 'verifying') {
       // A download/verify failure has no other surface — drop any stale ready
-      // artifact and make it visible + retryable via the error broadcast.
-      lastReady = null
-      setState({ phase: 'error', error: message })
-      emitError(message)
+      // artifact and make it visible + retryable via the error phase.
+      failWith(info)
     } else if (state.phase === 'checking') {
       // A check failure is already reported to the renderer via the
       // updater:check reply (manual) or intentionally silent (launch
-      // auto-check). Return to idle without a duplicate toast.
-      setState({ phase: 'idle', error: message })
+      // auto-check). Return to idle without surfacing the error alert.
+      setState({ phase: 'idle', error: info })
     } else {
       // Error outside an active attempt — record it without changing phase.
-      setState({ error: message })
+      setState({ error: info })
     }
   })
 }
@@ -263,10 +318,12 @@ export function markInstalling(): void {
 
 export function installUpdate(): boolean {
   if (!isUpdateReady()) {
-    const message = 'No downloaded update is ready to install'
-    wlog.warn(tag, message)
-    setState({ phase: 'error', error: message })
-    emitError(message)
+    wlog.warn(tag, 'No downloaded update is ready to install')
+    failWith({
+      code: 'unknown',
+      message: 'No downloaded update is ready to install.',
+      detail: null
+    })
     return false
   }
   wlog.separator('Install')

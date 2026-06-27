@@ -1237,6 +1237,14 @@
       "check": "Check",
       "retry": "Retry",
       "checkError": "Update failed. Please try again.",
+      "errorTitle": "Update failed",
+      "errors": {
+        "checksum": "The downloaded update was corrupted and couldn't be verified. Please try again.",
+        "network": "Couldn't reach the update server. Check your connection and try again.",
+        "timeout": "The update timed out before it finished. Please try again.",
+        "filesystem": "Couldn't save the update to your disk. Close other apps and try again.",
+        "unknown": "The update failed to download. Please try again."
+      },
       "install": "Update",
       "upToDate": "Up to date",
       "updateFound": "Update found",

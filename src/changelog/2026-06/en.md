@@ -1,4 +1,14 @@
-## v1.0.193 — 2026-06-27 `Latest`
+## v1.0.194 — 2026-06-27 `Latest`
+
+### Update Failures Now Explain Themselves
+
+When an update can't be installed, Wolffish now tells you exactly why, in plain language. A failed download is sorted into a real reason — the file arrived corrupted (a checksum mismatch), the update server couldn't be reached, the transfer timed out, or it couldn't be saved to disk — each shown as a clear inline alert with a **Retry** button, in place of the old one-size-fits-all "Update failed. Please try again." The underlying technical detail is still there for diagnostics, just trimmed so a verification error no longer dumps a wall of unreadable hashes.
+
+Two rough edges went with it: a checksum failure used to spill a huge expected-vs-got digest into a toast that ran off the edge of the window — long messages now wrap and stay inside their card, and those raw 88-character hashes are shortened to a readable prefix.
+
+---
+
+## v1.0.193 — 2026-06-27
 
 ### Wolffish Runs on Its Own Schedule
 
