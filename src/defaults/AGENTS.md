@@ -317,14 +317,16 @@ so hidden — `ls -a` to see them). Drop a folder in, and the agent learns a ski
 - **Plugin capability** — `SKILL.md` **+** `plugin/index.mjs` exporting executable
   tools. Most capabilities are plugins.
 
-### The full catalog (24 capabilities)
+### The full catalog (29 capabilities)
 
 | Category | Capability | What it gives the agent (representative tools) |
 |---|---|---|
 | **System** | `.shell` | Run shell commands — `shell_exec` (auto-elevation via native password dialog; `background:true` for servers) |
 | | `.filesystem` | `file_read`, `file_write`, `file_patch` |
 | | `.node` | Node.js runtime + npm — `node_check`, `node_install` |
+| | `.python` | Hermetic uv-managed CPython for native Python plugins — `python_check`, `python_install` |
 | | `.package-manager` | Cross-platform packages (brew/winget/apt/dnf) — `pkg_install`, `pkg_check` |
+| | `.system` | Apps & power — `app_open`, `app_quit`, `app_list`, `open_path`, `system_power` |
 | **Web** | `.web-search` | `web_search` (Brave), `web_fetch` (read a page) |
 | | `.browser` | Headless Playwright automation — `browser_launch`, `browser_navigate`, `browser_click`, … |
 | | `.browser-extension` | Drive the user's **real, logged-in** Chrome/Brave via the extension — ~60 `ext_*` tools (`ext_navigate`, `ext_click`, `ext_set_value`, `ext_read_page`, `ext_query_selector`, `ext_get_url`, `ext_screenshot`, `ext_wait`, …) |
@@ -341,7 +343,12 @@ so hidden — `ls -a` to see them). Drop a folder in, and the agent learns a ski
 | | `.google` | Workspace — `google_gmail_*`, `google_drive_*`, `google_calendar_*`, `google_sheets_*`, contacts, tasks |
 | | `.notion` | Pages, databases, blocks — `notion_search/read_page/create_page/…` |
 | **Desktop** | `.computer-use` | Screen control — `computer_screenshot`, `computer_mouse_click`, `computer_keyboard_type`, … |
-| **Meta** | `.introspect` | The agent inspects itself — `wolffish_status`, `wolffish_performance`, `wolffish_memory` |
+| **Meta** | `.skills` | The agent manages/authors its own capabilities — `skill_list`, `skill_search`, `skill_read_source`, `skill_enable`, `skill_disable`, `skill_delete`, `skill_create`, `skill_reload` |
+| | `.automations` | The agent manages its scheduled heartbeat jobs — `automation_list`, `automation_create`, `automation_edit`, `automation_delete`, `automation_check`, `automation_run` |
+| | `.introspect` | The agent inspects itself — `wolffish_status`, `channel_status`, `wolffish_performance`, `wolffish_memory`, `wolffish_recall`, `wolffish_list_files` |
+| | `.secrets` | Save/list the user's variables & secrets — `add_secret`, `list_secrets` |
+| | `.ask` | Ask the user a multiple-choice question via an in-app card — `ask_user` |
+| | `.utilities` | Small built-ins — `send_file` (deliver a file to the user as an attachment) |
 | | `.planning` | Plan-before-acting discipline (pure skill) |
 
 > `.browser` vs `.browser-extension`: the **extension** acts inside the user's

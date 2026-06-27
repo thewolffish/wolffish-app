@@ -13,9 +13,34 @@ import path from 'node:path'
 
 export const WHATSAPP_CAPABILITY_NAME = 'whatsapp'
 
+/**
+ * One message captured in the channel's per-chat read buffer (see
+ * WhatsAppChannel.readMessages). This is what whatsapp_read formats and
+ * returns — a lightweight view of an observed message, not the raw proto.
+ */
+export type WhatsAppBufferedMessage = {
+  id: string
+  /** Chat JID this message belongs to. */
+  jid: string
+  /** True when the message was sent by the linked account (the user/wolffish). */
+  fromMe: boolean
+  /** Display sender — "me", a push name + phone, or a bare phone/JID. */
+  sender: string
+  /** Extracted text body, or a `<media:…>` placeholder for non-text content. */
+  text: string
+  /** Unix epoch milliseconds. */
+  timestamp: number
+}
+
 type ToolDeps = {
   getSocket: () => WASocket | null
   trackSentId: (id: string) => void
+  /**
+   * Return up to `count` of the most recent messages observed in `jid`,
+   * oldest first. Backed by the channel's in-memory rolling buffer, so it
+   * only covers traffic seen since wolffish connected.
+   */
+  readMessages: (jid: string, count: number) => WhatsAppBufferedMessage[]
 }
 
 // WhatsApp practical upload ceilings. Images/audio are sent inline; documents
@@ -302,6 +327,24 @@ export function buildWhatsAppCapability(deps: ToolDeps): {
           required: true
         }
       }
+    },
+    {
+      name: 'whatsapp_read',
+      description:
+        'Read the most recent messages observed in a WhatsApp chat — a contact DM or a group — returned oldest-first. IMPORTANT: this only covers messages received or sent while wolffish has been connected; it CANNOT fetch older history from before wolffish started and is not a full transcript. Resolve the JID first: use whatsapp_list_groups for a group JID (…@g.us) or whatsapp_check to turn a phone number into a contact JID (…@s.whatsapp.net), then pass that JID here. If no messages for the chat have been seen yet, it says so.',
+      parameters: {
+        jid: {
+          type: 'string',
+          description:
+            'The chat JID to read — <phone>@s.whatsapp.net for a contact or <id>@g.us for a group.',
+          required: true
+        },
+        count: {
+          type: 'number',
+          description: 'How many of the most recent messages to return (default 10, max 50).',
+          required: false
+        }
+      }
     }
   ]
 
@@ -309,7 +352,7 @@ export function buildWhatsAppCapability(deps: ToolDeps): {
     name: WHATSAPP_CAPABILITY_NAME,
     dir: '<in-process>',
     description:
-      "WhatsApp messaging via Baileys (Web client). Look up any phone number to confirm it is on WhatsApp and resolve its JID, list the groups you belong to and inspect a group's members, settings, and invite link, read a contact's profile picture and status — then send text, images, documents, and voice notes (by file path, no manual base64 needed), reply to messages, and react. Works for any WhatsApp contact or group, not just people who have messaged first.",
+      "WhatsApp messaging via Baileys (Web client). Look up any phone number to confirm it is on WhatsApp and resolve its JID, list the groups you belong to and inspect a group's members, settings, and invite link, read a contact's profile picture and status, and read the most recent messages observed in a chat (whatsapp_read — live traffic only, no pre-connect history) — then send text, images, documents, and voice notes (by file path, no manual base64 needed), reply to messages, and react. Works for any WhatsApp contact or group, not just people who have messaged first.",
     triggers: {
       keywords: [
         'whatsapp',
@@ -365,6 +408,8 @@ export function buildWhatsAppCapability(deps: ToolDeps): {
           return groupInvite(sock, args)
         case 'whatsapp_profile':
           return getProfile(sock, args)
+        case 'whatsapp_read':
+          return readChat(args, deps.readMessages)
         default:
           return failure(`unknown whatsapp tool: ${toolName}`)
       }
@@ -673,6 +718,33 @@ async function getProfile(
   return success(lines.join('\n'))
 }
 
+function readChat(
+  args: Record<string, unknown>,
+  read: (jid: string, count: number) => WhatsAppBufferedMessage[]
+): ToolExecutionResult {
+  const jid = stringArg(args.jid)
+  if (!jid) return failure('jid is required')
+  let count = numberArg(args.count) ?? 10
+  if (count < 1) count = 1
+  if (count > 50) count = 50
+
+  const messages = read(jid, count)
+  if (messages.length === 0) {
+    return success(
+      `No messages seen for ${jid} yet. whatsapp_read only captures traffic received or sent while wolffish has been connected — there may simply be none since it started, or the JID may not match the chat. For a contact, resolve the number with whatsapp_check; for a group, get the JID from whatsapp_list_groups.`
+    )
+  }
+
+  const lines = messages.map((m) => {
+    const time = new Date(m.timestamp).toISOString().slice(0, 16).replace('T', ' ')
+    const who = m.fromMe ? 'me' : m.sender
+    return `[${time} UTC] ${who}: ${m.text}`
+  })
+  return success(
+    `Last ${messages.length} message(s) in ${jid} (oldest first):\n${lines.join('\n')}`
+  )
+}
+
 type MediaKind = 'image' | 'audio' | 'document'
 type LoadedMedia = { buffer: Buffer; mimetype: string; basename: string | null }
 
@@ -759,6 +831,12 @@ function stringArg(value: unknown): string | null {
   if (typeof value !== 'string') return null
   const trimmed = value.trim()
   return trimmed.length > 0 ? value : null
+}
+
+function numberArg(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && /^-?\d+$/.test(value.trim())) return Number(value.trim())
+  return null
 }
 
 function errMessage(err: unknown): string {

@@ -260,6 +260,57 @@ export type CerebellumPluginHost = {
   reload: () => Promise<void>
 }
 
+/** A single scheduled automation (heartbeat job) as the agent sees it. */
+export type AutomationJobInfo = {
+  id: string
+  /** Schedule kind — daily, weekly, every, hourly, weekday, monthly, startup, cron. */
+  kind: string
+  /** The 5-field cron expression the job runs on, or null for a startup job. */
+  cron: string | null
+  /** The exact ## heading text (e.g. "Every (5m)"). */
+  label: string
+  /** The instruction body the agent runs when the job fires. */
+  body: string
+  /** Plain-English description of the schedule (e.g. "every 5 minutes"). */
+  human: string
+  /** True while this job is executing right now. */
+  running: boolean
+  /** Epoch ms of the last run, or null if it hasn't run this session. */
+  lastRunAt: number | null
+  /** Outcome of the last run, or null if it hasn't run this session. */
+  lastStatus: 'completed' | 'failed' | 'skipped' | null
+  /** Error text from the last run, when it failed. */
+  lastError?: string
+}
+
+/**
+ * Automation-management surface injected into the `automations` capability's
+ * plugin via its init context (PluginContext.automations). Implemented in the
+ * main process (index.ts) over the live Brainstem instance, so agent-driven
+ * automation management and the engine that actually fires the jobs share one
+ * source of truth: the same parser validates a schedule, the same reload path
+ * applies an edit, the same executeJob runs a job on demand. Optional on
+ * PluginContext — every plugin other than `automations` ignores it.
+ */
+export type AutomationsHost = {
+  /** Read the raw brainstem/heartbeat.md file verbatim. */
+  readHeartbeat: () => Promise<string>
+  /** Overwrite brainstem/heartbeat.md, reload the scheduler, return the new live jobs. */
+  writeHeartbeat: (raw: string) => Promise<{ ok: boolean; jobs: AutomationJobInfo[]; error?: string }>
+  /** Live snapshot of every scheduled automation, enriched with run status. */
+  listJobs: () => AutomationJobInfo[]
+  /** Validate a proposed schedule heading and describe it; the syntax single-source-of-truth. */
+  previewSchedule: (
+    heading: string
+  ) =>
+    | { ok: true; kind: string; cron: string | null; human: string; runAt?: number | null }
+    | { ok: false; error: string }
+  /** The currently-running automation, if any. */
+  getRunningJob: () => { id: string; label: string; body: string; startedAt: number } | null
+  /** Run an automation immediately by id or heading label (fire-and-forget). */
+  runJobNow: (idOrLabel: string) => { ok: boolean; started: boolean; error?: string }
+}
+
 export type PluginContext = {
   pluginDir: string
   workspaceRoot: string
@@ -286,6 +337,13 @@ export type PluginContext = {
    * other plugin.
    */
   host?: CerebellumPluginHost
+  /**
+   * Automation-management surface. Present only when the host wired one in via
+   * setAutomationsHost — used by the `automations` capability to list, create,
+   * edit, delete, check, and run the scheduled heartbeat jobs. Undefined for
+   * every other plugin.
+   */
+  automations?: AutomationsHost
   /**
    * Ask the user a multiple-choice question and block until they answer.
    * Used by the `ask` capability to pause the agent loop, render an
@@ -351,6 +409,7 @@ export class Cerebellum {
   private currentConversationId: string | null = null
   private disabled = new Set<string>()
   private pluginHost?: CerebellumPluginHost
+  private automationsHost?: AutomationsHost
   /**
    * Bumped every time the live tool surface changes — a reload (skills
    * added/edited/removed) or an enable/disable toggle. The agent loop pins
@@ -434,6 +493,16 @@ export class Cerebellum {
    */
   setPluginHost(host: CerebellumPluginHost): void {
     this.pluginHost = host
+  }
+
+  /**
+   * Wire the automation-management host (implemented in the main process over
+   * the Brainstem) that the `automations` capability's plugin receives in its
+   * init context. Set once at startup; survives reload() so the bridge keeps
+   * working after the plugin is re-imported.
+   */
+  setAutomationsHost(host: AutomationsHost): void {
+    this.automationsHost = host
   }
 
   isDisabled(name: string): boolean {
@@ -1034,6 +1103,7 @@ export class Cerebellum {
         getCurrentConversationId: () => this.currentConversationId,
         sudo: sudoSession,
         host: this.pluginHost,
+        automations: this.automationsHost,
         askUser: (input) => this.dispatchAskUser(input),
         getChannelStatus: () => this.channelStatusProvider?.() ?? []
       })

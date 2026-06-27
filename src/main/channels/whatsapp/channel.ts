@@ -8,9 +8,20 @@ import {
 import {
   extractTextBody,
   isInboundVoiceNote,
+  messageTimestamp,
   shouldProcessMessage
 } from '@main/channels/whatsapp/messages'
-import { buildWhatsAppCapability, WHATSAPP_CAPABILITY_NAME } from '@main/channels/whatsapp/tools'
+import {
+  deleteReadHistory,
+  flushReadHistory,
+  loadReadHistory,
+  scheduleReadHistoryFlush
+} from '@main/channels/whatsapp/read-history'
+import {
+  buildWhatsAppCapability,
+  WHATSAPP_CAPABILITY_NAME,
+  type WhatsAppBufferedMessage
+} from '@main/channels/whatsapp/tools'
 import {
   createConversation,
   deleteConversation,
@@ -249,9 +260,18 @@ export class WhatsAppChannel {
 
     const { capability, plugin } = buildWhatsAppCapability({
       getSocket: () => this.sock,
-      trackSentId: (id) => this.sentIds.add(id)
+      trackSentId: (id) => this.sentIds.add(id),
+      readMessages: (jid, count) => this.readMessages(jid, count)
     })
     this.agent.cerebellum.registerInProcessCapability(capability, plugin)
+
+    // Seed the read buffer from disk so whatsapp_read has history from earlier
+    // sessions. loadReadHistory never throws; an empty/corrupt file is fine.
+    if (this.readBuffer.size === 0) {
+      for (const [jid, msgs] of await loadReadHistory()) {
+        this.readBuffer.set(jid, msgs)
+      }
+    }
 
     const hasAuth = await this.hasAuthCredentials()
     if (hasAuth) {
@@ -293,6 +313,14 @@ export class WhatsAppChannel {
     this.activeByJid.clear()
     this.pendingSelections.clear()
     this.lidToPhone.clear()
+    // Persist the read buffer before dropping it so history survives a restart;
+    // on logout, delete it instead so a different linked account starts clean.
+    if (reason === 'logout') {
+      await deleteReadHistory()
+    } else {
+      await flushReadHistory(this.readBuffer)
+    }
+    this.readBuffer.clear()
 
     this.status = 'disconnected'
     this.statusError = null
@@ -603,12 +631,126 @@ export class WhatsAppChannel {
     this.MESSAGE_STORE_KEYS.push(id)
   }
 
+  // --- Per-chat read buffer (in-memory, backs whatsapp_read) ---
+  //
+  // Baileys has no reliable "fetch last N messages" API and dropped its
+  // built-in store, so we keep our own rolling buffer of observed messages
+  // per chat JID. It only holds traffic seen since this socket connected —
+  // there is no pre-connect history. Cleared on stop()/logout.
+
+  private readonly readBuffer = new Map<string, WhatsAppBufferedMessage[]>()
+  private readonly READ_BUFFER_MAX_PER_CHAT = 100
+  private readonly READ_BUFFER_MAX_CHATS = 200
+
+  /**
+   * Record one observed message into its chat's rolling buffer. Skips
+   * broadcasts/status/protocol noise (shouldProcessMessage) and anything with
+   * no extractable text/placeholder. Captures fromMe messages too, so reads
+   * show both sides of a conversation.
+   */
+  private bufferForRead(msg: WAMessage): void {
+    if (!shouldProcessMessage(msg)) return
+    const jid = msg.key.remoteJid
+    if (!jid) return
+    const text = extractTextBody(msg)
+    if (!text) return
+
+    const fromMe = msg.key.fromMe === true
+    const entry: WhatsAppBufferedMessage = {
+      id: msg.key.id ?? '',
+      jid,
+      fromMe,
+      sender: this.resolveBufferSender(msg, jid, fromMe),
+      text,
+      timestamp: messageTimestamp(msg).getTime()
+    }
+
+    let arr = this.readBuffer.get(jid)
+    if (!arr) {
+      if (this.readBuffer.size >= this.READ_BUFFER_MAX_CHATS) {
+        const oldestChat = this.readBuffer.keys().next().value
+        if (oldestChat) this.readBuffer.delete(oldestChat)
+      }
+      arr = []
+      this.readBuffer.set(jid, arr)
+    }
+    // Dedup: the same id can arrive via both `notify` and an `append`/sync.
+    if (entry.id && arr.some((m) => m.id === entry.id)) return
+    arr.push(entry)
+    if (arr.length > this.READ_BUFFER_MAX_PER_CHAT) {
+      arr.splice(0, arr.length - this.READ_BUFFER_MAX_PER_CHAT)
+    }
+    scheduleReadHistoryFlush(this.readBuffer)
+  }
+
+  /** Build a human display for a message's sender ("me" for outgoing). */
+  private resolveBufferSender(msg: WAMessage, jid: string, fromMe: boolean): string {
+    if (fromMe) return 'me'
+    const name = msg.pushName?.trim() ?? ''
+    const phone = jid.endsWith('@g.us')
+      ? this.phoneFromJid(msg.key.participant ?? '')
+      : this.phoneFromJid(jid)
+    if (name && phone) return `${name} (${phone})`
+    return name || phone || 'unknown'
+  }
+
+  /** Strip a JID down to a phone number, resolving @lid via the lid map. */
+  private phoneFromJid(jid: string): string {
+    if (!jid) return ''
+    const local = jid.split('@')[0].split(':')[0]
+    if (jid.endsWith('@lid') || jid.endsWith('@hosted.lid')) {
+      return this.lidToPhone.get(local) ?? local
+    }
+    return local
+  }
+
+  /**
+   * Return up to `count` of the most recent buffered messages for `jid`,
+   * oldest first. For a contact DM, falls back to matching by phone digits so
+   * a @s.whatsapp.net JID still finds a chat buffered under @lid (and vice
+   * versa). Groups (@g.us) match by exact JID only.
+   */
+  readMessages(jid: string, count: number): WhatsAppBufferedMessage[] {
+    let arr = this.readBuffer.get(jid)
+    if (!arr && !jid.endsWith('@g.us')) {
+      const want = this.phoneFromJid(jid).replace(/[^0-9]/g, '')
+      if (want) {
+        for (const [key, msgs] of this.readBuffer) {
+          if (key.endsWith('@g.us')) continue
+          const have = this.phoneFromJid(key).replace(/[^0-9]/g, '')
+          if (have && (have === want || have.endsWith(want) || want.endsWith(have))) {
+            arr = msgs
+            break
+          }
+        }
+      }
+    }
+    if (!arr || arr.length === 0) return []
+    // Sort by timestamp so "last N" is truly chronological even if a synced
+    // history message arrived after a live one. Copy so the buffer is untouched.
+    return [...arr].sort((a, b) => a.timestamp - b.timestamp).slice(-count)
+  }
+
   // --- Inbound message handling ---
 
   private handleMessagesUpsert(upsert: BaileysEventMap['messages.upsert'], sock: WASocket): void {
     // Drop events flushed from a socket we've already replaced/torn down so
     // a stale message can't spin up a ghost turn after stop() or a reconnect.
     if (this.sock !== sock) return
+
+    // Capture every observed message (notify + history/append) into the
+    // per-chat read buffer that whatsapp_read queries. Runs before the
+    // notify-only turn guard below so reads also see the user's own
+    // outgoing messages and chats that aren't on the allow-list. Wrapped
+    // so a buffer hiccup can never disrupt the message-delivery path.
+    try {
+      for (const msg of upsert.messages) {
+        this.bufferForRead(msg)
+      }
+    } catch {
+      // best-effort: read history is non-critical, never block delivery
+    }
+
     if (upsert.type !== 'notify') return
 
     for (const msg of upsert.messages) {

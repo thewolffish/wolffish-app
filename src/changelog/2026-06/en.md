@@ -1,4 +1,16 @@
-## v1.0.192 — 2026-06-26 `Latest`
+## v1.0.193 — 2026-06-27 `Latest`
+
+### Wolffish Runs on Its Own Schedule
+
+Wolffish now manages its own scheduled jobs — its heartbeat — entirely through conversation. Say "every morning brief me on my calendar," "in 2 days remind me to renew the lease," or "check the build every hour," and it creates the automation; ask it to list, change, delete, or test one and it does. One-time jobs fire once and remove themselves; recurring ones keep going. Jobs never overlap — one that comes due while another is running waits its turn instead of being dropped — and anything missed while the app was closed runs once, collapsed, on the next launch.
+
+### Read a WhatsApp Chat
+
+A new **whatsapp_read** tool lets Wolffish catch up on the latest messages in any WhatsApp contact or group, returned oldest-first. It covers traffic seen while Wolffish is connected — not older history from before it started — and that buffer now survives restarts, so it no longer resets every launch.
+
+---
+
+## v1.0.192 — 2026-06-26
 
 ### A Per-Model Reasoning Brain Button
 

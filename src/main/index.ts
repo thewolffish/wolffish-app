@@ -61,6 +61,7 @@ import {
 } from '@main/ollama'
 import { Agent } from '@main/runtime/agent'
 import type { ApprovalDecision } from '@main/runtime/amygdala'
+import { previewSchedule } from '@main/runtime/brainstem'
 import type { AskUserResponse } from '@main/runtime/cerebellum'
 import { deleteCapabilityFolder, importCapability } from '@main/runtime/capabilityImport'
 import { MODEL_CATALOG } from '@main/runtime/models'
@@ -2225,6 +2226,62 @@ app.whenReady().then(async () => {
       const cfg = await readConfig()
       agent.cerebellum.setDisabled(cfg?.disabledCapabilities ?? [])
     }
+  })
+
+  // Automation-management bridge handed to the `automations` capability's
+  // plugin via its init context. Every method runs over the live Brainstem so
+  // the agent edits the same heartbeat.md the scheduler reads, validates a
+  // schedule with the exact parser that registers it, and reloads through the
+  // one serialized path the file-watcher uses — there is one source of truth
+  // for "what automations exist and when they fire", not two.
+  const heartbeatPath = (): string => join(workspaceRoot(), 'brain', 'brainstem', 'heartbeat.md')
+  const snapshotAutomations = (): import('@main/runtime/cerebellum').AutomationJobInfo[] => {
+    const running = agent.brainstem.getRunningJob()
+    const statuses = agent.brainstem.getJobStatuses()
+    return agent.brainstem.getActiveJobs().map((j) => {
+      const preview = previewSchedule(j.label)
+      const status = statuses[j.label]
+      return {
+        id: j.id,
+        kind: j.type,
+        cron: j.cron,
+        label: j.label,
+        body: j.body,
+        human: preview.ok ? preview.human : '(unrecognized schedule)',
+        running: running?.id === j.id,
+        lastRunAt: status?.lastRunAt ?? null,
+        lastStatus: status?.lastStatus ?? null,
+        ...(status?.lastError ? { lastError: status.lastError } : {})
+      }
+    })
+  }
+  agent.cerebellum.setAutomationsHost({
+    readHeartbeat: async () => {
+      const { readFile } = await import('node:fs/promises')
+      try {
+        return await readFile(heartbeatPath(), 'utf8')
+      } catch {
+        return ''
+      }
+    },
+    writeHeartbeat: async (raw) => {
+      const { writeFile, mkdir } = await import('node:fs/promises')
+      try {
+        await mkdir(join(workspaceRoot(), 'brain', 'brainstem'), { recursive: true })
+        await writeFile(heartbeatPath(), raw, 'utf8')
+      } catch (err) {
+        return { ok: false, jobs: snapshotAutomations(), error: err instanceof Error ? err.message : String(err) }
+      }
+      // Apply live in the same turn rather than waiting on the chokidar watcher,
+      // so the agent can verify the new job list immediately. The watcher's
+      // own reload on this write is harmless — reloadScheduler is serialized.
+      await agent.brainstem.reloadScheduler()
+      return { ok: true, jobs: snapshotAutomations() }
+    },
+    listJobs: () => snapshotAutomations(),
+    previewSchedule: (heading) => previewSchedule(heading),
+    getRunningJob: () => agent.brainstem.getRunningJob(),
+    runJobNow: (idOrLabel) => agent.brainstem.runJobNow(idOrLabel)
   })
 
   // Voice — read TTS-generated audio files for the renderer's AudioPlayer

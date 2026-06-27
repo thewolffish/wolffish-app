@@ -135,6 +135,8 @@ export type CorpusEvents = {
     error: string
   }
   'brainstem.jobSkipped': { job: string; label: string; reason: string }
+  'brainstem.jobCoalesced': { job: string; label: string }
+  'brainstem.jobCatchup': { job: string; label: string; missedAt: string }
   'brainstem.schedulerReloaded': { jobs: number; timestamp: string }
 
   'usage.recorded': {

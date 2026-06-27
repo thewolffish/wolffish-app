@@ -1,13 +1,28 @@
 # Heartbeat
 
-Wolffish's autonomic schedule. Each `##` heading defines a scheduled job.
-The brainstem parses headings on startup, registers cron jobs, and routes
-the body text through the full agent pipeline when the job fires.
+Wolffish's autonomic schedule. Each `##` heading defines a scheduled job —
+the heading IS the schedule, the body is the instruction. The brainstem parses
+the headings, registers the jobs, and routes each body through the full agent
+pipeline when the job fires.
 
-The body under each heading is the instruction — plain text, no markdown
-bullets needed. The agent receives it as a user message and decides what
-tools to call. Heartbeat jobs auto-approve tool calls that would normally
-need confirmation. Each job creates a sealed conversation visible in history.
+The body is plain text (no markdown bullets needed). The agent receives it as a
+user message and decides what tools to call. Heartbeat jobs **auto-approve** tool
+calls that would normally need confirmation, and each run is a **sealed
+conversation** visible in history.
+
+Behavior worth knowing:
+- **One at a time, queued.** Jobs never overlap; if one fires while another is
+  running it waits in line and runs next — it's never dropped.
+- **Missed runs catch up.** If the app was off when a job was due, it runs once
+  on the next launch — collapsed (a recurring job that missed several fires runs
+  a single catch-up), for misses within the last 24 hours.
+- **One-time jobs self-delete.** A `Once (YYYY-MM-DD HH:MM)` heading fires a
+  single time, then removes its own entry from this file.
+
+You don't have to hand-edit this file: just ask Wolffish ("every morning…", "in
+2 days remind me…") and it manages these jobs for you with its `automation_*`
+tools (list / create / edit / delete / check / run). Hand-editing still works —
+the schedule forms are below.
 
 Memory compaction (daily and weekly) is configured separately in
 Settings > Hippocampus > Compaction and is not part of this file.
@@ -31,6 +46,19 @@ on startup then never again until the next restart.
 Check all connected integrations (Telegram, WhatsApp, email) and
 report any that failed to initialize. Summarize status in a short
 memo to memory.
+
+
+── ONE-TIME ───────────────────────────────────────────────────────────
+Fires a single time at an absolute local date-time, then deletes its own
+entry from this file. Format: Once (<YYYY-MM-DD> <HH>:<MM>)
+When asking Wolffish, you can also say "in 15 minutes" / "in 2 hours" /
+"in 2 days" — it converts that to an absolute Once for you. (The relative
+"In (…)" form isn't hand-writable here, since it couldn't survive a restart.)
+
+## Once (2026-12-31 23:30)
+
+Wish me a happy new year and give me a short recap of my biggest wins
+this year, drawn from my episodes and knowledge files.
 
 
 ── EVERY (MINUTES) ────────────────────────────────────────────────────

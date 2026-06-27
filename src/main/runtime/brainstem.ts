@@ -34,6 +34,7 @@ export type ScheduleKind =
   | 'monthly'
   | 'startup'
   | 'cron'
+  | 'once'
 
 export type BrainstemJob = {
   id: string
@@ -42,6 +43,8 @@ export type BrainstemJob = {
   label: string
   body: string
   task: ScheduledTask | null
+  /** Epoch ms a one-time ('once') job fires; null for recurring/startup jobs. */
+  runAt?: number | null
 }
 
 export type CompactionResult = {
@@ -86,10 +89,22 @@ const NOTHING_TO_PROMOTE = /nothing to promote/i
 const DEFAULT_DEBOUNCE_MS = 500
 const MIN_EPISODE_ENTRIES_FOR_COMPACTION = 3
 
+// How far back a missed run may be and still fire as a catch-up on launch.
+// Older misses are retired without running. Collapse + this window bound the
+// catch-up flush to roughly "one run per automation", so no hard cap is needed.
+const CATCHUP_WINDOW_MS = 24 * 60 * 60 * 1000
+// Cadence at which the live "last seen" heartbeat tick is persisted, so the
+// next launch can tell how long the app was down and which fires it missed.
+const TICK_INTERVAL_MS = 60 * 1000
+// setTimeout's max delay (~24.8 days). A one-time job further out than this is
+// rejected at create time, so this is just a safety guard.
+const MAX_TIMER_MS = 2 ** 31 - 1
+
 // ── Schedule heading regexes ──────────────────────────────────────────
 const STARTUP_RE = /^Startup$/i
 const EVERY_RE = /^Every\s*\((\d+)(m|h)\)$/i
 const HOURLY_RE = /^Hourly\s*\(:?(\d{1,2})\)$/i
+const ONCE_RE = /^Once\s*\((\d{4})-(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{2})\)$/i
 const DAILY_NIGHTLY_RE = /^(?:Nightly|Daily)\s*\((\d{1,2}):(\d{2})\)$/i
 const WEEKDAY_RE = /^Weekday\s*\((\d{1,2}):(\d{2})\)$/i
 const WEEKLY_RE =
@@ -113,6 +128,8 @@ export type ParsedSchedule = {
   cron: string | null
   label: string
   body: string
+  /** Epoch ms a one-time ('once') schedule fires; undefined for recurring. */
+  runAt?: number | null
 }
 
 export type RunningJobInfo = {
@@ -121,6 +138,27 @@ export type RunningJobInfo = {
   body: string
   startedAt: number
 }
+
+/**
+ * Last-run bookkeeping for a single heartbeat job, surfaced to the
+ * `automations` capability via the AutomationsHost bridge so the agent can
+ * answer "is anything running, and how did the last runs go?" without a
+ * separate event store. Updated in runOne; reset on scheduler reload is
+ * deliberately NOT done — history survives an edit so the model can still see
+ * the previous run after the user tweaks a schedule.
+ */
+export type JobRunStatus = {
+  lastRunAt: number | null
+  lastStatus: 'completed' | 'failed' | 'skipped' | null
+  lastError?: string
+  lastDurationMs?: number
+  runCount: number
+}
+
+/** Result of validating a proposed schedule heading against the engine. */
+export type SchedulePreview =
+  | { ok: true; kind: ScheduleKind; cron: string | null; human: string; runAt?: number | null }
+  | { ok: false; error: string }
 
 export type JobLogEntry = {
   id: string
@@ -145,13 +183,37 @@ export class Brainstem {
   private watcher: FSWatcher | null = null
   private jobs = new Map<string, BrainstemJob>()
   private pendingIndex = new Map<string, NodeJS.Timeout>()
-  private runningJobs = new Set<string>()
   private runningJobInfo: RunningJobInfo | null = null
-  private jobQueue: Promise<void> = Promise.resolve()
+  // Jobs run one-at-a-time through a FIFO queue. An overlapping fire is QUEUED
+  // (not dropped), and coalesced per job id so a slow job can't build a backlog
+  // of its own ticks. `currentJobId` is the job draining right now.
+  private queue: Array<{
+    schedule: ParsedSchedule
+    handler: () => Promise<void>
+    onComplete?: () => void
+  }> = []
+  private draining = false
+  private currentJobId: string | null = null
+  // One-time ('once') jobs: pending fire timers keyed by job id, and the labels
+  // that have already fired this session (so a reload can't re-arm or re-run a
+  // one-shot before its self-deletion from the file lands).
+  private onceTimers = new Map<string, NodeJS.Timeout>()
+  private firedOnce = new Set<string>()
+  // Persisted "last seen" tick, used on the next launch to detect downtime and
+  // replay (collapsed) the recurring fires that were missed while down.
+  private tickTimer: NodeJS.Timeout | null = null
   private compactionTasks: ScheduledTask[] = []
   private compactionConfig: CompactionConfig = DEFAULT_COMPACTION
   private readonly debounceMs: number
   private listener: BrainstemListener | null = null
+  // Per-job last-run bookkeeping, keyed by the job's heading LABEL — the stable
+  // identity across reloads. (Job ids like `every-2` are positional and shift
+  // when a same-kind job is added or removed, which would misattribute one
+  // job's run history to another after an edit/delete.)
+  private jobStatuses = new Map<string, JobRunStatus>()
+  // Serializes scheduler reloads so a bridge-driven write and the chokidar
+  // watcher firing on that same write can't interleave their stop/start.
+  private reloadInFlight: Promise<void> = Promise.resolve()
 
   constructor(options: BrainstemOptions = {}) {
     this.workspaceRoot = options.workspaceRoot ?? null
@@ -177,7 +239,10 @@ export class Brainstem {
 
   async init(): Promise<void> {
     await this.startWatcher()
+    // startScheduler reads the persisted last-seen tick to compute catch-up, so
+    // it must run before startTicking overwrites that tick with "now".
     await this.startScheduler()
+    this.startTicking()
     this.startCompactionScheduler()
   }
 
@@ -187,6 +252,9 @@ export class Brainstem {
 
   async stopAll(): Promise<void> {
     this.stopCompactionScheduler()
+    this.stopTicking()
+    // Record a final tick so a clean shutdown is the downtime boundary.
+    await this.saveState({ lastTickAt: Date.now() })
     await this.stopScheduler()
     await this.stopWatcher()
   }
@@ -234,7 +302,15 @@ export class Brainstem {
     this.watcher = null
   }
 
-  async startScheduler(): Promise<void> {
+  /**
+   * Build the cron schedule from heartbeat.md. `runStartup` fires the one-shot
+   * `## Startup` jobs; it is true only on the initial start (from init()) and
+   * false on every reload (from performReload). Without that gate a Startup
+   * job — contractually "runs once on launch, never again until restart" —
+   * would re-fire every time any automation is created/edited/deleted, since
+   * each write reloads the scheduler.
+   */
+  async startScheduler(runStartup = true): Promise<void> {
     if (this.jobs.size > 0) return
     if (!this.workspaceRoot) return
 
@@ -263,6 +339,22 @@ export class Brainstem {
         continue
       }
 
+      // One-time jobs use a setTimeout for their exact moment, not cron, and
+      // self-delete from the file after firing. Registered for visibility.
+      if (schedule.kind === 'once') {
+        this.jobs.set(schedule.id, {
+          id: schedule.id,
+          type: schedule.kind,
+          cron: null,
+          label: schedule.label,
+          body: schedule.body,
+          task: null,
+          runAt: schedule.runAt ?? null
+        })
+        this.scheduleOnce(schedule, runStartup)
+        continue
+      }
+
       if (!schedule.cron) continue
       const handler = this.handlerFor(schedule.kind, schedule.body, schedule.label)
       if (!handler) continue
@@ -270,7 +362,7 @@ export class Brainstem {
       let task: ScheduledTask
       try {
         task = cron.schedule(schedule.cron, async () => {
-          await this.executeJob(schedule, handler)
+          this.enqueue(schedule, handler)
         })
       } catch {
         continue
@@ -285,10 +377,16 @@ export class Brainstem {
       })
     }
 
-    for (const startup of startupJobs) {
-      const handler = this.handlerFor(startup.kind, startup.body, startup.label)
-      if (!handler) continue
-      void this.executeJob(startup, handler)
+    // On the initial start only: replay (collapsed) the recurring fires missed
+    // while the app was down, then fire the one-shot Startup jobs. Neither runs
+    // on a reload triggered by an edit.
+    if (runStartup) {
+      await this.runCatchUp(schedules)
+      for (const startup of startupJobs) {
+        const handler = this.handlerFor(startup.kind, startup.body, startup.label)
+        if (!handler) continue
+        this.enqueue(startup, handler)
+      }
     }
   }
 
@@ -301,12 +399,26 @@ export class Brainstem {
         // best-effort
       }
     }
+    for (const timer of this.onceTimers.values()) clearTimeout(timer)
+    this.onceTimers.clear()
     this.jobs.clear()
   }
 
-  private async reloadScheduler(): Promise<void> {
+  /**
+   * Re-read brainstem/heartbeat.md and rebuild the cron schedule. Public so
+   * the `automations` capability can apply an edit live in the same turn, and
+   * serialized so this call and the chokidar watcher firing on the same write
+   * can't interleave their stop/start (which could double-register a job).
+   */
+  async reloadScheduler(): Promise<void> {
+    const next = this.reloadInFlight.catch(() => {}).then(() => this.performReload())
+    this.reloadInFlight = next
+    await next
+  }
+
+  private async performReload(): Promise<void> {
     await this.stopScheduler()
-    await this.startScheduler()
+    await this.startScheduler(false)
     this.corpus?.emit('brainstem.schedulerReloaded', {
       jobs: this.jobs.size,
       timestamp: new Date().toISOString()
@@ -410,22 +522,61 @@ export class Brainstem {
     return { date: targetDate, promoted, skipped: false }
   }
 
-  private async executeJob(schedule: ParsedSchedule, handler: () => Promise<void>): Promise<void> {
-    if (this.runningJobs.size > 0) {
-      this.corpus?.emit('brainstem.jobSkipped', {
-        job: schedule.id,
-        label: schedule.label,
-        reason: 'another job is running'
-      })
+  /**
+   * Queue a job to run. Jobs run one-at-a-time; an overlapping fire is QUEUED
+   * rather than dropped. Coalesced per job id — if this job is already running
+   * or already waiting in the queue, the new fire is folded into the pending
+   * one (so a slow recurring job can never accumulate a backlog of its own
+   * ticks). Returns true if a new queue slot was taken, false if coalesced.
+   */
+  private enqueue(
+    schedule: ParsedSchedule,
+    handler: () => Promise<void>,
+    onComplete?: () => void
+  ): boolean {
+    if (
+      this.currentJobId === schedule.id ||
+      this.queue.some((q) => q.schedule.id === schedule.id)
+    ) {
+      this.corpus?.emit('brainstem.jobCoalesced', { job: schedule.id, label: schedule.label })
       this.listener?.onJobLog?.({
         id: schedule.id,
         timestamp: Date.now(),
         kind: 'skipped',
-        summary: `Skipped "${schedule.label}" — another job is running`
+        summary: `Coalesced "${schedule.label}" — it's already running or queued`
       })
-      return
+      return false
     }
-    this.runningJobs.add(schedule.id)
+    this.queue.push({ schedule, handler, onComplete })
+    void this.drain()
+    return true
+  }
+
+  /** Drain the queue one job at a time. Reentrancy-guarded by `draining`. */
+  private async drain(): Promise<void> {
+    if (this.draining) return
+    this.draining = true
+    try {
+      while (this.queue.length > 0) {
+        const item = this.queue.shift()!
+        this.currentJobId = item.schedule.id
+        try {
+          await this.runOne(item.schedule, item.handler)
+        } finally {
+          this.currentJobId = null
+        }
+        try {
+          item.onComplete?.()
+        } catch {
+          // an onComplete (e.g. once self-delete) must not break the drain loop
+        }
+      }
+    } finally {
+      this.draining = false
+    }
+  }
+
+  private async runOne(schedule: ParsedSchedule, handler: () => Promise<void>): Promise<void> {
     const start = Date.now()
     const info: RunningJobInfo = {
       id: schedule.id,
@@ -463,6 +614,12 @@ export class Brainstem {
         kind: 'completed',
         summary: `Completed "${schedule.label}" in ${Math.round((Date.now() - start) / 1000)}s`
       })
+      this.recordStatus(schedule, {
+        lastStatus: 'completed',
+        lastRunAt: Date.now(),
+        lastDurationMs: Date.now() - start,
+        bumpRun: true
+      })
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       this.corpus?.emit('brainstem.jobFailed', {
@@ -479,10 +636,260 @@ export class Brainstem {
         kind: 'failed',
         summary: `Failed "${schedule.label}": ${message}`
       })
+      this.recordStatus(schedule, {
+        lastStatus: 'failed',
+        lastError: message,
+        lastRunAt: Date.now(),
+        lastDurationMs: Date.now() - start,
+        bumpRun: true
+      })
     } finally {
-      this.runningJobs.delete(schedule.id)
       this.runningJobInfo = null
     }
+  }
+
+  // ── One-time ('once') jobs ────────────────────────────────────────────
+
+  /**
+   * Arm a one-time job: a setTimeout for its exact moment. If the moment is
+   * already past, fire a single catch-up run when it's within the catch-up
+   * window AND this is the initial start (not a reload); otherwise retire it
+   * unrun. `firedOnce` guards against a reload re-arming a one-shot that has
+   * already fired but not yet self-deleted from the file.
+   */
+  private scheduleOnce(schedule: ParsedSchedule, runStartup: boolean): void {
+    if (this.firedOnce.has(schedule.label)) return
+    const handler = this.handlerFor('once', schedule.body, schedule.label)
+    if (!handler) return
+    const runAt = schedule.runAt ?? 0
+    const delay = runAt - Date.now()
+    if (delay > MAX_TIMER_MS) {
+      // A single setTimeout can't span more than ~24.8 days (e.g. a 28-day
+      // "In (28d)" / far "Once (...)"). Re-arm at the ceiling and recompute the
+      // remaining delay then — chained until it's within range.
+      const timer = setTimeout(() => {
+        this.onceTimers.delete(schedule.id)
+        this.scheduleOnce(schedule, false)
+      }, MAX_TIMER_MS)
+      if (typeof timer.unref === 'function') timer.unref()
+      this.onceTimers.set(schedule.id, timer)
+      return
+    }
+    if (delay > 0) {
+      const timer = setTimeout(() => this.fireOnce(schedule, handler), delay)
+      if (typeof timer.unref === 'function') timer.unref()
+      this.onceTimers.set(schedule.id, timer)
+      return
+    }
+    const overdueBy = Date.now() - runAt
+    if (runStartup && overdueBy <= CATCHUP_WINDOW_MS) {
+      this.corpus?.emit('brainstem.jobCatchup', {
+        job: schedule.id,
+        label: schedule.label,
+        missedAt: new Date(runAt).toISOString()
+      })
+      this.fireOnce(schedule, handler)
+    } else {
+      // Stale (older than the window) or hit on a reload: drop it from the file
+      // without firing.
+      void this.retireOnce(schedule.label)
+    }
+  }
+
+  private fireOnce(schedule: ParsedSchedule, handler: () => Promise<void>): void {
+    this.onceTimers.delete(schedule.id)
+    if (this.firedOnce.has(schedule.label)) return
+    this.firedOnce.add(schedule.label)
+    // Self-delete once the run actually completes (not before — so a queued
+    // one-shot that hasn't run yet stays in the file and survives a reload).
+    this.enqueue(schedule, handler, () => void this.retireOnce(schedule.label))
+  }
+
+  /** Remove a one-time job's entry from heartbeat.md, then reload. */
+  private async retireOnce(label: string): Promise<void> {
+    if (!this.workspaceRoot) return
+    const p = path.join(this.workspaceRoot, 'brain', 'brainstem', 'heartbeat.md')
+    try {
+      const raw = await fs.readFile(p, 'utf8')
+      const next = stripHeartbeatHeading(raw, label)
+      if (next !== raw) await fs.writeFile(p, next, 'utf8')
+    } catch {
+      // best-effort — worst case the entry lingers and is retired next launch
+    }
+    await this.reloadScheduler()
+  }
+
+  // ── Downtime catch-up ─────────────────────────────────────────────────
+
+  /**
+   * On the initial start, replay the recurring fires missed while the app was
+   * down — collapsed to ONE run per job (a 3-hour outage of an "every 15m" job
+   * is a single catch-up, not twelve), and only for fires within the catch-up
+   * window. One-time jobs handle their own catch-up in scheduleOnce.
+   */
+  private async runCatchUp(schedules: ParsedSchedule[]): Promise<void> {
+    const now = Date.now()
+    const state = await this.loadState()
+    const downtimeStart = state?.lastTickAt ?? now
+    // Advance the tick immediately so a crash mid-flush can't re-flush the same
+    // misses on the next launch.
+    await this.saveState({ lastTickAt: now })
+    const windowStart = Math.max(downtimeStart, now - CATCHUP_WINDOW_MS)
+    if (windowStart >= now) return // fresh install or no measurable gap
+
+    for (const s of schedules) {
+      if (s.kind === 'startup' || s.kind === 'once' || !s.cron) continue
+      const lastFire = mostRecentCronOccurrence(s.cron, now, CATCHUP_WINDOW_MS)
+      // Missed iff the most recent scheduled fire happened during the downtime
+      // window (after we went down, within 24h).
+      if (lastFire !== null && lastFire > windowStart) {
+        const handler = this.handlerFor(s.kind, s.body, s.label)
+        if (!handler) continue
+        this.corpus?.emit('brainstem.jobCatchup', {
+          job: s.id,
+          label: s.label,
+          missedAt: new Date(lastFire).toISOString()
+        })
+        this.enqueue(s, handler)
+      }
+    }
+  }
+
+  private statePath(): string | null {
+    return this.workspaceRoot
+      ? path.join(this.workspaceRoot, 'brain', 'brainstem', 'heartbeat-state.json')
+      : null
+  }
+
+  private async loadState(): Promise<{ lastTickAt: number } | null> {
+    const p = this.statePath()
+    if (!p) return null
+    try {
+      const parsed = JSON.parse(await fs.readFile(p, 'utf8'))
+      return typeof parsed?.lastTickAt === 'number' ? { lastTickAt: parsed.lastTickAt } : null
+    } catch {
+      return null
+    }
+  }
+
+  private async saveState(state: { lastTickAt: number }): Promise<void> {
+    const p = this.statePath()
+    if (!p) return
+    try {
+      await fs.writeFile(p, JSON.stringify(state), 'utf8')
+    } catch {
+      // best-effort — a missed tick just means a slightly wider downtime window
+    }
+  }
+
+  private startTicking(): void {
+    this.stopTicking()
+    void this.saveState({ lastTickAt: Date.now() })
+    this.tickTimer = setInterval(
+      () => void this.saveState({ lastTickAt: Date.now() }),
+      TICK_INTERVAL_MS
+    )
+    if (typeof this.tickTimer.unref === 'function') this.tickTimer.unref()
+  }
+
+  private stopTicking(): void {
+    if (this.tickTimer) {
+      clearInterval(this.tickTimer)
+      this.tickTimer = null
+    }
+  }
+
+  /**
+   * Merge a status patch into a job's last-run record, keyed by the job's
+   * heading label (stable across reloads). `bumpRun` increments the run
+   * counter (set on a real run, not a skip).
+   */
+  private recordStatus(
+    schedule: { id: string; label: string },
+    patch: Partial<JobRunStatus> & { bumpRun?: boolean }
+  ): void {
+    const prev = this.jobStatuses.get(schedule.label) ?? {
+      lastRunAt: null,
+      lastStatus: null,
+      runCount: 0
+    }
+    const { bumpRun, ...rest } = patch
+    const next: JobRunStatus = {
+      ...prev,
+      ...rest,
+      runCount: prev.runCount + (bumpRun ? 1 : 0)
+    }
+    this.jobStatuses.set(schedule.label, next)
+  }
+
+  /**
+   * Last-run status for every job that has run (or been skipped) this session,
+   * keyed by job LABEL. Backs the `automations` capability's status view.
+   */
+  getJobStatuses(): Record<string, JobRunStatus> {
+    const out: Record<string, JobRunStatus> = {}
+    for (const [key, value] of this.jobStatuses) {
+      out[key] = { ...value }
+    }
+    return out
+  }
+
+  /**
+   * Run a heartbeat job on demand, identified by its id (e.g. "every-2") or its
+   * exact heading label (e.g. "Every (5m)"). Goes through the very same queue a
+   * cron fire uses, so it runs one-at-a-time and produces the same sealed
+   * conversation + listener events. Fire-and-forget: returns as soon as the run
+   * is queued. If the job is already running or queued, it's coalesced (started
+   * = false) rather than run twice.
+   */
+  runJobNow(idOrLabel: string): { ok: boolean; started: boolean; error?: string } {
+    const job = this.findJob(idOrLabel)
+    if (!job) {
+      return { ok: false, started: false, error: `No automation matches "${idOrLabel}".` }
+    }
+    if (job.body.trim().length === 0) {
+      return {
+        ok: false,
+        started: false,
+        error: `Automation "${job.label}" has no instruction body.`
+      }
+    }
+    const handler = this.handlerFor(job.type, job.body, job.label)
+    if (!handler)
+      return {
+        ok: false,
+        started: false,
+        error: `Automation "${job.label}" has no runnable handler.`
+      }
+    const schedule: ParsedSchedule = {
+      id: job.id,
+      kind: job.type,
+      cron: job.cron,
+      label: job.label,
+      body: job.body,
+      runAt: job.runAt ?? null
+    }
+    const accepted = this.enqueue(schedule, handler)
+    if (!accepted) {
+      return {
+        ok: true,
+        started: false,
+        error: `"${job.label}" is already running or queued — it'll run shortly.`
+      }
+    }
+    return { ok: true, started: true }
+  }
+
+  /** Resolve a job by id first, then by exact (case-insensitive) label. */
+  private findJob(idOrLabel: string): BrainstemJob | undefined {
+    const needle = idOrLabel.trim()
+    const byId = this.jobs.get(needle)
+    if (byId) return byId
+    const lower = needle.toLowerCase()
+    for (const job of this.jobs.values()) {
+      if (job.label.toLowerCase() === lower) return job
+    }
+    return undefined
   }
 
   private handlerFor(
@@ -496,11 +903,8 @@ export class Brainstem {
 
   private runHeartbeatJob(instruction: string, label: string): Promise<void> {
     if (!this.agent) return Promise.resolve()
-    const job = this.jobQueue.then(() =>
-      this.agent!.processAutonomous({ instruction, jobLabel: label }).then(() => undefined)
-    )
-    this.jobQueue = job.catch(() => undefined)
-    return job
+    // Serialization is handled by the drain loop, so this just runs the turn.
+    return this.agent.processAutonomous({ instruction, jobLabel: label }).then(() => undefined)
   }
 
   private async runWeeklyReview(jobId?: string): Promise<void> {
@@ -535,7 +939,7 @@ export class Brainstem {
     try {
       this.compactionTasks.push(
         cron.schedule(dailyCron, () => {
-          void this.executeJob(
+          this.enqueue(
             {
               id: 'compaction-daily',
               kind: 'daily',
@@ -556,7 +960,7 @@ export class Brainstem {
     try {
       this.compactionTasks.push(
         cron.schedule(weeklyCron, () => {
-          void this.executeJob(
+          this.enqueue(
             {
               id: 'compaction-weekly',
               kind: 'weekly',
@@ -622,6 +1026,8 @@ export class Brainstem {
 
 function shouldIgnoreWatch(filepath: string): boolean {
   const normalized = filepath.replace(/\\/g, '/')
+  // The heartbeat "last seen" tick is rewritten every minute — never react to it.
+  if (normalized.endsWith('/brain/brainstem/heartbeat-state.json')) return true
   if (normalized.endsWith('cortex.db')) return true
   if (normalized.endsWith('cortex.db-wal') || normalized.endsWith('cortex.db-shm')) return true
   if (normalized.includes('/.debug/')) return true
@@ -663,7 +1069,8 @@ export function parseHeartbeat(raw: string): ParsedSchedule[] {
       kind: parsed.kind,
       cron: parsed.cron,
       label: headingText,
-      body
+      body,
+      runAt: parsed.runAt ?? null
     })
   }
 
@@ -683,10 +1090,48 @@ function collectBody(lines: string[], startIndex: number): string {
     .trim()
 }
 
-function matchSchedule(text: string): { kind: ScheduleKind; cron: string | null } | null {
+function matchSchedule(
+  text: string
+): { kind: ScheduleKind; cron: string | null; runAt?: number } | null {
+  // A friendly form whose built cron is out of range (e.g. "Every (0m)" →
+  // "*/0 * * * *", "Daily (99:99)") must be REJECTED here, not accepted and
+  // then silently dropped when cron.schedule throws on the next reload —
+  // otherwise the model is told a "ghost" job is scheduled when it never fires.
+  // Validating the built expression against the same node-cron the scheduler
+  // uses keeps previewSchedule honest. Returns null on an invalid range.
+  const withCron = (
+    kind: ScheduleKind,
+    expr: string
+  ): { kind: ScheduleKind; cron: string } | null =>
+    cron.validate(expr) ? { kind, cron: expr } : null
+
   // Startup — no cron, runs once on init
   if (STARTUP_RE.test(text)) {
     return { kind: 'startup', cron: null }
+  }
+
+  // Once (YYYY-MM-DD HH:MM) — fires a single time, then self-deletes. The local
+  // wall-clock time is resolved to an absolute epoch; an out-of-range date/time
+  // (e.g. month 13, 25:99) is rejected by checking the constructed Date's parts
+  // round-trip, mirroring the range guard on the recurring forms.
+  const once = ONCE_RE.exec(text)
+  if (once) {
+    const y = Number(once[1])
+    const mo = Number(once[2])
+    const d = Number(once[3])
+    const hh = Number(once[4])
+    const mm = Number(once[5])
+    const dt = new Date(y, mo - 1, d, hh, mm, 0, 0)
+    if (
+      dt.getFullYear() !== y ||
+      dt.getMonth() !== mo - 1 ||
+      dt.getDate() !== d ||
+      dt.getHours() !== hh ||
+      dt.getMinutes() !== mm
+    ) {
+      return null
+    }
+    return { kind: 'once', cron: null, runAt: dt.getTime() }
   }
 
   // Every (Nm) or Every (Nh)
@@ -694,15 +1139,14 @@ function matchSchedule(text: string): { kind: ScheduleKind; cron: string | null 
   if (every) {
     const n = Number(every[1])
     const unit = every[2].toLowerCase()
-    if (unit === 'm') return { kind: 'every', cron: `*/${n} * * * *` }
-    return { kind: 'every', cron: `0 */${n} * * *` }
+    return unit === 'm' ? withCron('every', `*/${n} * * * *`) : withCron('every', `0 */${n} * * *`)
   }
 
   // Hourly (:MM) or Hourly (MM)
   const hourly = HOURLY_RE.exec(text)
   if (hourly) {
     const mm = Number(hourly[1])
-    return { kind: 'hourly', cron: `${mm} * * * *` }
+    return withCron('hourly', `${mm} * * * *`)
   }
 
   // Daily (HH:MM) or Nightly (HH:MM) — both parse as 'daily'
@@ -710,7 +1154,7 @@ function matchSchedule(text: string): { kind: ScheduleKind; cron: string | null 
   if (daily) {
     const hh = Number(daily[1])
     const mm = Number(daily[2])
-    return { kind: 'daily', cron: `${mm} ${hh} * * *` }
+    return withCron('daily', `${mm} ${hh} * * *`)
   }
 
   // Weekday (HH:MM)
@@ -718,7 +1162,7 @@ function matchSchedule(text: string): { kind: ScheduleKind; cron: string | null 
   if (weekday) {
     const hh = Number(weekday[1])
     const mm = Number(weekday[2])
-    return { kind: 'weekday', cron: `${mm} ${hh} * * 1-5` }
+    return withCron('weekday', `${mm} ${hh} * * 1-5`)
   }
 
   // Weekly (Day HH:MM)
@@ -727,7 +1171,7 @@ function matchSchedule(text: string): { kind: ScheduleKind; cron: string | null 
     const day = DAY_OF_WEEK[weekly[1].toLowerCase()] ?? 0
     const hh = Number(weekly[2])
     const mm = Number(weekly[3])
-    return { kind: 'weekly', cron: `${mm} ${hh} * * ${day}` }
+    return withCron('weekly', `${mm} ${hh} * * ${day}`)
   }
 
   // Monthly (DD HH:MM)
@@ -736,7 +1180,7 @@ function matchSchedule(text: string): { kind: ScheduleKind; cron: string | null 
     const dd = Number(monthly[1])
     const hh = Number(monthly[2])
     const mm = Number(monthly[3])
-    return { kind: 'monthly', cron: `${mm} ${hh} ${dd} * *` }
+    return withCron('monthly', `${mm} ${hh} ${dd} * *`)
   }
 
   // Cron (raw expression)
@@ -750,6 +1194,211 @@ function matchSchedule(text: string): { kind: ScheduleKind; cron: string | null 
   }
 
   return null
+}
+
+/**
+ * Every valid schedule heading form, in one place. Shared by previewSchedule's
+ * error message and the automations capability's docs so the syntax can never
+ * drift between what the engine accepts and what the agent is told to write.
+ */
+export const SCHEDULE_SYNTAX_HELP =
+  'Valid forms (the text inside the ## heading): one-time → "Once (2026-06-27 14:30)" ' +
+  '(runs once then deletes itself); recurring → "Startup" · "Every (5m)" / "Every (2h)" · ' +
+  '"Hourly (30)" · "Daily (08:00)" or "Nightly (23:00)" · "Weekday (09:00)" · ' +
+  '"Weekly (Monday 09:30)" · "Monthly (1 09:00)" · "Cron (0 9 * * 1,3,5)".'
+
+/**
+ * Validate a proposed schedule heading exactly the way the scheduler will
+ * parse it (single source of truth — wraps matchSchedule), and describe it in
+ * plain English. The automations capability calls this before writing the file
+ * so a malformed schedule is rejected with help, not silently dropped on the
+ * next reload.
+ */
+export function previewSchedule(heading: string): SchedulePreview {
+  const text = heading.trim().replace(/^#+\s*/, '')
+  if (!text) return { ok: false, error: `Empty schedule. ${SCHEDULE_SYNTAX_HELP}` }
+  const matched = matchSchedule(text)
+  if (!matched) {
+    return { ok: false, error: `"${heading}" is not a valid schedule. ${SCHEDULE_SYNTAX_HELP}` }
+  }
+  return {
+    ok: true,
+    kind: matched.kind,
+    cron: matched.cron,
+    runAt: matched.runAt ?? null,
+    human: humanizeSchedule(text, matched.kind)
+  }
+}
+
+function pad2(s: string | number): string {
+  return String(Number(s)).padStart(2, '0')
+}
+
+function humanizeSchedule(text: string, kind: ScheduleKind): string {
+  switch (kind) {
+    case 'startup':
+      return 'once, immediately when Wolffish starts'
+    case 'once': {
+      const m = ONCE_RE.exec(text)
+      return m
+        ? `once on ${m[1]}-${pad2(m[2])}-${pad2(m[3])} at ${pad2(m[4])}:${m[5]} (then it deletes itself)`
+        : 'once at a set time'
+    }
+    case 'every': {
+      const m = EVERY_RE.exec(text)
+      if (!m) return 'on a repeating interval'
+      const n = Number(m[1])
+      const unit = m[2].toLowerCase()
+      return unit === 'm'
+        ? `every ${n} minute${n === 1 ? '' : 's'}`
+        : `every ${n} hour${n === 1 ? '' : 's'}`
+    }
+    case 'hourly': {
+      const m = HOURLY_RE.exec(text)
+      return m ? `every hour at :${pad2(m[1])}` : 'every hour'
+    }
+    case 'daily': {
+      const m = DAILY_NIGHTLY_RE.exec(text)
+      return m ? `every day at ${pad2(m[1])}:${m[2]}` : 'every day'
+    }
+    case 'weekday': {
+      const m = WEEKDAY_RE.exec(text)
+      return m ? `every weekday (Mon–Fri) at ${pad2(m[1])}:${m[2]}` : 'every weekday'
+    }
+    case 'weekly': {
+      const m = WEEKLY_RE.exec(text)
+      if (!m) return 'once a week'
+      const day = m[1][0].toUpperCase() + m[1].slice(1).toLowerCase()
+      return `every ${day} at ${pad2(m[2])}:${m[3]}`
+    }
+    case 'monthly': {
+      const m = MONTHLY_RE.exec(text)
+      return m ? `on day ${Number(m[1])} of each month at ${pad2(m[2])}:${m[3]}` : 'once a month'
+    }
+    case 'cron': {
+      const m = CRON_RE.exec(text)
+      return m ? `on cron schedule "${m[1].trim()}"` : 'on a cron schedule'
+    }
+    default:
+      return ''
+  }
+}
+
+// ── Cron occurrence math (downtime catch-up) ──────────────────────────
+
+/**
+ * The most recent time the 5-field cron expression fired at or before `now`,
+ * scanning back minute-by-minute up to `maxBackMs`. Returns its epoch ms, or
+ * null if it didn't fire in that window. Same field semantics as node-cron, so
+ * catch-up agrees with the live scheduler.
+ */
+export function mostRecentCronOccurrence(
+  cronStr: string,
+  now: number,
+  maxBackMs: number
+): number | null {
+  const start = new Date(now)
+  start.setSeconds(0, 0)
+  const minutes = Math.ceil(maxBackMs / 60000) + 1
+  for (let i = 0; i <= minutes; i++) {
+    const d = new Date(start.getTime() - i * 60000)
+    if (cronMatches(cronStr, d)) return d.getTime()
+  }
+  return null
+}
+
+export function cronMatches(cronStr: string, d: Date): boolean {
+  const f = cronStr.trim().split(/\s+/)
+  if (f.length !== 5) return false
+  const dow = d.getDay() // 0 = Sunday
+  return (
+    cronFieldMatch(f[0], d.getMinutes(), 0, 59) &&
+    cronFieldMatch(f[1], d.getHours(), 0, 23) &&
+    cronFieldMatch(f[2], d.getDate(), 1, 31) &&
+    cronFieldMatch(f[3], d.getMonth() + 1, 1, 12) &&
+    // cron allows both 0 and 7 for Sunday
+    (cronFieldMatch(f[4], dow, 0, 7) || (dow === 0 && cronFieldMatch(f[4], 7, 0, 7)))
+  )
+}
+
+/** Match one cron field: `*`, `a`, `a-b`, `a,b`, `*\/n`, `a-b/n`, and lists. */
+function cronFieldMatch(field: string, value: number, min: number, max: number): boolean {
+  for (const part of field.split(',')) {
+    if (part === '*' || part === '*/1') return true
+    let range = part
+    let step = 1
+    const slash = part.indexOf('/')
+    if (slash >= 0) {
+      step = parseInt(part.slice(slash + 1), 10)
+      range = part.slice(0, slash)
+      if (!Number.isFinite(step) || step < 1) continue
+    }
+    let lo: number
+    let hi: number
+    if (range === '*') {
+      lo = min
+      hi = max
+    } else if (range.includes('-')) {
+      const [a, b] = range.split('-')
+      lo = parseInt(a, 10)
+      hi = parseInt(b, 10)
+    } else {
+      lo = parseInt(range, 10)
+      hi = lo
+    }
+    if (!Number.isFinite(lo) || !Number.isFinite(hi)) continue
+    if (value < lo || value > hi) continue
+    if ((value - lo) % step === 0) return true
+  }
+  return false
+}
+
+// ── Heartbeat file editing (one-time job self-deletion) ───────────────
+
+/** Collapse 3+ newlines to 2, but only OUTSIDE HTML comments (keep examples). */
+function tidyOutsideComments(raw: string): string {
+  const re = /<!--[\s\S]*?-->/g
+  let out = ''
+  let last = 0
+  let m: RegExpExecArray | null
+  while ((m = re.exec(raw)) !== null) {
+    out += raw.slice(last, m.index).replace(/\n{3,}/g, '\n\n')
+    out += m[0]
+    last = m.index + m[0].length
+  }
+  out += raw.slice(last).replace(/\n{3,}/g, '\n\n')
+  return out
+}
+
+/**
+ * Remove the active `## <label>` block (heading + body, up to the next heading,
+ * comment, or EOF) from a heartbeat.md, leaving the commented examples and
+ * surrounding prose intact. Used to self-delete a fired one-time job. Returns
+ * the original string unchanged when the label isn't found.
+ */
+function stripHeartbeatHeading(raw: string, label: string): string {
+  const ranges: Array<[number, number]> = []
+  const re = /<!--[\s\S]*?-->/g
+  let cm: RegExpExecArray | null
+  while ((cm = re.exec(raw)) !== null) ranges.push([cm.index, cm.index + cm[0].length])
+  const inComment = (pos: number): boolean => ranges.some(([s, e]) => pos >= s && pos < e)
+
+  const heads: Array<{ start: number; lineEnd: number; isTarget: boolean }> = []
+  let offset = 0
+  for (const line of raw.split('\n')) {
+    const hm = /^##\s+(.+?)\s*$/.exec(line)
+    if (hm && !inComment(offset)) {
+      heads.push({ start: offset, lineEnd: offset + line.length + 1, isTarget: hm[1] === label })
+    }
+    offset += line.length + 1
+  }
+  for (let i = 0; i < heads.length; i++) {
+    if (!heads[i].isTarget) continue
+    let end = i + 1 < heads.length ? heads[i + 1].start : raw.length
+    for (const [s] of ranges) if (s >= heads[i].lineEnd && s < end) end = s
+    return tidyOutsideComments(raw.slice(0, heads[i].start) + raw.slice(end))
+  }
+  return raw
 }
 
 // ── Compaction helpers ────────────────────────────────────────────────

@@ -11,7 +11,7 @@ Wolffish is a local-first, markdown-powered personal AI desktop agent built with
 Built around a 15-module runtime modeled after the human brain, from memory consolidation to safety gating. Every piece of state lives in readable markdown files. To change what the agent does, you edit markdown — not code.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE.md)
-[![Version](https://img.shields.io/badge/version-1.0.192-green.svg)](https://wolffi.sh)
+[![Version](https://img.shields.io/badge/version-1.0.193-green.svg)](https://wolffi.sh)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)]()
 
 ---
@@ -181,7 +181,7 @@ A capability is a self-contained folder in `brain/cerebellum/` that gives wolffi
 | **Services**  | Google (Gmail, Drive, Calendar, Sheets), Notion  |
 | **Desktop**   | Computer Use (screenshots, mouse, keyboard)      |
 | **Fun**       | Memes, GIF Search                                |
-| **Meta**      | Introspect (self-awareness)                      |
+| **Meta**      | Introspect, Skills (self-extension), Automations (scheduled heartbeat jobs) |
 
 ---
 
@@ -329,7 +329,7 @@ All configuration lives in `~/.wolffish/workspace/config.json`:
 | `brain/identity/soul.md`       | Agent personality — tone, verbosity, behavioral guidelines |
 | `brain/identity/user.md`       | About you — name, role, tech stack, projects, preferences  |
 | `brain/prefrontal/agents.md`   | Operational manual — tool rules, procedures, constraints   |
-| `brain/brainstem/heartbeat.md` | Cron schedule for background jobs                          |
+| `brain/brainstem/heartbeat.md` | Scheduled background jobs (managed by the Automations skill) |
 
 Edit any of these markdown files to change how your agent behaves.
 
