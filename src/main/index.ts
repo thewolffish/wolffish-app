@@ -2270,7 +2270,11 @@ app.whenReady().then(async () => {
         await mkdir(join(workspaceRoot(), 'brain', 'brainstem'), { recursive: true })
         await writeFile(heartbeatPath(), raw, 'utf8')
       } catch (err) {
-        return { ok: false, jobs: snapshotAutomations(), error: err instanceof Error ? err.message : String(err) }
+        return {
+          ok: false,
+          jobs: snapshotAutomations(),
+          error: err instanceof Error ? err.message : String(err)
+        }
       }
       // Apply live in the same turn rather than waiting on the chokidar watcher,
       // so the agent can verify the new job list immediately. The watcher's

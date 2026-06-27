@@ -296,7 +296,9 @@ export type AutomationsHost = {
   /** Read the raw brainstem/heartbeat.md file verbatim. */
   readHeartbeat: () => Promise<string>
   /** Overwrite brainstem/heartbeat.md, reload the scheduler, return the new live jobs. */
-  writeHeartbeat: (raw: string) => Promise<{ ok: boolean; jobs: AutomationJobInfo[]; error?: string }>
+  writeHeartbeat: (
+    raw: string
+  ) => Promise<{ ok: boolean; jobs: AutomationJobInfo[]; error?: string }>
   /** Live snapshot of every scheduled automation, enriched with run status. */
   listJobs: () => AutomationJobInfo[]
   /** Validate a proposed schedule heading and describe it; the syntax single-source-of-truth. */
