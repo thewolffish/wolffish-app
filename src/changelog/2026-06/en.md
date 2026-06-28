@@ -1,4 +1,12 @@
-## v1.0.194 — 2026-06-27 `Latest`
+## v1.0.195 — 2026-06-28 `Latest`
+
+### Delete an Automation in One Click
+
+The Heartbeat page now has a trash button beside each automation's On/Off switch. The switch only pauses a job — leaving it in place to flip back on later — while the trash button removes it for good: the job is deleted from heartbeat.md and unscheduled on the spot, after a quick confirmation so nothing goes by accident. No more hand-editing the file to clear out an automation you're done with. Removal is surgical — only the job you chose is taken out, and the commented examples below your active jobs are always left perfectly intact.
+
+---
+
+## v1.0.194 — 2026-06-27
 
 ### Update Failures Now Explain Themselves
 

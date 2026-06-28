@@ -1,4 +1,5 @@
 import { Badge } from '@components/core/Badge'
+import { Button } from '@components/core/Button'
 import { CodeEditor } from '@components/core/CodeEditor'
 import { CopyButton } from '@components/core/CopyButton'
 import { Modal } from '@components/core/Modal'
@@ -13,6 +14,7 @@ import { useTheme } from '@providers/theme/useTheme'
 import {
   ArrowLeft02Icon,
   ArrowRight02Icon,
+  Delete02Icon,
   EyeIcon,
   FloppyDiskIcon,
   Refresh01Icon
@@ -47,8 +49,35 @@ const DAY_MAP: Record<string, number> = {
   saturday: 6
 }
 
-function parseSchedule(heading: string): { type: string; cron: string | null } | null {
+function parseSchedule(
+  heading: string
+): { type: string; cron: string | null; atMs?: number } | null {
   if (/^Startup$/i.test(heading)) return { type: 'startup', cron: null }
+
+  // Once (YYYY-MM-DD HH:MM) — a one-time job that fires at an absolute local
+  // wall-clock moment, then self-deletes. Mirrors the brainstem's ONCE_RE and
+  // its round-trip validity guard so the sidebar shows exactly the one-time
+  // jobs the scheduler would actually register (an out-of-range date like
+  // month 13 or 25:99 is rejected here too).
+  const once = /^Once\s*\((\d{4})-(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{2})\)$/i.exec(heading)
+  if (once) {
+    const y = Number(once[1])
+    const mo = Number(once[2])
+    const d = Number(once[3])
+    const hh = Number(once[4])
+    const mi = Number(once[5])
+    const dt = new Date(y, mo - 1, d, hh, mi, 0, 0)
+    if (
+      dt.getFullYear() !== y ||
+      dt.getMonth() !== mo - 1 ||
+      dt.getDate() !== d ||
+      dt.getHours() !== hh ||
+      dt.getMinutes() !== mi
+    ) {
+      return null
+    }
+    return { type: 'once', cron: null, atMs: dt.getTime() }
+  }
 
   const every = /^Every\s*\((\d+)(m|h)\)$/i.exec(heading)
   if (every) {
@@ -206,7 +235,12 @@ function parseSidebarJobs(
         endIdx = j
         break
       }
-      if (/^##\s+/.test(lines[j]) || /^<!--\s*##/.test(lines[j])) break
+      // A job's body ends at the next heading, the next toggle opener, OR the
+      // start of any raw comment block (e.g. the commented-out examples). Without
+      // the raw-comment guard the body would swallow the `<!--` opener below it,
+      // so deleting/toggling the job would strip that comment and un-comment the
+      // examples it wraps.
+      if (/^##\s+/.test(lines[j]) || /^\s*<!--/.test(lines[j])) break
       bodyLines.push(lines[j])
       if (!isBlock && lines[j].trim() !== '') endIdx = j
     }
@@ -222,7 +256,7 @@ function parseSidebarJobs(
       label,
       type: schedule.type,
       active: !!activeLine,
-      nextRunMs: activeJob?.nextRunMs ?? (cron ? nextCronMs(cron, nowMs) : null),
+      nextRunMs: activeJob?.nextRunMs ?? schedule.atMs ?? (cron ? nextCronMs(cron, nowMs) : null),
       body: activeJob?.body ?? body,
       cron,
       lineIndex: i,
@@ -244,6 +278,8 @@ export function Heartbeat(): React.JSX.Element {
 
   const [jobs, setJobs] = useState<HeartbeatJobView[]>([])
   const [detailJob, setDetailJob] = useState<SidebarJob | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<SidebarJob | null>(null)
+  const [deleting, setDeleting] = useState(false)
   const [content, setContent] = useState<string>('')
   const [originalContent, setOriginalContent] = useState<string>('')
   const [saving, setSaving] = useState(false)
@@ -353,6 +389,35 @@ export function Heartbeat(): React.JSX.Element {
     [content, t, toast]
   )
 
+  const handleDelete = useCallback(
+    async (job: SidebarJob): Promise<void> => {
+      if (deleting) return
+      setDeleting(true)
+      const lines = content.split('\n')
+      lines.splice(job.lineIndex, job.endLineIndex - job.lineIndex + 1)
+      // Collapse the blank line the removed block leaves behind, so deletes
+      // don't accumulate gaps (leading blank, or a double blank between jobs).
+      if (lines[job.lineIndex] === '' && (job.lineIndex === 0 || lines[job.lineIndex - 1] === '')) {
+        lines.splice(job.lineIndex, 1)
+      }
+      const newContent = lines.join('\n')
+      try {
+        await window.api.viewer.writeFile(HEARTBEAT_PATH, newContent)
+        setContent(newContent)
+        setOriginalContent(newContent)
+        const jobList = await window.api.heartbeat.getJobs()
+        setJobs(jobList)
+        setDeleteTarget(null)
+        toast.show({ tone: 'success', message: t('heartbeat.deleteSuccess') })
+      } catch {
+        toast.show({ tone: 'error', message: t('workspace.saveError') })
+      } finally {
+        setDeleting(false)
+      }
+    },
+    [content, deleting, t, toast]
+  )
+
   const isDirty = content !== originalContent
   const sidebarJobs = useMemo(() => parseSidebarJobs(content, jobs, now), [content, jobs, now])
 
@@ -379,7 +444,7 @@ export function Heartbeat(): React.JSX.Element {
       <div dir="ltr" className="flex min-h-0 flex-1">
         <aside
           dir={isRtl ? 'rtl' : 'ltr'}
-          className="border-border w-72 shrink-0 overflow-y-auto border-r p-3"
+          className="border-border w-80 shrink-0 overflow-y-auto border-r p-3"
         >
           {loading ? (
             <div className="text-muted flex items-center justify-center py-6 text-sm">
@@ -397,8 +462,32 @@ export function Heartbeat(): React.JSX.Element {
                       !job.active && 'opacity-60'
                     )}
                   >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-fg truncate text-sm font-medium">{job.label}</span>
+                    <div className="flex items-center justify-end gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setDetailJob(job)}
+                        aria-label={t('heartbeat.view')}
+                        title={t('heartbeat.view')}
+                        className={cn(
+                          'text-muted hover:text-fg cursor-pointer rounded-md p-1',
+                          'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
+                        )}
+                      >
+                        <EyeIcon size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDeleteTarget(job)}
+                        aria-label={t('heartbeat.delete')}
+                        title={t('heartbeat.delete')}
+                        className={cn(
+                          'text-muted cursor-pointer rounded-md p-1',
+                          'hover:text-red-600 dark:hover:text-red-400',
+                          'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
+                        )}
+                      >
+                        <Delete02Icon size={14} />
+                      </button>
                       <div
                         role="tablist"
                         className="border-border bg-bg/40 inline-flex shrink-0 items-center rounded-lg border p-0.5"
@@ -437,40 +526,32 @@ export function Heartbeat(): React.JSX.Element {
                         </button>
                       </div>
                     </div>
-                    <div className="mt-1.5 flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <Badge variant="primary" size="sm">
-                          {t(`heartbeat.type.${job.type}`)}
-                        </Badge>
-                        <span
-                          className={cn(
-                            'inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
-                            job.active
-                              ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
-                              : 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
-                          )}
-                        >
-                          {job.active ? t('heartbeat.active') : t('heartbeat.inactive')}
-                        </span>
-                        {job.active && job.nextRunMs != null && (
-                          <span className="text-muted text-[11px]">
-                            {formatFromNow(job.nextRunMs, now, locale)}
-                          </span>
+                    <div className="text-fg mt-2 truncate text-sm font-medium">{job.label}</div>
+                    <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                      <Badge variant="primary" size="sm">
+                        {t(`heartbeat.type.${job.type}`)}
+                      </Badge>
+                      <span
+                        className={cn(
+                          'inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
+                          job.active
+                            ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                            : 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
                         )}
-                        {job.active && job.type === 'startup' && (
-                          <span className="text-muted text-[11px]">on launch</span>
-                        )}
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setDetailJob(job)}
-                        className="text-muted hover:text-fg cursor-pointer rounded p-0.5"
                       >
-                        <EyeIcon size={14} />
-                      </button>
+                        {job.active ? t('heartbeat.active') : t('heartbeat.inactive')}
+                      </span>
+                      {job.active && job.nextRunMs != null && (
+                        <span className="text-muted text-[11px]">
+                          {formatFromNow(job.nextRunMs, now, locale)}
+                        </span>
+                      )}
+                      {job.active && job.type === 'startup' && (
+                        <span className="text-muted text-[11px]">on launch</span>
+                      )}
                     </div>
                     {job.body && (
-                      <pre className="bg-bg mt-2 max-h-12 overflow-auto rounded border border-border px-2 py-1.5 text-[10px] font-mono text-muted leading-relaxed whitespace-pre-wrap">
+                      <pre className="bg-bg mt-2 max-h-[4.5rem] overflow-auto rounded border border-border px-2 py-1.5 text-[10px] font-mono text-muted leading-relaxed whitespace-pre-wrap">
                         {job.body}
                       </pre>
                     )}
@@ -578,6 +659,40 @@ export function Heartbeat(): React.JSX.Element {
               </pre>
             </div>
           </div>
+        </Modal>
+      )}
+      {deleteTarget && (
+        <Modal
+          open
+          onClose={() => {
+            if (!deleting) setDeleteTarget(null)
+          }}
+          dismissable={!deleting}
+          title={t('heartbeat.deleteTitle')}
+          footer={
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={deleting}
+                onClick={() => setDeleteTarget(null)}
+                className="flex-1"
+              >
+                {t('heartbeat.deleteCancel')}
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                disabled={deleting}
+                onClick={() => void handleDelete(deleteTarget)}
+                className="flex-1 border border-transparent bg-red-600 text-white shadow-none hover:bg-red-700"
+              >
+                {deleting ? t('heartbeat.deleting') : t('heartbeat.deleteConfirm')}
+              </Button>
+            </div>
+          }
+        >
+          <p className="text-muted">{t('heartbeat.deleteWarning', { name: deleteTarget.label })}</p>
         </Modal>
       )}
     </main>
