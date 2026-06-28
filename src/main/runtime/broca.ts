@@ -53,15 +53,6 @@ export type Segment =
       model: string
     }
   | {
-      kind: 'provider_change'
-      turnId: string
-      segmentId: string
-      from: string
-      to: string
-      model: string
-      reason: string
-    }
-  | {
       kind: 'turn_end'
       turnId: string
       segmentId: string
@@ -208,16 +199,6 @@ export class Broca {
           segmentId: this.nextId(),
           provider: chunk.provider,
           model: chunk.model
-        })
-      } else if (chunk.type === 'provider_change') {
-        this.emit({
-          kind: 'provider_change',
-          turnId: this.requireTurn(),
-          segmentId: this.nextId(),
-          from: chunk.from,
-          to: chunk.to,
-          model: chunk.model,
-          reason: chunk.reason
         })
       }
       yield chunk

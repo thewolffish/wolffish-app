@@ -1,5 +1,6 @@
 export type TabKey =
   | 'appearance'
+  | 'brain'
   | 'model'
   | 'channels'
   | 'services'

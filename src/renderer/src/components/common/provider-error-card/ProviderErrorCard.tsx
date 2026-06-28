@@ -170,7 +170,7 @@ function buildDetailText(payload: NoProviderAvailablePayload): string {
   lines.push('')
   lines.push('This is an API provider issue — not a Wolffish error.')
   lines.push('The provider terminated or failed to complete the response.')
-  lines.push('Try again, or switch to a different provider in settings.')
+  lines.push('Try again, or pick a different Brain in settings.')
   return lines.join('\n')
 }
 

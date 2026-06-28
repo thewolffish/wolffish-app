@@ -132,7 +132,7 @@ async function getStatus() {
 
   if (providers.all.length > 0) {
     const list = providers.all.map((p) => {
-      const tag = p === providers.active ? ' ✦' : p === providers.fallback ? ' (fallback)' : ''
+      const tag = p === providers.active ? ' ✦' : ''
       return `${p.id}/${p.model}${tag}`
     })
     lines.push(`- **Providers:** ${list.join(', ')}`)
@@ -511,17 +511,18 @@ async function readProviders() {
   try {
     raw = await fs.readFile(configPath, 'utf8')
   } catch {
-    return { all: [], active: null, fallback: null }
+    return { all: [], active: null }
   }
   let cfg
   try {
     cfg = JSON.parse(raw)
   } catch {
-    return { all: [], active: null, fallback: null }
+    return { all: [], active: null }
   }
 
   const cloud = Array.isArray(cfg?.llm?.providers) ? cfg.llm.providers : []
-  const priority = Array.isArray(cfg?.llm?.cloudPriority) ? cfg.llm.cloudPriority : []
+  const brain = cfg?.llm?.brain ?? null
+  const localOnly = Boolean(cfg?.llm?.localOnly)
   const local = cfg?.llm?.local
 
   const all = []
@@ -534,22 +535,15 @@ async function readProviders() {
     all.push({ id: 'local', model: local.model, hasKey: true })
   }
 
-  const ordered = []
-  if (priority.length > 0) {
-    for (const id of priority) {
-      const match = all.find((p) => p.id === id && p.hasKey)
-      if (match && !ordered.includes(match)) ordered.push(match)
-    }
-  }
-  for (const p of all) {
-    if (!ordered.includes(p) && p.hasKey) ordered.push(p)
+  // The single active model: the local model in local-only mode, else the Brain.
+  let active = null
+  if (localOnly) {
+    active = all.find((p) => p.id === 'local') ?? null
+  } else if (brain?.providerId && brain?.model) {
+    active = all.find((p) => p.id === brain.providerId && p.hasKey) ?? null
   }
 
-  return {
-    all,
-    active: ordered[0] ?? null,
-    fallback: ordered[1] ?? null
-  }
+  return { all, active }
 }
 
 // ---------------------------------------------------------------------------

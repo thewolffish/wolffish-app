@@ -17,9 +17,6 @@ export function WolffishPanel(): React.JSX.Element {
     config?.safety?.blockCredentials ?? false
   )
   const [bypass, setBypass] = useState<boolean>(config?.safety?.bypassPermissions ?? false)
-  const [allowFallback, setAllowFallback] = useState<boolean>(
-    config?.llm.allowLocalFallback ?? false
-  )
   const [showAnalytics, setShowAnalytics] = useState<boolean>(config?.showChatAnalytics ?? true)
   const [restrictModels, setRestrictModels] = useState<boolean>(
     config?.llm.restrictPowerfulModels ?? true
@@ -29,7 +26,6 @@ export function WolffishPanel(): React.JSX.Element {
     | 'launchAtStartup'
     | 'blockCredentials'
     | 'bypass'
-    | 'fallback'
     | 'analytics'
     | 'restrictModels'
     | 'weekStart'
@@ -82,18 +78,6 @@ export function WolffishPanel(): React.JSX.Element {
     try {
       await window.api.runtime.setBypassPermissions(next)
       setBypass(next)
-      await refreshStatus()
-    } finally {
-      setSavingKey(null)
-    }
-  }
-
-  const onChangeFallback = async (next: boolean): Promise<void> => {
-    if (savingKey !== null || next === allowFallback) return
-    setSavingKey('fallback')
-    try {
-      await window.api.runtime.setAllowLocalFallback(next)
-      setAllowFallback(next)
       await refreshStatus()
     } finally {
       setSavingKey(null)
@@ -172,14 +156,6 @@ export function WolffishPanel(): React.JSX.Element {
             value={bypass}
             onChange={onChangeBypass}
             disabled={savingKey === 'bypass'}
-          />
-          <div className="border-border/60 border-t" />
-          <SettingToggle
-            label={t('settings.wolffish.allowLocalFallback.label')}
-            description={t('settings.wolffish.allowLocalFallback.description')}
-            value={allowFallback}
-            onChange={onChangeFallback}
-            disabled={savingKey === 'fallback'}
           />
           <div className="border-border/60 border-t" />
           <SettingToggle

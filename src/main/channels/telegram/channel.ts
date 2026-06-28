@@ -267,8 +267,7 @@ type ActiveTurn = {
    */
   pendingActiveModel: string | null
   /** Last model name actually sent as a chip — prevents the same
-   *  provider name from appearing twice when both active_model and
-   *  provider_change fire, or across back-to-back iterations. */
+   *  provider name from appearing twice across back-to-back iterations. */
   lastFlushedModel: string | null
   /**
    * Resolved absolute paths of every file already sent this turn. Prevents the
@@ -1046,8 +1045,8 @@ export class TelegramChannel {
   /**
    * Handle /local and /cloud — flip llm.localOnly via the same code
    * path the chat input's mode switch uses: persist the config, then
-   * push the new value into the live thalamus so the next turn's
-   * cascade picks it up. The IPC handler in main does the same two
+   * push the new value into the live thalamus so the next turn's model
+   * resolution picks it up. The IPC handler in main does the same two
    * steps; we mirror them here so a Telegram-driven switch and an
    * Electron-driven switch leave the runtime in identical state.
    */
@@ -1887,11 +1886,6 @@ export class TelegramChannel {
       // Defer the chip until the iteration commits real content
       // (text or a tool call). Skips silent wrap-up iterations that
       // would otherwise leave a stray "🤖 model" message at the end.
-      active.pendingActiveModel = segment.model
-      return
-    }
-
-    if (segment.kind === 'provider_change') {
       active.pendingActiveModel = segment.model
       return
     }

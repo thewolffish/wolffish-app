@@ -399,10 +399,13 @@ The model streams a response; tool calls are parsed out, safety-checked, execute
 with retries, and the result is streamed back. The turn is saved to an episode and
 the outcome recorded.
 
-**Provider cascade.** The thalamus tries cloud providers in the configured
-`cloudPriority` order (e.g. Claude → OpenAI → DeepSeek), falling back to local
-Ollama if enabled. Ollama is the floor: with no network and no keys, the agent
-still runs. Cloud models are upgrades, not requirements.
+**Single Brain.** The thalamus resolves exactly one user-chosen model — the
+Brain (`llm.brain`, a `{ providerId, model }` set on the Brain settings page) —
+or the local Ollama model when the chat switcher is in local-only mode
+(`llm.localOnly`). There is no cascade and no automatic substitution: the chosen
+model runs and retries itself on transient failures (429/5xx/timeouts), or the
+turn fails honestly. Switching cloud↔local is a manual, explicit act via the
+chat switcher.
 
 **Three-tier memory.**
 - *Episodes* (`hippocampus/episodes/`) — appended every turn, zero-latency, no LLM.
@@ -456,9 +459,9 @@ Reading these confidently lets you answer almost any question about the agent.
     "providers": [
       { "id": "deepseek", "model": "deepseek-v4-pro", "apiKey": "***", "models": ["deepseek-v4-flash", "deepseek-v4-pro"] }
     ],
-    "allowLocalFallback": false,
+    "brain": { "providerId": "deepseek", "model": "deepseek-v4-pro" },  // the single chosen cloud model
+    "localOnly": false,                     // chat switcher: cloud (false) vs local-only (true)
     "restrictPowerfulModels": true,
-    "cloudPriority": ["deepseek"],          // provider cascade order
     "thinkingModes": { "deepseek-v4-pro": "max" }
   },
   "safety": { "bypassPermissions": true, "blockCredentials": false },
@@ -577,8 +580,9 @@ half-wrote something, the markdown files are still the truth — fix them direct
 
 **"Switch model / add an API key / go fully offline."**
 Edit `config.json → llm`. Add a provider object (with `id`, `model`, `apiKey`),
-order the cascade in `cloudPriority`, or set `llm.local.enabled = true` and
-`allowLocalFallback = true` to lean on Ollama. **Redact keys when you echo this file.**
+point `llm.brain` at the `{ providerId, model }` you want, or set
+`llm.local.enabled = true` and `llm.localOnly = true` to run on Ollama only.
+**Redact keys when you echo this file.**
 
 **"Back up / move my agent to another machine."**
 Copy `~/.wolffish/workspace/`. Skip `runtime/` (disposable Chromium state) and

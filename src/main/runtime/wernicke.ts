@@ -1,17 +1,5 @@
 import type { Corpus } from '@main/runtime/corpus'
-import type {
-  FallbackMode,
-  NoProviderAvailableInfo,
-  StopReason,
-  StreamChunk
-} from '@main/runtime/thalamus'
-
-export type ProviderChange = {
-  from: string
-  to: string
-  reason: string
-  mode: FallbackMode
-}
+import type { NoProviderAvailableInfo, StopReason, StreamChunk } from '@main/runtime/thalamus'
 
 /**
  * Wernicke parses the LLM's raw output into something structured.
@@ -44,7 +32,6 @@ export type ParsedResponse = {
   error?: string
   noProviderAvailable?: NoProviderAvailableInfo[]
   providerFailures?: NoProviderAvailableInfo[]
-  providerChange?: ProviderChange
 }
 
 export type WernickeOptions = {
@@ -77,7 +64,6 @@ export class Wernicke {
     let error: string | undefined
     let noProviderAvailable: NoProviderAvailableInfo[] | undefined
     let providerFailures: NoProviderAvailableInfo[] | undefined
-    let providerChange: ProviderChange | undefined
 
     for await (const chunk of stream) {
       if (chunk.type === 'text') {
@@ -103,15 +89,6 @@ export class Wernicke {
         // and the catch handler can promote this into a turn_end with
         // stopReason='no_provider_available'.
         error = chunk.failures.map((f) => f.errorReason).join('; ')
-      } else if (chunk.type === 'provider_change') {
-        // Capture so the agent can update its fallback state for
-        // subsequent iterations of the tool-use loop in this turn.
-        providerChange = {
-          from: chunk.from,
-          to: chunk.to,
-          reason: chunk.reason,
-          mode: chunk.mode
-        }
       }
     }
 
@@ -131,7 +108,6 @@ export class Wernicke {
     if (error) result.error = error
     if (noProviderAvailable) result.noProviderAvailable = noProviderAvailable
     if (providerFailures) result.providerFailures = providerFailures
-    if (providerChange) result.providerChange = providerChange
     return result
   }
 }

@@ -17,6 +17,9 @@ import {
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+// Varied title-bar widths so the loading skeleton looks like real conversation rows.
+const skeletonTitleWidths = [62, 45, 78, 38, 55, 70, 48, 84, 41, 66]
+
 export function History(): React.JSX.Element {
   const { t } = useTranslation()
   const { locale } = useLocale()
@@ -137,7 +140,29 @@ export function History(): React.JSX.Element {
 
       <div className="flex-1 overflow-y-auto px-6 pb-6">
         <div className="mx-auto flex h-full max-w-2xl flex-col">
-          {loading && <p className="text-muted py-8 text-center text-sm">{t('history.loading')}</p>}
+          {loading && (
+            <div className="flex flex-col gap-1">
+              {Array.from({ length: 20 }).map((_, i) => (
+                <div
+                  key={i}
+                  className="flex items-center gap-3 rounded-xl px-4 py-3"
+                  aria-hidden="true"
+                >
+                  <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                    <div className="flex h-5 items-center">
+                      <div
+                        className="bg-border/60 h-3.5 animate-pulse rounded"
+                        style={{ width: `${skeletonTitleWidths[i % skeletonTitleWidths.length]}%` }}
+                      />
+                    </div>
+                    <div className="flex h-4 items-center">
+                      <div className="bg-border/60 h-3 w-20 animate-pulse rounded" />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
           {!loading && conversations.length === 0 && (
             <div className="text-muted flex flex-1 flex-col items-center justify-center gap-3 text-center">
               <BubbleChatIcon size={40} className="opacity-40" />

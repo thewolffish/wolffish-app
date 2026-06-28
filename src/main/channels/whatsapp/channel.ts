@@ -1495,11 +1495,6 @@ export class WhatsAppChannel {
       active.pendingActiveModel = segment.model
       return
     }
-
-    if (segment.kind === 'provider_change') {
-      active.pendingActiveModel = segment.model
-      return
-    }
   }
 
   private async flushPendingActiveModel(jid: string): Promise<void> {

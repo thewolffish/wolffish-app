@@ -41,8 +41,6 @@ export type ResourceUsage = {
   contextUsagePercent: number
   activeProvider: ProviderId | null
   activeModel: string | null
-  fallbackProvider: ProviderId | null
-  fallbackModel: string | null
   capabilitiesLoaded: number
   capabilityNames: string[]
 }
@@ -271,8 +269,6 @@ export class Hypothalamus {
         this.getContextBudget() > 0 ? this.lastContextTokens / this.getContextBudget() : 0,
       activeProvider: providers.active?.id ?? null,
       activeModel: providers.active?.model ?? null,
-      fallbackProvider: providers.fallback?.id ?? null,
-      fallbackModel: providers.fallback?.model ?? null,
       capabilitiesLoaded: capabilityNames.length,
       capabilityNames
     }
@@ -340,18 +336,15 @@ export class Hypothalamus {
 
   private getProviderInfo(): {
     active: { id: ProviderId; model: string } | null
-    fallback: { id: ProviderId; model: string } | null
   } {
-    if (!this.thalamus) return { active: null, fallback: null }
-    const cascade = this.thalamus.cascade()
-    const cloud = this.thalamus.getCloudProviders()
-    const lookup = (id: ProviderId | undefined): { id: ProviderId; model: string } | null => {
-      if (!id) return null
-      if (id === 'local') return { id, model: this.getActiveLocalModel() ?? 'local' }
-      const c = cloud.find((p) => p.id === id)
-      return c ? { id, model: c.model } : null
+    if (!this.thalamus) return { active: null }
+    const id = this.thalamus.getActiveProvider()
+    if (!id) return { active: null }
+    if (id === 'local') {
+      return { active: { id, model: this.getActiveLocalModel() ?? 'local' } }
     }
-    return { active: lookup(cascade[0]), fallback: lookup(cascade[1]) }
+    const model = this.thalamus.getActiveModel()
+    return { active: model ? { id, model } : null }
   }
 }
 

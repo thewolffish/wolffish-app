@@ -22,6 +22,7 @@ import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
 import { pageTopPadding } from '@lib/utils/platform'
 import { ModelPicker } from '@pages/ModelPicker'
+import { BrainPage } from '@pages/settings/BrainPage'
 import { BravePanel } from '@pages/settings/BravePanel'
 import { BrowserExtensionPanel } from '@pages/settings/BrowserExtensionPanel'
 import { CelebrumPanel } from '@pages/settings/CelebrumPanel'
@@ -62,6 +63,7 @@ import {
   GithubIcon,
   Key01Icon,
   Mic01Icon,
+  NeuralNetworkIcon,
   PaintBoardIcon,
   PuzzleIcon,
   SmileDizzyIcon,
@@ -82,7 +84,8 @@ type Tab = {
 }
 
 const TABS: Tab[] = [
-  { key: 'model', icon: <AiBrain01Icon size={18} />, labelKey: 'settings.tabs.model' },
+  { key: 'brain', icon: <AiBrain01Icon size={18} />, labelKey: 'settings.tabs.brain' },
+  { key: 'model', icon: <NeuralNetworkIcon size={18} />, labelKey: 'settings.tabs.model' },
   { key: 'channels', icon: <BubbleChatIcon size={18} />, labelKey: 'settings.tabs.channels' },
   { key: 'services', icon: <PuzzleIcon size={18} />, labelKey: 'settings.tabs.services' },
   { key: 'variables', icon: <Key01Icon size={18} />, labelKey: 'settings.tabs.variables' },
@@ -113,7 +116,7 @@ function restoreSnapshot(
   if (memo) return memo
   const s = cfg?.lastSettingsState
   const result: SettingsSnapshot = {
-    tab: s?.tab && TAB_KEYS.has(s.tab) ? (s.tab as TabKey) : 'model',
+    tab: s?.tab && TAB_KEYS.has(s.tab) ? (s.tab as TabKey) : 'brain',
     provider:
       s?.provider && PROVIDERS.includes(s.provider as Provider)
         ? (s.provider as Provider)
@@ -159,6 +162,9 @@ export function Settings(): React.JSX.Element {
     },
     [snapshot]
   )
+
+  // The provider panels link to the Brain page for model selection.
+  const openBrain = useCallback(() => setActive('brain'), [setActive])
 
   const setProvider = useCallback(
     (p: Provider) => {
@@ -306,7 +312,7 @@ export function Settings(): React.JSX.Element {
                   <span>{t(tab.labelKey)}</span>
                 </button>
 
-                {/* Nested sub-tabs (currently only Model has them). The
+                {/* Nested sub-tabs (Models and Channels have them). The
                     grid-rows trick gives us a smooth height collapse without
                     measuring, and the 200ms ease keeps it subtle. */}
                 {tab.key === 'model' && (
@@ -489,6 +495,9 @@ export function Settings(): React.JSX.Element {
         <TabPanel active={active === 'data'}>
           <DataPanel />
         </TabPanel>
+        <TabPanel active={active === 'brain'}>
+          <BrainPage />
+        </TabPanel>
         <TabPanel active={active === 'model' && provider === 'ollama'}>
           {ollamaReachable === false ? (
             <OllamaNotAvailableNotice goTo={goTo} t={t} />
@@ -497,37 +506,37 @@ export function Settings(): React.JSX.Element {
           )}
         </TabPanel>
         <TabPanel active={active === 'model' && provider === 'anthropic'}>
-          <CloudProviderPanel provider="anthropic" />
+          <CloudProviderPanel provider="anthropic" onOpenBrain={openBrain} />
         </TabPanel>
         <TabPanel active={active === 'model' && provider === 'openai'}>
-          <CloudProviderPanel provider="openai" />
+          <CloudProviderPanel provider="openai" onOpenBrain={openBrain} />
         </TabPanel>
         <TabPanel active={active === 'model' && provider === 'zai'}>
-          <CloudProviderPanel provider="zai" />
+          <CloudProviderPanel provider="zai" onOpenBrain={openBrain} />
         </TabPanel>
         <TabPanel active={active === 'model' && provider === 'deepseek'}>
-          <CloudProviderPanel provider="deepseek" />
+          <CloudProviderPanel provider="deepseek" onOpenBrain={openBrain} />
         </TabPanel>
         <TabPanel active={active === 'model' && provider === 'mimo'}>
-          <CloudProviderPanel provider="mimo" />
+          <CloudProviderPanel provider="mimo" onOpenBrain={openBrain} />
         </TabPanel>
         <TabPanel active={active === 'model' && provider === 'kimi'}>
-          <CloudProviderPanel provider="kimi" />
+          <CloudProviderPanel provider="kimi" onOpenBrain={openBrain} />
         </TabPanel>
         <TabPanel active={active === 'model' && provider === 'minimax'}>
-          <CloudProviderPanel provider="minimax" />
+          <CloudProviderPanel provider="minimax" onOpenBrain={openBrain} />
         </TabPanel>
         <TabPanel active={active === 'model' && provider === 'xai'}>
-          <CloudProviderPanel provider="xai" />
+          <CloudProviderPanel provider="xai" onOpenBrain={openBrain} />
         </TabPanel>
         <TabPanel active={active === 'model' && provider === 'qwen'}>
-          <CloudProviderPanel provider="qwen" />
+          <CloudProviderPanel provider="qwen" onOpenBrain={openBrain} />
         </TabPanel>
         <TabPanel active={active === 'model' && provider === 'stepfun'}>
-          <CloudProviderPanel provider="stepfun" />
+          <CloudProviderPanel provider="stepfun" onOpenBrain={openBrain} />
         </TabPanel>
         <TabPanel active={active === 'model' && provider === 'openrouter'}>
-          <CloudProviderPanel provider="openrouter" />
+          <CloudProviderPanel provider="openrouter" onOpenBrain={openBrain} />
         </TabPanel>
         <TabPanel active={active === 'services' && effectiveService === 'tts' && ttsAvailable}>
           <TextToSpeechPanel />

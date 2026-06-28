@@ -1,21 +1,16 @@
 import { Button } from '@components/core/Button'
 import { Input } from '@components/core/Input'
-import {
-  AnthropicLogo,
-  DeepSeekLogo,
-  KimiLogo,
-  MiniMaxLogo,
-  MimoLogo,
-  OpenAILogo,
-  OpenRouterLogo,
-  QwenLogo,
-  StepfunLogo,
-  XAILogo,
-  ZaiLogo
-} from '@components/core/ProviderLogos'
-import { Select, type SelectOption } from '@components/core/Select'
 import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn'
+import {
+  BADGE_STYLES,
+  isModelDisabled,
+  MODEL_SPECS,
+  PROVIDER_LOGOS,
+  sortOpenRouterModelIds,
+  sortOpenRouterModels,
+  type ModelSpec
+} from '@pages/settings/modelCatalog'
 import type { CloudProviderConfig, ProviderListEntry, ProviderTestResult } from '@preload/index'
 import {
   AlertCircleIcon,
@@ -28,27 +23,9 @@ import {
 } from 'hugeicons-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { IconType } from 'react-icons'
 
 type ProviderId = CloudProviderConfig['id']
 type Status = 'untested' | 'testing' | 'invalid'
-
-const PROVIDER_LOGOS: Record<
-  ProviderId,
-  IconType | React.ComponentType<{ size?: number; className?: string }>
-> = {
-  anthropic: AnthropicLogo,
-  openai: OpenAILogo,
-  openrouter: OpenRouterLogo,
-  deepseek: DeepSeekLogo,
-  mimo: MimoLogo,
-  kimi: KimiLogo,
-  minimax: MiniMaxLogo,
-  xai: XAILogo,
-  qwen: QwenLogo,
-  stepfun: StepfunLogo,
-  zai: ZaiLogo
-}
 
 const PROVIDER_URLS: Record<ProviderId, string> = {
   anthropic: 'https://console.anthropic.com',
@@ -64,956 +41,13 @@ const PROVIDER_URLS: Record<ProviderId, string> = {
   zai: 'https://z.ai/manage-apikey/apikey-list'
 }
 
-type BadgeKind = 'frontier' | 'vision' | 'reasoning' | 'code' | 'fast' | 'voice'
-
-type ModelSpec = {
-  name: string
-  context: string
-  input: string
-  output: string
-  cached: string | null
-  badges?: BadgeKind[]
-  /** Thinking mode keys available for this model (translation keys under chat.thinkingMode). */
-  modes?: string[]
-}
-
-const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
-  anthropic: [
-    {
-      name: 'claude-fable-5',
-      context: '1M',
-      input: '$10.00',
-      output: '$50.00',
-      cached: '$1.00',
-      badges: ['frontier', 'reasoning'],
-      modes: ['none', 'high', 'max']
-    },
-    {
-      name: 'claude-opus-4-8',
-      context: '1M',
-      input: '$5.00',
-      output: '$25.00',
-      cached: '$0.50',
-      badges: ['reasoning'],
-      modes: ['none', 'high', 'max']
-    },
-    {
-      name: 'claude-opus-4-7',
-      context: '1M',
-      input: '$5.00',
-      output: '$25.00',
-      cached: '$0.50',
-      badges: ['reasoning'],
-      modes: ['none', 'high', 'max']
-    },
-    {
-      name: 'claude-sonnet-4-6',
-      context: '1M',
-      input: '$3.00',
-      output: '$15.00',
-      cached: '$0.30',
-      badges: ['reasoning'],
-      modes: ['none', 'high', 'max']
-    },
-    {
-      name: 'claude-opus-4-6',
-      context: '1M',
-      input: '$5.00',
-      output: '$25.00',
-      cached: '$0.50',
-      badges: ['reasoning'],
-      modes: ['none', 'high', 'max']
-    },
-    {
-      name: 'claude-opus-4-5-20251101',
-      context: '200K',
-      input: '$5.00',
-      output: '$25.00',
-      cached: '$0.50',
-      badges: ['reasoning'],
-      modes: ['none', 'high', 'max']
-    },
-    {
-      name: 'claude-sonnet-4-5-20250929',
-      context: '200K',
-      input: '$3.00',
-      output: '$15.00',
-      cached: '$0.30',
-      badges: ['reasoning'],
-      modes: ['none', 'high', 'max']
-    },
-    {
-      name: 'claude-haiku-4-5-20251001',
-      context: '200K',
-      input: '$1.00',
-      output: '$5.00',
-      cached: '$0.10',
-      badges: ['fast', 'reasoning'],
-      modes: ['none', 'high']
-    },
-    {
-      name: 'claude-opus-4-1-20250805',
-      context: '200K',
-      input: '$15.00',
-      output: '$75.00',
-      cached: '$1.50',
-      badges: ['reasoning'],
-      modes: ['none', 'high', 'max']
-    }
-  ],
-  openai: [
-    {
-      name: 'gpt-5.5',
-      context: '1M',
-      input: '$5.00',
-      output: '$30.00',
-      cached: '$0.50',
-      badges: ['frontier', 'reasoning'],
-      modes: ['none', 'high', 'max']
-    },
-    {
-      name: 'gpt-5.4',
-      context: '1M',
-      input: '$2.50',
-      output: '$15.00',
-      cached: '$0.25',
-      badges: ['reasoning'],
-      modes: ['none', 'high', 'max']
-    },
-    {
-      name: 'gpt-5.4-mini',
-      context: '1M',
-      input: '$0.75',
-      output: '$4.50',
-      cached: '$0.08',
-      badges: ['fast', 'reasoning'],
-      modes: ['none', 'high', 'max']
-    },
-    {
-      name: 'gpt-5.4-nano',
-      context: '1M',
-      input: '$0.20',
-      output: '$1.25',
-      cached: '$0.02',
-      badges: ['fast', 'reasoning'],
-      modes: ['none', 'high', 'max']
-    },
-    {
-      name: 'gpt-5.2',
-      context: '1M',
-      input: '—',
-      output: '—',
-      cached: null,
-      badges: ['reasoning'],
-      modes: ['none', 'high', 'max']
-    },
-    {
-      name: 'gpt-5.1',
-      context: '1M',
-      input: '—',
-      output: '—',
-      cached: null,
-      badges: ['reasoning'],
-      modes: ['none', 'high', 'max']
-    },
-    {
-      name: 'gpt-5',
-      context: '1M',
-      input: '$2.50',
-      output: '$10.00',
-      cached: '$1.25',
-      badges: ['reasoning'],
-      modes: ['none', 'high', 'max']
-    },
-    {
-      name: 'gpt-5-mini',
-      context: '1M',
-      input: '$0.25',
-      output: '$2.00',
-      cached: '$0.03',
-      badges: ['fast', 'reasoning'],
-      modes: ['none', 'high', 'max']
-    },
-    {
-      name: 'gpt-5-nano',
-      context: '1M',
-      input: '$0.05',
-      output: '$0.40',
-      cached: '$0.01',
-      badges: ['fast', 'reasoning'],
-      modes: ['none', 'high', 'max']
-    },
-    {
-      name: 'o3',
-      context: '200K',
-      input: '$10.00',
-      output: '$40.00',
-      cached: '$5.00',
-      badges: ['reasoning'],
-      modes: ['none', 'high', 'max']
-    },
-    {
-      name: 'o4-mini',
-      context: '200K',
-      input: '$1.10',
-      output: '$4.40',
-      cached: '$0.55',
-      badges: ['fast', 'reasoning'],
-      modes: ['none', 'high', 'max']
-    },
-    {
-      name: 'o3-mini',
-      context: '200K',
-      input: '$1.10',
-      output: '$4.40',
-      cached: '$0.55',
-      badges: ['fast', 'reasoning'],
-      modes: ['none', 'high', 'max']
-    },
-    {
-      name: 'o1',
-      context: '200K',
-      input: '$15.00',
-      output: '$60.00',
-      cached: '$7.50',
-      badges: ['reasoning'],
-      modes: ['none', 'high', 'max']
-    },
-    {
-      name: 'gpt-4.1',
-      context: '1M',
-      input: '$2.00',
-      output: '$8.00',
-      cached: '$0.50'
-    },
-    {
-      name: 'gpt-4.1-mini',
-      context: '1M',
-      input: '$0.40',
-      output: '$1.60',
-      cached: '$0.10',
-      badges: ['fast']
-    },
-    {
-      name: 'gpt-4.1-nano',
-      context: '1M',
-      input: '$0.10',
-      output: '$0.40',
-      cached: '$0.03',
-      badges: ['fast']
-    },
-    {
-      name: 'gpt-4o',
-      context: '128K',
-      input: '$2.50',
-      output: '$10.00',
-      cached: '$1.25'
-    },
-    {
-      name: 'gpt-4o-mini',
-      context: '128K',
-      input: '$0.15',
-      output: '$0.60',
-      cached: '$0.08',
-      badges: ['fast']
-    },
-    {
-      name: 'gpt-4-turbo',
-      context: '128K',
-      input: '$10.00',
-      output: '$30.00',
-      cached: null
-    },
-    {
-      name: 'gpt-4',
-      context: '8K',
-      input: '$30.00',
-      output: '$60.00',
-      cached: null
-    }
-  ],
-  zai: [
-    {
-      name: 'glm-5.2',
-      context: '1M',
-      input: '$1.40',
-      output: '$4.40',
-      cached: '$0.26',
-      badges: ['frontier', 'reasoning'],
-      modes: ['none', 'high', 'max']
-    },
-    {
-      name: 'glm-5.1',
-      context: '200K',
-      input: '$1.40',
-      output: '$4.40',
-      cached: '$0.26',
-      badges: ['reasoning'],
-      modes: ['none', 'high', 'max']
-    },
-    {
-      name: 'glm-5-turbo',
-      context: '200K',
-      input: '$1.20',
-      output: '$4.00',
-      cached: '$0.24',
-      badges: ['fast', 'reasoning'],
-      modes: ['none', 'high', 'max']
-    },
-    {
-      name: 'glm-5',
-      context: '200K',
-      input: '$1.00',
-      output: '$3.20',
-      cached: '$0.20',
-      badges: ['reasoning'],
-      modes: ['none', 'high', 'max']
-    },
-    {
-      name: 'glm-4.7',
-      context: '200K',
-      input: '$0.60',
-      output: '$2.20',
-      cached: '$0.11',
-      badges: ['reasoning'],
-      modes: ['none', 'on']
-    },
-    {
-      name: 'glm-4.6',
-      context: '200K',
-      input: '$0.60',
-      output: '$2.20',
-      cached: '$0.11',
-      badges: ['reasoning'],
-      modes: ['none', 'on']
-    },
-    {
-      name: 'glm-4.5',
-      context: '128K',
-      input: '$0.60',
-      output: '$2.20',
-      cached: '$0.11',
-      badges: ['reasoning'],
-      modes: ['none', 'on']
-    },
-    {
-      name: 'glm-4.5-air',
-      context: '128K',
-      input: '$0.20',
-      output: '$1.10',
-      cached: '$0.03',
-      badges: ['fast', 'reasoning'],
-      modes: ['none', 'on']
-    }
-  ],
-  deepseek: [
-    {
-      name: 'deepseek-v4-pro',
-      context: '1M',
-      input: '$0.44',
-      output: '$0.87',
-      cached: '$0.01',
-      badges: ['frontier', 'reasoning'],
-      modes: ['none', 'high', 'max']
-    },
-    {
-      name: 'deepseek-v4-flash',
-      context: '1M',
-      input: '$0.14',
-      output: '$0.28',
-      cached: '$0.003',
-      badges: ['fast', 'reasoning'],
-      modes: ['none', 'high', 'max']
-    }
-  ],
-  mimo: [
-    {
-      name: 'mimo-v2.5-pro',
-      context: '1M',
-      input: '$0.20',
-      output: '$2.00',
-      cached: 'Free',
-      badges: ['frontier', 'reasoning'],
-      modes: ['none', 'on']
-    },
-    {
-      name: 'mimo-v2.5',
-      context: '1M',
-      input: '$0.08',
-      output: '$0.80',
-      cached: 'Free',
-      badges: ['reasoning'],
-      modes: ['none', 'on']
-    },
-    {
-      name: 'mimo-v2-pro',
-      context: '256K',
-      input: '$0.20',
-      output: '$2.00',
-      cached: 'Free',
-      badges: ['reasoning'],
-      modes: ['none', 'on']
-    },
-    {
-      name: 'mimo-v2-omni',
-      context: '256K',
-      input: '$0.08',
-      output: '$0.80',
-      cached: 'Free',
-      badges: ['vision', 'reasoning'],
-      modes: ['none', 'on']
-    },
-    {
-      name: 'mimo-v2-flash',
-      context: '256K',
-      input: '$0.01',
-      output: '$0.30',
-      cached: null,
-      badges: ['fast', 'reasoning'],
-      modes: ['none', 'on']
-    }
-  ],
-  kimi: [
-    {
-      name: 'kimi-k2.6',
-      context: '256K',
-      input: '$0.95',
-      output: '$4.00',
-      cached: '$0.16',
-      badges: ['frontier', 'vision', 'reasoning'],
-      modes: ['none', 'on']
-    },
-    {
-      name: 'kimi-k2.5',
-      context: '256K',
-      input: '$0.60',
-      output: '$3.00',
-      cached: '$0.10',
-      badges: ['vision', 'reasoning'],
-      modes: ['none', 'on']
-    },
-    {
-      name: 'kimi-k2.7-code',
-      context: '256K',
-      input: '—',
-      output: '—',
-      cached: null,
-      badges: ['code', 'reasoning'],
-      modes: ['on']
-    },
-    {
-      name: 'kimi-k2.7-code-highspeed',
-      context: '256K',
-      input: '—',
-      output: '—',
-      cached: null,
-      badges: ['code', 'fast', 'reasoning'],
-      modes: ['on']
-    },
-    { name: 'moonshot-v1-auto', context: '128K', input: '$1.00', output: '$3.00', cached: null },
-    { name: 'moonshot-v1-128k', context: '128K', input: '$2.00', output: '$5.00', cached: null },
-    { name: 'moonshot-v1-32k', context: '32K', input: '$1.00', output: '$3.00', cached: null },
-    { name: 'moonshot-v1-8k', context: '8K', input: '$0.20', output: '$2.00', cached: null }
-  ],
-  minimax: [
-    {
-      name: 'MiniMax-M3',
-      context: '1M',
-      input: '$0.30',
-      output: '$1.20',
-      cached: '$0.06',
-      badges: ['frontier', 'reasoning'],
-      modes: ['none', 'on']
-    },
-    {
-      name: 'MiniMax-M2.7',
-      context: '200K',
-      input: '$0.30',
-      output: '$1.20',
-      cached: '$0.06',
-      badges: ['reasoning'],
-      modes: ['on']
-    },
-    {
-      name: 'MiniMax-M2.7-highspeed',
-      context: '200K',
-      input: '$0.60',
-      output: '$2.40',
-      cached: '$0.06',
-      badges: ['fast', 'reasoning'],
-      modes: ['on']
-    },
-    {
-      name: 'MiniMax-M2.5',
-      context: '200K',
-      input: '$0.30',
-      output: '$1.20',
-      cached: '$0.03',
-      badges: ['code', 'reasoning'],
-      modes: ['on']
-    },
-    {
-      name: 'MiniMax-M2.5-highspeed',
-      context: '200K',
-      input: '$0.60',
-      output: '$2.40',
-      cached: '$0.03',
-      badges: ['code', 'fast', 'reasoning'],
-      modes: ['on']
-    },
-    {
-      name: 'MiniMax-M2.1',
-      context: '200K',
-      input: '$0.30',
-      output: '$1.20',
-      cached: '$0.03',
-      badges: ['reasoning'],
-      modes: ['on']
-    },
-    {
-      name: 'MiniMax-M2.1-highspeed',
-      context: '200K',
-      input: '$0.60',
-      output: '$2.40',
-      cached: '$0.03',
-      badges: ['fast', 'reasoning'],
-      modes: ['on']
-    },
-    {
-      name: 'MiniMax-M2',
-      context: '200K',
-      input: '$0.30',
-      output: '$1.20',
-      cached: '$0.03',
-      badges: ['reasoning'],
-      modes: ['on']
-    }
-  ],
-  xai: [
-    {
-      name: 'grok-4.3',
-      context: '1M',
-      input: '$1.25',
-      output: '$2.50',
-      cached: null,
-      badges: ['frontier', 'vision', 'reasoning'],
-      modes: ['none', 'high']
-    },
-    {
-      name: 'grok-4.20-0309-reasoning',
-      context: '256K',
-      input: '$1.25',
-      output: '$2.50',
-      cached: null,
-      badges: ['vision', 'reasoning'],
-      modes: ['on']
-    },
-    {
-      name: 'grok-4.20-0309-non-reasoning',
-      context: '256K',
-      input: '$1.25',
-      output: '$2.50',
-      cached: null,
-      badges: ['vision']
-    },
-    {
-      name: 'grok-build-0.1',
-      context: '256K',
-      input: '$1.00',
-      output: '$2.00',
-      cached: null,
-      badges: ['code', 'reasoning'],
-      modes: ['on']
-    }
-  ],
-  qwen: [
-    {
-      name: 'qwen3.7-max',
-      context: '1M',
-      input: '$2.50',
-      output: '$7.50',
-      cached: '$0.25',
-      badges: ['frontier', 'reasoning'],
-      modes: ['none', 'high', 'max']
-    },
-    {
-      name: 'qwen3.7-plus',
-      context: '1M',
-      input: '$0.40',
-      output: '$1.60',
-      cached: '$0.064',
-      badges: ['reasoning'],
-      modes: ['none', 'high', 'max']
-    },
-    {
-      name: 'qwen3.6-plus',
-      context: '1M',
-      input: '$0.40',
-      output: '$1.60',
-      cached: '$0.04',
-      badges: ['reasoning'],
-      modes: ['none', 'high', 'max']
-    },
-    {
-      name: 'qwen3.6-flash',
-      context: '1M',
-      input: '$0.25',
-      output: '$1.50',
-      cached: '$0.025',
-      badges: ['fast', 'reasoning'],
-      modes: ['none', 'high', 'max']
-    },
-    {
-      name: 'qwen3.5-plus',
-      context: '1M',
-      input: '$0.40',
-      output: '$1.60',
-      cached: '$0.04',
-      badges: ['reasoning'],
-      modes: ['none', 'high', 'max']
-    },
-    {
-      name: 'qwen3.5-flash',
-      context: '1M',
-      input: '$0.06',
-      output: '$0.24',
-      cached: '$0.006',
-      badges: ['fast', 'reasoning'],
-      modes: ['none', 'high', 'max']
-    },
-    {
-      name: 'qwen3-max',
-      context: '131K',
-      input: '$1.60',
-      output: '$6.40',
-      cached: '$0.40',
-      badges: ['reasoning'],
-      modes: ['none', 'high', 'max']
-    },
-    {
-      name: 'qwen3-coder-plus',
-      context: '131K',
-      input: '$0.40',
-      output: '$1.60',
-      cached: '$0.04',
-      badges: ['code', 'reasoning'],
-      modes: ['none', 'high', 'max']
-    },
-    {
-      name: 'qwen3-coder-flash',
-      context: '131K',
-      input: '$0.40',
-      output: '$1.60',
-      cached: '$0.04',
-      badges: ['code', 'fast', 'reasoning'],
-      modes: ['none', 'high', 'max']
-    },
-    {
-      name: 'qwq-plus',
-      context: '131K',
-      input: '$0.40',
-      output: '$1.60',
-      cached: '$0.04',
-      badges: ['reasoning'],
-      modes: ['on']
-    },
-    {
-      name: 'qvq-max',
-      context: '131K',
-      input: '$1.60',
-      output: '$6.40',
-      cached: '$0.16',
-      badges: ['vision', 'reasoning'],
-      modes: ['on']
-    },
-    {
-      name: 'qwen-max',
-      context: '131K',
-      input: '$1.60',
-      output: '$6.40',
-      cached: '$0.16'
-    },
-    {
-      name: 'qwen-plus',
-      context: '131K',
-      input: '$0.40',
-      output: '$1.60',
-      cached: '$0.04',
-      badges: ['fast']
-    },
-    {
-      name: 'qwen-turbo',
-      context: '1M',
-      input: '$0.30',
-      output: '$0.60',
-      cached: '$0.03',
-      badges: ['fast']
-    },
-    {
-      name: 'qwen-flash',
-      context: '1M',
-      input: '$0.06',
-      output: '$0.24',
-      cached: '$0.006',
-      badges: ['fast']
-    }
-  ],
-  stepfun: [
-    {
-      name: 'step-3.7-flash',
-      context: '128K',
-      input: '$0.83',
-      output: '$6.94',
-      cached: null,
-      badges: ['frontier', 'reasoning'],
-      modes: ['on']
-    },
-    {
-      name: 'step-3.5-flash',
-      context: '128K',
-      input: '$0.83',
-      output: '$6.94',
-      cached: null,
-      badges: ['fast', 'reasoning'],
-      modes: ['on']
-    }
-  ],
-  openrouter: [
-    {
-      name: 'anthropic/claude-opus-4.1',
-      context: '200K',
-      input: '$15.00',
-      output: '$75.00',
-      cached: null,
-      badges: ['reasoning'],
-      modes: ['none', 'high']
-    },
-    {
-      name: 'anthropic/claude-sonnet-4.5',
-      context: '1M',
-      input: '$3.00',
-      output: '$15.00',
-      cached: null,
-      badges: ['reasoning'],
-      modes: ['none', 'high']
-    },
-    {
-      name: 'openai/gpt-5',
-      context: '400K',
-      input: '$1.25',
-      output: '$10.00',
-      cached: null,
-      badges: ['reasoning'],
-      modes: ['none', 'high']
-    },
-    {
-      name: 'openai/gpt-5-mini',
-      context: '400K',
-      input: '$0.25',
-      output: '$2.00',
-      cached: null,
-      badges: ['fast', 'reasoning'],
-      modes: ['none', 'high']
-    },
-    {
-      name: 'openai/o3',
-      context: '200K',
-      input: '$2.00',
-      output: '$8.00',
-      cached: null,
-      badges: ['reasoning'],
-      modes: ['none', 'high']
-    },
-    {
-      name: 'openai/o4-mini',
-      context: '200K',
-      input: '$1.10',
-      output: '$4.40',
-      cached: null,
-      badges: ['fast', 'reasoning'],
-      modes: ['none', 'high']
-    },
-    {
-      name: 'openai/gpt-4o',
-      context: '128K',
-      input: '$2.50',
-      output: '$10.00',
-      cached: null,
-      badges: ['vision']
-    },
-    {
-      name: 'openai/gpt-4.1',
-      context: '1M',
-      input: '$2.00',
-      output: '$8.00',
-      cached: null
-    },
-    {
-      name: 'google/gemini-2.5-pro',
-      context: '1M',
-      input: '$1.25',
-      output: '$10.00',
-      cached: null,
-      badges: ['vision', 'reasoning'],
-      modes: ['none', 'high']
-    },
-    {
-      name: 'google/gemini-2.5-flash',
-      context: '1M',
-      input: '$0.30',
-      output: '$2.50',
-      cached: null,
-      badges: ['fast', 'vision', 'reasoning'],
-      modes: ['none', 'high']
-    },
-    {
-      name: 'deepseek/deepseek-r1',
-      context: '164K',
-      input: '$0.70',
-      output: '$2.50',
-      cached: null,
-      badges: ['reasoning'],
-      modes: ['none', 'high']
-    },
-    {
-      name: 'deepseek/deepseek-chat-v3.1',
-      context: '164K',
-      input: '$0.21',
-      output: '$0.79',
-      cached: null,
-      badges: ['reasoning'],
-      modes: ['none', 'high']
-    },
-    {
-      name: 'x-ai/grok-4.3',
-      context: '1M',
-      input: '$1.25',
-      output: '$2.50',
-      cached: null,
-      badges: ['vision', 'reasoning'],
-      modes: ['none', 'high']
-    },
-    {
-      name: 'qwen/qwen3-235b-a22b',
-      context: '131K',
-      input: '$0.45',
-      output: '$1.82',
-      cached: null,
-      badges: ['reasoning'],
-      modes: ['none', 'high']
-    },
-    {
-      name: 'z-ai/glm-4.6',
-      context: '203K',
-      input: '$0.43',
-      output: '$1.74',
-      cached: null,
-      badges: ['reasoning'],
-      modes: ['none', 'high']
-    },
-    {
-      name: 'meta-llama/llama-4-maverick',
-      context: '1M',
-      input: '$0.15',
-      output: '$0.60',
-      cached: null,
-      badges: ['fast']
-    },
-    {
-      name: 'meta-llama/llama-3.3-70b-instruct',
-      context: '131K',
-      input: '$0.10',
-      output: '$0.32',
-      cached: null,
-      badges: ['fast']
-    },
-    {
-      name: 'mistralai/mistral-large',
-      context: '128K',
-      input: '$2.00',
-      output: '$6.00',
-      cached: null
-    },
-    {
-      name: 'mistralai/mistral-medium-3',
-      context: '131K',
-      input: '$0.40',
-      output: '$2.00',
-      cached: null,
-      badges: ['fast']
-    },
-    {
-      name: 'moonshotai/kimi-k2',
-      context: '131K',
-      input: '$0.57',
-      output: '$2.30',
-      cached: null
-    }
-  ]
-}
-
-// ── OpenRouter model sorting ──────────────────────────────────────────
-// Tier 0: US frontier labs, Tier 1: Chinese labs, Tier 2: everything else.
-// Tier 0: providers wolffish supports directly (sorted first)
-// Tier 1: other US frontier labs
-// Tier 2: other Chinese labs
-// Tier 3: European / rest (fallback for unknown slugs)
-const OPENROUTER_PROVIDER_TIER: Record<string, number> = {
-  anthropic: 0,
-  openai: 0,
-  deepseek: 0,
-  qwen: 0,
-  xiaomi: 0,
-  moonshotai: 0,
-  minimax: 0,
-  stepfun: 0,
-  'z-ai': 0,
-  google: 1,
-  'x-ai': 1,
-  'meta-llama': 1,
-  perplexity: 1,
-  amazon: 1,
-  mistralai: 2,
-  cohere: 2,
-  microsoft: 2,
-  nousresearch: 2
-}
-
-function openRouterProviderSlug(modelId: string): string {
-  const slash = modelId.indexOf('/')
-  return slash > 0 ? modelId.slice(0, slash) : ''
-}
-
-function sortOpenRouterModels<T extends { name: string; badges?: BadgeKind[] }>(items: T[]): T[] {
-  return items.slice().sort((a, b) => {
-    const slugA = openRouterProviderSlug(a.name)
-    const slugB = openRouterProviderSlug(b.name)
-    const tierA = OPENROUTER_PROVIDER_TIER[slugA] ?? 3
-    const tierB = OPENROUTER_PROVIDER_TIER[slugB] ?? 3
-    if (tierA !== tierB) return tierA - tierB
-    if (slugA !== slugB) return slugA.localeCompare(slugB)
-    const fA = a.badges?.includes('frontier') ? 0 : 1
-    const fB = b.badges?.includes('frontier') ? 0 : 1
-    return fA - fB
-  })
-}
-
-function sortOpenRouterModelIds(ids: readonly string[]): string[] {
-  return ids.slice().sort((a, b) => {
-    const disA = isModelDisabled(a) ? 1 : 0
-    const disB = isModelDisabled(b) ? 1 : 0
-    if (disA !== disB) return disA - disB
-    const slugA = openRouterProviderSlug(a)
-    const slugB = openRouterProviderSlug(b)
-    const tierA = OPENROUTER_PROVIDER_TIER[slugA] ?? 3
-    const tierB = OPENROUTER_PROVIDER_TIER[slugB] ?? 3
-    if (tierA !== tierB) return tierA - tierB
-    if (slugA !== slugB) return slugA.localeCompare(slugB)
-    return a.localeCompare(b)
-  })
-}
-
-export function CloudProviderPanel({ provider }: { provider: ProviderId }): React.JSX.Element {
+export function CloudProviderPanel({
+  provider,
+  onOpenBrain
+}: {
+  provider: ProviderId
+  onOpenBrain: () => void
+}): React.JSX.Element {
   const { t } = useTranslation()
   const toast = useToast()
   const providerLabel = t(`settings.model.providers.${provider}`)
@@ -1033,30 +67,15 @@ export function CloudProviderPanel({ provider }: { provider: ProviderId }): Reac
   // rejected by the provider (revoked, regenerated, expired). Cleared as
   // soon as the user starts typing a replacement.
   const [keyInvalid, setKeyInvalid] = useState(false)
-  // Configured cloud providers (this and the other one) plus the current
-  // priority order. We need both to decide whether to show the Priority
-  // dropdown and how many position options to offer.
-  const [allConfigured, setAllConfigured] = useState<ProviderId[]>([])
-  const [priority, setPriority] = useState<ProviderId[]>([])
-
   type ReloadSnapshot = {
     match: ProviderListEntry | null
-    configured: ProviderId[]
-    order: ProviderId[]
   }
 
   // Pure read: callers are responsible for committing the snapshot to
   // state. Keeps setState out of effect bodies.
   const reloadStored = async (): Promise<ReloadSnapshot> => {
-    const [entries, order] = await Promise.all([
-      window.api.provider.list(),
-      window.api.provider.getPriority()
-    ])
-    return {
-      match: entries.find((e) => e.id === provider) ?? null,
-      configured: entries.map((e) => e.id),
-      order
-    }
+    const entries = await window.api.provider.list()
+    return { match: entries.find((e) => e.id === provider) ?? null }
   }
 
   // The component remounts per provider tab (TabPanel returns null when
@@ -1068,8 +87,6 @@ export function CloudProviderPanel({ provider }: { provider: ProviderId }): Reac
     void reloadStored().then((snap) => {
       if (cancelled) return
       setStored(snap.match)
-      setAllConfigured(snap.configured)
-      setPriority(snap.order)
       setModel(snap.match?.model ?? null)
       setApiKey(snap.match?.apiKey ?? '')
       if (!snap.match) return
@@ -1086,14 +103,11 @@ export function CloudProviderPanel({ provider }: { provider: ProviderId }): Reac
 
   // Background startup refresh updates the cached model list. If settings is
   // open at that moment, pick up the new catalogue without making the user
-  // retest. We also reload on changes to the *other* configured provider so
-  // the Priority dropdown appears/disappears as keys are added/removed.
+  // retest.
   useEffect(() => {
     const off = window.api.provider.onUpdated((event) => {
+      if (event.id !== provider) return
       void reloadStored().then((snap) => {
-        setAllConfigured(snap.configured)
-        setPriority(snap.order)
-        if (event.id !== provider) return
         setStored(snap.match)
         // Don't clobber an unsaved model selection — only sync if the user
         // hasn't picked anything yet.
@@ -1164,8 +178,6 @@ export function CloudProviderPanel({ provider }: { provider: ProviderId }): Reac
       })
       const snap = await reloadStored()
       setStored(snap.match)
-      setAllConfigured(snap.configured)
-      setPriority(snap.order)
       setModel(modelToSave)
       setApiKey(snap.match?.apiKey ?? '')
       setRevealKey(false)
@@ -1202,27 +214,6 @@ export function CloudProviderPanel({ provider }: { provider: ProviderId }): Reac
     showKeyWorksToast()
   }
 
-  // Picking a different model on an already-saved provider auto-saves
-  // silently — the dropdown already reflects the new selection.
-  const onSelectModel = async (next: string): Promise<void> => {
-    setModel(next)
-    if (saving || !stored || enteringNewKey || next === stored.model) return
-    setSaving(true)
-    try {
-      await window.api.provider.save({
-        id: provider,
-        model: next,
-        models: stored.models
-      })
-      const snap = await reloadStored()
-      setStored(snap.match)
-      setAllConfigured(snap.configured)
-      setPriority(snap.order)
-    } finally {
-      setSaving(false)
-    }
-  }
-
   const onRemove = async (): Promise<void> => {
     if (!canRemove) return
     setSaving(true)
@@ -1240,55 +231,6 @@ export function CloudProviderPanel({ provider }: { provider: ProviderId }): Reac
         tone: 'info',
         message: t('settings.model.cloud.removedToast', { provider: providerLabel })
       })
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const modelOptions: readonly SelectOption<string>[] = useMemo(
-    () =>
-      models.map((m) => ({
-        value: m,
-        label: isModelDisabled(m) ? `${m} — ${disabledReason(m)}` : m,
-        disabled: isModelDisabled(m)
-      })),
-    [models]
-  )
-
-  // Priority is shown only when this provider has a saved key AND another
-  // configured cloud provider exists — picking 1st-vs-2nd is meaningless
-  // with a single provider.
-  const showPriority = stored !== null && allConfigured.length >= 2
-  const currentPosition = useMemo(() => {
-    const idx = priority.indexOf(provider)
-    return idx >= 0 ? idx + 1 : null
-  }, [priority, provider])
-
-  const priorityOptions: readonly SelectOption<string>[] = useMemo(
-    () =>
-      Array.from({ length: allConfigured.length }, (_, i) => ({
-        value: String(i + 1),
-        label: t(`settings.model.cloud.priorityOptions.${i + 1}`)
-      })),
-    [allConfigured.length, t]
-  )
-
-  // Moving this provider to a new position bumps whoever held that slot —
-  // an in-place swap if there are two providers, or a rotate otherwise.
-  // Built so adding a third cloud provider later still produces a coherent
-  // order without revisiting this code.
-  const onPriorityChange = async (next: string): Promise<void> => {
-    const target = Number(next)
-    if (saving || !Number.isFinite(target) || target < 1) return
-    const current = priority.indexOf(provider)
-    if (current < 0 || current + 1 === target) return
-    const reordered = priority.filter((id) => id !== provider)
-    const insertAt = Math.min(target - 1, reordered.length)
-    reordered.splice(insertAt, 0, provider)
-    setSaving(true)
-    try {
-      await window.api.provider.setPriority(reordered)
-      setPriority(reordered)
     } finally {
       setSaving(false)
     }
@@ -1375,28 +317,17 @@ export function CloudProviderPanel({ provider }: { provider: ProviderId }): Reac
             </div>
           </div>
 
-          <Select<string>
-            label={t('settings.model.cloud.model')}
-            value={model ?? ''}
-            options={modelOptions}
-            disabled={saving || !hasModels}
-            placeholder={t('settings.model.cloud.modelHint')}
-            onChange={(next) => void onSelectModel(next)}
-            searchable
-            searchPlaceholder={t('settings.model.cloud.searchModels')}
-          />
-
-          <div className="flex flex-col gap-1.5">
-            <Select<string>
-              label={t('settings.model.cloud.priority')}
-              value={currentPosition !== null ? String(currentPosition) : ''}
-              options={priorityOptions}
-              disabled={saving || !showPriority}
-              placeholder={t('settings.model.cloud.priorityHint')}
-              onChange={(next) => void onPriorityChange(next)}
-            />
-            <p className="text-muted text-xs leading-relaxed">
-              {t('settings.model.cloud.priorityDescription')}
+          <div className="border-border/60 bg-bg/40 text-muted flex items-start gap-2.5 rounded-xl border px-4 py-3 text-xs leading-relaxed">
+            <InformationCircleIcon size={14} className="mt-0.5 shrink-0" aria-hidden />
+            <p className="flex-1">
+              {t('settings.model.cloud.brainNotice')}{' '}
+              <button
+                type="button"
+                onClick={onOpenBrain}
+                className="text-primary cursor-pointer font-medium hover:underline"
+              >
+                {t('settings.model.cloud.brainNoticeLink')}
+              </button>
             </p>
           </div>
 
@@ -1448,15 +379,6 @@ export function CloudProviderPanel({ provider }: { provider: ProviderId }): Reac
       </div>
     </div>
   )
-}
-
-const BADGE_STYLES: Record<BadgeKind, string> = {
-  frontier: 'bg-accent/15 text-accent',
-  vision: 'bg-blue-500/15 text-blue-600 dark:text-blue-400',
-  reasoning: 'bg-purple-500/15 text-purple-600 dark:text-purple-400',
-  code: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400',
-  fast: 'bg-amber-500/15 text-amber-600 dark:text-amber-400',
-  voice: 'bg-pink-500/15 text-pink-600 dark:text-pink-400'
 }
 
 function ModelBreakdown({
@@ -1622,19 +544,6 @@ function StatusLine({
       <span>{t('settings.model.cloud.status.untested')}</span>
     </p>
   )
-}
-
-function isModelDisabled(id: string): boolean {
-  if (/tts|voiceclone|voicedesign/.test(id)) return true
-  if (/^(gpt-5[\d.]*-(pro|codex)|o\d+-pro)/.test(id)) return true
-  if (/(-image|-audio|lyria)/i.test(id)) return true
-  return false
-}
-
-function disabledReason(id: string): string {
-  if (/-image/.test(id)) return 'image'
-  if (/(-audio|tts|voiceclone|voicedesign|lyria)/.test(id)) return 'audio'
-  return 'unsupported'
 }
 
 /** Prefer the undated base model (e.g. "gpt-5.5" over "gpt-5.5-2026-04-23"). */

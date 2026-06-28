@@ -1,4 +1,3 @@
-import { ActiveModelChip } from '@components/common/active-model-chip/ActiveModelChip'
 import { ApprovalCard } from '@components/common/approval-card/ApprovalCard'
 import { QuestionCard } from '@components/common/question-card/QuestionCard'
 import { AttachmentList } from '@components/common/attachment-list/AttachmentList'
@@ -150,22 +149,20 @@ export function Chat(): React.JSX.Element {
     () => status?.config?.llm.providers ?? [],
     [status?.config?.llm.providers]
   )
-  const cloudPriority = status?.config?.llm.cloudPriority
+  const brain = status?.config?.llm.brain ?? null
   const hasCloudProvider = cloudProviders.some((p) => p.apiKey && p.apiKey.length > 0)
+  // The single Brain is the active cloud model — but only when its provider
+  // still has a saved key. Null otherwise (no cloud model selected).
   const activeCloudProvider = useMemo(() => {
-    const withKey = cloudProviders.filter((p) => p.apiKey && p.apiKey.length > 0)
-    if (withKey.length === 0) return null
-    if (cloudPriority && cloudPriority.length > 0) {
-      const first = cloudPriority.find((id) => withKey.some((p) => p.id === id))
-      if (first) return first
-    }
-    return withKey[0].id
-  }, [cloudProviders, cloudPriority])
+    if (!brain) return null
+    const provider = cloudProviders.find((p) => p.id === brain.providerId)
+    return provider && provider.apiKey && provider.apiKey.length > 0 ? brain.providerId : null
+  }, [brain, cloudProviders])
   const hasAnyModel = !!currentModel || hasCloudProvider
   const [savingMode, setSavingMode] = useState(false)
   const activeCloudModel = useMemo(
-    () => cloudProviders.find((p) => p.id === activeCloudProvider)?.model ?? null,
-    [cloudProviders, activeCloudProvider]
+    () => (activeCloudProvider && brain ? brain.model : null),
+    [activeCloudProvider, brain]
   )
   const persistedThinkingModes = status?.config?.llm.thinkingModes
 
@@ -758,13 +755,7 @@ export function Chat(): React.JSX.Element {
       if (pendingTurnIdRef.current !== segment.turnId) return
       setMessages((prev) => appendSegment(prev, segment))
       const segKind = segment.kind
-      if (
-        segKind === 'tool_call' ||
-        segKind === 'tool_result' ||
-        segKind === 'compaction' ||
-        segKind === 'active_model' ||
-        segKind === 'provider_change'
-      ) {
+      if (segKind === 'tool_call' || segKind === 'tool_result' || segKind === 'compaction') {
         const entry = buildSegmentTimelineEntry(segment)
         if (entry) {
           if (segKind === 'compaction') {
@@ -1532,7 +1523,7 @@ export function Chat(): React.JSX.Element {
                     <button
                       type="button"
                       onClick={() => {
-                        preselectSettingsTab('model')
+                        preselectSettingsTab('brain')
                         goTo('settings')
                       }}
                       className="text-primary hover:underline cursor-pointer font-medium"
@@ -1571,7 +1562,7 @@ export function Chat(): React.JSX.Element {
                 <button
                   type="button"
                   onClick={() => {
-                    preselectSettingsTab('model')
+                    preselectSettingsTab('brain')
                     goTo('settings')
                   }}
                   className="text-primary hover:underline cursor-pointer font-medium"
@@ -1687,7 +1678,7 @@ export function Chat(): React.JSX.Element {
                 onChange={onModeChange}
                 disabled={savingMode || streaming}
                 activeCloudProvider={activeCloudProvider}
-                cloudModel={cloudProviders.find((p) => p.id === activeCloudProvider)?.model ?? null}
+                cloudModel={activeCloudModel}
                 localModel={currentModel}
               />
             </div>
@@ -2032,9 +2023,7 @@ const TIMELINE_KIND_COLOR: Record<string, string> = {
   'task.stopped': 'bg-amber-500',
   'segment.tool_call': 'bg-blue-500',
   'segment.tool_result': 'bg-violet-500',
-  'segment.compaction': 'bg-violet-500',
-  'segment.active_model': 'bg-sky-500',
-  'segment.provider_change': 'bg-amber-500'
+  'segment.compaction': 'bg-violet-500'
 }
 
 function CompactionStartedCard({
@@ -2249,24 +2238,6 @@ function buildSegmentTimelineEntry(segment: Segment): TimelineEntry | null {
       return `${d.toolName ?? 'unknown'}: ${d.originalChars} → ${d.compactedChars} chars (${pct}% reduced)`
     })
     lines.unshift(`~${fmtNum(segment.tokensSaved)} tokens saved in ${segment.durationMs}ms`)
-    return {
-      id: segment.segmentId,
-      timestamp: ts,
-      kind: `segment.${segKind}`,
-      detail: lines.join('\n')
-    }
-  }
-  if (segKind === 'active_model') {
-    return {
-      id: segment.segmentId,
-      timestamp: ts,
-      kind: `segment.${segKind}`,
-      detail: `${segment.provider}/${segment.model}`
-    }
-  }
-  if (segKind === 'provider_change') {
-    const lines = [`${segment.from} → ${segment.to}`]
-    if (segment.reason) lines.push(segment.reason)
     return {
       id: segment.segmentId,
       timestamp: ts,
@@ -2638,13 +2609,6 @@ function renderSegments(
   const blocks: ReactNode[] = []
   let textBuffer = ''
   let textRun = 0
-  // Defer rendering either chip until the cascade has actually committed
-  // to a provider — i.e. real content (text or a tool call) has arrived.
-  const hasCommitted = segments.some((s) => s.kind === 'text' || s.kind === 'tool_call')
-  // Track which model names have already been rendered as a chip so we
-  // never show the same provider name twice — covers active_model +
-  // provider_change naming the same model, and back-to-back iterations.
-  const renderedModelChips = new Set<string>()
   // Generic guard: every file path already rendered as a player/viewer in this
   // message. Prevents the same file showing twice when it's reachable from more
   // than one detector (e.g. a voice result that also matches the generic media
@@ -2817,12 +2781,35 @@ function renderSegments(
       // (no fall-through to the delivered-file viewers, which never coincide).
       if (codeFile) {
         if (verbose) {
+          // Reveal/download the read/written file via the OS. revealPath and
+          // downloadPath resolve ~ and absolute paths (file_read/file_write
+          // targets live anywhere on the user's machine, not just the
+          // workspace); a relative path can't be resolved from the renderer, so
+          // the buttons are omitted for it.
+          const codeFilePath = codeFile.filePath
+          const pathActionable = /^(?:~|\/)/.test(codeFilePath)
           blocks.push(
             <CodeFileViewer
               key={`code_${seg.segmentId}`}
               content={codeFile.content}
               fileName={codeFile.fileName}
               htmlPreview={/\.html?$/i.test(codeFile.fileName)}
+              onReveal={
+                pathActionable
+                  ? () =>
+                      void window.api.upload.revealPath(codeFilePath).catch(() => {
+                        // best-effort
+                      })
+                  : undefined
+              }
+              onDownload={
+                pathActionable
+                  ? () =>
+                      void window.api.upload.downloadPath(codeFilePath).catch(() => {
+                        // best-effort
+                      })
+                  : undefined
+              }
             />
           )
         }
@@ -3027,25 +3014,6 @@ function renderSegments(
       // Flush whatever text has accumulated into its own bubble, then
       // continue — the next text segment starts a new bubble.
       flushText()
-    } else if (seg.kind === 'active_model') {
-      // Clean feed: the model/provider chip is verbose-only. Off (default)
-      // hides which model answered; on shows it.
-      if (!verbose) continue
-      if (!hasCommitted) continue
-      if (!hasFollowingContent(segments, segIdx)) continue
-      if (renderedModelChips.has(seg.model)) continue
-      renderedModelChips.add(seg.model)
-      flushText()
-      blocks.push(<ActiveModelChip key={seg.segmentId} provider={seg.provider} model={seg.model} />)
-    } else if (seg.kind === 'provider_change') {
-      // Clean feed: the mid-turn provider-switch chip is verbose-only too.
-      if (!verbose) continue
-      if (!hasCommitted) continue
-      if (!hasFollowingContent(segments, segIdx)) continue
-      if (renderedModelChips.has(seg.model)) continue
-      renderedModelChips.add(seg.model)
-      flushText()
-      blocks.push(<ActiveModelChip key={seg.segmentId} provider={seg.to} model={seg.model} />)
     } else if (seg.kind === 'compaction_started') {
       // Clean feed: compaction is internal activity, not a result — hide it.
       if (!verbose) continue
@@ -3097,14 +3065,6 @@ function renderSegments(
   }
 
   return { blocks: <>{blocks}</>, empty: blocks.length === 0 }
-}
-
-function hasFollowingContent(segments: Segment[], fromIdx: number): boolean {
-  for (let i = fromIdx + 1; i < segments.length; i++) {
-    const k = segments[i].kind
-    if (k === 'text' || k === 'tool_call') return true
-  }
-  return false
 }
 
 function PendingAttachmentChip({
@@ -3363,12 +3323,13 @@ const DELIVERY_MARKER_ONLY_RE =
 function extractToolResultCodeFile(
   call: ToolCallSegment,
   result?: ToolResultSegment
-): { fileName: string; content: string } | null {
+): { filePath: string; fileName: string; content: string } | null {
   if (!result?.output || result.status !== 'success') return null
   if (DELIVERY_MARKER_ONLY_RE.test(result.output.trim())) return null
   const argsPath = typeof call.args?.path === 'string' ? call.args.path : null
   if (!argsPath || !CODE_EXTS_RE.test(argsPath)) return null
   return {
+    filePath: argsPath,
     fileName: argsPath.split('/').pop() ?? 'file',
     content: result.output
   }

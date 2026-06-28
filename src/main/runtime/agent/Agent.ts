@@ -24,12 +24,11 @@ import { Hypothalamus } from '@main/runtime/hypothalamus'
 import { Insula } from '@main/runtime/insula'
 import { Motor } from '@main/runtime/motor'
 import { formatRuntimeStatus } from '@main/runtime/outbound'
-import { Prefrontal, type ProviderContext } from '@main/runtime/prefrontal'
+import { Prefrontal } from '@main/runtime/prefrontal'
 import { RAS } from '@main/runtime/ras'
 import {
   Thalamus,
   type ChatMessage,
-  type FallbackMode,
   type NoProviderAvailableInfo,
   type ProviderId,
   type StopReason,
@@ -358,7 +357,6 @@ export class Agent {
     let lastReasoningContent: string | undefined
     let noProviderAvailable: NoProviderAvailableInfo[] | null = null
     let providerErrors: NoProviderAvailableInfo[] | undefined
-    let fallbackState: { mode: FallbackMode; reason: string; cloudProvider: string } | null = null
     const turnTools: TurnToolCall[] = []
     let turnUsage: StreamUsage = { inputTokens: 0, outputTokens: 0 }
     let turnProvider: ProviderId | null = null
@@ -386,7 +384,6 @@ export class Agent {
     const truncateOutbound = optimizeContext && optimizationConfig?.truncation !== false
     let pinnedSystemPrompt: string | null = null
     let pinnedTools: ToolDefinition[] | null = null
-    let pinnedWithFallback = false
     // Cerebellum tool-surface version captured when the pin was built. When a
     // skill is created/edited/enabled/disabled mid-turn (via the `skills`
     // capability), the cerebellum's generation moves and we rebuild the pin
@@ -406,15 +403,6 @@ export class Agent {
 
         iterationCount += 1
 
-        const providerContext: ProviderContext | undefined = fallbackState
-          ? {
-              isFallback: true,
-              mode: fallbackState.mode,
-              reason: fallbackState.reason,
-              cloudProvider: fallbackState.cloudProvider
-            }
-          : undefined
-
         const runtime = {
           iteration: iterationCount,
           toolsCalled: totalToolCalls,
@@ -425,28 +413,16 @@ export class Agent {
         let filteredTools: ToolDefinition[]
         if (optimizeContext) {
           // Task-start pin: prompt and tools are derived once per turn and
-          // reused across iterations. Rebuilt only when fallback state
-          // flips — a provider change resets the cache anyway, and the
-          // fallback prompt carries the <provider> notice and a different
-          // tool surface.
-          const isFallback = providerContext !== undefined
+          // reused across iterations. Rebuilt only when the cerebellum's
+          // tool surface changes mid-turn (a skill created/edited/toggled).
           const currentGeneration = this.cerebellum.getGeneration()
           if (
             pinnedSystemPrompt === null ||
             pinnedTools === null ||
-            pinnedWithFallback !== isFallback ||
             pinnedGeneration !== currentGeneration
           ) {
-            pinnedSystemPrompt = await this.prefrontal.buildSystemPrompt(
-              userContent,
-              runtime,
-              providerContext
-            )
-            pinnedTools = this.filterToolsForProvider(
-              this.prefrontal.selectTools(providerContext),
-              userContent
-            )
-            pinnedWithFallback = isFallback
+            pinnedSystemPrompt = await this.prefrontal.buildSystemPrompt(userContent, runtime)
+            pinnedTools = this.filterToolsForProvider(this.prefrontal.selectTools(), userContent)
             pinnedGeneration = currentGeneration
           }
           systemPrompt = pinnedSystemPrompt
@@ -454,37 +430,8 @@ export class Agent {
         } else {
           // Legacy path: rebuild the system prompt each iteration so the
           // <runtime> block reflects the live iteration counter.
-          systemPrompt = await this.prefrontal.buildSystemPrompt(
-            userContent,
-            runtime,
-            providerContext
-          )
-          filteredTools = this.filterToolsForProvider(
-            this.prefrontal.selectTools(providerContext),
-            userContent
-          )
-        }
-
-        // Cloud→local transitions happen mid-stream inside thalamus, so
-        // the iter-1 fallback prompt has to be rebuilt from there.
-        // Subsequent iterations already have providerContext baked in
-        // and won't transition (cloud is on cooldown, thalamus goes
-        // straight to local without invoking this).
-        const buildFallback = async (
-          mode: FallbackMode
-        ): Promise<{ system: string; tools?: ToolDefinition[] }> => {
-          const ctx: ProviderContext = {
-            isFallback: true,
-            mode,
-            reason: 'unavailable',
-            cloudProvider: this.thalamus.getActiveProvider() ?? 'cloud'
-          }
-          const sys = await this.prefrontal.buildSystemPrompt(userContent, runtime, ctx)
-          const fallbackTools = this.prefrontal.selectTools(ctx)
-          return {
-            system: sys,
-            tools: fallbackTools.length > 0 ? fallbackTools : undefined
-          }
+          systemPrompt = await this.prefrontal.buildSystemPrompt(userContent, runtime)
+          filteredTools = this.filterToolsForProvider(this.prefrontal.selectTools(), userContent)
         }
 
         // Context Compaction: if context exceeds the model's input budget,
@@ -532,17 +479,11 @@ export class Agent {
           })
         }
 
-        // Snapshot for closure-safe narrowing: the provider+model that
-        // served the previous iteration, used to pin the cascade.
-        const stickyId = turnProvider
-        const stickyModel = turnModel
-
         const stream = this.thalamus.stream({
           system: systemPrompt,
           messages,
           tools: filteredTools.length > 0 ? filteredTools : undefined,
           signal: turn.signal,
-          buildFallback,
           thinkingMode: turn.thinkingMode,
           cacheKey: turn.conversationId ?? turn.turnId,
           truncateOutbound,
@@ -554,10 +495,6 @@ export class Agent {
           volatileStatus:
             optimizeContext && iterationCount > 1
               ? formatRuntimeStatus({ iteration: iterationCount, toolsCalled: totalToolCalls })
-              : undefined,
-          stickyProvider:
-            optimizeContext && stickyId && stickyId !== 'local' && stickyModel
-              ? { id: stickyId, model: stickyModel }
               : undefined
         })
         const teed = broca.streamSegments(stream)
@@ -585,17 +522,6 @@ export class Agent {
         if (turn.signal?.aborted) {
           stopReason = 'canceled'
           break
-        }
-
-        if (parsed.providerChange) {
-          // Cloud failed mid-iteration and we're now on local. Lock in
-          // fallback state so subsequent iterations build their context
-          // with the runtime fallback block included from the start.
-          fallbackState = {
-            mode: parsed.providerChange.mode,
-            reason: parsed.providerChange.reason,
-            cloudProvider: parsed.providerChange.from
-          }
         }
 
         if (parsed.error) {

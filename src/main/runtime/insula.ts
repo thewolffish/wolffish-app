@@ -25,8 +25,6 @@ export type AgentStatus = {
   uptimeSeconds: number
   activeProvider: string | null
   activeModel: string | null
-  fallbackProvider: string | null
-  fallbackModel: string | null
   capabilities: string[]
   ramUsedBytes: number
   ramTotalBytes: number
@@ -95,8 +93,6 @@ export class Insula {
       uptimeSeconds: r?.uptimeSeconds ?? 0,
       activeProvider: r?.activeProvider ?? null,
       activeModel: r?.activeModel ?? null,
-      fallbackProvider: r?.fallbackProvider ?? null,
-      fallbackModel: r?.fallbackModel ?? null,
       capabilities: r?.capabilityNames ?? [],
       ramUsedBytes: r?.ramUsedBytes ?? 0,
       ramTotalBytes: r?.ramTotalBytes ?? 0,
@@ -353,9 +349,6 @@ function renderStatus(s: AgentStatus): string {
     lines.push(`- **Provider:** ${s.activeProvider} / ${s.activeModel ?? 'unknown'}`)
   } else {
     lines.push(`- **Provider:** none`)
-  }
-  if (s.fallbackProvider) {
-    lines.push(`- **Fallback:** ${s.fallbackProvider} / ${s.fallbackModel ?? 'unknown'}`)
   }
   const caps = s.capabilities.length === 0 ? 'none' : s.capabilities.join(', ')
   lines.push(`- **Capabilities:** ${caps} (${s.capabilities.length} loaded)`)

@@ -128,12 +128,11 @@ import {
   lockfilePath,
   markOnboardingComplete,
   patchConfig,
-  setAllowLocalFallback as persistAllowLocalFallback,
   setBlockCredentials as persistBlockCredentials,
+  setBrain as persistBrain,
   setBraveConfig as persistBraveConfig,
   setBrowserExtensionConfig as persistBrowserExtensionConfig,
   setBypassPermissions as persistBypassPermissions,
-  setCloudPriority as persistCloudPriority,
   setCompactionConfig as persistCompactionConfig,
   setComputerUseConfig as persistComputerUseConfig,
   setGitHubConfig as persistGitHubConfig,
@@ -687,12 +686,12 @@ async function refreshAllProviderModels(): Promise<void> {
     await setCloudProvider({ ...p, models: result.models, reasoningModels: result.reasoningModels })
     broadcast('provider:updated', { id: p.id })
   }
-  // Re-seed the cascade so any new model selection downstream sees the
-  // latest config (apiKey/model haven't changed but models did).
+  // Re-seed so any new model selection downstream sees the latest config
+  // (apiKey/model haven't changed but the cached model list did).
   const next = await readConfig()
   if (next?.llm.providers) {
     thalamus.setCloudProviders(next.llm.providers)
-    thalamus.setCloudPriority(next.llm.cloudPriority ?? next.llm.providers.map((p) => p.id))
+    thalamus.setBrain(next.llm.brain ?? null)
   }
 }
 
@@ -1152,7 +1151,7 @@ app.whenReady().then(async () => {
   }
   if (cfg?.llm.providers) {
     thalamus.setCloudProviders(cfg.llm.providers)
-    thalamus.setCloudPriority(cfg.llm.cloudPriority ?? cfg.llm.providers.map((p) => p.id))
+    thalamus.setBrain(cfg.llm.brain ?? null)
     // Fire-and-forget refresh of each provider's model catalogue. Cheap
     // (a single GET per provider) and doesn't block window creation.
     void refreshAllProviderModels()
@@ -1160,7 +1159,6 @@ app.whenReady().then(async () => {
 
   // Fire-and-forget update check. Respects the updates.enabled config flag.
   void checkForUpdatesIfEnabled()
-  thalamus.setAllowLocalFallback(cfg?.llm.allowLocalFallback ?? false)
   thalamus.setLocalOnly(cfg?.llm.localOnly ?? false)
   agent.amygdala.setBypassPermissions(cfg?.safety?.bypassPermissions ?? false)
   turnRunner.setBlockCredentials(cfg?.safety?.blockCredentials ?? false)
@@ -1251,11 +1249,6 @@ app.whenReady().then(async () => {
   ipcMain.handle('runtime:setBlockCredentials', async (_e, value: boolean) => {
     await persistBlockCredentials(value)
     turnRunner.setBlockCredentials(value)
-    return { value }
-  })
-  ipcMain.handle('runtime:setAllowLocalFallback', async (_e, value: boolean) => {
-    await persistAllowLocalFallback(value)
-    thalamus.setAllowLocalFallback(value)
     return { value }
   })
   ipcMain.handle('runtime:setShowChatAnalytics', async (_e, value: boolean) => {
@@ -2602,6 +2595,35 @@ app.whenReady().then(async () => {
     return { ok: true }
   })
 
+  // Save a copy of a device path (a file the assistant read/wrote anywhere on
+  // the user's machine) to a location the user picks. Device counterpart to
+  // upload:download — intentionally not workspace-scoped, same as revealPath.
+  ipcMain.handle(
+    'upload:downloadPath',
+    async (_e, p: string): Promise<{ ok: boolean; error?: string }> => {
+      const abs = resolveDevicePath(p)
+      if (!abs) return { ok: false, error: 'invalid path' }
+      const mainWin = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+      if (!mainWin) return { ok: false, error: 'no window' }
+      try {
+        const { stat } = await import('node:fs/promises')
+        const st = await stat(abs)
+        if (!st.isFile()) return { ok: false, error: 'not a file' }
+        const { basename, resolve } = await import('node:path')
+        const result = await dialog.showSaveDialog(mainWin, { defaultPath: basename(abs) })
+        if (result.canceled || !result.filePath) return { ok: false }
+        // Saving back onto the source is a no-op — skip the copy so we never
+        // risk clobbering the original (the file is already where they asked).
+        if (resolve(result.filePath) === resolve(abs)) return { ok: true }
+        const { copyFile } = await import('node:fs/promises')
+        await copyFile(abs, result.filePath)
+        return { ok: true }
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      }
+    }
+  )
+
   ipcMain.handle('upload:revealInFolder', (_e, relativePath: string): { ok: boolean } => {
     const abs = resolveUploadPath(relativePath)
     if (!abs) return { ok: false }
@@ -3033,7 +3055,7 @@ app.whenReady().then(async () => {
           const next = await readConfig()
           if (next?.llm.providers) {
             thalamus.setCloudProviders(next.llm.providers)
-            thalamus.setCloudPriority(next.llm.cloudPriority ?? next.llm.providers.map((p) => p.id))
+            thalamus.setBrain(next.llm.brain ?? null)
           }
           broadcast('provider:updated', { id: payload.id })
         }
@@ -3071,7 +3093,7 @@ app.whenReady().then(async () => {
         reasoningModels: payload.reasoningModels ?? existing?.reasoningModels
       })
       thalamus.setCloudProviders(updated.llm.providers)
-      thalamus.setCloudPriority(updated.llm.cloudPriority ?? updated.llm.providers.map((p) => p.id))
+      thalamus.setBrain(updated.llm.brain ?? null)
       broadcast('provider:updated', { id: payload.id })
       return { ok: true }
     }
@@ -3082,27 +3104,23 @@ app.whenReady().then(async () => {
     async (_e, id: CloudProviderConfig['id']): Promise<{ ok: true }> => {
       const updated = await removeCloudProvider(id)
       thalamus.setCloudProviders(updated.llm.providers)
-      thalamus.setCloudPriority(updated.llm.cloudPriority ?? updated.llm.providers.map((p) => p.id))
+      thalamus.setBrain(updated.llm.brain ?? null)
       broadcast('provider:updated', { id })
       return { ok: true }
     }
   )
 
-  ipcMain.handle('provider:getPriority', async (): Promise<CloudProviderConfig['id'][]> => {
-    const cfg = await readConfig()
-    const providers = cfg?.llm.providers ?? []
-    return cfg?.llm.cloudPriority ?? providers.map((p) => p.id)
-  })
-
   ipcMain.handle(
-    'provider:setPriority',
-    async (_e, order: CloudProviderConfig['id'][]): Promise<{ ok: true }> => {
-      const updated = await persistCloudPriority(order)
-      thalamus.setCloudPriority(updated.llm.cloudPriority ?? updated.llm.providers.map((p) => p.id))
-      // Broadcast so any open settings panel reloads its priority view.
-      for (const p of updated.llm.providers) {
-        broadcast('provider:updated', { id: p.id })
-      }
+    'provider:setBrain',
+    async (
+      _e,
+      brain: { providerId: CloudProviderConfig['id']; model: string } | null
+    ): Promise<{ ok: true }> => {
+      const updated = await persistBrain(brain)
+      thalamus.setBrain(updated.llm.brain ?? null)
+      // Broadcast so the Brain page, the chat mode switcher, and the
+      // reasoning button all reflect the new Brain immediately.
+      broadcast('provider:updated', { id: brain?.providerId ?? null })
       return { ok: true }
     }
   )

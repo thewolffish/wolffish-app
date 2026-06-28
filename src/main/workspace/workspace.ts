@@ -221,17 +221,13 @@ export type WorkspaceConfig = {
   llm: {
     local: LocalModelConfig
     providers: CloudProviderConfig[]
-    // Ordered list of configured cloud provider ids. The first entry is
-    // primary, the second is fallback. Only ids whose providers have a
-    // saved key appear here. Optional so legacy configs migrate cleanly —
-    // when absent the cascade falls back to the order in `providers`.
-    cloudPriority?: CloudProviderConfig['id'][]
-    // When true, the cascade falls back to the local Ollama model after
-    // all cloud providers exhaust their retries, and the local model
-    // receives the full toolset for agentic multi-step tasks.
-    allowLocalFallback?: boolean
-    // When true, the cascade skips cloud providers entirely and uses
-    // only the local model. Toggle from the chat input's mode switch.
+    // The single user-chosen cloud model — the Brain. Sole source of truth
+    // for which cloud provider+model runs when not in local-only mode.
+    // Null/absent means no cloud model is selected yet. Set from the Brain
+    // settings page; the matching provider's `model` field is mirrored to it.
+    brain?: { providerId: CloudProviderConfig['id']; model: string } | null
+    // When true, cloud is skipped entirely and only the local model runs.
+    // Toggled from the chat input's mode switch.
     localOnly?: boolean
     // When true (default), the model picker blocks models whose RAM
     // footprint exceeds ~55% of the system's physical memory. Turning
@@ -559,7 +555,6 @@ function defaultConfig(): WorkspaceConfig {
     llm: {
       local: emptyLocalModel(),
       providers: [],
-      allowLocalFallback: true,
       restrictPowerfulModels: true
     },
     safety: { bypassPermissions: true, blockCredentials: false },
@@ -604,6 +599,7 @@ export async function ensureWorkspace(): Promise<void> {
   // Must run before ensureBundledCapabilities so capability version checks
   // see the current bundled versions.
   await migrateConfig()
+  await migrateBrain()
   await migrateTtsConfig()
   await migrateStaleArtifacts()
   await migrateAgentsCore()
@@ -764,6 +760,40 @@ async function migrateConfig(): Promise<void> {
     bundledDefaults
   ) as unknown as WorkspaceConfig
   await writeConfig(merged)
+}
+
+/**
+ * Derive the single-Brain selection from the legacy cascade config and strip
+ * the dead cascade keys (`cloudPriority`, `allowLocalFallback`). Idempotent:
+ * once `llm.brain` exists and the dead keys are gone it does nothing. The
+ * Brain is seeded from the old primary (cloudPriority[0], or the first
+ * configured provider) so existing users keep running on the same model.
+ * Runs AFTER migrateConfig so the additive merge can't re-introduce the
+ * removed keys.
+ */
+async function migrateBrain(): Promise<void> {
+  const config = await readConfig()
+  if (!config) return
+  const llm = config.llm as typeof config.llm & {
+    cloudPriority?: CloudProviderConfig['id'][]
+    allowLocalFallback?: boolean
+  }
+  const hasDeadKeys = 'cloudPriority' in llm || 'allowLocalFallback' in llm
+  const alreadyMigrated = 'brain' in llm
+  if (alreadyMigrated && !hasDeadKeys) return
+
+  // Seed the Brain from the old primary provider when not already set.
+  let brain = config.llm.brain ?? null
+  if (!alreadyMigrated) {
+    const firstId =
+      llm.cloudPriority?.find((id) => config.llm.providers.some((p) => p.id === id)) ??
+      config.llm.providers[0]?.id
+    const provider = firstId ? config.llm.providers.find((p) => p.id === firstId) : undefined
+    brain = provider ? { providerId: provider.id, model: provider.model } : null
+  }
+  delete llm.cloudPriority
+  delete llm.allowLocalFallback
+  await writeConfig({ ...config, llm: { ...llm, brain } })
 }
 
 /**
@@ -1003,13 +1033,14 @@ export async function setCloudProvider(provider: CloudProviderConfig): Promise<W
   return patchConfig((c) => {
     const others = c.llm.providers.filter((p) => p.id !== provider.id)
     const nextProviders = [...others, provider]
+    // Keep the Brain's model in sync when its own provider's model changes.
+    const brain =
+      c.llm.brain && c.llm.brain.providerId === provider.id
+        ? { providerId: provider.id, model: provider.model }
+        : c.llm.brain
     return {
       ...c,
-      llm: {
-        ...c.llm,
-        providers: nextProviders,
-        cloudPriority: reconcileCloudPriority(c.llm.cloudPriority, nextProviders)
-      }
+      llm: { ...c.llm, providers: nextProviders, brain }
     }
   })
 }
@@ -1017,47 +1048,30 @@ export async function setCloudProvider(provider: CloudProviderConfig): Promise<W
 export async function removeCloudProvider(id: CloudProviderConfig['id']): Promise<WorkspaceConfig> {
   return patchConfig((c) => {
     const nextProviders = c.llm.providers.filter((p) => p.id !== id)
+    // Clear the Brain if it pointed at the removed provider.
+    const brain = c.llm.brain && c.llm.brain.providerId === id ? null : c.llm.brain
     return {
       ...c,
-      llm: {
-        ...c.llm,
-        providers: nextProviders,
-        cloudPriority: reconcileCloudPriority(c.llm.cloudPriority, nextProviders)
-      }
+      llm: { ...c.llm, providers: nextProviders, brain }
     }
   })
 }
 
-export async function setCloudPriority(
-  order: CloudProviderConfig['id'][]
+/**
+ * Set (or clear) the Brain — the single user-chosen cloud model. When
+ * non-null, mirror its model onto the matching provider record so the
+ * Brain and that provider never drift.
+ */
+export async function setBrain(
+  brain: { providerId: CloudProviderConfig['id']; model: string } | null
 ): Promise<WorkspaceConfig> {
-  return patchConfig((c) => ({
-    ...c,
-    llm: { ...c.llm, cloudPriority: reconcileCloudPriority(order, c.llm.providers) }
-  }))
-}
-
-// Drop ids whose provider was removed and append any newly-configured
-// providers to the tail. Keeps cloudPriority a faithful, deduped subset
-// of the configured providers so the cascade can iterate it directly.
-function reconcileCloudPriority(
-  prior: CloudProviderConfig['id'][] | undefined,
-  providers: CloudProviderConfig[]
-): CloudProviderConfig['id'][] {
-  const valid = new Set(providers.map((p) => p.id))
-  const seen = new Set<CloudProviderConfig['id']>()
-  const out: CloudProviderConfig['id'][] = []
-  for (const id of prior ?? []) {
-    if (!valid.has(id) || seen.has(id)) continue
-    out.push(id)
-    seen.add(id)
-  }
-  for (const p of providers) {
-    if (seen.has(p.id)) continue
-    out.push(p.id)
-    seen.add(p.id)
-  }
-  return out
+  return patchConfig((c) => {
+    if (!brain) return { ...c, llm: { ...c.llm, brain: null } }
+    const providers = c.llm.providers.map((p) =>
+      p.id === brain.providerId ? { ...p, model: brain.model } : p
+    )
+    return { ...c, llm: { ...c.llm, providers, brain } }
+  })
 }
 
 // If the config records a model name no longer in our curated catalog (e.g.
@@ -1103,13 +1117,6 @@ export async function setBlockCredentials(value: boolean): Promise<WorkspaceConf
       ...(c.safety ?? { bypassPermissions: false, blockCredentials: false }),
       blockCredentials: value
     }
-  }))
-}
-
-export async function setAllowLocalFallback(value: boolean): Promise<WorkspaceConfig> {
-  return patchConfig((c) => ({
-    ...c,
-    llm: { ...c.llm, allowLocalFallback: value }
   }))
 }
 

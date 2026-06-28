@@ -12,7 +12,7 @@ import {
   type ContextCategory,
   type ScoredCandidate
 } from '@main/runtime/ras'
-import type { FallbackMode, ToolDefinition } from '@main/runtime/thalamus'
+import type { ToolDefinition } from '@main/runtime/thalamus'
 import { readConfig } from '@main/workspace/workspace'
 import fs from 'node:fs/promises'
 import path from 'node:path'
@@ -57,21 +57,6 @@ export type RuntimeContext = {
    * preserves the legacy in-prompt rendering.
    */
   renderCounters?: boolean
-}
-
-/**
- * Carries information about which provider is currently driving the
- * turn so prefrontal can adjust the prompt accordingly. When the cloud
- * cascade exhausts and we fall to local, agent passes
- * `{ isFallback: true, mode, reason, cloudProvider }`. In restricted
- * fallback the `<tools>` section and the API tool list are both
- * omitted — the local model literally cannot call tools.
- */
-export type ProviderContext = {
-  isFallback: boolean
-  mode?: FallbackMode
-  reason?: string
-  cloudProvider?: string
 }
 
 const ALWAYS_INCLUDED: Array<{ category: ContextCategory; rel: string; tag: string }> = [
@@ -131,26 +116,16 @@ export class Prefrontal {
     this.device = options.device ?? null
   }
 
-  async buildSystemPrompt(
-    message = '',
-    runtime?: RuntimeContext,
-    providerContext?: ProviderContext
-  ): Promise<string> {
-    const bundle = await this.buildContext(message, runtime, providerContext)
+  async buildSystemPrompt(message = '', runtime?: RuntimeContext): Promise<string> {
+    const bundle = await this.buildContext(message, runtime)
     return bundle.systemPrompt
   }
 
   /**
-   * Pick the tools the LLM gets to see for this iteration. Restricted
-   * fallback mode returns an empty list — the local model has no tools
-   * surfaced and is steered via agents.md to decline complex requests
-   * in plain text. Full mode and normal cloud turns return the full
+   * Pick the tools the LLM gets to see for this iteration — the full
    * cerebellum-loaded tool list.
    */
-  selectTools(providerContext?: ProviderContext): ToolDefinition[] {
-    if (providerContext?.isFallback && providerContext.mode === 'restricted') {
-      return []
-    }
+  selectTools(): ToolDefinition[] {
     return this.cerebellum?.getToolDefinitions() ?? []
   }
 
@@ -159,16 +134,9 @@ export class Prefrontal {
    * system prompt. Writes a debug snapshot and emits `context.built`.
    * If `runtime` is supplied, a `<runtime>` block reporting the live
    * iteration counter is appended last so the model can see its own
-   * loop position. If `providerContext.isFallback` is true, that
-   * `<runtime>` block also carries a `<provider>` notice and a
-   * `<fallbackMode>` tag, and the `<tools>` section is omitted entirely
-   * when the mode is `'restricted'`.
+   * loop position.
    */
-  async buildContext(
-    message = '',
-    runtime?: RuntimeContext,
-    providerContext?: ProviderContext
-  ): Promise<ContextBundle> {
+  async buildContext(message = '', runtime?: RuntimeContext): Promise<ContextBundle> {
     // Assemble against a clamped budget, not the raw model window. A 200k–1M
     // window is for the live conversation, not a system prompt that gets
     // rebuilt every iteration — capping it here is what keeps the prompt lean
@@ -218,11 +186,6 @@ export class Prefrontal {
     // bounded by the disk cache TTL.
     const deviceBody = this.device ? await this.device.getBlockBody().catch(() => '') : ''
 
-    // Restricted fallback strips tool descriptions from the prompt.
-    // Showing a model tools it can't actually call (because the API
-    // request omits them) just confuses it.
-    const showTools = !(providerContext?.isFallback && providerContext.mode === 'restricted')
-
     for (const category of SECTION_ORDER) {
       const items = grouped.get(category) ?? []
       if (items.length > 0) {
@@ -253,7 +216,7 @@ export class Prefrontal {
       // Tools come from loaded capabilities, not from the RAS-scored
       // candidate pool. Inject right after <prefrontal> so the model sees
       // "what I am, then what I can do, then what I know".
-      if (category === 'prefrontal' && showTools) {
+      if (category === 'prefrontal') {
         const toolsBody = this.cerebellum?.getToolsPrompt().trim() ?? ''
         if (toolsBody.length > 0) {
           sections.push(this.wrap('tools', toolsBody))
@@ -282,8 +245,8 @@ export class Prefrontal {
       }
     }
 
-    if (runtime || providerContext?.isFallback) {
-      sections.push(this.wrap('runtime', formatRuntimeBody(runtime, providerContext)))
+    if (runtime) {
+      sections.push(this.wrap('runtime', formatRuntimeBody(runtime)))
       sectionsIncluded.push('runtime')
     }
 
@@ -526,10 +489,7 @@ function formatItem(item: ScoredCandidate): string {
   return `<source path="${item.source}">\n${item.content}\n</source>`
 }
 
-function formatRuntimeBody(
-  runtime: RuntimeContext | undefined,
-  providerContext: ProviderContext | undefined
-): string {
+function formatRuntimeBody(runtime: RuntimeContext | undefined): string {
   const lines: string[] = []
   if (runtime) {
     if (runtime.renderCounters !== false) {
@@ -539,15 +499,6 @@ function formatRuntimeBody(
     lines.push(
       `  IMPORTANT: When a task requires calling a tool for each item in a set (e.g. reading N emails, fetching N pages), you MUST call the tool for EVERY item before producing final output. Batch 10-15 calls per response for efficiency; their results return to you automatically and you continue with the remaining items in the same loop. A response with no tool calls ENDS the task — never end one planning to "continue next turn". Metadata from search/list results is NOT a substitute for calling the per-item tool — if the task says "read all," call read for ALL, not just a subset.`
     )
-  }
-  if (providerContext?.isFallback) {
-    const cloudName = providerContext.cloudProvider ?? 'the cloud provider'
-    const reason = providerContext.reason ?? 'unavailable'
-    const detail = reason && reason !== 'unavailable' ? ` (${reason})` : ''
-    lines.push(
-      `  <provider>You are running as the local fallback model. The cloud provider (${cloudName}) is currently unavailable${detail}.</provider>`
-    )
-    lines.push(`  <fallbackMode>${providerContext.mode ?? 'restricted'}</fallbackMode>`)
   }
   return lines.join('\n')
 }

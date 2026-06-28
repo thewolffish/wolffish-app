@@ -164,8 +164,8 @@ export type WorkspaceConfig = {
   llm: {
     local: LocalModelConfig
     providers: CloudProviderConfig[]
-    cloudPriority?: CloudProviderConfig['id'][]
-    allowLocalFallback?: boolean
+    /** The single user-chosen cloud model — the Brain. */
+    brain?: BrainSelection | null
     localOnly?: boolean
     restrictPowerfulModels?: boolean
     /** Per-model thinking mode. Key is model name, value is ThinkingMode. */
@@ -455,7 +455,6 @@ export type RuntimeApi = {
   getLaunchAtStartupStatus: () => Promise<LaunchAtStartupStatus>
   setBypassPermissions: (value: boolean) => Promise<{ value: boolean }>
   setBlockCredentials: (value: boolean) => Promise<{ value: boolean }>
-  setAllowLocalFallback: (value: boolean) => Promise<{ value: boolean }>
   setShowChatAnalytics: (value: boolean) => Promise<{ value: boolean }>
   setLocalOnly: (value: boolean) => Promise<{ value: boolean }>
   setRestrictPowerfulModels: (value: boolean) => Promise<{ value: boolean }>
@@ -532,7 +531,12 @@ export type ProviderTestResult =
   | { ok: true; models: string[]; reasoningModels?: string[] }
   | { ok: false; kind: ProviderTestErrorKind; message?: string }
 
-export type ProviderUpdatedEvent = { id: CloudProviderConfig['id'] }
+// `id` is null for events not tied to a specific provider (e.g. the Brain
+// was cleared). Listeners that filter by provider id simply won't match.
+export type ProviderUpdatedEvent = { id: CloudProviderConfig['id'] | null }
+
+/** The single user-chosen cloud model — the Brain. */
+export type BrainSelection = { providerId: CloudProviderConfig['id']; model: string }
 
 export type ProviderApi = {
   list: () => Promise<ProviderListEntry[]>
@@ -545,8 +549,7 @@ export type ProviderApi = {
     reasoningModels?: string[]
   }) => Promise<{ ok: true } | { ok: false; error: string }>
   remove: (id: CloudProviderConfig['id']) => Promise<{ ok: true }>
-  getPriority: () => Promise<CloudProviderConfig['id'][]>
-  setPriority: (order: CloudProviderConfig['id'][]) => Promise<{ ok: true }>
+  setBrain: (brain: BrainSelection | null) => Promise<{ ok: true }>
   onUpdated: (listener: (event: ProviderUpdatedEvent) => void) => () => void
 }
 
@@ -1238,6 +1241,8 @@ export type UploadApi = {
   listFolder: (path: string) => Promise<FolderListing>
   /** Open a directory, or reveal a file in its parent folder (resolves a leading ~). */
   revealPath: (path: string) => Promise<{ ok: boolean; error?: string }>
+  /** Save a copy of a device path (resolves a leading ~) to a user-picked location. */
+  downloadPath: (path: string) => Promise<{ ok: boolean; error?: string }>
   download: (relativePath: string) => Promise<{ ok: boolean }>
   /** Reveal the file in the OS file manager (Finder/Explorer). */
   revealInFolder: (relativePath: string) => Promise<{ ok: boolean }>
@@ -1333,8 +1338,7 @@ const api: WolffishApi = {
     test: (payload) => ipcRenderer.invoke('provider:test', payload),
     save: (payload) => ipcRenderer.invoke('provider:save', payload),
     remove: (id) => ipcRenderer.invoke('provider:remove', id),
-    getPriority: () => ipcRenderer.invoke('provider:getPriority'),
-    setPriority: (order) => ipcRenderer.invoke('provider:setPriority', order),
+    setBrain: (brain) => ipcRenderer.invoke('provider:setBrain', brain),
     onUpdated: (listener) => subscribe('provider:updated', listener)
   },
   chat: {
@@ -1395,7 +1399,6 @@ const api: WolffishApi = {
     getLaunchAtStartupStatus: () => ipcRenderer.invoke('runtime:getLaunchAtStartupStatus'),
     setBypassPermissions: (value) => ipcRenderer.invoke('runtime:setBypassPermissions', value),
     setBlockCredentials: (value) => ipcRenderer.invoke('runtime:setBlockCredentials', value),
-    setAllowLocalFallback: (value) => ipcRenderer.invoke('runtime:setAllowLocalFallback', value),
     setShowChatAnalytics: (value) => ipcRenderer.invoke('runtime:setShowChatAnalytics', value),
     setLocalOnly: (value) => ipcRenderer.invoke('runtime:setLocalOnly', value),
     setRestrictPowerfulModels: (value) =>
@@ -1446,6 +1449,7 @@ const api: WolffishApi = {
     statPath: (path) => ipcRenderer.invoke('upload:statPath', path),
     listFolder: (path) => ipcRenderer.invoke('upload:listFolder', path),
     revealPath: (path) => ipcRenderer.invoke('upload:revealPath', path),
+    downloadPath: (path) => ipcRenderer.invoke('upload:downloadPath', path),
     download: (relativePath) => ipcRenderer.invoke('upload:download', relativePath),
     revealInFolder: (relativePath) => ipcRenderer.invoke('upload:revealInFolder', relativePath),
     getPathForFile: (file) => webUtils.getPathForFile(file)

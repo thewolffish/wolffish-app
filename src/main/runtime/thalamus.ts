@@ -111,23 +111,6 @@ export type ProviderStreamOptions = {
    * ~15 req/min on one prefix overflow to cold machines.
    */
   cacheKey?: string
-  /**
-   * Provider+model that served the previous iteration of this turn. The
-   * cascade moves this entry to the front so a mid-task turn keeps
-   * hitting the same provider cache. Hard failures still cascade onward —
-   * pinning biases the order, it never traps the turn on a dead provider.
-   */
-  stickyProvider?: { id: ProviderId; model: string }
-  /**
-   * Invoked by thalamus on a cloud→local fallback transition within a
-   * single stream call. Lets the caller (the agent) supply a system
-   * prompt rebuilt for fallback context — including the `<runtime>`
-   * provider notice — and the tool list appropriate for the current
-   * fallback mode (no tools in restricted mode). When omitted, thalamus
-   * reuses the cloud options for the local call and only the model's
-   * response can signal the fallback to the user.
-   */
-  buildFallback?: (mode: FallbackMode) => Promise<FallbackOptions> | FallbackOptions
 }
 
 export type StopReason = 'end_turn' | 'tool_use' | 'max_tokens' | 'stop_sequence' | 'unknown'
@@ -149,20 +132,12 @@ export type NoProviderAvailableInfo = {
   totalDurationMs: number
 }
 
-export type FallbackMode = 'full' | 'restricted'
-
-export type FallbackOptions = {
-  system: string
-  tools?: ToolDefinition[]
-}
-
 export type StreamChunk =
   | { type: 'text'; text: string }
   | { type: 'reasoning'; text: string }
   | { type: 'tool_call'; id: string; name: string; args: Record<string, unknown> }
-  // provider/model are stamped by thalamus on relay — unlike the
-  // head-of-cascade active_model announcement, they name the entry that
-  // actually served the call, which is what turn pinning must follow.
+  // provider/model are stamped by thalamus on relay so the agent can record
+  // which model actually served the call (for usage capture and labelling).
   | {
       type: 'turn_meta'
       stopReason: StopReason
@@ -172,14 +147,6 @@ export type StreamChunk =
     }
   | { type: 'error'; message: string; recoverable: boolean; failures?: NoProviderAvailableInfo[] }
   | { type: 'active_model'; provider: ProviderId; model: string }
-  | {
-      type: 'provider_change'
-      from: string
-      to: string
-      model: string
-      reason: string
-      mode: FallbackMode
-    }
   | { type: 'no_provider_available'; failures: NoProviderAvailableInfo[] }
 
 export type CloudProviderConfig = {
@@ -205,6 +172,12 @@ export type CloudProviderConfig = {
   cacheTtl?: '5m' | '1h'
 }
 
+/**
+ * The single user-chosen cloud model — the Brain. Sole source of truth for
+ * which cloud provider+model runs when not in local-only mode.
+ */
+export type BrainSelection = { providerId: CloudProviderConfig['id']; model: string }
+
 export type ProviderHealth = {
   id: ProviderId
   healthy: boolean
@@ -216,18 +189,17 @@ export type ThalamusOptions = {
   corpus?: Corpus
 }
 
-// Per-provider cooldown after consecutive failures, exposed via
-// getHealth() for diagnostics. The cascade itself does NOT skip
-// providers in cooldown — every turn re-tries from the top of the
-// cascade so a transiently-flaky provider gets another shot, and the
-// retry budget below absorbs the actual back-off. Steps escalate so a
+// Per-model cooldown after consecutive failures, exposed via getHealth()
+// for diagnostics only. Resolution never skips the Brain because it is in
+// cooldown — every turn re-tries the same selected model, and the retry
+// budget below absorbs the actual back-off. Steps escalate so a
 // genuinely-broken provider stays visibly degraded for longer.
 const COOLDOWN_STEPS_MS = [30_000, 60_000, 120_000, 300_000]
 
-// ~3 minutes total. Cloud providers retry on transient failures with
-// this schedule before the cascade moves to the next provider. Slow but
-// non-erroring streams never trip this — there's no per-call deadline,
-// so a long Claude response doesn't cascade unnecessarily to Ollama.
+// ~3 minutes total. The selected cloud model retries on transient failures
+// (overloaded, rate-limited, gateway errors) with this schedule before the
+// turn fails honestly. Slow but non-erroring streams never trip this —
+// there's no per-call deadline, so a long response doesn't fail early.
 const RETRY_DELAYS_MS = [5_000, 15_000, 30_000, 60_000, 90_000]
 
 const PROVIDER_LOGO: Record<ProviderId, string> = {
@@ -293,17 +265,19 @@ type CascadeEntry = {
  * touch, taste — everything except smell) up to the cortex. Nothing
  * reaches conscious processing without being routed by the thalamus first.
  *
- * In Wolffish, Thalamus owns the LLM cascade: Claude → OpenAI → Local. It
- * tracks each provider's health, falls back automatically on failure with
- * exponential cooldown, and exposes a single async-generator interface so
- * downstream regions don't need to know which provider is responding.
+ * In Wolffish, Thalamus resolves the single user-chosen model — the Brain
+ * (one cloud provider+model) when cloud is active, or the local Ollama model
+ * when the chat switcher is in local-only mode. It retries the same model on
+ * transient failures and exposes a single async-generator interface so
+ * downstream regions don't need to know which provider is responding. Model
+ * resolution lives behind one seam (resolveEntry) so a future orchestrator
+ * can swap it without touching any caller.
  */
 export class Thalamus {
   private cloudProviders: CloudProviderConfig[] = []
-  private cloudPriority: CloudProviderConfig['id'][] = []
+  private brain: BrainSelection | null = null
   private health = new Map<ProviderId, ProviderHealth>()
   private corpus: Corpus | null
-  private allowLocalFallback = false
   private localOnly = false
 
   constructor(
@@ -321,16 +295,16 @@ export class Thalamus {
     this.cloudProviders = providers.filter((p) => p.apiKey && p.model)
   }
 
-  setCloudPriority(order: CloudProviderConfig['id'][]): void {
-    this.cloudPriority = [...order]
-  }
-
   getCloudProviders(): CloudProviderConfig[] {
     return [...this.cloudProviders]
   }
 
-  setAllowLocalFallback(value: boolean): void {
-    this.allowLocalFallback = value
+  /**
+   * Set the Brain — the single user-chosen cloud provider+model that runs
+   * when not in local-only mode. Null clears it (no cloud model selected).
+   */
+  setBrain(brain: BrainSelection | null): void {
+    this.brain = brain ? { ...brain } : null
   }
 
   setLocalOnly(value: boolean): void {
@@ -338,35 +312,19 @@ export class Thalamus {
   }
 
   /**
-   * Local fallback always engages when cloud exhausts; this getter
-   * exposes the *mode* the local model should run in. `'full'` lets it
-   * use tools and try anything (the user opted in). `'restricted'`
-   * means the local model has no tools surfaced and is steered via
-   * agents.md to decline complex requests in plain text.
-   */
-  getFallbackMode(): FallbackMode {
-    return this.allowLocalFallback ? 'full' : 'restricted'
-  }
-
-  cascade(): ProviderId[] {
-    return this.buildCascade().map((c) => c.id)
-  }
-
-  /**
-   * The first provider in the cascade — i.e. the one we'd hit right now,
-   * ignoring health/cooldown. Used by callers that just want a label for
-   * the model that will probably handle the request.
+   * The provider that would handle the next turn — the Brain's provider, or
+   * 'local' in local-only mode. Null when nothing is selected/ready.
    */
   getActiveProvider(): ProviderId | null {
-    return this.buildCascade()[0]?.id ?? null
+    return this.resolveEntry()?.id ?? null
   }
 
   /**
-   * Model name of the first cascade entry — the one getActiveProvider()
-   * points at. Null when nothing is configured.
+   * Model name that getActiveProvider() points at. Null when nothing is
+   * selected/ready.
    */
   getActiveModel(): string | null {
-    return this.buildCascade()[0]?.model ?? null
+    return this.resolveEntry()?.model ?? null
   }
 
   getLocalModelName(): string | null {
@@ -384,11 +342,10 @@ export class Thalamus {
 
   /**
    * Per-entry multimodal gate. Vision blocks can reach a text-only entry
-   * via replayed history, tool-result screenshots, or a mid-turn cascade
-   * fallback from a vision model — and text-only APIs reject the whole
-   * request with HTTP 400 when they see an image part (DeepSeek: `unknown
-   * variant image_url, expected text`). Strip rather than fail: the model
-   * gets a note about what was removed instead.
+   * via replayed history or tool-result screenshots — and text-only APIs
+   * reject the whole request with HTTP 400 when they see an image part
+   * (DeepSeek: `unknown variant image_url, expected text`). Strip rather
+   * than fail: the model gets a note about what was removed instead.
    */
   private async guardVisualContent(
     entry: CascadeEntry,
@@ -405,13 +362,13 @@ export class Thalamus {
 
   /**
    * Context-window size (input tokens) for the model that would handle the
-   * next turn — i.e. the first provider in the cascade. Returns a
-   * conservative 8 000 when nothing is configured.
+   * next turn — i.e. the resolved active model. Returns a conservative
+   * 8 000 when nothing is selected/ready.
    */
   getActiveContextWindow(): number {
-    const cascade = this.buildCascade()
-    if (cascade.length === 0) return 8_000
-    return contextWindowForModel(cascade[0].model)
+    const entry = this.resolveEntry()
+    if (!entry) return 8_000
+    return contextWindowForModel(entry.model)
   }
 
   /**
@@ -421,9 +378,9 @@ export class Thalamus {
    * deduction is zero.
    */
   getContextBudget(): number {
-    const cascade = this.buildCascade()
-    if (cascade.length === 0) return 8_000
-    const model = cascade[0].model
+    const entry = this.resolveEntry()
+    if (!entry) return 8_000
+    const model = entry.model
     const window = contextWindowForModel(model)
     const outputReserve = maxOutputForModel(model)
     return Math.max(window - outputReserve, Math.floor(window * 0.5))
@@ -431,9 +388,8 @@ export class Thalamus {
 
   /**
    * Make a bare LLM call to summarize content for context compaction.
-   * Uses the same provider cascade as the main stream (head provider
-   * first, falling through on failure). No system prompt, no tools —
-   * pure summarization.
+   * Uses the resolved active model (the Brain, or the local model in
+   * local-only mode). No system prompt, no tools — pure summarization.
    *
    * If the content exceeds the compaction model's own context window, it
    * is split into parts, each compacted separately, and the summaries
@@ -460,51 +416,42 @@ export class Thalamus {
     const prompt = instruction + content
     const promptTokens = Math.ceil(prompt.length / 4)
 
-    const cascade = this.buildCascade()
-    if (cascade.length === 0) throw new Error('No compaction providers available')
+    const entry = this.resolveEntry()
+    if (!entry) throw new Error('No compaction provider available')
 
-    for (const entry of cascade) {
-      const modelWindow = contextWindowForModel(entry.model)
-      const maxOutput = maxOutputForModel(entry.model)
-      const available = modelWindow - maxOutput
+    const modelWindow = contextWindowForModel(entry.model)
+    const maxOutput = maxOutputForModel(entry.model)
+    const available = modelWindow - maxOutput
 
-      if (promptTokens <= available) {
-        const result = await this.compactSingle(entry, prompt, signal)
-        if (result) return result
-        continue
-      }
-
-      const promptOverheadChars = instruction.length + 50
-      const charsPerPart = Math.max(available * 4 - promptOverheadChars, 4000)
-      const parts: string[] = []
-      for (let i = 0; i < content.length; i += charsPerPart) {
-        parts.push(content.slice(i, i + charsPerPart))
-      }
-
-      try {
-        const summaries = await Promise.all(
-          parts.map((part) => {
-            return this.compactSingle(entry, instruction + part, signal)
-          })
-        )
-        const valid = summaries.filter(Boolean) as {
-          text: string
-          provider: string
-          model: string
-        }[]
-        if (valid.length === parts.length) {
-          return {
-            text: valid.map((s) => s.text).join('\n\n'),
-            provider: valid[0].provider,
-            model: valid[0].model
-          }
-        }
-      } catch {
-        // fall through to next provider
-      }
+    if (promptTokens <= available) {
+      const result = await this.compactSingle(entry, prompt, signal)
+      if (result) return result
+      throw new Error('Compaction provider failed')
     }
 
-    throw new Error('All compaction providers failed')
+    const promptOverheadChars = instruction.length + 50
+    const charsPerPart = Math.max(available * 4 - promptOverheadChars, 4000)
+    const parts: string[] = []
+    for (let i = 0; i < content.length; i += charsPerPart) {
+      parts.push(content.slice(i, i + charsPerPart))
+    }
+
+    const summaries = await Promise.all(
+      parts.map((part) => this.compactSingle(entry, instruction + part, signal))
+    )
+    const valid = summaries.filter(Boolean) as {
+      text: string
+      provider: string
+      model: string
+    }[]
+    if (valid.length === parts.length) {
+      return {
+        text: valid.map((s) => s.text).join('\n\n'),
+        provider: valid[0].provider,
+        model: valid[0].model
+      }
+    }
+    throw new Error('Compaction provider failed')
   }
 
   /**
@@ -521,48 +468,41 @@ export class Thalamus {
   ): Promise<{ text: string; provider: string; model: string }> {
     const promptTokens = Math.ceil(prompt.length / 4)
 
-    const cascade = this.buildCascade()
-    if (cascade.length === 0) throw new Error('No summarization providers available')
+    const entry = this.resolveEntry()
+    if (!entry) throw new Error('No summarization provider available')
 
-    for (const entry of cascade) {
-      const modelWindow = contextWindowForModel(entry.model)
-      const maxOutput = maxOutputForModel(entry.model)
-      const available = modelWindow - maxOutput
+    const modelWindow = contextWindowForModel(entry.model)
+    const maxOutput = maxOutputForModel(entry.model)
+    const available = modelWindow - maxOutput
 
-      if (promptTokens <= available) {
-        const result = await this.summarizeSingle(entry, prompt, signal)
-        if (result) return result
-        continue
-      }
-
-      const charsPerPart = Math.max(available * 4 - 500, 4000)
-      const parts: string[] = []
-      for (let i = 0; i < prompt.length; i += charsPerPart) {
-        parts.push(prompt.slice(i, i + charsPerPart))
-      }
-
-      try {
-        const summaries = await Promise.all(
-          parts.map((part) => this.summarizeSingle(entry, part, signal))
-        )
-        const valid = summaries.filter(Boolean) as {
-          text: string
-          provider: string
-          model: string
-        }[]
-        if (valid.length === parts.length) {
-          return {
-            text: valid.map((s) => s.text).join('\n\n'),
-            provider: valid[0].provider,
-            model: valid[0].model
-          }
-        }
-      } catch {
-        // fall through to next provider
-      }
+    if (promptTokens <= available) {
+      const result = await this.summarizeSingle(entry, prompt, signal)
+      if (result) return result
+      throw new Error('Summarization provider failed')
     }
 
-    throw new Error('All summarization providers failed')
+    const charsPerPart = Math.max(available * 4 - 500, 4000)
+    const parts: string[] = []
+    for (let i = 0; i < prompt.length; i += charsPerPart) {
+      parts.push(prompt.slice(i, i + charsPerPart))
+    }
+
+    const summaries = await Promise.all(
+      parts.map((part) => this.summarizeSingle(entry, part, signal))
+    )
+    const valid = summaries.filter(Boolean) as {
+      text: string
+      provider: string
+      model: string
+    }[]
+    if (valid.length === parts.length) {
+      return {
+        text: valid.map((s) => s.text).join('\n\n'),
+        provider: valid[0].provider,
+        model: valid[0].model
+      }
+    }
+    throw new Error('Summarization provider failed')
   }
 
   /**
@@ -631,166 +571,46 @@ export class Thalamus {
   }
 
   /**
-   * Stream a turn through the provider cascade.
+   * Stream a turn through the resolved active model.
    *
-   * Each cloud provider gets a retry budget (`RETRY_DELAYS_MS`) for
-   * transient failures (overloaded, rate-limited, gateway errors). Hard
-   * failures (auth, not-found) skip ahead to the next cloud provider
-   * with no delay. Once every cloud provider exhausts its retries, the
-   * cascade *always* falls back to the local model when one is
-   * configured — `allowLocalFallback` no longer gates this; it only
-   * controls the fallback mode the local model runs in. When no local
-   * model exists, thalamus yields a single `no_provider_available`
-   * chunk and the renderer can surface a structured retry card. Once
-   * any text has streamed the provider choice is committed — failures
-   * past that point can't retry without the user seeing the abandoned
-   * reply.
+   * The selected cloud model (the Brain) gets a retry budget
+   * (`RETRY_DELAYS_MS`) for transient failures (overloaded, rate-limited,
+   * gateway errors); hard failures (auth, not-found) fail the turn
+   * immediately. There is no cascade and no automatic substitution — the
+   * chosen model runs, or the turn fails honestly. When the model is
+   * permanently unavailable thalamus yields a single
+   * `no_provider_available` chunk so the renderer can surface a structured
+   * retry card. When nothing is selected (no Brain and not in local-only
+   * mode, or no local model loaded) it yields a plain `error` chunk. The
+   * local model never gets the retry budget. Once any text has streamed the
+   * choice is committed — failures past that point surface as a committed
+   * error rather than retrying.
    */
   async *stream(options: ProviderStreamOptions): AsyncGenerator<StreamChunk> {
-    const cascade = this.buildCascade()
-    if (cascade.length === 0) {
-      const message = 'no provider available — load a local model or add an API key'
+    const entry = this.resolveEntry()
+    if (!entry) {
+      const message = this.localOnly
+        ? 'no local model loaded — pick one in the model picker'
+        : 'no model selected — choose a Brain in settings or switch to local'
       this.emit('llm.error', { provider: 'none', error: message })
       yield { type: 'error', message, recoverable: false }
       return
     }
 
-    const cloudEntries = cascade.filter((c) => c.id !== 'local')
-    const localEntry = cascade.find((c) => c.id === 'local') ?? null
+    // Announce who's handling this turn so the renderer can show a chip.
+    yield { type: 'active_model', provider: entry.id, model: entry.model }
 
-    // Task pinning: bias the cascade toward the provider+model that served
-    // the previous iteration of this turn, so the conversation prefix keeps
-    // hitting the same provider's cache. Only reorders — a pinned provider
-    // that hard-fails still cascades to the rest as usual.
-    const sticky = options.stickyProvider
-    if (sticky) {
-      const idx = cloudEntries.findIndex((c) => c.id === sticky.id && c.model === sticky.model)
-      if (idx > 0) {
-        const [entry] = cloudEntries.splice(idx, 1)
-        cloudEntries.unshift(entry)
-      }
+    // Same-model retry: the cloud Brain gets the transient retry budget; the
+    // local model does not (Ollama errors are local and effectively permanent).
+    const result = yield* this.streamOnce(entry, options, { retry: entry.id !== 'local' })
+    if (result.kind === 'success') return
+    if (result.kind === 'committed-error') {
+      const failures = result.failure ? [toInfo(result.failure)] : undefined
+      yield { type: 'error', message: result.message, recoverable: false, failures }
+      return
     }
-
-    // Announce who's about to handle this turn so the renderer can show a
-    // chip alongside the response. Falls back to local when no cloud key
-    // is configured. The provider_change chunk later in the cascade keeps
-    // the renderer in sync if we have to fail over to local mid-turn.
-    const head = cloudEntries[0] ?? localEntry
-    if (head) {
-      yield { type: 'active_model', provider: head.id, model: head.model }
-    }
-
-    const allFailures: ProviderFailure[] = []
-
-    // 1. Cloud providers, each with their own retry budget.
-    for (const entry of cloudEntries) {
-      const result = yield* this.streamOnce(entry, options, { retry: true })
-      if (result.kind === 'success') return
-      if (result.kind === 'committed-error') {
-        const failures = result.failure
-          ? [
-              {
-                provider: result.failure.provider,
-                providerLogo: PROVIDER_LOGO[result.failure.provider],
-                statusCode: result.failure.statusCode,
-                errorReason: result.failure.reasonKey,
-                errorDetail: result.failure.rawMessage,
-                retriesAttempted: result.failure.retries,
-                totalDurationMs: result.failure.durationMs
-              }
-            ]
-          : undefined
-        yield { type: 'error', message: result.message, recoverable: false, failures }
-        return
-      }
-      allFailures.push(result.failure)
-      // Hard or transient-exhausted: try the next cloud provider.
-    }
-
-    // 2. Cloud exhausted. Fall to local if one exists — the toggle now
-    //    controls the *mode*, not whether the fallback engages.
-    const lastCloudFailure = allFailures[allFailures.length - 1] ?? null
-    if (localEntry) {
-      const mode = this.getFallbackMode()
-      // Only announce a provider change when cloud was actually attempted
-      // and failed. When local is the head from the start (localOnly mode
-      // or no cloud configured), the active_model chunk above already
-      // announced local — emitting a provider_change here would falsely
-      // claim a fallback from cloud, and surfaces fall-channels (like
-      // Telegram, which renders both chunks sequentially) end up showing
-      // the model name twice.
-      if (lastCloudFailure) {
-        this.emit('llm.fallback', {
-          from: lastCloudFailure.provider,
-          to: localEntry.id,
-          reason: lastCloudFailure.reasonKey
-        })
-        yield {
-          type: 'provider_change',
-          from: lastCloudFailure.provider,
-          to: localEntry.id,
-          model: localEntry.model,
-          reason: lastCloudFailure.reasonKey,
-          mode
-        }
-      }
-      let localOptions = options
-      if (options.buildFallback) {
-        try {
-          const rebuilt = await options.buildFallback(mode)
-          localOptions = { ...options, system: rebuilt.system, tools: rebuilt.tools }
-        } catch {
-          // best-effort — fall through with the cloud-mode options
-        }
-      }
-      const result = yield* this.streamOnce(localEntry, localOptions, { retry: false })
-      if (result.kind === 'success') return
-      if (result.kind === 'committed-error') {
-        const failures = result.failure
-          ? [
-              {
-                provider: result.failure.provider,
-                providerLogo: PROVIDER_LOGO[result.failure.provider],
-                statusCode: result.failure.statusCode,
-                errorReason: result.failure.reasonKey,
-                errorDetail: result.failure.rawMessage,
-                retriesAttempted: result.failure.retries,
-                totalDurationMs: result.failure.durationMs
-              }
-            ]
-          : undefined
-        yield { type: 'error', message: result.message, recoverable: false, failures }
-        return
-      }
-      allFailures.push(result.failure)
-    }
-
-    // 3. Every provider exhausted. Surface a structured error card per
-    //    failed provider so the user sees exactly what went wrong with
-    //    each one — not just the last.
-    const failures: NoProviderAvailableInfo[] =
-      allFailures.length > 0
-        ? allFailures.map((f) => ({
-            provider: f.provider,
-            providerLogo: PROVIDER_LOGO[f.provider],
-            statusCode: f.statusCode,
-            errorReason: f.reasonKey,
-            errorDetail: f.rawMessage,
-            retriesAttempted: f.retries,
-            totalDurationMs: f.durationMs
-          }))
-        : [
-            {
-              provider: cloudEntries[0]?.id ?? localEntry?.id ?? 'local',
-              providerLogo: PROVIDER_LOGO[cloudEntries[0]?.id ?? localEntry?.id ?? 'local'],
-              statusCode: null,
-              errorReason: 'unavailable',
-              errorDetail: null,
-              retriesAttempted: 0,
-              totalDurationMs: 0
-            }
-          ]
-    yield { type: 'no_provider_available', failures }
+    // kind === 'failed' — the one selected model is permanently unavailable.
+    yield { type: 'no_provider_available', failures: [toInfo(result.failure)] }
   }
 
   private async *streamOnce(
@@ -951,121 +771,81 @@ export class Thalamus {
   }
 
   /**
-   * Snapshot of provider health for diagnostics.
+   * Snapshot of health for the resolved active model, for diagnostics.
    */
   getHealth(): ProviderHealth[] {
-    return this.buildCascade().map((entry) => {
-      const state = this.health.get(entry.id)
-      return (
-        state ?? {
-          id: entry.id,
-          healthy: true,
-          failCount: 0,
-          cooldownUntil: 0
-        }
-      )
-    })
+    const entry = this.resolveEntry()
+    if (!entry) return []
+    const state = this.health.get(entry.id)
+    return [
+      state ?? {
+        id: entry.id,
+        healthy: true,
+        failCount: 0,
+        cooldownUntil: 0
+      }
+    ]
   }
 
-  private buildCascade(): CascadeEntry[] {
-    const out: CascadeEntry[] = []
-    const seen = new Set<CloudProviderConfig['id']>()
-    // Priority is the source of truth for cloud ordering. Any provider
-    // configured but missing from priority (legacy configs, race after a
-    // save) appends in `cloudProviders` order so it still gets a turn.
-    const order: CloudProviderConfig['id'][] = []
-    if (!this.localOnly) {
-      for (const id of this.cloudPriority) {
-        if (seen.has(id)) continue
-        if (!this.cloudProviders.some((p) => p.id === id)) continue
-        order.push(id)
-        seen.add(id)
-      }
-      for (const p of this.cloudProviders) {
-        if (seen.has(p.id)) continue
-        order.push(p.id)
-        seen.add(p.id)
-      }
+  /**
+   * The resolution seam — the ONE place that answers "which provider+model
+   * handles this request". Local-only mode resolves to the local model; the
+   * Brain otherwise; null when nothing is selected/ready. A future
+   * orchestrator swaps only this method body — callers never change.
+   */
+  private resolveEntry(): CascadeEntry | null {
+    if (this.localOnly) {
+      if (!this.local.isReady) return null
+      return { id: 'local', model: this.local.currentModel ?? 'local', provider: this.local }
     }
-    for (const id of order) {
-      const cfg = this.cloudProviders.find((p) => p.id === id)
-      if (!cfg) continue
-      if (id === 'anthropic') {
-        out.push({
+    if (!this.brain) return null
+    const cfg = this.cloudProviders.find((p) => p.id === this.brain!.providerId)
+    if (!cfg) return null
+    return this.instantiate(cfg, this.brain.model)
+  }
+
+  /** Construct the provider client for one cloud config + the Brain's model. */
+  private instantiate(cfg: CloudProviderConfig, model: string): CascadeEntry {
+    switch (cfg.id) {
+      case 'anthropic':
+        return {
           id: 'anthropic',
-          model: cfg.model,
-          provider: new AnthropicProvider(cfg.apiKey, cfg.model, undefined, undefined, cfg.cacheTtl)
-        })
-      } else if (id === 'openai') {
-        out.push({
+          model,
+          provider: new AnthropicProvider(cfg.apiKey, model, undefined, undefined, cfg.cacheTtl)
+        }
+      case 'openai':
+        return {
           id: 'openai',
-          model: cfg.model,
-          provider: new OpenAIProvider(cfg.apiKey, cfg.model, undefined, this.corpus)
-        })
-      } else if (id === 'deepseek') {
-        out.push({
-          id: 'deepseek',
-          model: cfg.model,
-          provider: new DeepSeekProvider(cfg.apiKey, cfg.model)
-        })
-      } else if (id === 'mimo') {
-        out.push({
-          id: 'mimo',
-          model: cfg.model,
-          provider: new MimoProvider(cfg.apiKey, cfg.model)
-        })
-      } else if (id === 'kimi') {
-        out.push({
-          id: 'kimi',
-          model: cfg.model,
-          provider: new KimiProvider(cfg.apiKey, cfg.model)
-        })
-      } else if (id === 'minimax') {
-        out.push({
-          id: 'minimax',
-          model: cfg.model,
-          provider: new MiniMaxProvider(cfg.apiKey, cfg.model)
-        })
-      } else if (id === 'xai') {
-        out.push({
-          id: 'xai',
-          model: cfg.model,
-          provider: new XAIProvider(cfg.apiKey, cfg.model)
-        })
-      } else if (id === 'qwen') {
-        out.push({
-          id: 'qwen',
-          model: cfg.model,
-          provider: new QwenProvider(cfg.apiKey, cfg.model)
-        })
-      } else if (id === 'stepfun') {
-        out.push({
-          id: 'stepfun',
-          model: cfg.model,
-          provider: new StepfunProvider(cfg.apiKey, cfg.model)
-        })
-      } else if (id === 'zai') {
-        out.push({
-          id: 'zai',
-          model: cfg.model,
-          provider: new ZaiProvider(cfg.apiKey, cfg.model)
-        })
-      } else if (id === 'openrouter') {
-        out.push({
+          model,
+          provider: new OpenAIProvider(cfg.apiKey, model, undefined, this.corpus)
+        }
+      case 'deepseek':
+        return { id: 'deepseek', model, provider: new DeepSeekProvider(cfg.apiKey, model) }
+      case 'mimo':
+        return { id: 'mimo', model, provider: new MimoProvider(cfg.apiKey, model) }
+      case 'kimi':
+        return { id: 'kimi', model, provider: new KimiProvider(cfg.apiKey, model) }
+      case 'minimax':
+        return { id: 'minimax', model, provider: new MiniMaxProvider(cfg.apiKey, model) }
+      case 'xai':
+        return { id: 'xai', model, provider: new XAIProvider(cfg.apiKey, model) }
+      case 'qwen':
+        return { id: 'qwen', model, provider: new QwenProvider(cfg.apiKey, model) }
+      case 'stepfun':
+        return { id: 'stepfun', model, provider: new StepfunProvider(cfg.apiKey, model) }
+      case 'zai':
+        return { id: 'zai', model, provider: new ZaiProvider(cfg.apiKey, model) }
+      case 'openrouter':
+        return {
           id: 'openrouter',
-          model: cfg.model,
-          provider: new OpenRouterProvider(cfg.apiKey, cfg.model, undefined, cfg.reasoningModels)
-        })
+          model,
+          provider: new OpenRouterProvider(cfg.apiKey, model, undefined, cfg.reasoningModels)
+        }
+      default: {
+        const _exhaustive: never = cfg.id
+        throw new Error(`unknown provider: ${String(_exhaustive)}`)
       }
     }
-    if (this.local.isReady) {
-      out.push({
-        id: 'local',
-        model: this.local.currentModel ?? 'local',
-        provider: this.local
-      })
-    }
-    return out
   }
 
   private markHealthy(id: ProviderId): void {
@@ -1085,9 +865,7 @@ export class Thalamus {
     })
   }
 
-  private emit<
-    K extends 'llm.request' | 'llm.response' | 'llm.error' | 'llm.fallback' | 'llm.retry'
-  >(
+  private emit<K extends 'llm.request' | 'llm.response' | 'llm.error' | 'llm.retry'>(
     event: K,
     payload: K extends 'llm.request'
       ? { provider: string; model: string }
@@ -1102,9 +880,7 @@ export class Thalamus {
           }
         : K extends 'llm.error'
           ? { provider: string; error: string }
-          : K extends 'llm.fallback'
-            ? { from: string; to: string; reason: string }
-            : { provider: string; attempt: number; delayMs: number; errorClass: string }
+          : { provider: string; attempt: number; delayMs: number; errorClass: string }
   ): void {
     if (!this.corpus) return
     if (event === 'llm.request') {
@@ -1123,14 +899,25 @@ export class Thalamus {
       )
     } else if (event === 'llm.error') {
       this.corpus.emit('llm.error', payload as { provider: string; error: string })
-    } else if (event === 'llm.fallback') {
-      this.corpus.emit('llm.fallback', payload as { from: string; to: string; reason: string })
     } else {
       this.corpus.emit(
         'llm.retry',
         payload as { provider: string; attempt: number; delayMs: number; errorClass: string }
       )
     }
+  }
+}
+
+/** Map an internal provider failure to the renderer-facing error card shape. */
+function toInfo(f: ProviderFailure): NoProviderAvailableInfo {
+  return {
+    provider: f.provider,
+    providerLogo: PROVIDER_LOGO[f.provider],
+    statusCode: f.statusCode,
+    errorReason: f.reasonKey,
+    errorDetail: f.rawMessage,
+    retriesAttempted: f.retries,
+    totalDurationMs: f.durationMs
   }
 }
 
