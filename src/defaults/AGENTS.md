@@ -277,7 +277,7 @@ place on disk. This is the mental model behind the folder layout.
 
 | Module | Job | On-disk home |
 |---|---|---|
-| **Thalamus** | Classify input, route to a provider (cascade) | — (talks to providers) |
+| **Thalamus** | Resolve the selected Brain model and stream from it (no cascade) | — (talks to providers) |
 | **RAS** | Score relevance, allocate the token budget | — (pure heuristic) |
 | **Prefrontal** | Assemble the system prompt + plan the approach | `brain/prefrontal/` |
 | **Cortex** | Fast full-text retrieval over all markdown | `brain/cortex.db` |
