@@ -17,6 +17,7 @@ import {
   hasVisualContent,
   stripVisualContent
 } from '@main/runtime/vision'
+import { normalizeReasoningMode, reasoningModesFor } from '@main/runtime/reasoning'
 import { net } from 'electron'
 
 export type ToolUse = {
@@ -111,6 +112,13 @@ export type ProviderStreamOptions = {
    * ~15 req/min on one prefix overflow to cold machines.
    */
   cacheKey?: string
+  /**
+   * Which model resolves this call. 'worker' (orchestrator mode) uses the
+   * worker model; anything else uses the Brain/single model. Per-call, so it's
+   * concurrency-safe — a worker turn and the orchestrator turn can stream at
+   * once without sharing global role state.
+   */
+  role?: 'orchestrator' | 'worker'
 }
 
 export type StopReason = 'end_turn' | 'tool_use' | 'max_tokens' | 'stop_sequence' | 'unknown'
@@ -276,6 +284,7 @@ type CascadeEntry = {
 export class Thalamus {
   private cloudProviders: CloudProviderConfig[] = []
   private brain: BrainSelection | null = null
+  private workerModel: BrainSelection | null = null
   private health = new Map<ProviderId, ProviderHealth>()
   private corpus: Corpus | null
   private localOnly = false
@@ -305,6 +314,11 @@ export class Thalamus {
    */
   setBrain(brain: BrainSelection | null): void {
     this.brain = brain ? { ...brain } : null
+  }
+
+  /** Set the worker model — what worker sessions stream on in orchestrator mode. */
+  setWorkerModel(worker: BrainSelection | null): void {
+    this.workerModel = worker ? { ...worker } : null
   }
 
   setLocalOnly(value: boolean): void {
@@ -587,11 +601,14 @@ export class Thalamus {
    * error rather than retrying.
    */
   async *stream(options: ProviderStreamOptions): AsyncGenerator<StreamChunk> {
-    const entry = this.resolveEntry()
+    const entry = options.role === 'worker' ? this.resolveWorker() : this.resolveEntry()
     if (!entry) {
-      const message = this.localOnly
-        ? 'no local model loaded — pick one in the model picker'
-        : 'no model selected — choose a Brain in settings or switch to local'
+      const message =
+        options.role === 'worker'
+          ? 'no worker model selected — choose one in Brain settings'
+          : this.localOnly
+            ? 'no local model loaded — pick one in the model picker'
+            : 'no model selected — choose a Brain in settings or switch to local'
       this.emit('llm.error', { provider: 'none', error: message })
       yield { type: 'error', message, recoverable: false }
       return
@@ -600,9 +617,30 @@ export class Thalamus {
     // Announce who's handling this turn so the renderer can show a chip.
     yield { type: 'active_model', provider: entry.id, model: entry.model }
 
-    // Same-model retry: the cloud Brain gets the transient retry budget; the
-    // local model does not (Ollama errors are local and effectively permanent).
-    const result = yield* this.streamOnce(entry, options, { retry: entry.id !== 'local' })
+    // Worker effort is chosen by the orchestrator, which can't know the worker
+    // model's reasoning support (it differs widely: none / always-on / graded).
+    // Clamp it to what THIS model actually offers — same source of truth as the
+    // Brain button — so an unsupported pick degrades gracefully (max→high→on; a
+    // non-reasoning model → off) instead of being sent verbatim and erroring.
+    let opts = options
+    if (options.role === 'worker') {
+      const openrouterReasoning =
+        entry.id === 'openrouter'
+          ? (this.cloudProviders
+              .find((p) => p.id === 'openrouter')
+              ?.reasoningModels?.includes(entry.model) ?? false)
+          : false
+      const modes = reasoningModesFor(entry.id, entry.model, { openrouterReasoning })
+      opts = { ...options, thinkingMode: normalizeReasoningMode(options.thinkingMode, modes) }
+    }
+
+    // Same-model retry: the cloud Brain (orchestrator / single) gets the
+    // transient retry budget. WORKERS do NOT — a worker is single-shot and any
+    // failure surfaces immediately to the orchestrator, which owns all worker
+    // retry decisions end-to-end (re-run, re-scope, or report). The local model
+    // never retries either (Ollama errors are local and effectively permanent).
+    const retry = entry.id !== 'local' && options.role !== 'worker'
+    const result = yield* this.streamOnce(entry, opts, { retry })
     if (result.kind === 'success') return
     if (result.kind === 'committed-error') {
       const failures = result.failure ? [toInfo(result.failure)] : undefined
@@ -802,6 +840,18 @@ export class Thalamus {
     const cfg = this.cloudProviders.find((p) => p.id === this.brain!.providerId)
     if (!cfg) return null
     return this.instantiate(cfg, this.brain.model)
+  }
+
+  /**
+   * Resolve the worker model (orchestrator mode) — a pure cloud selection,
+   * independent of localOnly since orchestrator mode is a cloud feature. Null
+   * when unset or its provider is gone. The second Phase-2 routing seam.
+   */
+  private resolveWorker(): CascadeEntry | null {
+    if (!this.workerModel) return null
+    const cfg = this.cloudProviders.find((p) => p.id === this.workerModel!.providerId)
+    if (!cfg) return null
+    return this.instantiate(cfg, this.workerModel.model)
   }
 
   /** Construct the provider client for one cloud config + the Brain's model. */

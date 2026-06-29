@@ -1,4 +1,5 @@
 import type { WhatsAppBufferedMessage } from '@main/channels/whatsapp/tools'
+import { diskWriter } from '@main/io/diskWriter'
 import { workspaceRoot } from '@main/workspace/workspace'
 import fs from 'node:fs/promises'
 import path from 'node:path'
@@ -123,9 +124,8 @@ async function flush(): Promise<void> {
     if (msgs.length > 0) obj[jid] = msgs.slice(-MAX_PER_CHAT)
   }
   try {
-    await fs.mkdir(dir(), { recursive: true })
     if (myEpoch !== epoch) return
-    await fs.writeFile(filePath(), JSON.stringify(obj), 'utf8')
+    await diskWriter.writeFileAtomic(filePath(), JSON.stringify(obj))
   } catch {
     // best-effort: a write failure must not crash the channel; the in-memory
     // buffer stays correct and the next scheduleReadHistoryFlush retries.
@@ -145,7 +145,12 @@ export async function deleteReadHistory(): Promise<void> {
   }
   pending = null
   try {
-    await fs.rm(filePath(), { force: true })
+    // Route through the diskWriter's per-path queue (NOT a raw fs.rm) so the
+    // delete is FIFO-ordered AFTER any flush() write already enqueued for this
+    // path — otherwise an in-flight atomic write could land after the rm and
+    // resurrect the just-logged-out history. The epoch guard skips writes when
+    // it can; this guarantees ordering when one slips through.
+    await diskWriter.deleteFile(filePath())
   } catch {
     // best-effort
   }

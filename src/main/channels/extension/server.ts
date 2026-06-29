@@ -4,10 +4,11 @@ import {
   readEvents,
   type ExtensionEvent
 } from '@main/channels/extension/log'
+import { diskWriter } from '@main/io/diskWriter'
 import { wlog } from '@main/workspace/logger'
 import { getBrowserExtensionConfig, getRuntimeExtensionVersion } from '@main/workspace/workspace'
 import { randomUUID } from 'node:crypto'
-import { appendFile, mkdir } from 'node:fs/promises'
+import { mkdir } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { WebSocketServer, type WebSocket } from 'ws'
@@ -37,7 +38,7 @@ async function debug(level: string, msg: string): Promise<void> {
   const line = `${debugStamp()}  ${level.padEnd(5)}  ${msg}\n`
   try {
     await ensureDebugDir()
-    await appendFile(debugFile(), line, 'utf8')
+    await diskWriter.appendLine(debugFile(), line)
   } catch {
     // never let debug logging crash anything
   }

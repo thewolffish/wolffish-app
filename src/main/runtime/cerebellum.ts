@@ -1,10 +1,13 @@
 import type { Amygdala, DangerLevel, DangerPattern } from '@main/runtime/amygdala'
 import type { ChannelStatusSnapshot } from '@main/channels/status'
+import { diskWriter } from '@main/io/diskWriter'
 import type { Corpus } from '@main/runtime/corpus'
+import type { WorkerEffort, WorkerResult, WorkerView } from '@main/runtime/orchestrator'
 import { sudoSession, type SudoSession } from '@main/runtime/sudoSession'
 import type { ToolDefinition } from '@main/runtime/thalamus'
 import type { ToolCall } from '@main/runtime/wernicke'
 import yaml from 'js-yaml'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { execFileSync, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import fs from 'node:fs/promises'
@@ -313,6 +316,37 @@ export type AutomationsHost = {
   runJobNow: (idOrLabel: string) => { ok: boolean; started: boolean; error?: string }
 }
 
+/**
+ * Worker-management surface injected into the `orchestrator` capability's plugin
+ * via its init context (PluginContext.orchestrator). Implemented in the main
+ * process (index.ts) over the Agent's active orchestration session — the single
+ * source of truth for a turn's live workers. Present only to the orchestrator
+ * role in orchestrator mode; undefined for every other plugin and for workers
+ * (two-level: a worker never delegates). All methods throw if called outside an
+ * active orchestrator turn.
+ */
+export type OrchestratorHost = {
+  /**
+   * Spawn a live worker with an initial prompt. Non-blocking — returns its id.
+   * `effort` sets the worker's reasoning level (orchestrator-chosen; omitted ⇒
+   * the worker model's default).
+   */
+  spawnWorker: (prompt: string, branchLabel?: string, effort?: WorkerEffort) => string
+  /** Send a follow-up to an awaiting worker, optionally re-tuning its effort. */
+  sendToWorker: (workerId: string, prompt: string, effort?: WorkerEffort) => void
+  /**
+   * Block until the NEXT worker (optionally restricted to `workerIds`) lands,
+   * returning its id + result — or null when none is still running.
+   */
+  awaitWorkers: (workerIds?: string[]) => Promise<{ id: string; result: WorkerResult } | null>
+  /** Close a worker for good — it stops accepting follow-ups. */
+  closeWorker: (workerId: string) => void
+  /** Cancel a worker, aborting its in-flight tool calls. */
+  cancelWorker: (workerId: string) => void
+  /** Snapshot every worker in the active turn's registry. */
+  listWorkers: () => WorkerView[]
+}
+
 export type PluginContext = {
   pluginDir: string
   workspaceRoot: string
@@ -346,6 +380,13 @@ export type PluginContext = {
    * every other plugin.
    */
   automations?: AutomationsHost
+  /**
+   * Worker-management surface. Present only when the host wired one in via
+   * setOrchestratorHost — used by the `orchestrator` capability to spawn, drive,
+   * await, and cancel live worker sessions. Undefined for every other plugin
+   * and for workers themselves (two-level: a worker never delegates).
+   */
+  orchestrator?: OrchestratorHost
   /**
    * Ask the user a multiple-choice question and block until they answer.
    * Used by the `ask` capability to pause the agent loop, render an
@@ -409,9 +450,18 @@ export class Cerebellum {
   private dependencyCache = new Map<string, boolean>()
   private loaded = false
   private currentConversationId: string | null = null
+  // Per-turn conversation scope. Under concurrent turns (orchestrator + live
+  // workers) a single global field is clobbered — a worker running with no
+  // conversation would null out the orchestrator's stamp. AsyncLocalStorage
+  // gives every turn (and the tool calls inside it) its OWN value that follows
+  // the async call tree, so a worker's null can't bleed into the orchestrator's
+  // artifact stamping. `currentConversationId` remains the fallback for the
+  // imperative callers outside a turn (STT path, channel pre-roll).
+  private conversationCtx = new AsyncLocalStorage<string | null>()
   private disabled = new Set<string>()
   private pluginHost?: CerebellumPluginHost
   private automationsHost?: AutomationsHost
+  private orchestratorHost?: OrchestratorHost
   /**
    * Bumped every time the live tool surface changes — a reload (skills
    * added/edited/removed) or an enable/disable toggle. The agent loop pins
@@ -507,6 +557,15 @@ export class Cerebellum {
     this.automationsHost = host
   }
 
+  /**
+   * Wire the worker-management host (implemented in the main process over the
+   * Agent's active orchestration session) that the `orchestrator` capability's
+   * plugin receives in its init context. Set once at startup; survives reload().
+   */
+  setOrchestratorHost(host: OrchestratorHost): void {
+    this.orchestratorHost = host
+  }
+
   isDisabled(name: string): boolean {
     return this.disabled.has(name)
   }
@@ -523,7 +582,22 @@ export class Cerebellum {
   }
 
   getCurrentConversationId(): string | null {
-    return this.currentConversationId
+    // Prefer the turn-scoped value; getStore() is undefined only outside any
+    // runWithConversation scope, where the imperative global is the source.
+    const scoped = this.conversationCtx.getStore()
+    return scoped !== undefined ? scoped : this.currentConversationId
+  }
+
+  /**
+   * Run `fn` with `id` as the turn-scoped conversation. Every getCurrentConversationId
+   * call inside `fn` (including nested tool plugins) resolves to `id` regardless
+   * of what other concurrent turns set — the isolation that lets workers run with
+   * a null conversation without disturbing the orchestrator's. Does NOT touch the
+   * global or emit conversation.changed; the agent does that, once, for real
+   * (non-worker) turns so the UI/extension only ever track visible conversations.
+   */
+  runWithConversation<T>(id: string | null, fn: () => Promise<T>): Promise<T> {
+    return this.conversationCtx.run(id, fn)
   }
 
   /**
@@ -628,12 +702,18 @@ export class Cerebellum {
    * Render the `<tools>` section the prefrontal folds into the system
    * prompt. Each loaded capability contributes a header, its description,
    * and a brief tool catalog. Empty when no capabilities are loaded.
+   *
+   * `exclude` mirrors {@link getToolDefinitions}: capabilities in the set are
+   * left out of the prompt text. The prefrontal passes the role's exclusion
+   * (e.g. a worker's delegation + channel carve-out) so the catalog the model
+   * reads matches the tools it can actually call — no phantom listings.
    */
-  getToolsPrompt(): string {
+  getToolsPrompt(exclude?: ReadonlySet<string>): string {
     const blocks: string[] = []
     for (const cap of this.capabilities.values()) {
       if (cap.status !== 'ok') continue
       if (this.disabled.has(cap.name)) continue
+      if (exclude?.has(cap.name)) continue
       if (cap.tools.length === 0) continue
       const lines: string[] = [`## ${cap.name}`, cap.description]
       for (const tool of cap.tools) {
@@ -649,12 +729,13 @@ export class Cerebellum {
    * pure-skill capabilities (no plugin) are filtered out — the LLM should
    * only see what can actually execute.
    */
-  getToolDefinitions(): ToolDefinition[] {
+  getToolDefinitions(exclude?: ReadonlySet<string>): ToolDefinition[] {
     const out: ToolDefinition[] = []
     for (const cap of this.capabilities.values()) {
       if (cap.status !== 'ok') continue
       if (!cap.hasPlugin) continue
       if (this.disabled.has(cap.name)) continue
+      if (exclude?.has(cap.name)) continue
       for (const tool of cap.tools) {
         out.push({
           name: tool.name,
@@ -1059,7 +1140,7 @@ export class Cerebellum {
         )
       }
 
-      await fs.writeFile(markerPath, pkgHash, 'utf8').catch(() => {
+      await diskWriter.writeFileAtomic(markerPath, pkgHash).catch(() => {
         // Best-effort marker; if it fails we'll just reinstall next session.
       })
 
@@ -1102,10 +1183,11 @@ export class Cerebellum {
       await plugin.init?.({
         pluginDir: path.dirname(cap.pluginEntryPath),
         workspaceRoot: this.options.workspaceRoot ?? '',
-        getCurrentConversationId: () => this.currentConversationId,
+        getCurrentConversationId: () => this.getCurrentConversationId(),
         sudo: sudoSession,
         host: this.pluginHost,
         automations: this.automationsHost,
+        orchestrator: this.orchestratorHost,
         askUser: (input) => this.dispatchAskUser(input),
         getChannelStatus: () => this.channelStatusProvider?.() ?? []
       })

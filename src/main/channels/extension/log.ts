@@ -1,5 +1,6 @@
+import { diskWriter } from '@main/io/diskWriter'
 import { randomUUID } from 'node:crypto'
-import { appendFile, mkdir, readFile, readdir } from 'node:fs/promises'
+import { mkdir, readFile, readdir } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -208,7 +209,7 @@ export async function logEvent(
   try {
     await ensureDir()
     const file = join(LOGS_DIR, `${conversationId}.jsonl`)
-    await appendFile(file, JSON.stringify(event) + '\n', 'utf8')
+    await diskWriter.appendLine(file, JSON.stringify(event) + '\n')
   } catch {
     // never let logging break tool execution
   }

@@ -1,3 +1,4 @@
+import { diskWriter } from '@main/io/diskWriter'
 import type { Cerebellum, ToolExecutionResult } from '@main/runtime/cerebellum'
 import type { Corpus } from '@main/runtime/corpus'
 import type { ToolCall } from '@main/runtime/wernicke'
@@ -617,7 +618,7 @@ export class Motor {
     }
     const md = renderTranscript(task)
     try {
-      await fs.writeFile(task.transcriptPath, md, 'utf8')
+      await diskWriter.writeFileAtomic(task.transcriptPath, md)
     } catch {
       // best-effort: a transcript write failure must not abort execution
     }
@@ -628,7 +629,7 @@ export class Motor {
     if (detail) {
       const detailPath = task.transcriptPath.replace('.md', '-detail.log')
       try {
-        await fs.writeFile(detailPath, detail, 'utf8')
+        await diskWriter.writeFileAtomic(detailPath, detail)
       } catch {
         // best-effort
       }

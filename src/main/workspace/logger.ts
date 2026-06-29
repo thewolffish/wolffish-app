@@ -1,14 +1,8 @@
-import { appendFile, mkdir } from 'node:fs/promises'
+import { diskWriter } from '@main/io/diskWriter'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 const LOGS_DIR = join(homedir(), '.wolffish', 'workspace', 'logs')
-let ready: Promise<void> | null = null
-
-function ensureDir(): Promise<void> {
-  if (!ready) ready = mkdir(LOGS_DIR, { recursive: true }).then(() => {})
-  return ready
-}
 
 function dateStamp(): string {
   return new Date().toISOString().slice(0, 10)
@@ -30,8 +24,7 @@ function fmt(level: string, tag: string, args: unknown[]): string {
 
 async function write(line: string): Promise<void> {
   try {
-    await ensureDir()
-    await appendFile(join(LOGS_DIR, `${dateStamp()}.log`), line, 'utf8')
+    await diskWriter.appendLine(join(LOGS_DIR, `${dateStamp()}.log`), line)
   } catch {
     // never let logging crash the app
   }

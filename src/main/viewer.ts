@@ -1,3 +1,4 @@
+import { diskWriter } from '@main/io/diskWriter'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { defaultsWorkspacePath, workspaceRoot } from '@main/workspace/workspace'
@@ -88,8 +89,7 @@ export async function statViewerFile(relativePath: string): Promise<{ mtimeMs: n
 
 export async function writeViewerFile(relativePath: string, content: string): Promise<void> {
   const target = resolveScoped(viewerRoot(), relativePath)
-  await fs.mkdir(path.dirname(target), { recursive: true })
-  await fs.writeFile(target, content, 'utf8')
+  await diskWriter.writeFileAtomic(target, content)
 }
 
 export async function hasBundledDefault(relativePath: string): Promise<boolean> {

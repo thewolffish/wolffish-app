@@ -1,3 +1,4 @@
+import { diskWriter } from '@main/io/diskWriter'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import type { Corpus } from '@main/runtime/corpus'
@@ -118,7 +119,7 @@ export class BasalGanglia {
     const body = (needsHeader ? `# ${date}\n\n` : '') + line
 
     try {
-      await fs.appendFile(filepath, body, 'utf8')
+      await diskWriter.appendLine(filepath, body)
     } catch {
       return
     }

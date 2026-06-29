@@ -1,11 +1,14 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { ThemeProvider } from '@providers/theme/ThemeProvider'
 import { LocaleProvider } from '@providers/locale/LocaleProvider'
 import { FlowProvider } from '@providers/flow/FlowProvider'
 import { useFlow } from '@providers/flow/useFlow'
 import { ToastProvider } from '@components/core/toast/ToastProvider'
+import { useToast } from '@components/core/toast/useToast'
 import { InputContextMenu } from '@components/core/InputContextMenu'
 import { ClosingOverlay } from '@components/common/closing-overlay/ClosingOverlay'
+import { HeartbeatActiveOverlay } from '@components/common/heartbeat-active-overlay/HeartbeatActiveOverlay'
 import { Onboarding } from '@pages/Onboarding'
 import { LowDiskSpace } from '@pages/LowDiskSpace'
 import { OllamaSetup } from '@pages/OllamaSetup'
@@ -20,8 +23,43 @@ import { Soul } from '@pages/Soul'
 import { User } from '@pages/User'
 import { Agents } from '@pages/Agents'
 
+// A heartbeat job blocks everything (jobs run one-at-a-time), so while one runs
+// we swap the active screen for the live overlay. Centralized here so every page
+// is covered without each one wiring it up.
+function useHeartbeatActive(): boolean {
+  const { t } = useTranslation()
+  const toast = useToast()
+  const [active, setActive] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    window.api.heartbeat
+      .getRunningJob()
+      .then((job) => {
+        if (!cancelled) setActive(!!job)
+      })
+      .catch(() => {})
+    const offStarted = window.api.heartbeat.onJobStarted(() => setActive(true))
+    const offEnded = window.api.heartbeat.onJobEnded((payload) => {
+      setActive(false)
+      // A run that fails mid-execution has no other surface once the overlay
+      // closes, so surface the failure as a toast.
+      if (payload.status === 'failed') {
+        toast.show({ tone: 'error', message: payload.error ?? t('heartbeat.runFailed') })
+      }
+    })
+    return () => {
+      cancelled = true
+      offStarted()
+      offEnded()
+    }
+  }, [t, toast])
+  return active
+}
+
 function Screens(): React.JSX.Element {
   const { screen } = useFlow()
+  const heartbeatActive = useHeartbeatActive()
+  if (heartbeatActive) return <HeartbeatActiveOverlay />
   switch (screen) {
     case 'welcome':
       return <Onboarding />

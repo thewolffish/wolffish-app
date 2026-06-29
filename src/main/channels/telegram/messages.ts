@@ -1,3 +1,4 @@
+import { diskWriter } from '@main/io/diskWriter'
 import { workspaceRoot } from '@main/workspace/workspace'
 import fs from 'node:fs/promises'
 import path from 'node:path'
@@ -122,8 +123,7 @@ async function flush(): Promise<void> {
     if (v.length > 0) obj[String(k)] = v
   }
   try {
-    await fs.mkdir(dir(), { recursive: true })
-    await fs.writeFile(filePath(), JSON.stringify(obj), 'utf8')
+    await diskWriter.writeFileAtomic(filePath(), JSON.stringify(obj))
   } catch {
     // best-effort: a write failure shouldn't crash the bot. Worst
     // case is the in-memory state is correct but disk is stale,

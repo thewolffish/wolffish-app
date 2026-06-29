@@ -5,16 +5,19 @@ import {
   type ConversationFile,
   type ConversationMessage
 } from '@main/conversations'
+import { diskWriter } from '@main/io/diskWriter'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { Amygdala, SafetyBlockedError } from '@main/runtime/amygdala'
 import { BasalGanglia } from '@main/runtime/basalganglia'
 import { Brainstem } from '@main/runtime/brainstem'
 import {
   Broca,
+  type Segment,
   type SegmentSink,
   type SegmentTurnEndReason,
   type ToolResultStatus
 } from '@main/runtime/broca'
-import { Cerebellum } from '@main/runtime/cerebellum'
+import { Cerebellum, type OrchestratorHost } from '@main/runtime/cerebellum'
 import { compactOverflow } from '@main/runtime/compactor'
 import { Corpus } from '@main/runtime/corpus'
 import { Cortex } from '@main/runtime/cortex'
@@ -23,6 +26,11 @@ import { Hippocampus, type TurnToolCall } from '@main/runtime/hippocampus'
 import { Hypothalamus } from '@main/runtime/hypothalamus'
 import { Insula } from '@main/runtime/insula'
 import { Motor } from '@main/runtime/motor'
+import {
+  OrchestrationSession,
+  type WorkerEffort,
+  type WorkerResult
+} from '@main/runtime/orchestrator'
 import { formatRuntimeStatus } from '@main/runtime/outbound'
 import { Prefrontal } from '@main/runtime/prefrontal'
 import { RAS } from '@main/runtime/ras'
@@ -101,6 +109,12 @@ export type AgentTurnOptions = {
    */
   bypassApproval?: boolean
   thinkingMode?: 'off' | 'on' | 'high' | 'max'
+  /**
+   * Which model resolves this turn (orchestrator mode). 'worker' streams on the
+   * worker model; omitted/'orchestrator' uses the Brain. Per-turn, so a worker
+   * turn and the orchestrator turn resolve to different models concurrently.
+   */
+  role?: 'orchestrator' | 'worker'
 }
 
 export type AgentTurnResult = {
@@ -175,6 +189,15 @@ export class Agent {
 
   private cortexReady: Promise<void> | null = null
   private cerebellumReady: Promise<void> | null = null
+
+  // Orchestrator mode (Phase 2). `orchestratorMode` is the global Brain setting.
+  // The active orchestrator turn's worker registry rides on AsyncLocalStorage —
+  // NOT a single Agent field — so concurrent top-level turns (a channel turn and
+  // a heartbeat job, two channels) each get their OWN session and can't clobber
+  // one another. A worker turn runs with a null orchestration scope (it never
+  // delegates), even though it's spawned inside the orchestrator's async context.
+  private orchestratorMode: 'single' | 'orchestrator' = 'single'
+  private orchestrationCtx = new AsyncLocalStorage<OrchestrationSession | null>()
 
   constructor(options: AgentOptions) {
     this.thalamus = options.thalamus
@@ -274,6 +297,121 @@ export class Agent {
     await this.corpus.stop()
   }
 
+  /**
+   * Set the global orchestrator mode. In 'orchestrator' mode a top-level
+   * (non-worker) turn becomes an orchestrator: it owns a worker registry and
+   * the delegation capability is live. In 'single' mode every turn runs solo
+   * exactly as in Phase 1. Pushed from config at startup and on the
+   * provider:setOrchestratorMode IPC.
+   */
+  setOrchestratorMode(mode: 'single' | 'orchestrator'): void {
+    this.orchestratorMode = mode
+  }
+
+  /**
+   * The worker-management bridge handed to the `orchestrator` capability's
+   * plugin (via cerebellum.setOrchestratorHost). Every method operates on the
+   * active orchestrator turn's registry — the single source of truth — and
+   * throws if no orchestrator turn is in flight (which the capability gating
+   * makes unreachable in practice).
+   */
+  orchestratorHost(): OrchestratorHost {
+    const session = (): OrchestrationSession => {
+      // Resolve the session for the turn whose tool call is executing right now
+      // (ALS follows the async call tree), so two concurrent orchestrator turns
+      // never reach into each other's registry.
+      const active = this.orchestrationCtx.getStore()
+      if (!active) {
+        throw new Error(
+          'no active orchestration — delegation tools are only available to the orchestrator during an orchestrator-mode turn'
+        )
+      }
+      return active
+    }
+    return {
+      spawnWorker: (prompt, branchLabel, effort) => session().spawn(prompt, branchLabel, effort),
+      sendToWorker: (id, prompt, effort) => session().sendTo(id, prompt, effort),
+      awaitWorkers: (ids) => session().awaitNext(ids),
+      closeWorker: (id) => session().close(id),
+      cancelWorker: (id) => session().cancel(id),
+      listWorkers: () => session().list()
+    }
+  }
+
+  /**
+   * Drive one worker turn to completion on the worker model and harvest its
+   * final text. A worker is a real `respond()` turn with: a fresh Broca (its
+   * segments never reach the user sink), `role:'worker'` (resolves the worker
+   * model + the worker toolset minus delegation/channel), `conversationId:null`
+   * (invisible — no episode persistence), `bypassApproval` (the orchestrator is
+   * its operator), and its own abort signal (the registry kills it on cancel).
+   */
+  private async runWorkerTurn(
+    parent: AgentTurnOptions,
+    workerId: string,
+    label: string,
+    history: ChatMessage[],
+    signal: AbortSignal,
+    effort?: WorkerEffort
+  ): Promise<WorkerResult> {
+    const workerBroca = new Broca({
+      corpus: this.corpus,
+      shouldSilenceToolCall: isInternalToolCall
+    })
+    const segments: Segment[] = []
+    const worker = { id: workerId, label }
+    // No black box: forward the worker's user-visible segments (text + tool
+    // call/result) into the ORCHESTRATOR turn's sink — re-stamped to the parent
+    // turnId so the renderer accumulates them into the orchestrator's message
+    // (and persists them), tagged `worker` so they render marked as subagent
+    // activity, and toolCallId/segmentId namespaced so concurrent workers can't
+    // collide in the merged stream.
+    const result = await this.respond({
+      history: [...history],
+      turnId: `${parent.turnId}::w_${workerId}`,
+      onSegment: (seg) => {
+        segments.push(seg)
+        if (seg.kind === 'text') {
+          parent.onSegment({
+            ...seg,
+            turnId: parent.turnId,
+            segmentId: `${workerId}:${seg.segmentId}`,
+            worker
+          })
+        } else if (seg.kind === 'tool_call' || seg.kind === 'tool_result') {
+          parent.onSegment({
+            ...seg,
+            turnId: parent.turnId,
+            segmentId: `${workerId}:${seg.segmentId}`,
+            toolCallId: `${workerId}:${seg.toolCallId}`,
+            worker
+          })
+        }
+      },
+      signal,
+      conversationId: null,
+      broca: workerBroca,
+      bypassApproval: true,
+      role: 'worker',
+      // The orchestrator sets each worker's reasoning effort; omitted ⇒ the
+      // worker model's provider default. The user's Brain reasoning setting
+      // drives only the orchestrator turn, never the workers. A worker never
+      // retries at the code level (thalamus retry is orchestrator-only) — a
+      // failure surfaces to the orchestrator, which decides whether to re-run.
+      thinkingMode: effort
+    })
+    const text = segments
+      .filter((s): s is Extract<Segment, { kind: 'text' }> => s.kind === 'text')
+      .map((s) => s.delta)
+      .join('')
+      .trim()
+    return {
+      text: text || '(worker produced no text output)',
+      stopReason: String(result.stopReason),
+      toolCalls: result.toolCalls
+    }
+  }
+
   private async processHistoryAttachments(history: ChatMessage[]): Promise<ChatMessage[]> {
     const provider = this.thalamus.getActiveProvider()
     const providerKey: FileProcessorOptions['provider'] =
@@ -331,7 +469,32 @@ export class Agent {
     return out
   }
 
+  /**
+   * Run one turn. Establishes the turn-scoped conversation (AsyncLocalStorage)
+   * so the tool calls inside it stamp artifacts with THIS turn's conversation,
+   * even while concurrent worker turns run with their own (null) scope. Workers
+   * are nested respond() calls; each gets its own scope here.
+   */
   async respond(turn: AgentTurnOptions): Promise<AgentTurnResult> {
+    // A top-level turn in orchestrator mode owns a worker registry; a worker turn
+    // and single mode do not. The session is created here and pinned to this
+    // turn's async scope (orchestrationCtx.run) so the OrchestratorHost resolves
+    // THIS turn's registry even when several top-level turns run concurrently.
+    const isOrchestratorTurn = turn.role !== 'worker' && this.orchestratorMode === 'orchestrator'
+    const orchestration: OrchestrationSession | null = isOrchestratorTurn
+      ? new OrchestrationSession(({ workerId, label, history, signal, effort }) =>
+          this.runWorkerTurn(turn, workerId, label, history, signal, effort)
+        )
+      : null
+    return this.cerebellum.runWithConversation(turn.conversationId ?? null, () =>
+      this.orchestrationCtx.run(orchestration, () => this.runRespond(turn, orchestration))
+    )
+  }
+
+  private async runRespond(
+    turn: AgentTurnOptions,
+    orchestration: OrchestrationSession | null
+  ): Promise<AgentTurnResult> {
     await this.init().catch(() => undefined)
 
     const lastMessage = turn.history[turn.history.length - 1]
@@ -392,7 +555,29 @@ export class Agent {
     let pinnedGeneration = -1
 
     broca.beginTurn(turn.turnId, turn.onSegment)
-    this.cerebellum.setCurrentConversationId(turn.conversationId ?? null, turn.conversationTitle)
+    // Publish the active conversation to the UI/extension ONCE, for real
+    // (non-worker) turns only — a worker is invisible and must never flip the
+    // visible conversation. The turn-scoped stamp itself rides on ALS (see
+    // respond), so this is purely the global + conversation.changed emit.
+    if (turn.role !== 'worker') {
+      this.cerebellum.setCurrentConversationId(turn.conversationId ?? null, turn.conversationTitle)
+    }
+
+    // `orchestration` (created in respond() and already pinned to this turn's ALS
+    // scope) is non-null exactly for a top-level orchestrator turn. The tool
+    // surface keys off it: orchestrator → delegation visible; a single-mode
+    // top-level turn → undefined (hidden); a worker → 'worker'.
+    const isOrchestratorTurn = orchestration !== null
+    const toolRole: 'orchestrator' | 'worker' | undefined =
+      turn.role === 'worker' ? 'worker' : isOrchestratorTurn ? 'orchestrator' : undefined
+    let onTurnAbort: (() => void) | null = null
+    if (orchestration && turn.signal) {
+      // Cancel propagation: if the turn aborts while the orchestrator is parked
+      // in await_workers, dispose wakes the awaiter so the tool loop can unwind.
+      const session = orchestration
+      onTurnAbort = () => session.dispose()
+      turn.signal.addEventListener('abort', onTurnAbort)
+    }
 
     try {
       while (true) {
@@ -421,8 +606,15 @@ export class Agent {
             pinnedTools === null ||
             pinnedGeneration !== currentGeneration
           ) {
-            pinnedSystemPrompt = await this.prefrontal.buildSystemPrompt(userContent, runtime)
-            pinnedTools = this.filterToolsForProvider(this.prefrontal.selectTools(), userContent)
+            pinnedSystemPrompt = await this.prefrontal.buildSystemPrompt(
+              userContent,
+              runtime,
+              toolRole
+            )
+            pinnedTools = this.filterToolsForProvider(
+              this.prefrontal.selectTools(toolRole),
+              userContent
+            )
             pinnedGeneration = currentGeneration
           }
           systemPrompt = pinnedSystemPrompt
@@ -430,8 +622,11 @@ export class Agent {
         } else {
           // Legacy path: rebuild the system prompt each iteration so the
           // <runtime> block reflects the live iteration counter.
-          systemPrompt = await this.prefrontal.buildSystemPrompt(userContent, runtime)
-          filteredTools = this.filterToolsForProvider(this.prefrontal.selectTools(), userContent)
+          systemPrompt = await this.prefrontal.buildSystemPrompt(userContent, runtime, toolRole)
+          filteredTools = this.filterToolsForProvider(
+            this.prefrontal.selectTools(toolRole),
+            userContent
+          )
         }
 
         // Context Compaction: if context exceeds the model's input budget,
@@ -484,6 +679,7 @@ export class Agent {
           messages,
           tools: filteredTools.length > 0 ? filteredTools : undefined,
           signal: turn.signal,
+          role: turn.role,
           thinkingMode: turn.thinkingMode,
           cacheKey: turn.conversationId ?? turn.turnId,
           truncateOutbound,
@@ -941,7 +1137,16 @@ export class Agent {
       throw err
     } finally {
       broca.endTurn()
-      this.cerebellum.setCurrentConversationId(null)
+      if (turn.role !== 'worker') this.cerebellum.setCurrentConversationId(null)
+      if (orchestration) {
+        // Tear the registry down — abort every surviving worker (no orphans),
+        // then flush queued disk writes so nothing lands half-written after the
+        // turn closes (B6). The ALS scope unwinds on its own when respond()'s
+        // run() callback returns, so there is no shared pointer to clear.
+        if (turn.signal && onTurnAbort) turn.signal.removeEventListener('abort', onTurnAbort)
+        orchestration.dispose()
+        await diskWriter.flush().catch(() => undefined)
+      }
     }
   }
 

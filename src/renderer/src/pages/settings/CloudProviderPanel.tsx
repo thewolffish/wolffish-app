@@ -4,6 +4,7 @@ import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn'
 import {
   BADGE_STYLES,
+  DEFAULT_MODEL,
   isModelDisabled,
   MODEL_SPECS,
   PROVIDER_LOGOS,
@@ -159,14 +160,26 @@ export function CloudProviderPanel({
       setError(t('settings.model.cloud.errors.generic', { message: '' }))
       return
     }
-    // Auto-save with the freshly fetched models. Keep the
-    // prior selection if the new catalogue still has it; otherwise fall
-    // back to the newest model.
+    // Pick the model to save, in strict priority:
+    //   1. The model the user already chose (current selection or the one on
+    //      disk) — NEVER overwritten as long as the catalogue still offers it.
+    //   2. Only when nothing was ever chosen (first connection): this provider's
+    //      curated default.
+    //   3. Fallback: the newest selectable model.
+    // The curated default applies on first connection only — an existing choice
+    // always wins.
     const firstSelectable =
       result.models.find((m) => !isModelDisabled(m) && !isDateSnapshot(m)) ??
       result.models.find((m) => !isModelDisabled(m)) ??
       result.models[0]
-    const modelToSave = model && result.models.includes(model) ? model : firstSelectable
+    const alreadyChosen = model ?? stored?.model ?? null
+    const preferred = DEFAULT_MODEL[provider]
+    const modelToSave =
+      alreadyChosen && result.models.includes(alreadyChosen)
+        ? alreadyChosen
+        : preferred && result.models.includes(preferred)
+          ? preferred
+          : firstSelectable
     setSaving(true)
     try {
       await window.api.provider.save({

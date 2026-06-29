@@ -1,4 +1,42 @@
-## v1.0.195 — 2026-06-28 `Latest`
+## v1.0.196 — 2026-06-29 `Latest`
+
+### Orchestrator Mode: Workers That Run in Parallel
+
+Wolffish can now split a hard task across several workers at once. Turn on **Orchestrator mode** in the new Modes settings, and the agent you talk to becomes a coordinator: it spins up live worker sessions on a separate model, hands each one an independent piece — research one angle, draft another, check a third — runs them concurrently, then folds everything into a single answer. You still see one agent replying; the parallelism happens underneath. Single mode stays the default and remains the cheaper, faster choice for small or step-by-step tasks. Orchestrator mode earns its keep on work that genuinely splits apart — research, analysis, batch jobs — where running the pieces side by side is faster, and a coordinator that reviews each result before using it lifts the quality.
+
+Workers run the full toolset minus two things they shouldn't touch — they can't delegate further or message you on a channel — so the orchestrator stays the single voice to you, and the work stays bounded.
+
+### A New "Modes" Page, and One Brain Instead of a Fallback Chain
+
+Model setup has moved to a dedicated **Modes** tab — now the first thing you land on in Settings — and it replaces the old fallback-order list with something simpler: you pick one model. That model is your **Brain**, and it's the one that runs. The previous design let you stack providers in priority order ("try this API, then that one, then local") and quietly slid down the list when one was slow or down; that's gone. One model runs, and you always know which. Your existing setup migrates on its own — whatever was your top provider becomes your Brain, and the dead settings are cleaned out — so there's nothing to redo.
+
+Choosing a model is now drag-and-drop, with click as a shortcut. Connected providers are listed in collapsible sections — your Brain's provider opens expanded so it's easy to re-pick — and you drag a model into the Brain slot, or just click it. When Orchestrator mode is on, the page shows two slots side by side, the Orchestrator and the Worker, and clicking alternates between them so you can fill both quickly; the worker defaults to your Brain's model when no worker has been set yet, until you choose otherwise.
+
+The old **Models** tab stays for what it's good at — entering provider keys and basic setup — but the fallback-order dropdown and priority numbers are gone, with a note pointing to Modes for model and orchestration choices. The chat's model chip now shows both provider logos side by side when you're in Orchestrator mode with a worker set.
+
+### Two Ways to Shape How Hard the Agent Works
+
+Two new toggles in the Modes page let you tune behavior without changing your prompt. **Greedy effort** tells the agent that persistence beats speed and cost — retry up to about ten times instead of giving up at three, explore several genuinely different approaches instead of settling on one, and verify thoroughly before calling something done. **Autonomy** tells it to act with high agency — ask you as little as possible, make the call itself, and drive a task to the finish rather than checking in at every step. Both are independent of Orchestrator mode and apply to every turn, single, orchestrator, or worker alike.
+
+### See Exactly What Each Worker Did
+
+With Orchestrator mode on and verbose chat enabled, workers are no longer a black box. Each worker's text and every tool call it makes render inline, set off by an accent rail and a small uppercase label naming the worker — whatever the orchestrator called it, like **RESEARCH-PRICING** or **DRAFT-EMAIL** — so you can follow the split, learn from a worker's approach, or debug one that went sideways. With verbose off — the default — none of that shows: you get only the orchestrator's final synthesis, and the feed stays clean.
+
+### Run an Automation Right Now
+
+The Heartbeat page has a new **Run now** button beside each active automation, so you can fire one off immediately instead of waiting for its next scheduled time — handy for testing a job you just wrote, or running something time-sensitive on demand. You'll get a quick toast either way: it started, it's queued behind a job already running, or it couldn't run. While any automation runs, a live overlay takes over the screen with its name, a running timer, and a color-coded log of tool calls, results, and the finish — then steps aside when the job is done.
+
+### Save a File to Your Computer
+
+You can now save a copy of any file Wolffish has read or written on your machine — wherever it lives — to a spot you choose, through a normal save dialog. If you pick the file's own location, it skips the needless copy.
+
+### Sturdier Writes That Survive a Crash
+
+Every config, conversation, channel-state, and log file Wolffish writes now goes through one ordered, crash-resistant path. Whole-file state — your config, conversations, channel state — is written to a temporary file, flushed to disk, then swapped into place: a crash or hard quit can't leave a half-written file behind, so you always have the complete old version or the complete new one, never a corrupted middle. Logs go through the same serialized layer, so concurrent writes never interleave into a tangled file. (Files owned by third-party libraries or native modules — like WhatsApp's auth state — and large binary streams are out of scope by design.) It's invisible day to day, and that's the point.
+
+---
+
+## v1.0.195 — 2026-06-28
 
 ### Delete an Automation in One Click
 

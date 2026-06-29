@@ -9,7 +9,6 @@ import { DocxViewer } from '@components/common/docx-viewer/DocxViewer'
 import { FileCard } from '@components/common/file-card/FileCard'
 import { PathCard } from '@components/common/path-card/PathCard'
 import { canonicalPath } from '@components/common/path-card/pathStat'
-import { HeartbeatActiveOverlay } from '@components/common/heartbeat-active-overlay/HeartbeatActiveOverlay'
 import { HtmlFileViewer } from '@components/common/html-file-viewer/HtmlFileViewer'
 import { ReindexActiveOverlay } from '@components/common/reindex-active-overlay/ReindexActiveOverlay'
 import { ImageViewer } from '@components/common/image-viewer/ImageViewer'
@@ -164,6 +163,18 @@ export function Chat(): React.JSX.Element {
     () => (activeCloudProvider && brain ? brain.model : null),
     [activeCloudProvider, brain]
   )
+
+  // Orchestrator mode: the cloud switcher tab reflects BOTH models — the
+  // orchestrator (the Brain, shown via activeCloud*) and the worker model below.
+  const orchestratorMode = status?.config?.llm.orchestratorMode ?? 'single'
+  const workerModel = status?.config?.llm.workerModel ?? null
+  const workerSel = useMemo(() => {
+    if (!workerModel) return null
+    const provider = cloudProviders.find((p) => p.id === workerModel.providerId)
+    return provider && provider.apiKey && provider.apiKey.length > 0
+      ? { provider: workerModel.providerId as string, model: workerModel.model }
+      : null
+  }, [workerModel, cloudProviders])
   const persistedThinkingModes = status?.config?.llm.thinkingModes
 
   // Ordered reasoning modes this model honours (canonical scale). Drives the
@@ -220,21 +231,6 @@ export function Chat(): React.JSX.Element {
     const normalized = normalizeReasoningMode(persisted, reasoningModes)
     if (persisted !== normalized) void setThinkingMode(normalized)
   }, [reasoningModes, activeCloudModel, persistedThinkingModes, setThinkingMode])
-
-  const [heartbeatActive, setHeartbeatActive] = useState(false)
-  useEffect(() => {
-    let cancelled = false
-    window.api.heartbeat.getRunningJob().then((job) => {
-      if (!cancelled) setHeartbeatActive(!!job)
-    })
-    const offStarted = window.api.heartbeat.onJobStarted(() => setHeartbeatActive(true))
-    const offEnded = window.api.heartbeat.onJobEnded(() => setHeartbeatActive(false))
-    return () => {
-      cancelled = true
-      offStarted()
-      offEnded()
-    }
-  }, [])
 
   const [reindexActive, setReindexActive] = useState(false)
   useEffect(() => {
@@ -1407,7 +1403,6 @@ export function Chat(): React.JSX.Element {
   const placeholderAlign = useMemo(() => (isRtl ? 'text-right' : 'text-left'), [isRtl])
 
   if (reindexActive) return <ReindexActiveOverlay />
-  if (heartbeatActive) return <HeartbeatActiveOverlay />
 
   return (
     <main
@@ -1680,6 +1675,8 @@ export function Chat(): React.JSX.Element {
                 activeCloudProvider={activeCloudProvider}
                 cloudModel={activeCloudModel}
                 localModel={currentModel}
+                isOrchestrator={orchestratorMode === 'orchestrator'}
+                worker={workerSel}
               />
             </div>
             <button
@@ -2609,6 +2606,40 @@ function renderSegments(
   const blocks: ReactNode[] = []
   let textBuffer = ''
   let textRun = 0
+  // Wrap a subagent block in a left accent rail + a small worker-label chip so
+  // it reads as marked subagent activity. The wrapper spans the message width
+  // (no max-w of its own) so the inner bubble/card gets the SAME width it would
+  // in single mode; logical props (border-s / ps / ms) mirror in RTL; colors
+  // come from theme tokens (dark/light).
+  const wrapSubagent = (
+    worker: { id: string; label: string },
+    key: string,
+    node: ReactNode
+  ): ReactNode => (
+    <div key={key} className="border-primary/30 ms-2 flex w-full flex-col gap-1 border-s-2 ps-3">
+      <span className="text-primary/80 inline-flex w-fit items-center rounded text-[10px] font-medium tracking-wide uppercase">
+        {worker.label}
+      </span>
+      {node}
+    </div>
+  )
+  // Per-worker text buffer. Concurrent workers interleave their text deltas
+  // token-by-token in the merged stream, so we coalesce each worker's text by id
+  // and flush it as ONE bubble at that worker's next tool call (narration →
+  // action) or at the end — never a tiny bubble per interleave.
+  const workerText = new Map<string, { label: string; buf: string; run: number }>()
+  let workerRun = 0
+  const flushWorkerText = (id: string): void => {
+    const e = workerText.get(id)
+    if (!e || e.buf.length === 0) return
+    workerText.delete(id)
+    const bubble = (
+      <div className="bg-surface border-border text-fg max-w-[85%] rounded-2xl border px-4 py-2.5 text-sm leading-relaxed self-start wrap-anywhere">
+        <Markdown content={e.buf} />
+      </div>
+    )
+    blocks.push(wrapSubagent({ id, label: e.label }, `wmd-${id}-${e.run}`, bubble))
+  }
   // Generic guard: every file path already rendered as a player/viewer in this
   // message. Prevents the same file showing twice when it's reachable from more
   // than one detector (e.g. a voice result that also matches the generic media
@@ -2665,7 +2696,7 @@ function renderSegments(
       textBuffer = ''
       return
     }
-    blocks.push(
+    const bubble = (
       <div
         key={`md-${textRun}`}
         className="bg-surface border-border text-fg max-w-[85%] rounded-2xl border px-4 py-2.5 text-sm leading-relaxed self-start wrap-anywhere"
@@ -2673,6 +2704,7 @@ function renderSegments(
         <Markdown content={textBuffer} />
       </div>
     )
+    blocks.push(bubble)
     // Collect any filesystem paths named in this bubble; the cards render at the
     // end of the message (see collectPaths). Skipped mid-stream — a partial path
     // token would resolve to nothing — and verified on-device by PathCard.
@@ -2695,8 +2727,42 @@ function renderSegments(
   for (let segIdx = 0; segIdx < segments.length; segIdx++) {
     const seg = segments[segIdx]
     if (seg.kind === 'text') {
-      textBuffer += seg.delta
+      if (seg.worker) {
+        // Subagent text is verbose-only (clean feed = orchestrator's reply
+        // only); coalesce per worker so interleaved deltas don't fragment.
+        if (!verbose) continue
+        const e = workerText.get(seg.worker.id) ?? {
+          label: seg.worker.label,
+          buf: '',
+          run: ++workerRun
+        }
+        e.buf += seg.delta
+        e.label = seg.worker.label
+        workerText.set(seg.worker.id, e)
+      } else {
+        textBuffer += seg.delta
+      }
     } else if (seg.kind === 'tool_call') {
+      // Subagent tool calls (forwarded from a worker, tagged `worker`) render as
+      // the SAME tool card, marked as that subagent's activity — verbose-only,
+      // since the clean feed hides all subagent internals. No black box: every
+      // worker tool call is right here and persisted.
+      if (seg.worker) {
+        flushWorkerText(seg.worker.id) // narration before this worker's action
+        if (verbose) {
+          const wResult = findResult(segments, seg.toolCallId)
+          const wTiming = toolTimings?.[seg.toolCallId]
+          blocks.push(
+            wrapSubagent(
+              seg.worker,
+              `wtc-${seg.segmentId}`,
+              <ToolCard call={seg} result={wResult} timing={wTiming} />
+            )
+          )
+        }
+        continue
+      }
+
       flushText()
       const result = findResult(segments, seg.toolCallId)
 
@@ -3054,6 +3120,9 @@ function renderSegments(
     }
   }
 
+  // Flush any trailing subagent narration (a worker's final text with no
+  // following tool call) before the orchestrator's closing synthesis.
+  for (const id of workerText.keys()) flushWorkerText(id)
   flushText()
 
   // Openable cards for every filesystem path named this turn, rendered together
@@ -3201,7 +3270,9 @@ function ModeToggle({
   disabled,
   activeCloudProvider,
   cloudModel,
-  localModel
+  localModel,
+  isOrchestrator = false,
+  worker = null
 }: {
   value: boolean
   onChange: (next: boolean) => void
@@ -3209,21 +3280,40 @@ function ModeToggle({
   activeCloudProvider: string | null
   cloudModel: string | null
   localModel: string | null
+  isOrchestrator?: boolean
+  worker?: { provider: string; model: string } | null
 }): React.JSX.Element {
   const { t } = useTranslation()
 
   const hasCloudModel = cloudModel !== null
   const cloudFallback = hasCloudModel ? CloudIcon : CloudOffIcon
-  const cloudIcon =
+  const CloudIconCmp =
     (activeCloudProvider && CLOUD_PROVIDER_LOGOS[activeCloudProvider]) || cloudFallback
   const cloudLabel = activeCloudProvider
     ? t(`settings.model.providers.${activeCloudProvider}`)
     : t('chat.modeToggle.cloud')
+
+  // Orchestrator mode: the SAME cloud tab carries both models. Its icon becomes
+  // the two provider logos (orchestrator + worker) side by side, and its tooltip
+  // names each role + model — so the switcher reflects the mode in place.
+  const WorkerLogo = worker ? (CLOUD_PROVIDER_LOGOS[worker.provider] ?? CloudIcon) : null
+  const dual = isOrchestrator && WorkerLogo !== null
+  const cloudIconNode = dual ? (
+    <span className="inline-flex items-center gap-0.5">
+      <CloudIconCmp size={13} />
+      {WorkerLogo ? <WorkerLogo size={13} /> : null}
+    </span>
+  ) : undefined
+  const cloudTooltip = dual
+    ? `${t('settings.brain.orchestratorSlot')} — ${cloudModel ?? t('chat.modeToggle.noModel')}  ·  ${t('settings.brain.workerSlot')} — ${worker?.model ?? t('chat.modeToggle.noModel')}`
+    : cloudModel || t('chat.modeToggle.noModel')
+
   const modes: {
     key: 'local' | 'cloud'
     label: string
     tooltip: string
     Icon: React.ComponentType<{ size?: number }>
+    iconNode?: React.ReactNode
   }[] = [
     {
       key: 'local',
@@ -3234,8 +3324,9 @@ function ModeToggle({
     {
       key: 'cloud',
       label: cloudLabel,
-      tooltip: cloudModel || t('chat.modeToggle.noModel'),
-      Icon: cloudIcon
+      tooltip: cloudTooltip,
+      Icon: CloudIconCmp,
+      iconNode: cloudIconNode
     }
   ]
   const current: 'local' | 'cloud' = value ? 'local' : 'cloud'
@@ -3264,7 +3355,7 @@ function ModeToggle({
               disabled && 'cursor-not-allowed opacity-60'
             )}
           >
-            <Icon size={14} />
+            {m.iconNode ?? <Icon size={14} />}
             <span className="max-w-full truncate text-[10px] leading-tight font-medium">
               {m.label}
             </span>

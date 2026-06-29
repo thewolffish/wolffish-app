@@ -1,3 +1,4 @@
+import { diskWriter } from '@main/io/diskWriter'
 import yaml from 'js-yaml'
 import fs from 'node:fs/promises'
 import os from 'node:os'
@@ -170,7 +171,7 @@ export async function importCapability(
     // is named exactly "SKILL.md" (the loader is case-sensitive on Linux) and
     // carries precisely what we validated — no surprises from a stray
     // lowercase skill.md or a second copy in the tree.
-    await fs.writeFile(path.join(destDir, 'SKILL.md'), skillContent, 'utf8')
+    await diskWriter.writeFileAtomic(path.join(destDir, 'SKILL.md'), skillContent)
 
     return { ok: true, name, folderName, source: kind, hasPlugin, toolCount }
   } catch (err) {
@@ -498,8 +499,7 @@ async function extractZip(zipPath: string, destDir: string): Promise<void> {
       )
     }
 
-    await fs.mkdir(path.dirname(dest), { recursive: true })
-    await fs.writeFile(dest, content)
+    await diskWriter.writeFileAtomic(dest, content)
   }
 
   if (fileCount === 0) {

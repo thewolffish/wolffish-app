@@ -7,26 +7,44 @@ import { BrainIcon, Cancel01Icon } from 'hugeicons-react'
 import { useTranslation } from 'react-i18next'
 
 /**
- * The Brain slot — the single drop target, pinned to the top of the page so
- * it never scrolls away while the provider list scrolls under it. Filled with
- * the selected model, or a centered empty drop target inviting drop-or-click.
+ * A model drop target. Used for the single Brain slot (Phase 1) and, in
+ * orchestrator mode, the Orchestrator and Worker slots (Phase 2) — all share
+ * the drop-or-click-to-fill behavior. Filled with the selected model, or a
+ * centered empty target inviting a drop or click.
  */
 export function BrainSlot({
+  slotId = 'brain-slot',
   brain,
   spec,
   connected,
-  onClear
+  onClear,
+  heading,
+  role,
+  emptyTitleKey = 'settings.brain.empty.title',
+  emptyHintKey = 'settings.brain.empty.hint',
+  icon: Icon = BrainIcon,
+  sticky = true
 }: {
+  slotId?: string
   brain: BrainSelection | null
   spec: ModelSpec | null
   connected: boolean
   onClear: () => void
+  heading?: string
+  role?: 'orchestrator' | 'worker'
+  emptyTitleKey?: string
+  emptyHintKey?: string
+  icon?: typeof BrainIcon
+  sticky?: boolean
 }): React.JSX.Element {
   const { t } = useTranslation()
-  const { setNodeRef, isOver } = useDroppable({ id: 'brain-slot' })
+  const { setNodeRef, isOver } = useDroppable({ id: slotId })
 
   return (
-    <div ref={setNodeRef} className="bg-bg sticky top-0 z-20 pt-1 pb-4">
+    <div ref={setNodeRef} className={cn('bg-bg pb-4', sticky ? 'sticky top-0 z-20 pt-1' : 'pt-0')}>
+      {heading ? (
+        <h2 className="text-muted mb-2 text-xs font-semibold tracking-wide uppercase">{heading}</h2>
+      ) : null}
       {brain ? (
         <div className={cn('relative rounded-2xl transition-transform', isOver && 'scale-[1.01]')}>
           <div className={cn('rounded-2xl', isOver && 'ring-accent ring-2')}>
@@ -36,6 +54,7 @@ export function BrainSlot({
               spec={spec}
               variant="slot"
               active
+              role={role}
             />
           </div>
           <button
@@ -57,10 +76,10 @@ export function BrainSlot({
             isOver ? 'border-accent text-fg scale-[1.01]' : 'border-border text-muted'
           )}
         >
-          <BrainIcon size={32} aria-hidden />
+          <Icon size={32} aria-hidden />
           <div className="flex flex-col gap-1">
-            <span className="text-fg text-sm font-medium">{t('settings.brain.empty.title')}</span>
-            <span className="text-xs">{t('settings.brain.empty.hint')}</span>
+            <span className="text-fg text-sm font-medium">{t(emptyTitleKey)}</span>
+            <span className="text-xs">{t(emptyHintKey)}</span>
           </div>
         </div>
       )}

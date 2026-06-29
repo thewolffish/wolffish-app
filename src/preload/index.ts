@@ -164,8 +164,15 @@ export type WorkspaceConfig = {
   llm: {
     local: LocalModelConfig
     providers: CloudProviderConfig[]
-    /** The single user-chosen cloud model — the Brain. */
+    /** The single user-chosen cloud model — the Brain (orchestrator/single). */
     brain?: BrainSelection | null
+    /** Orchestrator mode (Phase 2): 'single' (default) vs 'orchestrator'. */
+    orchestratorMode?: 'single' | 'orchestrator'
+    /** Worker-session model in orchestrator mode. */
+    workerModel?: BrainSelection | null
+    /** Behavior modifiers — append a system-prompt block when on. */
+    greedy?: boolean
+    autonomous?: boolean
     localOnly?: boolean
     restrictPowerfulModels?: boolean
     /** Per-model thinking mode. Key is model name, value is ThinkingMode. */
@@ -550,6 +557,10 @@ export type ProviderApi = {
   }) => Promise<{ ok: true } | { ok: false; error: string }>
   remove: (id: CloudProviderConfig['id']) => Promise<{ ok: true }>
   setBrain: (brain: BrainSelection | null) => Promise<{ ok: true }>
+  setWorkerModel: (worker: BrainSelection | null) => Promise<{ ok: true }>
+  setOrchestratorMode: (mode: 'single' | 'orchestrator') => Promise<{ ok: true }>
+  setGreedy: (greedy: boolean) => Promise<{ ok: true }>
+  setAutonomous: (autonomous: boolean) => Promise<{ ok: true }>
   onUpdated: (listener: (event: ProviderUpdatedEvent) => void) => () => void
 }
 
@@ -679,6 +690,8 @@ export type HeartbeatLogEntry = {
 export type HeartbeatApi = {
   getJobs: () => Promise<HeartbeatJobView[]>
   getRunningJob: () => Promise<HeartbeatRunningJob | null>
+  /** Run an automation on demand by id or exact heading label, bypassing its schedule. */
+  runJob: (idOrLabel: string) => Promise<{ ok: boolean; started: boolean; error?: string }>
   onJobStarted: (listener: (job: HeartbeatRunningJob) => void) => () => void
   onJobEnded: (
     listener: (payload: { id: string; status: 'completed' | 'failed'; error?: string }) => void
@@ -1339,6 +1352,10 @@ const api: WolffishApi = {
     save: (payload) => ipcRenderer.invoke('provider:save', payload),
     remove: (id) => ipcRenderer.invoke('provider:remove', id),
     setBrain: (brain) => ipcRenderer.invoke('provider:setBrain', brain),
+    setWorkerModel: (worker) => ipcRenderer.invoke('provider:setWorkerModel', worker),
+    setOrchestratorMode: (mode) => ipcRenderer.invoke('provider:setOrchestratorMode', mode),
+    setGreedy: (greedy) => ipcRenderer.invoke('provider:setGreedy', greedy),
+    setAutonomous: (autonomous) => ipcRenderer.invoke('provider:setAutonomous', autonomous),
     onUpdated: (listener) => subscribe('provider:updated', listener)
   },
   chat: {
@@ -1377,6 +1394,7 @@ const api: WolffishApi = {
   heartbeat: {
     getJobs: () => ipcRenderer.invoke('heartbeat:getJobs'),
     getRunningJob: () => ipcRenderer.invoke('heartbeat:getRunningJob'),
+    runJob: (idOrLabel) => ipcRenderer.invoke('heartbeat:runJob', idOrLabel),
     onJobStarted: (listener) => subscribe('heartbeat:jobStarted', listener),
     onJobEnded: (listener) => subscribe('heartbeat:jobEnded', listener),
     onJobLog: (listener) => subscribe('heartbeat:jobLog', listener)

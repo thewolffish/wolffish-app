@@ -1,3 +1,4 @@
+import { diskWriter } from '@main/io/diskWriter'
 import { existsSync, readFileSync, rmSync } from 'node:fs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
@@ -16,7 +17,7 @@ export async function acquireLock(lockPath: string): Promise<LockResult> {
     await fsp.rm(lockPath, { force: true })
   }
 
-  await fsp.writeFile(lockPath, String(process.pid), 'utf8')
+  await diskWriter.writeFileAtomic(lockPath, String(process.pid))
   return { acquired: true }
 }
 

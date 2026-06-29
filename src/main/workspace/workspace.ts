@@ -1,9 +1,10 @@
 import { is } from '@electron-toolkit/utils'
+import { diskWriter } from '@main/io/diskWriter'
 import { isKnownModelName } from '@main/runtime/models'
 import { app } from 'electron'
 import yaml from 'js-yaml'
 import { execFile } from 'node:child_process'
-import { createHash, randomBytes } from 'node:crypto'
+import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import fs from 'node:fs/promises'
 import os from 'node:os'
@@ -226,6 +227,21 @@ export type WorkspaceConfig = {
     // Null/absent means no cloud model is selected yet. Set from the Brain
     // settings page; the matching provider's `model` field is mirrored to it.
     brain?: { providerId: CloudProviderConfig['id']; model: string } | null
+    // Orchestrator mode (Phase 2). 'single' (default) is the Phase-1 single-model
+    // app. 'orchestrator' = a frontier orchestrator (the `brain` model) drives
+    // live parallel worker sessions running on `workerModel`. Global toggle.
+    orchestratorMode?: 'single' | 'orchestrator'
+    // The model worker sessions run on in orchestrator mode. Mirrors `brain`'s
+    // shape; null/absent until chosen.
+    workerModel?: { providerId: CloudProviderConfig['id']; model: string } | null
+    // Behavior modifiers — append a system-prompt block when on (prefrontal
+    // reads these). Apply to every turn (single, orchestrator, worker).
+    // `greedy`: persist hard — many retries, several approaches, ignore
+    // token/time budgets until the job is truly done.
+    greedy?: boolean
+    // `autonomous`: high agency — ask the user as little as possible, decide and
+    // act, drive end-to-end. Both default off (no prompt added).
+    autonomous?: boolean
     // When true, cloud is skipped entirely and only the local model runs.
     // Toggled from the chat input's mode switch.
     localOnly?: boolean
@@ -454,44 +470,24 @@ export async function writeConfig(config: WorkspaceConfig): Promise<void> {
 }
 
 /**
- * Atomic write: stream to a sibling temp file, fsync, then rename(2) over the
- * target. rename is atomic on the same filesystem, so a concurrent reader
- * always sees either the complete old file or the complete new one — never the
- * truncated state a bare fs.writeFile exposes mid-write (the partial-read
- * window that made readConfig() return null and patchConfig() fall back to
- * defaults, wiping API keys and providers). After the swap we mirror the same
- * bytes to config.json.bak as a last-known-good snapshot for recovery.
+ * Atomic write through the single I/O layer: temp file + fsync + rename(2),
+ * serialized per path, so a concurrent reader or a crash always sees the
+ * complete old file or the complete new one — never the truncated window a
+ * bare fs.writeFile exposes mid-write (the partial-read that made readConfig()
+ * return null and patchConfig() fall back to defaults, wiping keys/providers).
+ * After the swap we mirror the same bytes to config.json.bak as a last-known-
+ * good snapshot for recovery.
  *
- * Not exported and not self-locking: always reached through writeConfig or
- * patchConfig, both of which already hold the config lock, so it never
- * re-enters it.
+ * Always reached through writeConfig or patchConfig, both of which already hold
+ * the config lock (the logical read-modify-write mutex); diskWriter adds the
+ * physical per-path serialization on top.
  */
 async function writeConfigAtomic(config: WorkspaceConfig): Promise<void> {
-  await fs.mkdir(WORKSPACE_ROOT, { recursive: true })
-  const target = configPath()
   const data = JSON.stringify(config, null, 2)
-  const tmp = path.join(
-    WORKSPACE_ROOT,
-    `${CONFIG_FILENAME}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`
-  )
-  let handle: import('node:fs/promises').FileHandle | undefined
-  try {
-    handle = await fs.open(tmp, 'w')
-    await handle.writeFile(data, 'utf8')
-    await handle.sync()
-  } finally {
-    await handle?.close()
-  }
-  try {
-    await fs.rename(tmp, target)
-  } catch (err) {
-    // Rename failed — don't leave the scratch file behind.
-    await fs.rm(tmp, { force: true }).catch(() => {})
-    throw err
-  }
+  await diskWriter.writeFileAtomic(configPath(), data)
   // Best-effort last-known-good snapshot. A failure here can never affect the
   // live file, and the backup is only ever read as a recovery fallback.
-  await fs.writeFile(configBackupPath(), data, 'utf8').catch(() => {})
+  await diskWriter.writeFileAtomic(configBackupPath(), data).catch(() => {})
 }
 
 export async function patchConfig(
@@ -604,6 +600,7 @@ export async function ensureWorkspace(): Promise<void> {
   await migrateStaleArtifacts()
   await migrateAgentsCore()
   await migrateAgentsGuide()
+  await migrateIdentityRoleFiles()
 
   // Always sync bundled capabilities — new ones get added and existing
   // ones get refreshed on every launch, so plugin bug fixes shipped by an
@@ -867,6 +864,22 @@ async function migrateAgentsGuide(): Promise<void> {
   await fs.copyFile(bundled, target)
 }
 
+/**
+ * The orchestrator/worker role prompts (brain/identity/) are APP-MANAGED, like
+ * agents.core.md: overwritten on every launch so prompt improvements ship with
+ * an upgrade. They're framework behaviour, not personalization — custom agent
+ * instructions belong in brain/prefrontal/agents.md, which we never overwrite.
+ */
+async function migrateIdentityRoleFiles(): Promise<void> {
+  for (const name of ['orchestrator.md', 'worker.md']) {
+    const bundled = path.join(defaultsWorkspacePath(), 'brain', 'identity', name)
+    if (!existsSync(bundled)) continue
+    const target = path.join(WORKSPACE_ROOT, 'brain', 'identity', name)
+    await fs.mkdir(path.dirname(target), { recursive: true })
+    await fs.copyFile(bundled, target)
+  }
+}
+
 function parseSkillVersion(content: string): string | null {
   const fmMatch = content.match(/^---\s*\n([\s\S]*?)\n---/)
   if (!fmMatch) return null
@@ -989,7 +1002,7 @@ async function ensureUsageStructure(): Promise<void> {
   for (const { file, header } of providerFiles) {
     const filepath = path.join(providersDir, file)
     if (!existsSync(filepath)) {
-      await fs.writeFile(filepath, `${header}\n`, 'utf8')
+      await diskWriter.writeFileAtomic(filepath, `${header}\n`)
     }
   }
 }
@@ -1048,11 +1061,13 @@ export async function setCloudProvider(provider: CloudProviderConfig): Promise<W
 export async function removeCloudProvider(id: CloudProviderConfig['id']): Promise<WorkspaceConfig> {
   return patchConfig((c) => {
     const nextProviders = c.llm.providers.filter((p) => p.id !== id)
-    // Clear the Brain if it pointed at the removed provider.
+    // Clear the Brain / worker model if either pointed at the removed provider.
     const brain = c.llm.brain && c.llm.brain.providerId === id ? null : c.llm.brain
+    const workerModel =
+      c.llm.workerModel && c.llm.workerModel.providerId === id ? null : c.llm.workerModel
     return {
       ...c,
-      llm: { ...c.llm, providers: nextProviders, brain }
+      llm: { ...c.llm, providers: nextProviders, brain, workerModel }
     }
   })
 }
@@ -1072,6 +1087,44 @@ export async function setBrain(
     )
     return { ...c, llm: { ...c.llm, providers, brain } }
   })
+}
+
+/** Set the orchestrator-mode toggle: 'single' (Phase-1 app) vs 'orchestrator'. */
+export async function setOrchestratorMode(
+  mode: 'single' | 'orchestrator'
+): Promise<WorkspaceConfig> {
+  return patchConfig((c) => {
+    const llm = { ...c.llm, orchestratorMode: mode }
+    // Default the worker to the same model as the orchestrator (the brain) the
+    // first time orchestrator mode is enabled, so it works out of the box. Only
+    // when no worker is set yet — never overrides a user's explicit choice.
+    if (mode === 'orchestrator' && !llm.workerModel && llm.brain) {
+      llm.workerModel = llm.brain
+    }
+    return { ...c, llm }
+  })
+}
+
+/**
+ * Set (or clear) the worker model — what live worker sessions run on in
+ * orchestrator mode. Stored independently of `brain` and NOT mirrored onto the
+ * provider record (brain owns that mirror; a shared provider has one `model`
+ * field that can't represent both roles). resolveWorker reads this directly.
+ */
+export async function setWorkerModel(
+  worker: { providerId: CloudProviderConfig['id']; model: string } | null
+): Promise<WorkspaceConfig> {
+  return patchConfig((c) => ({ ...c, llm: { ...c.llm, workerModel: worker } }))
+}
+
+/** Toggle greedy effort — see the `greedy` config field. */
+export async function setGreedy(greedy: boolean): Promise<WorkspaceConfig> {
+  return patchConfig((c) => ({ ...c, llm: { ...c.llm, greedy } }))
+}
+
+/** Toggle autonomy — see the `autonomous` config field. */
+export async function setAutonomous(autonomous: boolean): Promise<WorkspaceConfig> {
+  return patchConfig((c) => ({ ...c, llm: { ...c.llm, autonomous } }))
 }
 
 // If the config records a model name no longer in our curated catalog (e.g.

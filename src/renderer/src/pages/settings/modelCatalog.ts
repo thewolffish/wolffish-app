@@ -40,6 +40,27 @@ export const PROVIDER_LOGOS: Record<
 
 export type BadgeKind = 'frontier' | 'vision' | 'reasoning' | 'code' | 'fast' | 'voice'
 
+/**
+ * The model auto-selected when a provider first connects (when the user hasn't
+ * already picked one). Each is the provider's current flagship; if it isn't in
+ * the freshly fetched catalogue the connect flow falls back to the first
+ * selectable model. Purely a sensible default — the user can change it any time
+ * in the Modes page.
+ */
+export const DEFAULT_MODEL: Partial<Record<ProviderId, string>> = {
+  deepseek: 'deepseek-v4-pro',
+  zai: 'glm-5.2',
+  qwen: 'qwen3.7-max',
+  kimi: 'kimi-k2.6',
+  minimax: 'MiniMax-M3',
+  mimo: 'mimo-v2.5-pro',
+  stepfun: 'step-3.7-flash',
+  anthropic: 'claude-opus-4-8',
+  openai: 'gpt-5.5',
+  xai: 'grok-4.3',
+  openrouter: 'deepseek/deepseek-v4-pro'
+}
+
 export type ModelSpec = {
   name: string
   context: string

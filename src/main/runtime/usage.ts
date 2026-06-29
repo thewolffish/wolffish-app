@@ -1,3 +1,4 @@
+import { diskWriter } from '@main/io/diskWriter'
 import type { Corpus } from '@main/runtime/corpus'
 import type { ProviderId } from '@main/runtime/thalamus'
 import fs from 'node:fs/promises'
@@ -576,13 +577,13 @@ export class Usage {
           ? `# ${providerLabel(entry.provider)}\n\n${dateHeader}\n\n${line}`
           : `\n${dateHeader}\n\n${line}`
       try {
-        await fs.appendFile(filepath, body, 'utf8')
+        await diskWriter.appendLine(filepath, body)
       } catch {
         return
       }
     } else {
       try {
-        await fs.appendFile(filepath, line, 'utf8')
+        await diskWriter.appendLine(filepath, line)
       } catch {
         return
       }
@@ -617,7 +618,7 @@ export class Usage {
 
     const body = (needsHeader ? `# ${date}\n\n` : '') + line
     try {
-      await fs.appendFile(filepath, body, 'utf8')
+      await diskWriter.appendLine(filepath, body)
     } catch {
       return
     }

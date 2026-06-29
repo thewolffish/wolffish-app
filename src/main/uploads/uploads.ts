@@ -1,4 +1,5 @@
 import { conversationDirName, type MessageAttachmentType } from '@main/conversations'
+import { diskWriter } from '@main/io/diskWriter'
 import { workspaceRoot } from '@main/workspace/workspace'
 import { existsSync } from 'node:fs'
 import fs from 'node:fs/promises'
@@ -204,7 +205,7 @@ export async function saveUploadFromBuffer(
   const safeName = sanitizeFileName(originalName)
   const finalName = await uniqueFilename(dir, safeName)
   const destPath = path.join(dir, finalName)
-  await fs.writeFile(destPath, buffer)
+  await diskWriter.writeFileAtomic(destPath, buffer)
 
   const { type, mimeType } = classifyFile(finalName)
   const root = workspaceRoot()

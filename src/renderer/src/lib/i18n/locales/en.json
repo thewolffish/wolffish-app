@@ -187,7 +187,7 @@
   "settings": {
     "tabs": {
       "appearance": "Appearance",
-      "brain": "Brain",
+      "brain": "Modes",
       "model": "Models",
       "wolffish": "Preferences",
       "variables": "Variables",
@@ -200,8 +200,8 @@
       "hippocampus": "Hippocampus"
     },
     "brain": {
-      "title": "Brain",
-      "subtitle": "The model that powers Wolffish — drag or click one to set it.",
+      "title": "Modes",
+      "subtitle": "Configure Wolffish's modes of operation and the models that power them.",
       "empty": {
         "title": "No Brain selected",
         "hint": "Drag a model here, or click one below."
@@ -217,7 +217,39 @@
       "unavailable": "This model's provider is no longer connected — pick a new Brain.",
       "noProviders": "No providers connected yet. Add an API key in a provider's settings to choose a Brain.",
       "providerNoModels": "Test this provider's connection to load its models.",
-      "cardAria": "Set {{model}} as the Brain"
+      "cardAria": "Set {{model}} as the Brain",
+      "mode": {
+        "single": "Single",
+        "orchestrator": "Orchestrator"
+      },
+      "modeDesc": {
+        "single": "Wolffish runs on one model — the Brain. Simple and predictable.",
+        "orchestrator": "The Brain becomes an orchestrator that can spin up live parallel worker sessions on the worker model, drive them, and synthesize one reply. You still talk to one agent."
+      },
+      "orchestratorSlot": "Orchestrator",
+      "workerSlot": "Worker",
+      "workerEmpty": {
+        "title": "No Worker selected",
+        "hint": "Drag a model here, or click one below."
+      },
+      "applyClick": "Click sets:",
+      "prefs": {
+        "default": "Default",
+        "mode": {
+          "title": "Orchestrator mode",
+          "description": "Let the Brain spin up live parallel worker sessions on the worker model, drive them, and synthesize a single reply. You still talk to one agent."
+        },
+        "greedy": {
+          "title": "Greedy effort",
+          "description": "Push the model to go the extra mile — retry up to ~10 times instead of stopping at 3, try several approaches instead of one, and keep going regardless of token count or elapsed time until the job is truly done.",
+          "label": "Greedy"
+        },
+        "autonomy": {
+          "title": "Autonomy",
+          "description": "Tell the model to act with high agency — ask you as little as possible, make reasonable decisions on its own, and drive the task to the best possible outcome without waiting for input.",
+          "label": "Autonomous"
+        }
+      }
     },
     "wolffish": {
       "title": "Wolffish",
@@ -361,7 +393,7 @@
           "deepseek": "Open-weight reasoning powerhouse — frontier performance at a fraction of the cost",
           "anthropic": "Claude — safety-focused frontier models with exceptional long-context reasoning",
           "openai": "GPT and o-series — the industry-standard frontier model family",
-          "openrouter": "Unified API gateway — access models from OpenAI, Anthropic, Google, Meta, and more with a single key",
+          "openrouter": "Unified gateway — OpenAI, Anthropic, Google, Meta, and more from one key",
           "ollama": "Open-weight models running locally — private, offline, no API key needed"
         }
       },
@@ -381,8 +413,8 @@
         "model": "Model",
         "modelHint": "Add a key and test the connection below.",
         "searchModels": "Search for a model",
-        "brainNotice": "Which model runs and how it executes are set in the Brain page.",
-        "brainNoticeLink": "Open the Brain page",
+        "brainNotice": "Which model runs and how it executes are set in the Modes page.",
+        "brainNoticeLink": "Open the Modes page",
         "modelsBreakdown": "Models",
         "breakdown": {
           "model": "Model",
@@ -1591,6 +1623,11 @@
     "active": "Active",
     "inactive": "Inactive",
     "view": "View details",
+    "run": "Run now",
+    "runStarted": "Automation started",
+    "runQueued": "Automation is already running — it’ll run shortly",
+    "runError": "Couldn’t run automation",
+    "runFailed": "Automation run failed",
     "delete": "Delete automation",
     "deleteTitle": "Delete this automation?",
     "deleteWarning": "“{{name}}” will be permanently removed from heartbeat.md and unscheduled. This cannot be undone.",

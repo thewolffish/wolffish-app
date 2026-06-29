@@ -1,3 +1,4 @@
+import { diskWriter } from '@main/io/diskWriter'
 import type { Segment, SegmentTurnEndReason } from '@main/runtime/broca'
 import type { NoProviderAvailableInfo } from '@main/runtime/thalamus'
 import { workspaceRoot } from '@main/workspace/workspace'
@@ -237,20 +238,11 @@ function migrateSegments(conv: ConversationFile): void {
 }
 
 export async function saveConversation(conv: ConversationFile): Promise<void> {
-  const dir = conversationsDir()
-  await fs.mkdir(dir, { recursive: true })
-  const target = filePathForId(conv.id)
-  const tmp = `${target}.tmp`
-  await fs.writeFile(tmp, JSON.stringify(conv, null, 2), 'utf8')
-  await fs.rename(tmp, target)
+  await diskWriter.writeFileAtomic(filePathForId(conv.id), JSON.stringify(conv, null, 2))
 }
 
 export async function deleteConversation(id: string): Promise<void> {
-  try {
-    await fs.unlink(filePathForId(id))
-  } catch {
-    // already gone
-  }
+  await diskWriter.deleteFile(filePathForId(id))
 
   // Clean up the per-conversation media folders so a deleted chat doesn't
   // leave orphan files on disk. Best-effort: any folder that's missing or

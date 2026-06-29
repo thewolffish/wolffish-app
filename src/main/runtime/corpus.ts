@@ -14,6 +14,7 @@
  */
 
 import { is } from '@electron-toolkit/utils'
+import { diskWriter } from '@main/io/diskWriter'
 import mitt, { type Emitter, type Handler } from 'mitt'
 import fs from 'node:fs/promises'
 import path from 'node:path'
@@ -305,7 +306,7 @@ export class Corpus {
       }
       const body = (needsHeader ? `# ${date}\n\n` : '') + blocks.join('')
       try {
-        await fs.appendFile(filepath, body, 'utf8')
+        await diskWriter.appendLine(filepath, body)
       } catch {
         // best-effort: drop on persistent IO failure rather than retry-loop
       }

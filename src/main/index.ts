@@ -59,6 +59,7 @@ import {
   startOllama,
   type OllamaPullStatus
 } from '@main/ollama'
+import { diskWriter } from '@main/io/diskWriter'
 import { Agent } from '@main/runtime/agent'
 import type { ApprovalDecision } from '@main/runtime/amygdala'
 import { previewSchedule } from '@main/runtime/brainstem'
@@ -130,6 +131,10 @@ import {
   patchConfig,
   setBlockCredentials as persistBlockCredentials,
   setBrain as persistBrain,
+  setOrchestratorMode as persistOrchestratorMode,
+  setWorkerModel as persistWorkerModel,
+  setGreedy as persistGreedy,
+  setAutonomous as persistAutonomous,
   setBraveConfig as persistBraveConfig,
   setBrowserExtensionConfig as persistBrowserExtensionConfig,
   setBypassPermissions as persistBypassPermissions,
@@ -692,6 +697,7 @@ async function refreshAllProviderModels(): Promise<void> {
   if (next?.llm.providers) {
     thalamus.setCloudProviders(next.llm.providers)
     thalamus.setBrain(next.llm.brain ?? null)
+    thalamus.setWorkerModel(next.llm.workerModel ?? null)
   }
 }
 
@@ -725,6 +731,10 @@ const extensionServer = new ExtensionServer()
 
 agent.amygdala.setApprovalBridge((req) => turnRouter.dispatchApproval(req))
 agent.cerebellum.setAskBridge((req) => turnRouter.dispatchAskUser(req))
+// Wire the worker-management bridge the `orchestrator` capability's plugin
+// receives in its init context. It forwards to the Agent's active orchestration
+// session — the single source of truth for a turn's live workers.
+agent.cerebellum.setOrchestratorHost(agent.orchestratorHost())
 // Feed live channel connectivity to the introspect capability so the agent can
 // check whether Telegram/WhatsApp are reachable (via `channel_status` /
 // `wolffish_status`) and tell the user how to reconnect a disconnected one.
@@ -1152,6 +1162,7 @@ app.whenReady().then(async () => {
   if (cfg?.llm.providers) {
     thalamus.setCloudProviders(cfg.llm.providers)
     thalamus.setBrain(cfg.llm.brain ?? null)
+    thalamus.setWorkerModel(cfg.llm.workerModel ?? null)
     // Fire-and-forget refresh of each provider's model catalogue. Cheap
     // (a single GET per provider) and doesn't block window creation.
     void refreshAllProviderModels()
@@ -1161,6 +1172,7 @@ app.whenReady().then(async () => {
   void checkForUpdatesIfEnabled()
   thalamus.setLocalOnly(cfg?.llm.localOnly ?? false)
   agent.amygdala.setBypassPermissions(cfg?.safety?.bypassPermissions ?? false)
+  agent.setOrchestratorMode(cfg?.llm.orchestratorMode ?? 'single')
   turnRunner.setBlockCredentials(cfg?.safety?.blockCredentials ?? false)
   turnRunner.setLocale(cfg?.locale ?? 'en')
   sudoSession.setLocale(cfg?.locale ?? 'en')
@@ -2258,10 +2270,8 @@ app.whenReady().then(async () => {
       }
     },
     writeHeartbeat: async (raw) => {
-      const { writeFile, mkdir } = await import('node:fs/promises')
       try {
-        await mkdir(join(workspaceRoot(), 'brain', 'brainstem'), { recursive: true })
-        await writeFile(heartbeatPath(), raw, 'utf8')
+        await diskWriter.writeFileAtomic(heartbeatPath(), raw)
       } catch (err) {
         return {
           ok: false,
@@ -2801,6 +2811,13 @@ app.whenReady().then(async () => {
     return agent.brainstem.getRunningJob()
   })
 
+  // Run an automation on demand from the Heartbeat page's run button. Goes
+  // through the same FIFO queue a cron fire uses, so it serializes with
+  // scheduled runs and coalesces if the job is already running or queued.
+  ipcMain.handle('heartbeat:runJob', (_event, idOrLabel: string) => {
+    return agent.brainstem.runJobNow(idOrLabel)
+  })
+
   agent.brainstem.setListener({
     onJobStarted: (info) => broadcast('heartbeat:jobStarted', info),
     onJobEnded: (payload) => broadcast('heartbeat:jobEnded', payload),
@@ -3056,6 +3073,7 @@ app.whenReady().then(async () => {
           if (next?.llm.providers) {
             thalamus.setCloudProviders(next.llm.providers)
             thalamus.setBrain(next.llm.brain ?? null)
+            thalamus.setWorkerModel(next.llm.workerModel ?? null)
           }
           broadcast('provider:updated', { id: payload.id })
         }
@@ -3094,6 +3112,7 @@ app.whenReady().then(async () => {
       })
       thalamus.setCloudProviders(updated.llm.providers)
       thalamus.setBrain(updated.llm.brain ?? null)
+      thalamus.setWorkerModel(updated.llm.workerModel ?? null)
       broadcast('provider:updated', { id: payload.id })
       return { ok: true }
     }
@@ -3105,6 +3124,7 @@ app.whenReady().then(async () => {
       const updated = await removeCloudProvider(id)
       thalamus.setCloudProviders(updated.llm.providers)
       thalamus.setBrain(updated.llm.brain ?? null)
+      thalamus.setWorkerModel(updated.llm.workerModel ?? null)
       broadcast('provider:updated', { id })
       return { ok: true }
     }
@@ -3121,6 +3141,50 @@ app.whenReady().then(async () => {
       // Broadcast so the Brain page, the chat mode switcher, and the
       // reasoning button all reflect the new Brain immediately.
       broadcast('provider:updated', { id: brain?.providerId ?? null })
+      return { ok: true }
+    }
+  )
+
+  ipcMain.handle(
+    'provider:setWorkerModel',
+    async (
+      _e,
+      worker: { providerId: CloudProviderConfig['id']; model: string } | null
+    ): Promise<{ ok: true }> => {
+      const updated = await persistWorkerModel(worker)
+      thalamus.setWorkerModel(updated.llm.workerModel ?? null)
+      broadcast('provider:updated', { id: worker?.providerId ?? null })
+      return { ok: true }
+    }
+  )
+
+  ipcMain.handle(
+    'provider:setOrchestratorMode',
+    async (_e, mode: 'single' | 'orchestrator'): Promise<{ ok: true }> => {
+      const updated = await persistOrchestratorMode(mode)
+      agent.setOrchestratorMode(mode)
+      // Enabling orchestrator mode may have defaulted the worker model to the
+      // brain — push it so resolveWorker sees it without a restart.
+      thalamus.setWorkerModel(updated.llm.workerModel ?? null)
+      broadcast('provider:updated', { id: null })
+      return { ok: true }
+    }
+  )
+
+  // Behavior toggles only change the system-prompt blocks prefrontal appends
+  // (it reads config at prompt-build time), so persisting + broadcasting is
+  // enough — no live agent state to push.
+  ipcMain.handle('provider:setGreedy', async (_e, greedy: boolean): Promise<{ ok: true }> => {
+    await persistGreedy(Boolean(greedy))
+    broadcast('provider:updated', { id: null })
+    return { ok: true }
+  })
+
+  ipcMain.handle(
+    'provider:setAutonomous',
+    async (_e, autonomous: boolean): Promise<{ ok: true }> => {
+      await persistAutonomous(Boolean(autonomous))
+      broadcast('provider:updated', { id: null })
       return { ok: true }
     }
   )

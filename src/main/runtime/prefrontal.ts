@@ -1,3 +1,4 @@
+import { diskWriter } from '@main/io/diskWriter'
 import type { BasalGanglia } from '@main/runtime/basalganglia'
 import type { Cerebellum } from '@main/runtime/cerebellum'
 import type { Corpus } from '@main/runtime/corpus'
@@ -12,6 +13,7 @@ import {
   type ContextCategory,
   type ScoredCandidate
 } from '@main/runtime/ras'
+import { reasoningModesFor } from '@main/runtime/reasoning'
 import type { ToolDefinition } from '@main/runtime/thalamus'
 import { readConfig } from '@main/workspace/workspace'
 import fs from 'node:fs/promises'
@@ -68,6 +70,51 @@ const ALWAYS_INCLUDED: Array<{ category: ContextCategory; rel: string; tag: stri
 
 const SECTION_ORDER: ContextCategory[] = ['identity', 'prefrontal', 'memory', 'skills', 'history']
 
+/**
+ * The delegation capability — spawning/driving live workers. It is surfaced ONLY
+ * to an orchestrator turn: a single-mode turn and a worker turn never see it.
+ * Keeping it from workers is load-bearing — it holds the worker tree flat (a
+ * worker can't spawn workers), so the registry stays one finite source of truth.
+ */
+const DELEGATION_CAPABILITIES: ReadonlySet<string> = new Set(['orchestrator'])
+
+/**
+ * Channel egress capabilities — the live messaging channels register their send
+ * tools in-process under these names when connected (TELEGRAM_CAPABILITY_NAME /
+ * WHATSAPP_CAPABILITY_NAME in src/main/channels/*\/tools.ts). Their sends hit
+ * the channel API directly, so a worker holding them could message the user
+ * out-of-band. Hard-coded here (not imported) to keep runtime decoupled from the
+ * channel layer; the values are stable identifiers.
+ */
+const CHANNEL_CAPABILITIES: ReadonlySet<string> = new Set(['telegram', 'whatsapp'])
+
+/**
+ * Everything a worker role is denied on top of delegation: channel egress stays
+ * orchestrator-only — a worker must never message the user directly; only the
+ * orchestrator speaks (the single voice).
+ */
+const WORKER_EXCLUDED_CAPABILITIES: ReadonlySet<string> = new Set([
+  ...DELEGATION_CAPABILITIES,
+  ...CHANNEL_CAPABILITIES
+])
+
+// Behavior overlays appended to the system prompt when the matching Brain toggle
+// is on (config.llm.greedy / autonomous). Default = neither → no change.
+const GREEDY_PROMPT = `<effort_mode>
+Greedy effort is ON. Persistence outranks speed and cost on this turn:
+- Don't stop at the first sign of trouble. If an approach fails, try another, then another — where you'd normally give up after ~3 attempts, push to ~10.
+- Don't settle on a single strategy. Explore several genuinely different approaches (aim for ~5) before concluding something can't be done.
+- Disregard token budget and elapsed time completely. Going the extra mile to actually finish the job, and finish it well, is always worth it here.
+- Verify your work and push past "good enough" to genuinely complete and correct.
+</effort_mode>`
+
+const AUTONOMOUS_PROMPT = `<autonomy_mode>
+Autonomy is ON. Act with high agency and minimal hand-holding:
+- Ask the user as little as possible — ideally nothing. Make reasonable assumptions and decide for yourself instead of stopping to ask.
+- Default to action: when a step is clearly needed to reach the goal, just do it rather than proposing it and waiting for approval.
+- Drive the task end-to-end to the best possible outcome on your own. Only surface to the user for genuine blockers you truly cannot resolve.
+</autonomy_mode>`
+
 // Non-sensitive config variables longer than this are previewed, not dumped
 // verbatim, into the (RAS-bypassing) <variables> block. Generous enough that
 // real values — URLs, names, IDs, keys — are never touched.
@@ -116,17 +163,102 @@ export class Prefrontal {
     this.device = options.device ?? null
   }
 
-  async buildSystemPrompt(message = '', runtime?: RuntimeContext): Promise<string> {
-    const bundle = await this.buildContext(message, runtime)
-    return bundle.systemPrompt
+  async buildSystemPrompt(
+    message = '',
+    runtime?: RuntimeContext,
+    role?: 'orchestrator' | 'worker'
+  ): Promise<string> {
+    const bundle = await this.buildContext(message, runtime, role)
+    const blocks = [
+      bundle.systemPrompt,
+      await this.buildRoleBlock(role),
+      await this.buildBehaviorBlock()
+    ].filter((b) => b && b.length > 0)
+    return blocks.join('\n\n')
   }
 
   /**
-   * Pick the tools the LLM gets to see for this iteration — the full
-   * cerebellum-loaded tool list.
+   * Behavior overlay driven by the Brain settings toggles (config.llm.greedy /
+   * autonomous), appended to the prompt. Off by default → nothing added. Applies
+   * to every turn (single, orchestrator, worker). Read from config at build time
+   * so a toggle change takes effect on the next turn.
    */
-  selectTools(): ToolDefinition[] {
-    return this.cerebellum?.getToolDefinitions() ?? []
+  private async buildBehaviorBlock(): Promise<string> {
+    const cfg = await readConfig().catch(() => null)
+    const parts: string[] = []
+    if (cfg?.llm.greedy) parts.push(GREEDY_PROMPT)
+    if (cfg?.llm.autonomous) parts.push(AUTONOMOUS_PROMPT)
+    return parts.join('\n\n')
+  }
+
+  /**
+   * Role overlay for orchestrator mode (Phase 2), appended after the assembled
+   * prompt. An orchestrator gets the delegation playbook (it drives live
+   * workers); a worker gets the worker framing (bounded task, reports to the
+   * orchestrator, never the user). A single-mode turn (no role) gets nothing —
+   * the Phase-1 prompt, untouched.
+   */
+  private async buildRoleBlock(role?: 'orchestrator' | 'worker'): Promise<string> {
+    if (role === 'orchestrator') {
+      const md = (await this.readFile('brain/identity/orchestrator.md'))?.trim() ?? ''
+      const efforts = await this.workerReasoningBlock()
+      return efforts ? `${md}\n\n${efforts}` : md
+    }
+    if (role === 'worker') return (await this.readFile('brain/identity/worker.md'))?.trim() ?? ''
+    return ''
+  }
+
+  /**
+   * Tell the orchestrator exactly which reasoning efforts ITS worker model
+   * supports — models differ widely (none / always-on / graded), and the
+   * orchestrator otherwise picks `effort` blind. (The thalamus also clamps an
+   * out-of-range pick at the seam, so this is guidance, not a hard guard.)
+   */
+  private async workerReasoningBlock(): Promise<string> {
+    const cfg = await readConfig().catch(() => null)
+    const w = cfg?.llm.workerModel
+    if (!w) return ''
+    const openrouterReasoning =
+      w.providerId === 'openrouter'
+        ? (cfg?.llm.providers
+            .find((p) => p.id === 'openrouter')
+            ?.reasoningModels?.includes(w.model) ?? false)
+        : false
+    const modes = reasoningModesFor(w.providerId, w.model, { openrouterReasoning })
+    if (modes.length === 0) {
+      return `<worker_reasoning>\nYour worker model (\`${w.model}\`) has no adjustable reasoning — spawn_worker's \`effort\` argument has no effect for it, so omit it.\n</worker_reasoning>`
+    }
+    const list = modes.map((m) => `\`${m}\``).join(', ')
+    return `<worker_reasoning>\nYour worker model is \`${w.model}\`. The only reasoning efforts it supports are: ${list}. Pass spawn_worker's \`effort\` from this set (a higher value is automatically clamped down to the model's max).\n</worker_reasoning>`
+  }
+
+  /**
+   * Pick the tools the LLM gets to see for this iteration. Role-gated:
+   * - `orchestrator` → the full list, delegation included.
+   * - `worker` → full minus delegation minus channel egress (flat tree, no
+   *   direct user contact).
+   * - default (single-mode turn) → full minus delegation (no live workers
+   *   without an orchestrator to own them).
+   */
+  /**
+   * The capabilities a given role must NOT see. Orchestrator gets everything
+   * (incl. delegation); a worker loses delegation AND channel egress; single
+   * mode loses only delegation. Used for BOTH the API tool array
+   * (`getToolDefinitions`) and the `<tools>` prompt-text block so the two never
+   * drift — a worker shouldn't read about tools it can't call.
+   */
+  private excludedCapabilitiesFor(
+    role?: 'orchestrator' | 'worker'
+  ): ReadonlySet<string> | undefined {
+    return role === 'orchestrator'
+      ? undefined
+      : role === 'worker'
+        ? WORKER_EXCLUDED_CAPABILITIES
+        : DELEGATION_CAPABILITIES
+  }
+
+  selectTools(role?: 'orchestrator' | 'worker'): ToolDefinition[] {
+    return this.cerebellum?.getToolDefinitions(this.excludedCapabilitiesFor(role)) ?? []
   }
 
   /**
@@ -136,7 +268,19 @@ export class Prefrontal {
    * iteration counter is appended last so the model can see its own
    * loop position.
    */
-  async buildContext(message = '', runtime?: RuntimeContext): Promise<ContextBundle> {
+  async buildContext(
+    message = '',
+    runtime?: RuntimeContext,
+    role?: 'orchestrator' | 'worker'
+  ): Promise<ContextBundle> {
+    // A worker runs a bounded, self-contained task the orchestrator composed —
+    // it doesn't need the user's stored memory, learned feedback, conversation
+    // history, or keyword-injected skill bodies (those are about the live user
+    // thread, not the worker's slice). Skipping them keeps the worker prompt
+    // lean (it was ~42k tokens, mostly irrelevant) and far cheaper, while
+    // KEEPING what tool work needs: identity, agent procedures, device facts,
+    // variables, and the tool definitions.
+    const lean = role === 'worker'
     // Assemble against a clamped budget, not the raw model window. A 200k–1M
     // window is for the live conversation, not a system prompt that gets
     // rebuilt every iteration — capping it here is what keeps the prompt lean
@@ -153,25 +297,29 @@ export class Prefrontal {
       }
     }
 
-    const memoryCandidates = await this.collectMemoryCandidates(message, includedPaths)
-    for (const c of memoryCandidates) {
-      candidates.push(c)
-      includedPaths.add(c.source)
-    }
+    if (!lean) {
+      const memoryCandidates = await this.collectMemoryCandidates(message, includedPaths)
+      for (const c of memoryCandidates) {
+        candidates.push(c)
+        includedPaths.add(c.source)
+      }
 
-    const feedbackCandidate = await this.collectFeedbackCandidate(
-      this.options.feedbackWindowDays ?? 7
-    )
-    if (feedbackCandidate && !includedPaths.has(feedbackCandidate.source)) {
-      candidates.push(feedbackCandidate)
-      includedPaths.add(feedbackCandidate.source)
-    }
+      const feedbackCandidate = await this.collectFeedbackCandidate(
+        this.options.feedbackWindowDays ?? 7
+      )
+      if (feedbackCandidate && !includedPaths.has(feedbackCandidate.source)) {
+        candidates.push(feedbackCandidate)
+        includedPaths.add(feedbackCandidate.source)
+      }
 
-    const historyCandidates = await this.collectRecentEpisodes(this.options.episodeWindowDays ?? 2)
-    for (const c of historyCandidates) {
-      if (includedPaths.has(c.source)) continue
-      candidates.push(c)
-      includedPaths.add(c.source)
+      const historyCandidates = await this.collectRecentEpisodes(
+        this.options.episodeWindowDays ?? 2
+      )
+      for (const c of historyCandidates) {
+        if (includedPaths.has(c.source)) continue
+        candidates.push(c)
+        includedPaths.add(c.source)
+      }
     }
 
     const filtered = this.ras.filterContext(message, candidates, budget)
@@ -217,7 +365,8 @@ export class Prefrontal {
       // candidate pool. Inject right after <prefrontal> so the model sees
       // "what I am, then what I can do, then what I know".
       if (category === 'prefrontal') {
-        const toolsBody = this.cerebellum?.getToolsPrompt().trim() ?? ''
+        const toolsBody =
+          this.cerebellum?.getToolsPrompt(this.excludedCapabilitiesFor(role)).trim() ?? ''
         if (toolsBody.length > 0) {
           sections.push(this.wrap('tools', toolsBody))
           sectionsIncluded.push('tools')
@@ -226,8 +375,10 @@ export class Prefrontal {
         // Pure skills (no tools, just procedure bodies) are injected into
         // a <skills> section when the user's message matches their trigger
         // keywords. This surfaces capabilities like "planning" that guide
-        // agent behaviour without providing callable tools.
-        if (this.cerebellum && message.trim()) {
+        // agent behaviour without providing callable tools. Skipped for a
+        // worker — these match the orchestrator's user-facing message, not the
+        // worker's composed sub-task, so they'd be noise.
+        if (this.cerebellum && message.trim() && !lean) {
           const matched = this.cerebellum
             .findRelevantSkills(message)
             .filter((cap) => cap.tools.length === 0 && cap.body.trim().length > 0)
@@ -474,7 +625,7 @@ export class Prefrontal {
       ''
     ].join('\n')
     try {
-      await fs.writeFile(path.join(dir, filename), header, 'utf8')
+      await diskWriter.writeFileAtomic(path.join(dir, filename), header)
     } catch {
       // best-effort: snapshot failure must not block a turn
     }

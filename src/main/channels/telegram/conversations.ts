@@ -1,3 +1,4 @@
+import { diskWriter } from '@main/io/diskWriter'
 import { workspaceRoot } from '@main/workspace/workspace'
 import fs from 'node:fs/promises'
 import path from 'node:path'
@@ -49,8 +50,7 @@ async function load(): Promise<Map<number, string>> {
 async function persist(map: Map<number, string>): Promise<void> {
   const obj: RawMap = {}
   for (const [k, v] of map.entries()) obj[String(k)] = v
-  await fs.mkdir(telegramDir(), { recursive: true })
-  await fs.writeFile(chatMapPath(), JSON.stringify(obj, null, 2), 'utf8')
+  await diskWriter.writeFileAtomic(chatMapPath(), JSON.stringify(obj, null, 2))
 }
 
 export async function getConversationIdForChat(chatId: number): Promise<string | null> {

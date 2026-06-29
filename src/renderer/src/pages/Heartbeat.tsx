@@ -17,6 +17,7 @@ import {
   Delete02Icon,
   EyeIcon,
   FloppyDiskIcon,
+  PlayIcon,
   Refresh01Icon
 } from 'hugeicons-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
@@ -309,6 +310,24 @@ export function Heartbeat(): React.JSX.Element {
     }
   }, [])
 
+  const handleRun = useCallback(
+    async (job: SidebarJob): Promise<void> => {
+      try {
+        const res = await window.api.heartbeat.runJob(job.label)
+        if (res.started) {
+          toast.show({ tone: 'success', message: t('heartbeat.runStarted') })
+        } else if (res.ok) {
+          toast.show({ tone: 'info', message: t('heartbeat.runQueued') })
+        } else {
+          toast.show({ tone: 'error', message: t('heartbeat.runError') })
+        }
+      } catch {
+        toast.show({ tone: 'error', message: t('heartbeat.runError') })
+      }
+    },
+    [t, toast]
+  )
+
   const handleSave = useCallback(async (): Promise<void> => {
     if (saving) return
     setSaving(true)
@@ -463,6 +482,21 @@ export function Heartbeat(): React.JSX.Element {
                     )}
                   >
                     <div className="flex items-center justify-end gap-1">
+                      {job.active && (
+                        <button
+                          type="button"
+                          onClick={() => void handleRun(job)}
+                          aria-label={t('heartbeat.run')}
+                          title={t('heartbeat.run')}
+                          className={cn(
+                            'text-muted cursor-pointer rounded-md p-1',
+                            'hover:text-emerald-600 dark:hover:text-emerald-400',
+                            'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
+                          )}
+                        >
+                          <PlayIcon size={14} />
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={() => setDetailJob(job)}
@@ -551,7 +585,7 @@ export function Heartbeat(): React.JSX.Element {
                       )}
                     </div>
                     {job.body && (
-                      <pre className="bg-bg mt-2 max-h-[4.5rem] overflow-auto rounded border border-border px-2 py-1.5 text-[10px] font-mono text-muted leading-relaxed whitespace-pre-wrap">
+                      <pre className="bg-bg mt-2 max-h-18 overflow-auto rounded border border-border px-2 py-1.5 text-[10px] font-mono text-muted leading-relaxed whitespace-pre-wrap">
                         {job.body}
                       </pre>
                     )}

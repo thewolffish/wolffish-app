@@ -26,8 +26,17 @@ export type SegmentTurnEndReason =
 
 export type ToolResultStatus = 'success' | 'failed' | 'denied'
 
+/**
+ * Set on a segment that originated inside a subagent (worker) turn and was
+ * forwarded into the orchestrator turn's stream. The renderer marks these as
+ * subagent activity (the worker's label) and verbose-gates them, so orchestrator
+ * mode is no black box — every worker tool call is right there and persisted.
+ * Absent on ordinary (orchestrator / single-mode) segments.
+ */
+export type SegmentWorker = { id: string; label: string }
+
 export type Segment =
-  | { kind: 'text'; turnId: string; segmentId: string; delta: string }
+  | { kind: 'text'; turnId: string; segmentId: string; delta: string; worker?: SegmentWorker }
   | {
       kind: 'tool_call'
       turnId: string
@@ -35,6 +44,7 @@ export type Segment =
       toolCallId: string
       name: string
       args: Record<string, unknown>
+      worker?: SegmentWorker
     }
   | {
       kind: 'tool_result'
@@ -44,6 +54,7 @@ export type Segment =
       status: ToolResultStatus
       output: string
       error?: string
+      worker?: SegmentWorker
     }
   | {
       kind: 'active_model'

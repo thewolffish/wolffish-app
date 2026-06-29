@@ -1,3 +1,4 @@
+import { diskWriter } from '@main/io/diskWriter'
 import type { Agent } from '@main/runtime/agent'
 import type { Corpus } from '@main/runtime/corpus'
 import type { Cortex } from '@main/runtime/cortex'
@@ -712,7 +713,7 @@ export class Brainstem {
     try {
       const raw = await fs.readFile(p, 'utf8')
       const next = stripHeartbeatHeading(raw, label)
-      if (next !== raw) await fs.writeFile(p, next, 'utf8')
+      if (next !== raw) await diskWriter.writeFileAtomic(p, next)
     } catch {
       // best-effort — worst case the entry lingers and is retired next launch
     }
@@ -776,7 +777,7 @@ export class Brainstem {
     const p = this.statePath()
     if (!p) return
     try {
-      await fs.writeFile(p, JSON.stringify(state), 'utf8')
+      await diskWriter.writeFileAtomic(p, JSON.stringify(state))
     } catch {
       // best-effort — a missed tick just means a slightly wider downtime window
     }

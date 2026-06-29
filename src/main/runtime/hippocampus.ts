@@ -1,3 +1,4 @@
+import { diskWriter } from '@main/io/diskWriter'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import type { Corpus } from '@main/runtime/corpus'
@@ -105,7 +106,7 @@ export class Hippocampus {
     const body = (needsHeader ? `# ${date}\n\n` : '') + block
 
     try {
-      await fs.appendFile(filepath, body, 'utf8')
+      await diskWriter.appendLine(filepath, body)
     } catch {
       return
     }
@@ -207,7 +208,7 @@ export class Hippocampus {
     const needsNewline = existing.length > 0 && !existing.endsWith('\n')
     const body = `${needsNewline ? '\n' : ''}${line}\n`
     try {
-      await fs.appendFile(filepath, body, 'utf8')
+      await diskWriter.appendLine(filepath, body)
     } catch {
       return
     }
@@ -238,7 +239,7 @@ export class Hippocampus {
     const header = existing.length === 0 ? `# ${weekKey}\n\n` : ''
     const sep = existing.length > 0 && !existing.endsWith('\n\n') ? '\n\n' : ''
     try {
-      await fs.appendFile(filepath, `${header}${sep}${content.trim()}\n`, 'utf8')
+      await diskWriter.appendLine(filepath, `${header}${sep}${content.trim()}\n`)
     } catch {
       return
     }
