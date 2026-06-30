@@ -2964,6 +2964,14 @@ function renderSegments(
         if (docResults) {
           for (let di = 0; di < docResults.length; di++) {
             const doc = docResults[di]
+            // Dedup across detectors/segments in this message: the same file is
+            // often delivered by two tools in one turn — e.g. browser_pdf
+            // returns {"path":"x.pdf"} (recognized as a document) and send_file
+            // then emits the [wolffish-output: x.pdf (document)] marker for the
+            // SAME file. Without this guard the PDF renders twice. Mirrors the
+            // image/media emitOnce above and the channels' sentFiles dedup.
+            const docKey = doc.path.replace(/^.*?\.wolffish\/workspace\//, '')
+            if (!emitOnce(docKey)) continue
             const fileName = doc.path.split('/').pop() ?? 'document'
             const ext = fileName.split('.').pop()?.toLowerCase() ?? ''
             if (ext === 'pdf') {
@@ -3063,6 +3071,10 @@ function renderSegments(
         const genericFiles = extractToolResultGenericFiles(result)
         for (let gi = 0; gi < genericFiles.length; gi++) {
           const gPath = genericFiles[gi]
+          // Same cross-detector dedup as documents/images above: don't render a
+          // second card for a file already shown in this message.
+          const gKey = gPath.replace(/^.*?\.wolffish\/workspace\//, '')
+          if (!emitOnce(gKey)) continue
           const gName = gPath.split('/').pop() ?? 'file'
           const gExt = gName.split('.').pop()?.toLowerCase() ?? ''
           // Markdown delivered via the (file) catch-all renders inline as rich

@@ -1,4 +1,12 @@
-## v1.0.199 — 2026-06-30 `Latest`
+## v1.0.200 — 2026-06-30 `Latest`
+
+### Files Show Up Once, Not Twice
+
+A file Wolffish hands you in chat now appears a single time, never doubled. When a task produced a file with one tool and then delivered it with another — say a page printed to PDF and then attached for you — the in-app chat could render the same document twice, stacking two identical viewers in the feed. Now every file shows once no matter how many steps touched it, matching how WhatsApp and Telegram already behaved. Wolffish also leans on its file-producing tools to deliver their own output rather than re-sending it, so the agent spends fewer steps double-handling a file that's already on screen.
+
+---
+
+## v1.0.199 — 2026-06-30
 
 ### Local Models Always Run at Their Real Context Window
 

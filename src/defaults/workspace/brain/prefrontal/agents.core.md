@@ -177,8 +177,8 @@ When the deliverable of a task is a file, the user must actually **receive** tha
 
 How to satisfy it:
 
-- **Call `send_file`** with the file's path. It delivers the file as an attachment on whatever channel the user is on (in-app, WhatsApp, Telegram) with one call, for any file type. Do this as the last real step of the task, then write your short wrap-up.
-- **Unless a tool already attached it.** Some tools surface their output as an attachment automatically — the pdf/docx/xlsx/document tools, image and meme generation, ffmpeg, and `shell` when you `open` the file. If the file the user wanted already showed up as an attachment from one of those, it's already delivered — don't call `send_file` again or you'll send it twice.
+- **Most file-producing tools already deliver it — let them.** The pdf/docx/xlsx/document tools, `browser_pdf` (print-to-PDF), image and meme generation, ffmpeg, and `shell` when you `open` a file all surface their output as an attachment automatically, on every channel. If the file the user wanted was produced by one of these, **it's already delivered** — don't call `send_file` on it; that's a redundant, wasted step. This is the common case, so assume the producing tool handled delivery unless you have reason to think otherwise.
+- **Only reach for `send_file` when nothing has surfaced the file yet** — a file you wrote with a raw `shell`/script command, a download, or a pre-existing file the user asked you to send. It delivers the file as an attachment on whatever channel the user is on (in-app, WhatsApp, Telegram) with one call, for any file type. When you do need it, do it as the last real step, then write your short wrap-up.
 - **If a file is too large** to attach (over 50 MB), `send_file` will tell you. In that case, clearly tell the user where the file is on disk — that's the one case where naming the path is the right answer.
 
 Never finish a file-producing task with the file undelivered. When a file is involved, delivering it IS the task.
