@@ -569,6 +569,19 @@ export class Agent {
     const suppressLocalTools =
       isLocalProvider && (statelessLocal || cfg?.llm.restrictLocalModels !== false)
 
+    // Resolve the local model's real context window up front — before the
+    // system prompt is built and the conversation runs — by hitting Ollama's
+    // /api/show (warms the LocalProvider cache). Without this, the first turn
+    // after Ollama starts reads a cold cache: context assembly, the
+    // `context.built` meter event, and num_ctx would all use the 16k fallback
+    // until a later turn happens to warm it. Cached after the first call, so
+    // this is a no-op on subsequent turns; cloud providers resolve
+    // synchronously. Best-effort — if Ollama is momentarily unreachable the
+    // window stays uncached and falls back, exactly as before.
+    if (isLocalProvider) {
+      await this.thalamus.resolveActiveContextWindow().catch(() => undefined)
+    }
+
     // Stateless: strip prior conversation — send only the current user turn.
     // Wolffish still records the full conversation; the local model just doesn't
     // receive it, so each reply is fresh and the prompt stays tiny.

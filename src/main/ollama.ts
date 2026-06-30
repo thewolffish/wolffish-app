@@ -8,6 +8,13 @@ import { URL } from 'node:url'
 
 export const DEFAULT_ENDPOINT = 'http://localhost:11434'
 const DETECT_TIMEOUT_MS = 1500
+// Bound /api/show so an unreachable host (silently-dropped SYN — stale remote
+// endpoint, VPN down) can't hang the request until the OS TCP connect timeout
+// (~75s). showModel resolves null on failure, so without this its callers —
+// including the up-front context-window warm at the start of a local turn —
+// would block for that whole duration. More generous than the liveness ping
+// because /api/show reads (and returns) the model manifest, not just a 200.
+const SHOW_TIMEOUT_MS = 5000
 
 export type OllamaPullStatus =
   | { kind: 'progress'; status: string; completed: number | null; total: number | null }
@@ -79,6 +86,7 @@ export async function showModel(
         hostname: url.hostname,
         port: url.port || 80,
         path: url.pathname,
+        timeout: SHOW_TIMEOUT_MS,
         headers: {
           'content-type': 'application/json',
           'content-length': Buffer.byteLength(body)
@@ -102,6 +110,10 @@ export async function showModel(
       }
     )
     req.on('error', () => resolve(null))
+    req.on('timeout', () => {
+      req.destroy()
+      resolve(null)
+    })
     req.write(body)
     req.end()
   })

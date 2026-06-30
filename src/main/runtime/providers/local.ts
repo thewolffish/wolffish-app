@@ -70,17 +70,15 @@ export class LocalProvider {
     const cached = this.visionCache.get(model)
     if (cached !== undefined) return cached
 
-    let supports = false
-    try {
-      const info = await showModel(model, this.endpoint)
-      if (info?.capabilities && Array.isArray(info.capabilities)) {
-        supports = info.capabilities.includes('vision')
-      } else {
-        supports = isLikelyVisionByName(model)
-      }
-    } catch {
-      supports = isLikelyVisionByName(model)
-    }
+    const info = await safeShowModel(model, this.endpoint)
+    // Ollama unreachable: use the name heuristic for THIS call but don't cache
+    // it — a down-state guess would pin the answer for the whole session, since
+    // nothing re-queries once the cache warms. Retry on the next call instead.
+    if (!info) return isLikelyVisionByName(model)
+
+    const supports = Array.isArray(info.capabilities)
+      ? info.capabilities.includes('vision')
+      : isLikelyVisionByName(model)
     this.visionCache.set(model, supports)
     return supports
   }
@@ -97,15 +95,15 @@ export class LocalProvider {
     const cached = this.thinkingCache.get(model)
     if (cached !== undefined) return cached
 
-    let supports = false
-    try {
-      const info = await showModel(model, this.endpoint)
-      if (info?.capabilities && Array.isArray(info.capabilities)) {
-        supports = info.capabilities.includes('thinking')
-      }
-    } catch {
-      supports = false
-    }
+    const info = await safeShowModel(model, this.endpoint)
+    // Ollama unreachable: don't cache. Caching `false` here would silently
+    // strip reasoning from a thinking-capable model for the rest of the
+    // session if Ollama happened to be down when the cache was first warmed.
+    if (!info) return false
+
+    const supports = Array.isArray(info.capabilities)
+      ? info.capabilities.includes('thinking')
+      : false
     this.thinkingCache.set(model, supports)
     return supports
   }
@@ -126,14 +124,22 @@ export class LocalProvider {
     const cached = this.contextCache.get(model)
     if (cached !== undefined) return cached
 
-    let window = FALLBACK_LOCAL_CONTEXT
-    try {
-      const info = await showModel(model, this.endpoint)
-      const trained = readContextLength(info)
-      if (trained && trained > 0) window = trained
-    } catch {
-      window = FALLBACK_LOCAL_CONTEXT
-    }
+    const info = await safeShowModel(model, this.endpoint)
+    // Couldn't reach Ollama (it's down or still starting up). Return the
+    // fallback for THIS call but DON'T cache it. Caching a down-state value
+    // was the bug: a warm fired while Ollama was closed pinned every later
+    // turn — and the context meter — to the 16k fallback, because nothing
+    // re-queries once the cache holds a value. Leaving it uncached makes the
+    // next call (e.g. the turn that actually starts the conversation, or the
+    // capabilities probe) re-hit /api/show and pick up the model's real window.
+    if (!info) return FALLBACK_LOCAL_CONTEXT
+
+    // Reached Ollama: the answer is authoritative, so cache it. A real trained
+    // context_length, or the fallback when the model genuinely doesn't report
+    // one — both are deterministic, so the cached num_ctx stays stable across
+    // turns (Ollama reuses its KV prefix only while num_ctx is unchanged).
+    const trained = readContextLength(info)
+    const window = trained && trained > 0 ? trained : FALLBACK_LOCAL_CONTEXT
     this.contextCache.set(model, window)
     return window
   }
@@ -367,6 +373,21 @@ function readContextLength(info: OllamaShowResponse | null): number | null {
     }
   }
   return null
+}
+
+/**
+ * /api/show that never throws: any failure (Ollama down, HTTP error, bad JSON)
+ * resolves to null. A null return means "couldn't determine" — callers use it to
+ * decide whether to cache. A real response (even one missing a field) is
+ * authoritative and cacheable; a null is transient and must NOT be cached, or a
+ * probe made while Ollama is down would pin a wrong answer for the whole session.
+ */
+async function safeShowModel(model: string, endpoint: string): Promise<OllamaShowResponse | null> {
+  try {
+    return await showModel(model, endpoint)
+  } catch {
+    return null
+  }
 }
 
 function isLikelyVisionByName(model: string): boolean {

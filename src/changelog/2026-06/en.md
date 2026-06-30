@@ -1,4 +1,12 @@
-## v1.0.198 — 2026-06-30 `Latest`
+## v1.0.199 — 2026-06-30 `Latest`
+
+### Local Models Always Run at Their Real Context Window
+
+Wolffish now reads a local model's true context window straight from Ollama right before each conversation, so you always get the full window the model was built for instead of a cautious 16k stand-in. Before, if Ollama wasn't running the moment you picked a model, Wolffish settled on that fallback size and kept using it even after Ollama came back — the context meter stuck at 16k until you switched models or restarted the app. Now the window is read fresh at the start of every message and is never pinned to a stale guess: the instant Ollama is up, your model runs at its real window and the chat's context meter shows the true number. The same freshness fix covers whether a local model counts as vision- or reasoning-capable, so those are no longer mislabeled when Ollama happens to start late. And the lookup can't stall a reply waiting on an unreachable server — it gives up quickly and falls back rather than hanging.
+
+---
+
+## v1.0.198 — 2026-06-30
 
 ### Local Models as Plain, Fast Chatbots
 

@@ -806,9 +806,16 @@ export function Chat(): React.JSX.Element {
     const offTurnEvent = window.api.chat.onTurnEvent(({ turnId, type, payload }) => {
       if (pendingTurnIdRef.current !== turnId) return
       if (type === 'context.built') {
-        const cw = modelContextWindowRef.current
-        if (typeof payload.tokenBudget === 'number') {
-          setContextBudget(cw && cw > 0 ? cw : payload.tokenBudget)
+        // The window the backend just built this turn with is the freshest
+        // reading there is — the turn resolves the local model's real context
+        // length (via /api/show) before this fires. Adopt it AND refresh the
+        // ref, so a capabilities fetch that happened to run while Ollama was
+        // still starting (and returned the 16k fallback) can't keep pinning the
+        // meter to that stale value. Previously the stale ref won here, which
+        // re-asserted 16k on every turn even after the backend had recovered.
+        if (typeof payload.tokenBudget === 'number' && payload.tokenBudget > 0) {
+          modelContextWindowRef.current = payload.tokenBudget
+          setContextBudget(payload.tokenBudget)
         }
       } else if (type === 'llm.response') {
         const uncached = typeof payload.inputTokens === 'number' ? payload.inputTokens : 0
