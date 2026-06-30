@@ -166,9 +166,10 @@ export class Prefrontal {
   async buildSystemPrompt(
     message = '',
     runtime?: RuntimeContext,
-    role?: 'orchestrator' | 'worker'
+    role?: 'orchestrator' | 'worker',
+    opts?: { omitTools?: boolean }
   ): Promise<string> {
-    const bundle = await this.buildContext(message, runtime, role)
+    const bundle = await this.buildContext(message, runtime, role, opts)
     const blocks = [
       bundle.systemPrompt,
       await this.buildRoleBlock(role),
@@ -271,7 +272,8 @@ export class Prefrontal {
   async buildContext(
     message = '',
     runtime?: RuntimeContext,
-    role?: 'orchestrator' | 'worker'
+    role?: 'orchestrator' | 'worker',
+    opts?: { omitTools?: boolean }
   ): Promise<ContextBundle> {
     // A worker runs a bounded, self-contained task the orchestrator composed —
     // it doesn't need the user's stored memory, learned feedback, conversation
@@ -365,11 +367,24 @@ export class Prefrontal {
       // candidate pool. Inject right after <prefrontal> so the model sees
       // "what I am, then what I can do, then what I know".
       if (category === 'prefrontal') {
-        const toolsBody =
-          this.cerebellum?.getToolsPrompt(this.excludedCapabilitiesFor(role)).trim() ?? ''
-        if (toolsBody.length > 0) {
-          sections.push(this.wrap('tools', toolsBody))
-          sectionsIncluded.push('tools')
+        if (opts?.omitTools) {
+          // Tool use is suppressed (restrictLocalModels — see Agent.respond).
+          // Replace the ~20k-token <tools> catalog with a short notice so the
+          // model knows it has no tools, why, and how the user re-enables them.
+          // The native tools API param is zeroed separately in Agent.ts.
+          const omitted =
+            this.cerebellum?.getToolDefinitions(this.excludedCapabilitiesFor(role)).length ?? 0
+          if (omitted > 0) {
+            sections.push(this.wrap('tools_status', toolsDisabledNotice(omitted)))
+            sectionsIncluded.push('tools_status')
+          }
+        } else {
+          const toolsBody =
+            this.cerebellum?.getToolsPrompt(this.excludedCapabilitiesFor(role)).trim() ?? ''
+          if (toolsBody.length > 0) {
+            sections.push(this.wrap('tools', toolsBody))
+            sectionsIncluded.push('tools')
+          }
         }
 
         // Pure skills (no tools, just procedure bodies) are injected into
@@ -652,6 +667,23 @@ function formatRuntimeBody(runtime: RuntimeContext | undefined): string {
     )
   }
   return lines.join('\n')
+}
+
+/**
+ * Body of the <tools_status> block shown to a local model when tools are
+ * suppressed (restrictLocalModels). Tells the model it has no tools, why, and
+ * how the user can turn them on — so the model can relay that to the user
+ * instead of pretending to act.
+ */
+function toolsDisabledNotice(omittedCount: number): string {
+  const plural = omittedCount === 1 ? 'tool' : 'tools'
+  return [
+    `You are running on a local model. Tool use is turned OFF for local models by default, so ${omittedCount} ${plural} that would normally be available ${omittedCount === 1 ? 'has' : 'have'} been withheld and you cannot call any tool this turn.`,
+    `Small local models often misuse tools, loop, or stall on a large tool list — keeping you tool-free is what lets you answer reliably.`,
+    `- For questions, explanations, writing, brainstorming, and conversation: answer fully and helpfully as yourself.`,
+    `- If a request needs tools (running commands, editing files, browsing the web, reading/sending channel messages): tell the user plainly that tool use is disabled for local models, and that they can enable it in Settings → Wolffish by turning off "Restrict local models" — best only for a capable local model with a large context window.`,
+    `Never invent tool output or claim an action happened.`
+  ].join('\n')
 }
 
 function groupByCategory(items: ScoredCandidate[]): Map<ContextCategory, ScoredCandidate[]> {

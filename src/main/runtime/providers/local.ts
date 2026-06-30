@@ -1,4 +1,4 @@
-import { DEFAULT_ENDPOINT, showModel } from '@main/ollama'
+import { DEFAULT_ENDPOINT, showModel, type OllamaShowResponse } from '@main/ollama'
 import type {
   ChatMessage,
   ProviderStreamOptions,
@@ -11,6 +11,13 @@ import { thinkingEnabled } from '@main/runtime/reasoning'
 export type { ChatMessage }
 
 /**
+ * num_ctx to fall back to when /api/show doesn't report the model's context
+ * length. Well above Ollama's 4096 default so a normal prompt isn't starved.
+ * The real value is the model's own max context, fetched per model.
+ */
+const FALLBACK_LOCAL_CONTEXT = 16_384
+
+/**
  * LocalProvider is a thin wrapper around the Ollama HTTP API. The provider
  * holds the currently-selected model name and endpoint. There's no load/unload
  * — Ollama loads on first request and evicts on its own.
@@ -20,14 +27,21 @@ export class LocalProvider {
   private endpoint: string = DEFAULT_ENDPOINT
   private visionCache = new Map<string, boolean>()
   private thinkingCache = new Map<string, boolean>()
+  private contextCache = new Map<string, number>()
 
   configure(model: string | null, endpoint: string = DEFAULT_ENDPOINT): void {
     if (model !== this.model) {
       this.visionCache.clear()
       this.thinkingCache.clear()
+      this.contextCache.clear()
     }
     this.model = model
     this.endpoint = endpoint
+    // Warm the context-window cache so the synchronous Thalamus budget getters
+    // reflect the real window on the very first turn. Fire-and-forget — the
+    // per-request num_ctx in stream() is resolved independently, so this is
+    // purely an early-warm optimization.
+    if (model) void this.resolveContextWindow().catch(() => undefined)
   }
 
   get isReady(): boolean {
@@ -96,6 +110,44 @@ export class LocalProvider {
     return supports
   }
 
+  /**
+   * The num_ctx to request for the active model: the model's own max context,
+   * fetched from /api/show (`<arch>.context_length`), with a fallback when it
+   * isn't reported. Without an explicit num_ctx Ollama defaults to 4096 — small
+   * enough that Wolffish's system prompt fills the whole window and the model
+   * can emit only one token before a `done_reason: "length"` stop (which the
+   * agent loop then mistakes for output truncation and retries forever).
+   * Running at the model's real max means the prompt fits with room to answer.
+   * Cached per model (stable for the session so Ollama's KV prefix cache holds).
+   */
+  async resolveContextWindow(): Promise<number> {
+    const model = this.model
+    if (!model) return FALLBACK_LOCAL_CONTEXT
+    const cached = this.contextCache.get(model)
+    if (cached !== undefined) return cached
+
+    let window = FALLBACK_LOCAL_CONTEXT
+    try {
+      const info = await showModel(model, this.endpoint)
+      const trained = readContextLength(info)
+      if (trained && trained > 0) window = trained
+    } catch {
+      window = FALLBACK_LOCAL_CONTEXT
+    }
+    this.contextCache.set(model, window)
+    return window
+  }
+
+  /**
+   * Last resolved context window for the active model, or null if it hasn't
+   * been queried yet. Lets the synchronous Thalamus budget getters reflect the
+   * real local window once the cache is warm, without forcing them async.
+   */
+  cachedContextWindow(): number | null {
+    if (!this.model) return null
+    return this.contextCache.get(this.model) ?? null
+  }
+
   async *stream(options: ProviderStreamOptions): AsyncGenerator<StreamChunk> {
     if (!this.model) throw new Error('no local model selected')
 
@@ -104,14 +156,23 @@ export class LocalProvider {
       ...toOllamaMessages(options.messages)
     ]
 
+    const numCtx = await this.resolveContextWindow()
+
     const body: Record<string, unknown> = {
       model: this.model,
       messages,
       stream: true,
-      // num_predict: -1 tells Ollama to generate until the model itself
-      // stops or the context window fills. Without this, Ollama applies
-      // its default cap (128 tokens) and truncates replies mid-thought.
-      options: { num_predict: -1 },
+      options: {
+        // num_predict: -1 tells Ollama to generate until the model itself
+        // stops or the context window fills. Without this, Ollama applies
+        // its default cap (128 tokens) and truncates replies mid-thought.
+        num_predict: -1,
+        // num_ctx sizes the context window (and the KV cache). Without it,
+        // Ollama defaults to 4096 — smaller than our system prompt — so the
+        // prompt fills the window and the model can emit only one token
+        // before stopping with done_reason "length". See resolveContextWindow.
+        num_ctx: numCtx
+      },
       // Hold the model (and its KV cache) in memory across tool-loop
       // iterations. The 5-minute default can evict mid-task whenever a
       // single step runs long, forcing a full prefill of the entire
@@ -283,6 +344,29 @@ function safeParseJSON(raw: string): Record<string, unknown> | null {
 
 function generateToolId(): string {
   return `tool_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+}
+
+/**
+ * Pull `<arch>.context_length` out of an /api/show model_info bag. Ollama keys
+ * it by architecture family (e.g. `gemma4.context_length`,
+ * `llama.context_length`), so we scan for any *.context_length entry.
+ */
+function readContextLength(info: OllamaShowResponse | null): number | null {
+  const mi = info?.model_info
+  if (!mi) return null
+  // The text model's context_length, not a sub-encoder's (gemma's audio/vision
+  // towers carry their own `*.context_length`).
+  for (const [key, value] of Object.entries(mi)) {
+    if (
+      key.endsWith('.context_length') &&
+      !key.includes('.vision.') &&
+      !key.includes('.audio.') &&
+      typeof value === 'number'
+    ) {
+      return value
+    }
+  }
+  return null
 }
 
 function isLikelyVisionByName(model: string): boolean {

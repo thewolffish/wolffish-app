@@ -382,7 +382,23 @@ export class Thalamus {
   getActiveContextWindow(): number {
     const entry = this.resolveEntry()
     if (!entry) return 8_000
-    return contextWindowForModel(entry.model)
+    return this.windowForEntry(entry)
+  }
+
+  /**
+   * Async sibling of {@link getActiveContextWindow}. For local models this
+   * awaits the real window Ollama reports (warming the LocalProvider cache)
+   * rather than returning the name-based estimate while the cache is still
+   * cold. Used by the model:capabilities IPC so the renderer's context meter
+   * gets the true window the instant a model is switched — not a stale
+   * fallback that would otherwise never be corrected (nothing re-fetches once
+   * the cache warms). Cloud models resolve synchronously, as before.
+   */
+  async resolveActiveContextWindow(): Promise<number> {
+    const entry = this.resolveEntry()
+    if (!entry) return 8_000
+    if (entry.id === 'local') return this.local.resolveContextWindow()
+    return this.windowForEntry(entry)
   }
 
   /**
@@ -394,10 +410,24 @@ export class Thalamus {
   getContextBudget(): number {
     const entry = this.resolveEntry()
     if (!entry) return 8_000
-    const model = entry.model
-    const window = contextWindowForModel(model)
-    const outputReserve = maxOutputForModel(model)
+    const window = this.windowForEntry(entry)
+    const outputReserve = maxOutputForModel(entry.model)
     return Math.max(window - outputReserve, Math.floor(window * 0.5))
+  }
+
+  /**
+   * Context window for a resolved entry. Cloud models map by name; local
+   * models use the real window Ollama reports for the model (cached by the
+   * LocalProvider after the first /api/show), falling back to the name-based
+   * estimate until that cache is warm. Without this a local model whose name
+   * isn't recognized would be budgeted at the 8 000 fallback even though it
+   * may have a far larger (or smaller) real window.
+   */
+  private windowForEntry(entry: CascadeEntry): number {
+    if (entry.id === 'local') {
+      return this.local.cachedContextWindow() ?? contextWindowForModel(entry.model)
+    }
+    return contextWindowForModel(entry.model)
   }
 
   /**

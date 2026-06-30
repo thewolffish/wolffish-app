@@ -3,7 +3,7 @@ import { cn } from '@lib/utils/cn'
 import type { Segment, ToolResultStatus } from '@preload/index'
 import type { ToolTiming } from '@providers/flow/useFlow'
 import { ArrowDown01Icon, ArrowRight01Icon } from 'hugeicons-react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 type ToolCallSegment = Extract<Segment, { kind: 'tool_call' }>
@@ -34,21 +34,11 @@ export function ToolCard({
   const hasOutput = !!result?.output && result.output.length > 0
   const canExpand = argsKeys.length > 0 || hasOutput || !!result?.error
 
-  // Default expanded while the tool is running or has failed — those
-  // are the states where the user wants to see what's going on. On
-  // success/denied we collapse so the chat doesn't get cluttered with
-  // finished work. We reset to the status default at every status
-  // transition (running → success, etc.) using the documented "store
-  // the prior prop in a ref + reconcile during render" pattern, which
-  // beats useEffect+setState here: the update lands in the same render
-  // pass so the user never sees the wrong state, and there's no
-  // cascading re-render. Manual toggles between status flips stick.
-  const [expanded, setExpanded] = useState<boolean>(() => isRunning || status === 'failed')
-  const lastStatusRef = useRef<CardStatus>(status)
-  if (lastStatusRef.current !== status) {
-    lastStatusRef.current = status
-    setExpanded(status === 'running' || status === 'failed')
-  }
+  // Cards stay expanded by default — both while running and once done —
+  // so finished work stays visible without a click. We never auto-collapse
+  // on status transitions (running → success, etc.); only the user's manual
+  // toggle changes the state, and it sticks.
+  const [expanded, setExpanded] = useState<boolean>(true)
 
   // Live-tick a wall clock while the tool is running so the elapsed
   // counter on the card moves. Once the result lands, timing.endedAt is

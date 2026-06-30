@@ -149,6 +149,7 @@ import {
   setMemesConfig as persistMemesConfig,
   setNotionConfig as persistNotionConfig,
   setRestrictPowerfulModels as persistRestrictPowerfulModels,
+  setRestrictLocalModels as persistRestrictLocalModels,
   setShowChatAnalytics as persistShowChatAnalytics,
   setSttConfig as persistSttConfig,
   setTelegramConfig as persistTelegramConfig,
@@ -1274,6 +1275,10 @@ app.whenReady().then(async () => {
   })
   ipcMain.handle('runtime:setRestrictPowerfulModels', async (_e, value: boolean) => {
     await persistRestrictPowerfulModels(value)
+    return { value }
+  })
+  ipcMain.handle('runtime:setRestrictLocalModels', async (_e, value: boolean) => {
+    await persistRestrictLocalModels(value)
     return { value }
   })
   ipcMain.handle('runtime:setThinkingMode', async (_e, model: string, mode: string) => {
@@ -3010,7 +3015,7 @@ app.whenReady().then(async () => {
       supportsVision: boolean
       contextWindow: number
     }> => {
-      const contextWindow = agent.thalamus.getActiveContextWindow()
+      const contextWindow = await agent.thalamus.resolveActiveContextWindow()
       const provider = agent.thalamus.getActiveProvider()
       if (!provider) return { provider: null, model: null, supportsVision: false, contextWindow }
       if (provider === 'local') {

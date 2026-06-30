@@ -251,6 +251,12 @@ export type WorkspaceConfig = {
     // limits — not recommended, as oversized models cause heavy swap
     // thrashing and degrade the entire system.
     restrictPowerfulModels?: boolean
+    // When true (default), local (Ollama) models receive NO tools — the full
+    // tool catalog (~20k tokens) is omitted from the prompt and the native
+    // tools param, leaving a small local model to converse reliably instead of
+    // choking on a context it can't fit. The model is told tools are off and how
+    // to enable them. Turn off for a capable local model with a large window.
+    restrictLocalModels?: boolean
     // Per-model thinking mode. Key is model name, value is thinking mode string.
     thinkingModes?: Record<string, string>
   }
@@ -551,7 +557,8 @@ function defaultConfig(): WorkspaceConfig {
     llm: {
       local: emptyLocalModel(),
       providers: [],
-      restrictPowerfulModels: true
+      restrictPowerfulModels: true,
+      restrictLocalModels: true
     },
     safety: { bypassPermissions: true, blockCredentials: false },
     updates: { enabled: true },
@@ -1212,6 +1219,13 @@ export async function setRestrictPowerfulModels(value: boolean): Promise<Workspa
   return patchConfig((c) => ({
     ...c,
     llm: { ...c.llm, restrictPowerfulModels: value }
+  }))
+}
+
+export async function setRestrictLocalModels(value: boolean): Promise<WorkspaceConfig> {
+  return patchConfig((c) => ({
+    ...c,
+    llm: { ...c.llm, restrictLocalModels: value }
   }))
 }
 

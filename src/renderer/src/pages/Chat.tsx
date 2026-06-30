@@ -8,6 +8,7 @@ import { ContextMeter } from '@components/common/context-meter/ContextMeter'
 import { DocxViewer } from '@components/common/docx-viewer/DocxViewer'
 import { FileCard } from '@components/common/file-card/FileCard'
 import { PathCard } from '@components/common/path-card/PathCard'
+import { extractPathCandidates } from '@components/common/path-card/extractPaths'
 import { canonicalPath } from '@components/common/path-card/pathStat'
 import { HtmlFileViewer } from '@components/common/html-file-viewer/HtmlFileViewer'
 import { ReindexActiveOverlay } from '@components/common/reindex-active-overlay/ReindexActiveOverlay'
@@ -261,7 +262,12 @@ export function Chat(): React.JSX.Element {
   // In-app verbose display preference. Read once on mount and kept live via
   // the broadcast the settings panel triggers on save, so toggling it
   // re-renders an open feed immediately. Off (default) = clean feed.
-  const [inAppVerbose, setInAppVerbose] = useState(false)
+  // Seed from the already-loaded workspace config (status is resolved before
+  // Chat renders) so the very FIRST paint knows whether tool cards belong in
+  // the clean feed. Without this seed it defaulted to false, the async
+  // getConfig() below flipped it to true a beat later, and tool cards popped in
+  // on a second render — growing the conversation and flashing on open.
+  const [inAppVerbose, setInAppVerbose] = useState(status?.config?.inapp?.verbose ?? false)
   useEffect(() => {
     let cancelled = false
     void window.api.inapp.getConfig().then((cfg) => {
@@ -622,20 +628,31 @@ export function Chat(): React.JSX.Element {
   const isExternalChannel =
     isTelegramConversation || isWhatsAppConversation || isHeartbeatConversation
 
-  // Refresh vision support when the local model or local-only flag
-  // changes. Cloud providers all support vision; only Ollama models can
-  // come back as non-vision and need proactive UI gating.
+  // Re-sync model-dependent UI whenever the active model changes — the local
+  // model, the local-only toggle, OR the cloud Brain (activeCloudModel). Two
+  // things ride on this: vision support (only Ollama models can come back as
+  // non-vision and need proactive UI gating), and the context-meter budget.
+  // Pushing caps.contextWindow into contextBudget here makes the meter reflect
+  // the new model's window immediately on switch — before any turn fires.
+  // Without activeCloudModel in the deps the budget stayed pinned to the
+  // previous model's window when switching between cloud models.
   useEffect(() => {
     let cancelled = false
     void window.api.model.capabilities().then((caps) => {
       if (cancelled) return
       setModelVisionSupport({ supportsVision: caps.supportsVision, model: caps.model })
-      modelContextWindowRef.current = caps.contextWindow
+      // caps.provider is null exactly when no model is resolved (the backend's
+      // 8 000 placeholder case); a non-null provider means contextWindow is the
+      // real resolved window. Null the ref otherwise so the budget consumers
+      // below treat any positive window as authoritative.
+      const cw = caps.provider ? caps.contextWindow : null
+      modelContextWindowRef.current = cw
+      if (cw && cw > 0) setContextBudget(cw)
     })
     return () => {
       cancelled = true
     }
-  }, [currentModel, localOnly])
+  }, [currentModel, localOnly, activeCloudModel])
 
   const persistConversation = useCallback(
     async (msgs: ChatMessage[]) => {
@@ -707,7 +724,7 @@ export function Chat(): React.JSX.Element {
         if (conv.contextMeter) {
           setContextTokens(conv.contextMeter.contextTokens)
           const cw = modelContextWindowRef.current
-          setContextBudget(cw && cw > 8_000 ? cw : conv.contextMeter.contextBudget)
+          setContextBudget(cw && cw > 0 ? cw : conv.contextMeter.contextBudget)
         } else {
           setContextTokens(null)
           setContextBudget(null)
@@ -791,7 +808,7 @@ export function Chat(): React.JSX.Element {
       if (type === 'context.built') {
         const cw = modelContextWindowRef.current
         if (typeof payload.tokenBudget === 'number') {
-          setContextBudget(cw && cw > 8_000 ? cw : payload.tokenBudget)
+          setContextBudget(cw && cw > 0 ? cw : payload.tokenBudget)
         }
       } else if (type === 'llm.response') {
         const uncached = typeof payload.inputTokens === 'number' ? payload.inputTokens : 0
@@ -882,11 +899,18 @@ export function Chat(): React.JSX.Element {
     }
   }, [setMessages])
 
-  useEffect(() => {
+  // The feed pins to the end like a logs tail purely via CSS: the scroller is
+  // `flex flex-col-reverse`, so its scroll origin sits at the bottom (newest).
+  // Opening a conversation lands at the true end with no flash, and the view
+  // stays pinned as async children (file viewers, images, code highlighting)
+  // settle — no measure-and-jump that could park mid-feed, and a user who
+  // scrolls up to read history is never yanked down. The only case CSS can't
+  // cover is sending while scrolled up: force the newest into view so the user
+  // always sees their own message and the reply.
+  const scrollToBottom = useCallback(() => {
     const el = scrollerRef.current
-    if (!el) return
-    el.scrollTop = el.scrollHeight
-  }, [messages])
+    if (el) el.scrollTop = 0
+  }, [])
 
   const respondApproval = useCallback(
     async (approvalId: string, decision: 'approved' | 'denied') => {
@@ -1022,6 +1046,7 @@ export function Chat(): React.JSX.Element {
       const history = textHistory(messages, workspaceRoot).concat(currentEntry)
 
       setMessages((prev) => [...prev, userMessage, assistantPlaceholder])
+      scrollToBottom()
       setStreaming(true)
       setTurnStartedAt(Date.now())
       setTurnEndedAt(null)
@@ -1058,7 +1083,8 @@ export function Chat(): React.JSX.Element {
       ensureConversationId,
       status?.rootPath,
       workingFolders,
-      thinkingMode
+      thinkingMode,
+      scrollToBottom
     ]
   )
 
@@ -1172,6 +1198,7 @@ export function Chat(): React.JSX.Element {
         timestamp: Date.now()
       }
       setMessages((prev) => [...prev, assistantPlaceholder])
+      scrollToBottom()
       setStreaming(true)
       setTurnStartedAt(Date.now())
       setTurnEndedAt(null)
@@ -1213,7 +1240,8 @@ export function Chat(): React.JSX.Element {
     setMessages,
     status,
     workingFolders,
-    thinkingMode
+    thinkingMode,
+    scrollToBottom
   ])
 
   const stop = useCallback(() => {
@@ -1479,7 +1507,10 @@ export function Chat(): React.JSX.Element {
         ]}
       />
 
-      <div ref={scrollerRef} className="relative flex-1 overflow-y-auto px-6 py-8">
+      <div
+        ref={scrollerRef}
+        className="relative flex flex-1 flex-col-reverse overflow-y-auto px-6 py-8"
+      >
         <div className="pointer-events-none absolute inset-x-0 top-0 z-10 px-6 pt-2">
           <div className="pointer-events-auto">
             <UpdateCard />
@@ -1487,7 +1518,15 @@ export function Chat(): React.JSX.Element {
         </div>
         <div
           className={cn(
-            'mx-auto flex max-w-3xl flex-col gap-4',
+            // `w-full` is essential: as a flex item of the column-reverse
+            // scroller, `mx-auto` alone would shrink this wrapper to its
+            // content width (collapsing the column and centering bubbles).
+            // w-full + max-w-3xl + mx-auto restores the normal centered column.
+            'mx-auto flex w-full max-w-3xl flex-col gap-4',
+            // Empty state centers the welcome; otherwise the conversation
+            // bottom-pins via the column-reverse scroller — the newest message
+            // is glued to the bottom from the first frame, so opening a
+            // conversation never flashes the top before snapping to the end.
             !hasMessages && 'h-full justify-center'
           )}
         >
@@ -3111,6 +3150,15 @@ function renderSegments(
         />
       )
     } else if (seg.kind === 'turn_end') {
+      // Workers flush and finish first. A worker's closing narration has no
+      // following tool call to flush it, so it sits buffered in `workerText`
+      // until the post-loop drain below. But `turn_end` is the orchestrator's
+      // final segment, and this flushText() would emit its closing synthesis
+      // HERE — before that drain — burying the summary above the very worker
+      // reports it summarizes. Drain the workers first so the orchestrator's
+      // reply lands last. (The post-loop drain stays as the streaming-render
+      // fallback for an in-flight turn that has no turn_end yet.)
+      for (const id of workerText.keys()) flushWorkerText(id)
       flushText()
       if (seg.providerErrors?.length) {
         blocks.push(<ProviderErrorCards key={seg.segmentId} failures={seg.providerErrors} />)
@@ -3606,43 +3654,6 @@ function extractToolResultGenericFiles(result?: ToolResultSegment): string[] {
     }
   }
   return paths
-}
-
-/**
- * Find filesystem paths mentioned in assistant prose worth surfacing as an
- * openable card: home-anchored (`~/...`) or absolute (`/...`) paths, drawn from
- * both inline-code spans (which may contain spaces) and bare text. URLs/schemes
- * are excluded; existence is verified later by PathCard. Deduped within the call.
- */
-function extractPathCandidates(text: string): string[] {
-  const out: string[] = []
-  const seen = new Set<string>()
-
-  const add = (raw: string): void => {
-    const p = raw
-      .trim()
-      .replace(/^[`'"(]+/, '')
-      .replace(/[`'".,;:!?)\]]+$/, '')
-    if (!p || p === '/' || p === '~/') return
-    if (/[a-z][a-z0-9+.-]*:\/\//i.test(p)) return // http://, wolffish-media://, …
-    if (!/^(~\/|\/)/.test(p)) return // only home- or root-anchored paths
-    if (seen.has(p)) return
-    seen.add(p)
-    out.push(p)
-  }
-
-  // Inline-code spans can hold paths with spaces: `~/My Folder/sub`.
-  const codeRe = /`([^`\n]+)`/g
-  let m: RegExpExecArray | null
-  while ((m = codeRe.exec(text)) !== null) {
-    const c = m[1].trim()
-    if (/^(~\/|\/)/.test(c)) add(c)
-  }
-  // Bare paths (no spaces), anchored at a boundary so "and/or" isn't matched.
-  const bareRe = /(?:^|[\s(])((?:~\/|\/)[^\s`'")\]<>|]+)/gm
-  while ((m = bareRe.exec(text)) !== null) add(m[1])
-
-  return out
 }
 
 function collectText(segments: Segment[]): string {

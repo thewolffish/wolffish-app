@@ -9,7 +9,8 @@
       "endpoint": "http://localhost:11434"
     },
     "providers": [],
-    "restrictPowerfulModels": true
+    "restrictPowerfulModels": true,
+    "restrictLocalModels": true
   },
   "safety": {
     "bypassPermissions": true,

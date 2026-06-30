@@ -1,4 +1,20 @@
-## v1.0.196 — 2026-06-29 `Latest`
+## v1.0.197 — 2026-06-30 `Latest`
+
+### Local Models Now Converse Without Tools by Default
+
+When your Brain is a local (Ollama) model, Wolffish now hands it no tools — the full ~20k-token tool catalog is left out of the prompt entirely, so a small local model isn't drowned by a context it can't fit. The model still answers, explains, writes, and brainstorms as itself, and when something genuinely needs tools — running a command, editing a file, browsing, sending a channel message — it tells you plainly that tool use is off for local models and that you can turn it back on in **Settings → Wolffish → Restrict local models**. It's on by default; flip it off only for a capable local model with a large context window, and it gets the full toolset like a cloud model.
+
+### Local Models That Actually Finish
+
+Local models no longer stall out or spew one-token gibberish. Wolffish now runs each Ollama model at its real context window — read from the model itself instead of Ollama's tiny 4096-token default, which the system prompt alone used to overflow, leaving room for a single token before the model gave up and the agent retried that stall forever. A matching guard now ends a turn cleanly when the input truly fills the window, instead of looping. The chat's context meter also reflects the real local window the instant you switch models.
+
+### A Steadier Chat Feed
+
+Opening a conversation now lands on the newest message instantly, with no flash of the top before it snaps down, and stays pinned there as images, file viewers, and code highlighting settle in. File and folder cards — and tool cards — paint their final state on the very first frame instead of popping in one by one. Tool cards now stay open once they finish, so completed work stays visible without a click. And in Orchestrator mode, each worker's report stays above the orchestrator's closing summary, so the synthesis reads last — right where it belongs.
+
+---
+
+## v1.0.196 — 2026-06-29
 
 ### Orchestrator Mode: Workers That Run in Parallel
 

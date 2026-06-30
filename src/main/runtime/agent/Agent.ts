@@ -76,6 +76,16 @@ const PROVIDER_TOOL_LIMITS: Record<string, number> = {
 const INTERRUPTED_TOOL_RESULT =
   'Tool execution was interrupted before it completed because the run was stopped. No output was produced.'
 
+/**
+ * When a max_tokens/length stop arrives but the input is within this many
+ * tokens of the model's context window, there is no room left to generate
+ * into. Continuing would just feed a "continue" turn that gets truncated
+ * away, so the loop is ended instead. Guards the local-model case where the
+ * prompt grows to fill num_ctx and the model can only emit ~1 token per call,
+ * spinning the max_tokens continuation forever.
+ */
+const CONTEXT_FULL_MARGIN_TOKENS = 512
+
 export type AgentOptions = {
   thalamus: Thalamus
   workspaceRoot: string
@@ -540,11 +550,20 @@ export class Agent {
     // additionally collapses provably superseded/duplicated payloads in
     // the outbound clone (internal history is never touched). Disabling
     // `enabled` restores the legacy per-iteration prompt rebuild.
-    const optimizationConfig = await readConfig()
-      .then((c) => c?.contextOptimization)
-      .catch(() => undefined)
+    const cfg = await readConfig().catch(() => null)
+    const optimizationConfig = cfg?.contextOptimization
     const optimizeContext = optimizationConfig?.enabled !== false
     const truncateOutbound = optimizeContext && optimizationConfig?.truncation !== false
+    // Local models get no tools by default. Wolffish's full ~20k-token tool
+    // catalog fills a small local model's context and starves the response; a
+    // tiny model also tends to misuse tools and loop. When restrictLocalModels
+    // is on (default) and this turn resolves to the local provider, we omit both
+    // the <tools> prompt section (via buildSystemPrompt omitTools) and the native
+    // tools API param (filteredTools = []), and the model is told it has no tools
+    // and how the user can enable them. Opt out in Settings for a capable model.
+    // Stable for the whole turn — the active provider can't change mid-loop.
+    const suppressLocalTools =
+      cfg?.llm.restrictLocalModels !== false && this.thalamus.getActiveProvider() === 'local'
     let pinnedSystemPrompt: string | null = null
     let pinnedTools: ToolDefinition[] | null = null
     // Cerebellum tool-surface version captured when the pin was built. When a
@@ -609,12 +628,12 @@ export class Agent {
             pinnedSystemPrompt = await this.prefrontal.buildSystemPrompt(
               userContent,
               runtime,
-              toolRole
+              toolRole,
+              { omitTools: suppressLocalTools }
             )
-            pinnedTools = this.filterToolsForProvider(
-              this.prefrontal.selectTools(toolRole),
-              userContent
-            )
+            pinnedTools = suppressLocalTools
+              ? []
+              : this.filterToolsForProvider(this.prefrontal.selectTools(toolRole), userContent)
             pinnedGeneration = currentGeneration
           }
           systemPrompt = pinnedSystemPrompt
@@ -622,11 +641,12 @@ export class Agent {
         } else {
           // Legacy path: rebuild the system prompt each iteration so the
           // <runtime> block reflects the live iteration counter.
-          systemPrompt = await this.prefrontal.buildSystemPrompt(userContent, runtime, toolRole)
-          filteredTools = this.filterToolsForProvider(
-            this.prefrontal.selectTools(toolRole),
-            userContent
-          )
+          systemPrompt = await this.prefrontal.buildSystemPrompt(userContent, runtime, toolRole, {
+            omitTools: suppressLocalTools
+          })
+          filteredTools = suppressLocalTools
+            ? []
+            : this.filterToolsForProvider(this.prefrontal.selectTools(toolRole), userContent)
         }
 
         // Context Compaction: if context exceeds the model's input budget,
@@ -809,6 +829,25 @@ export class Agent {
 
         if (parsed.toolCalls.length === 0) {
           if (parsed.stopReason === 'max_tokens') {
+            // A max_tokens stop normally means the reply was cut off mid-output,
+            // so we let the model continue. But when the *input* already fills
+            // the context window there is no room to generate into — the
+            // "continue" turn below just gets truncated away and the loop spins
+            // forever emitting ~1 token per call (a local model whose prompt has
+            // grown to num_ctx). Detect that and end the turn with what we have.
+            const contextWindow = this.thalamus.getActiveContextWindow()
+            const contextFull =
+              lastIterationInputTokens >= contextWindow - CONTEXT_FULL_MARGIN_TOKENS
+            if (contextFull) {
+              console.log(
+                `[agent] max_tokens stop with context full ` +
+                  `(${lastIterationInputTokens}/${contextWindow} input tokens) — ` +
+                  `ending turn (iter ${iterationCount})`
+              )
+              lastAssistantText = parsed.text
+              stopReason = 'max_tokens'
+              break
+            }
             console.log(`[agent] max_tokens truncation — continuing (iter ${iterationCount})`)
             const truncatedMsg: ChatMessage = { role: 'assistant', content: parsed.text }
             if (parsed.thinking) truncatedMsg.reasoningContent = parsed.thinking
