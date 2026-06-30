@@ -167,7 +167,7 @@ export class Prefrontal {
     message = '',
     runtime?: RuntimeContext,
     role?: 'orchestrator' | 'worker',
-    opts?: { omitTools?: boolean }
+    opts?: { omitTools?: boolean; stateless?: boolean }
   ): Promise<string> {
     const bundle = await this.buildContext(message, runtime, role, opts)
     const blocks = [
@@ -273,7 +273,7 @@ export class Prefrontal {
     message = '',
     runtime?: RuntimeContext,
     role?: 'orchestrator' | 'worker',
-    opts?: { omitTools?: boolean }
+    opts?: { omitTools?: boolean; stateless?: boolean }
   ): Promise<ContextBundle> {
     // A worker runs a bounded, self-contained task the orchestrator composed —
     // it doesn't need the user's stored memory, learned feedback, conversation
@@ -282,7 +282,11 @@ export class Prefrontal {
     // lean (it was ~42k tokens, mostly irrelevant) and far cheaper, while
     // KEEPING what tool work needs: identity, agent procedures, device facts,
     // variables, and the tool definitions.
-    const lean = role === 'worker'
+    // Stateless mode (local chatbot) is leaner than a worker: identity only —
+    // no agent procedures, no memory/history/skills, no tools — so a local
+    // model answers like a plain LLM with minimal prompt and no context bloat.
+    const stateless = opts?.stateless === true
+    const lean = role === 'worker' || stateless
     // Assemble against a clamped budget, not the raw model window. A 200k–1M
     // window is for the live conversation, not a system prompt that gets
     // rebuilt every iteration — capping it here is what keeps the prompt lean
@@ -292,6 +296,9 @@ export class Prefrontal {
     const includedPaths = new Set<string>()
 
     for (const entry of ALWAYS_INCLUDED) {
+      // Stateless keeps only identity (soul/user) — drop the agent operating
+      // manual (the `prefrontal` category) so the model isn't steered agentic.
+      if (stateless && entry.category !== 'identity') continue
       const content = await this.readFile(entry.rel)
       if (content) {
         candidates.push({ category: entry.category, source: entry.rel, content })
@@ -345,8 +352,9 @@ export class Prefrontal {
       }
 
       // Device facts sit right after <identity> so the model reads
-      // "who I am, then where I am" before any memory or skills.
-      if (category === 'identity' && deviceBody.length > 0) {
+      // "who I am, then where I am" before any memory or skills. Skipped in
+      // stateless mode — they're tool/agent-oriented and just add bloat.
+      if (category === 'identity' && deviceBody.length > 0 && !stateless) {
         sections.push(this.wrap('device', deviceBody))
         sectionsIncluded.push('device')
       }
@@ -354,8 +362,8 @@ export class Prefrontal {
       // User-defined variables from config.json sit right after <device>
       // so the model sees "who I am, where I am, what I have" before
       // any memory or skills. Sensitive values are passed in plaintext
-      // so the agent can use them in tool calls.
-      if (category === 'identity') {
+      // so the agent can use them in tool calls. Skipped in stateless mode.
+      if (category === 'identity' && !stateless) {
         const variablesBody = await this.collectVariablesBlock()
         if (variablesBody.length > 0) {
           sections.push(this.wrap('variables', variablesBody))
@@ -367,7 +375,9 @@ export class Prefrontal {
       // candidate pool. Inject right after <prefrontal> so the model sees
       // "what I am, then what I can do, then what I know".
       if (category === 'prefrontal') {
-        if (opts?.omitTools) {
+        if (stateless) {
+          // Stateless chatbot: no tools and no notice — keep it minimal.
+        } else if (opts?.omitTools) {
           // Tool use is suppressed (restrictLocalModels — see Agent.respond).
           // Replace the ~20k-token <tools> catalog with a short notice so the
           // model knows it has no tools, why, and how the user re-enables them.

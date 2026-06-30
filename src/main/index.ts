@@ -150,6 +150,7 @@ import {
   setNotionConfig as persistNotionConfig,
   setRestrictPowerfulModels as persistRestrictPowerfulModels,
   setRestrictLocalModels as persistRestrictLocalModels,
+  setStatelessLocalModels as persistStatelessLocalModels,
   setShowChatAnalytics as persistShowChatAnalytics,
   setSttConfig as persistSttConfig,
   setTelegramConfig as persistTelegramConfig,
@@ -1279,6 +1280,10 @@ app.whenReady().then(async () => {
   })
   ipcMain.handle('runtime:setRestrictLocalModels', async (_e, value: boolean) => {
     await persistRestrictLocalModels(value)
+    return { value }
+  })
+  ipcMain.handle('runtime:setStatelessLocalModels', async (_e, value: boolean) => {
+    await persistStatelessLocalModels(value)
     return { value }
   })
   ipcMain.handle('runtime:setThinkingMode', async (_e, model: string, mode: string) => {

@@ -21,6 +21,9 @@ export function WolffishPanel(): React.JSX.Element {
   const [restrictModels, setRestrictModels] = useState<boolean>(
     config?.llm.restrictPowerfulModels ?? true
   )
+  const [statelessLocal, setStatelessLocal] = useState<boolean>(
+    config?.llm.statelessLocalModels ?? true
+  )
   const [restrictLocal, setRestrictLocal] = useState<boolean>(
     config?.llm.restrictLocalModels ?? true
   )
@@ -31,6 +34,7 @@ export function WolffishPanel(): React.JSX.Element {
     | 'bypass'
     | 'analytics'
     | 'restrictModels'
+    | 'statelessLocal'
     | 'restrictLocal'
     | 'weekStart'
     | null
@@ -112,6 +116,18 @@ export function WolffishPanel(): React.JSX.Element {
     }
   }
 
+  const onChangeStatelessLocal = async (next: boolean): Promise<void> => {
+    if (savingKey !== null || next === statelessLocal) return
+    setSavingKey('statelessLocal')
+    try {
+      await window.api.runtime.setStatelessLocalModels(next)
+      setStatelessLocal(next)
+      await refreshStatus()
+    } finally {
+      setSavingKey(null)
+    }
+  }
+
   const onChangeRestrictLocal = async (next: boolean): Promise<void> => {
     if (savingKey !== null || next === restrictLocal) return
     setSavingKey('restrictLocal')
@@ -183,11 +199,20 @@ export function WolffishPanel(): React.JSX.Element {
           />
           <div className="border-border/60 border-t" />
           <SettingToggle
+            label={t('settings.wolffish.statelessLocalModels.label')}
+            description={t('settings.wolffish.statelessLocalModels.description')}
+            value={statelessLocal}
+            onChange={onChangeStatelessLocal}
+            disabled={savingKey === 'statelessLocal'}
+          />
+          <div className="border-border/60 border-t" />
+          <SettingToggle
             label={t('settings.wolffish.restrictLocalModels.label')}
             description={t('settings.wolffish.restrictLocalModels.description')}
-            value={restrictLocal}
+            // While stateless is on, tools are forced off and locked.
+            value={statelessLocal ? true : restrictLocal}
             onChange={onChangeRestrictLocal}
-            disabled={savingKey === 'restrictLocal'}
+            disabled={savingKey === 'restrictLocal' || statelessLocal}
           />
           <div className="border-border/60 border-t" />
           <SettingToggle

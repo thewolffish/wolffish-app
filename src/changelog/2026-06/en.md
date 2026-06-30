@@ -1,4 +1,14 @@
-## v1.0.197 — 2026-06-30 `Latest`
+## v1.0.198 — 2026-06-30 `Latest`
+
+### Local Models as Plain, Fast Chatbots
+
+Local (Ollama) models now run **stateless** by default: each message is answered fresh, with no conversation history and none of the agent scaffolding — no stored memory, no procedures manual, no tools — just a small identity prompt that tells the model who it is. The payoff is speed and simplicity. Instead of straining to be an agent through a context it can't afford, a local model replies like a plain, fast LLM, and its prompt stays a couple of thousand tokens instead of tens of thousands. Wolffish still records your full conversation as always — the model simply doesn't carry it, so every reply starts clean.
+
+You'll find the new **Stateless local models** toggle in **Settings → Wolffish**, on by default. While it's on, tools for local models stay off and can't be switched on — turn stateless off first to give a capable local model its history back and the option to enable tools. Cloud models are unaffected throughout.
+
+---
+
+## v1.0.197 — 2026-06-30
 
 ### Local Models Now Converse Without Tools by Default
 

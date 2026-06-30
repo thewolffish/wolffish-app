@@ -251,11 +251,17 @@ export type WorkspaceConfig = {
     // limits — not recommended, as oversized models cause heavy swap
     // thrashing and degrade the entire system.
     restrictPowerfulModels?: boolean
+    // When true (default), local (Ollama) models run STATELESS: each turn sends
+    // only the current user message with an identity-only system prompt (no
+    // conversation history, agent manual, memory, skills, or tools) so a local
+    // model answers like a plain, fast LLM instead of an agent. While on, tools
+    // for local models are forced off and cannot be enabled.
+    statelessLocalModels?: boolean
     // When true (default), local (Ollama) models receive NO tools — the full
     // tool catalog (~20k tokens) is omitted from the prompt and the native
     // tools param, leaving a small local model to converse reliably instead of
     // choking on a context it can't fit. The model is told tools are off and how
-    // to enable them. Turn off for a capable local model with a large window.
+    // to enable them. Only adjustable when statelessLocalModels is off.
     restrictLocalModels?: boolean
     // Per-model thinking mode. Key is model name, value is thinking mode string.
     thinkingModes?: Record<string, string>
@@ -558,6 +564,7 @@ function defaultConfig(): WorkspaceConfig {
       local: emptyLocalModel(),
       providers: [],
       restrictPowerfulModels: true,
+      statelessLocalModels: true,
       restrictLocalModels: true
     },
     safety: { bypassPermissions: true, blockCredentials: false },
@@ -1226,6 +1233,13 @@ export async function setRestrictLocalModels(value: boolean): Promise<WorkspaceC
   return patchConfig((c) => ({
     ...c,
     llm: { ...c.llm, restrictLocalModels: value }
+  }))
+}
+
+export async function setStatelessLocalModels(value: boolean): Promise<WorkspaceConfig> {
+  return patchConfig((c) => ({
+    ...c,
+    llm: { ...c.llm, statelessLocalModels: value }
   }))
 }
 

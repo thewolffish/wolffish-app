@@ -554,16 +554,29 @@ export class Agent {
     const optimizationConfig = cfg?.contextOptimization
     const optimizeContext = optimizationConfig?.enabled !== false
     const truncateOutbound = optimizeContext && optimizationConfig?.truncation !== false
-    // Local models get no tools by default. Wolffish's full ~20k-token tool
-    // catalog fills a small local model's context and starves the response; a
-    // tiny model also tends to misuse tools and loop. When restrictLocalModels
-    // is on (default) and this turn resolves to the local provider, we omit both
-    // the <tools> prompt section (via buildSystemPrompt omitTools) and the native
-    // tools API param (filteredTools = []), and the model is told it has no tools
-    // and how the user can enable them. Opt out in Settings for a capable model.
-    // Stable for the whole turn — the active provider can't change mid-loop.
+    // Local-model behavior gates (default on, local provider only; stable for
+    // the whole turn — the active provider can't change mid-loop).
+    // - statelessLocal: the local model gets NO prior context — only the current
+    //   user turn, with an identity-only system prompt (no agent manual, memory,
+    //   history, skills, or tools). A plain fast chatbot, not an agent. Forces
+    //   tools off.
+    // - suppressLocalTools: omit the <tools> prompt section AND the native tools
+    //   API param. Always true under stateless; otherwise follows
+    //   restrictLocalModels. When omitted (and not stateless) the model is told
+    //   it has no tools and how to enable them.
+    const isLocalProvider = this.thalamus.getActiveProvider() === 'local'
+    const statelessLocal = isLocalProvider && cfg?.llm.statelessLocalModels !== false
     const suppressLocalTools =
-      cfg?.llm.restrictLocalModels !== false && this.thalamus.getActiveProvider() === 'local'
+      isLocalProvider && (statelessLocal || cfg?.llm.restrictLocalModels !== false)
+
+    // Stateless: strip prior conversation — send only the current user turn.
+    // Wolffish still records the full conversation; the local model just doesn't
+    // receive it, so each reply is fresh and the prompt stays tiny.
+    if (statelessLocal && messages.length > 1) {
+      const currentTurn = [...messages].reverse().find((m) => m.role === 'user')
+      messages.length = 0
+      messages.push(currentTurn ?? { role: 'user', content: userContent })
+    }
     let pinnedSystemPrompt: string | null = null
     let pinnedTools: ToolDefinition[] | null = null
     // Cerebellum tool-surface version captured when the pin was built. When a
@@ -629,7 +642,7 @@ export class Agent {
               userContent,
               runtime,
               toolRole,
-              { omitTools: suppressLocalTools }
+              { omitTools: suppressLocalTools, stateless: statelessLocal }
             )
             pinnedTools = suppressLocalTools
               ? []
@@ -642,7 +655,8 @@ export class Agent {
           // Legacy path: rebuild the system prompt each iteration so the
           // <runtime> block reflects the live iteration counter.
           systemPrompt = await this.prefrontal.buildSystemPrompt(userContent, runtime, toolRole, {
-            omitTools: suppressLocalTools
+            omitTools: suppressLocalTools,
+            stateless: statelessLocal
           })
           filteredTools = suppressLocalTools
             ? []
