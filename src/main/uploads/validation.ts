@@ -19,7 +19,9 @@ const ALLOWED_DOCUMENT_EXTS = new Set([
   '.txt',
   '.md',
   '.json',
-  '.pptx'
+  '.pptx',
+  '.html',
+  '.htm'
 ])
 const ALLOWED_AUDIO_EXTS = new Set(['.mp3', '.wav', '.ogg', '.m4a', '.flac', '.webm'])
 const VIDEO_EXTS = new Set(['.mp4', '.mov', '.avi', '.mkv', '.m4v', '.wmv', '.flv'])

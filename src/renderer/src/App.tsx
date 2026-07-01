@@ -3,12 +3,13 @@ import { useTranslation } from 'react-i18next'
 import { ThemeProvider } from '@providers/theme/ThemeProvider'
 import { LocaleProvider } from '@providers/locale/LocaleProvider'
 import { FlowProvider } from '@providers/flow/FlowProvider'
-import { useFlow } from '@providers/flow/useFlow'
+import { useFlow, type Screen } from '@providers/flow/useFlow'
 import { ToastProvider } from '@components/core/toast/ToastProvider'
 import { useToast } from '@components/core/toast/useToast'
 import { InputContextMenu } from '@components/core/InputContextMenu'
 import { ClosingOverlay } from '@components/common/closing-overlay/ClosingOverlay'
 import { HeartbeatActiveOverlay } from '@components/common/heartbeat-active-overlay/HeartbeatActiveOverlay'
+import { ProcedureActiveOverlay } from '@components/common/procedure-active-overlay/ProcedureActiveOverlay'
 import { Onboarding } from '@pages/Onboarding'
 import { LowDiskSpace } from '@pages/LowDiskSpace'
 import { OllamaSetup } from '@pages/OllamaSetup'
@@ -19,32 +20,45 @@ import { ViewerPage } from '@pages/ViewerPage'
 import { History } from '@pages/History'
 import { Changelog } from '@pages/Changelog'
 import { Heartbeat } from '@pages/Heartbeat'
+import { Procedures } from '@pages/Procedures'
 import { Soul } from '@pages/Soul'
 import { User } from '@pages/User'
 import { Agents } from '@pages/Agents'
 
-// A heartbeat job blocks everything (jobs run one-at-a-time), so while one runs
-// we swap the active screen for the live overlay. Centralized here so every page
+// A background run blocks everything (jobs run one-at-a-time), so while one runs
+// we swap the active screen for a live overlay. Both automations and procedures
+// run through the same brainstem queue, so they share the window.api.heartbeat.*
+// run channel; we tell them apart by the job id ("procedure:" prefix ⇒ a
+// procedure run) and show the matching overlay. Centralized here so every page
 // is covered without each one wiring it up.
-function useHeartbeatActive(): boolean {
+type ActiveRun = 'heartbeat' | 'procedure' | null
+
+const runKind = (id: string): Exclude<ActiveRun, null> =>
+  id.startsWith('procedure:') ? 'procedure' : 'heartbeat'
+
+function useActiveRun(): ActiveRun {
   const { t } = useTranslation()
   const toast = useToast()
-  const [active, setActive] = useState(false)
+  const [active, setActive] = useState<ActiveRun>(null)
   useEffect(() => {
     let cancelled = false
     window.api.heartbeat
       .getRunningJob()
       .then((job) => {
-        if (!cancelled) setActive(!!job)
+        if (!cancelled) setActive(job ? runKind(job.id) : null)
       })
       .catch(() => {})
-    const offStarted = window.api.heartbeat.onJobStarted(() => setActive(true))
+    const offStarted = window.api.heartbeat.onJobStarted((job) => setActive(runKind(job.id)))
     const offEnded = window.api.heartbeat.onJobEnded((payload) => {
-      setActive(false)
+      setActive(null)
       // A run that fails mid-execution has no other surface once the overlay
       // closes, so surface the failure as a toast.
       if (payload.status === 'failed') {
-        toast.show({ tone: 'error', message: payload.error ?? t('heartbeat.runFailed') })
+        const isProcedure = payload.id.startsWith('procedure:')
+        toast.show({
+          tone: 'error',
+          message: payload.error ?? t(isProcedure ? 'procedures.runFailed' : 'heartbeat.runFailed')
+        })
       }
     })
     return () => {
@@ -56,10 +70,27 @@ function useHeartbeatActive(): boolean {
   return active
 }
 
-function Screens(): React.JSX.Element {
-  const { screen } = useFlow()
-  const heartbeatActive = useHeartbeatActive()
-  if (heartbeatActive) return <HeartbeatActiveOverlay />
+// Main-app screens the user reaches from an active conversation (via the
+// sidebar). Chat stays mounted for the whole set so dipping into settings/
+// history/etc. and back never tears it down. Onboarding/setup screens are
+// excluded — there's no conversation to preserve there yet.
+const CHAT_KEEPALIVE_SCREENS = new Set<Screen>([
+  'chat',
+  'settings',
+  'viewer',
+  'history',
+  'changelog',
+  'heartbeat',
+  'procedures',
+  'soul',
+  'user',
+  'agents'
+])
+
+// Every screen EXCEPT chat, which is rendered persistently by Screens() so its
+// live state (context meter, timeline, scroll, in-flight stream) survives
+// navigation instead of reloading on every return.
+function NonChatScreen({ screen }: { screen: Screen }): React.JSX.Element | null {
   switch (screen) {
     case 'welcome':
       return <Onboarding />
@@ -70,7 +101,7 @@ function Screens(): React.JSX.Element {
     case 'model-picker':
       return <ModelPicker />
     case 'chat':
-      return <Chat />
+      return null
     case 'settings':
       return <Settings />
     case 'viewer':
@@ -81,6 +112,8 @@ function Screens(): React.JSX.Element {
       return <Changelog />
     case 'heartbeat':
       return <Heartbeat />
+    case 'procedures':
+      return <Procedures />
     case 'soul':
       return <Soul />
     case 'user':
@@ -88,6 +121,41 @@ function Screens(): React.JSX.Element {
     case 'agents':
       return <Agents />
   }
+}
+
+function Screens(): React.JSX.Element {
+  const { screen } = useFlow()
+  const activeRun = useActiveRun()
+  // Keep Chat MOUNTED (just hidden) across main-app navigation AND during a
+  // background run. `contents` makes the wrapper layout-invisible when shown so
+  // the chat view renders exactly as it would unwrapped; `hidden` (display:none)
+  // takes it out of layout without unmounting — no reload, no reset, no flash.
+  //
+  // Critically, staying mounted through a run is what keeps the conversation
+  // that TRIGGERED the run from being lost: an electron conversation is
+  // persisted only by this renderer, so unmounting Chat mid-turn (when a
+  // procedure_run/automation_run fires and the overlay takes over) would drop
+  // the triggering turn before it saves. Mounted-but-hidden, Chat still receives
+  // its own turn events and persists them; the run's own events never reach it
+  // (they go through the autonomous turn's isolated sink, not this channel).
+  const chatMounted = CHAT_KEEPALIVE_SCREENS.has(screen)
+  const chatVisible = chatMounted && screen === 'chat' && activeRun === null
+  return (
+    <>
+      {activeRun === 'procedure' ? (
+        <ProcedureActiveOverlay />
+      ) : activeRun === 'heartbeat' ? (
+        <HeartbeatActiveOverlay />
+      ) : (
+        <NonChatScreen screen={screen} />
+      )}
+      {chatMounted && (
+        <div className={chatVisible ? 'contents' : 'hidden'}>
+          <Chat />
+        </div>
+      )}
+    </>
+  )
 }
 
 // Electron's default action for a file dropped anywhere in the window is to

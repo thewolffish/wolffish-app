@@ -23,6 +23,7 @@ export type Screen =
   | 'history'
   | 'changelog'
   | 'heartbeat'
+  | 'procedures'
   | 'soul'
   | 'user'
   | 'agents'
@@ -138,6 +139,14 @@ export type FlowContextValue = {
   setMessages: Dispatch<SetStateAction<ChatMessage[]>>
   activeConversationId: string | null
   setActiveConversationId: Dispatch<SetStateAction<string | null>>
+  /**
+   * A saved procedure's prompt queued to run in a brand-new conversation. Set
+   * by the Procedures page's Play button; Chat consumes it — resetting to a
+   * fresh conversation and auto-sending the prompt — then clears it back to
+   * null. Not persisted; it's a one-shot hand-off between pages.
+   */
+  pendingProcedure: string | null
+  setPendingProcedure: Dispatch<SetStateAction<string | null>>
   /**
    * Navigate to a screen. Optional `returnTo` records where a follow-up
    * "Continue" should land — e.g. opening ollama-setup from Settings sets

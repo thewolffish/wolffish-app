@@ -7,7 +7,7 @@ import { PdfViewer } from '@components/common/pdf-viewer/PdfViewer'
 import { VideoPlayer } from '@components/common/video-player/VideoPlayer'
 import { cn } from '@lib/utils/cn'
 import type { MessageAttachment } from '@preload/index'
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 
 export type AttachmentListProps = {
   attachments: MessageAttachment[]
@@ -16,8 +16,17 @@ export type AttachmentListProps = {
    * Defaults to 'start' (assistant-side rendering); pass 'end' under
    * user bubbles so cards line up against the right edge instead of
    * inheriting the renderer components' built-in self-start.
+   * Only applies to the default 'list' variant.
    */
   align?: 'start' | 'end'
+  /**
+   * 'list' (default) — a single column at chat-bubble width (each viewer's
+   * built-in max-w-[85%]), used under message bubbles. 'grid' — a full-width
+   * CSS-columns masonry that lets tiles of different heights (image / audio /
+   * video / pdf) pack naturally with no single-column dead space; used by the
+   * conversation files dialog.
+   */
+  variant?: 'list' | 'grid'
 }
 
 /**
@@ -31,10 +40,31 @@ export type AttachmentListProps = {
  */
 export function AttachmentList({
   attachments,
-  align = 'start'
+  align = 'start',
+  variant = 'list'
 }: AttachmentListProps): React.JSX.Element | null {
   const existence = useExistenceMap(attachments)
   if (attachments.length === 0) return null
+
+  if (variant === 'grid') {
+    return (
+      // CSS multi-column masonry: tiles flow into as many ~18rem columns as
+      // fit and keep their natural height, so a short audio card sits beside a
+      // tall image without the single-column dead space. The per-tile wrapper
+      // neutralizes each viewer's built-in max-w-[85%]/self-start so tiles fill
+      // their column edge to edge (break-inside-avoid keeps a tile whole).
+      <div className="columns-[18rem] gap-3">
+        {attachments.map((att, idx) => (
+          <div
+            key={`${att.filePath}-${idx}`}
+            className="mb-3 break-inside-avoid [&>*]:w-full [&>*]:max-w-none!"
+          >
+            {renderViewer(att, existence[att.filePath] ?? true)}
+          </div>
+        ))}
+      </div>
+    )
+  }
 
   return (
     <div
@@ -47,91 +77,90 @@ export function AttachmentList({
         align === 'end' ? 'items-end [&>*]:self-end' : 'items-start [&>*]:self-start'
       )}
     >
-      {attachments.map((att, idx) => {
-        const exists = existence[att.filePath] ?? true
-        const key = `${att.filePath}-${idx}`
-        if (att.type === 'audio') {
-          return (
-            <AudioPlayer
-              key={key}
-              filePath={att.filePath}
-              fileExists={exists}
-              mimeType={att.mimeType}
-              fileName={att.originalName}
-            />
-          )
-        }
-        if (att.type === 'video') {
-          return (
-            <VideoPlayer
-              key={key}
-              filePath={att.filePath}
-              fileExists={exists}
-              mimeType={att.mimeType}
-              fileName={att.originalName}
-            />
-          )
-        }
-        if (att.type === 'image') {
-          return (
-            <ImageViewer
-              key={key}
-              filePath={att.filePath}
-              fileExists={exists}
-              mimeType={att.mimeType}
-              fileName={att.originalName}
-              width={att.width}
-              height={att.height}
-            />
-          )
-        }
-        if (att.type === 'pdf') {
-          return (
-            <PdfViewer
-              key={key}
-              filePath={att.filePath}
-              fileExists={exists}
-              fileName={att.originalName}
-              sizeBytes={att.sizeBytes}
-            />
-          )
-        }
-        if (isMarkdownAttachment(att)) {
-          return (
-            <MarkdownFileViewer
-              key={key}
-              filePath={att.filePath}
-              fileExists={exists}
-              fileName={att.originalName}
-              sizeBytes={att.sizeBytes}
-              mimeType={att.mimeType}
-            />
-          )
-        }
-        if (isHtmlAttachment(att)) {
-          return (
-            <HtmlFileViewer
-              key={key}
-              filePath={att.filePath}
-              fileExists={exists}
-              fileName={att.originalName}
-              sizeBytes={att.sizeBytes}
-              mimeType={att.mimeType}
-            />
-          )
-        }
-        return (
-          <FileCard
-            key={key}
-            filePath={att.filePath}
-            fileExists={exists}
-            fileName={att.originalName}
-            sizeBytes={att.sizeBytes}
-            mimeType={att.mimeType}
-          />
-        )
-      })}
+      {attachments.map((att, idx) => (
+        <Fragment key={`${att.filePath}-${idx}`}>
+          {renderViewer(att, existence[att.filePath] ?? true)}
+        </Fragment>
+      ))}
     </div>
+  )
+}
+
+/** Dispatch one attachment to its type-appropriate viewer (no key — the caller
+ *  owns keying so the same dispatch serves both the list and grid variants). */
+function renderViewer(att: MessageAttachment, exists: boolean): React.JSX.Element {
+  if (att.type === 'audio') {
+    return (
+      <AudioPlayer
+        filePath={att.filePath}
+        fileExists={exists}
+        mimeType={att.mimeType}
+        fileName={att.originalName}
+      />
+    )
+  }
+  if (att.type === 'video') {
+    return (
+      <VideoPlayer
+        filePath={att.filePath}
+        fileExists={exists}
+        mimeType={att.mimeType}
+        fileName={att.originalName}
+      />
+    )
+  }
+  if (att.type === 'image') {
+    return (
+      <ImageViewer
+        filePath={att.filePath}
+        fileExists={exists}
+        mimeType={att.mimeType}
+        fileName={att.originalName}
+        width={att.width}
+        height={att.height}
+      />
+    )
+  }
+  if (att.type === 'pdf') {
+    return (
+      <PdfViewer
+        filePath={att.filePath}
+        fileExists={exists}
+        fileName={att.originalName}
+        sizeBytes={att.sizeBytes}
+      />
+    )
+  }
+  if (isMarkdownAttachment(att)) {
+    return (
+      <MarkdownFileViewer
+        filePath={att.filePath}
+        fileExists={exists}
+        fileName={att.originalName}
+        sizeBytes={att.sizeBytes}
+        mimeType={att.mimeType}
+      />
+    )
+  }
+  if (isHtmlAttachment(att)) {
+    return (
+      <HtmlFileViewer
+        filePath={att.filePath}
+        fileExists={exists}
+        fileName={att.originalName}
+        sizeBytes={att.sizeBytes}
+        mimeType={att.mimeType}
+      />
+    )
+  }
+  return (
+    <FileCard
+      filePath={att.filePath}
+      fileExists={exists}
+      fileName={att.originalName}
+      sizeBytes={att.sizeBytes}
+      mimeType={att.mimeType}
+    />
   )
 }
 

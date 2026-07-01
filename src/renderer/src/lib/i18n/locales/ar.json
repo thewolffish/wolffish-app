@@ -5,6 +5,7 @@
   },
   "common": {
     "back": "رجوع",
+    "loading": "جارٍ التحميل…",
     "offline": "لا يوجد اتصال بالإنترنت",
     "diskUsage": "{{free}} متاح من أصل {{total}}",
     "contextMenu": {
@@ -677,6 +678,19 @@
         "title": "نوشن",
         "platform": "المنصة",
         "subtitle": "قراءة وكتابة الصفحات وقواعد البيانات والكتل عبر رمز تكامل نوشن.",
+        "connections": {
+          "title": "الاتصالات",
+          "subtitle": "اربط مساحة عمل نوشن واحدة أو أكثر؛ التسمية تخبر ولفيش أيها يستخدم.",
+          "label": "التسمية",
+          "labelPlaceholder": "مثال: شخصي",
+          "labelHint": "اسم قصير يستخدمه ولفيش لاختيار هذا الاتصال (مثل: شخصي).",
+          "add": "إضافة اتصال",
+          "remove": "إزالة الاتصال",
+          "empty": "لا توجد اتصالات بعد — أضف واحداً لربط مساحة عمل نوشن.",
+          "labelRequired": "التسمية مطلوبة.",
+          "labelDuplicate": "يجب أن تكون تسمية كل اتصال فريدة.",
+          "untitled": "اتصال {{index}}"
+        },
         "token": "رمز التكامل",
         "tokenPlaceholder": "ntn_…",
         "tokenHint": "أنشئ تكاملاً داخلياً في notion.so/my-integrations ثم شارك الصفحات/قواعد البيانات معه. يُخزَّن الرمز في config.json على جهازك — لا يُرسل إلى أي مكان عدا api.notion.com.",
@@ -719,6 +733,19 @@
         "title": "جيت هب",
         "platform": "المنصة",
         "subtitle": "إدارة المستودعات والمشاكل وطلبات الدمج والفروع والإصدارات عبر رمز الوصول الشخصي.",
+        "connections": {
+          "title": "الاتصالات",
+          "subtitle": "اربط حساب جيت هب واحداً أو أكثر؛ التسمية تخبر ولفيش أيها يستخدم.",
+          "label": "التسمية",
+          "labelPlaceholder": "مثال: شخصي",
+          "labelHint": "اسم قصير يستخدمه ولفيش لاختيار هذا الحساب (مثل: شخصي).",
+          "add": "إضافة اتصال",
+          "remove": "إزالة الاتصال",
+          "empty": "لا توجد اتصالات بعد — أضف واحداً لربط حساب جيت هب.",
+          "labelRequired": "التسمية مطلوبة.",
+          "labelDuplicate": "يجب أن تكون تسمية كل اتصال فريدة.",
+          "untitled": "اتصال {{index}}"
+        },
         "token": "رمز الوصول الشخصي",
         "tokenPlaceholder": "ghp_… أو github_pat_…",
         "tokenHint": "أنشئ رمزاً في <link>github.com/settings/personal-access-tokens</link> مع صلاحية 'repo' (و 'gist' للـ Gists). الرمز يُخزّن في config.json على جهازك — لا يُرسل إلا إلى api.github.com.",
@@ -1300,6 +1327,7 @@
     "stop": "إيقاف",
     "telegramReadOnly": "تابع هذه المحادثة على تيليجرام.",
     "whatsappReadOnly": "تابع هذه المحادثة على واتساب.",
+    "procedureReadOnly": "تشغيل إجراء — للقراءة فقط.",
     "empty": {
       "title": "وولف‌ فيش جاهز",
       "subtitle": "اسأل أي شيء. أنا أقضم كل شئ."
@@ -1438,6 +1466,7 @@
     "user": "المستخدم",
     "agents": "الوكلاء",
     "heartbeat": "نبض القلب",
+    "procedures": "الإجراءات",
     "task": {
       "title": "مهمة",
       "status": {
@@ -1495,6 +1524,7 @@
       "viewLogs": "عرض السجلات",
       "title": "المخطط الزمني",
       "event": {
+        "turn.started": "جولة جديدة",
         "context.built": "تم بناء السياق",
         "llm.response": "استجاب النموذج",
         "tool.called": "تم استدعاء أداة",
@@ -1517,6 +1547,11 @@
         "segment.compaction": "ضغط السياق"
       },
       "eventCount": "{{count}} أحداث"
+    },
+    "files": {
+      "viewFiles": "عرض الملفات",
+      "title": "الملفات",
+      "fileCount": "{{count}} ملفات"
     },
     "modeToggle": {
       "ariaLabel": "وضع المزوّد",
@@ -1901,6 +1936,37 @@
       "blocked": "المحادثة متوقفة أثناء تشغيل مهمة دورية.",
       "compactionDaily": "تلخيص حلقات اليوم وترقية الحقائق المهمة إلى الذاكرة طويلة المدى.",
       "compactionWeekly": "دمج حلقات الأسبوع الماضي في ملخص أسبوعي."
+    }
+  },
+  "procedures": {
+    "title": "الإجراءات",
+    "subtitle": "إجراءات محفوظة يمكنك تشغيلها عند الطلب.",
+    "new": "جديد",
+    "untitled": "إجراء بلا عنوان",
+    "empty": "لا توجد إجراءات بعد. أنشئ واحدًا لحفظ إجراء تستخدمها كثيرًا.",
+    "editedAt": "عُدّل {{time}}",
+    "run": "تشغيل",
+    "runEmptyHint": "أضف إجراء لتشغيل هذا",
+    "edit": "تعديل",
+    "editTitle": "تعديل الإجراء",
+    "titlePlaceholder": "اسم الإجراء",
+    "titleRequired": "العنوان مطلوب",
+    "promptPlaceholder": "اكتب الإجراء التي تريد تشغيله…",
+    "autosaveHint": "يتم الحفظ تلقائيًا.",
+    "done": "تم",
+    "delete": "حذف",
+    "deleteTitle": "حذف هذا الإجراء؟",
+    "deleteWarning": "سيُحذف «{{name}}» نهائيًا. لا يمكن التراجع عن هذا.",
+    "deleteConfirm": "حذف",
+    "deleteCancel": "إلغاء",
+    "deleteSuccess": "تم حذف الإجراء",
+    "saveError": "حدث خطأ ما",
+    "runFailed": "فشل تشغيل الإجراء",
+    "overlay": {
+      "startedAt": "بدأ في {{time}}",
+      "activity": "النشاط",
+      "waiting": "في انتظار المخرجات…",
+      "blocked": "المحادثة متوقفة أثناء تشغيل إجراء."
     }
   },
   "history": {

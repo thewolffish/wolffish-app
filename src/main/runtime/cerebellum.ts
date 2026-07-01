@@ -317,6 +317,38 @@ export type AutomationsHost = {
 }
 
 /**
+ * Procedure-management surface injected into the `procedures` capability's
+ * plugin via its init context (PluginContext.procedures). Implemented in the
+ * main process (index.ts) over the same procedures store the renderer uses, plus
+ * the Brainstem's detached-run queue for `run`. Present only to the `procedures`
+ * plugin; undefined for every other plugin.
+ */
+export type ProcedureInfo = {
+  id: string
+  title: string
+  prompt: string
+  createdAt: number
+  updatedAt: number
+}
+
+export type ProceduresHost = {
+  /** Every saved procedure, most-recently-edited first. */
+  list: () => Promise<ProcedureInfo[]>
+  /** Save a new procedure; returns the created row. */
+  create: (title: string, prompt: string) => Promise<ProcedureInfo>
+  /** Edit title and/or prompt (omitted fields kept); returns the updated row. */
+  update: (id: string, patch: { title?: string; prompt?: string }) => Promise<ProcedureInfo>
+  /** Permanently delete a procedure by id. */
+  delete: (id: string) => Promise<{ ok: boolean; error?: string }>
+  /**
+   * Run a procedure now as a detached background job — the same single-flight
+   * queue and sealed-conversation run a triggered automation uses. Fire-and-
+   * forget: returns as soon as the run is queued.
+   */
+  run: (id: string) => Promise<{ ok: boolean; started: boolean; error?: string }>
+}
+
+/**
  * Worker-management surface injected into the `orchestrator` capability's plugin
  * via its init context (PluginContext.orchestrator). Implemented in the main
  * process (index.ts) over the Agent's active orchestration session — the single
@@ -380,6 +412,13 @@ export type PluginContext = {
    * every other plugin.
    */
   automations?: AutomationsHost
+  /**
+   * Procedure-management surface. Present only when the host wired one in via
+   * setProceduresHost — used by the `procedures` capability to list, view,
+   * create, edit, delete, and run saved procedures. Undefined for every other
+   * plugin.
+   */
+  procedures?: ProceduresHost
   /**
    * Worker-management surface. Present only when the host wired one in via
    * setOrchestratorHost — used by the `orchestrator` capability to spawn, drive,
@@ -461,6 +500,7 @@ export class Cerebellum {
   private disabled = new Set<string>()
   private pluginHost?: CerebellumPluginHost
   private automationsHost?: AutomationsHost
+  private proceduresHost?: ProceduresHost
   private orchestratorHost?: OrchestratorHost
   /**
    * Bumped every time the live tool surface changes — a reload (skills
@@ -555,6 +595,16 @@ export class Cerebellum {
    */
   setAutomationsHost(host: AutomationsHost): void {
     this.automationsHost = host
+  }
+
+  /**
+   * Wire the procedure-management host (implemented in the main process over the
+   * procedures store + the Brainstem's detached-run queue) that the `procedures`
+   * capability's plugin receives in its init context. Set once at startup;
+   * survives reload() so the bridge keeps working after the plugin is re-imported.
+   */
+  setProceduresHost(host: ProceduresHost): void {
+    this.proceduresHost = host
   }
 
   /**
@@ -1187,6 +1237,7 @@ export class Cerebellum {
         sudo: sudoSession,
         host: this.pluginHost,
         automations: this.automationsHost,
+        procedures: this.proceduresHost,
         orchestrator: this.orchestratorHost,
         askUser: (input) => this.dispatchAskUser(input),
         getChannelStatus: () => this.channelStatusProvider?.() ?? []

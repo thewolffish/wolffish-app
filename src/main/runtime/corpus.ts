@@ -16,8 +16,25 @@
 import { is } from '@electron-toolkit/utils'
 import { diskWriter } from '@main/io/diskWriter'
 import mitt, { type Emitter, type Handler } from 'mitt'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import fs from 'node:fs/promises'
 import path from 'node:path'
+
+/**
+ * Set (via `.run(true, …)`) for the duration of an AUTONOMOUS turn — the sealed
+ * background runs from Agent.processAutonomous (heartbeat automations AND
+ * procedure runs). Corpus events are emitted SYNCHRONOUSLY (mitt), so a listener
+ * runs inside the emitter's async context and can read this at emit time to tell
+ * whether an event originated inside a background run. The Electron TurnRunner
+ * uses it to NOT relay a background run's events to the live chat — otherwise a
+ * procedure/automation firing while a chat turn is still streaming would pollute
+ * the live conversation's context meter, token counters, and timeline, and its
+ * task.created would hijack the channel's active task id (so Stop aborts the
+ * wrong task). Fail-open: `undefined` ⇒ a normal interactive/worker turn, relay
+ * as before. Only processAutonomous ever sets it, so channel and orchestrator
+ * worker turns are unaffected.
+ */
+export const autonomousTurnScope = new AsyncLocalStorage<boolean>()
 
 export type CorpusEvents = {
   'message.received': { content: string; timestamp: string }
@@ -192,6 +209,12 @@ export type CorpusEvents = {
     message: string
   }
   'whatsapp.message.received': { remoteJid: string; body: string }
+  'whatsapp.media.received': {
+    remoteJid: string
+    type: string
+    filePath: string
+    sizeBytes: number
+  }
   'whatsapp.message.sent': { remoteJid: string }
 
   'conversation.changed': { conversationId: string | null; title?: string | null }

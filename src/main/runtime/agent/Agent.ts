@@ -2,11 +2,14 @@ import {
   createConversation,
   generateTitle,
   saveConversation,
+  type ConversationChannel,
   type ConversationFile,
   type ConversationMessage
 } from '@main/conversations'
 import { diskWriter } from '@main/io/diskWriter'
 import { AsyncLocalStorage } from 'node:async_hooks'
+import { deliveredFileNames } from '@main/runtime/agent/delivered-files'
+import { emptyTurnNudge, MAX_EMPTY_TURN_NUDGES } from '@main/runtime/agent/empty-turn-guard'
 import { Amygdala, SafetyBlockedError } from '@main/runtime/amygdala'
 import { BasalGanglia } from '@main/runtime/basalganglia'
 import { Brainstem } from '@main/runtime/brainstem'
@@ -19,7 +22,7 @@ import {
 } from '@main/runtime/broca'
 import { Cerebellum, type OrchestratorHost } from '@main/runtime/cerebellum'
 import { compactOverflow } from '@main/runtime/compactor'
-import { Corpus } from '@main/runtime/corpus'
+import { autonomousTurnScope, Corpus } from '@main/runtime/corpus'
 import { Cortex } from '@main/runtime/cortex'
 import { Device } from '@main/runtime/device'
 import { Hippocampus, type TurnToolCall } from '@main/runtime/hippocampus'
@@ -107,6 +110,13 @@ export type AgentTurnOptions = {
   conversationId?: string | null
   conversationTitle?: string | null
   /**
+   * Delivery channel for this turn's user-facing prose. Threaded into the
+   * system prompt so the model writes in the channel's native text
+   * formatting (WhatsApp renders no Markdown; see prefrontal's channel
+   * overlay). Omitted for in-app and background turns → no overlay.
+   */
+  channel?: ConversationChannel
+  /**
    * Isolated Broca instance for this turn. When provided, the turn uses
    * this instead of the shared `this.broca`, preventing state collision
    * between concurrent turns (e.g. heartbeat jobs vs interactive chat).
@@ -137,6 +147,12 @@ export type AutonomousTurnOptions = {
   instruction: string
   jobLabel: string
   signal?: AbortSignal
+  /**
+   * Channel stamped on the sealed conversation this run produces. Defaults to
+   * 'heartbeat' (automations); the `procedures` capability passes 'procedure' so
+   * a procedure run is distinguishable from a scheduled automation in history.
+   */
+  channel?: ConversationChannel
 }
 
 export type AutonomousTurnResult = {
@@ -525,6 +541,16 @@ export class Agent {
     let task: Awaited<ReturnType<typeof this.motor.createTask>> | null = null
     let totalToolCalls = 0
     let iterationCount = 0
+    // File names a tool auto-delivered to the user this turn. Fed to the runtime
+    // tail (deliveredFilesReminder) so the model is reminded not to re-send them
+    // via send_file — turn-scoped and reset per respond() call, and it rides the
+    // post-cache-breakpoint tail so it never perturbs the cached history prefix.
+    const deliveredThisTurn = new Set<string>()
+    // Bounded guard against a silent empty end_turn (no tool calls, no text) —
+    // see emptyTurnNudge. Loop-scoped so it persists across iterations and
+    // resets per respond() call; it is the only thing that stops such a turn
+    // from looping (the outer while(true) has no numeric iteration cap).
+    let emptyTurnNudges = 0
     let stopReason: SegmentTurnEndReason | 'canceled' = 'end_turn'
     let lastAssistantText = ''
     let lastReasoningContent: string | undefined
@@ -636,7 +662,8 @@ export class Agent {
         const runtime = {
           iteration: iterationCount,
           toolsCalled: totalToolCalls,
-          renderCounters: !optimizeContext
+          renderCounters: !optimizeContext,
+          deliveredFiles: [...deliveredThisTurn]
         }
 
         let systemPrompt: string
@@ -655,7 +682,7 @@ export class Agent {
               userContent,
               runtime,
               toolRole,
-              { omitTools: suppressLocalTools, stateless: statelessLocal }
+              { omitTools: suppressLocalTools, stateless: statelessLocal, channel: turn.channel }
             )
             pinnedTools = suppressLocalTools
               ? []
@@ -669,7 +696,8 @@ export class Agent {
           // <runtime> block reflects the live iteration counter.
           systemPrompt = await this.prefrontal.buildSystemPrompt(userContent, runtime, toolRole, {
             omitTools: suppressLocalTools,
-            stateless: statelessLocal
+            stateless: statelessLocal,
+            channel: turn.channel
           })
           filteredTools = suppressLocalTools
             ? []
@@ -737,7 +765,11 @@ export class Agent {
           // never perturbs a prefix hash.
           volatileStatus:
             optimizeContext && iterationCount > 1
-              ? formatRuntimeStatus({ iteration: iterationCount, toolsCalled: totalToolCalls })
+              ? formatRuntimeStatus({
+                  iteration: iterationCount,
+                  toolsCalled: totalToolCalls,
+                  deliveredFiles: [...deliveredThisTurn]
+                })
               : undefined
         })
         const teed = broca.streamSegments(stream)
@@ -884,6 +916,22 @@ export class Agent {
               content:
                 '[System: Your previous response was truncated by the output token limit. Do NOT repeat what you already said. Continue from where you stopped.]'
             })
+            continue
+          }
+
+          // Silent empty end_turn: the model ended its turn with no tool calls
+          // and no visible text (a reasoning model can emit a reasoning block
+          // but an empty content channel). Left alone this ends the run
+          // mid-plan with no closing message to the user. Nudge it to continue
+          // or wrap up — bounded by MAX_EMPTY_TURN_NUDGES so it can never spin.
+          const nudge = emptyTurnNudge(parsed, emptyTurnNudges)
+          if (nudge) {
+            emptyTurnNudges += 1
+            console.log(
+              `[agent] empty end_turn (no output, no tool call) — nudging to ` +
+                `continue (${emptyTurnNudges}/${MAX_EMPTY_TURN_NUDGES}, iter ${iterationCount})`
+            )
+            messages.push(...nudge)
             continue
           }
 
@@ -1094,6 +1142,16 @@ export class Agent {
               ...(result.ok ? { output: result.output } : { error: result.output })
             })
             .catch(() => undefined)
+
+          // Record any file this tool auto-delivered (the [wolffish-output]
+          // marker or the bare {path} JSON generation tools return). The
+          // reminder rides the runtime tail (deliveredThisTurn → runtime /
+          // volatileStatus), NOT this tool message — keeping it out of the
+          // cached history prefix. Tool result content stays byte-identical to
+          // the persisted segment, so cross-turn prefix caching is unaffected.
+          if (result.ok) {
+            for (const name of deliveredFileNames(result.output)) deliveredThisTurn.add(name)
+          }
 
           const toolMsg: ChatMessage & { role: 'tool' } = {
             role: 'tool',
@@ -1312,7 +1370,7 @@ export class Agent {
     const conv: ConversationFile = {
       ...createConversation(null),
       title: summary === 'Untitled' ? opts.jobLabel : `${opts.jobLabel}: ${summary}`,
-      channel: 'heartbeat',
+      channel: opts.channel ?? 'heartbeat',
       sealed: true
     }
 
@@ -1359,16 +1417,22 @@ export class Agent {
     }
     const localBroca = new Broca({ corpus: this.corpus, shouldSilenceToolCall: isInternalToolCall })
 
-    const result = await this.respond({
-      history: [{ role: 'user', content: opts.instruction }],
-      turnId,
-      onSegment: sink,
-      signal: opts.signal,
-      conversationId: conv.id,
-      conversationTitle: conv.title,
-      broca: localBroca,
-      bypassApproval: true
-    })
+    // Run inside the autonomous-turn scope so this background run's corpus
+    // events (context/tokens/tools/tasks) are NOT relayed into a live chat that
+    // may still be streaming — they'd otherwise corrupt that conversation's
+    // meter/timeline and hijack its active task id. See autonomousTurnScope.
+    const result = await autonomousTurnScope.run(true, () =>
+      this.respond({
+        history: [{ role: 'user', content: opts.instruction }],
+        turnId,
+        onSegment: sink,
+        signal: opts.signal,
+        conversationId: conv.id,
+        conversationTitle: conv.title,
+        broca: localBroca,
+        bypassApproval: true
+      })
+    )
     flushText()
 
     const responseText = segments

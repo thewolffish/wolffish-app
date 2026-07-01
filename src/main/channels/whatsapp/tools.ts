@@ -1,3 +1,4 @@
+import { markdownToWhatsApp } from '@main/channels/whatsapp/format'
 import type {
   Capability,
   SkillToolDescriptor,
@@ -118,7 +119,8 @@ export function buildWhatsAppCapability(deps: ToolDeps): {
         },
         message: {
           type: 'string',
-          description: 'The message body. Plain text.',
+          description:
+            'The message body. WhatsApp formatting only — *bold*, _italic_, ~strikethrough~, `inline code`, ```monospace```, "- " bullets, "1. " numbered items, "> " quotes. Never Markdown (no **, no # headings, no | tables |, no [text](url)); leaked Markdown is auto-converted best-effort.',
           required: true
         }
       }
@@ -246,7 +248,8 @@ export function buildWhatsAppCapability(deps: ToolDeps): {
         },
         message: {
           type: 'string',
-          description: 'The reply text.',
+          description:
+            'The reply text. WhatsApp formatting only (*bold*, _italic_, `inline code`, "- " bullets) — never Markdown.',
           required: true
         }
       }
@@ -467,7 +470,9 @@ async function sendText(
   const message = stringArg(args.message)
   if (!message) return failure('message is required')
   try {
-    const result = await sock.sendMessage(jid, { text: message })
+    // Model-authored body — convert any Markdown to WhatsApp formatting
+    // (idempotent for text that is already WhatsApp-formatted).
+    const result = await sock.sendMessage(jid, { text: markdownToWhatsApp(message) })
     if (result?.key.id) track(result.key.id)
     return success(`Sent. messageId=${result?.key.id} to=${jid}`)
   } catch (err) {
@@ -484,7 +489,8 @@ async function sendImage(
   if (!jid) return failure('jid is required')
   const media = await loadMedia(args, 'imageBase64', 'image')
   if ('error' in media) return failure(media.error)
-  const caption = stringArg(args.caption) ?? undefined
+  const rawCaption = stringArg(args.caption)
+  const caption = rawCaption ? markdownToWhatsApp(rawCaption) : undefined
   try {
     const result = await sock.sendMessage(jid, {
       image: media.buffer,
@@ -508,7 +514,8 @@ async function sendDocument(
   const media = await loadMedia(args, 'documentBase64', 'document')
   if ('error' in media) return failure(media.error)
   const fileName = stringArg(args.fileName) ?? media.basename ?? 'file'
-  const caption = stringArg(args.caption) ?? undefined
+  const rawCaption = stringArg(args.caption)
+  const caption = rawCaption ? markdownToWhatsApp(rawCaption) : undefined
   try {
     const result = await sock.sendMessage(jid, {
       document: media.buffer,
@@ -559,7 +566,7 @@ async function replyTo(
   try {
     const result = await sock.sendMessage(
       jid,
-      { text: message },
+      { text: markdownToWhatsApp(message) },
       {
         quoted: {
           key: { remoteJid: jid, id: quotedId },

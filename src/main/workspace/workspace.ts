@@ -102,30 +102,55 @@ export type BraveConfig = {
 }
 
 /**
- * Notion integration token. When `token` is non-empty, the notion
- * cerebellum plugin can read/write Notion pages, databases, and blocks.
- * Stateless — no daemon, no long-poll. The plugin reads config.json
- * directly on every tool call.
+ * A single labeled Notion integration. The user assigns a `label`
+ * (e.g. "Personal", "Wolffish") so both they and the model can tell
+ * multiple linked workspaces apart. `token` is the integration secret.
+ * `name`/`email` are the account snapshot resolved by a successful
+ * "Test" in settings, kept so the UI can show the connected account on
+ * next launch without re-testing.
  */
-export type NotionConfig = {
+export type NotionConnection = {
+  id: string
+  label: string
   token: string
   name: string
   email: string
 }
 
 /**
- * GitHub Personal Access Token plus the authenticated account snapshot.
- * `token` is the credential the cerebellum plugin reads on every call.
- * `login` and `name` are populated by the settings panel after a
- * successful Test Connection — kept in config.json so the UI can show
- * the connected account on next launch without re-testing. Cleared
- * automatically when the token changes (a new token may belong to a
- * different account, so the cached identity is no longer trustworthy).
+ * Notion integration config. Holds any number of labeled connections —
+ * the user can link several Notion workspaces and the model picks one
+ * per tool call by its label. Stateless — no daemon, no long-poll. The
+ * cerebellum plugin reads config.json directly on every tool call.
  */
-export type GitHubConfig = {
+export type NotionConfig = {
+  connections: NotionConnection[]
+}
+
+/**
+ * A single labeled GitHub account (Personal Access Token). The user
+ * assigns a `label` (e.g. "Personal", "Work") to disambiguate multiple
+ * linked accounts. `token` is the PAT the cerebellum plugin reads on
+ * every call. `login`/`name` are the account snapshot populated by a
+ * successful Test Connection — kept so the UI can show the connected
+ * account on next launch without re-testing.
+ */
+export type GitHubConnection = {
+  id: string
+  label: string
   token: string
   login: string
   name: string
+}
+
+/**
+ * GitHub integration config. Holds any number of labeled connections —
+ * the user can link several accounts and the model picks one per tool
+ * call by its label. Stateless — no daemon: the cerebellum plugin reads
+ * config.json directly on every tool call.
+ */
+export type GitHubConfig = {
+  connections: GitHubConnection[]
 }
 
 /**
@@ -610,6 +635,7 @@ export async function ensureWorkspace(): Promise<void> {
   // see the current bundled versions.
   await migrateConfig()
   await migrateBrain()
+  await migrateConnections()
   await migrateTtsConfig()
   await migrateStaleArtifacts()
   await migrateAgentsCore()
@@ -771,6 +797,35 @@ async function migrateConfig(): Promise<void> {
     bundledDefaults
   ) as unknown as WorkspaceConfig
   await writeConfig(merged)
+}
+
+/**
+ * One-time migration of the legacy single-token Notion/GitHub shape
+ * (`{ token, name, email }` / `{ token, login, name }`) into the labeled
+ * connections array (`{ connections: [...] }`). Idempotent: once the
+ * value is already a `{ connections }` object it does nothing. The old
+ * token is preserved as a single connection labeled "Default" so linked
+ * accounts keep working across the update.
+ */
+async function migrateConnections(): Promise<void> {
+  const config = await readConfig()
+  if (!config) return
+  const cfg = config as unknown as Record<string, unknown>
+  let changed = false
+
+  const notion = cfg.notion
+  if (isPlainObject(notion) && !Array.isArray(notion.connections)) {
+    cfg.notion = normalizeNotionConfig(notion)
+    changed = true
+  }
+
+  const github = cfg.github
+  if (isPlainObject(github) && !Array.isArray(github.connections)) {
+    cfg.github = normalizeGitHubConfig(github)
+    changed = true
+  }
+
+  if (changed) await writeConfig(config)
 }
 
 /**
@@ -1419,54 +1474,112 @@ export async function setTtsConfig(patch: Partial<TtsConfig>): Promise<Workspace
   })
 }
 
-const EMPTY_NOTION_CONFIG: NotionConfig = { token: '', name: '', email: '' }
+// Deterministic short key derived from a token, used only to synthesize a
+// stable connection `id` for legacy or hand-edited configs that lack one
+// (the UI always assigns a real uuid). djb2 — no crypto import needed.
+function connectionKeyFromToken(token: string): string {
+  let hash = 5381
+  for (let i = 0; i < token.length; i++) {
+    hash = ((hash << 5) + hash + token.charCodeAt(i)) | 0
+  }
+  return (hash >>> 0).toString(36)
+}
+
+/**
+ * Coerce whatever is stored under `notion` into the connections shape.
+ * Handles the legacy single-token shape (`{ token, name, email }`) by
+ * folding it into a single "Default"-labeled connection so nothing is
+ * lost before migrateConnections() rewrites config.json on disk.
+ */
+function normalizeNotionConfig(stored: unknown): NotionConfig {
+  if (!isPlainObject(stored)) return { connections: [] }
+  if (Array.isArray(stored.connections)) {
+    const connections = stored.connections.filter(isPlainObject).map((c, i) => ({
+      // Fall back to an index-qualified id so hand-edited entries that omit
+      // both id and token don't collide on the same djb2('') hash.
+      id:
+        String(c.id ?? '').trim() || `notion-${i}-${connectionKeyFromToken(String(c.token ?? ''))}`,
+      // Mirror the legacy branch: a blank label would be unreachable by the
+      // model once several connections exist, so default it to "Default".
+      label: String(c.label ?? '').trim() || 'Default',
+      token: String(c.token ?? '').trim(),
+      name: String(c.name ?? ''),
+      email: String(c.email ?? '')
+    }))
+    return { connections }
+  }
+  const token = String(stored.token ?? '').trim()
+  if (token) {
+    return {
+      connections: [
+        {
+          id: `notion-${connectionKeyFromToken(token)}`,
+          label: String(stored.label ?? '').trim() || 'Default',
+          token,
+          name: String(stored.name ?? ''),
+          email: String(stored.email ?? '')
+        }
+      ]
+    }
+  }
+  return { connections: [] }
+}
 
 export async function getNotionConfig(): Promise<NotionConfig> {
   const config = await readConfig()
-  return config?.notion ?? EMPTY_NOTION_CONFIG
+  return normalizeNotionConfig(config?.notion)
 }
 
-export async function setNotionConfig(patch: Partial<NotionConfig>): Promise<WorkspaceConfig> {
-  return patchConfig((c) => {
-    const current = c.notion ?? EMPTY_NOTION_CONFIG
-    const tokenChanged = patch.token !== undefined && patch.token !== current.token
-    const next: NotionConfig = {
-      token: patch.token ?? current.token,
-      name: tokenChanged ? (patch.name ?? '') : (patch.name ?? current.name),
-      email: tokenChanged ? (patch.email ?? '') : (patch.email ?? current.email)
+export async function setNotionConfig(connections: NotionConnection[]): Promise<WorkspaceConfig> {
+  return patchConfig((c) => ({ ...c, notion: { connections } }))
+}
+
+/**
+ * Coerce whatever is stored under `github` into the connections shape,
+ * folding the legacy single-token shape (`{ token, login, name }`) into
+ * one "Default"-labeled connection.
+ */
+function normalizeGitHubConfig(stored: unknown): GitHubConfig {
+  if (!isPlainObject(stored)) return { connections: [] }
+  if (Array.isArray(stored.connections)) {
+    const connections = stored.connections.filter(isPlainObject).map((c, i) => ({
+      // Fall back to an index-qualified id so hand-edited entries that omit
+      // both id and token don't collide on the same djb2('') hash.
+      id:
+        String(c.id ?? '').trim() || `github-${i}-${connectionKeyFromToken(String(c.token ?? ''))}`,
+      // Mirror the legacy branch: a blank label would be unreachable by the
+      // model once several connections exist, so default it to "Default".
+      label: String(c.label ?? '').trim() || 'Default',
+      token: String(c.token ?? '').trim(),
+      login: String(c.login ?? ''),
+      name: String(c.name ?? '')
+    }))
+    return { connections }
+  }
+  const token = String(stored.token ?? '').trim()
+  if (token) {
+    return {
+      connections: [
+        {
+          id: `github-${connectionKeyFromToken(token)}`,
+          label: String(stored.label ?? '').trim() || 'Default',
+          token,
+          login: String(stored.login ?? ''),
+          name: String(stored.name ?? '')
+        }
+      ]
     }
-    return { ...c, notion: next }
-  })
+  }
+  return { connections: [] }
 }
-
-const EMPTY_GITHUB_CONFIG: GitHubConfig = { token: '', login: '', name: '' }
 
 export async function getGitHubConfig(): Promise<GitHubConfig> {
   const config = await readConfig()
-  const stored = config?.github
-  if (!stored) return EMPTY_GITHUB_CONFIG
-  // Backfill login/name for legacy configs that pre-date account snapshot.
-  return {
-    token: stored.token ?? '',
-    login: stored.login ?? '',
-    name: stored.name ?? ''
-  }
+  return normalizeGitHubConfig(config?.github)
 }
 
-export async function setGitHubConfig(patch: Partial<GitHubConfig>): Promise<WorkspaceConfig> {
-  return patchConfig((c) => {
-    const current = c.github ?? EMPTY_GITHUB_CONFIG
-    // Token rotation invalidates the cached identity — a fresh token may
-    // belong to a different account, so don't keep the old login/name
-    // unless the patch explicitly supplies them.
-    const tokenChanged = patch.token !== undefined && patch.token !== current.token
-    const next: GitHubConfig = {
-      token: patch.token ?? current.token,
-      login: patch.login ?? (tokenChanged ? '' : current.login),
-      name: patch.name ?? (tokenChanged ? '' : current.name)
-    }
-    return { ...c, github: next }
-  })
+export async function setGitHubConfig(connections: GitHubConnection[]): Promise<WorkspaceConfig> {
+  return patchConfig((c) => ({ ...c, github: { connections } }))
 }
 
 const EMPTY_GOOGLE_CONFIG: GoogleConfig = {

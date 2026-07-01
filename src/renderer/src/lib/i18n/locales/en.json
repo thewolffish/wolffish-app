@@ -5,6 +5,7 @@
   },
   "common": {
     "back": "Back",
+    "loading": "Loading…",
     "offline": "No network connection",
     "diskUsage": "{{free}} free of {{total}}",
     "contextMenu": {
@@ -674,6 +675,19 @@
         "title": "Notion",
         "platform": "Platform",
         "subtitle": "Read and write pages, databases, and blocks via your Notion integration token.",
+        "connections": {
+          "title": "Connections",
+          "subtitle": "Link one or more Notion workspaces; the label tells Wolffish which to use.",
+          "label": "Label",
+          "labelPlaceholder": "e.g. Personal",
+          "labelHint": "A short name Wolffish uses to pick this connection (e.g. Personal).",
+          "add": "Add connection",
+          "remove": "Remove connection",
+          "empty": "No connections yet — add one to link a Notion workspace.",
+          "labelRequired": "Label is required.",
+          "labelDuplicate": "Each connection needs a unique label.",
+          "untitled": "Connection {{index}}"
+        },
         "token": "Integration token",
         "tokenPlaceholder": "ntn_…",
         "tokenHint": "Create an internal integration at notion.so/my-integrations, then share pages/databases with it. Token is stored in config.json on your machine — never sent anywhere except api.notion.com.",
@@ -716,6 +730,19 @@
         "title": "GitHub",
         "platform": "Platform",
         "subtitle": "Manage repos, issues, PRs, branches, CI, releases, and gists via your Personal Access Token.",
+        "connections": {
+          "title": "Connections",
+          "subtitle": "Link one or more GitHub accounts; the label tells Wolffish which to use.",
+          "label": "Label",
+          "labelPlaceholder": "e.g. Personal",
+          "labelHint": "A short name Wolffish uses to pick this account (e.g. Personal).",
+          "add": "Add connection",
+          "remove": "Remove connection",
+          "empty": "No connections yet — add one to link a GitHub account.",
+          "labelRequired": "Label is required.",
+          "labelDuplicate": "Each connection needs a unique label.",
+          "untitled": "Connection {{index}}"
+        },
         "token": "Personal Access Token",
         "tokenPlaceholder": "ghp_… or github_pat_…",
         "tokenHint": "Create a token at <link>github.com/settings/personal-access-tokens</link> with the 'repo' scope (and 'gist' for gists). Token is stored in config.json on your machine — never sent anywhere except api.github.com.",
@@ -1317,6 +1344,7 @@
     "telegramReadOnly": "Continue this conversation on Telegram.",
     "whatsappReadOnly": "Continue this conversation on WhatsApp.",
     "heartbeatReadOnly": "Automated task — read only.",
+    "procedureReadOnly": "Procedure run — read only.",
     "empty": {
       "title": "Wolffish is ready",
       "subtitle": "Ask anything. I bite through anything."
@@ -1455,6 +1483,7 @@
     "user": "User",
     "agents": "Agents",
     "heartbeat": "Heartbeat",
+    "procedures": "Procedures",
     "task": {
       "title": "Task",
       "status": {
@@ -1512,6 +1541,7 @@
       "viewLogs": "View Logs",
       "title": "Timeline",
       "event": {
+        "turn.started": "New turn",
         "context.built": "Context built",
         "llm.response": "Model responded",
         "tool.called": "Tool called",
@@ -1534,6 +1564,11 @@
         "segment.compaction": "Compacting context"
       },
       "eventCount": "{{count}} events"
+    },
+    "files": {
+      "viewFiles": "View Files",
+      "title": "Files",
+      "fileCount": "{{count}} files"
     },
     "modeToggle": {
       "ariaLabel": "Provider mode",
@@ -1661,6 +1696,37 @@
       "blocked": "Chat is paused while a heartbeat job is running.",
       "compactionDaily": "Summarize today's episodes and promote key facts to long-term knowledge.",
       "compactionWeekly": "Consolidate the past week's episodes into a digest."
+    }
+  },
+  "procedures": {
+    "title": "Procedures",
+    "subtitle": "Saved prompts you can run on demand.",
+    "new": "New",
+    "untitled": "Untitled procedure",
+    "empty": "No procedures yet. Create one to save a prompt you run often.",
+    "editedAt": "Edited {{time}}",
+    "run": "Run",
+    "runEmptyHint": "Add a prompt to run this",
+    "edit": "Edit",
+    "editTitle": "Edit procedure",
+    "titlePlaceholder": "Procedure name",
+    "titleRequired": "A title is required",
+    "promptPlaceholder": "Write the prompt to run…",
+    "autosaveHint": "Changes save automatically.",
+    "done": "Done",
+    "delete": "Delete",
+    "deleteTitle": "Delete this procedure?",
+    "deleteWarning": "“{{name}}” will be permanently removed. This can't be undone.",
+    "deleteConfirm": "Delete",
+    "deleteCancel": "Cancel",
+    "deleteSuccess": "Procedure deleted",
+    "saveError": "Something went wrong",
+    "runFailed": "Procedure run failed",
+    "overlay": {
+      "startedAt": "Started at {{time}}",
+      "activity": "Activity",
+      "waiting": "Waiting for output…",
+      "blocked": "Chat is paused while a procedure is running."
     }
   },
   "history": {

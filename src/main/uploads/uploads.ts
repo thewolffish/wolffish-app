@@ -39,7 +39,9 @@ const DOCUMENT_EXTS = new Set([
   '.txt',
   '.md',
   '.json',
-  '.pptx'
+  '.pptx',
+  '.html',
+  '.htm'
 ])
 
 const MIME_BY_EXT: Record<string, string> = {
@@ -67,7 +69,19 @@ const MIME_BY_EXT: Record<string, string> = {
   '.pdf': 'application/pdf'
 }
 
-export function classifyFile(fileName: string): {
+/**
+ * Classify a file into a coarse type bucket + mimetype, primarily from its
+ * extension. `mimeHint` is a fallback for files whose extension is unknown
+ * or absent — inbound channel media (WhatsApp/Telegram) that arrives with a
+ * reliable mimetype but no usable filename extension. Without it, such files
+ * collapse to `other`/`application/octet-stream`, and the file-processor
+ * gates PDF/image handling on the mime, so the model would silently never
+ * see the file. The extension still wins when it's meaningful.
+ */
+export function classifyFile(
+  fileName: string,
+  mimeHint?: string
+): {
   type: MessageAttachmentType
   mimeType: string
 } {
@@ -82,7 +96,26 @@ export function classifyFile(fileName: string): {
   if (PDF_EXTS.has(ext)) return { type: 'pdf', mimeType }
   if (DOCUMENT_EXTS.has(ext))
     return { type: 'other', mimeType: DOCUMENT_MIME_BY_EXT[ext] ?? mimeType }
-  return { type: 'other', mimeType }
+  return classifyByMime(mimeHint)
+}
+
+/**
+ * Fallback classification from a mimetype alone, for extension-less files.
+ * Returns the opaque `other`/octet-stream default when the hint is missing
+ * or itself opaque.
+ */
+function classifyByMime(mimeHint?: string): {
+  type: MessageAttachmentType
+  mimeType: string
+} {
+  const mime = (mimeHint ?? '').split(';')[0].trim().toLowerCase()
+  if (!mime || mime === 'application/octet-stream')
+    return { type: 'other', mimeType: 'application/octet-stream' }
+  if (mime === 'application/pdf') return { type: 'pdf', mimeType: mime }
+  if (mime.startsWith('image/')) return { type: 'image', mimeType: mime }
+  if (mime.startsWith('audio/')) return { type: 'audio', mimeType: mime }
+  if (mime.startsWith('video/')) return { type: 'video', mimeType: mime }
+  return { type: 'other', mimeType: mime }
 }
 
 const DOCUMENT_MIME_BY_EXT: Record<string, string> = {
@@ -94,7 +127,9 @@ const DOCUMENT_MIME_BY_EXT: Record<string, string> = {
   '.txt': 'text/plain',
   '.md': 'text/markdown',
   '.json': 'application/json',
-  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  '.html': 'text/html',
+  '.htm': 'text/html'
 }
 
 export function isSupportedExtension(fileName: string): boolean {
@@ -194,7 +229,8 @@ export async function saveUpload(
 export async function saveUploadFromBuffer(
   conversationId: string,
   buffer: Buffer,
-  originalName: string
+  originalName: string,
+  mimeHint?: string
 ): Promise<UploadedFileMetadata> {
   if (!buffer || buffer.length === 0) {
     throw new Error('saveUploadFromBuffer: empty buffer')
@@ -207,7 +243,7 @@ export async function saveUploadFromBuffer(
   const destPath = path.join(dir, finalName)
   await diskWriter.writeFileAtomic(destPath, buffer)
 
-  const { type, mimeType } = classifyFile(finalName)
+  const { type, mimeType } = classifyFile(finalName, mimeHint)
   const root = workspaceRoot()
   const relPath = path.relative(root, destPath)
 

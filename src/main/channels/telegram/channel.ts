@@ -1248,7 +1248,8 @@ export class TelegramChannel {
         attachment = await saveUploadFromBuffer(
           conversation.id,
           buffer,
-          fileInfo.fileName ?? defaultFileName(file.file_path)
+          fileInfo.fileName ?? defaultFileName(file.file_path),
+          fileInfo.mimeType
         )
         this.agent.corpus.emit('telegram.media.received', {
           chatId,
@@ -1384,10 +1385,14 @@ export class TelegramChannel {
           throw new Error(`download failed: HTTP ${response.status}`)
         }
         const buffer = Buffer.from(await response.arrayBuffer())
+        // Pass Telegram's declared mime_type as a hint so a document whose
+        // filename lacks an extension still classifies correctly (e.g. a PDF
+        // named "scan" → type=pdf) instead of collapsing to an opaque blob.
         attachment = await saveUploadFromBuffer(
           conversation.id,
           buffer,
-          fileInfo.fileName ?? defaultFileName(file.file_path)
+          fileInfo.fileName ?? defaultFileName(file.file_path),
+          fileInfo.mimeType
         )
         this.agent.corpus.emit('telegram.media.received', {
           chatId,
@@ -1495,6 +1500,7 @@ export class TelegramChannel {
       const handle = this.runner.send({
         history,
         conversationId: conversation.id,
+        channel: 'telegram',
         makeSink: ({ turnId, conversationId }) => this.createSink(turnId, conversationId, chatId),
         onTurnStarted: ({ turnId, controller }) => {
           const active: ActiveTurn = {
@@ -2451,7 +2457,7 @@ function isPlausibleBotToken(token: string): boolean {
   return /^\d{6,}:[A-Za-z0-9_-]{30,}$/.test(token)
 }
 
-type ExtractedFile = { fileId: string; fileName?: string }
+type ExtractedFile = { fileId: string; fileName?: string; mimeType?: string }
 
 /**
  * Extract the bot-API file id and (best-effort) original name from a
@@ -2463,7 +2469,13 @@ function extractFileInfo(message: unknown): ExtractedFile | null {
   const m = message as {
     photo?: Array<{ file_id?: string; width?: number; height?: number }>
     video?: { file_id?: string; file_name?: string; mime_type?: string }
-    audio?: { file_id?: string; file_name?: string; title?: string; performer?: string }
+    audio?: {
+      file_id?: string
+      file_name?: string
+      title?: string
+      performer?: string
+      mime_type?: string
+    }
     voice?: { file_id?: string; mime_type?: string }
     document?: { file_id?: string; file_name?: string; mime_type?: string }
     message_id?: number
@@ -2481,7 +2493,8 @@ function extractFileInfo(message: unknown): ExtractedFile | null {
   if (m.video?.file_id) {
     return {
       fileId: m.video.file_id,
-      fileName: m.video.file_name ?? `video_${m.message_id ?? Date.now()}.mp4`
+      fileName: m.video.file_name ?? `video_${m.message_id ?? Date.now()}.mp4`,
+      mimeType: m.video.mime_type
     }
   }
 
@@ -2491,21 +2504,24 @@ function extractFileInfo(message: unknown): ExtractedFile | null {
       `audio_${m.message_id ?? Date.now()}`
     return {
       fileId: m.audio.file_id,
-      fileName: m.audio.file_name ?? `${fallbackTitle}.mp3`
+      fileName: m.audio.file_name ?? `${fallbackTitle}.mp3`,
+      mimeType: m.audio.mime_type
     }
   }
 
   if (m.voice?.file_id) {
     return {
       fileId: m.voice.file_id,
-      fileName: `voice_${m.message_id ?? Date.now()}.ogg`
+      fileName: `voice_${m.message_id ?? Date.now()}.ogg`,
+      mimeType: m.voice.mime_type
     }
   }
 
   if (m.document?.file_id) {
     return {
       fileId: m.document.file_id,
-      fileName: m.document.file_name ?? `document_${m.message_id ?? Date.now()}`
+      fileName: m.document.file_name ?? `document_${m.message_id ?? Date.now()}`,
+      mimeType: m.document.mime_type
     }
   }
 

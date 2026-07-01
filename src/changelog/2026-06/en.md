@@ -1,4 +1,4 @@
-## v1.0.200 — 2026-06-30 `Latest`
+## v1.0.200 — 2026-06-30
 
 ### Files Show Up Once, Not Twice
 

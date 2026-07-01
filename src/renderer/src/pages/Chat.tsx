@@ -58,6 +58,7 @@ import type {
   ConversationFile,
   FolderListing,
   MessageAttachment,
+  MessageAttachmentType,
   Segment,
   ThinkingMode,
   TimelineEntry
@@ -88,15 +89,18 @@ import {
   CloudUploadIcon,
   Delete02Icon,
   FileEditIcon,
+  Files01Icon,
   Folder01Icon,
   HeartCheckIcon,
   Image02Icon,
+  ListViewIcon,
   Robot01Icon,
   SparklesIcon,
   UserIcon,
   Mic01Icon,
   PauseIcon,
   PlayIcon,
+  PlayListIcon,
   PlusSignIcon,
   Settings02Icon,
   StopCircleIcon
@@ -104,6 +108,7 @@ import {
 import {
   createContext,
   Fragment,
+  memo,
   useCallback,
   useContext,
   useEffect,
@@ -134,12 +139,15 @@ export function Chat(): React.JSX.Element {
   const isRtl = RTL_LOCALES.has(locale)
   const {
     goTo,
+    screen,
     status,
     messages,
     setMessages,
     refreshStatus,
     activeConversationId,
-    setActiveConversationId
+    setActiveConversationId,
+    pendingProcedure,
+    setPendingProcedure
   } = useFlow()
 
   const currentModel = status?.config?.llm.local.model ?? null
@@ -428,10 +436,48 @@ export function Chat(): React.JSX.Element {
 
   const [timelineEntries, setTimelineEntries] = useState<TimelineEntry[]>([])
   const [timelineOpen, setTimelineOpen] = useState(false)
+  const [filesOpen, setFilesOpen] = useState(false)
+  // Real events only — turn-boundary dividers structure the log but shouldn't
+  // count toward the "N events" badges.
+  const timelineEventCount = useMemo(
+    () => timelineEntries.reduce((n, e) => n + (e.kind === 'turn.started' ? 0 : 1), 0),
+    [timelineEntries]
+  )
+  // Files that appear in the conversation — user uploads plus files delivered
+  // by tools — unified into MessageAttachment[] so the files dialog can render
+  // them through AttachmentList (the same per-type dispatch, existence checks
+  // and viewers the feed already uses). collectConversationFiles reuses the
+  // feed's extractors.
+  //
+  // Files only ever change when a user attachment or a whole tool_result
+  // segment lands — never mid-text-stream — so we key the heavy scan on those
+  // cheap counts instead of `messages` identity. Otherwise it would re-run on
+  // every streaming token (messages gets a fresh identity per delta) and
+  // re-scan every historical tool_result, regressing the per-delta budget.
+  const filesKey = useMemo(() => {
+    let userAttachments = 0
+    let toolResults = 0
+    for (const m of messages) {
+      if (m.role === 'user') userAttachments += m.attachments?.length ?? 0
+      else for (const s of m.segments) if (s.kind === 'tool_result') toolResults += 1
+    }
+    return `${userAttachments}:${toolResults}`
+  }, [messages])
+  const conversationFiles = useMemo(
+    () => collectConversationFiles(messages),
+    // Recompute only when the attachment/tool-result counts change; `messages`
+    // is intentionally read fresh inside but excluded from the deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [filesKey]
+  )
 
-  const onNewChat = useCallback(() => {
-    setMessages([])
-    setActiveConversationId(null)
+  // Clears the context meter + per-turn token/timing readouts back to empty.
+  // Every path that opens a fresh chat runs this: the New Chat button here
+  // (onNewChat), and — via the activeConversationId→null effect below —
+  // History's New Chat, Procedures' Play, and deleting the active
+  // conversation. Keeping it in one place stops those entry points from
+  // drifting apart (History's button used to leave the meter stale).
+  const resetTurnStats = useCallback(() => {
     setContextTokens(null)
     setContextBudget(null)
     setInputTokens(null)
@@ -440,8 +486,6 @@ export function Chat(): React.JSX.Element {
     setTurnStartedAt(null)
     setTurnEndedAt(null)
   }, [
-    setMessages,
-    setActiveConversationId,
     setContextTokens,
     setContextBudget,
     setInputTokens,
@@ -450,6 +494,12 @@ export function Chat(): React.JSX.Element {
     setTurnStartedAt,
     setTurnEndedAt
   ])
+
+  const onNewChat = useCallback(() => {
+    setMessages([])
+    setActiveConversationId(null)
+    resetTurnStats()
+  }, [setMessages, setActiveConversationId, resetTurnStats])
 
   const scrollerRef = useRef<HTMLDivElement>(null)
   const pendingTurnIdRef = useRef<string | null>(null)
@@ -604,6 +654,26 @@ export function Chat(): React.JSX.Element {
       if (recBlobUrl) URL.revokeObjectURL(recBlobUrl)
     }
   }, [recBlobUrl])
+
+  // Chat stays MOUNTED (just hidden) when you navigate to another screen — see
+  // App.tsx. Media doesn't stop under display:none, so on leaving chat we stop
+  // it ourselves: end live mic capture (otherwise the mic stays hot with no UI
+  // to stop it), pause voice-review playback, and pause any feed audio/video
+  // that was playing (restores the pre-keepalive behavior where unmounting
+  // stopped them). Stopping while recording lands in 'review', so nothing is
+  // lost — the take is there when you come back.
+  useEffect(() => {
+    if (screen === 'chat') return
+    if (recPhase === 'recording') stopRecording()
+    if (recAudioRef.current && !recAudioRef.current.paused) {
+      recAudioRef.current.pause()
+      setRecPlaying(false)
+    }
+    scrollerRef.current?.querySelectorAll('audio, video').forEach((el) => {
+      const media = el as HTMLMediaElement
+      if (!media.paused) media.pause()
+    })
+  }, [screen, recPhase, stopRecording])
   // ── End voice recording ───────────────────────────────────────
 
   useEffect(() => {
@@ -625,8 +695,12 @@ export function Chat(): React.JSX.Element {
   const isTelegramConversation = activeConversationId !== null && activeChannel === 'telegram'
   const isWhatsAppConversation = activeConversationId !== null && activeChannel === 'whatsapp'
   const isHeartbeatConversation = activeConversationId !== null && activeChannel === 'heartbeat'
+  const isProcedureConversation = activeConversationId !== null && activeChannel === 'procedure'
   const isExternalChannel =
-    isTelegramConversation || isWhatsAppConversation || isHeartbeatConversation
+    isTelegramConversation ||
+    isWhatsAppConversation ||
+    isHeartbeatConversation ||
+    isProcedureConversation
 
   // Re-sync model-dependent UI whenever the active model changes — the local
   // model, the local-only toggle, OR the cloud Brain (activeCloudModel). Two
@@ -735,12 +809,22 @@ export function Chat(): React.JSX.Element {
         setFolderListOpen(false)
         sentFolderByConvRef.current.set(conv.id, folders)
         setTimelineEntries(conv.timeline ?? [])
+        setFilesOpen(false)
       })
     } else {
+      // Fresh chat (New Chat / Procedures Play / active-conversation delete):
+      // wipe the meter + per-turn stats so no stale reading carries over from
+      // the conversation we just left. onNewChat also does this synchronously
+      // to avoid a one-frame flash on the Chat page; here it covers the entry
+      // points that can't reach this component's state directly.
       conversationRef.current = null
-      queueMicrotask(() => setTimelineEntries([]))
+      queueMicrotask(() => {
+        resetTurnStats()
+        setTimelineEntries([])
+        setFilesOpen(false)
+      })
     }
-  }, [activeConversationId])
+  }, [activeConversationId, resetTurnStats])
 
   const shouldPersistRef = useRef(false)
 
@@ -762,6 +846,18 @@ export function Chat(): React.JSX.Element {
       void persistConversation(messages).catch(() => undefined)
     }
   }, [messages, persistConversation])
+
+  // Chat now stays MOUNTED while a background run's overlay is up (so the turn
+  // that triggered it finishes persisting). These dialogs portal to <body> with
+  // a high z-index, so an open one would paint OVER the run overlay. Close them
+  // when a run starts so the overlay is unobstructed.
+  useEffect(() => {
+    return window.api.heartbeat.onJobStarted(() => {
+      setTimelineOpen(false)
+      setFilesOpen(false)
+      setDraftExpanded(false)
+    })
+  }, [])
 
   useEffect(() => {
     const offSegment = window.api.chat.onSegment((segment) => {
@@ -1066,8 +1162,11 @@ export function Chat(): React.JSX.Element {
         cacheReadTokens: 0,
         contextTokens: 0
       }
-      setTimelineEntries([])
+      // Keep the timeline additive across the whole conversation — seed a
+      // boundary for this turn instead of wiping the prior turns' events.
+      setTimelineEntries((prev) => [...prev, makeTurnBoundary(trimmed)])
       setTimelineOpen(false)
+      setFilesOpen(false)
 
       const response = await window.api.chat.send({
         history,
@@ -1103,6 +1202,23 @@ export function Chat(): React.JSX.Element {
     setPendingAttachments([])
     await sendContent(trimmed, atts)
   }, [draft, pendingAttachments, sendContent])
+
+  // A procedure's Play button clears the conversation (via Flow) and queues its
+  // prompt here, then switches to Chat. Clearing happens before this effect
+  // runs, so `sendContent` already closes over an empty history — auto-send it
+  // as a brand-new conversation. The ref guards against a re-fire (e.g. the
+  // `streaming` flip) before the pending flag is cleared in `finally`.
+  const procedureRunRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (pendingProcedure == null || streaming) return
+    if (procedureRunRef.current === pendingProcedure) return
+    procedureRunRef.current = pendingProcedure
+    const prompt = pendingProcedure
+    void sendContent(prompt).finally(() => {
+      setPendingProcedure(null)
+      procedureRunRef.current = null
+    })
+  }, [pendingProcedure, streaming, sendContent, setPendingProcedure])
 
   const sendRecording = useCallback(async () => {
     const blob = recBlobRef.current
@@ -1218,8 +1334,11 @@ export function Chat(): React.JSX.Element {
         cacheReadTokens: 0,
         contextTokens: 0
       }
-      setTimelineEntries([])
+      // Keep the timeline additive across the whole conversation — seed a
+      // boundary for this turn instead of wiping the prior turns' events.
+      setTimelineEntries((prev) => [...prev, makeTurnBoundary(transcript)])
       setTimelineOpen(false)
+      setFilesOpen(false)
 
       const response = await window.api.chat.send({
         history,
@@ -1491,6 +1610,13 @@ export function Chat(): React.JSX.Element {
             disabled: streaming
           },
           {
+            key: 'procedures',
+            icon: PlayListIcon,
+            label: t('chat.procedures'),
+            onClick: () => goTo('procedures'),
+            disabled: streaming
+          },
+          {
             key: 'viewer',
             icon: FileEditIcon,
             label: t('chat.workspace'),
@@ -1621,6 +1747,8 @@ export function Chat(): React.JSX.Element {
           <div className="bg-surface border-border mx-auto flex max-w-2xl items-center gap-2.5 rounded-xl border px-4 py-3">
             {isHeartbeatConversation ? (
               <Activity04Icon size={16} className="text-muted shrink-0" aria-hidden />
+            ) : isProcedureConversation ? (
+              <PlayIcon size={16} className="text-muted shrink-0" aria-hidden />
             ) : isTelegramConversation ? (
               <TelegramLogo size={16} className="text-muted shrink-0" aria-hidden />
             ) : (
@@ -1630,9 +1758,11 @@ export function Chat(): React.JSX.Element {
               {t(
                 isHeartbeatConversation
                   ? 'chat.heartbeatReadOnly'
-                  : isTelegramConversation
-                    ? 'chat.telegramReadOnly'
-                    : 'chat.whatsappReadOnly'
+                  : isProcedureConversation
+                    ? 'chat.procedureReadOnly'
+                    : isTelegramConversation
+                      ? 'chat.telegramReadOnly'
+                      : 'chat.whatsappReadOnly'
               )}
             </span>
             <button
@@ -1678,20 +1808,43 @@ export function Chat(): React.JSX.Element {
           )}
           <div className="relative mx-auto flex max-w-xl items-end gap-2">
             <div className="pointer-events-auto absolute inset-e-full top-1/2 me-6 -translate-y-1/2 flex items-center gap-2 whitespace-nowrap">
-              {timelineEntries.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => setTimelineOpen(true)}
-                  className={cn(
-                    'border-border bg-surface text-muted hover:text-fg absolute bottom-full mb-6 flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-1.5 text-xs shadow-sm',
-                    'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
+              {(timelineEntries.length > 0 || conversationFiles.length > 0) && (
+                <div className="border-border bg-surface absolute bottom-full mb-6 inline-flex items-center gap-0.5 rounded-lg border p-0.5 shadow-sm">
+                  {timelineEntries.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setTimelineOpen(true)}
+                      title={t('chat.timeline.viewLogs')}
+                      aria-label={t('chat.timeline.viewLogs')}
+                      className={cn(
+                        'text-muted hover:text-fg flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1',
+                        'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
+                      )}
+                    >
+                      <ListViewIcon size={15} />
+                      <span className="bg-bg border-border text-fg inline-flex h-4 min-w-4 items-center justify-center rounded-full border px-1 text-[10px] font-semibold tabular-nums">
+                        {timelineEventCount}
+                      </span>
+                    </button>
                   )}
-                >
-                  <span className="bg-bg border-border text-fg inline-flex h-4 min-w-4 items-center justify-center rounded-full border px-1 text-[10px] font-semibold tabular-nums">
-                    {timelineEntries.length}
-                  </span>
-                  {t('chat.timeline.viewLogs')}
-                </button>
+                  {conversationFiles.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setFilesOpen(true)}
+                      title={t('chat.files.viewFiles')}
+                      aria-label={t('chat.files.viewFiles')}
+                      className={cn(
+                        'text-muted hover:text-fg flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1',
+                        'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
+                      )}
+                    >
+                      <Files01Icon size={15} />
+                      <span className="bg-bg border-border text-fg inline-flex h-4 min-w-4 items-center justify-center rounded-full border px-1 text-[10px] font-semibold tabular-nums">
+                        {conversationFiles.length}
+                      </span>
+                    </button>
+                  )}
+                </div>
               )}
               <div className="border-border bg-surface inline-flex items-center rounded-lg border p-0.5">
                 <button
@@ -1972,7 +2125,8 @@ export function Chat(): React.JSX.Element {
       )}
       {textareaMenu}
       {editorMenu}
-      {draftExpanded &&
+      {screen === 'chat' &&
+        draftExpanded &&
         createPortal(
           <div
             role="presentation"
@@ -1996,7 +2150,10 @@ export function Chat(): React.JSX.Element {
           </div>,
           document.body
         )}
-      {timelineOpen &&
+      {/* Gated on the chat screen: these portal to <body>, so without this they
+          would escape the hidden wrapper and paint over another screen. */}
+      {screen === 'chat' &&
+        timelineOpen &&
         createPortal(
           <div
             role="presentation"
@@ -2012,10 +2169,38 @@ export function Chat(): React.JSX.Element {
                   {messages.find((m) => m.role === 'user')?.content || t('chat.timeline.title')}
                 </h2>
                 <span className="text-muted ms-3 shrink-0 text-[10px] tabular-nums">
-                  {t('chat.timeline.eventCount', { count: timelineEntries.length })}
+                  {t('chat.timeline.eventCount', { count: timelineEventCount })}
                 </span>
               </div>
               <TimelineList entries={timelineEntries} locale={locale} />
+            </div>
+          </div>,
+          document.body
+        )}
+      {screen === 'chat' &&
+        filesOpen &&
+        conversationFiles.length > 0 &&
+        createPortal(
+          <div
+            role="presentation"
+            onClick={() => setFilesOpen(false)}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="border-border bg-surface flex h-[80vh] w-[80vw] flex-col overflow-hidden rounded-2xl border shadow-xl"
+            >
+              <div className="border-border flex shrink-0 items-center justify-between border-b px-5 py-3">
+                <h2 className="text-fg min-w-0 flex-1 truncate text-sm font-semibold">
+                  {t('chat.files.title')}
+                </h2>
+                <span className="text-muted ms-3 shrink-0 text-[10px] tabular-nums">
+                  {t('chat.files.fileCount', { count: conversationFiles.length })}
+                </span>
+              </div>
+              <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-5 py-4">
+                <AttachmentList attachments={conversationFiles} variant="grid" />
+              </div>
             </div>
           </div>,
           document.body
@@ -2048,6 +2233,7 @@ function relativeTime(ts: number, locale: string): string {
 }
 
 const TIMELINE_KIND_COLOR: Record<string, string> = {
+  'turn.started': 'bg-accent',
   'context.built': 'bg-sky-500',
   'llm.response': 'bg-indigo-500',
   'tool.called': 'bg-blue-500',
@@ -2136,15 +2322,18 @@ type TurnStats = {
   contextTokens: number
 }
 
-// Render a millisecond duration in the largest sensible unit. Raw ms is only
-// useful sub-second; past that, seconds/minutes/hours read far better in the
-// logs (108679ms → "1m 49s").
+// Render a duration in seconds — never raw milliseconds. Sub-ten-second
+// values keep one decimal ("0.3s", "9.4s") so short turns stay legible;
+// past a minute we roll up into m/s and h/m because "1m 49s" scans far
+// better than "109s" (108679ms → "1m 49s").
 function formatDuration(ms: number): string {
-  if (ms < 1000) return `${ms}ms`
-  const totalSec = Math.round(ms / 1000)
-  if (totalSec < 60) return `${totalSec}s`
-  const min = Math.floor(totalSec / 60)
-  const sec = totalSec % 60
+  const totalSec = ms / 1000
+  if (totalSec < 10) return `${totalSec.toFixed(1)}s`
+  // Round to whole seconds first so the m/s split can never yield "1m 60s".
+  const rounded = Math.round(totalSec)
+  if (rounded < 60) return `${rounded}s`
+  const min = Math.floor(rounded / 60)
+  const sec = rounded % 60
   if (min < 60) return sec === 0 ? `${min}m` : `${min}m ${sec}s`
   const hr = Math.floor(min / 60)
   const remMin = min % 60
@@ -2179,11 +2368,32 @@ function TimelineList({
     )
   }
 
+  // Number only real events (skip turn-boundary dividers) so the badges stay
+  // contiguous — 1, 2, 3… — across every turn in the accumulated log.
+  let running = 0
+  const eventNumbers = entries.map((e) => (e.kind === 'turn.started' ? 0 : ++running))
+
   return (
     <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-5 py-3">
       <div className="flex flex-col gap-1">
         {entries.map((entry, i) => {
           const isLast = i === entries.length - 1
+          // A turn boundary renders as a labeled divider, not a numbered row —
+          // it visually groups the events that follow into one turn.
+          if (entry.kind === 'turn.started') {
+            return (
+              <div key={entry.id} className="mt-3 flex items-center gap-2 first:mt-0">
+                <span className="bg-border/60 h-px flex-1" />
+                <span
+                  dir="auto"
+                  className="text-muted/60 max-w-[75%] shrink truncate text-[10px] font-medium"
+                >
+                  {entry.summary || t('chat.timeline.event.turn.started')}
+                </span>
+                <span className="bg-border/60 h-px flex-1" />
+              </div>
+            )
+          }
           const color = TIMELINE_KIND_COLOR[entry.kind] ?? 'bg-muted/40'
           const label = t(`chat.timeline.event.${entry.kind}`, { defaultValue: entry.kind })
           const timeStr = relativeTime(entry.timestamp, locale)
@@ -2207,7 +2417,7 @@ function TimelineList({
                     entry.kind === 'compaction.started' && 'animate-pulse'
                   )}
                 >
-                  {i + 1}
+                  {eventNumbers[i]}
                 </span>
                 <span className="font-semibold">{label}</span>
                 {entry.kind === 'compaction.started' && (
@@ -2241,6 +2451,19 @@ function TimelineList({
       </div>
     </div>
   )
+}
+
+// A turn-boundary divider. The timeline accumulates across every turn of the
+// conversation (see the send paths — we no longer wipe it per turn), so each
+// user prompt seeds one of these to separate one turn's events from the next.
+function makeTurnBoundary(text: string): TimelineEntry {
+  const clean = text.trim().replace(/\s+/g, ' ')
+  return {
+    id: `turn_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    timestamp: Date.now(),
+    kind: 'turn.started',
+    ...(clean ? { summary: clean.length > 140 ? `${clean.slice(0, 140)}…` : clean } : {})
+  }
 }
 
 function buildSegmentTimelineEntry(segment: Segment): TimelineEntry | null {
@@ -2280,7 +2503,9 @@ function buildSegmentTimelineEntry(segment: Segment): TimelineEntry | null {
         d.originalChars > 0 ? Math.round((1 - d.compactedChars / d.originalChars) * 100) : 0
       return `${d.toolName ?? 'unknown'}: ${d.originalChars} → ${d.compactedChars} chars (${pct}% reduced)`
     })
-    lines.unshift(`~${fmtNum(segment.tokensSaved)} tokens saved in ${segment.durationMs}ms`)
+    lines.unshift(
+      `~${fmtNum(segment.tokensSaved)} tokens saved in ${formatDuration(segment.durationMs)}`
+    )
     return {
       id: segment.segmentId,
       timestamp: ts,
@@ -2399,42 +2624,69 @@ function useRelativeTime(ts: number | undefined): string | null {
   return ts ? relativeTime(ts, i18n.language) : null
 }
 
-function ChatItem({
-  message,
-  t,
-  awaitingApproval,
-  awaitingAsk,
-  onApprovalDecision,
-  onAskRespond
-}: {
+type ChatItemProps = {
   message: ChatMessage
   t: (k: string, opts?: Record<string, unknown>) => string
   awaitingApproval: boolean
   awaitingAsk: boolean
   onApprovalDecision: (id: string, decision: 'approved' | 'denied') => void
   onAskRespond: (askId: string, response: AskUserResponse) => void
-}): React.JSX.Element {
-  if (message.role === 'user') {
+}
+
+// Memoized so a streaming turn (or any parent state tick — token counters,
+// timeline, awaiting flags) re-renders ONLY the rows that actually changed
+// instead of the whole feed. appendSegment gives just the LAST message a new
+// object identity, so during streaming this collapses N re-renders into 1.
+const ChatItem = memo(
+  function ChatItem({
+    message,
+    t,
+    awaitingApproval,
+    awaitingAsk,
+    onApprovalDecision,
+    onAskRespond
+  }: ChatItemProps): React.JSX.Element {
+    if (message.role === 'user') {
+      return (
+        <UserBubble
+          content={message.content}
+          attachments={message.attachments}
+          transcribing={message.transcribing}
+          timestamp={message.timestamp}
+          t={t}
+        />
+      )
+    }
     return (
-      <UserBubble
-        content={message.content}
-        attachments={message.attachments}
-        transcribing={message.transcribing}
-        timestamp={message.timestamp}
-        t={t}
+      <AssistantBubble
+        message={message}
+        awaitingApproval={awaitingApproval}
+        awaitingAsk={awaitingAsk}
+        onApprovalDecision={onApprovalDecision}
+        onAskRespond={onAskRespond}
       />
     )
+  },
+  (prev, next) => {
+    // Re-render only when this row's own inputs change. The callbacks are
+    // useCallback-stable and message identity changes solely for the message
+    // that was actually mutated (new segment, approval/ask update, status flip).
+    if (prev.message !== next.message) return false
+    if (prev.t !== next.t) return false
+    if (prev.onApprovalDecision !== next.onApprovalDecision) return false
+    if (prev.onAskRespond !== next.onAskRespond) return false
+    // awaitingApproval/awaitingAsk are GLOBAL booleans passed to every row but
+    // only drive the streaming bubble's "Awaiting…" placeholder. Ignoring them
+    // for non-streaming rows is what stops a mid-turn permission prompt from
+    // re-rendering the entire conversation.
+    if (next.message.role === 'assistant' && next.message.status === 'streaming') {
+      return (
+        prev.awaitingApproval === next.awaitingApproval && prev.awaitingAsk === next.awaitingAsk
+      )
+    }
+    return true
   }
-  return (
-    <AssistantBubble
-      message={message}
-      awaitingApproval={awaitingApproval}
-      awaitingAsk={awaitingAsk}
-      onApprovalDecision={onApprovalDecision}
-      onAskRespond={onAskRespond}
-    />
-  )
-}
+)
 
 function UserBubble({
   content,
@@ -2762,10 +3014,21 @@ function renderSegments(
   // one. The model occasionally replies, then redoes the reply; only the final
   // voice_respond is the real answer, so earlier ones are superseded.
   // voice_generate ASSETS (isResponse:false) are unaffected and each render.
+  // One O(n) index of tool results by call id so the loops below resolve a
+  // call's result in O(1). Previously each tool_call re-scanned every segment
+  // (findResult), making a render O(tool_calls × segments) — rebuilt on every
+  // render and growing with each streaming delta, the dominant cost on
+  // tool-heavy turns. First-match semantics preserved (don't overwrite).
+  const resultByToolCall = new Map<string, ToolResultSegment>()
+  for (const s of segments) {
+    if (s.kind === 'tool_result' && !resultByToolCall.has(s.toolCallId))
+      resultByToolCall.set(s.toolCallId, s)
+  }
+
   let lastVoiceReplyId: string | null = null
   for (const s of segments) {
     if (s.kind !== 'tool_call') continue
-    const r = findResult(segments, s.toolCallId)
+    const r = resultByToolCall.get(s.toolCallId)
     const v = r?.status === 'success' ? parseVoiceResult(r.output) : null
     if (v?.isResponse) lastVoiceReplyId = s.toolCallId
   }
@@ -2796,7 +3059,7 @@ function renderSegments(
       if (seg.worker) {
         flushWorkerText(seg.worker.id) // narration before this worker's action
         if (verbose) {
-          const wResult = findResult(segments, seg.toolCallId)
+          const wResult = resultByToolCall.get(seg.toolCallId)
           const wTiming = toolTimings?.[seg.toolCallId]
           blocks.push(
             wrapSubagent(
@@ -2810,7 +3073,7 @@ function renderSegments(
       }
 
       flushText()
-      const result = findResult(segments, seg.toolCallId)
+      const result = resultByToolCall.get(seg.toolCallId)
 
       // ask_user renders a dedicated interactive question card instead of a
       // tool card — always visible (the user must be able to answer), even
@@ -2964,14 +3227,6 @@ function renderSegments(
         if (docResults) {
           for (let di = 0; di < docResults.length; di++) {
             const doc = docResults[di]
-            // Dedup across detectors/segments in this message: the same file is
-            // often delivered by two tools in one turn — e.g. browser_pdf
-            // returns {"path":"x.pdf"} (recognized as a document) and send_file
-            // then emits the [wolffish-output: x.pdf (document)] marker for the
-            // SAME file. Without this guard the PDF renders twice. Mirrors the
-            // image/media emitOnce above and the channels' sentFiles dedup.
-            const docKey = doc.path.replace(/^.*?\.wolffish\/workspace\//, '')
-            if (!emitOnce(docKey)) continue
             const fileName = doc.path.split('/').pop() ?? 'document'
             const ext = fileName.split('.').pop()?.toLowerCase() ?? ''
             if (ext === 'pdf') {
@@ -3071,10 +3326,6 @@ function renderSegments(
         const genericFiles = extractToolResultGenericFiles(result)
         for (let gi = 0; gi < genericFiles.length; gi++) {
           const gPath = genericFiles[gi]
-          // Same cross-detector dedup as documents/images above: don't render a
-          // second card for a file already shown in this message.
-          const gKey = gPath.replace(/^.*?\.wolffish\/workspace\//, '')
-          if (!emitOnce(gKey)) continue
           const gName = gPath.split('/').pop() ?? 'file'
           const gExt = gName.split('.').pop()?.toLowerCase() ?? ''
           // Markdown delivered via the (file) catch-all renders inline as rich
@@ -3438,13 +3689,6 @@ function ModeToggle({
   )
 }
 
-function findResult(segments: Segment[], toolCallId: string): ToolResultSegment | undefined {
-  for (const s of segments) {
-    if (s.kind === 'tool_result' && s.toolCallId === toolCallId) return s
-  }
-  return undefined
-}
-
 const IMAGE_EXTS_RE = /\.(?:png|jpe?g|gif|webp|bmp|tiff?)$/i
 const DOCUMENT_EXTS_RE = /\.(?:pdf|docx?|xlsx?|pptx?|csv)$/i
 // const AUDIO_EXTS_RE = /\.(?:mp3|wav|m4a|ogg|flac|aac|wma|opus)$/i
@@ -3673,6 +3917,128 @@ function extractToolResultGenericFiles(result?: ToolResultSegment): string[] {
     }
   }
   return paths
+}
+
+type DeliveredBucket = 'image' | 'audio' | 'video' | 'document' | 'file'
+
+/**
+ * Build the flat, ordered, de-duplicated list of files that appear across the
+ * whole conversation: user uploads (already MessageAttachment[]) plus files
+ * delivered by tools. Delivered files are pulled with the SAME extractors the
+ * feed uses and adapted into MessageAttachment so AttachmentList can render
+ * them with its existing per-type dispatch, existence checks and viewers.
+ * Order follows appearance; dedup is on the canonical path so a file surfaced
+ * in more than one place collapses to a single entry.
+ */
+function collectConversationFiles(messages: ChatMessage[]): MessageAttachment[] {
+  const out: MessageAttachment[] = []
+  const seen = new Set<string>()
+  const push = (att: MessageAttachment): void => {
+    const key = canonicalPath(att.filePath)
+    if (seen.has(key)) return
+    seen.add(key)
+    out.push(att)
+  }
+
+  for (const message of messages) {
+    if (message.role === 'user') {
+      for (const att of message.attachments ?? []) push(att)
+      continue
+    }
+    // Index this message's tool_calls so each result can be paired with its
+    // call — the codeFile/page short-circuit below needs the call's args/name.
+    const callById = new Map<string, ToolCallSegment>()
+    for (const seg of message.segments) {
+      if (seg.kind === 'tool_call') callById.set(seg.toolCallId, seg)
+    }
+    for (const seg of message.segments) {
+      if (seg.kind !== 'tool_result' || seg.status !== 'success' || !seg.output) continue
+      const call = callById.get(seg.toolCallId)
+      // Mirror renderSegments' branch order exactly: a file-content result
+      // (file_read/file_write → codeFile) or a fetched-page result never
+      // yields a *delivered* file there, so it must not here either — otherwise
+      // a workspace media path embedded in file content or page text would be
+      // mis-detected by the image/media bare-path fallbacks and surface as a
+      // phantom file the feed never shows.
+      if (call && (extractToolResultCodeFile(call, seg) || extractToolResultPage(call, seg))) {
+        continue
+      }
+      for (const att of deliveredFilesToAttachments(seg)) push(att)
+    }
+  }
+  return out
+}
+
+/**
+ * Adapt one tool_result's delivered files into MessageAttachment[], applying
+ * the same extractors and path normalization renderSegments uses in the feed
+ * so the files dialog and the feed agree on what (and where) each file is.
+ */
+function deliveredFilesToAttachments(result: ToolResultSegment): MessageAttachment[] {
+  const atts: MessageAttachment[] = []
+
+  const imagePath = extractToolResultImage(result)
+  if (imagePath) {
+    const relPath = imagePath.startsWith('wolffish-media://')
+      ? imagePath
+      : imagePath.replace(/^.*?\.wolffish\/workspace\//, '')
+    atts.push(fileToAttachment(relPath, 'image'))
+  }
+
+  const docs = extractToolResultDocuments(result)
+  if (docs) for (const d of docs) atts.push(fileToAttachment(d.path, 'document', d.size))
+
+  const media = extractToolResultMedia(result)
+  if (media) {
+    const relPath = media.path.replace(/^.*?\.wolffish\/workspace\//, '')
+    atts.push(fileToAttachment(relPath, media.type))
+  }
+
+  for (const p of extractToolResultGenericFiles(result)) atts.push(fileToAttachment(p, 'file'))
+
+  return atts
+}
+
+function fileToAttachment(
+  filePath: string,
+  bucket: DeliveredBucket,
+  sizeBytes = 0
+): MessageAttachment {
+  const fileName = filePath.split('/').pop() ?? 'file'
+  // Anchored match (mirrors the feed) so a dotless name yields '' — split('.')
+  // would return the whole filename and defeat the mimeForAttachment fallbacks.
+  const ext = (fileName.match(/\.[^.]+$/)?.[0].slice(1) ?? '').toLowerCase()
+  const type: MessageAttachmentType =
+    bucket === 'image'
+      ? 'image'
+      : bucket === 'audio'
+        ? 'audio'
+        : bucket === 'video'
+          ? 'video'
+          : ext === 'pdf'
+            ? 'pdf'
+            : 'other'
+  return {
+    type,
+    filePath,
+    originalName: fileName,
+    mimeType: mimeForAttachment(type, ext),
+    sizeBytes
+  }
+}
+
+/**
+ * Best-effort MIME for a delivered file. AttachmentList keys markdown/html off
+ * the filename too, so this only needs to be exactly right for the media
+ * decoders (image/audio/video) and pdf; everything else falls back to the
+ * shared docMimeType map.
+ */
+function mimeForAttachment(type: MessageAttachmentType, ext: string): string {
+  if (type === 'image') return `image/${ext === 'jpg' ? 'jpeg' : ext || 'png'}`
+  if (type === 'audio') return `audio/${ext === 'mp3' ? 'mpeg' : ext || 'mpeg'}`
+  if (type === 'video') return `video/${ext === 'mov' ? 'quicktime' : ext || 'mp4'}`
+  if (type === 'pdf') return 'application/pdf'
+  return docMimeType(ext)
 }
 
 function collectText(segments: Segment[]): string {

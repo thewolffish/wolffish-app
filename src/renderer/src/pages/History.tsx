@@ -14,7 +14,8 @@ import {
   ArrowLeft02Icon,
   ArrowRight02Icon,
   BubbleChatIcon,
-  Delete01Icon
+  Delete01Icon,
+  PlayIcon
 } from 'hugeicons-react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -204,6 +205,13 @@ export function History(): React.JSX.Element {
                           size={12}
                           className="text-muted shrink-0"
                           aria-label="Heartbeat"
+                        />
+                      )}
+                      {conv.channel === 'procedure' && (
+                        <PlayIcon
+                          size={12}
+                          className="text-muted shrink-0"
+                          aria-label="Procedure"
                         />
                       )}
                       {conv.channel === 'telegram' && (

@@ -32,6 +32,20 @@ export function FileCard({
   )
 }
 
+/**
+ * Short, human-friendly type label for the card subtitle. Prefers the
+ * uppercased file extension ("DOCX", "ZIP") — the raw mimeType is unreadable
+ * for Office formats (application/vnd.openxmlformats-officedocument…). Falls
+ * back to the top-level mime type ("Image", "Audio") when there's no
+ * extension, then to "File".
+ */
+function fileTypeLabel(fileName: string, mimeType: string): string {
+  const ext = fileName.match(/\.([a-z0-9]+)$/i)?.[1]
+  if (ext) return ext.toUpperCase()
+  const top = mimeType.split('/')[0]
+  return top ? top.charAt(0).toUpperCase() + top.slice(1) : 'File'
+}
+
 function DeletedFile({ fileName }: { fileName: string }): React.JSX.Element {
   const { t } = useTranslation()
   return (
@@ -97,7 +111,8 @@ function ActiveFile({
           {fileName}
         </span>
         <span className="text-muted text-xs">
-          {mimeType || 'file'} · {formatBytes(sizeBytes)}
+          {fileTypeLabel(fileName, mimeType)}
+          {sizeBytes > 0 ? ` · ${formatBytes(sizeBytes)}` : ''}
         </span>
       </div>
       <button

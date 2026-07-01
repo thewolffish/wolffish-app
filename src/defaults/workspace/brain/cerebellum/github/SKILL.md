@@ -114,9 +114,16 @@ requires:
   - shell
   - node
 tools:
+  - name: github_connections
+    description: 'List the configured GitHub connections (their labels and connected account) so you know which `connection` to pass on other github_* tools. Never exposes tokens.'
+    parameters: {}
   - name: github_list_repos
     description: List the authenticated user's repositories. Returns name, description, visibility, default branch, and last pushed date.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       type:
         type: string
         required: false
@@ -141,6 +148,10 @@ tools:
   - name: github_get_repo
     description: Get details for a specific repository including open issues count, stars, forks, default branch, language, and topics.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       owner:
         type: string
         description: Repository owner (username or org)
@@ -150,6 +161,10 @@ tools:
   - name: github_create_repo
     description: Create a new repository for the authenticated user.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       name:
         type: string
         description: Repository name
@@ -168,6 +183,10 @@ tools:
   - name: github_list_issues
     description: List issues for a repository. Returns issue number, title, state, labels, assignee, and created date.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       owner:
         type: string
         description: Repository owner
@@ -197,6 +216,10 @@ tools:
   - name: github_get_issue
     description: Get a single issue with full body and comments.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       owner:
         type: string
         description: Repository owner
@@ -209,6 +232,10 @@ tools:
   - name: github_create_issue
     description: Create a new issue in a repository.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       owner:
         type: string
         description: Repository owner
@@ -233,6 +260,10 @@ tools:
   - name: github_close_issue
     description: Close an issue.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       owner:
         type: string
         description: Repository owner
@@ -245,6 +276,10 @@ tools:
   - name: github_list_prs
     description: List pull requests for a repository. Returns PR number, title, state, head/base branches, author, and review status.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       owner:
         type: string
         description: Repository owner
@@ -274,6 +309,10 @@ tools:
   - name: github_get_pr
     description: Get a single pull request with full body, diff stats, and review status.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       owner:
         type: string
         description: Repository owner
@@ -286,6 +325,10 @@ tools:
   - name: github_create_pr
     description: Create a new pull request.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       owner:
         type: string
         description: Repository owner
@@ -312,6 +355,10 @@ tools:
   - name: github_merge_pr
     description: Merge a pull request.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       owner:
         type: string
         description: Repository owner
@@ -332,6 +379,10 @@ tools:
   - name: github_list_branches
     description: List branches for a repository. Returns branch names and whether they are protected.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       owner:
         type: string
         description: Repository owner
@@ -341,6 +392,10 @@ tools:
   - name: github_delete_branch
     description: Delete a branch from a repository.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       owner:
         type: string
         description: Repository owner
@@ -353,6 +408,10 @@ tools:
   - name: github_get_workflow_runs
     description: Get recent CI/Actions workflow runs for a repository.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       owner:
         type: string
         description: Repository owner
@@ -374,6 +433,10 @@ tools:
   - name: github_get_workflow_run_logs
     description: Get logs for a specific workflow run. Returns log content truncated for context.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       owner:
         type: string
         description: Repository owner
@@ -386,6 +449,10 @@ tools:
   - name: github_create_release
     description: Create a new release on a repository.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       owner:
         type: string
         description: Repository owner
@@ -417,6 +484,10 @@ tools:
   - name: github_search_code
     description: Search code across GitHub repositories.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       query:
         type: string
         description: Search query (GitHub code search syntax)
@@ -427,6 +498,10 @@ tools:
   - name: github_get_file_content
     description: Get the contents of a file from a repository.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       owner:
         type: string
         description: Repository owner
@@ -443,6 +518,10 @@ tools:
   - name: github_list_gists
     description: List the authenticated user's gists.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       per_page:
         type: number
         required: false
@@ -450,6 +529,10 @@ tools:
   - name: github_create_gist
     description: Create a new gist.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       description:
         type: string
         required: false
@@ -464,6 +547,10 @@ tools:
   - name: github_delete_repo
     description: Permanently delete a repository. This action is irreversible.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       owner:
         type: string
         description: Repository owner
@@ -472,10 +559,18 @@ tools:
         description: Repository name
   - name: github_list_user_orgs
     description: List organizations the authenticated user belongs to. Returns org login, description, and URL. Use this to discover org names before calling github_list_org_repos.
-    parameters: {}
+    parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
   - name: github_list_org_repos
     description: List repositories for a specific organization. Returns name, description, visibility, default branch, and last pushed date.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       org:
         type: string
         description: Organization name
@@ -505,10 +600,18 @@ tools:
         description: Results per page (default 10, max 100)
   - name: github_get_authenticated_user
     description: Get the authenticated user's profile. Returns username, name, email, bio, public repos count, followers, and created date.
-    parameters: {}
+    parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
   - name: github_list_collaborators
     description: List collaborators on a repository. Returns username, role, and permissions.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       owner:
         type: string
         description: Repository owner
@@ -530,6 +633,10 @@ tools:
   - name: github_add_collaborator
     description: Invite a collaborator to a repository.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       owner:
         type: string
         description: Repository owner
@@ -550,6 +657,10 @@ tools:
   - name: github_remove_collaborator
     description: Remove a collaborator from a repository.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       owner:
         type: string
         description: Repository owner
@@ -562,6 +673,10 @@ tools:
   - name: github_list_comments_on_issue
     description: List comments on an issue or PR. Returns comment author, body, and created date.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       owner:
         type: string
         description: Repository owner
@@ -578,6 +693,10 @@ tools:
   - name: github_add_comment
     description: Add a comment to an issue or PR.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       owner:
         type: string
         description: Repository owner
@@ -593,6 +712,10 @@ tools:
   - name: github_list_labels
     description: List labels for a repository. Returns label name, color, and description.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       owner:
         type: string
         description: Repository owner
@@ -606,6 +729,10 @@ tools:
   - name: github_create_label
     description: Create a label in a repository.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       owner:
         type: string
         description: Repository owner
@@ -626,6 +753,10 @@ tools:
   - name: github_add_labels_to_issue
     description: Add labels to an issue or PR.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       owner:
         type: string
         description: Repository owner
@@ -641,6 +772,10 @@ tools:
   - name: github_list_milestones
     description: List milestones for a repository. Returns title, description, due date, and open/closed issue counts.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       owner:
         type: string
         description: Repository owner
@@ -662,6 +797,10 @@ tools:
   - name: github_create_milestone
     description: Create a milestone in a repository.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       owner:
         type: string
         description: Repository owner
@@ -689,6 +828,10 @@ tools:
   - name: github_list_pr_reviews
     description: List reviews on a pull request. Returns reviewer, state, body, and submitted date.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       owner:
         type: string
         description: Repository owner
@@ -705,6 +848,10 @@ tools:
   - name: github_request_reviewers
     description: Request reviewers on a pull request.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       owner:
         type: string
         description: Repository owner
@@ -724,6 +871,10 @@ tools:
   - name: github_list_pr_files
     description: List files changed in a pull request. Returns filename, status, additions, deletions, and patch snippet.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       owner:
         type: string
         description: Repository owner
@@ -740,6 +891,10 @@ tools:
   - name: github_update_pr
     description: Update a pull request's title, body, state, or base branch.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       owner:
         type: string
         description: Repository owner
@@ -771,6 +926,10 @@ tools:
   - name: github_list_releases
     description: List releases for a repository. Returns tag name, release name, published date, draft/prerelease flags, and asset count.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       owner:
         type: string
         description: Repository owner
@@ -784,6 +943,10 @@ tools:
   - name: github_get_release
     description: Get a single release with full body and asset download URLs.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       owner:
         type: string
         description: Repository owner
@@ -801,6 +964,10 @@ tools:
   - name: github_list_repo_topics
     description: List topics (tags) for a repository.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       owner:
         type: string
         description: Repository owner
@@ -810,6 +977,10 @@ tools:
   - name: github_replace_repo_topics
     description: Replace all topics on a repository.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       owner:
         type: string
         description: Repository owner
@@ -822,6 +993,10 @@ tools:
   - name: github_get_commit
     description: Get details for a specific commit. Returns SHA, author, message, date, and files changed.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       owner:
         type: string
         description: Repository owner
@@ -834,6 +1009,10 @@ tools:
   - name: github_compare_commits
     description: Compare two commits, branches, or tags. Returns ahead/behind counts, commit list, and files changed.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       owner:
         type: string
         description: Repository owner
@@ -849,6 +1028,10 @@ tools:
   - name: github_list_notifications
     description: List the authenticated user's notifications.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       all:
         type: boolean
         required: false
@@ -864,6 +1047,10 @@ tools:
   - name: github_mark_notifications_read
     description: Mark all notifications as read.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       last_read_at:
         type: string
         required: false
@@ -871,6 +1058,10 @@ tools:
   - name: github_list_stargazers
     description: List users who have starred a repository.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       owner:
         type: string
         description: Repository owner
@@ -884,6 +1075,10 @@ tools:
   - name: github_star_repo
     description: Star a repository for the authenticated user.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       owner:
         type: string
         description: Repository owner
@@ -893,6 +1088,10 @@ tools:
   - name: github_unstar_repo
     description: Unstar a repository for the authenticated user.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       owner:
         type: string
         description: Repository owner
@@ -902,6 +1101,10 @@ tools:
   - name: github_fork_repo
     description: Fork a repository.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       owner:
         type: string
         description: Repository owner
@@ -915,6 +1118,10 @@ tools:
   - name: github_rerun_workflow
     description: Re-run a failed or completed workflow run.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       owner:
         type: string
         description: Repository owner
@@ -927,6 +1134,10 @@ tools:
   - name: github_cancel_workflow_run
     description: Cancel an in-progress workflow run.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       owner:
         type: string
         description: Repository owner
@@ -939,6 +1150,10 @@ tools:
   - name: github_dispatch_workflow
     description: Manually trigger a workflow via workflow_dispatch event.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
       owner:
         type: string
         description: Repository owner
@@ -995,6 +1210,15 @@ confirm_patterns:
 # GitHub
 
 Interact with GitHub repositories, issues, pull requests, branches, CI, releases, gists, collaborators, labels, milestones, reviews, notifications, stars, forks, and more.
+
+## Connections
+
+GitHub access is organized into **connections**. Each connection is one GitHub account the user linked, identified by a **label** they chose (for example `Work` or `Personal`). The label is how you — and the user — tell one account apart from another.
+
+- Call `github_connections` to see the configured labels and which account each points to. It never returns tokens.
+- Pass the chosen label as the `connection` parameter on every other `github_*` tool call.
+- You may omit `connection` only when exactly one connection is configured. When several exist and you don't pass one, the tool returns an error listing the available labels — read it and retry with the right label.
+- Match the label to the user's intent: "my work github" → the connection labeled `Work`; "my personal account" → `Personal`. If it is genuinely ambiguous which the user means, ask them before acting.
 
 ## Authentication
 

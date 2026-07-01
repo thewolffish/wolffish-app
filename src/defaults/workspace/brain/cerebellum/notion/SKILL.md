@@ -91,9 +91,16 @@ triggers:
 requires:
   - node
 tools:
+  - name: notion_connections
+    description: 'List the configured Notion connections (their labels and connected account) so you know which `connection` to pass on other notion_* tools. Never exposes tokens.'
+    parameters: {}
   - name: notion_search
     description: Search across all pages and databases the integration can access. Returns page/database titles, IDs, and snippets.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked Notion connection to use, by its label (e.g. "Personal", "Wolffish"). Optional when only one connection is configured; required to disambiguate when several exist. Call notion_connections to list the labels.'
       query:
         type: string
         description: Search query text
@@ -112,12 +119,20 @@ tools:
   - name: notion_read_page
     description: Retrieve a page's properties (title, status, dates, relations, etc). Returns the full property object as raw Notion JSON.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked Notion connection to use, by its label (e.g. "Personal", "Wolffish"). Optional when only one connection is configured; required to disambiguate when several exist. Call notion_connections to list the labels.'
       page_id:
         type: string
         description: The page ID (UUID, with or without dashes)
   - name: notion_read_blocks
     description: Read the block content (body) of a page or block. Returns an array of block objects. Use the page ID to read the top-level content, or a block ID for children of a specific block.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked Notion connection to use, by its label (e.g. "Personal", "Wolffish"). Optional when only one connection is configured; required to disambiguate when several exist. Call notion_connections to list the labels.'
       block_id:
         type: string
         description: Page or block ID to read children of
@@ -132,6 +147,10 @@ tools:
   - name: notion_create_page
     description: Create a new page. Specify a parent (database or page) and properties. Optionally include block children for the page body.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked Notion connection to use, by its label (e.g. "Personal", "Wolffish"). Optional when only one connection is configured; required to disambiguate when several exist. Call notion_connections to list the labels.'
       parent:
         type: object
         description: '{ "database_id": "..." } or { "page_id": "..." }'
@@ -153,6 +172,10 @@ tools:
   - name: notion_update_page
     description: Update a page's properties, icon, cover, or archive status. Cannot change the page body — use notion_append_blocks, notion_update_block, or notion_delete_block for that.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked Notion connection to use, by its label (e.g. "Personal", "Wolffish"). Optional when only one connection is configured; required to disambiguate when several exist. Call notion_connections to list the labels.'
       page_id:
         type: string
         description: The page ID to update
@@ -175,15 +198,25 @@ tools:
   - name: notion_append_blocks
     description: Append new block children to a page or block. Use this to add content to existing pages.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked Notion connection to use, by its label (e.g. "Personal", "Wolffish"). Optional when only one connection is configured; required to disambiguate when several exist. Call notion_connections to list the labels.'
       block_id:
         type: string
-        description: Parent page or block ID to append to
+        required: true
+        description: Parent page or block ID to append to. REQUIRED on every call — this is the destination the blocks are added to; omitting it fails the append. Pass the page ID here to add to the top of a page, or a block ID to nest under an existing block.
       children:
         type: array
+        required: true
         description: Array of block objects to append
   - name: notion_read_database
     description: Query a database with optional filters and sorts. Returns an array of page objects (database rows).
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked Notion connection to use, by its label (e.g. "Personal", "Wolffish"). Optional when only one connection is configured; required to disambiguate when several exist. Call notion_connections to list the labels.'
       database_id:
         type: string
         description: The database ID to query
@@ -206,6 +239,10 @@ tools:
   - name: notion_update_block
     description: Update an existing block's content or archive it. Only the block type's own content field can be updated.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked Notion connection to use, by its label (e.g. "Personal", "Wolffish"). Optional when only one connection is configured; required to disambiguate when several exist. Call notion_connections to list the labels.'
       block_id:
         type: string
         description: The block ID to update
@@ -224,12 +261,20 @@ tools:
   - name: notion_delete_block
     description: Delete (archive) a block by ID. This removes the block from the page.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked Notion connection to use, by its label (e.g. "Personal", "Wolffish"). Optional when only one connection is configured; required to disambiguate when several exist. Call notion_connections to list the labels.'
       block_id:
         type: string
         description: The block ID to delete
   - name: notion_create_database
     description: Create a new database as a child of an existing page. Define the schema with properties.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked Notion connection to use, by its label (e.g. "Personal", "Wolffish"). Optional when only one connection is configured; required to disambiguate when several exist. Call notion_connections to list the labels.'
       parent:
         type: object
         description: '{ "page_id": "..." } — the parent page for the new database'
@@ -250,6 +295,10 @@ tools:
   - name: notion_update_database
     description: Update a database's title, description, or property schema.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked Notion connection to use, by its label (e.g. "Personal", "Wolffish"). Optional when only one connection is configured; required to disambiguate when several exist. Call notion_connections to list the labels.'
       database_id:
         type: string
         description: The database ID to update
@@ -268,6 +317,10 @@ tools:
   - name: notion_list_users
     description: List all users in the workspace (members and bots).
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked Notion connection to use, by its label (e.g. "Personal", "Wolffish"). Optional when only one connection is configured; required to disambiguate when several exist. Call notion_connections to list the labels.'
       page_size:
         type: number
         required: false
@@ -279,12 +332,20 @@ tools:
   - name: notion_get_user
     description: Get details about a specific user by ID.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked Notion connection to use, by its label (e.g. "Personal", "Wolffish"). Optional when only one connection is configured; required to disambiguate when several exist. Call notion_connections to list the labels.'
       user_id:
         type: string
         description: The user ID
   - name: notion_add_comment
     description: Add a comment to a page or existing discussion thread.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked Notion connection to use, by its label (e.g. "Personal", "Wolffish"). Optional when only one connection is configured; required to disambiguate when several exist. Call notion_connections to list the labels.'
       parent:
         type: object
         required: false
@@ -299,6 +360,10 @@ tools:
   - name: notion_list_comments
     description: List comments on a block or page.
     parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked Notion connection to use, by its label (e.g. "Personal", "Wolffish"). Optional when only one connection is configured; required to disambiguate when several exist. Call notion_connections to list the labels.'
       block_id:
         type: string
         description: The block or page ID to list comments for
@@ -338,6 +403,15 @@ confirm_patterns:
 ---
 
 # Notion
+
+## Connections
+
+Notion access is organized into **connections**. Each connection is one Notion workspace the user linked, identified by a **label** they chose (for example `Personal` or `Wolffish`). The label is how you — and the user — tell one workspace apart from another.
+
+- Call `notion_connections` to see the configured labels and which account each points to. It never returns tokens.
+- Pass the chosen label as the `connection` parameter on every other `notion_*` tool call.
+- You may omit `connection` only when exactly one connection is configured. When several exist and you don't pass one, the tool returns an error listing the available labels — read it and retry with the right label.
+- Match the label to the user's intent: "my personal notion" → the connection labeled `Personal`; "the Wolffish workspace" → `Wolffish`. If it is genuinely ambiguous which the user means, ask them before acting.
 
 ## Content model
 
@@ -480,7 +554,8 @@ List and query endpoints return `has_more` and `next_cursor`. When `has_more` is
 
 ### Add content to a page
 1. Build block objects for the content
-2. `notion_append_blocks` with the page ID and block array
+2. `notion_append_blocks`, passing the destination page (or block) ID as `block_id` and the block objects as `children`. `block_id` is required on every call — omitting it fails the append; there is no implicit "current page."
+3. Building a large page in several appends? Keep each append well under the 2000-block limit, and after the final append read the page back with `notion_read_blocks` to confirm every planned section actually landed before telling the user it's done.
 
 ### Create a database entry
 1. Use `notion_read_database` to understand the schema

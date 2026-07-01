@@ -5,11 +5,14 @@ import {
   getConversationIdForJid,
   setConversationIdForJid
 } from '@main/channels/whatsapp/conversations'
+import { markdownToWhatsApp, stripInlineMarkup } from '@main/channels/whatsapp/format'
 import {
+  extractInboundMedia,
   extractTextBody,
   isInboundVoiceNote,
   messageTimestamp,
-  shouldProcessMessage
+  shouldProcessMessage,
+  type InboundMedia
 } from '@main/channels/whatsapp/messages'
 import {
   deleteReadHistory,
@@ -102,6 +105,12 @@ const RECONNECT_JITTER = 0.25
 const RECONNECT_MAX_ATTEMPTS = 12
 
 const STALE_DEFAULT_HOURS = 3
+
+// Ceiling for a single inbound media download. WhatsApp itself allows up to
+// ~2 GB documents, but the whole blob is buffered in memory before it's
+// written, so we decline anything larger with a friendly note rather than
+// risk the main process. Matches the in-app 1 GB per-message upload budget.
+const MAX_WHATSAPP_MEDIA_BYTES = 1024 * 1024 * 1024
 
 const BUSY_SYSTEM_PROMPT =
   "You are a friendly assistant currently working on a previous task for the user. The user has just sent a NEW message but you cannot address it yet — another task is still running. Reply briefly (1-2 short sentences) acknowledging their new message and politely asking them to wait. Do NOT attempt to answer their question, perform any action, or speculate about an answer. Just say you're busy and will get to it. Be warm and natural."
@@ -799,6 +808,20 @@ export class WhatsAppChannel {
         continue
       }
 
+      // Inbound media (documents/PDFs, images, video, non-voice audio,
+      // stickers): download into the conversation's uploads folder and
+      // dispatch as a real file attachment — the same pipeline in-app uploads
+      // and Telegram media use — instead of the dead '<media:…>' placeholder
+      // the agent can't act on. Sits in the same slot as the voice check
+      // (after the allow-list/sentIds/timestamp guards, before the command
+      // parser) so a media caption like "stop" attaches the file rather than
+      // being mistaken for a command.
+      const media = extractInboundMedia(msg)
+      if (media) {
+        void this.handleInboundMedia(jid, msg, media)
+        continue
+      }
+
       this.agent.corpus.emit('whatsapp.message.received', { remoteJid: jid, body })
 
       void this.handleInboundMessage(jid, body)
@@ -961,7 +984,7 @@ export class WhatsAppChannel {
     try {
       const report = await this.agent.insula.reflect()
       const text = typeof report === 'string' ? report : JSON.stringify(report, null, 2)
-      await this.safeSend(jid, text)
+      await this.safeSend(jid, markdownToWhatsApp(text))
     } catch {
       await this.safeSend(jid, 'Unable to generate status report.')
     }
@@ -1135,6 +1158,115 @@ export class WhatsAppChannel {
     }
   }
 
+  /**
+   * Inbound media (documents/PDFs, images, video, non-voice audio, stickers):
+   * download the blob into the conversation's uploads folder and dispatch a
+   * normal text turn with the file attached and the caption (if any) as the
+   * prompt. This routes channel media through the exact same
+   * upload → attachment → processHistoryAttachments pipeline the in-app chat
+   * uses, so a PDF is handed to the model as a native document (and read the
+   * same way an in-app PDF is) instead of a dead '<media:document>'
+   * placeholder. Mirrors handleInboundVoice + Telegram's handleMediaMessage.
+   * Every early-return surfaces a friendly message; nothing throws back into
+   * the upsert loop.
+   */
+  private async handleInboundMedia(
+    jid: string,
+    msg: WAMessage,
+    media: InboundMedia
+  ): Promise<void> {
+    // One turn per chat at a time — mirrors the voice + text paths. Decline
+    // BEFORE downloading so a busy agent never pulls a large blob it can't use.
+    if (this.activeByJid.size > 0) {
+      await this.sendBusyReply(jid, media.caption || `(${media.kind})`)
+      return
+    }
+    const sock = this.sock
+    if (!sock) return
+
+    // Pre-download size guard using the size WhatsApp declares in the media
+    // header — refuses an oversized file before pulling it down. Best-effort:
+    // the header omits fileLength on some messages, so a post-download check
+    // below is the real backstop.
+    if (media.fileLength != null && media.fileLength > MAX_WHATSAPP_MEDIA_BYTES) {
+      await this.safeSend(
+        jid,
+        `⚠️ File too large (${formatBytes(media.fileLength)}). Limit is ${formatBytes(MAX_WHATSAPP_MEDIA_BYTES)}.`
+      )
+      return
+    }
+
+    try {
+      const conversation = await this.loadOrCreateConversation(jid)
+
+      let attachment: MessageAttachment
+      try {
+        // The raw `msg` carries the encrypted media keys; reuploadRequest lets
+        // baileys re-fetch keys if the first decrypt attempt fails. Same call
+        // the voice path uses — it works uniformly across media kinds.
+        const buffer = await downloadMediaMessage(
+          msg,
+          'buffer',
+          {},
+          { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage }
+        )
+        // Backstop for media whose header omitted fileLength (the pre-download
+        // guard couldn't fire): drop it now rather than persist + dispatch a
+        // file over the cap.
+        if (buffer.length > MAX_WHATSAPP_MEDIA_BYTES) {
+          await this.safeSend(
+            jid,
+            `⚠️ File too large (${formatBytes(buffer.length)}). Limit is ${formatBytes(MAX_WHATSAPP_MEDIA_BYTES)}.`
+          )
+          return
+        }
+        // Pass the WhatsApp mimetype as a hint so an extension-less document
+        // still classifies correctly (the filename already carries a
+        // synthesized extension, but the hint is a belt-and-suspenders).
+        attachment = await saveUploadFromBuffer(
+          conversation.id,
+          buffer,
+          media.fileName,
+          media.mimeType
+        )
+        this.agent.corpus.emit('whatsapp.media.received', {
+          remoteJid: jid,
+          type: attachment.type,
+          filePath: attachment.filePath,
+          sizeBytes: attachment.sizeBytes
+        })
+      } catch (err) {
+        const errMessage = err instanceof Error ? err.message : String(err)
+        await this.safeSend(jid, `⚠️ Media download failed: ${errMessage}`)
+        return
+      }
+
+      // Vision-capability gate for images on a non-vision local model — mirror
+      // Telegram. Cloud providers always support vision; only Ollama can come
+      // back negative. Caught before dispatch so the user gets a clear reply
+      // instead of the model silently ignoring the image.
+      if (
+        attachment.type === 'image' &&
+        this.agent.thalamus.getActiveProvider() === 'local' &&
+        !(await this.agent.thalamus.localSupportsVision())
+      ) {
+        const modelName = this.agent.thalamus.getLocalModelName() ?? 'current model'
+        await this.safeSend(
+          jid,
+          `⚠️ ${modelName} doesn't support image uploads. Switch to a vision model or send a different file.`
+        )
+        return
+      }
+
+      // Empty caption is fine — composeAttachmentContext forwards the file
+      // with empty text and the model sees the attachment alone.
+      await this.dispatchTurn(jid, media.caption ?? '', [attachment])
+    } catch (err) {
+      const errMessage = err instanceof Error ? err.message : String(err)
+      await this.safeSend(jid, `⚠️ Media message failed: ${errMessage}`)
+    }
+  }
+
   // --- Turn dispatch (mirrors Telegram's pattern) ---
 
   private async dispatchTurn(
@@ -1186,6 +1318,7 @@ export class WhatsAppChannel {
     const handle = this.runner.send({
       history,
       conversationId: conversation.id,
+      channel: 'whatsapp',
       makeSink: ({ turnId, conversationId }) => this.createSink(turnId, conversationId, jid),
       onTurnStarted: ({ controller }) => {
         const active: ActiveTurn = {
@@ -1463,6 +1596,10 @@ export class WhatsAppChannel {
         await this.safeSend(jid, heading)
         return
       }
+      // Deliberately NOT markdown-converted: tool output is not model
+      // prose — it's frequently code/shell text (def f(**a), # comments)
+      // that the converter would corrupt, and failed results shown here
+      // are diagnostics the user may be debugging against verbatim.
       await this.safeSend(jid, `${heading}\n${blockquote(truncateToolOutput(output))}`)
       return
     }
@@ -1520,7 +1657,10 @@ export class WhatsAppChannel {
     active.textBuffer = ''
 
     const imagePaths = extractWolffishMediaPaths(raw)
-    const cleaned = stripWolffishMediaMarkdown(raw).trim()
+    // Media markers are extracted from the RAW text first — the Markdown
+    // converter would rewrite ![...](wolffish-media://...) syntax before the
+    // extractor could see it. Conversion runs on the cleaned prose only.
+    const cleaned = markdownToWhatsApp(stripWolffishMediaMarkdown(raw)).trim()
 
     if (cleaned.length > 0) {
       for (const chunk of splitForWhatsApp(cleaned)) {
@@ -1616,9 +1756,11 @@ export class WhatsAppChannel {
       active.pendingAsk = null
       active.pendingAskResolve = null
       resolve({ kind: 'option', index: outcome.index })
+      // Same sanitization the question card applies to this label —
+      // otherwise a model-authored '**Deploy now**' echoes back raw.
       await this.safeSend(
         jid,
-        `✅ Option ${outcome.index + 1}: ${pending.options[outcome.index].label}`
+        `✅ Option ${outcome.index + 1}: ${stripInlineMarkup(pending.options[outcome.index].label)}`
       )
       return
     }
@@ -1670,7 +1812,7 @@ export class WhatsAppChannel {
     }
 
     const trimmed = response.trim()
-    await this.safeSend(jid, trimmed.length > 0 ? trimmed : FALLBACK_BUSY_REPLY)
+    await this.safeSend(jid, trimmed.length > 0 ? markdownToWhatsApp(trimmed) : FALLBACK_BUSY_REPLY)
   }
 
   // --- Sending ---
@@ -1859,6 +2001,13 @@ export class WhatsAppChannel {
   }
 }
 
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`
+}
+
 function classifyError(error: Boom | undefined): WhatsAppErrorKind {
   if (!error) return 'unknown'
   const msg = (error.message ?? '').toLowerCase()
@@ -1919,12 +2068,14 @@ function parseSelectionNumber(text: string): number | null {
  * user they can just type their own instructions instead.
  */
 function formatAskRequestPlain(req: AskUserRequest): string {
-  const parts: string[] = [`❓ *${req.question}*`]
-  if (req.details) parts.push(req.details)
+  // Question and labels are model-authored — strip/convert any Markdown so
+  // the card renders with WhatsApp formatting, not raw syntax.
+  const parts: string[] = [`❓ *${stripInlineMarkup(req.question)}*`]
+  if (req.details) parts.push(markdownToWhatsApp(req.details))
   const list = req.options
     .map((opt, i) => {
-      const head = `*${i + 1}.* ${opt.label}`
-      return opt.description ? `${head}\n${opt.description}` : head
+      const head = `*${i + 1}.* ${stripInlineMarkup(opt.label)}`
+      return opt.description ? `${head}\n${markdownToWhatsApp(opt.description)}` : head
     })
     .join('\n\n')
   parts.push(list)

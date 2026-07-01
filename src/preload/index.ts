@@ -274,7 +274,7 @@ export type ConversationMessage = {
   voicePrompt?: boolean
 }
 
-export type ConversationChannel = 'electron' | 'telegram' | 'whatsapp' | 'heartbeat'
+export type ConversationChannel = 'electron' | 'telegram' | 'whatsapp' | 'heartbeat' | 'procedure'
 
 export type TimelineEntry = {
   id: string
@@ -703,6 +703,21 @@ export type HeartbeatApi = {
   onJobLog: (listener: (entry: HeartbeatLogEntry) => void) => () => void
 }
 
+export type Procedure = {
+  id: string
+  title: string
+  prompt: string
+  createdAt: number
+  updatedAt: number
+}
+
+export type ProceduresApi = {
+  list: () => Promise<Procedure[]>
+  create: (payload: { title: string; prompt: string }) => Promise<Procedure>
+  update: (payload: { id: string; title?: string; prompt?: string }) => Promise<Procedure>
+  delete: (id: string) => Promise<{ ok: true }>
+}
+
 export type ReindexStatus = {
   startedAt: number
   total: number
@@ -959,10 +974,16 @@ export type NotionStatus = {
   error: string | null
 }
 
-export type NotionConfig = {
+export type NotionConnection = {
+  id: string
+  label: string
   token: string
   name: string
   email: string
+}
+
+export type NotionConfig = {
+  connections: NotionConnection[]
 }
 
 export type NotionTestResult =
@@ -971,7 +992,7 @@ export type NotionTestResult =
 
 export type NotionApi = {
   getConfig: () => Promise<NotionConfig>
-  setConfig: (patch: Partial<NotionConfig>) => Promise<{
+  setConfig: (connections: NotionConnection[]) => Promise<{
     ok: true
     status: NotionStatus
     config: NotionConfig
@@ -994,10 +1015,16 @@ export type GitHubStatus = {
   error: string | null
 }
 
-export type GitHubConfig = {
+export type GitHubConnection = {
+  id: string
+  label: string
   token: string
   login: string
   name: string
+}
+
+export type GitHubConfig = {
+  connections: GitHubConnection[]
 }
 
 export type GitHubTestResult =
@@ -1006,7 +1033,7 @@ export type GitHubTestResult =
 
 export type GitHubApi = {
   getConfig: () => Promise<GitHubConfig>
-  setConfig: (patch: Partial<GitHubConfig>) => Promise<{
+  setConfig: (connections: GitHubConnection[]) => Promise<{
     ok: true
     status: GitHubStatus
     config: GitHubConfig
@@ -1279,6 +1306,7 @@ export type WolffishApi = {
   conversation: ConversationApi
   viewer: ViewerApi
   heartbeat: HeartbeatApi
+  procedures: ProceduresApi
   reindex: ReindexApi
   app: AppApi
   data: DataApi
@@ -1403,6 +1431,12 @@ const api: WolffishApi = {
     onJobEnded: (listener) => subscribe('heartbeat:jobEnded', listener),
     onJobLog: (listener) => subscribe('heartbeat:jobLog', listener)
   },
+  procedures: {
+    list: () => ipcRenderer.invoke('procedures:list'),
+    create: (payload) => ipcRenderer.invoke('procedures:create', payload),
+    update: (payload) => ipcRenderer.invoke('procedures:update', payload),
+    delete: (id) => ipcRenderer.invoke('procedures:delete', id)
+  },
   reindex: {
     getStatus: () => ipcRenderer.invoke('reindex:getStatus'),
     onStarted: (listener) => subscribe('reindex:started', listener),
@@ -1508,13 +1542,13 @@ const api: WolffishApi = {
   },
   notion: {
     getConfig: () => ipcRenderer.invoke('notion:getConfig'),
-    setConfig: (patch) => ipcRenderer.invoke('notion:setConfig', patch),
+    setConfig: (connections) => ipcRenderer.invoke('notion:setConfig', connections),
     status: () => ipcRenderer.invoke('notion:status'),
     test: (token) => ipcRenderer.invoke('notion:test', token)
   },
   github: {
     getConfig: () => ipcRenderer.invoke('github:getConfig'),
-    setConfig: (patch) => ipcRenderer.invoke('github:setConfig', patch),
+    setConfig: (connections) => ipcRenderer.invoke('github:setConfig', connections),
     status: () => ipcRenderer.invoke('github:status'),
     test: (token) => ipcRenderer.invoke('github:test', token)
   },

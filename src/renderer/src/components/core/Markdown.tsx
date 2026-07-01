@@ -169,7 +169,7 @@ export const Markdown = memo(function Markdown({ content }: { content: string })
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
-      rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
+      rehypePlugins={[[rehypeHighlight, { detect: false, ignoreMissing: true }]]}
       components={components}
       urlTransform={urlTransform}
     >

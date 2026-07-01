@@ -881,6 +881,49 @@ export class Brainstem {
     return { ok: true, started: true }
   }
 
+  /**
+   * Run an ad-hoc instruction NOW as a detached background job — used by the
+   * `procedures` capability so a saved procedure runs exactly like a triggered
+   * automation: through this same single-flight queue (one-at-a-time, coalesced),
+   * as a sealed autonomous conversation that lands in history. `key` dedupes
+   * re-runs of the same procedure — a second run while one is in flight is
+   * coalesced rather than run twice. Fire-and-forget: returns once queued.
+   */
+  runDetached(
+    instruction: string,
+    label: string,
+    key: string
+  ): { ok: boolean; started: boolean; error?: string } {
+    if (!this.agent) return { ok: false, started: false, error: 'The agent is not ready yet.' }
+    if (instruction.trim().length === 0) {
+      return { ok: false, started: false, error: `"${label}" has no instruction to run.` }
+    }
+    // `kind: 'once'` here is cosmetic — it only labels the corpus jobStarted
+    // event's `type`. The real one-time self-delete (retireOnce → rewrites
+    // heartbeat.md) is wired ONLY as the enqueue `onComplete` in fireOnce, which
+    // this path never touches. Do NOT add an onComplete or route detached runs
+    // through scheduleOnce, or a procedure run would start editing heartbeat.md.
+    const schedule: ParsedSchedule = {
+      id: key,
+      kind: 'once',
+      cron: null,
+      label,
+      body: instruction,
+      runAt: null
+    }
+    const accepted = this.enqueue(schedule, () =>
+      this.runHeartbeatJob(instruction, label, 'procedure')
+    )
+    if (!accepted) {
+      return {
+        ok: true,
+        started: false,
+        error: `"${label}" is already running or queued — it'll run shortly.`
+      }
+    }
+    return { ok: true, started: true }
+  }
+
   /** Resolve a job by id first, then by exact (case-insensitive) label. */
   private findJob(idOrLabel: string): BrainstemJob | undefined {
     const needle = idOrLabel.trim()
@@ -902,10 +945,18 @@ export class Brainstem {
     return () => this.runHeartbeatJob(body, label)
   }
 
-  private runHeartbeatJob(instruction: string, label: string): Promise<void> {
+  private runHeartbeatJob(
+    instruction: string,
+    label: string,
+    channel: 'heartbeat' | 'procedure' = 'heartbeat'
+  ): Promise<void> {
     if (!this.agent) return Promise.resolve()
     // Serialization is handled by the drain loop, so this just runs the turn.
-    return this.agent.processAutonomous({ instruction, jobLabel: label }).then(() => undefined)
+    // `channel` stamps the sealed conversation so a procedure run reads as a
+    // procedure (not an automation) in history.
+    return this.agent
+      .processAutonomous({ instruction, jobLabel: label, channel })
+      .then(() => undefined)
   }
 
   private async runWeeklyReview(jobId?: string): Promise<void> {

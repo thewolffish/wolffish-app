@@ -19,12 +19,15 @@ export function CodeBlock({
   className?: string
 }): React.JSX.Element {
   const html = useMemo(() => {
+    // Only highlight when the language is known. hljs.highlightAuto runs every
+    // registered grammar to guess the language and is by far the dominant cost
+    // when a conversation opens — tool outputs pass no language, so each one
+    // would pay a full multi-grammar scan synchronously during render. When the
+    // language is unknown we fall through to the plain <pre> below: far cheaper,
+    // and visually fine (the .hljs container styling is kept either way).
+    if (!language || !hljs.getLanguage(language)) return null
     try {
-      const result =
-        language && hljs.getLanguage(language)
-          ? hljs.highlight(content, { language, ignoreIllegals: true })
-          : hljs.highlightAuto(content)
-      return result.value || null
+      return hljs.highlight(content, { language, ignoreIllegals: true }).value || null
     } catch {
       return null
     }

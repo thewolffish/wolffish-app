@@ -1,4 +1,5 @@
 import { diskWriter } from '@main/io/diskWriter'
+import { deliveredFilesReminder } from '@main/runtime/agent/delivered-files'
 import type { BasalGanglia } from '@main/runtime/basalganglia'
 import type { Cerebellum } from '@main/runtime/cerebellum'
 import type { Corpus } from '@main/runtime/corpus'
@@ -59,6 +60,14 @@ export type RuntimeContext = {
    * preserves the legacy in-prompt rendering.
    */
   renderCounters?: boolean
+  /**
+   * File names already delivered to the user this turn (auto-attached by a
+   * tool). Travels with the per-iteration counters — rendered in the volatile
+   * tail (optimized) or the `<runtime>` block (legacy), both after every cache
+   * breakpoint — so it reinforces "don't re-send an already-delivered file"
+   * without landing inside the cached history. Reset each turn by the caller.
+   */
+  deliveredFiles?: string[]
 }
 
 const ALWAYS_INCLUDED: Array<{ category: ContextCategory; rel: string; tag: string }> = [
@@ -115,6 +124,25 @@ Autonomy is ON. Act with high agency and minimal hand-holding:
 - Drive the task end-to-end to the best possible outcome on your own. Only surface to the user for genuine blockers you truly cannot resolve.
 </autonomy_mode>`
 
+// Channel formatting overlays, keyed by the turn's delivery channel (see
+// AgentTurnOptions.channel). Appended when the turn's prose is delivered
+// through a messaging channel whose renderer differs from the in-app chat.
+// Keyed by hard-coded name — same decoupling rationale as
+// CHANNEL_CAPABILITIES above. The WhatsApp channel also converts leaked
+// Markdown at egress (channels/whatsapp/format.ts), but a converter can't
+// un-design a table or a heading-structured document — the model has to
+// write for the medium in the first place; the converter is the backstop.
+const CHANNEL_PROMPTS: Readonly<Record<string, string>> = {
+  whatsapp: `<channel>
+You are talking with the user over WhatsApp: every prose reply you write is delivered as WhatsApp messages. WhatsApp does NOT render Markdown — write replies in WhatsApp's own text formatting and nothing else:
+- *bold* (single asterisks), _italic_ (single underscores), ~strikethrough~ (single tildes), \`inline code\` (backticks), \`\`\`monospace block\`\`\` (triple backticks, no language tag).
+- Lists: start a line with "- " for a bullet or "1. " for a numbered item. Quote: start the line with "> ".
+- NEVER use Markdown syntax: no **double asterisks**, no # headings, no | tables |, no [text](url) links, no --- rules.
+- Instead of a heading, write a short *bold* line. Instead of a table, write one "*Label:* value" line per fact. For a link, paste the bare URL — WhatsApp makes it clickable.
+- This is a phone chat: keep replies short and scannable. Prefer a few tight lines over long structured documents.
+</channel>`
+}
+
 // Non-sensitive config variables longer than this are previewed, not dumped
 // verbatim, into the (RAS-bypassing) <variables> block. Generous enough that
 // real values — URLs, names, IDs, keys — are never touched.
@@ -167,13 +195,14 @@ export class Prefrontal {
     message = '',
     runtime?: RuntimeContext,
     role?: 'orchestrator' | 'worker',
-    opts?: { omitTools?: boolean; stateless?: boolean }
+    opts?: { omitTools?: boolean; stateless?: boolean; channel?: string }
   ): Promise<string> {
     const bundle = await this.buildContext(message, runtime, role, opts)
     const blocks = [
       bundle.systemPrompt,
       await this.buildRoleBlock(role),
-      await this.buildBehaviorBlock()
+      await this.buildBehaviorBlock(),
+      opts?.channel ? (CHANNEL_PROMPTS[opts.channel] ?? '') : ''
     ].filter((b) => b && b.length > 0)
     return blocks.join('\n\n')
   }
@@ -671,6 +700,11 @@ function formatRuntimeBody(runtime: RuntimeContext | undefined): string {
     if (runtime.renderCounters !== false) {
       lines.push(`  Tool iteration this turn: ${runtime.iteration}`)
       lines.push(`  Tools called this turn: ${runtime.toolsCalled}`)
+      // Gated on renderCounters (legacy path only) — in the optimized path the
+      // prompt is pinned, so this per-turn fact rides the volatile tail via
+      // formatRuntimeStatus instead, never touching the cached prefix.
+      const delivered = deliveredFilesReminder(runtime.deliveredFiles ?? [])
+      if (delivered) lines.push(`  ${delivered}`)
     }
     lines.push(
       `  IMPORTANT: When a task requires calling a tool for each item in a set (e.g. reading N emails, fetching N pages), you MUST call the tool for EVERY item before producing final output. Batch 10-15 calls per response for efficiency; their results return to you automatically and you continue with the remaining items in the same loop. A response with no tool calls ENDS the task — never end one planning to "continue next turn". Metadata from search/list results is NOT a substitute for calling the per-item tool — if the task says "read all," call read for ALL, not just a subset.`

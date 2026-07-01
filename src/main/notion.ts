@@ -29,15 +29,15 @@ export type NotionTestResult =
   | { ok: false; kind: NotionErrorKind; message?: string }
 
 class NotionService {
-  private lastError: { kind: NotionErrorKind; message: string | null } | null = null
-
+  // Aggregate status across all connections: configured when at least one
+  // connection carries a token, disabled otherwise. Per-connection test
+  // outcomes are surfaced in the settings panel, not folded in here — a
+  // single failed test shouldn't poison the whole service's status dot.
   async getStatus(): Promise<NotionStatus> {
     const cfg = await getNotionConfig()
-    if (cfg.token.trim().length === 0) {
+    const hasToken = cfg.connections.some((c) => c.token.trim().length > 0)
+    if (!hasToken) {
       return { status: 'disabled', errorKind: null, error: null }
-    }
-    if (this.lastError) {
-      return { status: 'error', errorKind: this.lastError.kind, error: this.lastError.message }
     }
     return { status: 'configured', errorKind: null, error: null }
   }
@@ -45,7 +45,6 @@ class NotionService {
   async testToken(token: string): Promise<NotionTestResult> {
     const trimmed = token.trim()
     if (trimmed.length === 0) {
-      this.lastError = { kind: 'missing_token', message: null }
       return { ok: false, kind: 'missing_token' }
     }
 
@@ -63,28 +62,23 @@ class NotionService {
     } catch (err) {
       const aborted = (err as { name?: string })?.name === 'AbortError'
       const message = aborted ? 'Request timed out' : ((err as Error)?.message ?? String(err))
-      this.lastError = { kind: 'network', message }
       return { ok: false, kind: 'network', message }
     } finally {
       clearTimeout(timer)
     }
 
     if (response.status === 401) {
-      this.lastError = { kind: 'invalid_token', message: null }
       return { ok: false, kind: 'invalid_token' }
     }
     if (response.status === 403) {
-      this.lastError = { kind: 'invalid_token', message: null }
       return { ok: false, kind: 'invalid_token' }
     }
     if (response.status === 429) {
-      this.lastError = { kind: 'rate_limit', message: null }
       return { ok: false, kind: 'rate_limit' }
     }
     if (!response.ok) {
       const text = await response.text().catch(() => '')
       const message = `HTTP ${response.status} ${response.statusText}${text ? ': ' + text.slice(0, 200) : ''}`
-      this.lastError = { kind: 'unknown', message }
       return { ok: false, kind: 'unknown', message }
     }
 
@@ -97,18 +91,12 @@ class NotionService {
       json = (await response.json()) as typeof json
     } catch (err) {
       const message = `Failed to parse response: ${(err as Error)?.message ?? err}`
-      this.lastError = { kind: 'unknown', message }
       return { ok: false, kind: 'unknown', message }
     }
 
     const name = json.name ?? 'Unknown'
     const email = json.bot?.owner?.user?.person?.email ?? json.person?.email ?? null
-    this.lastError = null
     return { ok: true, name, email }
-  }
-
-  resetCache(): void {
-    this.lastError = null
   }
 }
 

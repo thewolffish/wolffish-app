@@ -1,7 +1,7 @@
 import { turnRouter, type TurnSink } from '@main/channels/channel'
-import { generateTitle } from '@main/conversations'
+import { generateTitle, type ConversationChannel } from '@main/conversations'
 import type { Agent } from '@main/runtime/agent'
-import type { CorpusEvent } from '@main/runtime/corpus'
+import { autonomousTurnScope, type CorpusEvent } from '@main/runtime/corpus'
 import { CREDENTIAL_BLOCKED_REPLY, detectSensitiveData } from '@main/runtime/sensitiveDataFilter'
 import type { ChatHistoryMessage } from '@preload/index'
 
@@ -33,6 +33,12 @@ export type TurnSendOptions = {
   history: ChatHistoryMessage[]
   conversationId?: string | null
   conversationTitle?: string | null
+  /**
+   * Delivery channel for this turn's prose. Threaded into the system
+   * prompt so the model writes in the channel's native text formatting
+   * (WhatsApp renders no Markdown). Omitted → no formatting overlay.
+   */
+  channel?: ConversationChannel
   thinkingMode?: 'off' | 'on' | 'high' | 'max'
   /**
    * External controller. Lets channels tie cancellation to a parent
@@ -148,6 +154,14 @@ export class TurnRunner {
       const offs: Array<() => void> = []
       for (const eventName of TURN_RELAYED_EVENTS) {
         const off = agent.corpus.on(eventName, (payload) => {
+          // Drop events emitted from inside a background autonomous run
+          // (a procedure/automation firing while this channel turn is still
+          // streaming). Relaying them would pollute this turn's context meter,
+          // token counters, and timeline and hijack its active task id — the
+          // events are stamped with THIS turn's id downstream, so the renderer
+          // can't tell them apart. Corpus emit is synchronous, so this reads the
+          // emitter's scope. Fail-open: no scope ⇒ relay as before.
+          if (autonomousTurnScope.getStore()) return
           sink.onTurnEvent(eventName, payload)
         })
         offs.push(off)
@@ -176,6 +190,7 @@ export class TurnRunner {
           turnId,
           conversationId: opts.conversationId ?? null,
           conversationTitle: title,
+          channel: opts.channel,
           signal: controller.signal,
           onSegment: (segment) => sink.onSegment(segment),
           thinkingMode: opts.thinkingMode

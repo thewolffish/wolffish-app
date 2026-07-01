@@ -97,14 +97,19 @@ function ActivePlayer({
       setCurrentTime(0)
       audio.currentTime = 0
     }
+    // Keep the button in sync when playback is paused from outside togglePlay
+    // (e.g. Chat pausing feed media when you navigate away — see Chat.tsx).
+    const onPause = (): void => setPlaying(false)
 
     audio.addEventListener('timeupdate', onTime)
     audio.addEventListener('loadedmetadata', onMeta)
     audio.addEventListener('ended', onEnded)
+    audio.addEventListener('pause', onPause)
     return () => {
       audio.removeEventListener('timeupdate', onTime)
       audio.removeEventListener('loadedmetadata', onMeta)
       audio.removeEventListener('ended', onEnded)
+      audio.removeEventListener('pause', onPause)
     }
   }, [url])
 

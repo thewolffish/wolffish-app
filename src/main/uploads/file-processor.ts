@@ -36,8 +36,32 @@ const DOCUMENT_EXTS = new Set([
   '.txt',
   '.md',
   '.json',
-  '.pptx'
+  '.pptx',
+  '.html',
+  '.htm'
 ])
+
+/**
+ * Document mimetypes → the extension whose extractor handles them. Used as a
+ * fallback when a file arrives with no usable filename extension — inbound
+ * channel media (WhatsApp/Telegram) whose sender omitted or stripped the
+ * extension. Without this an extension-less docx/xlsx/pptx would reach the
+ * model as an opaque path with no extracted text, the same silent drop the
+ * channel fix set out to prevent (the PDF case is already handled by the
+ * dedicated application/pdf branch).
+ */
+const DOC_EXT_BY_MIME: Record<string, string> = {
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '.xlsx',
+  'application/vnd.ms-excel': '.xls',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': '.pptx',
+  'text/csv': '.csv',
+  'text/tab-separated-values': '.tsv',
+  'text/plain': '.txt',
+  'text/markdown': '.md',
+  'application/json': '.json',
+  'text/html': '.html'
+}
 
 export async function processAttachment(
   relativePath: string,
@@ -61,6 +85,15 @@ export async function processAttachment(
 
   if (DOCUMENT_EXTS.has(ext)) {
     return processDocument(abs, originalName, ext)
+  }
+
+  // Extension-less document fallback: classifyFile preserves the sender's
+  // mimetype, so map that back to the extractor's extension and process by
+  // content (mammoth/xlsx/jszip read the bytes, not the name). Covers inbound
+  // channel files that arrived without a usable filename extension.
+  const docExt = DOC_EXT_BY_MIME[mimeType.split(';')[0].trim().toLowerCase()]
+  if (docExt) {
+    return processDocument(abs, originalName, docExt)
   }
 
   if (mimeType.startsWith('audio/')) return null
@@ -149,6 +182,10 @@ async function processDocument(
     case '.xls':
       text = await extractSpreadsheet(absPath)
       break
+    // Plain-text formats (incl. HTML) are inlined as their raw source — HTML is
+    // just text, so every model (vision or not) gets the full markup.
+    case '.html':
+    case '.htm':
     case '.csv':
     case '.tsv':
     case '.txt':

@@ -88,6 +88,179 @@ export function isInboundVoiceNote(raw: proto.IWebMessageInfo): boolean {
 }
 
 /**
+ * Downloadable inbound media kinds. Voice notes (ptt) are intentionally
+ * excluded — they are transcribed, not attached (see isInboundVoiceNote).
+ */
+export type InboundMediaKind = 'image' | 'video' | 'audio' | 'document' | 'sticker'
+
+export type InboundMedia = {
+  kind: InboundMediaKind
+  /**
+   * Filename to save the download under. ALWAYS carries a usable
+   * extension: the sender's document filename when present, otherwise one
+   * synthesized from the media mimetype. The extension is load-bearing —
+   * classifyFile() derives the attachment type AND mime from it, and the
+   * file-processor gates PDF/image handling on that mime, so a missing or
+   * wrong extension silently drops the file before the model ever sees it.
+   */
+  fileName: string
+  /** Best-effort mimetype reported by WhatsApp, parameters stripped. */
+  mimeType: string
+  /** User caption, if any (image / video / document carry one). */
+  caption: string | null
+  /** Declared byte size for a pre-download size guard, when present. */
+  fileLength: number | null
+}
+
+/**
+ * Map a media mimetype to a file extension. Used to synthesize a filename
+ * for media that arrives without one (images, video, audio, stickers) or
+ * a document whose filename has no extension.
+ */
+const EXT_BY_MIME: Record<string, string> = {
+  'image/jpeg': '.jpg',
+  'image/png': '.png',
+  'image/webp': '.webp',
+  'image/gif': '.gif',
+  'video/mp4': '.mp4',
+  'video/3gpp': '.3gp',
+  'video/quicktime': '.mov',
+  'audio/mpeg': '.mp3',
+  'audio/mp4': '.m4a',
+  'audio/aac': '.aac',
+  'audio/ogg': '.ogg',
+  'audio/wav': '.wav',
+  'application/pdf': '.pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '.xlsx',
+  'application/vnd.ms-excel': '.xls',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': '.pptx',
+  'text/csv': '.csv',
+  'text/tab-separated-values': '.tsv',
+  'text/plain': '.txt',
+  'text/markdown': '.md',
+  'application/json': '.json',
+  'text/html': '.html'
+}
+
+/** Strip mimetype parameters: "audio/ogg; codecs=opus" → "audio/ogg". */
+function baseMime(mimetype: string | null | undefined): string {
+  return (mimetype ?? '').split(';')[0].trim().toLowerCase()
+}
+
+/** Baileys stores byte lengths as number | Long | null — normalize to number. */
+function toByteCount(len: unknown): number | null {
+  if (len == null) return null
+  if (typeof len === 'number') return Number.isFinite(len) ? len : null
+  const asLong = len as { toNumber?: () => number }
+  if (typeof asLong.toNumber === 'function') {
+    const n = asLong.toNumber()
+    return Number.isFinite(n) ? n : null
+  }
+  const n = Number(len)
+  return Number.isFinite(n) ? n : null
+}
+
+/** True when `name` already ends in a plausible file extension. */
+function hasExtension(name: string): boolean {
+  return /\.[A-Za-z0-9]{1,8}$/.test(name)
+}
+
+/**
+ * Guarantee a filename carries an extension. Names that already have one
+ * are returned untouched; otherwise the mimetype's extension is appended.
+ * An unknown mimetype leaves the name bare — an unclassifiable blob the
+ * model can still inspect via the shell.
+ */
+function withExtension(name: string, mimeType: string): string {
+  if (hasExtension(name)) return name
+  const ext = EXT_BY_MIME[mimeType]
+  return ext ? `${name}${ext}` : name
+}
+
+/**
+ * Extract downloadable media from an inbound WhatsApp message. Returns
+ * null for plain text, voice notes (ptt — transcribed elsewhere),
+ * locations, contacts, and anything with no media payload.
+ *
+ * This is the inbound counterpart to the in-app upload pipeline: the
+ * channel downloads the bytes, saves them via saveUploadFromBuffer under
+ * the returned fileName, and dispatches the turn with the file attached —
+ * so a PDF sent over WhatsApp reaches the model exactly like an in-app
+ * upload instead of a dead '<media:document>' placeholder the agent
+ * cannot act on.
+ */
+export function extractInboundMedia(raw: proto.IWebMessageInfo): InboundMedia | null {
+  const msg = raw.message
+  if (!msg) return null
+  const inner = unwrapMessage(msg)
+  const id = raw.key?.id ?? String(Date.now())
+
+  // Voice notes are transcribed (isInboundVoiceNote), never attached.
+  if (inner.audioMessage?.ptt === true) return null
+
+  if (inner.imageMessage) {
+    const mimeType = baseMime(inner.imageMessage.mimetype) || 'image/jpeg'
+    return {
+      kind: 'image',
+      fileName: `image_${id}${EXT_BY_MIME[mimeType] ?? '.jpg'}`,
+      mimeType,
+      caption: inner.imageMessage.caption?.trim() || null,
+      fileLength: toByteCount(inner.imageMessage.fileLength)
+    }
+  }
+
+  if (inner.videoMessage) {
+    const mimeType = baseMime(inner.videoMessage.mimetype) || 'video/mp4'
+    return {
+      kind: 'video',
+      fileName: `video_${id}${EXT_BY_MIME[mimeType] ?? '.mp4'}`,
+      mimeType,
+      caption: inner.videoMessage.caption?.trim() || null,
+      fileLength: toByteCount(inner.videoMessage.fileLength)
+    }
+  }
+
+  // Non-ptt audio (forwarded music, attached audio files) — ptt handled above.
+  if (inner.audioMessage) {
+    const mimeType = baseMime(inner.audioMessage.mimetype) || 'audio/ogg'
+    return {
+      kind: 'audio',
+      fileName: `audio_${id}${EXT_BY_MIME[mimeType] ?? '.ogg'}`,
+      mimeType,
+      caption: null,
+      fileLength: toByteCount(inner.audioMessage.fileLength)
+    }
+  }
+
+  if (inner.documentMessage) {
+    const mimeType = baseMime(inner.documentMessage.mimetype) || 'application/octet-stream'
+    const rawName = inner.documentMessage.fileName?.trim()
+    const fileName = withExtension(rawName || `document_${id}`, mimeType)
+    return {
+      kind: 'document',
+      fileName,
+      mimeType,
+      caption: inner.documentMessage.caption?.trim() || null,
+      fileLength: toByteCount(inner.documentMessage.fileLength)
+    }
+  }
+
+  if (inner.stickerMessage) {
+    const mimeType = baseMime(inner.stickerMessage.mimetype) || 'image/webp'
+    return {
+      kind: 'sticker',
+      fileName: `sticker_${id}${EXT_BY_MIME[mimeType] ?? '.webp'}`,
+      mimeType,
+      caption: null,
+      fileLength: toByteCount(inner.stickerMessage.fileLength)
+    }
+  }
+
+  return null
+}
+
+/**
  * Determine whether an inbound message should be forwarded to the
  * agent pipeline or silently dropped. Mirrors OpenClaw's filter chain.
  */

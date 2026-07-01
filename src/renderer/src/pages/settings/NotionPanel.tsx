@@ -3,54 +3,152 @@ import { Input } from '@components/core/Input'
 import { NotionLogo } from '@components/core/ProviderLogos'
 import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn'
-import type { NotionConfig, NotionErrorKind, NotionStatus } from '@preload/index'
-import { EyeIcon, LinkSquare02Icon, ViewOffIcon } from 'hugeicons-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import type { NotionConnection, NotionErrorKind } from '@preload/index'
+import { Delete02Icon, EyeIcon, LinkSquare02Icon, PlusSignIcon, ViewOffIcon } from 'hugeicons-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 const NOTION_CONNECTIONS_URL = 'https://app.notion.com/developers/connections'
 
-const STATUS_DOT: Record<NotionStatus['status'], string> = {
-  configured: 'bg-emerald-500',
-  error: 'bg-rose-500',
-  disabled: 'bg-border'
+// A connection row as edited in the UI: the persisted shape plus transient
+// view state (token visibility, in-flight test).
+type Row = NotionConnection & { tokenVisible: boolean; busy: boolean }
+
+function newRow(): Row {
+  return {
+    id: crypto.randomUUID(),
+    label: '',
+    token: '',
+    name: '',
+    email: '',
+    tokenVisible: false,
+    busy: false
+  }
 }
+
+function toRow(c: NotionConnection): Row {
+  return { ...c, tokenVisible: false, busy: false }
+}
+
+// Strip transient view fields before persisting. Only connections carrying a
+// token are kept — a label with no token can't be used by the model.
+function toStored(rows: Row[]): NotionConnection[] {
+  return rows
+    .filter((r) => r.token.trim().length > 0)
+    .map((r) => ({
+      id: r.id,
+      label: r.label.trim(),
+      token: r.token.trim(),
+      name: r.name,
+      email: r.email
+    }))
+}
+
+function normLabel(label: string): string {
+  return label.trim().toLowerCase()
+}
+
+// Module-level cache of the persisted connections, warmed once at app start
+// (this panel is eagerly imported, so the load below runs during startup). By
+// the time the user opens the panel the connections are already in memory and
+// paint on the first frame — no IPC round-trip, no empty-list flash. Kept in
+// sync on every persist. `null` means "not loaded yet".
+let cachedConnections: NotionConnection[] | null = null
+let loadPromise: Promise<NotionConnection[]> | null = null
+
+function loadConnections(): Promise<NotionConnection[]> {
+  if (cachedConnections) return Promise.resolve(cachedConnections)
+  if (!loadPromise) {
+    const api = window.api?.notion
+    if (!api) return Promise.resolve([]) // preload not ready yet; retry on mount
+    loadPromise = api
+      .getConfig()
+      .then((cfg) => {
+        cachedConnections = toStored(cfg.connections.map(toRow))
+        return cachedConnections
+      })
+      .catch(() => {
+        cachedConnections = []
+        return cachedConnections
+      })
+  }
+  return loadPromise
+}
+
+// Prefill the cache at app start.
+void loadConnections()
 
 export function NotionPanel(): React.JSX.Element {
   const { t } = useTranslation()
   const toast = useToast()
 
-  const [token, setToken] = useState('')
-  // Last persisted token, so the Test/save button can disable when the input
-  // matches what's already saved (no change to apply).
-  const [savedToken, setSavedToken] = useState('')
-  const [tokenVisible, setTokenVisible] = useState(false)
-  const [connectedAccount, setConnectedAccount] = useState<Pick<
-    NotionConfig,
-    'name' | 'email'
-  > | null>(null)
-  const [status, setStatus] = useState<NotionStatus>({
-    status: 'disabled',
-    errorKind: null,
-    error: null
-  })
-  const [busy, setBusy] = useState<'idle' | 'saving' | 'testing'>('idle')
-  const [validation, setValidation] = useState<string | null>(null)
+  // Seed from the module cache so the panel paints connections immediately.
+  const [rows, setRows] = useState<Row[]>(() => (cachedConnections ?? []).map(toRow))
+  // JSON snapshot of the last-persisted array, to detect unsaved edits.
+  const [savedJson, setSavedJson] = useState(() => JSON.stringify(cachedConnections ?? []))
+  // Gate the empty-state placeholder on the first config load so it doesn't
+  // flash before the cache is warm.
+  const [ready, setReady] = useState(cachedConnections !== null)
+  // Mirror of `rows` readable after an await, so async handlers reconcile
+  // against the latest committed state instead of a stale render closure.
+  const rowsRef = useRef(rows)
+  useEffect(() => {
+    rowsRef.current = rows
+  }, [rows])
 
   useEffect(() => {
     let cancelled = false
     void (async () => {
-      const cfg = await window.api.notion.getConfig()
-      const live = await window.api.notion.status()
+      // Usually already warm from app start; seed here only if we mounted
+      // before that finished.
+      const conns = await loadConnections()
       if (cancelled) return
-      setToken(cfg.token)
-      setSavedToken(cfg.token)
-      setStatus(live)
-      if (cfg.name) setConnectedAccount({ name: cfg.name, email: cfg.email })
+      if (!ready) {
+        setRows(conns.map(toRow))
+        setSavedJson(JSON.stringify(conns))
+        setReady(true)
+      }
+
+      // Silent revalidation on open (like the models panel): re-verify each
+      // token and refresh the resolved account. No toasts, no busy state, and
+      // it only touches state when something actually changed — so a
+      // still-valid connected account never flashes.
+      const tokened = conns.filter((c) => c.token.trim().length > 0)
+      if (tokened.length === 0) return
+      const results = await Promise.all(
+        tokened.map(async (c) => ({
+          id: c.id,
+          token: c.token,
+          res: await window.api.notion.test(c.token)
+        }))
+      )
+      if (cancelled) return
+      const byId = new Map(results.map((x) => [x.id, x]))
+      let changed = false
+      const next = rowsRef.current.map((r) => {
+        const hit = byId.get(r.id)
+        if (!hit || r.token.trim() !== hit.token) return r
+        if (hit.res.ok) {
+          const email = hit.res.email ?? ''
+          if (r.name === hit.res.name && r.email === email) return r
+          changed = true
+          return { ...r, name: hit.res.name, email }
+        }
+        // Only a definitively invalid token clears the cached identity — a
+        // transient network/rate-limit blip must not drop the chip.
+        if (hit.res.kind !== 'invalid_token' || (!r.name && !r.email)) return r
+        changed = true
+        return { ...r, name: '', email: '' }
+      })
+      if (changed) {
+        setRows(next)
+        cachedConnections = toStored(next)
+      }
     })()
     return () => {
       cancelled = true
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const translateError = useCallback(
@@ -63,57 +161,191 @@ export function NotionPanel(): React.JSX.Element {
     [t]
   )
 
-  const handleTest = useCallback(async () => {
-    if (token.trim().length === 0) {
-      setValidation(t('settings.services.notion.validation.tokenRequired'))
-      return
-    }
-    setValidation(null)
-    setBusy('testing')
-    try {
-      const result = await window.api.notion.test(token.trim())
-      if (result.ok) {
-        const patch: Partial<NotionConfig> = { token: token.trim() }
-        if (result.name) patch.name = result.name
-        if (result.email) patch.email = result.email
-        const response = await window.api.notion.setConfig(patch)
-        setStatus(response.status)
-        setSavedToken(token.trim())
-        if (result.name) {
-          setConnectedAccount({ name: result.name, email: result.email ?? '' })
-        }
+  const persist = useCallback(async (next: Row[]) => {
+    const stored = toStored(next)
+    cachedConnections = stored
+    await window.api.notion.setConfig(stored)
+    setSavedJson(JSON.stringify(stored))
+  }, [])
+
+  const patchRow = useCallback((id: string, patch: Partial<Row>) => {
+    setRows((rs) => rs.map((r) => (r.id === id ? { ...r, ...patch } : r)))
+  }, [])
+
+  const dirty = useMemo(() => JSON.stringify(toStored(rows)) !== savedJson, [rows, savedJson])
+
+  // Per-row label problem: required when the row has a token, and must be
+  // unique among all tokened rows (case-insensitive).
+  const labelError = useCallback(
+    (row: Row): 'required' | 'duplicate' | null => {
+      const hasToken = row.token.trim().length > 0
+      const label = row.label.trim()
+      if (hasToken && label.length === 0) return 'required'
+      if (label.length === 0) return null
+      const dup = rows.some(
+        (r) => r.id !== row.id && r.token.trim() && normLabel(r.label) === normLabel(label)
+      )
+      return dup ? 'duplicate' : null
+    },
+    [rows]
+  )
+
+  const handleAdd = useCallback(() => {
+    setRows((rs) => [...rs, newRow()])
+  }, [])
+
+  const handleRemove = useCallback(
+    async (id: string) => {
+      const next = rows.filter((r) => r.id !== id)
+      setRows(next)
+      await persist(next)
+    },
+    [rows, persist]
+  )
+
+  // Editing the token invalidates the previously resolved account — a new
+  // token may belong to a different workspace, so clear the cached identity.
+  const handleTokenChange = useCallback((id: string, value: string) => {
+    setRows((rs) => rs.map((r) => (r.id === id ? { ...r, token: value, name: '', email: '' } : r)))
+  }, [])
+
+  const handleTest = useCallback(
+    async (id: string) => {
+      const row = rows.find((r) => r.id === id)
+      if (!row) return
+      const label = row.label.trim()
+      const token = row.token.trim()
+      if (label.length === 0) {
         toast.show({
-          message: t('settings.services.notion.testSuccess', {
-            name: result.name,
-            email: result.email ?? ''
-          }),
-          tone: 'success'
-        })
-      } else {
-        toast.show({
-          message: t('settings.services.notion.testFailure', {
-            message: translateError(result.kind, result.message)
-          }),
+          message: t('settings.services.notion.connections.labelRequired'),
           tone: 'error'
         })
-        setConnectedAccount(null)
-        const live = await window.api.notion.status()
-        setStatus(live)
+        return
       }
-    } finally {
-      setBusy('idle')
-    }
-  }, [token, t, toast, translateError])
-
-  const statusLabel = useMemo(
-    () => t(`settings.services.notion.status.${status.status}`),
-    [status, t]
+      if (token.length === 0) {
+        toast.show({
+          message: t('settings.services.notion.validation.tokenRequired'),
+          tone: 'error'
+        })
+        return
+      }
+      if (
+        rows.some((r) => r.id !== id && r.token.trim() && normLabel(r.label) === normLabel(label))
+      ) {
+        toast.show({
+          message: t('settings.services.notion.connections.labelDuplicate'),
+          tone: 'error'
+        })
+        return
+      }
+      patchRow(id, { busy: true })
+      try {
+        const result = await window.api.notion.test(token)
+        if (result.ok) {
+          // Reconcile against the latest committed rows (not the stale closure
+          // captured before the network round-trip), so edits the user made to
+          // other rows while the test was in flight aren't clobbered. Only the
+          // tested row's resolved identity is written, and only if its token
+          // still matches what we tested.
+          const next = rowsRef.current.map((r) =>
+            r.id === id && r.token.trim() === token
+              ? { ...r, name: result.name, email: result.email ?? '', busy: false }
+              : r
+          )
+          setRows(next)
+          await persist(next)
+          toast.show({
+            message: t('settings.services.notion.testSuccess', {
+              name: result.name,
+              email: result.email ?? ''
+            }),
+            tone: 'success'
+          })
+        } else {
+          patchRow(id, { busy: false, name: '', email: '' })
+          toast.show({
+            message: t('settings.services.notion.testFailure', {
+              message: translateError(result.kind, result.message)
+            }),
+            tone: 'error'
+          })
+        }
+      } finally {
+        patchRow(id, { busy: false })
+      }
+    },
+    [rows, persist, patchRow, t, toast, translateError]
   )
-  const statusErrorText = useMemo(() => {
-    if (status.errorKind) return translateError(status.errorKind, status.error)
-    if (status.error) return status.error
-    return null
-  }, [status, translateError])
+
+  const handleSaveAll = useCallback(async () => {
+    // Block save while any tokened row has an invalid label.
+    for (const r of rows) {
+      const err = labelError(r)
+      if (err === 'required') {
+        toast.show({
+          message: t('settings.services.notion.connections.labelRequired'),
+          tone: 'error'
+        })
+        return
+      }
+      if (err === 'duplicate') {
+        toast.show({
+          message: t('settings.services.notion.connections.labelDuplicate'),
+          tone: 'error'
+        })
+        return
+      }
+    }
+    // Ids that were persisted before this save. A row whose token was cleared
+    // is dropped from disk by toStored; drop it from the visible list too so
+    // the UI matches what's stored. Fresh drafts (ids not yet saved) stay.
+    const savedIds = new Set<string>()
+    try {
+      for (const c of JSON.parse(savedJson) as NotionConnection[]) savedIds.add(c.id)
+    } catch {
+      // savedJson is always our own JSON; ignore a malformed snapshot.
+    }
+
+    // Saving verifies every connection against the API and resolves its
+    // account, not just writing tokens blindly.
+    const tokened = rows.filter((r) => r.token.trim().length > 0)
+    setRows((rs) => rs.map((r) => (r.token.trim().length > 0 ? { ...r, busy: true } : r)))
+    const results = await Promise.all(
+      tokened.map(async (r) => ({
+        id: r.id,
+        label: r.label.trim(),
+        token: r.token.trim(),
+        res: await window.api.notion.test(r.token.trim())
+      }))
+    )
+    const byId = new Map(results.map((x) => [x.id, x]))
+    const next = rowsRef.current
+      .map((r) => {
+        const hit = byId.get(r.id)
+        if (!hit || r.token.trim() !== hit.token) return { ...r, busy: false }
+        return hit.res.ok
+          ? { ...r, name: hit.res.name, email: hit.res.email ?? '', busy: false }
+          : { ...r, name: '', email: '', busy: false }
+      })
+      .filter((r) => r.token.trim().length > 0 || !savedIds.has(r.id))
+    setRows(next)
+    await persist(next)
+
+    let anyFailure = false
+    for (const x of results) {
+      if (x.res.ok) continue
+      anyFailure = true
+      toast.show({
+        message: t('settings.services.notion.testFailure', {
+          message: `${x.label}: ${translateError(x.res.kind, x.res.message)}`
+        }),
+        tone: 'error'
+      })
+    }
+    if (!anyFailure) {
+      toast.show({ message: t('settings.services.notion.saveSuccess'), tone: 'success' })
+    }
+  }, [rows, labelError, persist, savedJson, t, toast, translateError])
 
   return (
     <div className="flex min-h-full w-full items-start justify-center px-6 py-10">
@@ -141,125 +373,206 @@ export function NotionPanel(): React.JSX.Element {
           </p>
         </header>
 
-        <section className="bg-surface border-border flex flex-col gap-5 rounded-2xl border p-6">
-          <div className="flex flex-col gap-2">
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-muted text-xs font-medium uppercase tracking-wider">
-                {t('settings.services.notion.status.label')}
-              </span>
-              <div className="flex items-center gap-2">
-                <span
-                  aria-hidden="true"
-                  className={cn('h-2 w-2 rounded-full', STATUS_DOT[status.status])}
-                />
-                <span className="text-fg text-sm">{statusLabel}</span>
-              </div>
-            </div>
-            {connectedAccount && status.status === 'configured' && (
-              <div className="bg-bg/40 border-border flex items-center gap-3 rounded-xl border px-3 py-2.5">
-                <div className="bg-surface border-border flex h-9 w-9 shrink-0 items-center justify-center rounded-full border">
-                  <NotionLogo size={18} />
-                </div>
-                <div className="flex min-w-0 flex-col">
-                  <span className="text-muted text-xs font-medium uppercase tracking-wider">
-                    {t('settings.services.notion.connectedAs')}
-                  </span>
-                  <span className="text-fg truncate text-sm font-medium">
-                    {connectedAccount.email
-                      ? `${connectedAccount.name} (${connectedAccount.email})`
-                      : connectedAccount.name}
-                  </span>
-                </div>
-              </div>
-            )}
-            {statusErrorText && (
-              <pre
-                className={cn(
-                  'bg-bg/40 border-border rounded-md border px-3 py-2',
-                  'text-xs whitespace-pre-wrap wrap-break-word font-mono text-rose-500'
-                )}
-              >
-                {statusErrorText}
-              </pre>
-            )}
+        <section className="bg-surface border-border flex flex-col gap-4 rounded-2xl border p-6">
+          <div className="flex flex-col gap-1">
+            <h2 className="text-fg text-sm font-medium">
+              {t('settings.services.notion.connections.title')}
+            </h2>
+            <p className="text-muted text-xs leading-relaxed">
+              {t('settings.services.notion.connections.subtitle')}
+            </p>
           </div>
 
-          <div className="border-border/60 border-t" />
-
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor="notion-token" className="text-muted text-sm font-medium">
-              {t('settings.services.notion.token')}
-            </label>
-            <div className="relative w-full">
-              <Input
-                id="notion-token"
-                type={tokenVisible ? 'text' : 'password'}
-                value={token}
-                onChange={(e) => setToken(e.target.value)}
-                placeholder={t('settings.services.notion.tokenPlaceholder')}
-                autoComplete="off"
-                spellCheck={false}
-                className="pe-10 font-mono"
-              />
-              <button
-                type="button"
-                onClick={() => setTokenVisible((v) => !v)}
-                aria-label={t(
-                  tokenVisible
-                    ? 'settings.services.notion.hideToken'
-                    : 'settings.services.notion.showToken'
-                )}
-                className={cn(
-                  'text-muted hover:text-fg absolute inset-e-2 top-1/2 -translate-y-1/2',
-                  'flex h-8 w-8 cursor-pointer items-center justify-center rounded-md',
-                  'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
-                )}
-              >
-                {tokenVisible ? <ViewOffIcon size={16} /> : <EyeIcon size={16} />}
-              </button>
-            </div>
-            <p className="text-muted text-xs">{t('settings.services.notion.tokenHint')}</p>
-          </div>
-
-          {validation && (
-            <p className="text-rose-500 text-xs" role="alert">
-              {validation}
+          {ready && rows.length === 0 && (
+            <p className="text-muted bg-bg/40 border-border rounded-xl border border-dashed px-4 py-6 text-center text-sm">
+              {t('settings.services.notion.connections.empty')}
             </p>
           )}
 
-          <div className="border-border/60 border-t" />
+          <div className="flex flex-col gap-4">
+            {rows.map((row, index) => (
+              <ConnectionCard
+                key={row.id}
+                row={row}
+                index={index}
+                labelError={labelError(row)}
+                onLabel={(v) => patchRow(row.id, { label: v })}
+                onToken={(v) => handleTokenChange(row.id, v)}
+                onToggleToken={() => patchRow(row.id, { tokenVisible: !row.tokenVisible })}
+                onTest={() => void handleTest(row.id)}
+                onRemove={() => void handleRemove(row.id)}
+              />
+            ))}
+          </div>
 
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center justify-between gap-2 pt-1">
+            <Button type="button" variant="outline" size="sm" onClick={handleAdd}>
+              <PlusSignIcon size={15} />
+              {t('settings.services.notion.connections.add')}
+            </Button>
             <Button
               type="button"
-              onClick={() => void handleTest()}
-              disabled={
-                busy !== 'idle' || token.trim().length === 0 || token.trim() === savedToken.trim()
-              }
+              size="sm"
+              onClick={() => void handleSaveAll()}
+              disabled={!dirty || rows.some((r) => r.busy)}
             >
-              {t('settings.services.notion.test')}
+              {t('settings.services.notion.save')}
             </Button>
-            <button
-              type="button"
-              disabled={busy !== 'idle' || token.trim().length === 0}
-              onClick={() => void handleTest()}
-              className={cn(
-                'text-xs font-medium capitalize',
-                busy === 'testing'
-                  ? 'text-muted animate-pulse cursor-wait'
-                  : busy !== 'idle' || token.trim().length === 0
-                    ? 'text-muted cursor-not-allowed'
-                    : 'text-primary hover:text-primary/80 cursor-pointer'
-              )}
-            >
-              {t('settings.services.notion.testConnection')}
-            </button>
           </div>
 
           <p className="text-muted text-xs">{t('settings.services.notion.testHint')}</p>
         </section>
 
         <HowItWorksSection />
+      </div>
+    </div>
+  )
+}
+
+type CardProps = {
+  row: Row
+  index: number
+  labelError: 'required' | 'duplicate' | null
+  onLabel: (v: string) => void
+  onToken: (v: string) => void
+  onToggleToken: () => void
+  onTest: () => void
+  onRemove: () => void
+}
+
+function ConnectionCard({
+  row,
+  index,
+  labelError,
+  onLabel,
+  onToken,
+  onToggleToken,
+  onTest,
+  onRemove
+}: CardProps): React.JSX.Element {
+  const { t } = useTranslation()
+  const labelId = `notion-label-${row.id}`
+  const tokenId = `notion-token-${row.id}`
+  const connected = row.name.length > 0
+  const testDisabled = row.busy || row.token.trim().length === 0 || row.label.trim().length === 0
+
+  const errorText =
+    labelError === 'required'
+      ? t('settings.services.notion.connections.labelRequired')
+      : labelError === 'duplicate'
+        ? t('settings.services.notion.connections.labelDuplicate')
+        : null
+
+  return (
+    <div className="bg-bg/40 border-border flex flex-col gap-3 rounded-xl border p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="bg-surface border-border flex h-8 w-8 shrink-0 items-center justify-center rounded-full border">
+            <NotionLogo size={16} />
+          </div>
+          <span className="text-muted text-xs font-medium uppercase tracking-wider">
+            {row.label.trim() ||
+              t('settings.services.notion.connections.untitled', { index: index + 1 })}
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={onRemove}
+          aria-label={t('settings.services.notion.connections.remove')}
+          className={cn(
+            'text-muted hover:text-rose-500 flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-md',
+            'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
+          )}
+        >
+          <Delete02Icon size={16} />
+        </button>
+      </div>
+
+      {connected && (
+        <div className="bg-surface/60 border-border flex items-center gap-2 rounded-lg border px-3 py-2">
+          <span className="text-muted text-xs font-medium uppercase tracking-wider">
+            {t('settings.services.notion.connectedAs')}
+          </span>
+          <span className="text-fg truncate text-sm font-medium">
+            {row.email ? `${row.name} (${row.email})` : row.name}
+          </span>
+        </div>
+      )}
+
+      <div className="flex flex-col gap-1.5">
+        <label htmlFor={labelId} className="text-muted text-sm font-medium">
+          {t('settings.services.notion.connections.label')}
+        </label>
+        <Input
+          id={labelId}
+          value={row.label}
+          onChange={(e) => onLabel(e.target.value)}
+          placeholder={t('settings.services.notion.connections.labelPlaceholder')}
+          autoComplete="off"
+          spellCheck={false}
+          aria-invalid={errorText ? true : undefined}
+        />
+        {errorText ? (
+          <p className="text-xs text-rose-500" role="alert">
+            {errorText}
+          </p>
+        ) : (
+          <p className="text-muted text-xs">
+            {t('settings.services.notion.connections.labelHint')}
+          </p>
+        )}
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <label htmlFor={tokenId} className="text-muted text-sm font-medium">
+          {t('settings.services.notion.token')}
+        </label>
+        <div className="relative w-full">
+          <Input
+            id={tokenId}
+            type={row.tokenVisible ? 'text' : 'password'}
+            value={row.token}
+            onChange={(e) => onToken(e.target.value)}
+            placeholder={t('settings.services.notion.tokenPlaceholder')}
+            autoComplete="off"
+            spellCheck={false}
+            className="pe-10 font-mono"
+          />
+          <button
+            type="button"
+            onClick={onToggleToken}
+            aria-label={t(
+              row.tokenVisible
+                ? 'settings.services.notion.hideToken'
+                : 'settings.services.notion.showToken'
+            )}
+            className={cn(
+              'text-muted hover:text-fg absolute inset-e-2 top-1/2 -translate-y-1/2',
+              'flex h-8 w-8 cursor-pointer items-center justify-center rounded-md',
+              'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
+            )}
+          >
+            {row.tokenVisible ? <ViewOffIcon size={16} /> : <EyeIcon size={16} />}
+          </button>
+        </div>
+      </div>
+
+      <div className="flex items-center justify-start">
+        <button
+          type="button"
+          disabled={testDisabled}
+          onClick={onTest}
+          className={cn(
+            'text-sm font-medium capitalize',
+            row.busy
+              ? 'text-muted animate-pulse cursor-wait'
+              : testDisabled
+                ? 'text-muted cursor-not-allowed'
+                : 'text-primary hover:text-primary/80 cursor-pointer'
+          )}
+        >
+          {t('settings.services.notion.testConnection')}
+        </button>
       </div>
     </div>
   )

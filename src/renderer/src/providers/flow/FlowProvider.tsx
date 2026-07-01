@@ -18,6 +18,7 @@ export function FlowProvider({ children }: { children: ReactNode }): React.JSX.E
   const [ready, setReady] = useState(false)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
+  const [pendingProcedure, setPendingProcedure] = useState<string | null>(null)
   const [dataAnalytics, setDataAnalytics] = useState<DataAnalytics | null>(null)
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null)
 
@@ -127,6 +128,8 @@ export function FlowProvider({ children }: { children: ReactNode }): React.JSX.E
       setMessages,
       activeConversationId,
       setActiveConversationId,
+      pendingProcedure,
+      setPendingProcedure,
       dataAnalytics,
       systemInfo,
       refreshData,
@@ -141,6 +144,7 @@ export function FlowProvider({ children }: { children: ReactNode }): React.JSX.E
       status,
       messages,
       activeConversationId,
+      pendingProcedure,
       dataAnalytics,
       systemInfo,
       refreshData,

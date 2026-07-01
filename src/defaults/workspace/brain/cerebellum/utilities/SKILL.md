@@ -34,19 +34,26 @@ file to disk and telling the user "saved to …/files/report.pdf" is **not** del
 on WhatsApp and Telegram the user never sees the file, and even in the app the path is
 not the file. `send_file` closes that gap on every channel at once.
 
-### When NOT to call it (the common case)
+### When to call it — the default, every time
 
-Most file-producing tools already attach their output automatically: the pdf/docx/xlsx/document
-tools, `browser_pdf` (print-to-PDF), image/meme generation, ffmpeg, and `shell` opening a file
-with `open`. If the file the user wanted came from one of those, it's **already delivered** —
-calling `send_file` on it is a redundant, wasted step. Default to assuming the producing tool
-handled delivery.
+Call `send_file` for **any** file you created, edited, converted, downloaded, or saved — a
+Python/PIL image edit, an ImageMagick call, a shell/script output, a download, a file saved
+outside the workspace (the Desktop, etc.), a pre-existing file the user asked for. Deliver it as
+the last real step, then write your short wrap-up. A file the user can't see is a failed task —
+**when in doubt, send it.**
 
-### When to call it
+**Re-deliver every version when the user is iterating.** If they're refining a file — you edit,
+regenerate, "make it red", "now orange" — call `send_file` on the **updated** file each time,
+even if you delivered a file at that same path in an earlier turn. Each new version is a new
+result the user must see. A new turn, a different file, or an edited version always gets sent.
 
-Reach for `send_file` only when nothing has surfaced the file yet — typically a file you
-produced by other means: one you wrote directly with a raw `shell`/script command, a download,
-or a pre-existing file the user asked you to send. Deliver it, then write your short wrap-up reply.
+### When NOT to call it — only a same-turn duplicate
+
+The one time to skip it: a file-generation tool already attached *this exact file this turn* — the
+pdf/docx/xlsx/document tools, `browser_pdf`, image/meme generation, ffmpeg, or `shell` opening a
+file with `open` all auto-attach their output, so re-sending that same file the same turn just
+duplicates it. That's the **only** exception, and it's strictly **per-turn** — never a reason to
+leave a new or edited file undelivered.
 
 ### Notes
 

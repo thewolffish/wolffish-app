@@ -47,6 +47,7 @@ import {
 import { acquireLock, releaseLockSync } from '@main/lockfile'
 import { memesService, type MemesStatus, type MemesTestResult } from '@main/memes'
 import { notionService, type NotionStatus, type NotionTestResult } from '@main/notion'
+import { createProcedure, deleteProcedure, listProcedures, updateProcedure } from '@main/procedures'
 import {
   defaultModelsFolder,
   detect as detectOllama,
@@ -170,10 +171,12 @@ import {
   type BrowserExtensionConfig,
   type ComputerUseConfig,
   type GitHubConfig,
+  type GitHubConnection,
   type GoogleConfig,
   type InAppConfig,
   type MemesConfig,
   type NotionConfig,
+  type NotionConnection,
   type SttConfig,
   type TelegramConfig,
   type TtsConfig,
@@ -1514,11 +1517,10 @@ app.whenReady().then(async () => {
     'notion:setConfig',
     async (
       _e,
-      patch: Partial<NotionConfig>
+      connections: NotionConnection[]
     ): Promise<{ ok: true; status: NotionStatus; config: NotionConfig }> => {
-      const updated = await persistNotionConfig(patch)
-      const next = updated.notion ?? { token: '', name: '', email: '' }
-      notionService.resetCache()
+      const updated = await persistNotionConfig(connections)
+      const next = updated.notion ?? { connections: [] }
       return { ok: true as const, status: await notionService.getStatus(), config: next }
     }
   )
@@ -1539,11 +1541,10 @@ app.whenReady().then(async () => {
     'github:setConfig',
     async (
       _e,
-      patch: Partial<GitHubConfig>
+      connections: GitHubConnection[]
     ): Promise<{ ok: true; status: GitHubStatus; config: GitHubConfig }> => {
-      const updated = await persistGitHubConfig(patch)
-      const next = updated.github ?? { token: '', login: '', name: '' }
-      githubService.resetCache()
+      const updated = await persistGitHubConfig(connections)
+      const next = updated.github ?? { connections: [] }
       return { ok: true as const, status: await githubService.getStatus(), config: next }
     }
   )
@@ -2301,6 +2302,35 @@ app.whenReady().then(async () => {
     runJobNow: (idOrLabel) => agent.brainstem.runJobNow(idOrLabel)
   })
 
+  // Procedures — the same store the renderer/IPC use, plus a detached run that
+  // fires a procedure's prompt through the Brainstem's single-flight queue so it
+  // runs exactly like a triggered automation (sealed conversation, in history).
+  agent.cerebellum.setProceduresHost({
+    list: () => listProcedures(),
+    create: (title, prompt) => createProcedure({ title, prompt }),
+    update: (id, patch) => updateProcedure({ id, ...patch }),
+    delete: async (id) => {
+      await deleteProcedure(id)
+      return { ok: true as const }
+    },
+    run: async (id) => {
+      const proc = (await listProcedures()).find((p) => p.id === id)
+      if (!proc) return { ok: false, started: false, error: 'Procedure not found.' }
+      if (proc.prompt.trim().length === 0) {
+        return {
+          ok: false,
+          started: false,
+          error: `Procedure "${proc.title}" has no prompt to run.`
+        }
+      }
+      return agent.brainstem.runDetached(
+        proc.prompt,
+        proc.title || 'Procedure',
+        `procedure:${proc.id}`
+      )
+    }
+  })
+
   // Voice — read TTS-generated audio files for the renderer's AudioPlayer
   // (source="voice"), download via save dialog, and check existence for
   // past conversations.
@@ -2369,6 +2399,8 @@ app.whenReady().then(async () => {
             'md',
             'json',
             'pptx',
+            'html',
+            'htm',
             'mp3',
             'wav',
             'ogg',
@@ -2387,7 +2419,20 @@ app.whenReady().then(async () => {
         { name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp'] },
         {
           name: 'Documents',
-          extensions: ['pdf', 'docx', 'xlsx', 'xls', 'csv', 'tsv', 'txt', 'md', 'json', 'pptx']
+          extensions: [
+            'pdf',
+            'docx',
+            'xlsx',
+            'xls',
+            'csv',
+            'tsv',
+            'txt',
+            'md',
+            'json',
+            'pptx',
+            'html',
+            'htm'
+          ]
         },
         { name: 'Audio', extensions: ['mp3', 'wav', 'ogg', 'm4a', 'flac', 'webm'] },
         { name: 'Video', extensions: ['mp4', 'mov', 'avi', 'mkv', 'm4v', 'wmv', 'flv'] },
@@ -2832,6 +2877,22 @@ app.whenReady().then(async () => {
     onJobStarted: (info) => broadcast('heartbeat:jobStarted', info),
     onJobEnded: (payload) => broadcast('heartbeat:jobEnded', payload),
     onJobLog: (entry) => broadcast('heartbeat:jobLog', entry)
+  })
+
+  // Procedures — saved prompts the user runs on demand from the Procedures page.
+  // Plain CRUD over a JSON file; the renderer re-fetches after each mutation, so
+  // there are no push events to broadcast (unlike heartbeat's job lifecycle).
+  ipcMain.handle('procedures:list', () => listProcedures())
+  ipcMain.handle('procedures:create', (_event, payload: { title: string; prompt: string }) =>
+    createProcedure(payload)
+  )
+  ipcMain.handle(
+    'procedures:update',
+    (_event, payload: { id: string; title?: string; prompt?: string }) => updateProcedure(payload)
+  )
+  ipcMain.handle('procedures:delete', async (_event, id: string) => {
+    await deleteProcedure(id)
+    return { ok: true as const }
   })
 
   // Memory reindex — the cortex search index is rebuilt from scratch after an

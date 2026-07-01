@@ -4,6 +4,7 @@ import type { NoProviderAvailableInfo } from '@main/runtime/thalamus'
 import { workspaceRoot } from '@main/workspace/workspace'
 import type { PersistedApproval, PersistedToolTiming } from '@preload/index'
 import nlp from 'compromise'
+import { randomBytes } from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
@@ -68,7 +69,7 @@ export type ConversationMessage = {
  * with conversation files written before the field shipped — those
  * are treated as `electron` by default.
  */
-export type ConversationChannel = 'electron' | 'telegram' | 'whatsapp' | 'heartbeat'
+export type ConversationChannel = 'electron' | 'telegram' | 'whatsapp' | 'heartbeat' | 'procedure'
 
 export type TimelineEntry = {
   id: string
@@ -136,7 +137,7 @@ function idFromFilename(filename: string): string | null {
 function generateId(): string {
   const now = new Date()
   const pad = (n: number, len = 2): string => String(n).padStart(len, '0')
-  return [
+  const stamp = [
     now.getFullYear(),
     '-',
     pad(now.getMonth() + 1),
@@ -149,6 +150,13 @@ function generateId(): string {
     '-',
     pad(now.getSeconds())
   ].join('')
+  // The id IS the on-disk filename, so it MUST be unique. A second-resolution
+  // timestamp alone collides whenever two conversations are created in the same
+  // second — e.g. a procedure/automation run firing while a live chat is open —
+  // and the second save silently overwrites the first (destroying a whole
+  // conversation). Append milliseconds + a random suffix so collisions can't
+  // happen; the readable timestamp prefix is kept for human-legible filenames.
+  return `${stamp}_${pad(now.getMilliseconds(), 3)}-${randomBytes(3).toString('hex')}`
 }
 
 export async function countConversationsSince(sinceMs: number): Promise<number> {

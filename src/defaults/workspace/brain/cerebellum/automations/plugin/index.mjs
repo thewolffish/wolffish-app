@@ -279,11 +279,17 @@ async function checkAutomations() {
   const running = automations.getRunningJob()
   const live = automations.listJobs()
 
+  // A detached procedure run shares the brainstem's single run slot but is NOT
+  // an automation (its id is namespaced "procedure:"). Don't report it here as a
+  // running automation — that would contradict the list below and hand the user
+  // wrong status.
+  const runningAutomation = running && !running.id.startsWith('procedure:') ? running : null
+
   const lines = ['## Automation status', '']
-  if (running) {
-    const since = relativeTime(running.startedAt)
+  if (runningAutomation) {
+    const since = relativeTime(runningAutomation.startedAt)
     lines.push(
-      `▶ **Running now:** "${running.label}" — started ${since}. It finishes on its own and lands in history; re-running automation_check won't speed it up, so don't poll it in a loop — just tell the user it's still running.`
+      `▶ **Running now:** "${runningAutomation.label}" — started ${since}. It finishes on its own and lands in history; re-running automation_check won't speed it up, so don't poll it in a loop — just tell the user it's still running.`
     )
   } else {
     lines.push('Nothing is running right now.')

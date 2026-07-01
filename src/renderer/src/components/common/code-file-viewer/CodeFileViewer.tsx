@@ -8,6 +8,7 @@ import {
   ArrowExpandIcon,
   CodeIcon,
   Download01Icon,
+  EyeIcon,
   File01Icon,
   FolderOpenIcon
 } from 'hugeicons-react'
@@ -96,10 +97,12 @@ export function CodeFileViewer({
 }): React.JSX.Element {
   const { t } = useTranslation()
   const [sheetOpen, setSheetOpen] = useState(false)
-  // HTML expanded sheet view: 'preview' renders the markup live (sandboxed
-  // iframe), 'source' shows the same highlighted body. Defaults to preview so
-  // expanding an HTML file shows the rendered page, which is the whole point.
-  const [sheetView, setSheetView] = useState<'preview' | 'source'>('preview')
+  // HTML preview⇄source view, shared by the inline card and the expanded sheet
+  // so toggling one keeps the other in step. 'preview' renders the markup live
+  // (sandboxed iframe), 'source' shows the highlighted body. Defaults to
+  // preview — the rendered page is the whole point of an HTML file. Only used
+  // when htmlPreview is set (HTML files); other code/markdown files ignore it.
+  const [view, setView] = useState<'preview' | 'source'>('preview')
 
   const ext = fileName.split('.').pop()?.toLowerCase() ?? ''
   const lang = language ?? langHintFromExt(ext)
@@ -156,6 +159,22 @@ export function CodeFileViewer({
     </div>
   )
 
+  // Static, sandboxed live preview, shared verbatim by the inline card and the
+  // expanded sheet. Two layers keep it safe: the frame has an opaque origin (no
+  // allow-same-origin) so it can't touch the renderer, its storage, or IPC; and
+  // the app's own CSP (script-src 'self') is inherited by the srcDoc document,
+  // so inline page scripts don't execute either. The result is a clean render
+  // of the markup and styles. Never add allow-same-origin next to allow-scripts
+  // — that would defeat the sandbox.
+  const previewFrame = (
+    <iframe
+      title={fileName}
+      srcDoc={content}
+      sandbox="allow-scripts allow-popups allow-forms allow-modals"
+      className="h-full w-full border-0 bg-white"
+    />
+  )
+
   // Individual action controls, composed in opposite orders per surface.
   const iconButton =
     'text-muted hover:text-fg flex shrink-0 cursor-pointer items-center justify-center rounded p-1 focus-visible:ring-2 focus-visible:ring-accent'
@@ -173,6 +192,21 @@ export function CodeFileViewer({
       <ArrowExpandIcon size={14} />
     </button>
   )
+  // HTML only: a compact eye⇄code toggle for the card footer that mirrors the
+  // expanded sheet's Preview/Source control. Shows the icon of the view it will
+  // switch TO (code when previewing, eye when viewing source).
+  const previewToggleButton = htmlPreview ? (
+    <button
+      type="button"
+      onClick={() => setView((v) => (v === 'preview' ? 'source' : 'preview'))}
+      title={t(`chat.htmlViewer.${view === 'preview' ? 'source' : 'preview'}`)}
+      aria-label={t(`chat.htmlViewer.${view === 'preview' ? 'source' : 'preview'}`)}
+      aria-pressed={view === 'preview'}
+      className={cn(iconButton)}
+    >
+      {view === 'preview' ? <CodeIcon size={14} /> : <EyeIcon size={14} />}
+    </button>
+  ) : null
   const copyButton = (
     <CopyButton
       text={content}
@@ -214,11 +248,11 @@ export function CodeFileViewer({
         <button
           key={v}
           type="button"
-          onClick={() => setSheetView(v)}
-          aria-pressed={sheetView === v}
+          onClick={() => setView(v)}
+          aria-pressed={view === v}
           className={cn(
             'rounded-md px-2 py-0.5 text-[11px] font-medium',
-            sheetView === v
+            view === v
               ? 'bg-primary text-primary-fg shadow-sm'
               : 'text-muted hover:text-fg cursor-pointer'
           )}
@@ -259,13 +293,20 @@ export function CodeFileViewer({
         </span>
       </div>
 
-      <div className="max-h-80 overflow-auto">{body}</div>
+      <div
+        className={
+          htmlPreview && view === 'preview' ? 'h-80 overflow-hidden' : 'max-h-80 overflow-auto'
+        }
+      >
+        {htmlPreview && view === 'preview' ? previewFrame : body}
+      </div>
 
       <div className="border-border flex items-center gap-2 border-t px-3 py-1.5">
         <span className="text-muted min-w-0 flex-1 truncate text-[10px]">
           {lang ?? ext}
           {sizeBytes != null ? ` · ${formatBytes(sizeBytes)}` : ''}
         </span>
+        {previewToggleButton}
         {revealButton}
         {downloadButton}
         {copyButton}
@@ -278,23 +319,7 @@ export function CodeFileViewer({
         title={fileName}
         actions={sheetActions}
       >
-        {htmlPreview && sheetView === 'preview' ? (
-          // Static, sandboxed preview. Two layers keep it safe: the frame has
-          // an opaque origin (no allow-same-origin) so it can't touch the
-          // renderer, its storage, or IPC; and the app's own CSP
-          // (script-src 'self') is inherited by the srcDoc document, so inline
-          // page scripts don't execute either. The result is a clean render of
-          // the markup and styles. Never add allow-same-origin next to
-          // allow-scripts — that would defeat the sandbox.
-          <iframe
-            title={fileName}
-            srcDoc={content}
-            sandbox="allow-scripts allow-popups allow-forms allow-modals"
-            className="h-full w-full border-0 bg-white"
-          />
-        ) : (
-          body
-        )}
+        {htmlPreview && view === 'preview' ? previewFrame : body}
       </ExpandedSheet>
     </div>
   )

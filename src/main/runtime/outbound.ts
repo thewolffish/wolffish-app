@@ -1,3 +1,7 @@
+// Relative (not @main): outbound stays electron-free / tsx-testable, and its
+// other @main imports are type-only (erased). A value import must resolve at
+// runtime for the standalone tests, so it goes through the relative path.
+import { deliveredFilesReminder } from './agent/delivered-files'
 import type { RuntimeContext } from '@main/runtime/prefrontal'
 import type { ChatMessage, ProviderStreamOptions } from '@main/runtime/thalamus'
 
@@ -57,9 +61,14 @@ const MIN_STUB_CHARS = 2_000
  * task is truly complete or hopeless.
  */
 export function formatRuntimeStatus(runtime: RuntimeContext, now: Date = new Date()): string {
+  // Files a tool already auto-attached this turn ride here (after every cache
+  // breakpoint) rather than in a tool-result message — so reminding the model
+  // not to re-send them via send_file never perturbs the cached history prefix.
+  const delivered = deliveredFilesReminder(runtime.deliveredFiles ?? [])
   return (
     `[runtime] Current date/time: ${formatClock(now)}. ` +
     `Tool iteration this turn: ${runtime.iteration}. Tools called this turn: ${runtime.toolsCalled}. ` +
+    (delivered ? `${delivered} ` : '') +
     `(Automated telemetry, not a user message — do not reply to it or summarize progress because of it. ` +
     `If the task is unfinished, keep calling tools: a response without tool calls ends the task; there is no next turn.)`
   )
