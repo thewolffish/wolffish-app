@@ -66,6 +66,8 @@ import type { ApprovalDecision } from '@main/runtime/amygdala'
 import { previewSchedule } from '@main/runtime/brainstem'
 import type { AskUserResponse } from '@main/runtime/cerebellum'
 import { deleteCapabilityFolder, importCapability } from '@main/runtime/capabilityImport'
+import { McpManager } from '@main/runtime/mcp/manager'
+import type { McpAddInput } from '@main/runtime/mcp/types'
 import { MODEL_CATALOG } from '@main/runtime/models'
 import { localProvider } from '@main/runtime/providers/local'
 import { sudoSession } from '@main/runtime/sudoSession'
@@ -734,12 +736,39 @@ const telegramChannel = new TelegramChannel(agent, turnRunner, localProvider)
 const whatsappChannel = new WhatsAppChannel(agent, turnRunner, localProvider)
 const extensionServer = new ExtensionServer()
 
+// MCP server connections. Each connected server registers an in-process
+// cerebellum capability (`mcp-<slug>`), so its tools reach the Brain and
+// orchestrator workers through the exact same per-turn selection path as
+// every other capability — connect/disconnect just adds/removes the
+// registration. All lifecycle noise stays inside the manager.
+const mcpManager = new McpManager({
+  register: (capability, plugin) =>
+    agent.cerebellum.registerInProcessCapability(capability, plugin),
+  unregister: (name) => agent.cerebellum.unregisterInProcessCapability(name),
+  openExternal: (url) => void shell.openExternal(url),
+  appVersion: app.getVersion(),
+  onStatusChange: (snapshots) => broadcast('mcp:statusChange', snapshots),
+  takenCapabilityNames: () => new Set(agent.cerebellum.getCapabilities().map((c) => c.name))
+})
+
 agent.amygdala.setApprovalBridge((req) => turnRouter.dispatchApproval(req))
 agent.cerebellum.setAskBridge((req) => turnRouter.dispatchAskUser(req))
 // Wire the worker-management bridge the `orchestrator` capability's plugin
 // receives in its init context. It forwards to the Agent's active orchestration
 // session — the single source of truth for a turn's live workers.
 agent.cerebellum.setOrchestratorHost(agent.orchestratorHost())
+// Wire the MCP-management bridge the `mcp` capability's plugin receives in its
+// init context. It forwards to the McpManager — the exact same methods the
+// Settings → MCP IPC handlers call — so an agent-driven add/test/remove
+// reflects in the UI (via mcp:statusChange) exactly like a manual one.
+agent.cerebellum.setMcpHost({
+  list: () => mcpManager.snapshot(),
+  add: (input) => mcpManager.add(input),
+  test: (id) => mcpManager.test(id),
+  remove: (id) => mcpManager.remove(id),
+  setEnabled: (id, enabled) => mcpManager.setEnabled(id, enabled),
+  authorize: (id) => mcpManager.authorize(id)
+})
 // Feed live channel connectivity to the introspect capability so the agent can
 // check whether Telegram/WhatsApp are reachable (via `channel_status` /
 // `wolffish_status`) and tell the user how to reconnect a disconnected one.
@@ -1060,6 +1089,7 @@ async function shutdownGracefully(): Promise<void> {
   await telegramChannel.stop('app shutdown').catch(() => undefined)
   await whatsappChannel.stop('app shutdown').catch(() => undefined)
   await extensionServer.stop().catch(() => undefined)
+  await mcpManager.stop().catch(() => undefined)
   await agent.stop().catch(() => undefined)
 }
 
@@ -1230,6 +1260,17 @@ app.whenReady().then(async () => {
 
   const lock = await acquireLock(lockfilePath())
   if (lock.acquired) lockAcquired = true
+
+  // MCP connections start only in the instance that owns the workspace
+  // lock: stdio servers are real child processes with exclusive side
+  // effects (ports, database locks, OAuth token refresh writes), and a
+  // dev + packaged instance pair sharing ~/.wolffish must not both
+  // spawn them. Channels predate this concern; MCP doesn't inherit it.
+  if (lock.acquired) {
+    mcpManager.start(cfg?.mcp)
+  } else {
+    wlog.warn('[mcp]', `connections not started — workspace owned by pid ${lock.runningPid}`)
+  }
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
@@ -1481,6 +1522,23 @@ app.whenReady().then(async () => {
       return { ok: true as const, config: next }
     }
   )
+
+  // MCP server connections. All lifecycle mechanics live in McpManager;
+  // these handlers are thin passthroughs. Status flows to the renderer
+  // via the 'mcp:statusChange' broadcast wired at manager construction.
+  ipcMain.handle('mcp:list', () => mcpManager.snapshot())
+
+  ipcMain.handle('mcp:add', (_e, input: McpAddInput) => mcpManager.add(input))
+
+  ipcMain.handle('mcp:remove', (_e, id: string) => mcpManager.remove(id))
+
+  ipcMain.handle('mcp:setEnabled', (_e, id: string, enabled: boolean) =>
+    mcpManager.setEnabled(id, enabled)
+  )
+
+  ipcMain.handle('mcp:test', (_e, id: string) => mcpManager.test(id))
+
+  ipcMain.handle('mcp:authorize', (_e, id: string) => mcpManager.authorize(id))
 
   // Brave Search — stateless service. The web-search cerebellum plugin
   // reads the persisted config and uses Brave as the primary provider
@@ -2047,6 +2105,9 @@ app.whenReady().then(async () => {
     whatsappChannel.abort()
     await telegramChannel.stop('factory reset').catch(() => undefined)
     await whatsappChannel.stop('factory reset').catch(() => undefined)
+    // app.exit() below skips before-quit/will-quit, so MCP children must
+    // be torn down here or they survive into the relaunched instance.
+    await mcpManager.stop().catch(() => undefined)
     await agent.stop().catch(() => undefined)
     if (lockAcquired) {
       releaseLockSync(lockfilePath())
@@ -3348,6 +3409,10 @@ app.on('before-quit', (event) => {
 })
 
 app.on('will-quit', () => {
+  // Last-resort synchronous sweep for stdio MCP children: the idle quit
+  // path never runs the async drain, and Node does not kill children on
+  // parent exit — a server that ignores stdin EOF would orphan.
+  mcpManager.killAllSync()
   if (lockAcquired) {
     releaseLockSync(lockfilePath())
     lockAcquired = false

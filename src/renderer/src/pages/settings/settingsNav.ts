@@ -4,6 +4,7 @@ export type TabKey =
   | 'model'
   | 'channels'
   | 'services'
+  | 'mcp'
   | 'updates'
   | 'wolffish'
   | 'variables'

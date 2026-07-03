@@ -140,6 +140,55 @@ export type InAppApi = {
   onConfigChange: (callback: (config: InAppConfig) => void) => () => void
 }
 
+// MCP connection views. Mirrors src/main/runtime/mcp/types.ts (the
+// preload re-declares main types by convention) — keep both in sync.
+export type McpTransportKind = 'stdio' | 'http'
+
+export type McpServerState = 'connected' | 'connecting' | 'needs-auth' | 'offline' | 'disabled'
+
+export type McpServerSnapshot = {
+  id: string
+  name: string
+  slug: string
+  transport: McpTransportKind
+  target: string
+  enabled: boolean
+  state: McpServerState
+  toolCount: number
+  toolNames: string[]
+  serverName?: string
+  serverVersion?: string
+  error?: string
+  /** Live connect-progress line, present only while state is `connecting`. */
+  progress?: string
+  lastConnectedAt?: number
+}
+
+export type McpTestResult = {
+  ok: boolean
+  toolCount?: number
+  durationMs?: number
+  error?: string
+}
+
+export type McpAddInput = {
+  name?: string
+  target: string
+  env?: Record<string, string>
+}
+
+export type McpAddResult = { ok: true; server: McpServerSnapshot } | { ok: false; error: string }
+
+export type McpApi = {
+  list: () => Promise<McpServerSnapshot[]>
+  add: (input: McpAddInput) => Promise<McpAddResult>
+  remove: (id: string) => Promise<{ ok: boolean; error?: string }>
+  setEnabled: (id: string, enabled: boolean) => Promise<{ ok: boolean; error?: string }>
+  test: (id: string) => Promise<McpTestResult>
+  authorize: (id: string) => Promise<{ ok: boolean; error?: string }>
+  onStatusChange: (callback: (servers: McpServerSnapshot[]) => void) => () => void
+}
+
 export type SttConfig = {
   defaultModel: string
 }
@@ -1319,6 +1368,7 @@ export type WolffishApi = {
   telegram: TelegramApi
   whatsapp: WhatsAppApi
   inapp: InAppApi
+  mcp: McpApi
   brave: BraveApi
   notion: NotionApi
   github: GitHubApi
@@ -1533,6 +1583,15 @@ const api: WolffishApi = {
     getConfig: () => ipcRenderer.invoke('inapp:getConfig'),
     setConfig: (patch) => ipcRenderer.invoke('inapp:setConfig', patch),
     onConfigChange: (callback) => subscribe('inapp:configChange', callback)
+  },
+  mcp: {
+    list: () => ipcRenderer.invoke('mcp:list'),
+    add: (input) => ipcRenderer.invoke('mcp:add', input),
+    remove: (id) => ipcRenderer.invoke('mcp:remove', id),
+    setEnabled: (id, enabled) => ipcRenderer.invoke('mcp:setEnabled', id, enabled),
+    test: (id) => ipcRenderer.invoke('mcp:test', id),
+    authorize: (id) => ipcRenderer.invoke('mcp:authorize', id),
+    onStatusChange: (callback) => subscribe('mcp:statusChange', callback)
   },
   brave: {
     getConfig: () => ipcRenderer.invoke('brave:getConfig'),

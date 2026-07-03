@@ -34,6 +34,7 @@ import { GitHubPanel } from '@pages/settings/GitHubPanel'
 import { GooglePanel } from '@pages/settings/GooglePanel'
 import { prefetchGooglePanel } from '@pages/settings/googleSnapshot'
 import { InAppPanel } from '@pages/settings/InAppPanel'
+import { McpPanel } from '@pages/settings/McpPanel'
 import { MemesPanel } from '@pages/settings/MemesPanel'
 import { NotionPanel } from '@pages/settings/NotionPanel'
 import { SpeechToTextPanel } from '@pages/settings/SpeechToTextPanel'
@@ -62,6 +63,7 @@ import {
   DnaIcon,
   GithubIcon,
   Key01Icon,
+  McpServerIcon,
   Mic01Icon,
   NeuralNetworkIcon,
   PaintBoardIcon,
@@ -88,6 +90,7 @@ const TABS: Tab[] = [
   { key: 'model', icon: <NeuralNetworkIcon size={18} />, labelKey: 'settings.tabs.model' },
   { key: 'channels', icon: <BubbleChatIcon size={18} />, labelKey: 'settings.tabs.channels' },
   { key: 'services', icon: <PuzzleIcon size={18} />, labelKey: 'settings.tabs.services' },
+  { key: 'mcp', icon: <McpServerIcon size={18} />, labelKey: 'settings.tabs.mcp' },
   { key: 'variables', icon: <Key01Icon size={18} />, labelKey: 'settings.tabs.variables' },
   { key: 'cellebrum', icon: <BrainIcon size={18} />, labelKey: 'settings.tabs.cellebrum' },
   { key: 'hippocampus', icon: <DnaIcon size={18} />, labelKey: 'settings.tabs.hippocampus' },
@@ -552,6 +555,9 @@ export function Settings(): React.JSX.Element {
         </TabPanel>
         <TabPanel active={active === 'channels' && channel === 'inapp'}>
           <InAppPanel />
+        </TabPanel>
+        <TabPanel active={active === 'mcp'}>
+          <McpPanel />
         </TabPanel>
         <TabPanel active={active === 'services' && effectiveService === 'browserExtension'}>
           <BrowserExtensionPanel />

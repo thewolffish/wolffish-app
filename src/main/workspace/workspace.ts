@@ -1,5 +1,7 @@
 import { is } from '@electron-toolkit/utils'
 import { diskWriter } from '@main/io/diskWriter'
+import { mcpCapabilityName } from '@main/runtime/mcp/naming'
+import type { McpConfig, McpOauthState, McpServerConfig } from '@main/runtime/mcp/types'
 import { isKnownModelName } from '@main/runtime/models'
 import { app } from 'electron'
 import yaml from 'js-yaml'
@@ -352,6 +354,10 @@ export type WorkspaceConfig = {
   browserExtension?: BrowserExtensionConfig
   compaction?: CompactionConfig
   updates?: UpdatesConfig
+  // MCP server connections. Types live in @main/runtime/mcp/types (pure,
+  // test-importable) and are re-exported below. Optional so legacy
+  // configs migrate cleanly — when absent no connections exist.
+  mcp?: McpConfig
   lastSettingsState?: {
     tab?: string
     provider?: string
@@ -1706,6 +1712,92 @@ export async function setBrowserExtensionConfig(
         screenshotQuality: patch.screenshotQuality ?? current.screenshotQuality
       }
     }
+  })
+}
+
+export type { McpConfig, McpOauthState, McpServerConfig }
+
+const EMPTY_MCP_CONFIG: McpConfig = { servers: [] }
+
+export async function getMcpConfig(): Promise<McpConfig> {
+  const config = await readConfig()
+  return config?.mcp ?? EMPTY_MCP_CONFIG
+}
+
+export async function addMcpServer(server: McpServerConfig): Promise<WorkspaceConfig> {
+  return patchConfig((c) => {
+    const servers = (c.mcp ?? EMPTY_MCP_CONFIG).servers.filter((s) => s.id !== server.id)
+    return { ...c, mcp: { servers: [...servers, server] } }
+  })
+}
+
+/**
+ * Patch a server record by id. Strictly map-in-place: when the record no
+ * longer exists (removed while an async caller was in flight) this is a
+ * no-op — it must never re-create a deleted server.
+ */
+export async function updateMcpServer(
+  id: string,
+  patch: Partial<Pick<McpServerConfig, 'name' | 'enabled' | 'command' | 'url' | 'env'>>
+): Promise<WorkspaceConfig> {
+  return patchConfig((c) => {
+    const servers = (c.mcp ?? EMPTY_MCP_CONFIG).servers
+    if (!servers.some((s) => s.id === id)) return c
+    return {
+      ...c,
+      mcp: { servers: servers.map((s) => (s.id === id ? { ...s, ...patch } : s)) }
+    }
+  })
+}
+
+/**
+ * Merge OAuth state (tokens, client registration, callback port) into a
+ * server record. Same map-in-place/no-op contract as updateMcpServer —
+ * the MCP SDK calls this mid-connect and must not race a user's remove.
+ * An explicit `undefined` value clears the field (credential invalidation).
+ */
+export async function patchMcpServerOauth(
+  id: string,
+  patch: Partial<McpOauthState>
+): Promise<void> {
+  await patchConfig((c) => {
+    const servers = (c.mcp ?? EMPTY_MCP_CONFIG).servers
+    if (!servers.some((s) => s.id === id)) return c
+    return {
+      ...c,
+      mcp: {
+        servers: servers.map((s) => {
+          if (s.id !== id) return s
+          const oauth: McpOauthState = { ...s.oauth }
+          for (const key of ['clientInformation', 'tokens', 'redirectPort'] as const) {
+            if (!(key in patch)) continue
+            const value = patch[key]
+            if (value === undefined) delete oauth[key]
+            else (oauth as Record<string, unknown>)[key] = value
+          }
+          return { ...s, oauth }
+        })
+      }
+    }
+  })
+}
+
+/**
+ * Remove a server and everything it owned: its config record (including
+ * OAuth tokens) and any stale disabledCapabilities entry — a later
+ * server that lands the same slug must not inherit a disable.
+ */
+export async function removeMcpServer(id: string): Promise<WorkspaceConfig> {
+  return patchConfig((c) => {
+    const servers = (c.mcp ?? EMPTY_MCP_CONFIG).servers
+    const removed = servers.find((s) => s.id === id)
+    const next: WorkspaceConfig = { ...c, mcp: { servers: servers.filter((s) => s.id !== id) } }
+    if (removed && next.disabledCapabilities) {
+      next.disabledCapabilities = next.disabledCapabilities.filter(
+        (name) => name !== mcpCapabilityName(removed.slug)
+      )
+    }
+    return next
   })
 }
 

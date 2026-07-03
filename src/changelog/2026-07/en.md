@@ -1,4 +1,18 @@
-## v1.0.201 — 2026-07-01 `Latest`
+## v1.0.202 — 2026-07-02 `Latest`
+
+### MCP: Connect Any Tool Server, and It Just Works
+
+A new **MCP** page in Settings connects Model Context Protocol servers — the growing ecosystem of tool servers for everything from databases to design apps to domain knowledge. Paste a command (for a server that runs on your machine) or a URL (for a remote one) and Wolffish connects on the spot: no separate "connect" step, no test button you have to remember, no restart. Every tool the server exposes is available to Wolffish — in normal chat and to orchestrator workers alike — on your very next message.
+
+Connections look after themselves. If a server crashes or a remote endpoint drops, its tools quietly step aside and Wolffish reconnects in the background with steadily-spaced retries — no error modals, no flashing status, nothing you have to do. When it comes back, the tools return on their own. If a remote server needs sign-in, Wolffish walks you through it the way any modern app would: one **Sign in** button, your browser opens, and you come back connected. One misbehaving server can never affect another or the app — every connection is isolated. Servers are namespaced so two of them can never collide, and removing a connection cleans up everything it touched.
+
+Wolffish can also manage these connections for you by conversation — "connect the tafsir MCP server," "which MCP servers are on?", "disable that one," "remove it" — through a new `mcp` capability. Whatever it does shows up on the MCP settings page live, and whatever you do there is visible to it.
+
+### Network Status, Quietly Handled
+
+Wolffish now tells you when your connection drops and when it's back — one small toast each way, only on real transitions, never on a normal launch. And when a background run (an automation or procedure) fails because of the network or a provider, the notification now says *why* in plain words — "no internet connection," "rate-limited," "invalid API key" — instead of a raw machine error.
+
+## v1.0.201 — 2026-07-01
 
 ### Procedures: Prompts You Save and Run On Demand
 
@@ -10,7 +24,7 @@ The GitHub and Notion settings panels now hold any number of connections, each w
 
 ### WhatsApp Messages in WhatsApp's Own Formatting
 
-Replies on WhatsApp no longer arrive as raw Markdown — `**bold**` asterisk soup, `#` headings, broken tables. Wolffish now writes in WhatsApp's native style (*bold*, _italic_, plain lists), and everything it sends passes through a converter that translates any leftover Markdown — headings, links, tables, task lists — into clean WhatsApp text.
+Replies on WhatsApp no longer arrive as raw Markdown — `**bold**` asterisk soup, `#` headings, broken tables. Wolffish now writes in WhatsApp's native style (_bold_, _italic_, plain lists), and everything it sends passes through a converter that translates any leftover Markdown — headings, links, tables, task lists — into clean WhatsApp text.
 
 ### WhatsApp Now Accepts Any File You Send It
 

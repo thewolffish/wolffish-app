@@ -19,7 +19,7 @@ export type Procedure = {
 }
 
 function proceduresFile(): string {
-  return path.join(workspaceRoot(), 'brain', 'procedures', 'procedures.json')
+  return path.join(workspaceRoot(), 'brain', 'procedures.json')
 }
 
 async function loadProcedures(): Promise<Procedure[]> {

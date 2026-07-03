@@ -7,6 +7,8 @@
     "back": "Back",
     "loading": "Loading…",
     "offline": "No network connection",
+    "networkOffline": "No network connection detected",
+    "networkRestored": "Network connection restored",
     "diskUsage": "{{free}} free of {{total}}",
     "contextMenu": {
       "selectAll": "Select all",
@@ -195,6 +197,7 @@
       "cellebrum": "Cellebrum",
       "channels": "Channels",
       "services": "Services",
+      "mcp": "MCP",
       "usage": "Usage",
       "data": "Data",
       "updates": "Updates",
@@ -1194,6 +1197,65 @@
         }
       }
     },
+    "mcp": {
+      "title": "MCP",
+      "subtitle": "Connect Model Context Protocol servers to give Wolffish new tools.",
+      "how": {
+        "title": "How this works",
+        "add": "Add a connection with a command (for servers that run on this machine) or a URL (for remote servers). Wolffish connects right away — no restart, no setup steps. If a server requires sign-in, you'll see one button for it here.",
+        "tools": "Everything a connected server offers becomes available to Wolffish on your very next message, in normal chat and in orchestrator mode alike.",
+        "background": "Wolffish keeps each connection healthy on its own: it checks in periodically, reconnects with steadily-spaced retries if one drops, refreshes a server's tools whenever it reconnects, and keeps every connection isolated so one failing never touches another.",
+        "offline": "If a server crashes or drops offline, its tools quietly step aside while Wolffish reconnects in the background. Nothing breaks, and there's nothing you need to do."
+      },
+      "connections": {
+        "title": "Connections",
+        "empty": "No connections yet. Add one below to get started."
+      },
+      "status": {
+        "connected": "Connected",
+        "connecting": "Connecting",
+        "needsAuth": "Sign-in required",
+        "offline": "Offline",
+        "disabled": "Disabled"
+      },
+      "toolCount_one": "{{count}} tool",
+      "toolCount_other": "{{count}} tools",
+      "actions": {
+        "test": "Test",
+        "remove": "Remove",
+        "signIn": "Sign in"
+      },
+      "toggle": {
+        "label": "Enabled",
+        "on": "On",
+        "off": "Off"
+      },
+      "test": {
+        "ok_one": "OK — {{count}} tool in {{ms}} ms",
+        "ok_other": "OK — {{count}} tools in {{ms}} ms",
+        "failed": "Test failed"
+      },
+      "progress": {
+        "generic": "establishing the connection…"
+      },
+      "auth": {
+        "prompt": "This server requires sign-in."
+      },
+      "add": {
+        "title": "Add a connection",
+        "subtitle": "Paste a server command or a URL — Wolffish figures out the rest.",
+        "targetLabel": "Command or URL",
+        "targetPlaceholder": "uvx some-mcp-server   ·   https://mcp.example.com/mcp",
+        "nameLabel": "Name (optional)",
+        "namePlaceholder": "How this connection appears in the list",
+        "envToggle": "+ Environment variables",
+        "envLabel": "Environment variables",
+        "envPlaceholder": "API_KEY=…\nONE PER LINE",
+        "hintStdio": "Runs as a local command",
+        "hintHttp": "Connects to a remote server",
+        "button": "Add"
+      }
+    },
     "variables": {
       "title": "Variables",
       "subtitle": "Store API keys, tokens, base URLs, and other values in one place.",
@@ -1759,6 +1821,15 @@
       "timeout": "The provider didn't respond in time — it may be overloaded. Try again or switch providers.",
       "serverError": "Provider temporarily unavailable — retry shortly.",
       "viewDetails": "View details"
+    },
+    "runFailedReason": {
+      "offline": "no internet connection",
+      "invalidKey": "invalid API key",
+      "modelNotFound": "model not found",
+      "rateLimited": "rate-limited, try again soon",
+      "badRequest": "provider rejected the request",
+      "timeout": "provider timed out",
+      "serverError": "provider unavailable"
     }
   }
 }

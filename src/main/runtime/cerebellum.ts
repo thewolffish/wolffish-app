@@ -2,6 +2,12 @@ import type { Amygdala, DangerLevel, DangerPattern } from '@main/runtime/amygdal
 import type { ChannelStatusSnapshot } from '@main/channels/status'
 import { diskWriter } from '@main/io/diskWriter'
 import type { Corpus } from '@main/runtime/corpus'
+import type {
+  McpAddInput,
+  McpAddResult,
+  McpServerSnapshot,
+  McpTestResult
+} from '@main/runtime/mcp/types'
 import type { WorkerEffort, WorkerResult, WorkerView } from '@main/runtime/orchestrator'
 import { sudoSession, type SudoSession } from '@main/runtime/sudoSession'
 import type { ToolDefinition } from '@main/runtime/thalamus'
@@ -45,6 +51,14 @@ export type ToolParameterSpec = {
    */
   items?: Record<string, unknown>
   properties?: Record<string, unknown>
+  /**
+   * Complete JSON Schema for this parameter, used verbatim as the
+   * property schema (only `required` is still read from the spec).
+   * For tool sources that already speak JSON Schema — MCP servers —
+   * so unions, formats, defaults and nested required arrays survive
+   * without a lossy round-trip through the simplified fields above.
+   */
+  raw?: Record<string, unknown>
 }
 
 export type SkillTrigger = {
@@ -379,6 +393,29 @@ export type OrchestratorHost = {
   listWorkers: () => WorkerView[]
 }
 
+/**
+ * MCP-management surface injected into the `mcp` capability's plugin via its
+ * init context (PluginContext.mcp). Implemented in the main process (index.ts)
+ * over the McpManager — the same methods the Settings → MCP IPC handlers call,
+ * so an agent-driven add/test/remove reflects in the UI exactly like a manual
+ * one. All ids are the server ids surfaced by `list`. Present only to the `mcp`
+ * plugin; undefined for every other plugin.
+ */
+export type McpHost = {
+  /** Every configured MCP server with its live status snapshot. */
+  list: () => McpServerSnapshot[]
+  /** Add a connection (stdio command or remote URL); connects immediately. */
+  add: (input: McpAddInput) => Promise<McpAddResult>
+  /** Re-check / reconnect a server now; returns tool count + latency or error. */
+  test: (id: string) => Promise<McpTestResult>
+  /** Remove a server and everything it owns (tokens, disabled entry). */
+  remove: (id: string) => Promise<{ ok: boolean; error?: string }>
+  /** Enable or disable a server without deleting it. */
+  setEnabled: (id: string, enabled: boolean) => Promise<{ ok: boolean; error?: string }>
+  /** Begin the OAuth sign-in flow for a remote server (opens the browser). */
+  authorize: (id: string) => Promise<{ ok: boolean; error?: string }>
+}
+
 export type PluginContext = {
   pluginDir: string
   workspaceRoot: string
@@ -426,6 +463,13 @@ export type PluginContext = {
    * and for workers themselves (two-level: a worker never delegates).
    */
   orchestrator?: OrchestratorHost
+  /**
+   * MCP-management surface. Present only when the host wired one in via
+   * setMcpHost — used by the `mcp` capability to list, add, test, enable,
+   * disable, remove, and authorize MCP server connections. Undefined for
+   * every other plugin.
+   */
+  mcp?: McpHost
   /**
    * Ask the user a multiple-choice question and block until they answer.
    * Used by the `ask` capability to pause the agent loop, render an
@@ -502,6 +546,7 @@ export class Cerebellum {
   private automationsHost?: AutomationsHost
   private proceduresHost?: ProceduresHost
   private orchestratorHost?: OrchestratorHost
+  private mcpHost?: McpHost
   /**
    * Bumped every time the live tool surface changes — a reload (skills
    * added/edited/removed) or an enable/disable toggle. The agent loop pins
@@ -616,6 +661,16 @@ export class Cerebellum {
     this.orchestratorHost = host
   }
 
+  /**
+   * Wire the MCP-management host (implemented in the main process over the
+   * McpManager) that the `mcp` capability's plugin receives in its init
+   * context. Set once at startup; survives reload() so the bridge keeps working
+   * after the plugin is re-imported.
+   */
+  setMcpHost(host: McpHost): void {
+    this.mcpHost = host
+  }
+
   isDisabled(name: string): boolean {
     return this.disabled.has(name)
   }
@@ -677,6 +732,10 @@ export class Cerebellum {
     for (const tool of capability.tools) {
       this.toolToCapability.set(tool.name, capability.name)
     }
+    // The tool surface changed: let a turn already in flight re-pin its
+    // prompt + tool list on the next loop iteration (same mechanism as
+    // skill_create / setDisabled).
+    this.generation++
   }
 
   /**
@@ -693,6 +752,7 @@ export class Cerebellum {
     }
     this.capabilities.delete(name)
     this.plugins.delete(name)
+    this.generation++
   }
 
   /**
@@ -1239,6 +1299,7 @@ export class Cerebellum {
         automations: this.automationsHost,
         procedures: this.proceduresHost,
         orchestrator: this.orchestratorHost,
+        mcp: this.mcpHost,
         askUser: (input) => this.dispatchAskUser(input),
         getChannelStatus: () => this.channelStatusProvider?.() ?? []
       })
@@ -1305,7 +1366,18 @@ export class Cerebellum {
    * Existing plugins are torn down first so their destroy() hooks run.
    */
   async reload(): Promise<{ capabilities: Capability[] }> {
-    for (const plugin of this.plugins.values()) {
+    // In-process capabilities (channel tools, MCP servers) don't live on
+    // disk, so the rescan below can't restore them — carry them across.
+    // Their plugins' lifecycles belong to their registrars (a reload is
+    // not a disconnect), so they're excluded from the destroy pass too.
+    const inProcess: Array<{ capability: Capability; plugin: WolffishPlugin }> = []
+    for (const cap of this.capabilities.values()) {
+      if (!cap.inProcess) continue
+      const plugin = this.plugins.get(cap.name)
+      if (plugin) inProcess.push({ capability: cap, plugin })
+    }
+    for (const [name, plugin] of this.plugins) {
+      if (this.capabilities.get(name)?.inProcess) continue
       try {
         await plugin.destroy?.()
       } catch {
@@ -1320,7 +1392,11 @@ export class Cerebellum {
     // New tool surface, and any re-imported plugin must dodge Node's ESM
     // cache (see importPlugin) — both ride on this bump.
     this.generation++
-    return this.loadAll()
+    await this.loadAll()
+    for (const entry of inProcess) {
+      this.registerInProcessCapability(entry.capability, entry.plugin)
+    }
+    return { capabilities: [...this.capabilities.values()] }
   }
 
   /**
@@ -1758,6 +1834,11 @@ function toJSONSchema(parameters: Record<string, ToolParameterSpec>): Record<str
   const properties: Record<string, unknown> = {}
   const required: string[] = []
   for (const [key, spec] of Object.entries(parameters ?? {})) {
+    if (spec.raw) {
+      properties[key] = spec.raw
+      if (spec.required !== false) required.push(key)
+      continue
+    }
     const prop: Record<string, unknown> = {
       type: spec.type ?? 'string'
     }

@@ -7,6 +7,7 @@ import { useFlow, type Screen } from '@providers/flow/useFlow'
 import { ToastProvider } from '@components/core/toast/ToastProvider'
 import { useToast } from '@components/core/toast/useToast'
 import { InputContextMenu } from '@components/core/InputContextMenu'
+import { useNetworkToasts } from '@hooks/use-network-toasts/useNetworkToasts'
 import { ClosingOverlay } from '@components/common/closing-overlay/ClosingOverlay'
 import { HeartbeatActiveOverlay } from '@components/common/heartbeat-active-overlay/HeartbeatActiveOverlay'
 import { ProcedureActiveOverlay } from '@components/common/procedure-active-overlay/ProcedureActiveOverlay'
@@ -36,6 +37,31 @@ type ActiveRun = 'heartbeat' | 'procedure' | null
 const runKind = (id: string): Exclude<ActiveRun, null> =>
   id.startsWith('procedure:') ? 'procedure' : 'heartbeat'
 
+// A run that dies because every provider attempt failed surfaces the raw
+// ProviderFailure.reasonKey as its error (wernicke joins them with '; '), so
+// payload.error arrives as a bare machine key like "offline". Map those to
+// short toast-sized reasons; anything unrecognized is a real exception
+// message and passes through (clamped so a stack-ish string can't balloon
+// the toast).
+const PROVIDER_REASON_MESSAGE: Record<string, string> = {
+  offline: 'errors.runFailedReason.offline',
+  'authentication failed': 'errors.runFailedReason.invalidKey',
+  forbidden: 'errors.runFailedReason.invalidKey',
+  'model not found': 'errors.runFailedReason.modelNotFound',
+  'rate-limited': 'errors.runFailedReason.rateLimited',
+  'bad request': 'errors.runFailedReason.badRequest',
+  timeout: 'errors.runFailedReason.timeout',
+  'server error': 'errors.runFailedReason.serverError',
+  'gateway error': 'errors.runFailedReason.serverError',
+  unavailable: 'errors.runFailedReason.serverError',
+  overloaded: 'errors.runFailedReason.serverError'
+}
+
+const RAW_ERROR_TOAST_LIMIT = 100
+
+const clampToastDetail = (text: string): string =>
+  text.length <= RAW_ERROR_TOAST_LIMIT ? text : `${text.slice(0, RAW_ERROR_TOAST_LIMIT - 1).trimEnd()}…`
+
 function useActiveRun(): ActiveRun {
   const { t } = useTranslation()
   const toast = useToast()
@@ -52,12 +78,16 @@ function useActiveRun(): ActiveRun {
     const offEnded = window.api.heartbeat.onJobEnded((payload) => {
       setActive(null)
       // A run that fails mid-execution has no other surface once the overlay
-      // closes, so surface the failure as a toast.
+      // closes, so surface the failure as a toast: what failed, then why.
       if (payload.status === 'failed') {
-        const isProcedure = payload.id.startsWith('procedure:')
+        const title = t(
+          payload.id.startsWith('procedure:') ? 'procedures.runFailed' : 'heartbeat.runFailed'
+        )
+        const reasonKey = PROVIDER_REASON_MESSAGE[payload.error?.split(';')[0]?.trim() ?? '']
+        const detail = reasonKey ? t(reasonKey) : payload.error && clampToastDetail(payload.error)
         toast.show({
           tone: 'error',
-          message: payload.error ?? t(isProcedure ? 'procedures.runFailed' : 'heartbeat.runFailed')
+          message: detail ? `${title} — ${detail}` : title
         })
       }
     })
@@ -123,6 +153,14 @@ function NonChatScreen({ screen }: { screen: Screen }): React.JSX.Element | null
   }
 }
 
+// Global network-status notifier — mounted once inside ToastProvider so the
+// drop/restore toasts show on every screen, not just the ones that track
+// connectivity themselves.
+function NetworkToasts(): null {
+  useNetworkToasts()
+  return null
+}
+
 function Screens(): React.JSX.Element {
   const { screen } = useFlow()
   const activeRun = useActiveRun()
@@ -185,6 +223,7 @@ function App(): React.JSX.Element {
     <ThemeProvider>
       <LocaleProvider>
         <ToastProvider>
+          <NetworkToasts />
           <FlowProvider>
             <div className="app-titlebar" aria-hidden />
             <Screens />
