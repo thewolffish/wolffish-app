@@ -224,8 +224,6 @@ export type WorkspaceConfig = {
     autonomous?: boolean
     localOnly?: boolean
     restrictPowerfulModels?: boolean
-    statelessLocalModels?: boolean
-    restrictLocalModels?: boolean
     /** Per-model thinking mode. Key is model name, value is ThinkingMode. */
     thinkingModes?: Record<string, ThinkingMode>
   }
@@ -345,6 +343,10 @@ export type ConversationFile = {
   workingFolder?: string[] | null
   contextMeter?: { contextTokens: number; contextBudget: number } | null
   timeline?: TimelineEntry[]
+  /** Rolling prefix summary — see src/main/conversations.ts (dual decl). */
+  summary?: string | null
+  /** First message index NOT covered by `summary` (always a user message). */
+  summarizedThroughMessage?: number | null
 }
 
 export type ConversationMeta = {
@@ -516,8 +518,6 @@ export type RuntimeApi = {
   setShowChatAnalytics: (value: boolean) => Promise<{ value: boolean }>
   setLocalOnly: (value: boolean) => Promise<{ value: boolean }>
   setRestrictPowerfulModels: (value: boolean) => Promise<{ value: boolean }>
-  setRestrictLocalModels: (value: boolean) => Promise<{ value: boolean }>
-  setStatelessLocalModels: (value: boolean) => Promise<{ value: boolean }>
   setThinkingMode: (model: string, mode: ThinkingMode) => Promise<void>
   setUpdatesEnabled: (value: boolean) => Promise<{ value: boolean }>
   setWeekStartsOn: (value: WeekStartsOn) => Promise<{ value: WeekStartsOn }>
@@ -625,6 +625,8 @@ export type ChatApi = {
   send: (payload: {
     history: ChatHistoryMessage[]
     conversationId?: string | null
+    /** Active working-folder paths — the agent injects fresh listings into the outbound volatile tail. */
+    workingFolders?: string[]
     thinkingMode?: ThinkingMode
   }) => Promise<{ turnId: string; ok: boolean; error?: string }>
   cancel: () => Promise<{ canceled: boolean }>
@@ -639,12 +641,24 @@ export type ChatApi = {
   onCredentialBlocked: (listener: (event: ChatCredentialBlockedEvent) => void) => () => void
 }
 
+export type ConversationSummaryUpdate = {
+  conversationId: string
+  summary: string
+  summarizedThroughMessage: number
+}
+
 export type ConversationApi = {
   list: () => Promise<ConversationMeta[]>
   load: (id: string) => Promise<ConversationFile | null>
   save: (conv: ConversationFile) => Promise<{ ok: true }>
   delete: (id: string) => Promise<{ ok: true }>
   create: (model: string | null) => Promise<ConversationFile>
+  /**
+   * Fired when the main-side rolling summarizer persisted a new prefix
+   * summary. The renderer folds it into its in-memory conversation so the
+   * next whole-file save preserves it and the next send replays lean.
+   */
+  onSummaryUpdated: (listener: (update: ConversationSummaryUpdate) => void) => () => void
 }
 
 export type ViewerTreeNode =
@@ -1458,7 +1472,8 @@ const api: WolffishApi = {
     load: (id) => ipcRenderer.invoke('conversation:load', id),
     save: (conv) => ipcRenderer.invoke('conversation:save', conv),
     delete: (id) => ipcRenderer.invoke('conversation:delete', id),
-    create: (model) => ipcRenderer.invoke('conversation:create', model)
+    create: (model) => ipcRenderer.invoke('conversation:create', model),
+    onSummaryUpdated: (listener) => subscribe('conversation:summaryUpdated', listener)
   },
   viewer: {
     readTree: () => ipcRenderer.invoke('viewer:readTree'),
@@ -1509,9 +1524,6 @@ const api: WolffishApi = {
     setLocalOnly: (value) => ipcRenderer.invoke('runtime:setLocalOnly', value),
     setRestrictPowerfulModels: (value) =>
       ipcRenderer.invoke('runtime:setRestrictPowerfulModels', value),
-    setRestrictLocalModels: (value) => ipcRenderer.invoke('runtime:setRestrictLocalModels', value),
-    setStatelessLocalModels: (value) =>
-      ipcRenderer.invoke('runtime:setStatelessLocalModels', value),
     setThinkingMode: (model, mode) => ipcRenderer.invoke('runtime:setThinkingMode', model, mode),
     setUpdatesEnabled: (value) => ipcRenderer.invoke('runtime:setUpdatesEnabled', value),
     setWeekStartsOn: (value) => ipcRenderer.invoke('runtime:setWeekStartsOn', value),

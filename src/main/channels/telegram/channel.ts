@@ -1,5 +1,11 @@
 import { interpretAskReply } from '@main/channels/ask-reply'
-import { assistantSegmentsToHistory, type TurnSink } from '@main/channels/channel'
+import {
+  assistantSegmentsToHistory,
+  replayWindow,
+  stubStaleToolResults,
+  type TurnSink
+} from '@main/channels/channel'
+import { queueConversationSummarization } from '@main/conversation-summarizer'
 import {
   getConversationIdForChat,
   setConversationIdForChat
@@ -1474,28 +1480,34 @@ export class TelegramChannel {
       // so the agent's processHistoryAttachments can convert images,
       // PDFs, and docs into native content blocks (same rules the
       // in-app channel uses).
-      const history: ChatHistoryMessage[] = conversation.messages.flatMap((m) => {
-        if (m.role !== 'user') return assistantSegmentsToHistory(m)
-        if (m.voicePrompt) {
-          const langAttr = m.voiceLang ? ` lang="${m.voiceLang}"` : ''
-          return [{ role: 'user' as const, content: `<voice_note${langAttr}>\n${m.content}` }]
-        }
-        const atts = m.attachments ?? []
-        const entry: ChatHistoryMessage = {
-          role: 'user',
-          content: composeAttachmentContext(m.content, atts)
-        }
-        if (atts.length > 0) {
-          entry.attachments = atts.map((a) => ({
-            type: a.type,
-            filePath: a.filePath,
-            originalName: a.originalName,
-            mimeType: a.mimeType,
-            sizeBytes: a.sizeBytes
-          }))
-        }
-        return [entry]
-      })
+      const window = replayWindow(conversation)
+      const history: ChatHistoryMessage[] = stubStaleToolResults(
+        window.preamble.concat(
+          window.messages.flatMap((m) => {
+            if (m.role !== 'user') return assistantSegmentsToHistory(m)
+            if (m.voicePrompt) {
+              const langAttr = m.voiceLang ? ` lang="${m.voiceLang}"` : ''
+              return [{ role: 'user' as const, content: `<voice_note${langAttr}>\n${m.content}` }]
+            }
+            const atts = m.attachments ?? []
+            const entry: ChatHistoryMessage = {
+              role: 'user',
+              content: composeAttachmentContext(m.content, atts)
+            }
+            if (atts.length > 0) {
+              entry.attachments = atts.map((a) => ({
+                type: a.type,
+                filePath: a.filePath,
+                originalName: a.originalName,
+                mimeType: a.mimeType,
+                sizeBytes: a.sizeBytes
+              }))
+            }
+            return [entry]
+          })
+        ),
+        conversation.id
+      )
 
       const handle = this.runner.send({
         history,
@@ -1591,7 +1603,9 @@ export class TelegramChannel {
               if (finished.stopReason) assistant.stopReason = finished.stopReason
               finished.conversation.messages.push(assistant)
               finished.conversation.updatedAt = assistant.timestamp
-              void saveConversation(finished.conversation).catch(() => undefined)
+              void saveConversation(finished.conversation)
+                .then(() => queueConversationSummarization(finished.conversation.id))
+                .catch(() => undefined)
               void this.maybeGenerateTitle(finished.conversation)
             }
             if (finished.typingTimer) {
@@ -2554,30 +2568,12 @@ function parseVoiceToolOutput(output: string): { filePath: string; fileName: str
   }
 }
 
-const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.tiff', '.tif'])
-const DOCUMENT_EXTS = new Set(['.pdf', '.docx', '.xlsx', '.pptx', '.doc', '.xls', '.csv'])
-// webm is treated as audio: wolffish's own webm outputs are voice/TTS. A real
-// webm *video* still routes correctly via the explicit (video) marker, which
-// extractAudioVideoPaths honours before this extension fallback.
-const AUDIO_EXTS = new Set([
-  '.mp3',
-  '.wav',
-  '.m4a',
-  '.ogg',
-  '.flac',
-  '.aac',
-  '.wma',
-  '.opus',
-  '.webm'
-])
-const VIDEO_EXTS = new Set(['.mp4', '.mov', '.avi', '.mkv', '.m4v', '.wmv', '.flv'])
-
 function extractWolffishMediaPaths(output: string): string[] {
   const paths: string[] = []
   const seen = new Set<string>()
 
-  // Explicit [wolffish-output: path (image)] markers from ffmpeg plugin —
-  // these identify the output file unambiguously.
+  // Explicit [wolffish-output: path (image)] markers — send_file's transport,
+  // i.e. the model's own deliberate delivery act.
   const markerRegex = /\[wolffish-output:\s*([^\]]+?)\s+\(image\)\]/g
   let match: RegExpExecArray | null
   while ((match = markerRegex.exec(output)) !== null) {
@@ -2597,38 +2593,6 @@ function extractWolffishMediaPaths(output: string): string[] {
     }
   }
 
-  const absRegex = /(\/[^\s",:)]+\.(?:png|jpe?g|gif|webp|bmp|tiff?))\b/gi
-  while ((match = absRegex.exec(output)) !== null) {
-    const abs = match[1]
-    if (!seen.has(abs) && IMAGE_EXTS.has(path.extname(abs).toLowerCase())) {
-      seen.add(abs)
-      paths.push(abs)
-    }
-  }
-
-  const home = os.homedir()
-  const homeRegex = /(~\/[^\s",:)]+\.(?:png|jpe?g|gif|webp|bmp|tiff?))\b/gi
-  while ((match = homeRegex.exec(output)) !== null) {
-    const abs = path.join(home, match[1].slice(2))
-    if (!seen.has(abs) && IMAGE_EXTS.has(path.extname(abs).toLowerCase())) {
-      seen.add(abs)
-      paths.push(abs)
-    }
-  }
-
-  try {
-    const parsed = JSON.parse(output)
-    if (parsed?.path && typeof parsed.path === 'string') {
-      const abs = parsed.path.startsWith('~/') ? path.join(home, parsed.path.slice(2)) : parsed.path
-      if (!seen.has(abs) && IMAGE_EXTS.has(path.extname(abs).toLowerCase())) {
-        seen.add(abs)
-        paths.push(abs)
-      }
-    }
-  } catch {
-    /* not JSON */
-  }
-
   return paths
 }
 
@@ -2641,47 +2605,22 @@ function stripWolffishMediaMarkdown(text: string): string {
 }
 
 function extractDocumentPaths(output: string): string[] {
+  // MARKER-ONLY by design: the [wolffish-output: … (document)] marker is
+  // send_file's transport — the model's explicit delivery act. Bare {path}
+  // JSON and prose paths are mere generation; the harness never auto-sends.
   const paths: string[] = []
   const seen = new Set<string>()
   const home = os.homedir()
-
-  function addIfDocument(p: string): void {
-    const abs = p.startsWith('~/') ? path.join(home, p.slice(2)) : p
-    if (!seen.has(abs) && DOCUMENT_EXTS.has(path.extname(abs).toLowerCase())) {
+  const markerRegex = /\[wolffish-output:\s*([^\]]+?)\s+\(document\)\]/g
+  let markerMatch: RegExpExecArray | null
+  while ((markerMatch = markerRegex.exec(output)) !== null) {
+    const raw = markerMatch[1].trim()
+    const abs = raw.startsWith('~/') ? path.join(home, raw.slice(2)) : raw
+    if (!seen.has(abs)) {
       seen.add(abs)
       paths.push(abs)
     }
   }
-
-  // Explicit [wolffish-output: path (document)] markers from the shell
-  // plugin's opened-file detection — these survive paths with spaces,
-  // which the bare-path regex below cannot.
-  const markerRegex = /\[wolffish-output:\s*([^\]]+?)\s+\(document\)\]/g
-  let markerMatch: RegExpExecArray | null
-  while ((markerMatch = markerRegex.exec(output)) !== null) {
-    addIfDocument(markerMatch[1].trim())
-  }
-
-  try {
-    const parsed = JSON.parse(output)
-    if (parsed?.path && typeof parsed.path === 'string') {
-      addIfDocument(parsed.path)
-    }
-    if (Array.isArray(parsed?.files)) {
-      for (const f of parsed.files) {
-        if (f?.path && typeof f.path === 'string') addIfDocument(f.path)
-      }
-    }
-  } catch {
-    /* not JSON */
-  }
-
-  const absRegex = /(\/[^\s",:)]+\.(?:pdf|docx?|xlsx?|pptx?|csv))\b/gi
-  let match: RegExpExecArray | null
-  while ((match = absRegex.exec(output)) !== null) {
-    addIfDocument(match[1])
-  }
-
   return paths
 }
 
@@ -2726,21 +2665,8 @@ function extractAudioVideoPaths(output: string): { path: string; type: 'audio' |
     }
   }
 
-  // 2. Fallback: absolute paths with known audio/video extensions
-  const avRegex =
-    /(\/[^\s",:)]+\.(?:mp3|wav|m4a|ogg|flac|aac|wma|opus|mp4|mov|avi|mkv|m4v|wmv|flv|webm))\b/gi
-  while ((match = avRegex.exec(output)) !== null) {
-    const abs = match[1]
-    if (seen.has(abs)) continue
-    const ext = path.extname(abs).toLowerCase()
-    if (AUDIO_EXTS.has(ext)) {
-      seen.add(abs)
-      results.push({ path: abs, type: 'audio' })
-    } else if (VIDEO_EXTS.has(ext)) {
-      seen.add(abs)
-      results.push({ path: abs, type: 'video' })
-    }
-  }
+  // MARKER-ONLY by design: bare audio/video paths are mere generation, not
+  // delivery — the model sends outputs explicitly via send_file/voice tools.
 
   return results
 }

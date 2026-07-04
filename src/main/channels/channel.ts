@@ -2,7 +2,7 @@ import type { ApprovalDecision, ApprovalRequest } from '@main/runtime/amygdala'
 import type { AskUserRequest, AskUserResponse } from '@main/runtime/cerebellum'
 import type { Segment } from '@main/runtime/broca'
 import type { CorpusEvent, CorpusEvents } from '@main/runtime/corpus'
-import type { ConversationMessage } from '@main/conversations'
+import type { ConversationFile, ConversationMessage } from '@main/conversations'
 import type { ChatHistoryMessage } from '@preload/index'
 
 /**
@@ -98,6 +98,77 @@ class TurnRouter {
 }
 
 export const turnRouter = new TurnRouter()
+
+/**
+ * The replay window for a persisted conversation: when a rolling prefix
+ * summary exists (written by the post-turn summarizer), replay
+ * `summary preamble + messages from the mark` instead of the whole
+ * transcript. The summarized turns stay on disk and indexed —
+ * conversation_read retrieves them verbatim, and the preamble says so.
+ */
+export function replayWindow(
+  conversation: Pick<ConversationFile, 'id' | 'messages' | 'summary' | 'summarizedThroughMessage'>
+): { messages: ConversationMessage[]; preamble: ChatHistoryMessage[] } {
+  const mark = conversation.summarizedThroughMessage ?? 0
+  const summary = conversation.summary?.trim()
+  if (!summary || mark <= 0 || mark >= conversation.messages.length) {
+    return { messages: conversation.messages, preamble: [] }
+  }
+  return {
+    messages: conversation.messages.slice(mark),
+    preamble: [
+      {
+        role: 'user',
+        content:
+          `[Conversation summary — the first ${mark} messages of this conversation were compressed; ` +
+          `conversation_read("${conversation.id}") retrieves any of them verbatim]\n\n${summary}`
+      },
+      { role: 'assistant', content: 'Understood — continuing with that context.' }
+    ]
+  }
+}
+
+/** Tool results older than this many chars get stubbed once stale. */
+const STALE_TOOL_RESULT_MIN_CHARS = 2_000
+/** The last N user exchanges keep their tool results verbatim. */
+const STALE_TOOL_PROTECT_EXCHANGES = 2
+
+/**
+ * Replace large tool-result payloads from OLDER exchanges with a
+ * self-describing recovery stub. The full bytes stay persisted and indexed —
+ * the stub names the retrieval call — so replay cost stops growing with
+ * every old page-dump while nothing is ever actually lost. Mirrors the
+ * outbound stub-with-recovery-pointer contract.
+ */
+export function stubStaleToolResults(
+  history: ChatHistoryMessage[],
+  conversationId: string
+): ChatHistoryMessage[] {
+  // Everything from the Nth-from-last user message onward is protected.
+  let protectFrom = history.length
+  let usersSeen = 0
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (history[i].role === 'user') {
+      usersSeen++
+      protectFrom = i
+      if (usersSeen >= STALE_TOOL_PROTECT_EXCHANGES) break
+    }
+  }
+  // Degenerate history with no user messages: exchange boundaries can't be
+  // established, so nothing is provably stale — protect everything.
+  if (usersSeen === 0) return history
+  return history.map((entry, i) => {
+    if (i >= protectFrom) return entry
+    if (entry.role !== 'tool') return entry
+    if (typeof entry.content !== 'string' || entry.content.length < STALE_TOOL_RESULT_MIN_CHARS) {
+      return entry
+    }
+    return {
+      ...entry,
+      content: `[${entry.toolName} result from earlier in this conversation, ${entry.content.length} chars — memory_search or conversation_read("${conversationId}") retrieves it verbatim]`
+    }
+  })
+}
 
 /**
  * Reconstruct the full message history from a conversation's stored messages,

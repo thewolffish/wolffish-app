@@ -56,7 +56,6 @@ import type {
   ChatHistoryMessage,
   ConversationChannel,
   ConversationFile,
-  FolderListing,
   MessageAttachment,
   MessageAttachmentType,
   Segment,
@@ -519,7 +518,6 @@ export function Chat(): React.JSX.Element {
   // per conversation. Lets us emit a one-shot "cleared" notice on the
   // transition from set→null so the model stops referring to the old
   // folder it saw in earlier turns.
-  const sentFolderByConvRef = useRef<Map<string, string[]>>(new Map())
   // Track the channel of the currently-loaded conversation. Null
   // when there's no active conversation (fresh chat). Telegram
   // conversations are read-only from the in-app chat — we hide the
@@ -728,6 +726,19 @@ export function Chat(): React.JSX.Element {
     }
   }, [currentModel, localOnly, activeCloudModel])
 
+  // Fold main-side rolling-summary updates into the in-memory conversation:
+  // the summarizer persisted {summary, mark} after our last save — merge them
+  // so the NEXT whole-file save preserves them and the next send replays
+  // summary + tail instead of the full transcript.
+  useEffect(() => {
+    return window.api.conversation.onSummaryUpdated((update) => {
+      const conv = conversationRef.current
+      if (!conv || conv.id !== update.conversationId) return
+      conv.summary = update.summary
+      conv.summarizedThroughMessage = update.summarizedThroughMessage
+    })
+  }, [])
+
   const persistConversation = useCallback(
     async (msgs: ChatMessage[]) => {
       const convMessages = msgs
@@ -750,7 +761,10 @@ export function Chat(): React.JSX.Element {
           return {
             role: 'assistant' as const,
             content: collectText(am.segments),
-            segments: am.segments,
+            // Coalesce streaming text deltas at persistence time: one text
+            // segment per run instead of thousands of one-word deltas (a
+            // single conversation was 28k delta segments / 4MB on disk).
+            segments: coalesceTextSegments(am.segments),
             approvals: am.approvals,
             toolTimings: am.toolTimings,
             stopReason: am.stopReason,
@@ -807,7 +821,6 @@ export function Chat(): React.JSX.Element {
         const folders = Array.isArray(raw) ? raw : typeof raw === 'string' ? [raw] : []
         setStoredFolders(folders)
         setFolderListOpen(false)
-        sentFolderByConvRef.current.set(conv.id, folders)
         setTimelineEntries(conv.timeline ?? [])
         setFilesOpen(false)
       })
@@ -1128,25 +1141,23 @@ export function Chat(): React.JSX.Element {
       // along with this turn even though it can't read them. Tools like
       // stt_transcribe_upload can then pick up the file from this hint.
       const workspaceRoot = status?.rootPath ?? null
-      const previousFolders = sentFolderByConvRef.current.get(conversationId) ?? []
-      const folderListings =
-        workingFolders.length > 0 ? await fetchFolderListings(workingFolders) : undefined
-      const historyContent = composeHistoryContent(
-        trimmed,
-        attachments,
-        workspaceRoot,
-        workingFolders,
-        previousFolders,
-        folderListings
-      )
-      sentFolderByConvRef.current.set(conversationId, workingFolders)
+      // Working-folder listings no longer ride the user message: composing a
+      // fresh readdir into the persisted-vs-wire content rewrote the previous
+      // user message every send and invalidated the provider prompt-cache
+      // prefix. The folder paths travel in the chat:send payload instead and
+      // the agent injects a fresh listing into the outbound volatile tail.
+      const historyContent = composeHistoryContent(trimmed, attachments, workspaceRoot)
       const currentEntry: {
         role: 'user'
         content: string
         attachments?: MessageAttachment[]
       } = { role: 'user', content: historyContent }
       if (attachments.length > 0) currentEntry.attachments = attachments
-      const history = textHistory(messages, workspaceRoot).concat(currentEntry)
+      const history = textHistory(messages, workspaceRoot, {
+        summary: conversationRef.current?.summary,
+        summarizedThroughMessage: conversationRef.current?.summarizedThroughMessage,
+        conversationId: conversationRef.current?.id ?? null
+      }).concat(currentEntry)
 
       setMessages((prev) => [...prev, userMessage, assistantPlaceholder])
       scrollToBottom()
@@ -1171,6 +1182,7 @@ export function Chat(): React.JSX.Element {
       const response = await window.api.chat.send({
         history,
         conversationId,
+        workingFolders,
         thinkingMode: thinkingMode as import('@preload/index').ThinkingMode
       })
       pendingTurnIdRef.current = response.turnId
@@ -1293,25 +1305,22 @@ export function Chat(): React.JSX.Element {
       // tag carries Whisper's detected language so the model replies in it
       // instead of guessing from a short transcript.
       const workspaceRoot = status?.rootPath ?? null
-      const previousFolders = sentFolderByConvRef.current.get(conversationId) ?? []
       const langAttr = sttResult.language ? ` lang="${sttResult.language}"` : ''
-      const folderListings =
-        workingFolders.length > 0 ? await fetchFolderListings(workingFolders) : undefined
       const historyContent = `<voice_note${langAttr}>\n${composeHistoryContent(
         transcript,
         [attachment],
-        workspaceRoot,
-        workingFolders,
-        previousFolders,
-        folderListings
+        workspaceRoot
       )}`
-      sentFolderByConvRef.current.set(conversationId, workingFolders)
       const currentEntry: {
         role: 'user'
         content: string
         attachments?: MessageAttachment[]
       } = { role: 'user', content: historyContent, attachments: [attachment] }
-      const history = textHistory(messages, workspaceRoot).concat(currentEntry)
+      const history = textHistory(messages, workspaceRoot, {
+        summary: conversationRef.current?.summary,
+        summarizedThroughMessage: conversationRef.current?.summarizedThroughMessage,
+        conversationId: conversationRef.current?.id ?? null
+      }).concat(currentEntry)
 
       const assistantPlaceholder: AssistantMessage = {
         id: cryptoId(),
@@ -1343,6 +1352,7 @@ export function Chat(): React.JSX.Element {
       const response = await window.api.chat.send({
         history,
         conversationId,
+        workingFolders,
         thinkingMode: thinkingMode as import('@preload/index').ThinkingMode
       })
       pendingTurnIdRef.current = response.turnId
@@ -4115,16 +4125,105 @@ function markError(messages: ChatMessage[], turnId: string, error: string): Chat
   return out
 }
 
-function textHistory(messages: ChatMessage[], workspaceRoot: string | null): ChatHistoryMessage[] {
+/** Tool results older than this many chars get stubbed once stale. */
+const STALE_TOOL_RESULT_MIN_CHARS = 2_000
+/** The last N user exchanges keep their tool results verbatim. */
+const STALE_TOOL_PROTECT_EXCHANGES = 2
+
+/**
+ * Mirror of the channel-side replay policy (channels/channel.ts
+ * stubStaleToolResults): large tool results from older exchanges collapse to
+ * a recovery stub — the bytes stay persisted and indexed, one
+ * conversation_read away.
+ */
+function stubStaleToolResults(
+  history: ChatHistoryMessage[],
+  conversationId: string | null
+): ChatHistoryMessage[] {
+  let protectFrom = history.length
+  let usersSeen = 0
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (history[i].role === 'user') {
+      usersSeen++
+      protectFrom = i
+      if (usersSeen >= STALE_TOOL_PROTECT_EXCHANGES) break
+    }
+  }
+  // Degenerate history with no user messages: exchange boundaries can't be
+  // established, so nothing is provably stale — protect everything.
+  if (usersSeen === 0) return history
+  const readRef = conversationId ? `conversation_read("${conversationId}")` : 'memory_search'
+  return history.map((entry, i) => {
+    if (i >= protectFrom) return entry
+    if (entry.role !== 'tool') return entry
+    if (typeof entry.content !== 'string' || entry.content.length < STALE_TOOL_RESULT_MIN_CHARS) {
+      return entry
+    }
+    return {
+      ...entry,
+      content: `[${entry.toolName} result from earlier in this conversation, ${entry.content.length} chars — ${readRef} retrieves it verbatim]`
+    }
+  })
+}
+
+type ReplayWindowInfo = {
+  summary?: string | null
+  summarizedThroughMessage?: number | null
+  conversationId?: string | null
+}
+
+function textHistory(
+  messages: ChatMessage[],
+  workspaceRoot: string | null,
+  replay?: ReplayWindowInfo
+): ChatHistoryMessage[] {
   const out: ChatHistoryMessage[] = []
+
+  // Rolling prefix summary: skip the persisted messages the summarizer
+  // already folded in and replay the summary preamble instead. The mark is
+  // an index into the PERSISTED message list, so count renderer messages
+  // with the same filter persistConversation uses.
+  const mark = replay?.summarizedThroughMessage ?? 0
+  const summary = replay?.summary?.trim()
+  // Mirror of channel.ts replayWindow's defensive guard: a stale/corrupt mark
+  // at/beyond the persisted count degrades to full replay — never to an
+  // everything-skipped send.
+  const persistedTotal = messages.filter(
+    (m) =>
+      isUser(m) ||
+      (isAssistant(m) &&
+        (m.status === 'error' || (m.status === 'complete' && m.segments.length > 0)))
+  ).length
+  const useSummary = Boolean(summary) && mark > 0 && mark < persistedTotal
+  if (useSummary) {
+    out.push({
+      role: 'user',
+      content:
+        `[Conversation summary — the first ${mark} messages of this conversation were compressed; ` +
+        `conversation_read("${replay?.conversationId ?? ''}") retrieves any of them verbatim]\n\n${summary}`
+    })
+    out.push({ role: 'assistant', content: 'Understood — continuing with that context.' })
+  }
+  let persistIdx = -1
+
   for (const m of messages) {
+    if (useSummary) {
+      const persisted =
+        isUser(m) ||
+        (isAssistant(m) &&
+          (m.status === 'error' || (m.status === 'complete' && m.segments.length > 0)))
+      if (persisted) {
+        persistIdx++
+        if (persistIdx < mark) continue
+      }
+    }
     if (isUser(m)) {
       const content = composeHistoryContent(m.content, m.attachments ?? [], workspaceRoot)
       const entry: ChatHistoryMessage = { role: 'user', content }
       if (m.attachments && m.attachments.length > 0) entry.attachments = m.attachments
       out.push(entry)
     } else if (isAssistant(m) && m.status === 'complete') {
-      const segments = m.segments
+      const segments = m.segments.filter((s) => !('worker' in s && s.worker))
       const turnEnd = segments.find((s) => s.kind === 'turn_end')
       const reasoningContent =
         turnEnd && 'reasoningContent' in turnEnd && turnEnd.reasoningContent
@@ -4206,6 +4305,30 @@ function textHistory(messages: ChatMessage[], workspaceRoot: string | null): Cha
       flushIteration()
     }
   }
+  return stubStaleToolResults(out, replay?.conversationId ?? null)
+}
+
+/**
+ * Merge consecutive text-delta segments (same turn) into one segment.
+ * Replay joins deltas anyway, and the UI renders joined text identically —
+ * only the on-disk shape changes.
+ */
+function coalesceTextSegments(segments: Segment[]): Segment[] {
+  const out: Segment[] = []
+  for (const s of segments) {
+    const prev = out[out.length - 1]
+    if (
+      s.kind === 'text' &&
+      prev &&
+      prev.kind === 'text' &&
+      prev.turnId === s.turnId &&
+      (prev.worker?.id ?? null) === (s.worker?.id ?? null)
+    ) {
+      out[out.length - 1] = { ...prev, delta: prev.delta + s.delta }
+    } else {
+      out.push(s)
+    }
+  }
   return out
 }
 
@@ -4273,49 +4396,6 @@ function toAbsoluteUploadPath(relativePath: string, workspaceRoot: string | null
 }
 
 /**
- * Read the top-level entries of every working folder in parallel so the
- * current turn can ship the folder structure to the model. Runs on every
- * send (cheap — one shallow readdir per folder) so the listing reflects the
- * folder as it is right now, not when it was first selected. Unreadable
- * folders resolve to an error entry rather than rejecting the whole turn.
- */
-async function fetchFolderListings(folders: string[]): Promise<Map<string, FolderListing>> {
-  const map = new Map<string, FolderListing>()
-  await Promise.all(
-    folders.map(async (f) => {
-      try {
-        map.set(f, await window.api.upload.listFolder(f))
-      } catch {
-        map.set(f, { entries: [], truncated: false, error: 'unreadable' })
-      }
-    })
-  )
-  return map
-}
-
-/**
- * Render one working folder as a bullet with its top-level contents indented
- * beneath. Directories get a trailing slash so the model can tell them from
- * files at a glance. Falls back to the bare path when no listing is available
- * (e.g. the read failed or hasn't run).
- */
-function formatWorkingFolder(folder: string, listing?: FolderListing): string {
-  if (!listing) return `- ${folder}`
-  if (listing.error) return `- ${folder} (could not read contents: ${listing.error})`
-  if (listing.entries.length === 0) return `- ${folder} (empty)`
-  const items = listing.entries
-    .map((e) => `    ${e.isDirectory ? `${e.name}/` : e.name}`)
-    .join('\n')
-  let more = ''
-  if (listing.truncated) {
-    const files = listing.omittedFiles ?? 0
-    const folders = listing.omittedDirectories ?? 0
-    more = `\n    … and ${files} more file${files === 1 ? '' : 's'} and ${folders} more folder${folders === 1 ? '' : 's'} omitted`
-  }
-  return `- ${folder}\n${items}${more}`
-}
-
-/**
  * Build the LLM-facing content string for a user turn. Text comes first
  * (when present); attachments are appended as a bullet list under a
  * sentinel header so the model has unambiguous metadata to act on
@@ -4328,24 +4408,12 @@ function formatWorkingFolder(folder: string, listing?: FolderListing): string {
 function composeHistoryContent(
   text: string,
   attachments: MessageAttachment[],
-  workspaceRoot: string | null,
-  workingFolders?: string[],
-  previousFolders?: string[],
-  folderListings?: Map<string, FolderListing>
+  workspaceRoot: string | null
 ): string {
+  // Working folders deliberately do NOT render here anymore: the agent
+  // injects a fresh listing into the outbound volatile tail each turn, so
+  // history content stays byte-stable and the prompt-cache prefix survives.
   const parts: string[] = []
-  if (workingFolders && workingFolders.length > 0) {
-    const folderList = workingFolders
-      .map((f) => formatWorkingFolder(f, folderListings?.get(f)))
-      .join('\n')
-    parts.push(
-      `<working_folders>\nThe user has set the following working directories. The top-level contents of each are listed so you already have the structure — you don't need to list these again unless you need deeper levels or suspect they changed:\n${folderList}\nBe attentive that the user has pointed you to these folders. When the user references files, paths, or project context, assume they are relative to these directories unless stated otherwise.\n</working_folders>`
-    )
-  } else if (previousFolders && previousFolders.length > 0) {
-    parts.push(
-      `<working_folders_cleared>\nThe user has cleared their previously selected working folders (${previousFolders.join(', ')}). They are no longer the active working directories — disregard any earlier references to them as the current context unless the user mentions them again.\n</working_folders_cleared>`
-    )
-  }
   if (text) parts.push(text)
   if (attachments.length > 0) {
     const lines = attachments.map((a) => {

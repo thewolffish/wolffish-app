@@ -21,12 +21,6 @@ export function WolffishPanel(): React.JSX.Element {
   const [restrictModels, setRestrictModels] = useState<boolean>(
     config?.llm.restrictPowerfulModels ?? true
   )
-  const [statelessLocal, setStatelessLocal] = useState<boolean>(
-    config?.llm.statelessLocalModels ?? true
-  )
-  const [restrictLocal, setRestrictLocal] = useState<boolean>(
-    config?.llm.restrictLocalModels ?? true
-  )
   const [weekStartsOn, setWeekStartsOnState] = useState<WeekStartsOn>(config?.weekStartsOn ?? 1)
   const [savingKey, setSavingKey] = useState<
     | 'launchAtStartup'
@@ -34,8 +28,6 @@ export function WolffishPanel(): React.JSX.Element {
     | 'bypass'
     | 'analytics'
     | 'restrictModels'
-    | 'statelessLocal'
-    | 'restrictLocal'
     | 'weekStart'
     | null
   >(null)
@@ -116,30 +108,6 @@ export function WolffishPanel(): React.JSX.Element {
     }
   }
 
-  const onChangeStatelessLocal = async (next: boolean): Promise<void> => {
-    if (savingKey !== null || next === statelessLocal) return
-    setSavingKey('statelessLocal')
-    try {
-      await window.api.runtime.setStatelessLocalModels(next)
-      setStatelessLocal(next)
-      await refreshStatus()
-    } finally {
-      setSavingKey(null)
-    }
-  }
-
-  const onChangeRestrictLocal = async (next: boolean): Promise<void> => {
-    if (savingKey !== null || next === restrictLocal) return
-    setSavingKey('restrictLocal')
-    try {
-      await window.api.runtime.setRestrictLocalModels(next)
-      setRestrictLocal(next)
-      await refreshStatus()
-    } finally {
-      setSavingKey(null)
-    }
-  }
-
   const onChangeWeekStart = async (next: WeekStartsOn): Promise<void> => {
     if (savingKey !== null || next === weekStartsOn) return
     setSavingKey('weekStart')
@@ -196,23 +164,6 @@ export function WolffishPanel(): React.JSX.Element {
             value={restrictModels}
             onChange={onChangeRestrictModels}
             disabled={savingKey === 'restrictModels'}
-          />
-          <div className="border-border/60 border-t" />
-          <SettingToggle
-            label={t('settings.wolffish.statelessLocalModels.label')}
-            description={t('settings.wolffish.statelessLocalModels.description')}
-            value={statelessLocal}
-            onChange={onChangeStatelessLocal}
-            disabled={savingKey === 'statelessLocal'}
-          />
-          <div className="border-border/60 border-t" />
-          <SettingToggle
-            label={t('settings.wolffish.restrictLocalModels.label')}
-            description={t('settings.wolffish.restrictLocalModels.description')}
-            // While stateless is on, tools are forced off and locked.
-            value={statelessLocal ? true : restrictLocal}
-            onChange={onChangeRestrictLocal}
-            disabled={savingKey === 'restrictLocal' || statelessLocal}
           />
           <div className="border-border/60 border-t" />
           <SettingToggle

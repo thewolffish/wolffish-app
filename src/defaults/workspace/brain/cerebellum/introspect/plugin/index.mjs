@@ -14,6 +14,11 @@ let workspaceRoot = ''
 // Wired by the host (PluginContext.getChannelStatus) — returns a live snapshot
 // of each messaging channel's connectivity. Null until init captures it.
 let getChannelStatusBridge = null
+// Wired by the host (PluginContext.cortex) — the retrieval bridge over the
+// live cortex index (memory_search/memory_get/conversation_list/usage_report
+// and the indexed wolffish_recall all ride it). Null until init captures it;
+// wolffish_recall falls back to the legacy file scanner when absent.
+let cortexBridge = null
 
 const toolDefinitions = [
   {
@@ -68,6 +73,118 @@ const toolDefinitions = [
           enum: ['episodes', 'tasks', 'feedback', 'knowledge', 'conversations', 'all']
         },
         limit: { type: 'number', description: 'Max matches to return (default 8, max 30).' }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'memory_search',
+    description:
+      'Ranked full-text search across EVERYTHING you know: past conversations (including tool calls and their outputs), episodes, long-term knowledge, weekly digests, task runs, tool-outcome feedback, usage/cost records, event logs, and generated files. Returns snippets with refs — follow up with memory_get or conversation_read for full content. Search 2-3 different phrasings before concluding something was never recorded.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Keywords to search (exact-word matching, OR-combined).' },
+        sources: {
+          type: 'string',
+          description:
+            'Optional comma-separated subset of: episode, knowledge, consolidated, conversation, task, feedback, usage, corpus, log, artifact, doc. Default: all.'
+        },
+        after: { type: 'string', description: 'Only records from this day on (YYYY-MM-DD).' },
+        before: { type: 'string', description: 'Only records up to this day (YYYY-MM-DD).' },
+        limit: { type: 'number', description: 'Max hits (default 15, max 50).' }
+      },
+      required: ['query']
+    }
+  },
+  {
+    name: 'memory_get',
+    description:
+      'Fetch the FULL content behind a memory_search ref: a whole episode day, a knowledge file, a task transcript with its detail log, or all records of a conversation. file: refs return the actual file; conversation:/task: refs return the stored records in order.',
+    parameters: {
+      type: 'object',
+      properties: {
+        ref: {
+          type: 'string',
+          description:
+            'A ref from memory_search, e.g. "conversation:<id>#3", "task:<id>", "file:brain/hippocampus/episodes/2026-07-01.md".'
+        },
+        limit: { type: 'number', description: 'Max records for prefix refs (default 50).' }
+      },
+      required: ['ref']
+    }
+  },
+  {
+    name: 'conversation_list',
+    description:
+      'Enumerate your past conversations, newest first: id, channel (electron/telegram/whatsapp/heartbeat/procedure), title, message count, last-updated. Optionally rank by a content query. Use this when the user refers to a past chat you cannot see.',
+    parameters: {
+      type: 'object',
+      properties: {
+        channel: { type: 'string', description: 'Filter to one channel.' },
+        query: { type: 'string', description: 'Rank conversations by content matches for these keywords.' },
+        after: { type: 'string', description: 'Only conversations updated on/after this day (YYYY-MM-DD).' },
+        before: { type: 'string', description: 'Only conversations updated on/before this day (YYYY-MM-DD).' },
+        limit: { type: 'number', description: 'Max conversations (default 20, max 100).' }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'conversation_read',
+    description:
+      'Read a specific past conversation — messages and the tool calls/results inside it — with pagination. Recovers turns of the CURRENT conversation summarized out of your context. Returns excerpts; detail:full raises the caps, and memory_get on the file ref it prints returns the complete untruncated bytes.',
+    parameters: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Conversation id (a unique suffix is enough) from conversation_list or a conversation: ref.' },
+        from: { type: 'number', description: 'First message index to show (default: last 15 messages).' },
+        to: { type: 'number', description: 'Last message index to show.' },
+        what: {
+          type: 'string',
+          description: 'messages = text only; tools = tool calls/results only; all (default).',
+          enum: ['messages', 'tools', 'all']
+        },
+        detail: {
+          type: 'string',
+          description: 'brief (default) or full — full raises per-item excerpt caps.',
+          enum: ['brief', 'full']
+        }
+      },
+      required: ['id']
+    }
+  },
+  {
+    name: 'memory_save',
+    description:
+      'Durably save one self-contained fact to your long-term knowledge (deduplicated). Use for preferences, decisions, project facts, or people details worth remembering across conversations — not for transient task state.',
+    parameters: {
+      type: 'object',
+      properties: {
+        fact: { type: 'string', description: 'One durable, self-contained sentence.' },
+        type: {
+          type: 'string',
+          description: 'Which knowledge file it belongs in (default technical).',
+          enum: ['projects', 'people', 'preferences', 'technical', 'decisions']
+        }
+      },
+      required: ['fact']
+    }
+  },
+  {
+    name: 'usage_report',
+    description:
+      'Your own LLM spend from the usage ledger: requests, tokens (in/out/cache), and cost, total and per model, for a period.',
+    parameters: {
+      type: 'object',
+      properties: {
+        period: {
+          type: 'string',
+          description: 'Shortcut range (default today).',
+          enum: ['today', 'yesterday', 'week', 'month', 'all']
+        },
+        after: { type: 'string', description: 'Explicit start day YYYY-MM-DD (overrides period).' },
+        before: { type: 'string', description: 'Explicit end day YYYY-MM-DD.' }
       },
       required: []
     }
@@ -785,6 +902,13 @@ const RECALL_SOURCES = {
 // (e.g. `**Created:** 2026-06-18T…`), so they must be date-matched on content.
 const RECALL_DATE_STAMPED = new Set(['episodes', 'feedback', 'conversations'])
 
+/**
+ * wolffish_recall — kept as a stable alias over the indexed search so every
+ * doc, procedure, and learned habit that references it keeps working. When
+ * the cortex bridge is wired (always, in a normal launch) it routes to the
+ * same FTS index memory_search uses; the legacy file scanner below survives
+ * only as a bridge-less fallback.
+ */
 async function recall(args) {
   const query = typeof args?.query === 'string' ? args.query.trim() : ''
   const date =
@@ -793,6 +917,51 @@ async function recall(args) {
   const limit =
     typeof args?.limit === 'number' && args.limit > 0 ? Math.min(Math.floor(args.limit), 30) : 8
 
+  if (!cortexBridge) return legacyRecall({ query, date, requested, limit })
+
+  if (!query && !date) {
+    return {
+      success: true,
+      output:
+        'Provide a `query` (keywords) and/or a `date` (YYYY-MM-DD) to recall something specific.\n\n' +
+        coverageIndex()
+    }
+  }
+
+  const sources = mapRecallSources(requested)
+  try {
+    if (!query && date) {
+      const rows = cortexBridge.recordsByDate(date, sources, limit)
+      if (rows.length === 0) {
+        return {
+          success: true,
+          output: `Nothing indexed for ${date}${requested !== 'all' ? ` in ${requested}` : ''}.\n\n${coverageIndex()}`
+        }
+      }
+      return { success: true, output: formatRecordRows(rows, limit) }
+    }
+    const hits = cortexBridge.searchRecords(query, {
+      sources,
+      after: date || undefined,
+      before: date || undefined,
+      limit
+    })
+    if (hits.length === 0) {
+      return {
+        success: true,
+        output:
+          `No matches for "${query}"${date ? ` on ${date}` : ''}${requested !== 'all' ? ` in ${requested}` : ''}. ` +
+          'Try different or fewer keywords — search is exact-word based.\n\n' +
+          coverageIndex()
+      }
+    }
+    return { success: true, output: formatRecordHits(hits) }
+  } catch (err) {
+    return legacyRecall({ query, date, requested, limit })
+  }
+}
+
+async function legacyRecall({ query, date, requested, limit }) {
   if (!query && !date) {
     const index = await recallIndex()
     return {
@@ -1232,6 +1401,386 @@ function formatPercent(ratio) {
 // Plugin export
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Indexed retrieval suite (memory_search / memory_get / conversation_list /
+// conversation_read / memory_save / usage_report) — all ride the cortex
+// bridge, i.e. the same index the ambient context assembly reads.
+// ---------------------------------------------------------------------------
+
+const SEARCH_MAX_OUTPUT_CHARS = 6000
+const GET_MAX_OUTPUT_CHARS = 12000
+const ALL_SOURCES = [
+  'episode',
+  'knowledge',
+  'consolidated',
+  'conversation',
+  'task',
+  'feedback',
+  'usage',
+  'corpus',
+  'log',
+  'artifact',
+  'doc'
+]
+const KNOWLEDGE_TYPES = ['projects', 'people', 'preferences', 'technical', 'decisions']
+
+function mapRecallSources(requested) {
+  switch (requested) {
+    case 'episodes':
+      return ['episode']
+    case 'tasks':
+      return ['task']
+    case 'feedback':
+      return ['feedback']
+    case 'knowledge':
+      return ['knowledge']
+    case 'conversations':
+      return ['conversation']
+    default:
+      return undefined
+  }
+}
+
+function parseSources(raw) {
+  if (typeof raw !== 'string' || !raw.trim()) return undefined
+  const wanted = raw
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter((s) => ALL_SOURCES.includes(s))
+  return wanted.length > 0 ? wanted : undefined
+}
+
+function validDay(raw) {
+  return typeof raw === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : undefined
+}
+
+function clampLimit(raw, fallback, max) {
+  return typeof raw === 'number' && raw > 0 ? Math.min(Math.floor(raw), max) : fallback
+}
+
+/** Cheap "what memory exists" map — the honest answer to an empty search. */
+function coverageIndex() {
+  if (!cortexBridge) return ''
+  try {
+    const cov = cortexBridge.coverage()
+    const lines = ['Indexed memory coverage:']
+    for (const s of cov.recordsBySource) {
+      const range = s.minDate && s.maxDate ? ` (${s.minDate} → ${s.maxDate})` : ''
+      lines.push(`- ${s.source}: ${s.count} records${range}`)
+    }
+    lines.push(`- conversations on disk: ${cov.conversations}`)
+    lines.push(`- generated/uploaded artifacts: ${cov.artifacts}`)
+    lines.push(
+      'Coverage is a map, not evidence of absence — search with different words before concluding something was never recorded.'
+    )
+    return lines.join('\n')
+  } catch {
+    return ''
+  }
+}
+
+function formatRecordHits(hits) {
+  const lines = []
+  let used = 0
+  for (const h of hits) {
+    const date = h.date ? ` ${h.date}` : ''
+    const snippet = oneLine(h.snippet ?? '').slice(0, 320)
+    const entry = `[${h.ref}] (${h.source}${date}) ${h.title}\n  ${snippet}`
+    if (used + entry.length > SEARCH_MAX_OUTPUT_CHARS) break
+    lines.push(entry)
+    used += entry.length
+  }
+  lines.push('')
+  lines.push(
+    'Full content: memory_get with a [ref]; whole conversations: conversation_read with the conversation id.'
+  )
+  return lines.join('\n')
+}
+
+function formatRecordRows(rows, limit) {
+  const lines = []
+  let used = 0
+  for (const r of rows.slice(0, limit)) {
+    const date = r.date ? ` ${r.date}` : ''
+    const body = oneLine(r.content).slice(0, 480)
+    const entry = `[${r.ref}] (${r.source}${date}) ${r.title}\n  ${body}`
+    if (used + entry.length > SEARCH_MAX_OUTPUT_CHARS) break
+    lines.push(entry)
+    used += entry.length
+  }
+  return lines.join('\n')
+}
+
+async function memorySearch(args) {
+  if (!cortexBridge) {
+    return { success: false, error: 'memory index unavailable — use wolffish_recall instead' }
+  }
+  const query = typeof args?.query === 'string' ? args.query.trim() : ''
+  if (!query) {
+    return {
+      success: true,
+      output: 'Provide a `query` to search. ' + '\n\n' + coverageIndex()
+    }
+  }
+  const hits = cortexBridge.searchRecords(query, {
+    sources: parseSources(args?.sources),
+    after: validDay(args?.after),
+    before: validDay(args?.before),
+    limit: clampLimit(args?.limit, 15, 50)
+  })
+  if (hits.length === 0) {
+    return {
+      success: true,
+      output:
+        `No matches for "${query}". Search is exact-word based — try different or fewer keywords ` +
+        '(2-3 rephrasings before concluding it was never recorded).\n\n' +
+        coverageIndex()
+    }
+  }
+  return { success: true, output: formatRecordHits(hits) }
+}
+
+async function memoryGet(args) {
+  const ref = typeof args?.ref === 'string' ? args.ref.trim() : ''
+  if (!ref) {
+    return {
+      success: false,
+      error: 'Provide a `ref` from a memory_search result (e.g. "conversation:<id>#3", "task:<id>", "file:brain/hippocampus/episodes/2026-07-01.md").'
+    }
+  }
+
+  // file: refs read the file itself — the ref IS the retrieval handle for
+  // "give me the whole thing", not just the indexed excerpt.
+  if (ref.startsWith('file:')) {
+    const rel = ref.slice('file:'.length).split('#')[0]
+    const abs = path.resolve(workspaceRoot, rel)
+    const wsReal = await fs.realpath(workspaceRoot).catch(() => workspaceRoot)
+    const absReal = await fs.realpath(abs).catch(() => abs)
+    if (!absReal.startsWith(wsReal + path.sep) && absReal !== wsReal) {
+      return { success: false, error: 'file refs must stay inside the workspace' }
+    }
+    let raw
+    try {
+      raw = await fs.readFile(abs, 'utf8')
+    } catch {
+      return { success: false, error: `cannot read ${rel} (moved or deleted?)` }
+    }
+    if (raw.length > GET_MAX_OUTPUT_CHARS) {
+      const head = raw.slice(0, GET_MAX_OUTPUT_CHARS - 2000)
+      const tail = raw.slice(-1500)
+      return {
+        success: true,
+        output: `${rel} (${raw.length} chars, showing head+tail — file_read with line ranges for the middle)\n\n${head}\n…[${raw.length - head.length - tail.length} chars omitted]…\n${tail}`
+      }
+    }
+    return { success: true, output: `${rel} (${raw.length} chars)\n\n${raw}` }
+  }
+
+  if (!cortexBridge) {
+    return { success: false, error: 'memory index unavailable — use file_read on the source file instead' }
+  }
+  const rows = cortexBridge.getRecordsByRef(ref, clampLimit(args?.limit, 50, 200))
+  if (rows.length === 0) {
+    return {
+      success: false,
+      error: `no records under ref "${ref}" — refs come from memory_search results`
+    }
+  }
+  const lines = []
+  let used = 0
+  for (const r of rows) {
+    const entry = `[${r.ref}] ${r.title}\n${r.content}`
+    if (used + entry.length > GET_MAX_OUTPUT_CHARS) {
+      lines.push(`…[${rows.length - lines.length} more records — narrow the ref or raise limit]`)
+      break
+    }
+    lines.push(entry)
+    used += entry.length
+  }
+  if (rows[0]?.sourceFile) lines.push(`\n(source file: ${rows[0].sourceFile})`)
+  return { success: true, output: lines.join('\n\n') }
+}
+
+async function conversationList(args) {
+  if (!cortexBridge) return { success: false, error: 'conversation index unavailable' }
+  const limit = clampLimit(args?.limit, 20, 100)
+  const channel = typeof args?.channel === 'string' && args.channel.trim() ? args.channel.trim() : undefined
+  const after = validDay(args?.after)
+  const before = validDay(args?.before)
+  const query = typeof args?.query === 'string' ? args.query.trim() : ''
+
+  let rows = cortexBridge.listConversations({
+    channel,
+    after: after ? Date.parse(`${after}T00:00:00`) : undefined,
+    before: before ? Date.parse(`${before}T23:59:59`) : undefined,
+    limit: query ? 200 : limit
+  })
+
+  if (query) {
+    // Rank by content hits, then join back to the summaries.
+    const hits = cortexBridge.searchRecords(query, { sources: ['conversation'], limit: 100 })
+    const ranked = []
+    const seen = new Set()
+    for (const h of hits) {
+      try {
+        const meta = h.meta ? JSON.parse(h.meta) : null
+        const id = meta?.conversationId
+        if (id && !seen.has(id)) {
+          seen.add(id)
+          ranked.push(id)
+        }
+      } catch {
+        // ignore malformed meta
+      }
+    }
+    rows = ranked
+      .map((id) => rows.find((r) => r.id === id))
+      .filter(Boolean)
+      .slice(0, limit)
+  }
+
+  if (rows.length === 0) {
+    return { success: true, output: 'No conversations match. Loosen the filters or drop the query.' }
+  }
+  const lines = rows.map((r) => {
+    const updated = r.updatedAt ? formatTimestamp(new Date(r.updatedAt)) : '?'
+    return `- ${r.id} [${r.channel}] "${truncate(r.title, 80)}" — ${r.messageCount} msgs, updated ${updated}${r.sealed ? ' (sealed)' : ''}`
+  })
+  lines.push('')
+  lines.push('Read one with conversation_read (id accepts a unique suffix).')
+  return { success: true, output: lines.join('\n') }
+}
+
+async function conversationRead(args) {
+  const idArg = typeof args?.id === 'string' ? args.id.trim() : ''
+  if (!idArg) return { success: false, error: 'Provide `id` (from conversation_list or a conversation: ref).' }
+
+  const dir = path.join(workspaceRoot, 'brain', 'conversations')
+  let names
+  try {
+    names = await fs.readdir(dir)
+  } catch {
+    return { success: false, error: 'no conversations directory' }
+  }
+  const wanted = idArg.replace(/^conversation:/, '').replace(/^conv-/, '')
+  const exact = names.find((n) => n === `conv-${wanted}.json`)
+  const matches = exact ? [exact] : names.filter((n) => n.endsWith('.json') && n.includes(wanted))
+  if (matches.length === 0) {
+    return { success: false, error: `no conversation matches "${idArg}" — conversation_list to enumerate` }
+  }
+  if (matches.length > 1) {
+    return {
+      success: false,
+      error: `ambiguous id "${idArg}" matches ${matches.length} conversations: ${matches.slice(0, 6).join(', ')}…`
+    }
+  }
+
+  let parsed
+  try {
+    parsed = JSON.parse(await fs.readFile(path.join(dir, matches[0]), 'utf8'))
+  } catch {
+    return { success: false, error: `cannot parse ${matches[0]}` }
+  }
+  const messages = Array.isArray(parsed.messages) ? parsed.messages : []
+  const what = args?.what === 'messages' || args?.what === 'tools' ? args.what : 'all'
+  // detail: 'full' raises per-item excerpts (fewer messages fit the output
+  // budget); the complete untruncated bytes are always one memory_get away
+  // on the file ref printed in the header line.
+  const detailChars = args?.detail === 'full' ? 4000 : 400
+  const textChars = args?.detail === 'full' ? 2400 : 600
+  const total = messages.length
+  let from = typeof args?.from === 'number' ? Math.max(0, Math.floor(args.from)) : Math.max(0, total - 15)
+  let to = typeof args?.to === 'number' ? Math.min(total - 1, Math.floor(args.to)) : total - 1
+  if (from > to) [from, to] = [to, from]
+
+  const lines = [
+    `"${parsed.title ?? '(untitled)'}" [${parsed.channel ?? 'electron'}] — ${total} messages, showing #${from}–#${to}${from > 0 ? ' (earlier available via from/to)' : ''} — excerpts; full bytes: memory_get "file:brain/conversations/${matches[0]}"`
+  ]
+  let used = 0
+  for (let i = from; i <= to; i++) {
+    const m = messages[i]
+    const when = m.timestamp ? formatTimestamp(new Date(m.timestamp)) : ''
+    const parts = []
+    const text = typeof m.content === 'string' ? m.content.trim() : ''
+    if (what !== 'tools' && text) {
+      parts.push(`#${i} [${m.role}${when ? ' ' + when : ''}] ${truncate(oneLine(text), textChars)}`)
+    } else if (what !== 'tools') {
+      parts.push(`#${i} [${m.role}${when ? ' ' + when : ''}]`)
+    }
+    if (what !== 'messages' && Array.isArray(m.segments)) {
+      for (const seg of m.segments) {
+        if (seg.kind === 'tool_call') {
+          let argsShort = ''
+          try {
+            argsShort = truncate(JSON.stringify(seg.args ?? {}), 200)
+          } catch {
+            argsShort = ''
+          }
+          parts.push(`  ↳ ${seg.name} ${argsShort}`)
+        } else if (seg.kind === 'tool_result' && typeof seg.output === 'string' && seg.output) {
+          parts.push(`    → ${truncate(oneLine(seg.output), detailChars)}`)
+        }
+      }
+    }
+    const entry = parts.join('\n')
+    if (!entry) continue
+    if (used + entry.length > GET_MAX_OUTPUT_CHARS) {
+      lines.push(`…[output cap reached at #${i} — narrow from/to for the rest]`)
+      break
+    }
+    lines.push(entry)
+    used += entry.length
+  }
+  return { success: true, output: lines.join('\n') }
+}
+
+async function memorySave(args) {
+  if (!cortexBridge) return { success: false, error: 'memory bridge unavailable' }
+  const fact = typeof args?.fact === 'string' ? args.fact.trim() : ''
+  if (!fact) return { success: false, error: 'Provide `fact` — one durable, self-contained sentence.' }
+  const type = KNOWLEDGE_TYPES.includes(args?.type) ? args.type : 'technical'
+  const result = await cortexBridge.saveKnowledge(type, fact)
+  if (!result.ok) return { success: false, error: 'could not save the fact' }
+  return {
+    success: true,
+    output: result.deduped
+      ? `Already saved in knowledge/${type}.md — no duplicate written.`
+      : `Saved to knowledge/${type}.md.`
+  }
+}
+
+async function usageReport(args) {
+  if (!cortexBridge) return { success: false, error: 'usage index unavailable' }
+  const period = typeof args?.period === 'string' ? args.period : 'today'
+  const now = new Date()
+  const day = (d) => formatDate(d)
+  let after = validDay(args?.after)
+  let before = validDay(args?.before)
+  if (!after && !before) {
+    if (period === 'today') after = day(now)
+    else if (period === 'yesterday') {
+      const y = new Date(now.getTime() - 86400000)
+      after = day(y)
+      before = day(y)
+    } else if (period === 'week') after = day(new Date(now.getTime() - 7 * 86400000))
+    else if (period === 'month') after = day(new Date(now.getTime() - 30 * 86400000))
+    // 'all' → no bounds
+  }
+  const s = cortexBridge.usageSummary({
+    after: after ? `${after}T00:00:00` : undefined,
+    before: before ? `${before}T23:59:59` : undefined
+  })
+  const label = after || before ? `${after ?? '…'} → ${before ?? 'now'}` : 'all time'
+  const lines = [
+    `LLM usage (${label}): ${s.requests} requests, $${s.cost.toFixed(4)}`,
+    `tokens: in ${s.inputTokens.toLocaleString()} / out ${s.outputTokens.toLocaleString()} / cache-write ${s.cacheWriteTokens.toLocaleString()} / cache-read ${s.cacheReadTokens.toLocaleString()}`
+  ]
+  for (const m of s.byModel) {
+    lines.push(`- ${m.model}: ${m.requests} req, $${m.cost.toFixed(4)}`)
+  }
+  return { success: true, output: lines.join('\n') }
+}
+
 const plugin = {
   name: 'introspect',
   tools: toolDefinitions,
@@ -1239,6 +1788,7 @@ const plugin = {
     workspaceRoot = context?.workspaceRoot ?? ''
     getChannelStatusBridge =
       typeof context?.getChannelStatus === 'function' ? context.getChannelStatus : null
+    cortexBridge = context?.cortex ?? null
   },
   async execute(toolName, args) {
     switch (toolName) {
@@ -1252,6 +1802,18 @@ const plugin = {
         return getMemory(args ?? {})
       case 'wolffish_recall':
         return recall(args ?? {})
+      case 'memory_search':
+        return memorySearch(args ?? {})
+      case 'memory_get':
+        return memoryGet(args ?? {})
+      case 'conversation_list':
+        return conversationList(args ?? {})
+      case 'conversation_read':
+        return conversationRead(args ?? {})
+      case 'memory_save':
+        return memorySave(args ?? {})
+      case 'usage_report':
+        return usageReport(args ?? {})
       case 'wolffish_list_files':
         return listFiles(args ?? {})
       default:

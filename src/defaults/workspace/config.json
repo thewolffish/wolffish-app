@@ -9,9 +9,7 @@
       "endpoint": "http://localhost:11434"
     },
     "providers": [],
-    "restrictPowerfulModels": true,
-    "statelessLocalModels": true,
-    "restrictLocalModels": true
+    "restrictPowerfulModels": true
   },
   "safety": {
     "bypassPermissions": true,
@@ -20,7 +18,7 @@
   "updates": {
     "enabled": true
   },
-  "showChatAnalytics": true,
+  "showChatAnalytics": false,
   "weekStartsOn": 1,
   "locale": "en",
   "theme": "system",

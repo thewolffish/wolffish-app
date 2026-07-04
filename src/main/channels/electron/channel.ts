@@ -41,6 +41,7 @@ export class ElectronChannel {
     payload: {
       history: ChatHistoryMessage[]
       conversationId?: string | null
+      workingFolders?: string[]
       thinkingMode?: string
     }
   ): { turnId: string; ok: true } {
@@ -49,6 +50,7 @@ export class ElectronChannel {
     const handle = this.runner.send({
       history: payload.history,
       conversationId: payload.conversationId ?? null,
+      workingFolders: payload.workingFolders,
       thinkingMode: (payload.thinkingMode as TurnSendOptions['thinkingMode']) ?? undefined,
       makeSink: ({ turnId, conversationId }) => this.createSink(turnId, conversationId, sender),
       onTurnStarted: ({ turnId, controller }) => {

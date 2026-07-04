@@ -47,6 +47,7 @@ import {
 import { acquireLock, releaseLockSync } from '@main/lockfile'
 import { memesService, type MemesStatus, type MemesTestResult } from '@main/memes'
 import { notionService, type NotionStatus, type NotionTestResult } from '@main/notion'
+import { configureSummarizer, queueConversationSummarization } from '@main/conversation-summarizer'
 import { createProcedure, deleteProcedure, listProcedures, updateProcedure } from '@main/procedures'
 import {
   defaultModelsFolder,
@@ -152,8 +153,6 @@ import {
   setMemesConfig as persistMemesConfig,
   setNotionConfig as persistNotionConfig,
   setRestrictPowerfulModels as persistRestrictPowerfulModels,
-  setRestrictLocalModels as persistRestrictLocalModels,
-  setStatelessLocalModels as persistStatelessLocalModels,
   setShowChatAnalytics as persistShowChatAnalytics,
   setSttConfig as persistSttConfig,
   setTelegramConfig as persistTelegramConfig,
@@ -769,6 +768,38 @@ agent.cerebellum.setMcpHost({
   setEnabled: (id, enabled) => mcpManager.setEnabled(id, enabled),
   authorize: (id) => mcpManager.authorize(id)
 })
+// Wire the retrieval bridge the `introspect` capability's plugin receives in
+// its init context. It queries the SAME cortex index the ambient context
+// assembly reads, so memory_search / conversation_list / usage_report and the
+// prompt's memory section can never disagree about what wolffish knows.
+agent.cerebellum.setCortexHost({
+  searchRecords: (query, opts) => agent.cortex.searchRecords(query, opts),
+  getRecordsByRef: (refPrefix, limit) => agent.cortex.getRecordsByRef(refPrefix, limit),
+  recordsByDate: (date, sources, limit) => agent.cortex.recordsByDate(date, sources, limit),
+  listConversations: (opts) => agent.cortex.listConversations(opts),
+  usageSummary: (opts) => agent.cortex.usageSummary(opts),
+  searchArtifacts: (opts) => agent.cortex.searchArtifacts(opts),
+  coverage: () => agent.cortex.coverage(),
+  saveKnowledge: async (file, fact) => {
+    // Exact-line dedup here: promoteToKnowledge is append-only by design, so
+    // the bridge is where "don't save what's already saved" lives.
+    const trimmed = fact.trim()
+    if (!trimmed) return { ok: false, deduped: false }
+    const line = trimmed.startsWith('-') ? trimmed : `- ${trimmed}`
+    try {
+      const { readFile } = await import('node:fs/promises')
+      const p = join(workspaceRoot(), 'brain', 'hippocampus', 'knowledge', `${file}.md`)
+      const existing = await readFile(p, 'utf8').catch(() => '')
+      if (existing.split(/\r?\n/).some((l) => l.trim() === line)) {
+        return { ok: true, deduped: true }
+      }
+    } catch {
+      // a failed dedup probe must not block the save
+    }
+    await agent.hippocampus.promoteToKnowledge(file, trimmed)
+    return { ok: true, deduped: false }
+  }
+})
 // Feed live channel connectivity to the introspect capability so the agent can
 // check whether Telegram/WhatsApp are reachable (via `channel_status` /
 // `wolffish_status`) and tell the user how to reconnect a disconnected one.
@@ -778,6 +809,14 @@ agent.cerebellum.setChannelStatusProvider(() =>
     whatsapp: () => whatsappChannel.getStatus()
   })
 )
+// Rolling prefix summarizer: fires after conversation persistence (channel
+// post-turn saves + the conversation:save IPC). The onUpdated push tells the
+// renderer to fold {summary, mark} into its in-memory conversation so its
+// next whole-file save preserves rather than clobbers the summary.
+configureSummarizer({
+  thalamus: agent.thalamus,
+  onUpdated: (update) => broadcast('conversation:summaryUpdated', update)
+})
 
 function currentThemeState(): ThemeState {
   return {
@@ -1212,6 +1251,7 @@ app.whenReady().then(async () => {
   turnRunner.setLocale(cfg?.locale ?? 'en')
   sudoSession.setLocale(cfg?.locale ?? 'en')
   agent.cerebellum.setDisabled(cfg?.disabledCapabilities ?? [])
+  agent.cerebellum.setPinnedCapabilities(cfg?.pinnedCapabilities ?? [])
 
   // Compaction schedule from config. Brainstem.init() will call
   // startCompactionScheduler() using whatever config is set here.
@@ -1320,14 +1360,6 @@ app.whenReady().then(async () => {
   })
   ipcMain.handle('runtime:setRestrictPowerfulModels', async (_e, value: boolean) => {
     await persistRestrictPowerfulModels(value)
-    return { value }
-  })
-  ipcMain.handle('runtime:setRestrictLocalModels', async (_e, value: boolean) => {
-    await persistRestrictLocalModels(value)
-    return { value }
-  })
-  ipcMain.handle('runtime:setStatelessLocalModels', async (_e, value: boolean) => {
-    await persistStatelessLocalModels(value)
     return { value }
   })
   ipcMain.handle('runtime:setThinkingMode', async (_e, model: string, mode: string) => {
@@ -2965,7 +2997,27 @@ app.whenReady().then(async () => {
   agent.corpus.on('index.reindexed', (p) => broadcast('reindex:ended', p))
 
   // Conversations
-  ipcMain.handle('conversation:list', (): Promise<ConversationMeta[]> => listConversations())
+  ipcMain.handle('conversation:list', async (): Promise<ConversationMeta[]> => {
+    // Fast path: the cortex conversations table answers in <1ms vs the
+    // legacy JSON.parse-every-file scan (~140ms today, linear in history).
+    // Fall back to the scan when the index is cold/empty (first boot,
+    // rebuild in flight) so History is never blank.
+    try {
+      const rows = agent.cortex.listConversations({ limit: 500 })
+      if (rows.length > 0) {
+        return rows.map((r) => ({
+          id: r.id,
+          title: r.title,
+          updatedAt: r.updatedAt,
+          channel: r.channel as ConversationMeta['channel'],
+          messageCount: r.messageCount
+        }))
+      }
+    } catch {
+      // index not ready — fall through
+    }
+    return listConversations()
+  })
   ipcMain.handle(
     'conversation:load',
     (_e, id: string): Promise<ConversationFile | null> => loadConversation(id)
@@ -2977,6 +3029,10 @@ app.whenReady().then(async () => {
       }
       await saveConversation(conv)
       extensionServer.updateTitle(conv.id, conv.title)
+      // Post-persist rolling-summary check (fire-and-forget). When it writes
+      // a summary, the onUpdated push folds it into the renderer's in-memory
+      // conversation so the NEXT whole-file save keeps it.
+      queueConversationSummarization(conv.id)
       return { ok: true as const }
     })
   })
@@ -3332,6 +3388,7 @@ app.whenReady().then(async () => {
       payload: {
         history: ChatHistoryMessage[]
         conversationId?: string | null
+        workingFolders?: string[]
         thinkingMode?: string
       }
     ) => electronChannel.send(e.sender, payload)

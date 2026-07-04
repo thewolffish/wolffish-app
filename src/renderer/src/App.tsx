@@ -60,7 +60,9 @@ const PROVIDER_REASON_MESSAGE: Record<string, string> = {
 const RAW_ERROR_TOAST_LIMIT = 100
 
 const clampToastDetail = (text: string): string =>
-  text.length <= RAW_ERROR_TOAST_LIMIT ? text : `${text.slice(0, RAW_ERROR_TOAST_LIMIT - 1).trimEnd()}…`
+  text.length <= RAW_ERROR_TOAST_LIMIT
+    ? text
+    : `${text.slice(0, RAW_ERROR_TOAST_LIMIT - 1).trimEnd()}…`
 
 function useActiveRun(): ActiveRun {
   const { t } = useTranslation()

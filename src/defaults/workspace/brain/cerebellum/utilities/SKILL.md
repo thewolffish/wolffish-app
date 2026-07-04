@@ -13,7 +13,7 @@ triggers:
   - here's the file
 tools:
   - name: send_file
-    description: "Deliver a file to the user as a downloadable attachment in the conversation they are talking to you in — it shows up in the in-app chat and is uploaded/sent natively on WhatsApp and Telegram. Works for ANY file type (documents, images, audio, video, archives, code, text, etc.). Call this ONLY when a file the user should receive has NOT already been surfaced by the tool that produced it: most file-producing tools (the pdf/docx/xlsx/document tools, browser_pdf, image/meme generation, ffmpeg, shell `open`) already attach their output automatically, so calling send_file on those is redundant. Use it for files produced by other means — a script you ran, a download, a pre-existing file the user asked for. Up to 50 MB. Pass the file path — absolute, ~/-relative, or workspace-relative."
+    description: "Deliver a file to the user as a downloadable attachment in the conversation they are talking to you in — it renders in the in-app chat and is uploaded/sent natively on WhatsApp and Telegram. Works for ANY file type (documents, images, audio, video, archives, code, text, etc.). THIS IS THE ONLY WAY A FILE REACHES THE USER: no tool auto-delivers its output, so every file you create, convert, edit, or download for the user MUST be sent with this call once the work is done. Never end a task by just naming a saved path. Up to 50 MB. Pass the file path — absolute, ~/-relative, or workspace-relative."
     parameters:
       file:
         type: string
@@ -47,13 +47,14 @@ regenerate, "make it red", "now orange" — call `send_file` on the **updated** 
 even if you delivered a file at that same path in an earlier turn. Each new version is a new
 result the user must see. A new turn, a different file, or an edited version always gets sent.
 
-### When NOT to call it — only a same-turn duplicate
+### When NOT to call it — almost never
 
-The one time to skip it: a file-generation tool already attached *this exact file this turn* — the
-pdf/docx/xlsx/document tools, `browser_pdf`, image/meme generation, ffmpeg, or `shell` opening a
-file with `open` all auto-attach their output, so re-sending that same file the same turn just
-duplicates it. That's the **only** exception, and it's strictly **per-turn** — never a reason to
-leave a new or edited file undelivered.
+NOTHING auto-attaches anymore: no generation tool (pdf, browser_pdf, ffmpeg, image/meme
+generation, shell `open`) delivers its own output. If you don't call `send_file`, the user
+receives nothing — on every channel. The only reasons to skip it: (1) you already sent this
+exact file this turn (the runtime status lists your sends), or (2) the user explicitly asked
+for the file to be placed somewhere without delivery — and if you're merely unsure, ASK
+whether they want it sent rather than silently withholding it.
 
 ### Notes
 

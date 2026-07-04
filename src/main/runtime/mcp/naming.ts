@@ -23,7 +23,9 @@ export const MAX_TOOL_NAME_LENGTH = 64
 export const RESERVED_SLUGS = new Set(['telegram', 'whatsapp', 'electron', 'wolffish', 'mcp'])
 
 export function mcpCapabilityName(slug: string): string {
-  return `mcp-${slug}`
+  // Hostname-derived slugs often already start with "mcp-" (mcp.zapier.com →
+  // mcp-zapier-com); don't stack a second prefix onto those.
+  return slug.startsWith('mcp-') ? slug : `mcp-${slug}`
 }
 
 /** Lowercase, alphanumeric + dashes, no leading/trailing/double dashes. */

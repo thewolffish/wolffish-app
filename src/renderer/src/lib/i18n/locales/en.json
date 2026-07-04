@@ -281,14 +281,6 @@
         "label": "Restrict powerful local models",
         "description": "When enabled, the model picker blocks local models whose memory footprint exceeds what your system can handle comfortably (~55% of total RAM). This prevents severe slowdowns, swap thrashing, and system instability caused by loading oversized models. Turning this off lets you install and run any model regardless of hardware limits — not recommended. Oversized models force your system into heavy disk swapping, making both Wolffish and your entire machine unresponsive."
       },
-      "statelessLocalModels": {
-        "label": "Stateless local models",
-        "description": "When enabled, local models answer each message fresh — no conversation history and no agent context (memory, procedures, tools), just a minimal identity prompt. This keeps local models fast and bloat-free, giving plain LLM-style replies instead of agentic behavior. On by default. While on, tools for local models stay off and can't be enabled — turn this off first to allow tools."
-      },
-      "restrictLocalModels": {
-        "label": "Restrict local models (no tools)",
-        "description": "When enabled, local models run conversation-only — Wolffish's full tool catalog (running commands, editing files, web access, channels) is withheld so a small local model isn't drowned by a context it can't fit. The model still answers, explains, and writes, and tells you when something needs tools. On by default. Only adjustable when Stateless local models is off — turn it off there to give a capable local model the full toolset like cloud models."
-      },
       "showChatAnalytics": {
         "label": "Show in-chat analytics",
         "description": "Display a small strip next to the chat input showing elapsed turn time, output tokens, and context size. Off by default — turn it on if you want live visibility into model usage and timing."

@@ -91,6 +91,19 @@ export type ConversationFile = {
   workingFolder?: string[] | null
   contextMeter?: { contextTokens: number; contextBudget: number } | null
   timeline?: TimelineEntry[]
+  /**
+   * Rolling prefix summary of messages[0..summarizedThroughMessage-1],
+   * written by the post-turn summarizer when a conversation outgrows
+   * verbatim replay. Both rebuild paths (renderer textHistory + channel
+   * assistantSegmentsToHistory) replay `summary + messages from the mark`
+   * instead of the whole transcript — a long conversation pays ONE
+   * summarization ever (until it grows again), not a fresh compaction LLM
+   * call every turn. Summarized turns stay on disk and indexed:
+   * conversation_read retrieves them verbatim.
+   */
+  summary?: string | null
+  /** First message index NOT covered by `summary` (always a user message). */
+  summarizedThroughMessage?: number | null
 }
 
 export type ConversationMeta = {

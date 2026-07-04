@@ -22,22 +22,6 @@ export type OllamaPullStatus =
 
 export type OllamaTag = { name: string; size: number }
 
-export type OllamaChatMessage = { role: 'system' | 'user' | 'assistant'; content: string }
-
-export type OllamaChatOptions = {
-  endpoint?: string
-  model: string
-  messages: OllamaChatMessage[]
-  signal?: AbortSignal
-  onToken: (text: string) => void
-  temperature?: number
-}
-
-export type OllamaChatResult = {
-  text: string
-  stopped: 'eos' | 'canceled'
-}
-
 function endpointUrl(endpoint: string | undefined, path: string): URL {
   return new URL(path, endpoint ?? DEFAULT_ENDPOINT)
 }
@@ -205,88 +189,6 @@ export async function pullModel(options: {
     })
 
     req.write(JSON.stringify({ model: options.model, stream: true }))
-    req.end()
-  })
-}
-
-export async function streamChat(options: OllamaChatOptions): Promise<OllamaChatResult> {
-  const url = endpointUrl(options.endpoint, '/api/chat')
-  return new Promise((resolve, reject) => {
-    let collected = ''
-    let canceled = false
-    let settled = false
-    const settle = (result: OllamaChatResult): void => {
-      if (settled) return
-      settled = true
-      resolve(result)
-    }
-    const fail = (err: unknown): void => {
-      if (settled) return
-      settled = true
-      reject(err)
-    }
-
-    const req = request(
-      {
-        method: 'POST',
-        hostname: url.hostname,
-        port: url.port || 80,
-        path: url.pathname,
-        headers: { 'content-type': 'application/json' }
-      },
-      (res) => {
-        if (res.statusCode !== 200) {
-          let body = ''
-          res.on('data', (c: Buffer) => (body += c.toString('utf8')))
-          res.on('end', () => fail(new Error(`chat failed: HTTP ${res.statusCode} ${body}`)))
-          return
-        }
-        consumeJsonLines(res, (line) => {
-          let parsed: { message?: { role: string; content: string }; error?: string }
-          try {
-            parsed = JSON.parse(line)
-          } catch {
-            return
-          }
-          if (parsed.error) {
-            fail(new Error(parsed.error))
-            req.destroy()
-            return
-          }
-          const chunk = parsed.message?.content ?? ''
-          if (chunk.length > 0) {
-            collected += chunk
-            options.onToken(chunk)
-          }
-        })
-          .then(() => {
-            settle({ text: collected, stopped: canceled ? 'canceled' : 'eos' })
-          })
-          .catch((err) => {
-            if (canceled) settle({ text: collected, stopped: 'canceled' })
-            else fail(err)
-          })
-      }
-    )
-
-    req.on('error', (err) => {
-      if (canceled) settle({ text: collected, stopped: 'canceled' })
-      else fail(err)
-    })
-
-    options.signal?.addEventListener('abort', () => {
-      canceled = true
-      req.destroy()
-      settle({ text: collected, stopped: 'canceled' })
-    })
-
-    const body = {
-      model: options.model,
-      messages: options.messages,
-      stream: true,
-      options: options.temperature != null ? { temperature: options.temperature } : undefined
-    }
-    req.write(JSON.stringify(body))
     req.end()
   })
 }

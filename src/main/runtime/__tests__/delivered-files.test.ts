@@ -1,119 +1,95 @@
 /**
- * Delivered-file note tests — pins the detector that tells the model, in
- * context, when a tool result already delivered a file to the user, so it
- * doesn't redundantly call send_file (the PDF-shown-twice cause: browser_pdf
- * returns {path} which auto-attaches, then send_file re-delivers the same file).
+ * Delivered-file note tests — MARKER-ONLY contract.
  *
- * Standalone — no vitest/jest in this repo. Run:
- *   npx tsx src/main/runtime/__tests__/delivered-files.test.ts
+ * Delivery is 100% the model's act: only the `[wolffish-output: <path>
+ * (type)]` marker (send_file's transport) counts as "delivered". A tool that
+ * merely GENERATES a file — bare `{path}` / `{files:[{path}]}` JSON, prose
+ * paths, screenshots — delivers nothing, and this module must never claim it
+ * did (the old bare-JSON detection talked the model out of sending its own
+ * outputs; that whole auto-delivery world is gone).
  *
- * The helper is a pure, Electron-free leaf module.
+ * Standalone — no vitest/jest in this repo.
+ * Run: npx tsx --tsconfig tsconfig.node.json src/main/runtime/__tests__/delivered-files.test.ts
  */
-
 import { deliveredFileNames, deliveredFilesReminder } from '../agent/delivered-files'
 
 let passed = 0
 let failed = 0
 
-function ok(label: string, cond: boolean, detail?: string): void {
+function ok(label: string, cond: boolean): void {
   if (cond) {
     passed++
-    return
+  } else {
+    failed++
+    console.error(`FAIL ${label}`)
   }
-  failed++
-  console.error(`FAIL ${label}${detail ? `: ${detail}` : ''}`)
 }
 
-const PDF = '/Users/me/.wolffish/workspace/files/organic-growth-plan-2026-06-30.pdf'
-
-// 1. The real double-delivery scenario. browser_pdf returns bare {path}; both it
-//    and a later send_file marker must be recognized as delivering the SAME file
-//    — so the model sees "already delivered" before it decides to send_file.
-const browserPdfResult = JSON.stringify({ path: PDF })
-const sendFileResult = `[wolffish-output: ${PDF} (document)]`
-ok('browser_pdf {path} counts as delivered', deliveredFileNames(browserPdfResult).length === 1)
+// ── 1. Explicit markers (send_file) deliver — any type ─────────────────
 ok(
-  'names the pdf by basename',
-  deliveredFileNames(browserPdfResult)[0] === 'organic-growth-plan-2026-06-30.pdf'
+  'document marker delivers',
+  deliveredFileNames(
+    '[wolffish-output: /Users/y/.wolffish/workspace/files/report.pdf (document)]'
+  ).join() === 'report.pdf'
 )
-ok('send_file marker counts as delivered', deliveredFileNames(sendFileResult).length === 1)
 ok(
-  'both mechanisms resolve to the same file',
-  deliveredFileNames(browserPdfResult)[0] === deliveredFileNames(sendFileResult)[0]
+  'image marker delivers',
+  deliveredFileNames('done!\n[wolffish-output: /tmp/chart.png (image)]').join() === 'chart.png'
+)
+ok(
+  'audio marker delivers',
+  deliveredFileNames('[wolffish-output: /w/voice.mp3 (audio)]').join() === 'voice.mp3'
+)
+ok(
+  'video marker delivers',
+  deliveredFileNames('[wolffish-output: /w/clip.mp4 (video)]').join() === 'clip.mp4'
+)
+ok(
+  'generic file marker delivers',
+  deliveredFileNames('[wolffish-output: /w/data.tar.gz (file)]').join() === 'data.tar.gz'
+)
+ok(
+  'multiple markers dedupe and keep order',
+  deliveredFileNames(
+    '[wolffish-output: /a/one.pdf (document)]\n[wolffish-output: /b/two.png (image)]\n[wolffish-output: /a/one.pdf (document)]'
+  ).join() === 'one.pdf,two.png'
+)
+ok(
+  'marker path with spaces survives',
+  deliveredFileNames('[wolffish-output: /w/files/World Cup On Top.pdf (document)]').join() ===
+    'World Cup On Top.pdf'
 )
 
-// 2. The turn-level reminder (rides the runtime tail, built from accumulated
-//    names) lists the files and forbids re-sending.
-const reminder = deliveredFilesReminder(deliveredFileNames(browserPdfResult))
-ok('reminder is produced', reminder !== null)
-ok('reminder names the file', reminder?.includes('organic-growth-plan-2026-06-30.pdf') === true)
-ok('reminder forbids resending', reminder?.includes('send_file') === true)
+// ── 2. Generation is NOT delivery — bare JSON/paths never fire ──────────
+ok(
+  'bare {path} pdf does NOT deliver',
+  deliveredFileNames('{"path":"/w/files/out.pdf"}').length === 0
+)
+ok(
+  'bare {path} image does NOT deliver',
+  deliveredFileNames('{"path":"/w/shot.png","size":123}').length === 0
+)
+ok(
+  'bare {files:[{path}]} does NOT deliver',
+  deliveredFileNames('{"files":[{"path":"/w/a.pdf"},{"path":"/w/b.docx"}]}').length === 0
+)
+ok('bare {path} .mp3 does NOT deliver', deliveredFileNames('{"path":"/w/song.mp3"}').length === 0)
+ok(
+  'prose path does NOT deliver',
+  deliveredFileNames('Saved the report to /w/files/report.pdf successfully.').length === 0
+)
+ok('plain text does NOT deliver', deliveredFileNames('conversion finished OK').length === 0)
+ok('empty output does NOT deliver', deliveredFileNames('').length === 0)
+
+// ── 3. The reminder (rides the volatile tail) ───────────────────────────
+const reminder = deliveredFilesReminder(['report.pdf', 'chart.png'])
+ok('reminder is produced', typeof reminder === 'string' && reminder.length > 0)
+ok(
+  'reminder names the files',
+  /report\.pdf/.test(reminder ?? '') && /chart\.png/.test(reminder ?? '')
+)
+ok('reminder forbids resending', /already|re-send|resend/i.test(reminder ?? ''))
 ok('empty list yields no reminder', deliveredFilesReminder([]) === null)
-ok(
-  'reminder lists multiple files',
-  deliveredFilesReminder(['a.pdf', 'b.png'])?.includes('a.pdf, b.png') === true
-)
 
-// 3. Marker types: document, image, audio, video, and the (file) catch-all.
-ok('image marker delivers', deliveredFileNames('[wolffish-output: /w/a.png (image)]').length === 1)
-ok('audio marker delivers', deliveredFileNames('[wolffish-output: /w/a.mp3 (audio)]').length === 1)
-ok('video marker delivers', deliveredFileNames('[wolffish-output: /w/a.mp4 (video)]').length === 1)
-ok(
-  '(file) catch-all delivers any ext',
-  deliveredFileNames('[wolffish-output: /w/archive.zip (file)]')[0] === 'archive.zip'
-)
-
-// 4. Bare {path}: fire ONLY for docs+images (unconditionally auto-delivered on
-//    every surface). A .txt returned as {path} is not auto-attached, so no fire.
-ok(
-  'bare {path} image delivers',
-  deliveredFileNames(JSON.stringify({ path: '/w/x.png' })).length === 1
-)
-ok(
-  'bare {path} pdf delivers',
-  deliveredFileNames(JSON.stringify({ path: '/w/x.pdf' })).length === 1
-)
-ok(
-  'bare {path} .txt does NOT deliver',
-  deliveredFileNames(JSON.stringify({ path: '/w/notes.txt' })).length === 0
-)
-// Audio/video are marker-only (renderer renders bare-path media only when
-// workspace-anchored). Claiming a bare {path} audio/video as delivered would
-// risk the model skipping send_file → a missing file, so it must NOT fire here.
-ok(
-  'bare {path} .mp3 does NOT deliver (marker-only)',
-  deliveredFileNames(JSON.stringify({ path: '/w/voice.mp3' })).length === 0
-)
-ok(
-  'bare {path} .mp4 does NOT deliver (marker-only)',
-  deliveredFileNames(JSON.stringify({ path: '/w/clip.mp4' })).length === 0
-)
-// ...but an audio/video MARKER still counts — that path IS delivered everywhere.
-ok(
-  'audio via marker still delivers',
-  deliveredFileNames('[wolffish-output: /w/voice.mp3 (audio)]').length === 1
-)
-ok(
-  '{files:[{path}]} array delivers each',
-  deliveredFileNames(JSON.stringify({ files: [{ path: '/w/a.pdf' }, { path: '/w/b.docx' }] }))
-    .length === 2
-)
-
-// 5. No over-firing. Prose that merely mentions a path is not a delivery, and
-//    plain/empty output produces no note.
-ok(
-  'prose mentioning a path does not fire',
-  deliveredFileNames('Saved the report to /w/x.pdf').length === 0
-)
-ok('plain success output does not fire', deliveredFileNames('Done. 3 files changed.').length === 0)
-ok('empty output does not fire', deliveredFileNames('').length === 0)
-ok('non-delivering output yields no names', deliveredFileNames('ok').length === 0)
-
-// 6. Dedup: the same path named twice in one result collapses to one name.
-ok(
-  'duplicate paths in one result dedupe',
-  deliveredFileNames(`${sendFileResult}\n${sendFileResult}`).length === 1
-)
-
-console.log(`\n${passed} passed, ${failed} failed`)
+console.log(`${passed} passed, ${failed} failed`)
 if (failed > 0) process.exit(1)

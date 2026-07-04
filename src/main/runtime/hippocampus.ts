@@ -34,20 +34,18 @@ export type TurnSummary = {
   userMessage: string
   toolCalls: TurnToolCall[]
   assistantResponse: string
+  /**
+   * Where the turn originated ('heartbeat', 'procedure', 'worker',
+   * 'telegram', …). Rendered into the episode header so machine-generated
+   * entries are distinguishable from real user activity — both for recall
+   * filtering and for the nightly consolidation.
+   */
+  origin?: string
 }
 
 export type Episode = {
   date: string
   content: string
-}
-
-export type MemorySource = 'episode' | 'consolidated' | 'knowledge'
-
-export type MemorySearchResult = {
-  source: MemorySource
-  path: string
-  snippet: string
-  score: number
 }
 
 export type KnowledgeFile = 'projects' | 'people' | 'preferences' | 'technical' | 'decisions'
@@ -205,6 +203,11 @@ export class Hippocampus {
       existing = `# ${capitalize(file)}\n\n`
     }
 
+    // Append-only WITH dedup: the nightly consolidation re-derives the same
+    // facts night after night — without this, knowledge files silently fill
+    // with duplicate bullets (observed live in preferences.md).
+    if (existing.split(/\r?\n/).some((l) => l.trim() === line)) return
+
     const needsNewline = existing.length > 0 && !existing.endsWith('\n')
     const body = `${needsNewline ? '\n' : ''}${line}\n`
     try {
@@ -249,7 +252,8 @@ export class Hippocampus {
 
 function renderTurn(turn: TurnSummary): string {
   const time = formatTime(turn.timestamp)
-  const head = `## ${time} — ${headline(turn.userMessage)}\n`
+  const origin = turn.origin && turn.origin !== 'electron' ? ` [${turn.origin}]` : ''
+  const head = `## ${time}${origin} — ${headline(turn.userMessage)}\n`
   const userLine = `- **User:** ${truncate(oneLine(turn.userMessage), USER_PREVIEW_CHARS) || '(empty)'}\n`
   const toolLine =
     turn.toolCalls.length > 0

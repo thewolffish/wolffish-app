@@ -86,6 +86,9 @@ tools:
   - name: wolffish_status
     description: Get current Wolffish status including uptime, active provider, loaded capabilities, and system health
     parameters: {}
+  - name: channel_status
+    description: Check whether each chat channel (Telegram, WhatsApp, in-app) is currently connected, with reconnect steps for any that are down
+    parameters: {}
   - name: wolffish_performance
     description: Get performance stats including task success rates, most used tools, and error rates
     parameters: {}
@@ -116,6 +119,116 @@ tools:
         type: number
         required: false
         description: Max matches to return (default 8, max 30)
+  - name: memory_search
+    description: 'Ranked full-text search across EVERYTHING you know: past conversations (including tool calls and outputs), episodes, long-term knowledge, weekly digests, task runs, tool-outcome feedback, usage/cost records, event logs, and generated files. Returns snippets with refs — follow up with memory_get or conversation_read for full content. Try 2-3 different phrasings before concluding something was never recorded.'
+    parameters:
+      query:
+        type: string
+        required: true
+        description: Keywords to search (exact-word matching, OR-combined)
+      sources:
+        type: string
+        required: false
+        description: 'Optional comma-separated subset of: episode, knowledge, consolidated, conversation, task, feedback, usage, corpus, log, artifact, doc. Default: all.'
+      after:
+        type: string
+        required: false
+        description: Only records from this day on (YYYY-MM-DD)
+      before:
+        type: string
+        required: false
+        description: Only records up to this day (YYYY-MM-DD)
+      limit:
+        type: number
+        required: false
+        description: Max hits (default 15, max 50)
+  - name: memory_get
+    description: 'Fetch the FULL content behind a memory_search ref: a whole episode day, a knowledge file, a task transcript with its detail log, or all records of a conversation. file: refs return the actual file; conversation:/task: refs return the stored records in order.'
+    parameters:
+      ref:
+        type: string
+        required: true
+        description: 'A ref from memory_search, e.g. "conversation:<id>#3", "task:<id>", "file:brain/hippocampus/episodes/2026-07-01.md"'
+      limit:
+        type: number
+        required: false
+        description: Max records for prefix refs (default 50)
+  - name: conversation_list
+    description: 'Enumerate your past conversations, newest first: id, channel (electron/telegram/whatsapp/heartbeat/procedure), title, message count, last-updated. Optionally rank by a content query. Use when the user refers to a past chat you cannot see.'
+    parameters:
+      channel:
+        type: string
+        required: false
+        description: Filter to one channel
+      query:
+        type: string
+        required: false
+        description: Rank conversations by content matches for these keywords
+      after:
+        type: string
+        required: false
+        description: Only conversations updated on/after this day (YYYY-MM-DD)
+      before:
+        type: string
+        required: false
+        description: Only conversations updated on/before this day (YYYY-MM-DD)
+      limit:
+        type: number
+        required: false
+        description: Max conversations (default 20, max 100)
+  - name: conversation_read
+    description: 'Read a specific past conversation — messages and the tool calls/results inside it — with pagination. Recovers turns of the CURRENT conversation summarized out of your context. Returns excerpts; detail: full raises the caps, and memory_get on the printed file ref returns the complete untruncated bytes.'
+    parameters:
+      id:
+        type: string
+        required: true
+        description: Conversation id (a unique suffix is enough) from conversation_list or a conversation ref
+      from:
+        type: number
+        required: false
+        description: 'First message index to show (default: last 15 messages)'
+      to:
+        type: number
+        required: false
+        description: Last message index to show
+      what:
+        type: string
+        required: false
+        enum: [messages, tools, all]
+        description: messages = text only; tools = tool calls/results only; all (default)
+      detail:
+        type: string
+        required: false
+        enum: [brief, full]
+        description: brief (default) or full — full raises per-item excerpt caps
+  - name: memory_save
+    description: Durably save one self-contained fact to your long-term knowledge (deduplicated). Use for preferences, decisions, project facts, or people details worth remembering across conversations — not for transient task state.
+    parameters:
+      fact:
+        type: string
+        required: true
+        description: One durable, self-contained sentence
+      type:
+        type: string
+        required: false
+        enum: [projects, people, preferences, technical, decisions]
+        description: Which knowledge file it belongs in (default technical)
+  - name: usage_report
+    description: 'Your own LLM spend from the usage ledger: requests, tokens (in/out/cache), and cost, total and per model, for a period.'
+    parameters:
+      period:
+        type: string
+        required: false
+        enum: [today, yesterday, week, month, all]
+        description: Shortcut range (default today)
+      after:
+        type: string
+        required: false
+        description: Explicit start day YYYY-MM-DD (overrides period)
+      before:
+        type: string
+        required: false
+        description: Explicit end day YYYY-MM-DD
   - name: wolffish_list_files
     description: List files inside the Wolffish workspace ONLY (~/.wolffish/workspace — your memory, generated files, capabilities, logs) as a structured tree with sizes. This is NOT a general file browser; it refuses paths outside the workspace. For the user's own files anywhere else (Desktop, Documents, projects, any absolute path), use the filesystem tools or shell instead.
     parameters:
@@ -144,28 +257,47 @@ tools:
 
 ## Tools
 
-- `wolffish_status` — uptime, provider, capabilities, RAM, disk, cortex.db size
+- `memory_search` — THE primary retrieval tool: ranked full-text search across
+  everything you know (conversations incl. tool outputs, episodes, knowledge,
+  digests, tasks, feedback, usage, logs, generated files). Returns refs.
+- `memory_get` — full content behind a ref (whole episode, task transcript,
+  knowledge file, conversation records).
+- `conversation_list` / `conversation_read` — enumerate past conversations and
+  read one verbatim (messages + tool activity, paginated). conversation_read
+  also recovers turns of the CURRENT conversation that were summarized away.
+- `memory_save` — durably save a fact to long-term knowledge (deduplicated).
+- `usage_report` — your own LLM spend (requests, tokens, cost, per model).
+- `wolffish_recall` — stable alias over the same index (query/date/source);
+  memory_search offers richer filters.
+- `wolffish_status` — uptime, provider, capabilities, RAM, disk, index size
 - `wolffish_performance` — task counts, success rate, most used / denied tools
 - `wolffish_memory` — episode topics, knowledge file coverage, feedback counts
-- `wolffish_recall` — precise retrieval of a specific past detail (a date's
-  activity, a task's steps, an old conversation, a learned fact). Search by
-  `query` and/or `date`, scoped to a `source` if you know where it lives.
 - `wolffish_list_files` — structured tree of **your own workspace** files
   (`~/.wolffish/workspace`) with sizes. Workspace-only — not a general file
   browser (see Rules).
 
 ## Recall vs. summary
 
-Your context window carries a **lean summary**, not your whole history — recent
-conversation is in the live thread, and a digest of habits/preferences is in
-your prompt. Everything else lives on disk and is one tool call away:
+Your context window carries a **lean working set**, not your whole history —
+everything you have ever done, said, produced, or spent lives on disk, indexed,
+one tool call away:
 
+- "Send me the flight plan" → `memory_search` `query: "flight plan"` → follow
+  the ref with `conversation_read` or `memory_get`.
+- "What did Sana say on WhatsApp?" → `memory_search` — inbound channel
+  messages are indexed too (whatsapp read-history).
 - "What did we do on the 18th?" → `wolffish_recall` with `date: "2026-06-18"`.
-- "Did that World Cup task finish?" → `wolffish_recall` with `query: "world cup", source: "tasks"`.
-- "What's the file you made yesterday?" → `wolffish_list_files` with `dir: "files"`.
+- "Did that World Cup task finish?" → `memory_search` `query: "world cup"`,
+  `sources: "task"`.
+- "What's the file you made yesterday?" → `memory_search` `sources: "artifact"`
+  or `wolffish_list_files` with `dir: "files"`.
+- "What did today cost?" → `usage_report`.
+- "What was the confirmation number I gave you earlier?" (long conversation) →
+  `conversation_read` on the current conversation.
 
-Reach for `wolffish_recall` the moment you're about to say "I don't remember" or
-guess — it almost certainly knows.
+Reach for `memory_search` the moment you're about to say "I don't remember" or
+guess — and search 2-3 different phrasings before concluding it was never
+recorded. A miss is not evidence of absence.
 
 ## Rules
 

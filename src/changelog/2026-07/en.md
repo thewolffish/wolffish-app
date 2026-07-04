@@ -1,4 +1,40 @@
-## v1.0.202 — 2026-07-02 `Latest`
+## v1.0.203 — 2026-07-04 `Latest`
+
+### A New Brain Economy: Lean Context, Total Recall
+
+Wolffish's entire relationship with its own memory and tools has been rebuilt. Until now, every single message — even a scheduled hourly job — carried a ~95,000-token payload: the full catalog of every tool it owns (twice), yesterday's activity logs pasted in wholesale, and a 40KB operating manual. That's gone. A fresh conversation now starts at roughly **9,000 tokens — a 10× reduction** — carrying only the essentials: who it is, who you are, your learned preferences, a map of what it remembers, and an index of what it can do.
+
+Nothing was lost — the opposite. Everything Wolffish has ever done, said, produced, or spent is now in one indexed store it can search in milliseconds: every conversation **including every tool call and its output**, daily activity, long-term knowledge, task runs, generated files, even its own LLM costs. New tools — `memory_search`, `memory_get`, `conversation_list`, `conversation_read`, `memory_save`, `usage_report` — retrieve any of it surgically, on demand. Say "send me the flight plan" and Wolffish searches its past for it unprompted, whether that was yesterday or a month ago. Ask "what did today cost?" and it answers from its own ledger — something it simply couldn't do before.
+
+Tools went the same way. Instead of shipping all 300+ tool definitions with every request, Wolffish keeps ~30 essentials loaded and **finds the rest when it needs them** — `tool_search("resize a video")` loads ffmpeg mid-task, usable that same turn. Connecting an MCP server with 500 tools now costs one line of context instead of inflating every request forever. The architecture scales to thousands of tools and gigabytes of history without slowing down.
+
+### Long Conversations Stop Paying Rent
+
+A conversation that outgrows the context window used to re-summarize itself from scratch on **every message** — a hidden LLM call each time, forever. Now the summary is computed once, saved with the conversation, and reused; the compressed turns stay retrievable verbatim via `conversation_read`, so even a detail from fifty messages ago is one lookup away. Old bulky tool outputs and attachments in a long chat also step aside into compact pointers instead of re-uploading themselves every turn — and re-attached images and PDFs are no longer re-encoded from disk on every single message.
+
+### Your Files, Hand-Delivered — Never Auto-Dumped
+
+File delivery is now entirely Wolffish's own decision, not hidden plumbing. Previously, some tools quietly auto-attached whatever file path appeared in their output — files could reach your Telegram or WhatsApp without Wolffish ever deciding to send them, and worse, the machinery sometimes talked Wolffish *out* of sending its own work. All of that is gone. Now there is exactly one rule, and Wolffish follows it: **when it produces a file for you — a PDF, a converted video, a spreadsheet, even a tiny text file — it sends it to your conversation the moment the work is done**, rendered natively wherever you are: a file card in-app, a real upload on Telegram and WhatsApp. If you explicitly asked for a file to just be saved somewhere, it respects that and tells you where it is. No more "saved to ~/some/path" dead ends, and no more surprise attachments you never asked to receive.
+
+### Local Models: One System, No Training Wheels
+
+The two "Stateless local models" and "Restrict local models" settings are gone. Local models now run the exact same system as cloud models — same lean context, same tools, same memory — because the context is finally small enough for them to handle. A locally-run model will tell you honestly when a task is beyond it and suggest a capable model, but if you insist, nothing is withheld. Models with very small context windows automatically get a slimmed bootstrap toolset instead of being lobotomized.
+
+### Sweat the Details
+
+- Working-folder listings no longer silently invalidate the prompt cache on every message.
+- Automation runs are now recorded durably — "why did last week's job fail?" finally has an answer.
+- The memory index no longer rebuilds from scratch at every launch; it updates incrementally as files change (full rebuild of the entire workspace takes ~1.5s when needed).
+- The context meter now measures against the same budget compaction actually enforces.
+- Duplicate facts no longer pile up in the knowledge files, and the weekly review writes a digest instead of pasting seven days of raw logs.
+- Incoming WhatsApp messages are now part of Wolffish's searchable memory — "what did she say on WhatsApp?" just works.
+- Reading a past conversation supports a full-detail mode, and the complete untruncated transcript is always one call away.
+- The History page now loads its list from the memory index — instant, no matter how many conversations you have.
+- The context meter shows your model's full context window (a 1M model reads 1M).
+- Hardened against the weird stuff: corrupt files, empty workspaces, Arabic search, malformed data — thirty new edge-case tests, all passing.
+- Fixed: task-history indexing (every record was silently empty), memory-search ranking (better matches scored lower), doubled `mcp-mcp-` names for MCP servers, a ghost `channel_status` tool the model was told to call but couldn't, and cloud-provider PDFs being needlessly flattened to plain text.
+
+## v1.0.202 — 2026-07-02
 
 ### MCP: Connect Any Tool Server, and It Just Works
 

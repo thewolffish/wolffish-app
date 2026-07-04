@@ -35,6 +35,7 @@ import {
   type WorkerResult
 } from '@main/runtime/orchestrator'
 import { formatRuntimeStatus } from '@main/runtime/outbound'
+import fs from 'node:fs/promises'
 import { Prefrontal } from '@main/runtime/prefrontal'
 import { RAS } from '@main/runtime/ras'
 import {
@@ -52,11 +53,7 @@ import {
 import { Usage, calculateCost } from '@main/runtime/usage'
 import { cloudModelSupportsVision } from '@main/runtime/vision'
 import { Wernicke } from '@main/runtime/wernicke'
-import {
-  processAttachments,
-  type FileProcessorOptions,
-  type MessageAttachmentInput
-} from '@main/uploads/file-processor'
+import { processAttachments, type MessageAttachmentInput } from '@main/uploads/file-processor'
 import { isInternalToolCall, readConfig } from '@main/workspace/workspace'
 
 /**
@@ -89,6 +86,38 @@ const INTERRUPTED_TOOL_RESULT =
  */
 const CONTEXT_FULL_MARGIN_TOKENS = 512
 
+/**
+ * Below this context budget the full core toolset (+prompt) won't fit with
+ * useful headroom — slim to the bootstrap set. ~24k covers the lean prompt
+ * (~5-7k), bootstrap schemas (~3k), and room for a real conversation.
+ */
+const MIN_FULL_CORE_BUDGET_TOKENS = 24_000
+
+/** The tools a small-window model keeps: retrieval + discovery + files + shell. */
+const SMALL_WINDOW_BOOTSTRAP_TOOLS: ReadonlySet<string> = new Set([
+  'tool_search',
+  'tool_activate',
+  'memory_search',
+  'memory_get',
+  'conversation_list',
+  'conversation_read',
+  'memory_save',
+  'wolffish_recall',
+  'ask_user',
+  'file_read',
+  'file_write',
+  'shell_exec',
+  'send_file',
+  'web_search'
+])
+
+/**
+ * User messages within this many history entries of the end get their
+ * attachments expanded into full content blocks; older attachments stay
+ * metadata-only (the <attachments> text already carries each absolute path).
+ */
+const ATTACHMENT_VERBATIM_WINDOW = 4
+
 export type AgentOptions = {
   thalamus: Thalamus
   workspaceRoot: string
@@ -116,6 +145,14 @@ export type AgentTurnOptions = {
    * overlay). Omitted for in-app and background turns → no overlay.
    */
   channel?: ConversationChannel
+  /**
+   * Active working-folder paths. The agent reads a fresh shallow listing
+   * MAIN-SIDE once per turn and injects it into the outbound volatile tail
+   * (after every cache breakpoint) — never into persisted user content,
+   * where a fresh-per-send readdir used to rewrite the previous user
+   * message and invalidate the provider prompt-cache prefix.
+   */
+  workingFolders?: string[]
   /**
    * Isolated Broca instance for this turn. When provided, the turn uses
    * this instead of the shared `this.broca`, preventing state collision
@@ -236,7 +273,7 @@ export class Agent {
     const getContextBudget = options.defaultBudgetTokens
       ? () => options.defaultBudgetTokens!
       : () => this.thalamus.getContextBudget()
-    this.ras = new RAS({ corpus, totalBudgetTokens: getContextBudget() })
+    this.ras = new RAS({ totalBudgetTokens: getContextBudget() })
     this.cortex = new Cortex({ workspaceRoot, corpus })
     this.amygdala = new Amygdala({ corpus })
     this.cerebellum = new Cerebellum({
@@ -440,31 +477,31 @@ export class Agent {
 
   private async processHistoryAttachments(history: ChatMessage[]): Promise<ChatMessage[]> {
     const provider = this.thalamus.getActiveProvider()
-    const providerKey: FileProcessorOptions['provider'] =
-      provider === 'anthropic'
-        ? 'anthropic'
-        : provider === 'openai'
-          ? 'openai'
-          : provider === 'deepseek'
-            ? 'deepseek'
-            : provider === 'mimo'
-              ? 'mimo'
-              : provider === 'kimi'
-                ? 'kimi'
-                : provider === 'minimax'
-                  ? 'minimax'
-                  : 'local'
-    // Branch on the real provider id, not providerKey — providerKey
-    // collapses providers missing from FileProcessorOptions (xai, qwen,
-    // stepfun, openrouter) to 'local', and asking Ollama about a cloud
-    // model's vision support answers the wrong question.
-    const supportsVision =
-      provider === null || provider === 'local'
-        ? await this.thalamus.localSupportsVision()
-        : cloudModelSupportsVision(provider, this.thalamus.getActiveModel() ?? '')
+    // Capability flags, not provider ids: only local (Ollama) lacks native
+    // PDF ingestion — every cloud provider receives the raw document block.
+    const isLocal = provider === null || provider === 'local'
+    const supportsVision = isLocal
+      ? await this.thalamus.localSupportsVision()
+      : cloudModelSupportsVision(provider, this.thalamus.getActiveModel() ?? '')
+
+    // Attachment aging: full content blocks (base64 images/PDFs, extracted
+    // documents) are generated only for attachments in the RECENT window —
+    // older messages keep just their <attachments> metadata text, which
+    // already names each file's absolute path (file_read / memory_get
+    // retrieves it on demand). Without this, one attachment-heavy message
+    // permanently re-injected hundreds of KB into every subsequent request.
+    let lastAttachmentIdx = -1
+    for (let i = history.length - 1; i >= 0; i--) {
+      const m = history[i] as { role: string; attachments?: MessageAttachmentInput[] }
+      if (m.role === 'user' && m.attachments && m.attachments.length > 0) {
+        lastAttachmentIdx = i
+        break
+      }
+    }
 
     const out: ChatMessage[] = []
-    for (const m of history) {
+    for (let i = 0; i < history.length; i++) {
+      const m = history[i]
       if (m.role !== 'user') {
         out.push(m)
         continue
@@ -478,8 +515,13 @@ export class Agent {
         out.push(m)
         continue
       }
+      const recent = i === lastAttachmentIdx || i >= history.length - ATTACHMENT_VERBATIM_WINDOW
+      if (!recent) {
+        out.push(m)
+        continue
+      }
       const fileBlocks = await processAttachments(raw.attachments, {
-        provider: providerKey,
+        pdfAsText: isLocal,
         supportsVision
       })
       if (fileBlocks.length === 0) {
@@ -580,20 +622,13 @@ export class Agent {
     const optimizationConfig = cfg?.contextOptimization
     const optimizeContext = optimizationConfig?.enabled !== false
     const truncateOutbound = optimizeContext && optimizationConfig?.truncation !== false
-    // Local-model behavior gates (default on, local provider only; stable for
-    // the whole turn — the active provider can't change mid-loop).
-    // - statelessLocal: the local model gets NO prior context — only the current
-    //   user turn, with an identity-only system prompt (no agent manual, memory,
-    //   history, skills, or tools). A plain fast chatbot, not an agent. Forces
-    //   tools off.
-    // - suppressLocalTools: omit the <tools> prompt section AND the native tools
-    //   API param. Always true under stateless; otherwise follows
-    //   restrictLocalModels. When omitted (and not stateless) the model is told
-    //   it has no tools and how to enable them.
+    // ONE unified path for every model, local or cloud: same context, same
+    // tools, same memory, same doctrine. The only local-specific artifact is
+    // a small honesty overlay (prefrontal LOCAL_MODEL_PROMPT) — prompt text,
+    // not logic. The old stateless/restrict lobotomies existed because the
+    // full-fat context drowned small models; the lean assembly removed the
+    // reason they existed.
     const isLocalProvider = this.thalamus.getActiveProvider() === 'local'
-    const statelessLocal = isLocalProvider && cfg?.llm.statelessLocalModels !== false
-    const suppressLocalTools =
-      isLocalProvider && (statelessLocal || cfg?.llm.restrictLocalModels !== false)
 
     // Resolve the local model's real context window up front — before the
     // system prompt is built and the conversation runs — by hitting Ollama's
@@ -608,14 +643,6 @@ export class Agent {
       await this.thalamus.resolveActiveContextWindow().catch(() => undefined)
     }
 
-    // Stateless: strip prior conversation — send only the current user turn.
-    // Wolffish still records the full conversation; the local model just doesn't
-    // receive it, so each reply is fresh and the prompt stays tiny.
-    if (statelessLocal && messages.length > 1) {
-      const currentTurn = [...messages].reverse().find((m) => m.role === 'user')
-      messages.length = 0
-      messages.push(currentTurn ?? { role: 'user', content: userContent })
-    }
     let pinnedSystemPrompt: string | null = null
     let pinnedTools: ToolDefinition[] | null = null
     // Cerebellum tool-surface version captured when the pin was built. When a
@@ -624,6 +651,14 @@ export class Agent {
     // on the next iteration — so the new/edited tool is callable in the SAME
     // turn, enabling create→load→test→edit→retest without ending the turn.
     let pinnedGeneration = -1
+
+    // Working-folder listing: read ONCE per turn, main-side, and delivered via
+    // the outbound volatile tail (after every cache breakpoint) — never baked
+    // into persisted or replayed user content.
+    const workingFoldersBlock =
+      turn.workingFolders && turn.workingFolders.length > 0
+        ? await renderWorkingFolders(turn.workingFolders)
+        : ''
 
     broca.beginTurn(turn.turnId, turn.onSegment)
     // Publish the active conversation to the UI/extension ONCE, for real
@@ -670,24 +705,34 @@ export class Agent {
         let filteredTools: ToolDefinition[]
         if (optimizeContext) {
           // Task-start pin: prompt and tools are derived once per turn and
-          // reused across iterations. Rebuilt only when the cerebellum's
-          // tool surface changes mid-turn (a skill created/edited/toggled).
-          const currentGeneration = this.cerebellum.getGeneration()
+          // reused across iterations. Rebuilt when THIS conversation's
+          // toolset version moves — a mid-turn tool_search activation, a
+          // skill created/edited/toggled, an MCP surface change. Another
+          // conversation's activation never invalidates this pin (or its
+          // provider prompt-cache prefix).
+          const currentVersion = this.cerebellum.getToolsetVersion(turn.conversationId ?? null)
           if (
             pinnedSystemPrompt === null ||
             pinnedTools === null ||
-            pinnedGeneration !== currentGeneration
+            pinnedGeneration !== currentVersion
           ) {
             pinnedSystemPrompt = await this.prefrontal.buildSystemPrompt(
               userContent,
               runtime,
               toolRole,
-              { omitTools: suppressLocalTools, stateless: statelessLocal, channel: turn.channel }
+              {
+                localModel: isLocalProvider,
+                channel: turn.channel,
+                conversationId: turn.conversationId ?? null
+              }
             )
-            pinnedTools = suppressLocalTools
-              ? []
-              : this.filterToolsForProvider(this.prefrontal.selectTools(toolRole), userContent)
-            pinnedGeneration = currentGeneration
+            pinnedTools = this.slimForWindow(
+              this.filterToolsForProvider(
+                this.prefrontal.selectTools(toolRole, turn.conversationId ?? null),
+                userContent
+              )
+            )
+            pinnedGeneration = currentVersion
           }
           systemPrompt = pinnedSystemPrompt
           filteredTools = pinnedTools
@@ -695,13 +740,16 @@ export class Agent {
           // Legacy path: rebuild the system prompt each iteration so the
           // <runtime> block reflects the live iteration counter.
           systemPrompt = await this.prefrontal.buildSystemPrompt(userContent, runtime, toolRole, {
-            omitTools: suppressLocalTools,
-            stateless: statelessLocal,
-            channel: turn.channel
+            localModel: isLocalProvider,
+            channel: turn.channel,
+            conversationId: turn.conversationId ?? null
           })
-          filteredTools = suppressLocalTools
-            ? []
-            : this.filterToolsForProvider(this.prefrontal.selectTools(toolRole), userContent)
+          filteredTools = this.slimForWindow(
+            this.filterToolsForProvider(
+              this.prefrontal.selectTools(toolRole, turn.conversationId ?? null),
+              userContent
+            )
+          )
         }
 
         // Context Compaction: if context exceeds the model's input budget,
@@ -759,17 +807,17 @@ export class Agent {
           cacheKey: turn.conversationId ?? turn.turnId,
           truncateOutbound,
           // The live runtime tail (host clock + loop counters) rides at the
-          // very end of the outbound clone — omitted on iteration 1, as
-          // before, so the first cache write is a clean prefix. It renders
-          // strictly after every cache breakpoint (see anthropic.ts), so it
-          // never perturbs a prefix hash.
+          // very end of the outbound clone — omitted on iteration 1 (unless
+          // working folders need announcing) so the first cache write is a
+          // clean prefix. It renders strictly after every cache breakpoint
+          // (see anthropic.ts), so it never perturbs a prefix hash.
           volatileStatus:
-            optimizeContext && iterationCount > 1
+            optimizeContext && (iterationCount > 1 || workingFoldersBlock)
               ? formatRuntimeStatus({
                   iteration: iterationCount,
                   toolsCalled: totalToolCalls,
                   deliveredFiles: [...deliveredThisTurn]
-                })
+                }) + (workingFoldersBlock ? `\n${workingFoldersBlock}` : '')
               : undefined
         })
         const teed = broca.streamSegments(stream)
@@ -1192,7 +1240,8 @@ export class Agent {
           timestamp: new Date(),
           userMessage: userContent,
           toolCalls: turnTools,
-          assistantResponse: lastAssistantText
+          assistantResponse: lastAssistantText,
+          origin: turn.role === 'worker' ? 'worker' : (turn.channel ?? 'electron')
         })
         .catch(() => undefined)
 
@@ -1272,6 +1321,19 @@ export class Agent {
         await diskWriter.flush().catch(() => undefined)
       }
     }
+  }
+
+  /**
+   * Window-aware core-set slimming, keyed on the MEASURED context budget —
+   * never on provider identity. The compactor can shrink messages but not
+   * the prompt or tool schemas, so a small-window model (e.g. a local model
+   * with a 16k trained context) must get a reduced bootstrap set or the
+   * prompt alone would pin its window. Any model with a small window —
+   * local or cloud — triggers this identically.
+   */
+  private slimForWindow(tools: ToolDefinition[]): ToolDefinition[] {
+    if (this.thalamus.getContextBudget() >= MIN_FULL_CORE_BUDGET_TOKENS) return tools
+    return tools.filter((t) => SMALL_WINDOW_BOOTSTRAP_TOOLS.has(t.name))
   }
 
   private filterToolsForProvider(tools: ToolDefinition[], message: string): ToolDefinition[] {
@@ -1485,6 +1547,42 @@ function mapProviderStopReason(s: StopReason): SegmentTurnEndReason {
 // isn't a model-side reason. Surface it as end_turn so no footer chip
 // renders; the renderer already knows the user canceled because the
 // chat:error event arrived.
+
+/** Entries listed per working folder in the volatile tail. */
+const WORKING_FOLDER_MAX_ENTRIES = 200
+
+/**
+ * Fresh shallow listing of the user's working folders, rendered for the
+ * outbound volatile tail. Main-side replacement for the renderer-composed
+ * <working_folders> block that used to rewrite the previous user message
+ * every send (invalidating the provider prompt-cache prefix).
+ */
+async function renderWorkingFolders(folders: string[]): Promise<string> {
+  const rendered: string[] = []
+  for (const folder of folders.slice(0, 8)) {
+    try {
+      const entries = await fs.readdir(folder, { withFileTypes: true })
+      entries.sort((a, b) => {
+        if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1
+        return a.name.localeCompare(b.name)
+      })
+      const shown = entries.slice(0, WORKING_FOLDER_MAX_ENTRIES)
+      const lines = shown.map((e) => `    ${e.isDirectory() ? `${e.name}/` : e.name}`)
+      const omitted = entries.length - shown.length
+      rendered.push(
+        `- ${folder}${lines.length === 0 ? ' (empty)' : `\n${lines.join('\n')}`}${omitted > 0 ? `\n    … and ${omitted} more entries omitted` : ''}`
+      )
+    } catch {
+      rendered.push(`- ${folder} (could not read contents)`)
+    }
+  }
+  if (rendered.length === 0) return ''
+  return (
+    `<working_folders>\nThe user has set the following working directories (top-level contents listed). ` +
+    `When the user references files, paths, or project context, assume they are relative to these unless stated otherwise:\n${rendered.join('\n')}\n</working_folders>`
+  )
+}
+
 function segmentReasonFor(s: SegmentTurnEndReason | 'canceled'): SegmentTurnEndReason {
   return s === 'canceled' ? 'end_turn' : s
 }

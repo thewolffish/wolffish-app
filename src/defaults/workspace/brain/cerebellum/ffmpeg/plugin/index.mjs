@@ -572,49 +572,11 @@ async function ffmpegRun(args, signal) {
       if (signal) signal.removeEventListener('abort', onAbort)
       const output = (stdout + '\n' + stderr).trim()
       if (code === 0) {
-        // Detect and surface the output file so renderers and channels
-        // can show inline previews / auto-send it
-        const outputFile = detectOutputFile(ffmpegArgs)
-        if (outputFile && existsSync(outputFile)) {
-          const ext = path.extname(outputFile).toLowerCase()
-          const audioExts = new Set(['.mp3', '.wav', '.m4a', '.ogg', '.flac', '.aac', '.wma', '.opus'])
-          const videoExts = new Set(['.mp4', '.mov', '.avi', '.mkv', '.m4v', '.wmv', '.flv', '.webm'])
-          const imageExts = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.tiff'])
-          let type = 'file'
-          if (audioExts.has(ext)) type = 'audio'
-          else if (videoExts.has(ext)) type = 'video'
-          else if (imageExts.has(ext)) type = 'image'
-
-          // If the output landed outside the workspace (e.g. /tmp/),
-          // copy it into workspace/files/ so the renderer can load it
-          // through the upload IPC channel and the file persists
-          // beyond OS temp cleanup.
-          let markerPath = outputFile
-          const wsRoot = path.join(homedir(), '.wolffish', 'workspace')
-          if (!outputFile.startsWith(wsRoot)) {
-            try {
-              const filesDir = path.join(wsRoot, 'files')
-              await mkdir(filesDir, { recursive: true })
-              const baseName = path.basename(outputFile)
-              let destPath = path.join(filesDir, baseName)
-              if (existsSync(destPath)) {
-                const stem = path.basename(baseName, ext)
-                let suffix = 1
-                while (existsSync(path.join(filesDir, `${stem}_${suffix}${ext}`))) suffix++
-                destPath = path.join(filesDir, `${stem}_${suffix}${ext}`)
-              }
-              await copyFile(outputFile, destPath)
-              markerPath = destPath
-            } catch {
-              // Copy failed — fall back to original path
-            }
-          }
-
-          const marker = `\n[wolffish-output: ${markerPath} (${type})]`
-          resolve({ success: true, output: (output || '(completed successfully)') + marker })
-        } else {
-          resolve({ success: true, output: output || '(completed successfully)' })
-        }
+        // Delivery is the MODEL's job, never the harness's: this plugin no
+        // longer appends a [wolffish-output] marker to generated files. The
+        // model is instructed to send its outputs with send_file once
+        // processing is done — send_file handles workspace copying too.
+        resolve({ success: true, output: output || '(completed successfully)' })
       } else {
         resolve({
           success: false,

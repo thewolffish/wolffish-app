@@ -251,7 +251,10 @@ async function run(): Promise<void> {
     default: 10
   })
   check('toJSONSchema top-level required honors booleans', params.required, ['query'])
-  ok('tools prompt lists the capability', cerebellum.getToolsPrompt().includes('## mcp-srv'))
+  ok(
+    'capability index lists the capability',
+    cerebellum.getCapabilityIndex().includes('- mcp-srv (')
+  )
 
   const execResult = await cerebellum.executeTool('srv_search', { query: 'x' })
   ok(

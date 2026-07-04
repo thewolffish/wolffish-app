@@ -1,59 +1,17 @@
 /**
- * Delivered-file note — the in-context reinforcement that stops the agent
- * re-delivering a file a tool already surfaced (e.g. `browser_pdf` returns
- * `{"path":"x.pdf"}` which the renderer + channels auto-attach, and the model
- * then redundantly calls `send_file` on the same file → it shows twice).
+ * Delivered-file note — the in-context record of files the MODEL delivered
+ * this turn, so it never re-sends the same file twice in one turn.
  *
- * When a tool result carries a deliverable file, we append a short `[System: …]`
- * note to the MODEL's copy of that tool result only (Agent.ts `toolMsg.content`)
- * — never the UI card or the channel send. So the model gets concrete, per-call
- * evidence that the file is already on the user's screen, reinforcing the
- * agents.core.md rule ("most file-producing tools already deliver it — let
- * them"). This is a source-level nudge, not a render-time filter: nothing is
- * hidden; the model is simply told what already happened.
- *
- * Detection mirrors the four delivery surfaces (renderer + both channels +
- * emitters): the explicit `[wolffish-output: <path> (type)]` marker (any type,
- * emitted by send_file / shell `open` / ffmpeg), and the bare `{path}` /
- * `{files:[{path}]}` JSON that every file-GENERATION tool returns (browser_pdf,
- * pdf_create/merge, image gen). The bare-JSON form only auto-delivers for known
- * media/document extensions, so we gate it the same way the channels do; the
- * explicit marker already covers any extension.
+ * Detection is MARKER-ONLY by design: the `[wolffish-output: <path> (type)]`
+ * marker is emitted exclusively by deliberate delivery tools (send_file's
+ * contract) — i.e., by the model's own explicit act. The old bare
+ * `{path}` / `{files:[{path}]}` JSON detection is gone along with harness
+ * auto-delivery: generating a file no longer counts as delivering it, and
+ * nothing here may ever talk the model out of sending its output. Delivery
+ * is 100% the model's job; this module only remembers what it already sent.
  */
 
 const MARKER_RE = /\[wolffish-output:\s*([^\]]+?)\s+\((?:image|audio|video|document|file)\)\]/g
-
-// Extensions auto-delivered from a bare {path} JSON on EVERY surface — DOCUMENTS
-// and IMAGES only. Both the renderer (extractToolResultDocuments/Image) and the
-// channels (extractDocumentPaths/extractWolffishMediaPaths) parse a bare
-// {"path": ...} for these regardless of location, so a generation tool that
-// returns {path} (browser_pdf, pdf_create, image gen) is genuinely already
-// shown. Audio/video are deliberately EXCLUDED here: the renderer only renders
-// bare-path media when it's workspace-anchored (a regex, not JSON parsing), so
-// claiming "delivered" for a bare {path:x.mp3} risks a false positive → the
-// model skips send_file → a MISSING file. A missing file is worse than a rare
-// redundant send, so we stay conservative. Marker-delivered audio/video is
-// still caught by MARKER_RE below (any type) — that path IS delivered on every
-// surface. Generic/other extensions likewise only deliver via the explicit
-// (file) marker, never a bare {path}.
-const DELIVERABLE_EXTS = new Set([
-  '.pdf',
-  '.doc',
-  '.docx',
-  '.xls',
-  '.xlsx',
-  '.ppt',
-  '.pptx',
-  '.csv',
-  '.png',
-  '.jpg',
-  '.jpeg',
-  '.gif',
-  '.webp',
-  '.bmp',
-  '.tiff',
-  '.tif'
-])
 
 function basename(p: string): string {
   const cleaned = p.trim().replace(/[/\\]+$/, '')
@@ -61,15 +19,9 @@ function basename(p: string): string {
   return cut >= 0 ? cleaned.slice(cut + 1) : cleaned
 }
 
-function extname(p: string): string {
-  const b = basename(p)
-  const dot = b.lastIndexOf('.')
-  return dot > 0 ? b.slice(dot).toLowerCase() : ''
-}
-
 /**
- * The file names a successful tool result delivered to the user, in order,
- * deduped. Empty when the output carries no auto-delivered file.
+ * The file names a tool result explicitly delivered to the user (via the
+ * send_file marker), in order, deduped. Empty when no marker is present.
  */
 export function deliveredFileNames(output: string): string[] {
   if (!output) return []
@@ -80,35 +32,6 @@ export function deliveredFileNames(output: string): string[] {
   while ((m = MARKER_RE.exec(output)) !== null) {
     const name = basename(m[1])
     if (name) names.add(name)
-  }
-
-  // Bare {path} / {files:[{path}]} only when the output IS that JSON (a tool
-  // that merely mentions a path in prose isn't delivering it). Skip if a marker
-  // already accounted for the delivery.
-  if (names.size === 0) {
-    const trimmed = output.trim()
-    if (trimmed.startsWith('{')) {
-      try {
-        const parsed = JSON.parse(trimmed) as { path?: unknown; files?: unknown }
-        const paths: unknown[] = []
-        if (typeof parsed.path === 'string') paths.push(parsed.path)
-        if (Array.isArray(parsed.files)) {
-          for (const f of parsed.files) {
-            if (f && typeof (f as { path?: unknown }).path === 'string') {
-              paths.push((f as { path: string }).path)
-            }
-          }
-        }
-        for (const p of paths) {
-          if (typeof p === 'string' && DELIVERABLE_EXTS.has(extname(p))) {
-            const name = basename(p)
-            if (name) names.add(name)
-          }
-        }
-      } catch {
-        /* not JSON — no delivery */
-      }
-    }
   }
 
   return [...names]

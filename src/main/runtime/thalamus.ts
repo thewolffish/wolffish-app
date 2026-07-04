@@ -431,76 +431,8 @@ export class Thalamus {
   }
 
   /**
-   * Make a bare LLM call to summarize content for context compaction.
-   * Uses the resolved active model (the Brain, or the local model in
-   * local-only mode). No system prompt, no tools — pure summarization.
-   *
-   * If the content exceeds the compaction model's own context window, it
-   * is split into parts, each compacted separately, and the summaries
-   * merged.
-   */
-  async compactContent(
-    content: string,
-    signal?: AbortSignal
-  ): Promise<{ text: string; provider: string; model: string }> {
-    const instruction =
-      `You are compacting conversation context to fit within a model's context window. ` +
-      `Your goal is to REDUCE size while RETAINING maximum useful information.\n\n` +
-      `Rules:\n` +
-      `- Preserve ALL: tool names, function calls, API endpoints, parameter names, return values, error messages, status codes\n` +
-      `- Preserve ALL: names, emails, dates, timestamps, numbers, IDs, URLs, file paths\n` +
-      `- Preserve ALL: decisions made, action items, conclusions, errors and their causes\n` +
-      `- For structured data (JSON, tables): keep the schema/keys and representative values, collapse repeated similar entries into a count + example\n` +
-      `- For tool results: keep the tool name, key fields from the response, and outcome. Do NOT reduce a tool call + result to a single sentence\n` +
-      `- Remove: redundant whitespace, boilerplate HTML/headers, repeated patterns, verbose formatting, base64 data, CSS/styling\n` +
-      `- Remove: marketing copy, legal disclaimers, email footers/signatures, tracking pixels descriptions\n` +
-      `- Output plain text, no markdown formatting overhead\n` +
-      `- Never fabricate or infer data not present in the original\n\n` +
-      `Compact the following:\n\n---\n\n`
-    const prompt = instruction + content
-    const promptTokens = Math.ceil(prompt.length / 4)
-
-    const entry = this.resolveEntry()
-    if (!entry) throw new Error('No compaction provider available')
-
-    const modelWindow = contextWindowForModel(entry.model)
-    const maxOutput = maxOutputForModel(entry.model)
-    const available = modelWindow - maxOutput
-
-    if (promptTokens <= available) {
-      const result = await this.compactSingle(entry, prompt, signal)
-      if (result) return result
-      throw new Error('Compaction provider failed')
-    }
-
-    const promptOverheadChars = instruction.length + 50
-    const charsPerPart = Math.max(available * 4 - promptOverheadChars, 4000)
-    const parts: string[] = []
-    for (let i = 0; i < content.length; i += charsPerPart) {
-      parts.push(content.slice(i, i + charsPerPart))
-    }
-
-    const summaries = await Promise.all(
-      parts.map((part) => this.compactSingle(entry, instruction + part, signal))
-    )
-    const valid = summaries.filter(Boolean) as {
-      text: string
-      provider: string
-      model: string
-    }[]
-    if (valid.length === parts.length) {
-      return {
-        text: valid.map((s) => s.text).join('\n\n'),
-        provider: valid[0].provider,
-        model: valid[0].model
-      }
-    }
-    throw new Error('Compaction provider failed')
-  }
-
-  /**
    * Raw LLM call for conversation-level summarization during compaction.
-   * Unlike compactContent, takes a complete prompt (no hardcoded instruction)
+   * Takes a complete prompt (no hardcoded instruction)
    * and uses 5 retries with escalating backoff for resilience.
    *
    * If the prompt exceeds the model's context window, it is split into parts,
@@ -576,39 +508,6 @@ export class Thalamus {
       } catch {
         if (attempt >= 4) return null
         await sleep(delays[attempt], signal)
-      }
-    }
-    return null
-  }
-
-  /**
-   * Single compaction call to one provider. Returns null on failure.
-   * Retries up to 3 times with brief back-off.
-   */
-  private async compactSingle(
-    entry: CascadeEntry,
-    prompt: string,
-    signal?: AbortSignal
-  ): Promise<{ text: string; provider: string; model: string } | null> {
-    const messages: ChatMessage[] = [{ role: 'user', content: prompt }]
-    let attempts = 0
-
-    while (attempts < 3) {
-      attempts++
-      if (signal?.aborted) return null
-      try {
-        let text = ''
-        for await (const chunk of entry.provider.stream({
-          system: '',
-          messages,
-          signal
-        })) {
-          if (chunk.type === 'text') text += chunk.text
-        }
-        if (text.length > 0) return { text, provider: entry.id, model: entry.model }
-      } catch {
-        if (attempts >= 3) return null
-        await sleep(1000, signal)
       }
     }
     return null

@@ -27,7 +27,9 @@ function eq(label: string, actual: string, expected: string): void {
     return
   }
   failed++
-  console.error(`FAIL ${label}\n  expected: ${JSON.stringify(expected)}\n  actual:   ${JSON.stringify(actual)}`)
+  console.error(
+    `FAIL ${label}\n  expected: ${JSON.stringify(expected)}\n  actual:   ${JSON.stringify(actual)}`
+  )
 }
 function unchanged(label: string, input: string): void {
   eq(label, markdownToWhatsApp(input), input)
@@ -68,11 +70,7 @@ eq('double-underscore bold', markdownToWhatsApp('__very__ important'), '*very* i
 eq('strikethrough', markdownToWhatsApp('~~cancelled~~ rescheduled'), '~cancelled~ rescheduled')
 eq('h2 heading', markdownToWhatsApp('## Boarding details'), '*Boarding details*')
 eq('h1 with inner bold', markdownToWhatsApp('# Flight **F3 505**'), '*Flight F3 505*')
-eq(
-  'closed atx heading',
-  markdownToWhatsApp('### Gate info ###'),
-  '*Gate info*'
-)
+eq('closed atx heading', markdownToWhatsApp('### Gate info ###'), '*Gate info*')
 eq(
   'bold inside quote line',
   markdownToWhatsApp('> **note:** gate closes 08:20'),
@@ -96,7 +94,11 @@ eq(
   markdownToWhatsApp('![boarding pass](https://a.example/bp.png)'),
   'boarding pass (https://a.example/bp.png)'
 )
-eq('image without alt', markdownToWhatsApp('![](https://a.example/x.png)'), 'https://a.example/x.png')
+eq(
+  'image without alt',
+  markdownToWhatsApp('![](https://a.example/x.png)'),
+  'https://a.example/x.png'
+)
 
 // --- Code regions are verbatim ---
 
@@ -115,11 +117,7 @@ eq(
   markdownToWhatsApp('```\n| a | b |\n|---|---|\n| 1 | 2 |\n```'),
   '```\n| a | b |\n|---|---|\n| 1 | 2 |\n```'
 )
-eq(
-  'bold wrapping inline code',
-  markdownToWhatsApp('**run `ls` now**'),
-  '*run `ls` now*'
-)
+eq('bold wrapping inline code', markdownToWhatsApp('**run `ls` now**'), '*run `ls` now*')
 
 // --- Bullets, tasks, rules ---
 
@@ -179,11 +177,7 @@ eq('horizontal rule dropped', markdownToWhatsApp('above\n\n---\n\nbelow'), 'abov
 }
 
 // The label comes from the row's first cell, not the header.
-eq(
-  'table with alignment colons',
-  markdownToWhatsApp('| a | b |\n|:---|---:|\n| 1 | 2 |'),
-  '*1:* 2'
-)
+eq('table with alignment colons', markdownToWhatsApp('| a | b |\n|:---|---:|\n| 1 | 2 |'), '*1:* 2')
 eq(
   'prose pipe is not a table',
   markdownToWhatsApp('either this | or that\nand more text'),
@@ -256,7 +250,11 @@ eq(
   markdownToWhatsApp('This is **really *very* important** to know'),
   'This is *really _very_ important* to know'
 )
-eq('lone asterisk inside bold', markdownToWhatsApp('The result of **2 * 3** is 6'), 'The result of *2 * 3* is 6')
+eq(
+  'lone asterisk inside bold',
+  markdownToWhatsApp('The result of **2 * 3** is 6'),
+  'The result of *2 * 3* is 6'
+)
 unchanged('python exponents never cross-pair', 'Note that 2**8 = 256 and 2**10 = 1024 in Python.')
 unchanged('multi-line bold is left alone', '**bold spanning\ntwo lines**')
 
@@ -332,11 +330,7 @@ eq('strip keeps snake_case', stripInlineMarkup('keep snake_case_name'), 'keep sn
 
 // --- Arabic content with Markdown ---
 
-eq(
-  'arabic bold',
-  markdownToWhatsApp('**الرحلة** تغادر الساعة ٨:٥٠'),
-  '*الرحلة* تغادر الساعة ٨:٥٠'
-)
+eq('arabic bold', markdownToWhatsApp('**الرحلة** تغادر الساعة ٨:٥٠'), '*الرحلة* تغادر الساعة ٨:٥٠')
 eq(
   'arabic table',
   markdownToWhatsApp('| البند | القيمة |\n|---|---|\n| **الرحلة** | F3 505 |'),

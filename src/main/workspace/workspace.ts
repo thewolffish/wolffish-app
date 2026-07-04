@@ -278,18 +278,6 @@ export type WorkspaceConfig = {
     // limits — not recommended, as oversized models cause heavy swap
     // thrashing and degrade the entire system.
     restrictPowerfulModels?: boolean
-    // When true (default), local (Ollama) models run STATELESS: each turn sends
-    // only the current user message with an identity-only system prompt (no
-    // conversation history, agent manual, memory, skills, or tools) so a local
-    // model answers like a plain, fast LLM instead of an agent. While on, tools
-    // for local models are forced off and cannot be enabled.
-    statelessLocalModels?: boolean
-    // When true (default), local (Ollama) models receive NO tools — the full
-    // tool catalog (~20k tokens) is omitted from the prompt and the native
-    // tools param, leaving a small local model to converse reliably instead of
-    // choking on a context it can't fit. The model is told tools are off and how
-    // to enable them. Only adjustable when statelessLocalModels is off.
-    restrictLocalModels?: boolean
     // Per-model thinking mode. Key is model name, value is thinking mode string.
     thinkingModes?: Record<string, string>
   }
@@ -366,6 +354,12 @@ export type WorkspaceConfig = {
     hippocampusTab?: string
   }
   disabledCapabilities?: string[]
+  /**
+   * Extra capabilities whose tool schemas ship on EVERY request, on top of
+   * the built-in core set (see cerebellum CORE_CAPABILITIES). The tuning
+   * knob for the lean tool surface — no UI, hand-edited in config.json.
+   */
+  pinnedCapabilities?: string[]
   locale: 'en' | 'ar'
   theme: 'system' | 'light' | 'dark'
   onboardingCompleted: boolean
@@ -594,9 +588,7 @@ function defaultConfig(): WorkspaceConfig {
     llm: {
       local: emptyLocalModel(),
       providers: [],
-      restrictPowerfulModels: true,
-      statelessLocalModels: true,
-      restrictLocalModels: true
+      restrictPowerfulModels: true
     },
     safety: { bypassPermissions: true, blockCredentials: false },
     updates: { enabled: true },
@@ -657,9 +649,10 @@ export async function ensureWorkspace(): Promise<void> {
   await ensureBundledCapabilities()
   await migrateOfficialCapabilities()
 
-  // cortex.db is derived from markdown — safe to nuke on every launch so
-  // the index reflects any files changed by migration above.
-  await nukeCortexDb()
+  // cortex.db is NOT nuked here anymore: Cortex.init() is schema-versioned
+  // (full rebuild on version bump) and its startup catch-up diff picks up any
+  // files the migrations above changed — a full every-launch rebuild would
+  // throw away the incremental index for nothing.
 
   await ensureUsageStructure()
   await ensureSpeechDirectory()
@@ -849,8 +842,16 @@ async function migrateBrain(): Promise<void> {
   const llm = config.llm as typeof config.llm & {
     cloudPriority?: CloudProviderConfig['id'][]
     allowLocalFallback?: boolean
+    statelessLocalModels?: boolean
+    restrictLocalModels?: boolean
   }
-  const hasDeadKeys = 'cloudPriority' in llm || 'allowLocalFallback' in llm
+  const hasDeadKeys =
+    'cloudPriority' in llm ||
+    'allowLocalFallback' in llm ||
+    // The two local-model context lobotomies died with the lean-context
+    // unification — strip them so stale config can't imply they still work.
+    'statelessLocalModels' in llm ||
+    'restrictLocalModels' in llm
   const alreadyMigrated = 'brain' in llm
   if (alreadyMigrated && !hasDeadKeys) return
 
@@ -865,6 +866,8 @@ async function migrateBrain(): Promise<void> {
   }
   delete llm.cloudPriority
   delete llm.allowLocalFallback
+  delete llm.statelessLocalModels
+  delete llm.restrictLocalModels
   await writeConfig({ ...config, llm: { ...llm, brain } })
 }
 
@@ -1038,23 +1041,6 @@ async function migrateOfficialCapabilities(): Promise<void> {
           console.error(`npm install failed for capability ${entry.name}:`, err)
         })
       }
-    }
-  }
-}
-
-async function nukeCortexDb(): Promise<void> {
-  const dbPath = path.join(WORKSPACE_ROOT, 'brain', 'cortex.db')
-  try {
-    await fs.unlink(dbPath)
-  } catch {
-    // doesn't exist or already deleted
-  }
-  // Also clean up WAL/SHM files SQLite may have left behind
-  for (const suffix of ['-wal', '-shm']) {
-    try {
-      await fs.unlink(dbPath + suffix)
-    } catch {
-      // ignore
     }
   }
 }
@@ -1287,20 +1273,6 @@ export async function setRestrictPowerfulModels(value: boolean): Promise<Workspa
   return patchConfig((c) => ({
     ...c,
     llm: { ...c.llm, restrictPowerfulModels: value }
-  }))
-}
-
-export async function setRestrictLocalModels(value: boolean): Promise<WorkspaceConfig> {
-  return patchConfig((c) => ({
-    ...c,
-    llm: { ...c.llm, restrictLocalModels: value }
-  }))
-}
-
-export async function setStatelessLocalModels(value: boolean): Promise<WorkspaceConfig> {
-  return patchConfig((c) => ({
-    ...c,
-    llm: { ...c.llm, statelessLocalModels: value }
   }))
 }
 

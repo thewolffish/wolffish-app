@@ -14,15 +14,13 @@ export type ProcessedAttachment = {
 }
 
 export type FileProcessorOptions = {
-  provider:
-    | 'anthropic'
-    | 'openai'
-    | 'openrouter'
-    | 'deepseek'
-    | 'mimo'
-    | 'kimi'
-    | 'minimax'
-    | 'local'
+  /**
+   * True when the active model cannot ingest raw PDF bytes (local/Ollama):
+   * PDFs are flattened to extracted text instead of a base64 document block.
+   * A capability flag, not a provider id — cloud providers absent from an
+   * enum can never silently misroute onto the lossy path again.
+   */
+  pdfAsText: boolean
   supportsVision: boolean
 }
 
@@ -123,14 +121,14 @@ async function processImage(
 }
 
 /**
- * PDFs follow two paths depending on the active provider:
- * - Cloud (Anthropic/OpenAI): pass the raw bytes as a base64 document
- *   block. The model handles layout, tables, embedded images natively;
- *   we don't pre-flatten anything. Oversized PDFs come back as an API
- *   error the user sees in the chat — that's strictly better than
+ * PDFs follow two paths depending on the active model's capability:
+ * - Native ingestion (cloud providers): pass the raw bytes as a base64
+ *   document block. The model handles layout, tables, embedded images
+ *   natively; we don't pre-flatten anything. Oversized PDFs come back as
+ *   an API error the user sees in the chat — that's strictly better than
  *   silently degrading the file to flat extracted text.
- * - Local (Ollama): no native PDF support, so we extract text with
- *   pdf-parse. This is the only place pdf-parse runs.
+ * - pdfAsText (local/Ollama): no native PDF support, so we extract text
+ *   with pdf-parse. This is the only place pdf-parse runs.
  */
 async function processPdf(
   absPath: string,
@@ -139,7 +137,7 @@ async function processPdf(
 ): Promise<ProcessedAttachment> {
   const raw = await fs.readFile(absPath)
 
-  if (options.provider === 'local') {
+  if (options.pdfAsText) {
     const text = await extractPdfText(raw)
     return {
       originalName,
@@ -287,6 +285,46 @@ export type MessageAttachmentInput = {
   sizeBytes: number
 }
 
+// Processed-attachment cache: processHistoryAttachments re-runs for EVERY
+// user message with attachments on EVERY turn — without this, each turn
+// re-reads, re-resizes (sharp), and re-base64s every historical image/PDF
+// from scratch (measured: a 500KB jpeg re-encoded per turn, a 371KB PDF
+// re-base64'd to 495k chars per turn). Keyed on (path, mtime, options) so a
+// changed file re-processes; bounded LRU so blobs don't accumulate.
+const PROCESSED_CACHE_MAX = 60
+const processedCache = new Map<string, ContentBlock[]>()
+
+async function processAttachmentCached(
+  att: MessageAttachmentInput,
+  options: FileProcessorOptions
+): Promise<ContentBlock[]> {
+  let mtimeMs = 0
+  const abs = resolveUploadPath(att.filePath)
+  if (abs) {
+    try {
+      mtimeMs = Math.floor((await fs.stat(abs)).mtimeMs)
+    } catch {
+      mtimeMs = 0
+    }
+  }
+  const key = `${att.filePath}|${mtimeMs}|${options.pdfAsText ? 1 : 0}|${options.supportsVision ? 1 : 0}`
+  const hit = processedCache.get(key)
+  if (hit) {
+    // refresh LRU position
+    processedCache.delete(key)
+    processedCache.set(key, hit)
+    return hit
+  }
+  const result = await processAttachment(att.filePath, att.mimeType, att.originalName, options)
+  const blocks = result?.blocks ?? []
+  processedCache.set(key, blocks)
+  if (processedCache.size > PROCESSED_CACHE_MAX) {
+    const oldest = processedCache.keys().next().value
+    if (oldest !== undefined) processedCache.delete(oldest)
+  }
+  return blocks
+}
+
 export async function processAttachments(
   attachments: MessageAttachmentInput[],
   options: FileProcessorOptions
@@ -294,10 +332,7 @@ export async function processAttachments(
   const blocks: ContentBlock[] = []
 
   for (const att of attachments) {
-    const result = await processAttachment(att.filePath, att.mimeType, att.originalName, options)
-    if (result) {
-      blocks.push(...result.blocks)
-    }
+    blocks.push(...(await processAttachmentCached(att, options)))
   }
 
   return blocks

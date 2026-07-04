@@ -3,7 +3,7 @@ import { deliveredFilesReminder } from '@main/runtime/agent/delivered-files'
 import type { BasalGanglia } from '@main/runtime/basalganglia'
 import type { Cerebellum } from '@main/runtime/cerebellum'
 import type { Corpus } from '@main/runtime/corpus'
-import { Cortex, type CortexSearchResult } from '@main/runtime/cortex'
+import { Cortex } from '@main/runtime/cortex'
 import type { Device } from '@main/runtime/device'
 import type { Hippocampus } from '@main/runtime/hippocampus'
 import {
@@ -117,6 +117,14 @@ Greedy effort is ON. Persistence outranks speed and cost on this turn:
 - Verify your work and push past "good enough" to genuinely complete and correct.
 </effort_mode>`
 
+// Self-qualifying overlay for locally-run models. Deliberately NOT a
+// capability claim ("you are small") — a capable local 70B would be lied to,
+// and any size-based branch would reintroduce the special-casing this
+// replaced. One overlay, zero branching, full access.
+const LOCAL_MODEL_PROMPT = `<local_model>
+You are running as a locally-hosted model on the user's own machine. If a task exceeds what you can do reliably, say so plainly and suggest switching to a capable cloud model — hallucinating capability serves nobody. But if the user insists, comply fully: you have the same tools, memory, and context as any other model here, and nothing is withheld from you.
+</local_model>`
+
 const AUTONOMOUS_PROMPT = `<autonomy_mode>
 Autonomy is ON. Act with high agency and minimal hand-holding:
 - Ask the user as little as possible — ideally nothing. Make reasonable assumptions and decide for yourself instead of stopping to ask.
@@ -176,7 +184,6 @@ export class Prefrontal {
   private cortex: Cortex | null
   private ras: RAS
   private cerebellum: Cerebellum | null
-  private hippocampus: Hippocampus | null
   private basalganglia: BasalGanglia | null
   private corpus: Corpus | null
   private device: Device | null
@@ -185,7 +192,6 @@ export class Prefrontal {
     this.cortex = options.cortex ?? null
     this.ras = options.ras ?? new RAS({ totalBudgetTokens: this.getTokenBudget() })
     this.cerebellum = options.cerebellum ?? null
-    this.hippocampus = options.hippocampus ?? null
     this.basalganglia = options.basalganglia ?? null
     this.corpus = options.corpus ?? null
     this.device = options.device ?? null
@@ -195,13 +201,23 @@ export class Prefrontal {
     message = '',
     runtime?: RuntimeContext,
     role?: 'orchestrator' | 'worker',
-    opts?: { omitTools?: boolean; stateless?: boolean; channel?: string }
+    opts?: {
+      /**
+       * True when the resolved model runs locally. Adds the self-qualifying
+       * honesty overlay — prompt text, never divergent assembly: a local
+       * model gets the same context, tools, and memory as any cloud model.
+       */
+      localModel?: boolean
+      channel?: string
+      conversationId?: string | null
+    }
   ): Promise<string> {
     const bundle = await this.buildContext(message, runtime, role, opts)
     const blocks = [
       bundle.systemPrompt,
       await this.buildRoleBlock(role),
       await this.buildBehaviorBlock(),
+      opts?.localModel ? LOCAL_MODEL_PROMPT : '',
       opts?.channel ? (CHANNEL_PROMPTS[opts.channel] ?? '') : ''
     ].filter((b) => b && b.length > 0)
     return blocks.join('\n\n')
@@ -287,8 +303,12 @@ export class Prefrontal {
         : DELEGATION_CAPABILITIES
   }
 
-  selectTools(role?: 'orchestrator' | 'worker'): ToolDefinition[] {
-    return this.cerebellum?.getToolDefinitions(this.excludedCapabilitiesFor(role)) ?? []
+  selectTools(role?: 'orchestrator' | 'worker', conversationId?: string | null): ToolDefinition[] {
+    return (
+      this.cerebellum?.getToolDefinitions(this.excludedCapabilitiesFor(role), {
+        conversationId: conversationId ?? null
+      }) ?? []
+    )
   }
 
   /**
@@ -302,32 +322,27 @@ export class Prefrontal {
     message = '',
     runtime?: RuntimeContext,
     role?: 'orchestrator' | 'worker',
-    opts?: { omitTools?: boolean; stateless?: boolean }
+    opts?: { localModel?: boolean; conversationId?: string | null }
   ): Promise<ContextBundle> {
+    // LEAN BY DESIGN: the prompt carries the essentials only — identity, the
+    // behavioral contract, device facts, the learned-preferences digest, a
+    // "what memory exists" map, and a one-line-per-capability index. No
+    // memory dumps, no episode dumps, no tool catalogs: everything else is
+    // indexed on disk and retrieved surgically (memory_search / tool_search)
+    // when the turn actually needs it.
+    //
     // A worker runs a bounded, self-contained task the orchestrator composed —
-    // it doesn't need the user's stored memory, learned feedback, conversation
-    // history, or keyword-injected skill bodies (those are about the live user
-    // thread, not the worker's slice). Skipping them keeps the worker prompt
-    // lean (it was ~42k tokens, mostly irrelevant) and far cheaper, while
-    // KEEPING what tool work needs: identity, agent procedures, device facts,
-    // variables, and the tool definitions.
-    // Stateless mode (local chatbot) is leaner than a worker: identity only —
-    // no agent procedures, no memory/history/skills, no tools — so a local
-    // model answers like a plain LLM with minimal prompt and no context bloat.
-    const stateless = opts?.stateless === true
-    const lean = role === 'worker' || stateless
-    // Assemble against a clamped budget, not the raw model window. A 200k–1M
-    // window is for the live conversation, not a system prompt that gets
-    // rebuilt every iteration — capping it here is what keeps the prompt lean
-    // and its prefix stable enough for the provider to cache.
+    // it additionally skips the preferences digest and the memory map (those
+    // are about the live user thread, not the worker's slice).
+    const lean = role === 'worker'
+    const conversationId = opts?.conversationId ?? null
+    // Assemble against a clamped budget, not the raw model window — the guard
+    // that keeps a pathological candidate from ever ballooning the prompt.
     const budget = this.ras.allocateBudget(clampAssemblyBudget(this.getTokenBudget()))
     const candidates: ContextCandidate[] = []
     const includedPaths = new Set<string>()
 
     for (const entry of ALWAYS_INCLUDED) {
-      // Stateless keeps only identity (soul/user) — drop the agent operating
-      // manual (the `prefrontal` category) so the model isn't steered agentic.
-      if (stateless && entry.category !== 'identity') continue
       const content = await this.readFile(entry.rel)
       if (content) {
         candidates.push({ category: entry.category, source: entry.rel, content })
@@ -336,27 +351,15 @@ export class Prefrontal {
     }
 
     if (!lean) {
-      const memoryCandidates = await this.collectMemoryCandidates(message, includedPaths)
-      for (const c of memoryCandidates) {
-        candidates.push(c)
-        includedPaths.add(c.source)
-      }
-
+      // The one ambient memory that stays: the bounded learned-preferences
+      // digest (~500 tokens). Checking preferences must not cost a retrieval
+      // round-trip on every task.
       const feedbackCandidate = await this.collectFeedbackCandidate(
         this.options.feedbackWindowDays ?? 7
       )
       if (feedbackCandidate && !includedPaths.has(feedbackCandidate.source)) {
         candidates.push(feedbackCandidate)
         includedPaths.add(feedbackCandidate.source)
-      }
-
-      const historyCandidates = await this.collectRecentEpisodes(
-        this.options.episodeWindowDays ?? 2
-      )
-      for (const c of historyCandidates) {
-        if (includedPaths.has(c.source)) continue
-        candidates.push(c)
-        includedPaths.add(c.source)
       }
     }
 
@@ -368,8 +371,6 @@ export class Prefrontal {
 
     // Device facts bypass RAS — they're universally relevant for any
     // tool call (correct shell syntax, correct paths, resource limits).
-    // Resolved once before the loop so the per-iteration cost stays
-    // bounded by the disk cache TTL.
     const deviceBody = this.device ? await this.device.getBlockBody().catch(() => '') : ''
 
     for (const category of SECTION_ORDER) {
@@ -381,18 +382,16 @@ export class Prefrontal {
       }
 
       // Device facts sit right after <identity> so the model reads
-      // "who I am, then where I am" before any memory or skills. Skipped in
-      // stateless mode — they're tool/agent-oriented and just add bloat.
-      if (category === 'identity' && deviceBody.length > 0 && !stateless) {
+      // "who I am, then where I am".
+      if (category === 'identity' && deviceBody.length > 0) {
         sections.push(this.wrap('device', deviceBody))
         sectionsIncluded.push('device')
       }
 
-      // User-defined variables from config.json sit right after <device>
-      // so the model sees "who I am, where I am, what I have" before
-      // any memory or skills. Sensitive values are passed in plaintext
-      // so the agent can use them in tool calls. Skipped in stateless mode.
-      if (category === 'identity' && !stateless) {
+      // User-defined variables from config.json sit right after <device>.
+      // Sensitive values are passed in plaintext so the agent can use them
+      // in tool calls.
+      if (category === 'identity') {
         const variablesBody = await this.collectVariablesBlock()
         if (variablesBody.length > 0) {
           sections.push(this.wrap('variables', variablesBody))
@@ -400,51 +399,32 @@ export class Prefrontal {
         }
       }
 
-      // Tools come from loaded capabilities, not from the RAS-scored
-      // candidate pool. Inject right after <prefrontal> so the model sees
-      // "what I am, then what I can do, then what I know".
       if (category === 'prefrontal') {
-        if (stateless) {
-          // Stateless chatbot: no tools and no notice — keep it minimal.
-        } else if (opts?.omitTools) {
-          // Tool use is suppressed (restrictLocalModels — see Agent.respond).
-          // Replace the ~20k-token <tools> catalog with a short notice so the
-          // model knows it has no tools, why, and how the user re-enables them.
-          // The native tools API param is zeroed separately in Agent.ts.
-          const omitted =
-            this.cerebellum?.getToolDefinitions(this.excludedCapabilitiesFor(role)).length ?? 0
-          if (omitted > 0) {
-            sections.push(this.wrap('tools_status', toolsDisabledNotice(omitted)))
-            sectionsIncluded.push('tools_status')
-          }
-        } else {
-          const toolsBody =
-            this.cerebellum?.getToolsPrompt(this.excludedCapabilitiesFor(role)).trim() ?? ''
-          if (toolsBody.length > 0) {
-            sections.push(this.wrap('tools', toolsBody))
-            sectionsIncluded.push('tools')
-          }
+        // The capability INDEX — one line per capability, no schemas. The
+        // model always knows what exists; tool_search loads what a turn
+        // needs. Full schemas ship only for the core + activated set (the
+        // native tools param, selected in lockstep via selectTools).
+        const indexBody =
+          this.cerebellum
+            ?.getCapabilityIndex(this.excludedCapabilitiesFor(role), conversationId)
+            .trim() ?? ''
+        if (indexBody.length > 0) {
+          sections.push(
+            this.wrap(
+              'capabilities',
+              `Installed capabilities ([loaded] = callable right now; anything else is one tool_search/tool_activate away):\n${indexBody}`
+            )
+          )
+          sectionsIncluded.push('capabilities')
         }
 
-        // Pure skills (no tools, just procedure bodies) are injected into
-        // a <skills> section when the user's message matches their trigger
-        // keywords. This surfaces capabilities like "planning" that guide
-        // agent behaviour without providing callable tools. Skipped for a
-        // worker — these match the orchestrator's user-facing message, not the
-        // worker's composed sub-task, so they'd be noise.
-        if (this.cerebellum && message.trim() && !lean) {
-          const matched = this.cerebellum
-            .findRelevantSkills(message)
-            .filter((cap) => cap.tools.length === 0 && cap.body.trim().length > 0)
-          if (matched.length > 0) {
-            const skillsBody = matched
-              .map(
-                (cap) =>
-                  `<source path="brain/cerebellum/${cap.name}/SKILL.md">\n${cap.body}\n</source>`
-              )
-              .join('\n\n')
-            sections.push(this.wrap('skills', skillsBody))
-            sectionsIncluded.push('skills')
+        // The memory map: a byte-stable-per-day coverage stub telling the
+        // model WHAT exists to be recalled — never the content itself.
+        if (!lean) {
+          const memoryMap = await this.buildMemoryMap()
+          if (memoryMap.length > 0) {
+            sections.push(this.wrap('memory_map', memoryMap))
+            sectionsIncluded.push('memory_map')
           }
         }
       }
@@ -461,6 +441,10 @@ export class Prefrontal {
     if (this.corpus) {
       this.corpus.emit('context.built', {
         tokenCount: estimatedTokens,
+        // The model's FULL context window — a 1M model reads 1M on the meter.
+        // (Compaction enforces against getTokenBudget(), the window minus the
+        // output reserve; the meter deliberately shows the headline window
+        // because that's the number the user knows their model by.)
         tokenBudget: this.getContextWindow(),
         sectionsIncluded
       })
@@ -498,88 +482,56 @@ export class Prefrontal {
     return this.options.getContextWindow?.() ?? this.getTokenBudget()
   }
 
-  private async collectMemoryCandidates(
-    message: string,
-    exclude: Set<string>
-  ): Promise<ContextCandidate[]> {
-    if (!this.cortex || !message.trim()) return []
-    let hits: CortexSearchResult[] = []
+  /**
+   * The `<memory_map>` stub: a coverage MAP of everything recallable — never
+   * the content. Byte-stable per calendar day (cached) so it doesn't churn
+   * the provider prompt-cache prefix between turns: counts are rounded to
+   * coarse buckets and the whole string regenerates once per day.
+   */
+  private memoryMapCache: { day: string; body: string } | null = null
+
+  private async buildMemoryMap(): Promise<string> {
+    const day = new Date().toISOString().slice(0, 10)
+    if (this.memoryMapCache?.day === day) return this.memoryMapCache.body
+    if (!this.cortex) return ''
+
+    let body = ''
     try {
-      hits = this.cortex.search(message, 12)
-    } catch {
-      return []
-    }
-
-    const out: ContextCandidate[] = []
-    for (const hit of hits) {
-      if (exclude.has(hit.path)) continue
-      // Capability files (SKILL.md and plugin code) are surfaced via the
-      // <tools> section already; pulling them into <memory> would duplicate
-      // their content and burn tokens for nothing.
-      if (hit.path.startsWith('brain/cerebellum/')) continue
-      // Corpus logs are operational event trails for debugging — the LLM
-      // doesn't need to read its own event log, and at 500-700 tokens per
-      // day they crowd out actually-useful memories.
-      if (hit.path.startsWith('brain/corpus/')) continue
-      // Motor task transcripts are rewritten after every tool step. The
-      // running task's file embeds the user's message verbatim, so cortex
-      // scores it 1.00 and the prompt re-ingests a growing copy of the
-      // very conversation the model is already holding — mutating the
-      // prompt every iteration and defeating provider prefix caches.
-      // Past tasks stay reachable on demand via insula tools and through
-      // hippocampus episodes; task minutiae never belong in every prompt.
-      if (hit.path.startsWith('brain/motor/')) continue
-      // Basal-ganglia day files are the raw tool-outcome log. Their learning
-      // signal is already folded into context as the bounded preference digest
-      // (collectFeedbackCandidate below); pulling the raw days in here would
-      // re-introduce the firehose the digest exists to replace. They stay
-      // reachable verbatim on demand via wolffish_recall.
-      if (hit.path.startsWith('brain/basalganglia/')) continue
-      const content = await this.readFile(hit.path)
-      if (!content) continue
-      out.push({ category: 'memory', source: hit.path, content })
-    }
-    return out
-  }
-
-  private async collectRecentEpisodes(windowDays: number): Promise<ContextCandidate[]> {
-    if (this.hippocampus) {
-      const episodes = await this.hippocampus.getRecentEpisodes(windowDays).catch(() => [])
-      return episodes.map((ep) => ({
-        category: 'history' as ContextCategory,
-        source: `brain/hippocampus/episodes/${ep.date}.md`,
-        content: ep.content
-      }))
-    }
-    const dir = path.join(this.options.workspaceRoot, 'brain', 'hippocampus', 'episodes')
-    let entries: string[]
-    try {
-      entries = await fs.readdir(dir)
-    } catch {
-      return []
-    }
-
-    const dated = entries
-      .filter((name) => /^\d{4}-\d{2}-\d{2}\.md$/.test(name))
-      .sort()
-      .slice(-windowDays)
-
-    const out: ContextCandidate[] = []
-    for (const name of dated) {
-      try {
-        const raw = await fs.readFile(path.join(dir, name), 'utf8')
-        const content = raw.trim()
-        if (content.length === 0) continue
-        out.push({
-          category: 'history',
-          source: `brain/hippocampus/episodes/${name}`,
-          content
-        })
-      } catch {
-        // skip unreadable files
+      const cov = this.cortex.coverage()
+      const round = (n: number): string =>
+        n < 20 ? String(n) : n < 200 ? `~${Math.round(n / 10) * 10}` : `~${Math.round(n / 50) * 50}`
+      const lines: string[] = [
+        'Everything you have ever done, said, produced, or spent is indexed on disk — this is the coverage map, NOT the content. It is never evidence of absence: memory_search (2-3 phrasings) before concluding something was not recorded.'
+      ]
+      for (const s of cov.recordsBySource) {
+        const range = s.minDate && s.maxDate ? ` (${s.minDate} → ${s.maxDate})` : ''
+        lines.push(`- ${s.source}: ${round(s.count)} records${range}`)
       }
+      lines.push(
+        `- conversations on disk: ${round(cov.conversations)} (conversation_list / conversation_read)`
+      )
+      lines.push(
+        `- generated/uploaded files: ${round(cov.artifacts)} (memory_search sources: artifact)`
+      )
+
+      // Long-term knowledge topics (## headers of the five curated files) —
+      // tiny, and they tell the model what durable facts exist to be fetched.
+      const topics: string[] = []
+      for (const file of ['projects', 'people', 'preferences', 'technical', 'decisions']) {
+        const raw = await this.readFile(`brain/hippocampus/knowledge/${file}.md`)
+        if (!raw) continue
+        const headers = [...raw.matchAll(/^##\s+(.+\S)\s*$/gm)].map((m) => m[1]).slice(0, 8)
+        if (headers.length > 0) topics.push(`${file}: ${headers.join(', ')}`)
+      }
+      if (topics.length > 0) {
+        lines.push(`- knowledge topics — ${topics.join(' | ')} (memory_get the file for details)`)
+      }
+      body = lines.join('\n')
+    } catch {
+      body = ''
     }
-    return out
+    this.memoryMapCache = { day, body }
+    return body
   }
 
   private async collectFeedbackCandidate(windowDays: number): Promise<ContextCandidate | null> {
@@ -654,6 +606,7 @@ export class Prefrontal {
     }
     const stamp = formatStamp(new Date())
     const filename = `${stamp}.md`
+    await pruneDebugSnapshots(dir)
     const sourceList = args.filtered
       .map((it) => `- (${it.category}, score=${it.score.toFixed(2)}, ~${it.tokens}t) ${it.source}`)
       .join('\n')
@@ -695,39 +648,20 @@ function formatItem(item: ScoredCandidate): string {
 }
 
 function formatRuntimeBody(runtime: RuntimeContext | undefined): string {
+  // The batch-every-item doctrine that used to ride here unconditionally
+  // lives in the core contract (agents.core.md "Loop discipline") now — the
+  // runtime block carries only live counters, and only on the legacy path.
   const lines: string[] = []
-  if (runtime) {
-    if (runtime.renderCounters !== false) {
-      lines.push(`  Tool iteration this turn: ${runtime.iteration}`)
-      lines.push(`  Tools called this turn: ${runtime.toolsCalled}`)
-      // Gated on renderCounters (legacy path only) — in the optimized path the
-      // prompt is pinned, so this per-turn fact rides the volatile tail via
-      // formatRuntimeStatus instead, never touching the cached prefix.
-      const delivered = deliveredFilesReminder(runtime.deliveredFiles ?? [])
-      if (delivered) lines.push(`  ${delivered}`)
-    }
-    lines.push(
-      `  IMPORTANT: When a task requires calling a tool for each item in a set (e.g. reading N emails, fetching N pages), you MUST call the tool for EVERY item before producing final output. Batch 10-15 calls per response for efficiency; their results return to you automatically and you continue with the remaining items in the same loop. A response with no tool calls ENDS the task — never end one planning to "continue next turn". Metadata from search/list results is NOT a substitute for calling the per-item tool — if the task says "read all," call read for ALL, not just a subset.`
-    )
+  if (runtime && runtime.renderCounters !== false) {
+    lines.push(`  Tool iteration this turn: ${runtime.iteration}`)
+    lines.push(`  Tools called this turn: ${runtime.toolsCalled}`)
+    // Gated on renderCounters (legacy path only) — in the optimized path the
+    // prompt is pinned, so this per-turn fact rides the volatile tail via
+    // formatRuntimeStatus instead, never touching the cached prefix.
+    const delivered = deliveredFilesReminder(runtime.deliveredFiles ?? [])
+    if (delivered) lines.push(`  ${delivered}`)
   }
   return lines.join('\n')
-}
-
-/**
- * Body of the <tools_status> block shown to a local model when tools are
- * suppressed (restrictLocalModels). Tells the model it has no tools, why, and
- * how the user can turn them on — so the model can relay that to the user
- * instead of pretending to act.
- */
-function toolsDisabledNotice(omittedCount: number): string {
-  const plural = omittedCount === 1 ? 'tool' : 'tools'
-  return [
-    `You are running on a local model. Tool use is turned OFF for local models by default, so ${omittedCount} ${plural} that would normally be available ${omittedCount === 1 ? 'has' : 'have'} been withheld and you cannot call any tool this turn.`,
-    `Small local models often misuse tools, loop, or stall on a large tool list — keeping you tool-free is what lets you answer reliably.`,
-    `- For questions, explanations, writing, brainstorming, and conversation: answer fully and helpfully as yourself.`,
-    `- If a request needs tools (running commands, editing files, browsing the web, reading/sending channel messages): tell the user plainly that tool use is disabled for local models, and that they can enable it in Settings → Wolffish by turning off "Restrict local models" — best only for a capable local model with a large context window.`,
-    `Never invent tool output or claim an action happened.`
-  ].join('\n')
 }
 
 function groupByCategory(items: ScoredCandidate[]): Map<ContextCategory, ScoredCandidate[]> {
@@ -749,4 +683,34 @@ function formatStamp(d: Date): string {
   const ss = String(d.getSeconds()).padStart(2, '0')
   const ms = String(d.getMilliseconds()).padStart(3, '0')
   return `${yyyy}-${mm}-${dd}_${hh}-${mi}-${ss}.${ms}`
+}
+
+/** Keep at most this many prompt snapshots in brain/prefrontal/.debug. */
+const SNAPSHOT_KEEP = 50
+/** Only pay the readdir once the dir has clearly outgrown the cap. */
+const SNAPSHOT_PRUNE_SLACK = 10
+
+/**
+ * Cap .debug snapshot growth. Snapshot filenames are sortable timestamps, so
+ * lexicographic order IS chronological order — delete the oldest overflow.
+ * One snapshot lands per context build (hourly heartbeats alone add ~180KB
+ * each); without pruning the dir grew unbounded (83MB in 18 days observed).
+ */
+async function pruneDebugSnapshots(dir: string): Promise<void> {
+  let names: string[]
+  try {
+    names = (await fs.readdir(dir)).filter((n) => n.endsWith('.md'))
+  } catch {
+    return
+  }
+  if (names.length < SNAPSHOT_KEEP + SNAPSHOT_PRUNE_SLACK) return
+  names.sort()
+  const excess = names.slice(0, names.length - SNAPSHOT_KEEP)
+  for (const name of excess) {
+    try {
+      await fs.unlink(path.join(dir, name))
+    } catch {
+      // best-effort: pruning must never block a turn
+    }
+  }
 }

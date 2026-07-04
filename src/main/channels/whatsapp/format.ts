@@ -100,9 +100,8 @@ export function markdownToWhatsApp(input: string): string {
   // and silently demote the heading. The title line must look like prose
   // (not a list/quote/heading/table line) to avoid misreading a genuine
   // rule after structured content.
-  text = text.replace(
-    /^([ \t]*[^\s#>*+|-][^\n]*)\n[ \t]*(?:={3,}|-{3,})[ \t]*$/gm,
-    (_, title) => stash(`*${stripInlineMarkup(title)}*`)
+  text = text.replace(/^([ \t]*[^\s#>*+|-][^\n]*)\n[ \t]*(?:={3,}|-{3,})[ \t]*$/gm, (_, title) =>
+    stash(`*${stripInlineMarkup(title)}*`)
   )
 
   // ATX headings — WhatsApp has no headings; a bold line is the closest
@@ -129,9 +128,7 @@ export function markdownToWhatsApp(input: string): string {
     /(?<![\w*])\*\*(?!\s)((?:[^*\n]|\*(?!\*))+?)(?<!\s)\*\*(?![\w*])/g,
     (_, inner: string) => stash(`*${inner.replace(/\*([^*\n]+)\*/g, '_$1_')}*`)
   )
-  text = text.replace(/(?<![\w_])__([^_\n][^_\n]*?)__(?![\w_])/g, (_, inner) =>
-    stash(`*${inner}*`)
-  )
+  text = text.replace(/(?<![\w_])__([^_\n][^_\n]*?)__(?![\w_])/g, (_, inner) => stash(`*${inner}*`))
 
   // Strikethrough: ~~x~~ → ~x~.
   text = text.replace(/~~([^~\n]+)~~/g, '~$1~')

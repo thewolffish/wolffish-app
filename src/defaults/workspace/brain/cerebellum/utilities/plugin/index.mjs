@@ -131,7 +131,7 @@ const toolDefinitions = [
   {
     name: 'send_file',
     description:
-      'Deliver a file to the user as a downloadable attachment in the current conversation (in-app chat, WhatsApp, or Telegram). Works for any file type. Up to 50 MB.',
+      'Deliver a file to the user as a downloadable attachment in the current conversation (in-app chat, WhatsApp, or Telegram). Works for any file type. THE ONLY WAY a file reaches the user — no tool auto-delivers its output. Up to 50 MB.',
     parameters: {
       type: 'object',
       properties: {

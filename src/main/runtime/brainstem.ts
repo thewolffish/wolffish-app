@@ -2,6 +2,7 @@ import { diskWriter } from '@main/io/diskWriter'
 import type { Agent } from '@main/runtime/agent'
 import type { Corpus } from '@main/runtime/corpus'
 import type { Cortex } from '@main/runtime/cortex'
+import { isIndexablePath } from '@main/runtime/cortexIngest'
 import type { Hippocampus, KnowledgeFile } from '@main/runtime/hippocampus'
 import type { ChatMessage, Thalamus } from '@main/runtime/thalamus'
 import { DEFAULT_COMPACTION, type CompactionConfig } from '@main/workspace/workspace'
@@ -88,6 +89,12 @@ DAILY LOG:
 const NOTHING_TO_PROMOTE = /nothing to promote/i
 
 const DEFAULT_DEBOUNCE_MS = 500
+
+/**
+ * Debounce for append-heavy streams (corpus event log, app logs) — indexed
+ * for retrieval but never worth re-parsing on every 2-second flush.
+ */
+const SLOW_INDEX_DEBOUNCE_MS = 60_000
 const MIN_EPISODE_ENTRIES_FOR_COMPACTION = 3
 
 // How far back a missed run may be and still fire as a catch-up on launch.
@@ -264,10 +271,25 @@ export class Brainstem {
     if (this.watcher) return
     if (!this.workspaceRoot) return
 
-    const root = path.join(this.workspaceRoot, 'brain')
+    // Every root the cortex indexes: brain/ (memory, conversations, tasks)
+    // plus the workspace-level trees the retrieval tools cover — usage ledger,
+    // app/extension logs, and the artifact trees (metadata-only ingest).
+    // diskWriter can't see plugin/shell writes, so the watcher is the one
+    // ingest trigger that catches everything.
+    const workspaceRoot = this.workspaceRoot
+    const roots = [
+      'brain',
+      'usage',
+      'logs',
+      'files',
+      'uploads',
+      'screenshots',
+      'speech',
+      'whatsapp'
+    ].map((dir) => path.join(workspaceRoot, dir))
     let watcher: FSWatcher
     try {
-      watcher = chokidar.watch(root, {
+      watcher = chokidar.watch(roots, {
         ignoreInitial: true,
         persistent: true,
         ignored: (filepath) => shouldIgnoreWatch(filepath)
@@ -280,7 +302,6 @@ export class Brainstem {
     const onFileChange = (filepath: string, action: 'index' | 'remove'): void => {
       if (isHeartbeatFile(filepath)) {
         void this.reloadScheduler()
-        return
       }
       this.scheduleIndex(filepath, action)
     }
@@ -945,18 +966,52 @@ export class Brainstem {
     return () => this.runHeartbeatJob(body, label)
   }
 
-  private runHeartbeatJob(
+  private async runHeartbeatJob(
     instruction: string,
     label: string,
     channel: 'heartbeat' | 'procedure' = 'heartbeat'
   ): Promise<void> {
-    if (!this.agent) return Promise.resolve()
+    if (!this.agent) return
     // Serialization is handled by the drain loop, so this just runs the turn.
     // `channel` stamps the sealed conversation so a procedure run reads as a
     // procedure (not an automation) in history.
-    return this.agent
-      .processAutonomous({ instruction, jobLabel: label, channel })
-      .then(() => undefined)
+    const startedAt = Date.now()
+    try {
+      await this.agent.processAutonomous({ instruction, jobLabel: label, channel })
+      await this.appendRunHistory(label, channel, 'ok', Date.now() - startedAt)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      await this.appendRunHistory(label, channel, 'error', Date.now() - startedAt, msg)
+      throw err
+    }
+  }
+
+  /**
+   * Persist every automation/procedure run outcome to
+   * brain/brainstem/run-history.md. The in-memory job state only knows about
+   * THIS session, and corpus event logs purge after 7 days — this file is the
+   * durable, indexed answer to "why did last week's job fail?".
+   */
+  private async appendRunHistory(
+    label: string,
+    channel: string,
+    status: 'ok' | 'error',
+    durationMs: number,
+    error?: string
+  ): Promise<void> {
+    if (!this.workspaceRoot) return
+    const p = path.join(this.workspaceRoot, 'brain', 'brainstem', 'run-history.md')
+    const ts = new Date().toISOString()
+    const seconds = (durationMs / 1000).toFixed(1)
+    const suffix = error ? ` | ${error.replace(/\s+/g, ' ').slice(0, 300)}` : ''
+    try {
+      await diskWriter.appendLine(
+        p,
+        `- ${ts} | ${channel} | ${label} | ${status} | ${seconds}s${suffix}`
+      )
+    } catch {
+      // best-effort: history must never break a job run
+    }
   }
 
   private async runWeeklyReview(jobId?: string): Promise<void> {
@@ -975,7 +1030,17 @@ export class Brainstem {
       return
     }
     log('text', `Consolidating ${recent.length} episode${recent.length === 1 ? '' : 's'}`)
-    const digest = recent.map((ep) => `## ${ep.date}\n\n${ep.content}`).join('\n\n---\n\n')
+    // The daily compaction job already appends its LLM-distilled summary of
+    // each day into this week's consolidated file. Re-appending the RAW 7-day
+    // episode concatenation on top of that (the old behavior) only polluted
+    // the file — and the index — with a giant low-quality record. The weekly
+    // pass now writes a compact coverage line instead.
+    const dates = recent.map((ep) => ep.date)
+    const entryCount = recent.reduce(
+      (sum, ep) => sum + (ep.content.match(/^## /gm)?.length ?? 0),
+      0
+    )
+    const digest = `Week in review: ${entryCount} logged turns across ${dates.length} active day${dates.length === 1 ? '' : 's'} (${dates[0]} → ${dates[dates.length - 1]}). Daily summaries above; full logs in episodes/.`
     await this.hippocampus.writeConsolidated(weekKey(formatDate(today)), digest)
     log('text', 'Weekly digest written')
   }
@@ -1051,15 +1116,24 @@ export class Brainstem {
 
   private scheduleIndex(filepath: string, action: 'index' | 'remove'): void {
     if (!this.cortex) return
-    if (!filepath.toLowerCase().endsWith('.md')) return
+    if (!this.workspaceRoot) return
     if (shouldIgnoreWatch(filepath)) return
+    const rel = path.relative(this.workspaceRoot, filepath).split(path.sep).join('/')
+    if (rel.startsWith('..')) return
+    if (!isIndexablePath(rel)) return
+
+    // Append-heavy streams (corpus event log flushes every 2s, app logs) get
+    // a long debounce so the indexer isn't thrashed by every flush; knowledge
+    // and conversation writes stay near-realtime.
+    const slow = rel.startsWith('brain/corpus/') || rel.startsWith('logs/')
+    const debounce = slow ? SLOW_INDEX_DEBOUNCE_MS : this.debounceMs
 
     const existing = this.pendingIndex.get(filepath)
     if (existing) clearTimeout(existing)
     const timer = setTimeout(() => {
       this.pendingIndex.delete(filepath)
       void this.dispatchIndex(filepath, action)
-    }, this.debounceMs)
+    }, debounce)
     this.pendingIndex.set(filepath, timer)
   }
 
@@ -1076,15 +1150,22 @@ export class Brainstem {
 
 // ── File-watcher ignore rules ─────────────────────────────────────────
 
+/**
+ * Subtree pruning for the chokidar watcher. This callback also receives
+ * DIRECTORY paths — returning true prunes the whole subtree — so it must only
+ * reject known-bad trees (dot-dirs, node_modules, the index's own db files).
+ * File-level indexability is decided by isIndexablePath in scheduleIndex.
+ */
 function shouldIgnoreWatch(filepath: string): boolean {
   const normalized = filepath.replace(/\\/g, '/')
   // The heartbeat "last seen" tick is rewritten every minute — never react to it.
   if (normalized.endsWith('/brain/brainstem/heartbeat-state.json')) return true
   if (normalized.endsWith('cortex.db')) return true
   if (normalized.endsWith('cortex.db-wal') || normalized.endsWith('cortex.db-shm')) return true
-  if (normalized.includes('/.debug/')) return true
-  if (normalized.includes('/brain/corpus/')) return true
-  if (/\.log\.md$/i.test(normalized)) return true
+  if (normalized.includes('/.debug/') || normalized.includes('/.debug-archive/')) return true
+  // Baileys credential churn — high write frequency, never indexable.
+  if (normalized.includes('/whatsapp/auth')) return true
+  if (normalized.includes('/node_modules/') || normalized.endsWith('/node_modules')) return true
   const base = path.basename(normalized)
   if (base.startsWith('.')) return true
   return false

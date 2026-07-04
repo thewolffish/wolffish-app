@@ -1,5 +1,3 @@
-import type { Corpus } from '@main/runtime/corpus'
-
 /**
  * RAS is the attention filter that decides what makes it into context.
  *
@@ -32,7 +30,6 @@ export type BudgetAllocation = Record<ContextCategory, number>
 
 export type RASOptions = {
   totalBudgetTokens?: number
-  corpus?: Corpus
 }
 
 export const DEFAULT_BUDGET_TOKENS = 8000
@@ -132,12 +129,9 @@ const STOP_WORDS = new Set([
 
 export class RAS {
   private totalBudget: number
-  private corpus: Corpus | null
 
   constructor(options: RASOptions = {}) {
     this.totalBudget = options.totalBudgetTokens ?? DEFAULT_BUDGET_TOKENS
-    this.corpus = options.corpus ?? null
-    void this.corpus
   }
 
   /**

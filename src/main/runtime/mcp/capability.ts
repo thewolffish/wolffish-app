@@ -78,11 +78,39 @@ export function toolsToDescriptors(
     }
     descriptors.push({
       name: namespaced,
-      description: tool.description?.trim() || `${original} (no description provided)`,
+      description:
+        sanitizeToolDescription(tool.description) || `${original} (no description provided)`,
       parameters
     })
   }
   return { descriptors, nameMap }
+}
+
+/** Longest per-tool description an MCP server may inject into requests. */
+const TOOL_DESCRIPTION_MAX_CHARS = 400
+
+/**
+ * MCP tool descriptions pass into every request once the capability is
+ * activated — and servers ship whatever they like (one live server embedded
+ * multi-heading markdown charters that rendered as fake capability headers
+ * inside the prompt). Neutralize prompt-structure forgery (markdown headings,
+ * XML-ish tags) and cap the length so one server can't reintroduce catalog
+ * bloat.
+ */
+export function sanitizeToolDescription(raw: string | undefined): string {
+  if (!raw) return ''
+  let text = raw.trim()
+  // Strip heading markers at line starts and flatten structural newlines —
+  // a description is a sentence, not a document.
+  text = text
+    .replace(/^\s{0,3}#{1,6}\s+/gm, '')
+    .replace(/<\/?[a-zA-Z][^>]*>/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (text.length > TOOL_DESCRIPTION_MAX_CHARS) {
+    text = text.slice(0, TOOL_DESCRIPTION_MAX_CHARS - 1) + '…'
+  }
+  return text
 }
 
 /**
@@ -100,7 +128,7 @@ export function buildDescription(opts: {
       : `Tools from the connected MCP server "${opts.displayName}".`
   const lines = [
     identity,
-    'These tools are live while this block is present; if it disappears from a later turn, the server is offline and reconnecting.'
+    'Check connection state with mcp_list when a call fails — a server can drop and reconnect between turns.'
   ]
   const instructions = opts.instructions?.trim()
   if (instructions) {

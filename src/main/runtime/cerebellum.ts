@@ -3,6 +3,14 @@ import type { ChannelStatusSnapshot } from '@main/channels/status'
 import { diskWriter } from '@main/io/diskWriter'
 import type { Corpus } from '@main/runtime/corpus'
 import type {
+  ArtifactHit,
+  ConversationSummary,
+  RecordHit,
+  RecordRow,
+  UsageSummary
+} from '@main/runtime/cortex'
+import type { RecordSource } from '@main/runtime/cortexIngest'
+import type {
   McpAddInput,
   McpAddResult,
   McpServerSnapshot,
@@ -416,6 +424,63 @@ export type McpHost = {
   authorize: (id: string) => Promise<{ ok: boolean; error?: string }>
 }
 
+/**
+ * Retrieval surface injected into the `introspect` capability's plugin via
+ * its init context (PluginContext.cortex). Implemented in the main process
+ * (index.ts) over the live Cortex index + Hippocampus write path, so the
+ * memory_search / conversation_list / usage_report tool family queries the
+ * same records the ambient context assembly reads — one index, no drift.
+ * Optional on PluginContext — every plugin other than `introspect` ignores it.
+ */
+export type CortexHost = {
+  /** Ranked record-level FTS across every indexed source, with snippets. */
+  searchRecords: (
+    query: string,
+    opts?: { sources?: RecordSource[]; after?: string; before?: string; limit?: number }
+  ) => RecordHit[]
+  /** Full stored records by exact ref or ref prefix (ordered). */
+  getRecordsByRef: (refPrefix: string, limit?: number) => RecordRow[]
+  /** Records pinned to a single resolved day. */
+  recordsByDate: (date: string, sources?: RecordSource[], limit?: number) => RecordRow[]
+  /** Enumerate conversations, newest first. */
+  listConversations: (opts?: {
+    channel?: string
+    after?: number
+    before?: number
+    limit?: number
+  }) => ConversationSummary[]
+  /** Aggregate LLM spend from the usage ledger. */
+  usageSummary: (opts?: { after?: string; before?: string }) => UsageSummary
+  /** Generated/uploaded artifact lookup with conversation provenance. */
+  searchArtifacts: (opts?: {
+    query?: string
+    kind?: string
+    conversationId?: string
+    limit?: number
+  }) => ArtifactHit[]
+  /** Cheap per-source counts + date coverage — the "what memory exists" map. */
+  coverage: () => {
+    recordsBySource: Array<{
+      source: string
+      count: number
+      minDate: string | null
+      maxDate: string | null
+    }>
+    conversations: number
+    artifacts: number
+  }
+  /**
+   * Durably save a fact into the curated knowledge store (with exact-line
+   * dedup). The write path is hippocampus.promoteToKnowledge — the same file
+   * the nightly consolidation appends to — so model-saved and consolidated
+   * facts live together.
+   */
+  saveKnowledge: (
+    file: 'projects' | 'people' | 'preferences' | 'technical' | 'decisions',
+    fact: string
+  ) => Promise<{ ok: boolean; deduped: boolean }>
+}
+
 export type PluginContext = {
   pluginDir: string
   workspaceRoot: string
@@ -470,6 +535,13 @@ export type PluginContext = {
    * every other plugin.
    */
   mcp?: McpHost
+  /**
+   * Retrieval surface over the cortex index. Present only when the host wired
+   * one in via setCortexHost — used by the `introspect` capability's
+   * memory_search / memory_get / conversation_list / conversation_read /
+   * memory_save / usage_report tools. Undefined for every other plugin.
+   */
+  cortex?: CortexHost
   /**
    * Ask the user a multiple-choice question and block until they answer.
    * Used by the `ask` capability to pause the agent loop, render an
@@ -526,10 +598,60 @@ export type CerebellumOptions = {
 
 const PLUGIN_FILES = ['index.mjs', 'index.js', 'index.cjs']
 
+/**
+ * Capabilities whose full tool schemas ship on EVERY request: the bootstrap
+ * set that must never require a discovery hop. (1) tool-discovery + the
+ * introspect retrieval suite — the keys to every other tool and every byte of
+ * memory; (2) universal primitives used across most task types (filesystem,
+ * shell, web-search, secrets, system, ask, send_file); (3) the channel send
+ * tools, which register only while connected and can't wait a hop to reply.
+ * Everything else — github, google, browser(s), media, documents, MCP
+ * servers — is one tool_search away. Tunable via config.pinnedCapabilities.
+ */
+export const CORE_CAPABILITIES: ReadonlySet<string> = new Set([
+  'tool-discovery',
+  // Delegation must be core: orchestrator.md commands spawn_worker at turn
+  // start, so its schemas must ship without a discovery hop. Role gating
+  // (excludedCapabilitiesFor) still hides it from single-mode/worker turns.
+  'orchestrator',
+  'introspect',
+  'filesystem',
+  'shell',
+  'ask',
+  'utilities',
+  'web-search',
+  'secrets',
+  'system',
+  'telegram',
+  'whatsapp',
+  'electron'
+])
+
+/** Max non-core capabilities exposed per conversation before LRU eviction. */
+const ACTIVE_SET_MAX = 10
+
+/** Individual index lines before the unloaded remainder collapses to a count. */
+const CAPABILITY_INDEX_MAX_LINES = 60
+
+type ActiveToolset = {
+  names: Set<string>
+  version: number
+  lastUsed: Map<string, number>
+}
+
+function oneLineDescription(text: string, max: number): string {
+  const flat = text.replace(/\s+/g, ' ').trim()
+  return flat.length > max ? flat.slice(0, max - 1) + '…' : flat
+}
+
 export class Cerebellum {
   private capabilities = new Map<string, Capability>()
   private plugins = new Map<string, WolffishPlugin>()
   private toolToCapability = new Map<string, string>()
+  /** Per-conversation activated (non-core) capabilities. Key: conversationId. */
+  private activeSets = new Map<string, ActiveToolset>()
+  /** Extra always-exposed capabilities from config.pinnedCapabilities. */
+  private pinnedCapabilities = new Set<string>()
   private dependencyCache = new Map<string, boolean>()
   private loaded = false
   private currentConversationId: string | null = null
@@ -547,6 +669,7 @@ export class Cerebellum {
   private proceduresHost?: ProceduresHost
   private orchestratorHost?: OrchestratorHost
   private mcpHost?: McpHost
+  private cortexHost?: CortexHost
   /**
    * Bumped every time the live tool surface changes — a reload (skills
    * added/edited/removed) or an enable/disable toggle. The agent loop pins
@@ -671,6 +794,16 @@ export class Cerebellum {
     this.mcpHost = host
   }
 
+  /**
+   * Wire the retrieval host (implemented in the main process over the live
+   * Cortex index + Hippocampus) that the `introspect` capability's plugin
+   * receives in its init context. Set once at startup; survives reload() so
+   * the bridge keeps working after the plugin is re-imported.
+   */
+  setCortexHost(host: CortexHost): void {
+    this.cortexHost = host
+  }
+
   isDisabled(name: string): boolean {
     return this.disabled.has(name)
   }
@@ -763,10 +896,15 @@ export class Cerebellum {
    */
   async loadAll(): Promise<{ capabilities: Capability[] }> {
     if (this.loaded) return { capabilities: [...this.capabilities.values()] }
+    // The built-in discovery capability (tool_search / tool_activate) exists
+    // regardless of what — if anything — loads from disk: it is the bootstrap
+    // tool the lean surface depends on. Registered before the disk scan so
+    // every loadAll exit path has it.
+    this.registerDiscoveryCapability()
     const root = this.options.workspaceRoot
     if (!root) {
       this.loaded = true
-      return { capabilities: [] }
+      return { capabilities: [...this.capabilities.values()] }
     }
     const dir = path.join(root, 'brain', 'cerebellum')
     let entries: Array<import('node:fs').Dirent>
@@ -774,7 +912,7 @@ export class Cerebellum {
       entries = await fs.readdir(dir, { withFileTypes: true })
     } catch {
       this.loaded = true
-      return { capabilities: [] }
+      return { capabilities: [...this.capabilities.values()] }
     }
 
     for (const entry of entries) {
@@ -809,43 +947,71 @@ export class Cerebellum {
   }
 
   /**
-   * Render the `<tools>` section the prefrontal folds into the system
-   * prompt. Each loaded capability contributes a header, its description,
-   * and a brief tool catalog. Empty when no capabilities are loaded.
-   *
-   * `exclude` mirrors {@link getToolDefinitions}: capabilities in the set are
-   * left out of the prompt text. The prefrontal passes the role's exclusion
-   * (e.g. a worker's delegation + channel carve-out) so the catalog the model
-   * reads matches the tools it can actually call — no phantom listings.
+   * One-line-per-capability index the prefrontal folds into the system
+   * prompt in place of the old full `<tools>` catalog. The model always
+   * KNOWS what exists (name + short description + tool count) without
+   * carrying schemas; `tool_search` activates a capability on demand.
+   * Exposed (core/pinned/activated) capabilities are marked `[loaded]` so
+   * the model can tell which tools are callable right now. Past
+   * CAPABILITY_INDEX_MAX_LINES the unloaded remainder collapses to a
+   * grouped count so prompt cost stays O(1) in installed-capability count.
    */
-  getToolsPrompt(exclude?: ReadonlySet<string>): string {
-    const blocks: string[] = []
+  getCapabilityIndex(exclude?: ReadonlySet<string>, conversationId?: string | null): string {
+    const key = this.activeKey(conversationId)
+    const loaded: string[] = []
+    const unloaded: string[] = []
+    let collapsedCaps = 0
+    let collapsedTools = 0
+    const describe = (cap: Capability): string => {
+      const desc = oneLineDescription(cap.description, 90)
+      const kind = cap.tools.length > 0 ? `${cap.tools.length} tools` : 'guide'
+      return `- ${cap.name} (${kind}) — ${desc}`
+    }
     for (const cap of this.capabilities.values()) {
       if (cap.status !== 'ok') continue
       if (this.disabled.has(cap.name)) continue
       if (exclude?.has(cap.name)) continue
-      if (cap.tools.length === 0) continue
-      const lines: string[] = [`## ${cap.name}`, cap.description]
-      for (const tool of cap.tools) {
-        lines.push(`- \`${tool.name}\` — ${tool.description}`)
+      if (cap.tools.length === 0 && !cap.body) continue
+      if (cap.tools.length > 0 && this.isExposed(cap.name, key)) {
+        loaded.push(`${describe(cap)} [loaded]`)
+      } else if (unloaded.length < CAPABILITY_INDEX_MAX_LINES) {
+        unloaded.push(describe(cap))
+      } else {
+        collapsedCaps++
+        collapsedTools += cap.tools.length
       }
-      blocks.push(lines.join('\n'))
     }
-    return blocks.join('\n\n')
+    const lines = [...loaded, ...unloaded]
+    if (collapsedCaps > 0) {
+      lines.push(
+        `- …plus ${collapsedCaps} more capabilities (${collapsedTools} tools) — tool_search finds any of them`
+      )
+    }
+    return lines.join('\n')
   }
 
   /**
    * Structured tool definitions handed to the LLM API call. Tools from
    * pure-skill capabilities (no plugin) are filtered out — the LLM should
    * only see what can actually execute.
+   *
+   * Without `opts`, returns EVERY enabled capability's tools (management
+   * surfaces, counts). The agent loop passes `{ conversationId }` to get the
+   * per-conversation exposed set: core + pinned + capabilities activated via
+   * tool_search — the lean surface that actually ships to the provider.
    */
-  getToolDefinitions(exclude?: ReadonlySet<string>): ToolDefinition[] {
+  getToolDefinitions(
+    exclude?: ReadonlySet<string>,
+    opts?: { conversationId?: string | null }
+  ): ToolDefinition[] {
+    const key = opts ? this.activeKey(opts.conversationId) : null
     const out: ToolDefinition[] = []
     for (const cap of this.capabilities.values()) {
       if (cap.status !== 'ok') continue
       if (!cap.hasPlugin) continue
       if (this.disabled.has(cap.name)) continue
       if (exclude?.has(cap.name)) continue
+      if (key !== null && !this.isExposed(cap.name, key)) continue
       for (const tool of cap.tools) {
         out.push({
           name: tool.name,
@@ -857,32 +1023,253 @@ export class Cerebellum {
     return out
   }
 
+  // ── Active toolset (conversation-scoped tool discovery) ──────────────
+
   /**
-   * Match the message against trigger keywords and return matching skill
-   * bodies for prompt injection. Pure skills (git) hit here too
-   * so the LLM sees their procedure when relevant.
+   * Wire extra always-exposed capabilities from config.pinnedCapabilities.
+   * Set once at startup — the escape hatch for tuning the core set without
+   * a code change.
    */
-  findRelevantSkills(message: string, limit = 3): Capability[] {
-    const lower = message.toLowerCase()
-    const always: Capability[] = []
+  setPinnedCapabilities(names: string[]): void {
+    this.pinnedCapabilities = new Set(names)
+    this.generation++
+  }
+
+  /**
+   * Toolset version for one conversation: global generation (capability
+   * reloads, MCP connects, skill toggles) plus that conversation's private
+   * activation counter. The agent's per-turn pin compares THIS — so an
+   * activation in a heartbeat run never invalidates a live chat's pinned
+   * tools (and its provider prompt cache) and vice versa.
+   */
+  getToolsetVersion(conversationId?: string | null): number {
+    const set = this.activeSets.get(this.activeKey(conversationId))
+    return this.generation + (set?.version ?? 0)
+  }
+
+  /**
+   * Expose a capability's tools to one conversation. Idempotent; core and
+   * pinned capabilities are always exposed. Bounded by an LRU: the least
+   * recently USED activation is dropped past ACTIVE_SET_MAX — invisible to
+   * the model because a call to an evicted tool auto-reactivates it.
+   */
+  activateCapability(
+    name: string,
+    conversationId?: string | null
+  ): { ok: boolean; error?: string } {
+    const cap = this.capabilities.get(name)
+    if (!cap || cap.status !== 'ok') {
+      return { ok: false, error: `no capability named "${name}"` }
+    }
+    if (this.disabled.has(name)) {
+      return { ok: false, error: `capability "${name}" is disabled (skill_enable to turn it on)` }
+    }
+    const key = this.activeKey(conversationId)
+    if (CORE_CAPABILITIES.has(name) || this.pinnedCapabilities.has(name)) {
+      return { ok: true }
+    }
+    let set = this.activeSets.get(key)
+    if (!set) {
+      set = { names: new Set(), version: 0, lastUsed: new Map() }
+      this.activeSets.set(key, set)
+    }
+    set.lastUsed.set(name, Date.now())
+    if (set.names.has(name)) return { ok: true }
+    set.names.add(name)
+    if (set.names.size > ACTIVE_SET_MAX) {
+      let oldest: string | null = null
+      let oldestAt = Infinity
+      for (const n of set.names) {
+        if (n === name) continue
+        const at = set.lastUsed.get(n) ?? 0
+        if (at < oldestAt) {
+          oldestAt = at
+          oldest = n
+        }
+      }
+      if (oldest) set.names.delete(oldest)
+    }
+    set.version++
+    return { ok: true }
+  }
+
+  /** True when a capability's tools ship to this conversation's requests. */
+  private isExposed(capName: string, key: string): boolean {
+    if (CORE_CAPABILITIES.has(capName)) return true
+    if (this.pinnedCapabilities.has(capName)) return true
+    return this.activeSets.get(key)?.names.has(capName) ?? false
+  }
+
+  private activeKey(conversationId?: string | null): string {
+    return conversationId ?? this.getCurrentConversationId() ?? '(none)'
+  }
+
+  /** Refresh a capability's LRU stamp when one of its tools actually runs. */
+  private touchCapabilityUse(capName: string): void {
+    const set = this.activeSets.get(this.activeKey())
+    if (set?.names.has(capName)) set.lastUsed.set(capName, Date.now())
+  }
+
+  /**
+   * Score every capability (and pure skill) against a query — the engine
+   * behind tool_search. Deterministic term matching over name, description,
+   * trigger keywords, and tool names/descriptions.
+   */
+  searchCapabilities(query: string, limit = 5): Array<{ cap: Capability; score: number }> {
+    const terms = query
+      .toLowerCase()
+      .split(/[^\p{L}\p{N}_]+/u)
+      .filter((t) => t.length >= 3)
+    if (terms.length === 0) return []
     const scored: Array<{ cap: Capability; score: number }> = []
     for (const cap of this.capabilities.values()) {
       if (cap.status !== 'ok') continue
       if (this.disabled.has(cap.name)) continue
-      // A trigger of "*" means always inject this skill — no keyword
-      // matching needed. These don't count against the limit.
-      if (cap.triggers.keywords.includes('*')) {
-        always.push(cap)
-        continue
-      }
+      const name = cap.name.toLowerCase()
+      const desc = cap.description.toLowerCase()
+      const triggers = cap.triggers.keywords.join(' ').toLowerCase()
+      const toolNames = cap.tools
+        .map((t) => t.name)
+        .join(' ')
+        .toLowerCase()
+      const toolDescs = cap.tools
+        .map((t) => t.description)
+        .join(' ')
+        .toLowerCase()
       let score = 0
-      for (const kw of cap.triggers.keywords) {
-        if (lower.includes(kw.toLowerCase())) score += 1
+      for (const term of terms) {
+        if (name.includes(term)) score += 4
+        if (toolNames.includes(term)) score += 3
+        if (triggers.includes(term)) score += 2
+        if (desc.includes(term)) score += 2
+        if (toolDescs.includes(term)) score += 1
       }
       if (score > 0) scored.push({ cap, score })
     }
     scored.sort((a, b) => b.score - a.score)
-    return [...always, ...scored.slice(0, limit).map((s) => s.cap)]
+    return scored.slice(0, limit)
+  }
+
+  /**
+   * Register the built-in `tool-discovery` capability (tool_search /
+   * tool_activate). In-process like the channel/MCP capabilities, part of
+   * the core set, and implemented over this cerebellum's own registry —
+   * activation bumps only the calling conversation's toolset version, so
+   * the new tools are callable on the very next loop iteration.
+   */
+  private registerDiscoveryCapability(): void {
+    const describeMatch = (cap: Capability, exposed: boolean): string => {
+      const head = `## ${cap.name}${exposed ? ' [loaded]' : ''} — ${oneLineDescription(cap.description, 120)}`
+      if (cap.tools.length === 0) {
+        return `${head}\n(guide only — read it with skill_read_source or ask skills to show it)`
+      }
+      const shown = cap.tools.slice(0, 8)
+      const lines = shown.map((t) => `- \`${t.name}\` — ${oneLineDescription(t.description, 100)}`)
+      if (cap.tools.length > shown.length) {
+        lines.push(`- …and ${cap.tools.length - shown.length} more`)
+      }
+      return `${head}\n${lines.join('\n')}`
+    }
+    const plugin: WolffishPlugin = {
+      name: 'tool-discovery',
+      tools: [],
+      execute: async (toolName, args) => {
+        if (toolName === 'tool_search') {
+          const query = typeof args?.query === 'string' ? args.query.trim() : ''
+          if (!query) {
+            return { success: false, error: 'Provide a query describing what you need to do.' }
+          }
+          const matches = this.searchCapabilities(query, 5)
+          if (matches.length === 0) {
+            return {
+              success: true,
+              output:
+                `No capability matches "${query}". Try different words (tool_search is term-based) — ` +
+                'and only fall back to shell_exec after 2-3 rephrasings find nothing.'
+            }
+          }
+          const key = this.activeKey(null)
+          const top = matches.find((m) => m.cap.tools.length > 0)
+          let activationNote = ''
+          if (top && !this.isExposed(top.cap.name, key)) {
+            const res = this.activateCapability(top.cap.name)
+            if (res.ok) {
+              activationNote = `Activated \`${top.cap.name}\` — its tools are callable now. `
+            }
+          } else if (top) {
+            activationNote = `\`${top.cap.name}\` is already loaded. `
+          }
+          const blocks = matches.map((m) => describeMatch(m.cap, this.isExposed(m.cap.name, key)))
+          return {
+            success: true,
+            output: `${activationNote}tool_activate(<name>) loads any other match.\n\n${blocks.join('\n\n')}`
+          }
+        }
+        if (toolName === 'tool_activate') {
+          const name = typeof args?.capability === 'string' ? args.capability.trim() : ''
+          if (!name)
+            return {
+              success: false,
+              error: 'Provide `capability` (a name from tool_search or the capability index).'
+            }
+          const cap = this.capabilities.get(name)
+          const res = this.activateCapability(name)
+          if (!res.ok || !cap) {
+            return {
+              success: false,
+              error: `${res.error ?? `no capability named "${name}"`}. tool_search to find the right name.`
+            }
+          }
+          return {
+            success: true,
+            output: `Loaded \`${name}\`.\n\n${describeMatch(cap, true)}`
+          }
+        }
+        return { success: false, error: `tool-discovery: unknown tool ${toolName}` }
+      }
+    }
+    this.registerInProcessCapability(
+      {
+        name: 'tool-discovery',
+        dir: '',
+        description:
+          'Find and load tools on demand. The capability index in your prompt lists what exists; tool_search/tool_activate make a capability callable.',
+        triggers: { keywords: [] },
+        tools: [
+          {
+            name: 'tool_search',
+            description:
+              'Search every installed capability (including MCP servers) by what you need to do, and auto-load the best match so its tools become callable this turn. Use BEFORE assuming a tool does not exist and BEFORE reaching for shell — try 2-3 phrasings.',
+            parameters: {
+              query: {
+                type: 'string',
+                required: true,
+                description: 'What you need to do (e.g. "resize a video", "create github issue").'
+              }
+            }
+          },
+          {
+            name: 'tool_activate',
+            description:
+              'Load a specific capability by name (from the capability index or a tool_search result) so its tools become callable this turn.',
+            parameters: {
+              capability: {
+                type: 'string',
+                required: true,
+                description: 'Exact capability name, e.g. "ffmpeg", "github", "mcp-zapier-com".'
+              }
+            }
+          }
+        ],
+        body: '',
+        hasPlugin: true,
+        status: 'ok',
+        requires: [],
+        packages: {},
+        npmDependencies: {}
+      },
+      plugin
+    )
   }
 
   /**
@@ -915,11 +1302,22 @@ export class Cerebellum {
   ): Promise<ToolExecutionResult> {
     const capName = this.toolToCapability.get(name)
     if (!capName) {
-      return { success: false, error: `unknown tool: ${name}` }
+      // Deterministic and instructive — a retry would fail identically, and
+      // under lean tool exposure "unknown" usually means "not discovered yet".
+      return {
+        success: false,
+        error: `unknown tool: ${name}. Not every tool is preloaded — tool_search("what you need to do") finds and loads the right capability.`
+      }
     }
     if (this.disabled.has(capName)) {
       return { success: false, error: `capability "${capName}" is disabled` }
     }
+    // Transparent auto-activation: the model may call a tool it knows from
+    // the capability index, an earlier conversation, or after LRU eviction.
+    // The plugin is loaded either way — expose the capability to this
+    // conversation so the NEXT pin ships its schemas too.
+    this.activateCapability(capName)
+    this.touchCapabilityUse(capName)
     let plugin = this.plugins.get(capName)
     if (!plugin) {
       // Plugin is registered but not yet loaded. This path runs when a tool
@@ -1300,6 +1698,7 @@ export class Cerebellum {
         procedures: this.proceduresHost,
         orchestrator: this.orchestratorHost,
         mcp: this.mcpHost,
+        cortex: this.cortexHost,
         askUser: (input) => this.dispatchAskUser(input),
         getChannelStatus: () => this.channelStatusProvider?.() ?? []
       })

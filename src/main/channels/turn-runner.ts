@@ -39,6 +39,12 @@ export type TurnSendOptions = {
    * (WhatsApp renders no Markdown). Omitted → no formatting overlay.
    */
   channel?: ConversationChannel
+  /**
+   * Active working-folder paths for this turn. The agent injects a fresh
+   * listing into the OUTBOUND volatile tail (after every cache breakpoint) —
+   * never into persisted/user content, so history stays byte-stable.
+   */
+  workingFolders?: string[]
   thinkingMode?: 'off' | 'on' | 'high' | 'max'
   /**
    * External controller. Lets channels tie cancellation to a parent
@@ -191,6 +197,7 @@ export class TurnRunner {
           conversationId: opts.conversationId ?? null,
           conversationTitle: title,
           channel: opts.channel,
+          workingFolders: opts.workingFolders,
           signal: controller.signal,
           onSegment: (segment) => sink.onSegment(segment),
           thinkingMode: opts.thinkingMode
