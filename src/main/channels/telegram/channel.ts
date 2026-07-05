@@ -211,9 +211,20 @@ type ActiveTurn = {
    */
   textBuffer: string
   /**
+   * Per-worker narration buffers (orchestrator mode). Concurrent workers
+   * interleave their text deltas token-by-token in the merged stream, so
+   * each worker's prose coalesces by id here — never in textBuffer — and
+   * flushes as its own labeled message at that worker's next tool call,
+   * before any orchestrator action, and at turn_end. Verbose-only: the
+   * clean feed is the orchestrator's reply alone, so nothing is buffered
+   * when verbose is off.
+   */
+  workerText: Map<string, { label: string; buf: string }>
+  /**
    * Full prose the model produced this turn — accumulated alongside
    * textBuffer but NEVER cleared. Used to derive the assistant
-   * message's `content` field at save time.
+   * message's `content` field at save time. Orchestrator-only: worker
+   * narration is persisted in `segments` (worker-tagged), not here.
    */
   assistantContent: string
   /**
@@ -1413,25 +1424,10 @@ export class TelegramChannel {
         return
       }
 
-      // Vision-capability gate. The renderer toasts the same message at
-      // attach time; on Telegram we can't intercept before download but
-      // we catch it before dispatch so the user gets a clear reply
-      // instead of the model silently ignoring the image. Cloud
-      // providers always support vision; only Ollama can come back
-      // negative.
-      if (
-        attachment.type === 'image' &&
-        this.agent.thalamus.getActiveProvider() === 'local' &&
-        !(await this.agent.thalamus.localSupportsVision())
-      ) {
-        const modelName = this.agent.thalamus.getLocalModelName() ?? 'current model'
-        await this.safeSend(
-          chatId,
-          `⚠️ ${modelName} doesn't support image uploads. Switch to a vision model or send a different file.`
-        )
-        return
-      }
-
+      // No vision gate here — images dispatch on every model. A non-vision
+      // model gets a text note (name + path + tool guidance) from the
+      // attachment pipeline instead of the image bytes, and explains to the
+      // user what it can and can't do with the file.
       await this.dispatchTurn(chatId, userId, caption, [attachment], ctx, conversation)
     } finally {
       this.stopPreTyping(chatId)
@@ -1519,6 +1515,7 @@ export class TelegramChannel {
             chatId,
             conversation,
             textBuffer: '',
+            workerText: new Map(),
             assistantContent: '',
             segments: [],
             approvals: new Map(),
@@ -1731,6 +1728,21 @@ export class TelegramChannel {
     active.segments.push(segment)
 
     if (segment.kind === 'text') {
+      if (segment.worker) {
+        // Subagent narration: verbose-only (the clean feed is the
+        // orchestrator's reply alone), coalesced per worker so concurrent
+        // workers' token-interleaved deltas don't scramble into one message
+        // — and never mixed into textBuffer/assistantContent.
+        if (!active.verbose) return
+        const entry = active.workerText.get(segment.worker.id) ?? {
+          label: segment.worker.label,
+          buf: ''
+        }
+        entry.buf += segment.delta
+        entry.label = segment.worker.label
+        active.workerText.set(segment.worker.id, entry)
+        return
+      }
       await this.flushPendingActiveModel(chatId)
       active.textBuffer += segment.delta
       active.assistantContent += segment.delta
@@ -1747,7 +1759,23 @@ export class TelegramChannel {
       // structure stays legible.
       active.toolCallNames.set(segment.toolCallId, segment.name)
       active.toolTimings.set(segment.toolCallId, { startedAt: Date.now() })
+      if (segment.worker) {
+        // Narration before this worker's action, then a labeled card —
+        // verbose-only, mirroring the in-app subagent rail.
+        await this.flushWorkerText(chatId, segment.worker.id)
+        if (!active.verbose) return
+        const heading = `⚙️ <b>${escapeHtml(segment.worker.label)} · ${escapeHtml(segment.name)}</b>`
+        const args = formatArgsForTelegram(segment.args)
+        const html = args.length > 0 ? `${heading}\n<pre>${escapeHtml(args)}</pre>` : heading
+        await this.sendHtml(chatId, html)
+        return
+      }
       await this.flushPendingActiveModel(chatId)
+      // Workers narrate, then the orchestrator acts: drain every pending
+      // worker buffer before this orchestrator action so no worker message
+      // lands after a later main-flow send (e.g. the file the orchestrator
+      // delivers via send_file near the end of the turn).
+      await this.flushAllWorkerText(chatId)
       await this.flushBufferedText(chatId)
       // ask_user posts its own formatted question via onAskUserRequest — never
       // surface the raw tool call (even in verbose), or the question doubles up.
@@ -1767,6 +1795,26 @@ export class TelegramChannel {
       const timing = active.toolTimings.get(segment.toolCallId)
       if (timing) timing.endedAt = Date.now()
       const icon = segment.status === 'success' ? '✅' : segment.status === 'denied' ? '❌' : '⚠️'
+      if (segment.worker) {
+        // Subagent results are the ORCHESTRATOR's input, not a user-facing
+        // delivery: no native file sends here (the orchestrator delivers
+        // through its own send_file), no clean-feed surfacing. Verbose gets
+        // a labeled result card, same as the in-app subagent rail.
+        if (!active.verbose) return
+        const wName = active.toolCallNames.get(segment.toolCallId)
+        const wHeading = `${icon} <b>${escapeHtml(segment.worker.label)}${wName ? ` · ${escapeHtml(wName)}` : ''}</b>`
+        const wOutput = segment.output?.trim() ?? ''
+        if (wOutput.length === 0) {
+          await this.sendHtml(chatId, wHeading)
+          return
+        }
+        const wCleaned = markdownToPlain(wOutput)
+        await this.sendHtml(
+          chatId,
+          `${wHeading}\n<pre>${escapeHtml(truncateToolOutput(wCleaned))}</pre>`
+        )
+        return
+      }
       const name = active.toolCallNames.get(segment.toolCallId)
       // ask_user's result is the user's own answer, already acknowledged inline
       // when they replied — don't echo it back as a tool-result block.
@@ -1898,6 +1946,9 @@ export class TelegramChannel {
       // Drop any pending model chip — the iteration ended without
       // committing real content (e.g. silent wrap-up after voice_respond).
       active.pendingActiveModel = null
+      // Workers flush and finish first; the orchestrator's closing reply
+      // is the LAST message of the turn.
+      await this.flushAllWorkerText(chatId)
       await this.flushBufferedText(chatId)
       return
     }
@@ -2014,13 +2065,43 @@ export class TelegramChannel {
     }
   }
 
+  /**
+   * Flush one worker's coalesced narration as its own labeled message.
+   * Buffers only fill when verbose is on, so this is a no-op on clean feeds.
+   */
+  private async flushWorkerText(chatId: number, workerId: string): Promise<void> {
+    const active = this.activeByChat.get(chatId)
+    if (!active) return
+    const entry = active.workerText.get(workerId)
+    if (!entry) return
+    active.workerText.delete(workerId)
+    const text = entry.buf.trim()
+    if (text.length === 0) return
+    for (const chunk of splitForTelegram(`🔹 **${entry.label}**\n${text}`)) {
+      await this.safeSend(chatId, chunk)
+    }
+  }
+
+  /** Drain every pending worker buffer — workers speak before the orchestrator's next move. */
+  private async flushAllWorkerText(chatId: number): Promise<void> {
+    const active = this.activeByChat.get(chatId)
+    if (!active) return
+    for (const id of [...active.workerText.keys()]) {
+      await this.flushWorkerText(chatId, id)
+    }
+  }
+
   private async flushBufferedText(chatId: number): Promise<void> {
     const active = this.activeByChat.get(chatId)
     if (!active) return
     const raw = active.textBuffer
     active.textBuffer = ''
 
-    const imagePaths = extractWolffishMediaPaths(raw)
+    // The wolffish-media:// scheme is honored here — in the model's OWN
+    // prose — because embedding it in markdown is the model's deliberate
+    // act of showing an image. Tool results don't get that treatment (see
+    // extractWolffishMediaPaths).
+    const imagePaths = extractWolffishMediaPaths(raw, { includeMediaScheme: true })
     const cleaned = stripWolffishMediaMarkdown(raw)
 
     if (cleaned.trim().length > 0) {
@@ -2568,7 +2649,10 @@ function parseVoiceToolOutput(output: string): { filePath: string; fileName: str
   }
 }
 
-function extractWolffishMediaPaths(output: string): string[] {
+function extractWolffishMediaPaths(
+  output: string,
+  opts?: { includeMediaScheme?: boolean }
+): string[] {
   const paths: string[] = []
   const seen = new Set<string>()
 
@@ -2584,12 +2668,19 @@ function extractWolffishMediaPaths(output: string): string[] {
     }
   }
 
-  const mediaRegex = /wolffish-media:\/\/([^\s)"]+)/g
-  while ((match = mediaRegex.exec(output)) !== null) {
-    const abs = path.join(workspaceRoot(), decodeURIComponent(match[1]))
-    if (!seen.has(abs)) {
-      seen.add(abs)
-      paths.push(abs)
+  // wolffish-media:// URLs count as a delivery ONLY in the model's own prose
+  // (a markdown image embed = the model deliberately showing the image).
+  // In tool results they're mere generation — e.g. browser_screenshot's
+  // media_url field naming its output — and auto-sending those would ship a
+  // file the model never chose to deliver.
+  if (opts?.includeMediaScheme) {
+    const mediaRegex = /wolffish-media:\/\/([^\s)"]+)/g
+    while ((match = mediaRegex.exec(output)) !== null) {
+      const abs = path.join(workspaceRoot(), decodeURIComponent(match[1]))
+      if (!seen.has(abs)) {
+        seen.add(abs)
+        paths.push(abs)
+      }
     }
   }
 

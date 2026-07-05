@@ -228,7 +228,6 @@ export type WorkspaceConfig = {
     thinkingModes?: Record<string, ThinkingMode>
   }
   safety?: SafetyConfig
-  showChatAnalytics?: boolean
   weekStartsOn?: WeekStartsOn
   variables?: Variable[]
   telegram?: TelegramConfig
@@ -331,6 +330,55 @@ export type TimelineEntry = {
   detail?: string
 }
 
+/** Frozen roll-up of the most recent completed turn (dual decl — see src/main/conversations.ts). */
+export type ConversationTurnStats = {
+  endedAt: number
+  elapsedMs: number
+  apiMs: number
+  apiCalls: number
+  toolCalls: number
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheCreationTokens: number
+  cost: number
+  provider: string | null
+  model: string | null
+}
+
+/** Persisted per-conversation tokenomics (dual decl — see src/main/conversations.ts). */
+export type ConversationStats = {
+  /**
+   * Lifetime totals for this conversation. Includes orchestrator-worker
+   * spend; accrues from the first turn after this feature shipped for
+   * pre-existing conversations.
+   */
+  allTime: {
+    processingMs: number
+    apiMs: number
+    turns: number
+    apiCalls: number
+    toolCalls: number
+    inputTokens: number
+    outputTokens: number
+    cacheReadTokens: number
+    cacheCreationTokens: number
+    cost: number
+  }
+  lastTurn: ConversationTurnStats | null
+  /**
+   * Context-meter snapshot at last save. `model` records which model the
+   * reading was measured under so a reload never divides an old model's
+   * numerator by a different model's window.
+   */
+  meter: {
+    contextTokens: number
+    contextBudget: number
+    compactionAt?: number | null
+    model?: string | null
+  } | null
+}
+
 export type ConversationFile = {
   id: string
   title: string
@@ -341,7 +389,9 @@ export type ConversationFile = {
   channel?: ConversationChannel
   sealed?: boolean
   workingFolder?: string[] | null
+  /** Legacy meter snapshot — superseded by `stats.meter`, still read as a fallback. */
   contextMeter?: { contextTokens: number; contextBudget: number } | null
+  stats?: ConversationStats | null
   timeline?: TimelineEntry[]
   /** Rolling prefix summary — see src/main/conversations.ts (dual decl). */
   summary?: string | null
@@ -393,6 +443,7 @@ export type ChatTurnEvent = {
   type:
     | 'context.built'
     | 'llm.response'
+    | 'turn.usage'
     | 'task.created'
     | 'task.stepCompleted'
     | 'task.completed'
@@ -515,7 +566,6 @@ export type RuntimeApi = {
   getLaunchAtStartupStatus: () => Promise<LaunchAtStartupStatus>
   setBypassPermissions: (value: boolean) => Promise<{ value: boolean }>
   setBlockCredentials: (value: boolean) => Promise<{ value: boolean }>
-  setShowChatAnalytics: (value: boolean) => Promise<{ value: boolean }>
   setLocalOnly: (value: boolean) => Promise<{ value: boolean }>
   setRestrictPowerfulModels: (value: boolean) => Promise<{ value: boolean }>
   setThinkingMode: (model: string, mode: ThinkingMode) => Promise<void>
@@ -560,6 +610,8 @@ export type ModelCapabilities = {
   model: string | null
   supportsVision: boolean
   contextWindow: number
+  /** Token count where auto-compaction triggers for this model. */
+  compactionAt: number
 }
 
 export type ModelApi = {
@@ -632,6 +684,11 @@ export type ChatApi = {
   cancel: () => Promise<{ canceled: boolean }>
   respondApproval: (payload: { id: string; decision: ApprovalDecision }) => Promise<{ ok: boolean }>
   respondAsk: (payload: { id: string; response: AskUserResponse }) => Promise<{ ok: boolean }>
+  /** Save-dialog + Chromium print of a renderer-built transcript HTML. */
+  exportPdf: (payload: {
+    html: string
+    fileName: string
+  }) => Promise<{ ok: boolean; canceled?: boolean; error?: string }>
   onSegment: (listener: (segment: Segment) => void) => () => void
   onDone: (listener: (event: ChatDoneEvent) => void) => () => void
   onError: (listener: (event: ChatErrorEvent) => void) => () => void
@@ -1302,7 +1359,6 @@ export type UploadValidationError =
   | { code: 'max_files_reached'; max: number }
   | { code: 'total_size_exceeded'; maxBytes: number }
   | { code: 'type_not_supported' }
-  | { code: 'vision_not_supported'; model: string }
 
 /** One top-level entry of a working folder, for attaching folder structure to chat context. */
 export type FolderEntry = { name: string; isDirectory: boolean }
@@ -1459,6 +1515,7 @@ const api: WolffishApi = {
     cancel: () => ipcRenderer.invoke('chat:cancel'),
     respondApproval: (payload) => ipcRenderer.invoke('chat:approvalRespond', payload),
     respondAsk: (payload) => ipcRenderer.invoke('chat:askRespond', payload),
+    exportPdf: (payload) => ipcRenderer.invoke('chat:exportPdf', payload),
     onSegment: (listener) => subscribe('chat:segment', listener),
     onDone: (listener) => subscribe('chat:done', listener),
     onError: (listener) => subscribe('chat:error', listener),
@@ -1520,7 +1577,6 @@ const api: WolffishApi = {
     getLaunchAtStartupStatus: () => ipcRenderer.invoke('runtime:getLaunchAtStartupStatus'),
     setBypassPermissions: (value) => ipcRenderer.invoke('runtime:setBypassPermissions', value),
     setBlockCredentials: (value) => ipcRenderer.invoke('runtime:setBlockCredentials', value),
-    setShowChatAnalytics: (value) => ipcRenderer.invoke('runtime:setShowChatAnalytics', value),
     setLocalOnly: (value) => ipcRenderer.invoke('runtime:setLocalOnly', value),
     setRestrictPowerfulModels: (value) =>
       ipcRenderer.invoke('runtime:setRestrictPowerfulModels', value),

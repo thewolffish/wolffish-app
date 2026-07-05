@@ -18,7 +18,6 @@
   "updates": {
     "enabled": true
   },
-  "showChatAnalytics": false,
   "weekStartsOn": 1,
   "locale": "en",
   "theme": "system",

@@ -20,10 +20,13 @@ const sideBase: Record<Side, string> = {
   right: 'left-full ml-2'
 }
 
+// start/end are logical (inset-inline-*), so they anchor to the trigger's
+// leading/trailing edge and flip with the writing direction — matching the
+// app's other hover cards (meter, folder, logs popovers) which use inset-s/e.
 const horizontalAlign: Record<Align, string> = {
   center: 'left-1/2 -translate-x-1/2',
-  start: 'left-0',
-  end: 'right-0'
+  start: 'inset-s-0',
+  end: 'inset-e-0'
 }
 
 const verticalAlign: Record<Align, string> = {
@@ -69,7 +72,7 @@ export function Tooltip({
         <span
           role="tooltip"
           className={cn(
-            'border-border bg-bg text-fg pointer-events-none absolute z-50 w-max select-none',
+            'border-border bg-surface text-fg pointer-events-none absolute z-50 w-max select-none',
             'whitespace-nowrap rounded-lg border px-2.5 py-1.5 text-center text-[11px] leading-snug shadow-lg',
             getPositionClasses(side, align),
             className

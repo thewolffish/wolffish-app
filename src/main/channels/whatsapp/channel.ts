@@ -141,6 +141,20 @@ type ActiveTurn = {
   jid: string
   conversation: ConversationFile
   textBuffer: string
+  /**
+   * Per-worker narration buffers (orchestrator mode). Concurrent workers
+   * interleave their text deltas token-by-token in the merged stream, so
+   * each worker's prose coalesces by id here — never in textBuffer — and
+   * flushes as its own labeled message at that worker's next tool call,
+   * before any orchestrator action, and at turn_end. Verbose-only: the
+   * clean feed is the orchestrator's reply alone, so nothing is buffered
+   * when verbose is off.
+   */
+  workerText: Map<string, { label: string; buf: string }>
+  /**
+   * Full prose the model produced this turn. Orchestrator-only: worker
+   * narration is persisted in `segments` (worker-tagged), not here.
+   */
   assistantContent: string
   segments: Segment[]
   approvals: Map<string, PersistedApproval>
@@ -1247,22 +1261,10 @@ export class WhatsAppChannel {
         return
       }
 
-      // Vision-capability gate for images on a non-vision local model — mirror
-      // Telegram. Cloud providers always support vision; only Ollama can come
-      // back negative. Caught before dispatch so the user gets a clear reply
-      // instead of the model silently ignoring the image.
-      if (
-        attachment.type === 'image' &&
-        this.agent.thalamus.getActiveProvider() === 'local' &&
-        !(await this.agent.thalamus.localSupportsVision())
-      ) {
-        const modelName = this.agent.thalamus.getLocalModelName() ?? 'current model'
-        await this.safeSend(
-          jid,
-          `⚠️ ${modelName} doesn't support image uploads. Switch to a vision model or send a different file.`
-        )
-        return
-      }
+      // No vision gate here — images dispatch on every model. A non-vision
+      // model gets a text note (name + path + tool guidance) from the
+      // attachment pipeline instead of the image bytes, and explains to the
+      // user what it can and can't do with the file.
 
       // Empty caption is fine — composeAttachmentContext forwards the file
       // with empty text and the model sees the attachment alone.
@@ -1337,6 +1339,7 @@ export class WhatsAppChannel {
           jid,
           conversation,
           textBuffer: '',
+          workerText: new Map(),
           assistantContent: '',
           segments: [],
           approvals: new Map(),
@@ -1506,6 +1509,21 @@ export class WhatsAppChannel {
     active.segments.push(segment)
 
     if (segment.kind === 'text') {
+      if (segment.worker) {
+        // Subagent narration: verbose-only (the clean feed is the
+        // orchestrator's reply alone), coalesced per worker so concurrent
+        // workers' token-interleaved deltas don't scramble into one message
+        // — and never mixed into textBuffer/assistantContent.
+        if (!active.verbose) return
+        const entry = active.workerText.get(segment.worker.id) ?? {
+          label: segment.worker.label,
+          buf: ''
+        }
+        entry.buf += segment.delta
+        entry.label = segment.worker.label
+        active.workerText.set(segment.worker.id, entry)
+        return
+      }
       await this.flushPendingActiveModel(jid)
       active.textBuffer += segment.delta
       active.assistantContent += segment.delta
@@ -1515,7 +1533,23 @@ export class WhatsAppChannel {
     if (segment.kind === 'tool_call') {
       active.toolCallNames.set(segment.toolCallId, segment.name)
       active.toolTimings.set(segment.toolCallId, { startedAt: Date.now() })
+      if (segment.worker) {
+        // Narration before this worker's action, then a labeled card —
+        // verbose-only, mirroring the in-app subagent rail.
+        await this.flushWorkerText(jid, segment.worker.id)
+        if (!active.verbose) return
+        const wArgs = formatArgs(segment.args)
+        const wHeading = `⚙️ *${segment.worker.label} · ${segment.name}*`
+        const wMsg = wArgs.length > 0 ? `${wHeading}\n\`\`\`\n${wArgs}\n\`\`\`` : wHeading
+        await this.safeSend(jid, wMsg)
+        return
+      }
       await this.flushPendingActiveModel(jid)
+      // Workers narrate, then the orchestrator acts: drain every pending
+      // worker buffer before this orchestrator action so no worker message
+      // lands after a later main-flow send (e.g. the file the orchestrator
+      // delivers via send_file near the end of the turn).
+      await this.flushAllWorkerText(jid)
       await this.flushBufferedText(jid)
       // ask_user posts its own formatted question via onAskUserRequest — never
       // surface the raw tool call (even in verbose), or the question doubles up.
@@ -1535,6 +1569,22 @@ export class WhatsAppChannel {
       const timing = active.toolTimings.get(segment.toolCallId)
       if (timing) timing.endedAt = Date.now()
       const icon = segment.status === 'success' ? '✅' : segment.status === 'denied' ? '❌' : '⚠️'
+      if (segment.worker) {
+        // Subagent results are the ORCHESTRATOR's input, not a user-facing
+        // delivery: no native file sends here (the orchestrator delivers
+        // through its own send_file), no clean-feed surfacing. Verbose gets
+        // a labeled result card, same as the in-app subagent rail.
+        if (!active.verbose) return
+        const wName = active.toolCallNames.get(segment.toolCallId)
+        const wHeading = `${icon} *${segment.worker.label}${wName ? ` · ${wName}` : ''}*`
+        const wOutput = segment.output?.trim() ?? ''
+        if (wOutput.length === 0) {
+          await this.safeSend(jid, wHeading)
+          return
+        }
+        await this.safeSend(jid, `${wHeading}\n${blockquote(truncateToolOutput(wOutput))}`)
+        return
+      }
       const name = active.toolCallNames.get(segment.toolCallId)
       // ask_user's result is the user's own answer, already acknowledged inline
       // when they replied — don't echo it back as a tool-result block.
@@ -1638,6 +1688,9 @@ export class WhatsAppChannel {
     if (segment.kind === 'turn_end') {
       active.stopReason = segment.stopReason
       active.pendingActiveModel = null
+      // Workers flush and finish first; the orchestrator's closing reply
+      // is the LAST message of the turn.
+      await this.flushAllWorkerText(jid)
       await this.flushBufferedText(jid)
       return
     }
@@ -1664,16 +1717,46 @@ export class WhatsAppChannel {
     await this.safeSend(jid, `🤖 *${model}*`)
   }
 
+  /**
+   * Flush one worker's coalesced narration as its own labeled message.
+   * Buffers only fill when verbose is on, so this is a no-op on clean feeds.
+   */
+  private async flushWorkerText(jid: string, workerId: string): Promise<void> {
+    const active = this.activeByJid.get(jid)
+    if (!active) return
+    const entry = active.workerText.get(workerId)
+    if (!entry) return
+    active.workerText.delete(workerId)
+    const text = entry.buf.trim()
+    if (text.length === 0) return
+    const body = markdownToWhatsApp(text).trim()
+    for (const chunk of splitForWhatsApp(`🔹 *${entry.label}*\n${body}`)) {
+      await this.safeSend(jid, chunk)
+    }
+  }
+
+  /** Drain every pending worker buffer — workers speak before the orchestrator's next move. */
+  private async flushAllWorkerText(jid: string): Promise<void> {
+    const active = this.activeByJid.get(jid)
+    if (!active) return
+    for (const id of [...active.workerText.keys()]) {
+      await this.flushWorkerText(jid, id)
+    }
+  }
+
   private async flushBufferedText(jid: string): Promise<void> {
     const active = this.activeByJid.get(jid)
     if (!active) return
     const raw = active.textBuffer
     active.textBuffer = ''
 
-    const imagePaths = extractWolffishMediaPaths(raw)
-    // Media markers are extracted from the RAW text first — the Markdown
-    // converter would rewrite ![...](wolffish-media://...) syntax before the
-    // extractor could see it. Conversion runs on the cleaned prose only.
+    // The wolffish-media:// scheme is honored here — in the model's OWN
+    // prose — because embedding it in markdown is the model's deliberate
+    // act of showing an image. Tool results don't get that treatment (see
+    // extractWolffishMediaPaths). Extracted from the RAW text first — the
+    // Markdown converter would rewrite ![...](wolffish-media://...) syntax
+    // before the extractor could see it. Conversion runs on cleaned prose.
+    const imagePaths = extractWolffishMediaPaths(raw, { includeMediaScheme: true })
     const cleaned = markdownToWhatsApp(stripWolffishMediaMarkdown(raw)).trim()
 
     if (cleaned.length > 0) {
@@ -2135,7 +2218,10 @@ function extractVoiceLanguage(rawOutput: string): string {
   return ''
 }
 
-function extractWolffishMediaPaths(output: string): string[] {
+function extractWolffishMediaPaths(
+  output: string,
+  opts?: { includeMediaScheme?: boolean }
+): string[] {
   const paths: string[] = []
   const seen = new Set<string>()
 
@@ -2151,12 +2237,19 @@ function extractWolffishMediaPaths(output: string): string[] {
     }
   }
 
-  const mediaRegex = /wolffish-media:\/\/([^\s)"]+)/g
-  while ((match = mediaRegex.exec(output)) !== null) {
-    const abs = path.join(workspaceRoot(), decodeURIComponent(match[1]))
-    if (!seen.has(abs)) {
-      seen.add(abs)
-      paths.push(abs)
+  // wolffish-media:// URLs count as a delivery ONLY in the model's own prose
+  // (a markdown image embed = the model deliberately showing the image).
+  // In tool results they're mere generation — e.g. browser_screenshot's
+  // media_url field naming its output — and auto-sending those would ship a
+  // file the model never chose to deliver.
+  if (opts?.includeMediaScheme) {
+    const mediaRegex = /wolffish-media:\/\/([^\s)"]+)/g
+    while ((match = mediaRegex.exec(output)) !== null) {
+      const abs = path.join(workspaceRoot(), decodeURIComponent(match[1]))
+      if (!seen.has(abs)) {
+        seen.add(abs)
+        paths.push(abs)
+      }
     }
   }
 

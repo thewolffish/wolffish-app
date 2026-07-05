@@ -153,6 +153,8 @@ async function run(): Promise<void> {
         corpus.emit('tool.called', { taskId: 'electron_task', tool: 'electron_tool', args: {} })
         corpus.emit('llm.response', {
           provider: 'electron',
+          model: 'electron-model',
+          role: 'brain',
           inputTokens: 10,
           outputTokens: 20,
           cacheCreationTokens: 0,
@@ -188,6 +190,8 @@ async function run(): Promise<void> {
       corpus.emit('tool.called', { taskId: 'auto_task', tool: 'auto_tool', args: {} })
       corpus.emit('llm.response', {
         provider: 'auto',
+        model: 'auto-model',
+        role: 'brain',
         inputTokens: 999,
         outputTokens: 888,
         cacheCreationTokens: 0,

@@ -43,18 +43,35 @@ export type CorpusEvents = {
     complexity: 'simple' | 'complex'
   }
 
-  'context.built': { tokenCount: number; tokenBudget: number; sectionsIncluded: string[] }
+  'context.built': {
+    tokenCount: number
+    tokenBudget: number
+    // Token count at which auto-compaction triggers for the active model —
+    // the renderer draws it as a tick on the context meter so the visible
+    // meter and the compaction trigger share one denominator story.
+    compactionAt?: number
+    sectionsIncluded: string[]
+  }
 
   'tools.filtered': { total: number; kept: number; dropped: string[] }
 
   'llm.request': { provider: string; model: string }
   'llm.response': {
     provider: string
+    model: string
+    // Who consumed these tokens: the Brain's own turn loop, an orchestrator
+    // worker, or a summarization side-call (compaction / conversation
+    // summarizer / memory compaction). The renderer routes on this — only
+    // 'brain' calls feed the context meter; the rest are itemized separately.
+    role: 'brain' | 'worker' | 'summary'
     inputTokens: number
     outputTokens: number
     cacheCreationTokens: number
     cacheReadTokens: number
     durationMs: number
+    // Set for role:'summary' only — brain/worker cost arrives via the
+    // per-turn `turn.usage` roll-up instead.
+    cost?: number
   }
   'llm.error': { provider: string; error: string }
   'llm.fallback': { from: string; to: string; reason: string }
@@ -65,6 +82,7 @@ export type CorpusEvents = {
   'turn.usage': {
     provider: string
     model: string
+    role: 'brain' | 'worker'
     iterations: number
     toolCalls: number
     inputTokens: number
@@ -162,6 +180,8 @@ export type CorpusEvents = {
     model: string
     inputTokens: number
     outputTokens: number
+    cacheCreationTokens: number
+    cacheReadTokens: number
     cost: number
   }
 

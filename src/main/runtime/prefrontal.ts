@@ -2,10 +2,12 @@ import { diskWriter } from '@main/io/diskWriter'
 import { deliveredFilesReminder } from '@main/runtime/agent/delivered-files'
 import type { BasalGanglia } from '@main/runtime/basalganglia'
 import type { Cerebellum } from '@main/runtime/cerebellum'
+import { COMPACTION_THRESHOLD } from '@main/runtime/compactor'
 import type { Corpus } from '@main/runtime/corpus'
 import { Cortex } from '@main/runtime/cortex'
 import type { Device } from '@main/runtime/device'
 import type { Hippocampus } from '@main/runtime/hippocampus'
+import { OFFLINE_NOTICE } from '@main/runtime/outbound'
 import {
   clampAssemblyBudget,
   DEFAULT_BUDGET_TOKENS,
@@ -68,6 +70,16 @@ export type RuntimeContext = {
    * without landing inside the cached history. Reset each turn by the caller.
    */
   deliveredFiles?: string[]
+  /**
+   * Host connectivity, sampled per iteration (Electron net.isOnline()). When
+   * false, an explicit OFFLINE_NOTICE is rendered so the model doesn't burn
+   * iterations on tools that need the internet and leans on offline tools
+   * (memory recall, files, shell) instead. Travels the same vehicle as the
+   * counters — volatile tail (optimized) or `<runtime>` block (legacy) — so
+   * the online→offline flip never perturbs a cached prompt prefix. Undefined
+   * or true renders nothing: online is the silent default.
+   */
+  online?: boolean
 }
 
 const ALWAYS_INCLUDED: Array<{ category: ContextCategory; rel: string; tag: string }> = [
@@ -446,6 +458,10 @@ export class Prefrontal {
         // output reserve; the meter deliberately shows the headline window
         // because that's the number the user knows their model by.)
         tokenBudget: this.getContextWindow(),
+        // Where auto-compaction actually triggers, in the same token units as
+        // tokenBudget — the meter draws this as a tick so the visible % and
+        // the compaction trigger stop being two unrelated denominators.
+        compactionAt: Math.floor(this.getTokenBudget() * COMPACTION_THRESHOLD),
         sectionsIncluded
       })
     }
@@ -660,6 +676,10 @@ function formatRuntimeBody(runtime: RuntimeContext | undefined): string {
     // formatRuntimeStatus instead, never touching the cached prefix.
     const delivered = deliveredFilesReminder(runtime.deliveredFiles ?? [])
     if (delivered) lines.push(`  ${delivered}`)
+    // Same vehicle rule as the counters: legacy rebuilds the prompt each
+    // iteration so the notice lives here; optimized pins the prompt and the
+    // notice rides the volatile tail instead.
+    if (runtime.online === false) lines.push(`  ${OFFLINE_NOTICE}`)
   }
   return lines.join('\n')
 }

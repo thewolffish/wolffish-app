@@ -174,9 +174,15 @@ export function stubStaleToolResults(
  * Reconstruct the full message history from a conversation's stored messages,
  * preserving tool calls and tool results from assistant segments. This gives
  * the model access to its prior tool interactions across turns.
+ *
+ * Worker-tagged segments (orchestrator mode) are excluded — mirrors the
+ * renderer's textHistory. The orchestrator's real context received worker
+ * output through its own await_workers tool results (main segments); replaying
+ * the forwarded worker segments too would interleave worker prose into the
+ * assistant's text and present worker tool calls as the orchestrator's own.
  */
 export function assistantSegmentsToHistory(msg: ConversationMessage): ChatHistoryMessage[] {
-  const segments = msg.segments
+  const segments = msg.segments?.filter((s) => !('worker' in s && s.worker))
   if (!segments || segments.length === 0) {
     return [{ role: 'assistant', content: msg.content }]
   }

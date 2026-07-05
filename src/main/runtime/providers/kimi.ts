@@ -106,7 +106,13 @@ export class KimiProvider {
       const delta = choice.delta
 
       if (choice.usage) {
-        if (typeof choice.usage.prompt_tokens === 'number') inputTokens = choice.usage.prompt_tokens
+        // choice.usage carries no prompt_tokens_details, so its prompt_tokens
+        // is cache-inclusive. Re-subtract the cached share captured from the
+        // top-level usage block — without this the overwrite restored the
+        // inclusive count while cacheReadTokens stayed set, double-counting
+        // cached tokens in both cost and the context meter.
+        if (typeof choice.usage.prompt_tokens === 'number')
+          inputTokens = Math.max(0, choice.usage.prompt_tokens - cacheReadTokens)
         if (typeof choice.usage.completion_tokens === 'number')
           outputTokens = choice.usage.completion_tokens
       }

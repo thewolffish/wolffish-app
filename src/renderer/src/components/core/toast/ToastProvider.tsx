@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { Alert02Icon, CheckmarkCircle02Icon, InformationCircleIcon } from 'hugeicons-react'
+import { useTranslation } from 'react-i18next'
+import {
+  Alert02Icon,
+  Cancel01Icon,
+  CheckmarkCircle02Icon,
+  InformationCircleIcon
+} from 'hugeicons-react'
 import { cn } from '@lib/utils/cn'
 import {
   ToastContext,
@@ -28,17 +34,22 @@ export function ToastProvider({ children }: { children: ReactNode }): React.JSX.
   }, [])
 
   const show = useCallback(
-    (input: ToastInput) => {
+    (input: ToastInput): number => {
       const id = ++idRef.current
       const toast: Toast = {
         id,
         tone: input.tone ?? 'info',
         durationMs: input.durationMs ?? DEFAULT_DURATION_MS,
+        sticky: input.sticky ?? false,
+        placement: input.placement ?? 'bottom',
         message: input.message
       }
       setToasts((prev) => [...prev, toast])
-      const timer = setTimeout(() => dismiss(id), toast.durationMs)
-      timersRef.current.set(id, timer)
+      if (!toast.sticky) {
+        const timer = setTimeout(() => dismiss(id), toast.durationMs)
+        timersRef.current.set(id, timer)
+      }
+      return id
     },
     [dismiss]
   )
@@ -52,20 +63,37 @@ export function ToastProvider({ children }: { children: ReactNode }): React.JSX.
     []
   )
 
-  const value = useMemo<ToastContextValue>(() => ({ show }), [show])
+  const value = useMemo<ToastContextValue>(() => ({ show, dismiss }), [show, dismiss])
 
+  // Two stacks: transient toasts keep the classic bottom position; ambient
+  // app-state notices (placement: 'top') stack under the titlebar. top-12
+  // keeps the top stack clear of the 40px titlebar drag strip
+  // (.app-titlebar) — a toast inside the drag region would swallow clicks.
+  const top = toasts.filter((t) => t.placement === 'top')
+  const bottom = toasts.filter((t) => t.placement !== 'top')
   const portal =
     typeof document !== 'undefined'
       ? createPortal(
-          <div
-            aria-live="polite"
-            aria-atomic="true"
-            className="pointer-events-none fixed inset-x-0 bottom-6 z-50 flex flex-col items-center gap-2 px-4"
-          >
-            {toasts.map((t) => (
-              <ToastItem key={t.id} toast={t} onDismiss={() => dismiss(t.id)} />
-            ))}
-          </div>,
+          <>
+            <div
+              aria-live="polite"
+              aria-atomic="true"
+              className="pointer-events-none fixed inset-x-0 top-12 z-50 flex flex-col items-center gap-2 px-4"
+            >
+              {top.map((t) => (
+                <ToastItem key={t.id} toast={t} onDismiss={() => dismiss(t.id)} />
+              ))}
+            </div>
+            <div
+              aria-live="polite"
+              aria-atomic="true"
+              className="pointer-events-none fixed inset-x-0 bottom-6 z-50 flex flex-col items-center gap-2 px-4"
+            >
+              {bottom.map((t) => (
+                <ToastItem key={t.id} toast={t} onDismiss={() => dismiss(t.id)} />
+              ))}
+            </div>
+          </>,
           document.body
         )
       : null
@@ -101,6 +129,7 @@ function ToastItem({
   toast: Toast
   onDismiss: () => void
 }): React.JSX.Element {
+  const { t } = useTranslation()
   return (
     <div
       role="status"
@@ -114,6 +143,18 @@ function ToastItem({
         <ToneIcon tone={toast.tone ?? 'info'} />
       </span>
       <span className="min-w-0 break-words leading-relaxed">{toast.message}</span>
+      <button
+        type="button"
+        aria-label={t('common.dismiss')}
+        title={t('common.dismiss')}
+        onClick={(e) => {
+          e.stopPropagation()
+          onDismiss()
+        }}
+        className="mt-0.5 shrink-0 cursor-pointer rounded-md p-0.5 opacity-60 hover:opacity-100"
+      >
+        <Cancel01Icon size={14} />
+      </button>
     </div>
   )
 }

@@ -15,30 +15,30 @@ type BrainButtonProps = {
   disabled?: boolean
 }
 
-const MODE_LABEL_KEY: Record<ReasoningMode, string> = {
+/** Full-sentence tooltip per mode. */
+const MODE_TOOLTIP_KEY: Record<ReasoningMode, string> = {
   off: 'chat.reasoning.off',
   on: 'chat.reasoning.on',
   high: 'chat.reasoning.high',
   max: 'chat.reasoning.max'
 }
 
-// Escalating reasoning tiers (4 total, no 5th yet): gray (off) → primary
-// (on / high — the first active level; a model never exposes both, so they
-// share this tier) → purple (max) → orange (reserved for a future tier above
-// max — no mode maps to it today).
-const MODE_STYLE: Record<ReasoningMode, string> = {
-  off: 'border-border bg-surface text-muted',
-  on: 'border-primary/40 bg-primary/10 text-primary',
-  high: 'border-primary/40 bg-primary/10 text-primary',
-  max: 'border-purple-500/50 bg-purple-500/10 text-purple-500 dark:border-purple-400/50 dark:text-purple-400'
+/** One-word label shown under the brain icon inside the card. */
+const MODE_SHORT_KEY: Record<ReasoningMode, string> = {
+  off: 'chat.reasoning.shortOff',
+  on: 'chat.reasoning.shortOn',
+  high: 'chat.reasoning.shortHigh',
+  max: 'chat.reasoning.shortMax'
 }
 
 /**
- * Single per-model reasoning control: a ghost/outline icon button that
- * mirrors the send button's size and shape. Clicking cycles through this
- * model's reasoning modes, wrapping. State is conveyed by colour (gray off →
- * primary on/high → purple max, with orange reserved for a future tier) and a
- * localized hover tooltip naming the current mode in one sentence.
+ * Single per-model reasoning control, styled like the composer's other card
+ * buttons (new chat / mode toggle): a bordered surface card holding a w-14
+ * column button — brain icon on top, one-word mode label (Off / Normal /
+ * High / Max) beneath. Clicking cycles through this model's reasoning modes,
+ * wrapping. State is conveyed by the label alone (uniform muted text, no
+ * per-tier colours) and a localized hover tooltip naming the current mode in
+ * one sentence.
  *
  * Uses the shared Tooltip so it is byte-for-byte the same as every other
  * tooltip in the app (e.g. the cloud/local model switch). `pointer-events-none`
@@ -62,8 +62,9 @@ export function BrainButton({
   const active = supported && value !== 'off'
 
   const tooltip = supported
-    ? t(MODE_LABEL_KEY[value] ?? MODE_LABEL_KEY.on)
+    ? t(MODE_TOOLTIP_KEY[value] ?? MODE_TOOLTIP_KEY.on)
     : t('chat.reasoning.unsupported')
+  const label = t(MODE_SHORT_KEY[value] ?? MODE_SHORT_KEY.off)
 
   const handleClick = (): void => {
     if (!cyclable) return
@@ -76,25 +77,28 @@ export function BrainButton({
 
   return (
     <span className="inline-flex shrink-0">
-      <Tooltip content={tooltip} side="top">
-        <button
-          type="button"
-          onClick={handleClick}
-          disabled={disabled || !cyclable}
-          aria-label={t('chat.reasoning.ariaLabel')}
-          aria-pressed={active}
-          className={cn(
-            'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border',
-            'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-            'disabled:pointer-events-none disabled:opacity-50',
-            interactive ? 'cursor-pointer' : 'cursor-not-allowed',
-            MODE_STYLE[value] ?? MODE_STYLE.off,
-            interactive && active && 'hover:brightness-110',
-            interactive && !active && 'hover:text-fg hover:border-muted'
-          )}
-        >
-          <BrainIcon size={18} />
-        </button>
+      <Tooltip content={tooltip} side="top" align="start">
+        <div className="border-border bg-surface inline-flex shrink-0 items-center rounded-lg border p-0.5">
+          <button
+            type="button"
+            onClick={handleClick}
+            disabled={disabled || !cyclable}
+            aria-label={t('chat.reasoning.ariaLabel')}
+            aria-pressed={active}
+            className={cn(
+              'flex w-14 flex-col items-center gap-0.5 rounded-md px-1.5 py-1',
+              'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+              'disabled:pointer-events-none disabled:opacity-60',
+              'text-muted',
+              interactive ? 'cursor-pointer hover:text-fg' : 'cursor-not-allowed'
+            )}
+          >
+            <BrainIcon size={14} />
+            <span className="max-w-full truncate text-[10px] leading-tight font-medium">
+              {label}
+            </span>
+          </button>
+        </div>
       </Tooltip>
     </span>
   )

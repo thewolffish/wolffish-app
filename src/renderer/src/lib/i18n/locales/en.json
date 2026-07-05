@@ -9,6 +9,7 @@
     "offline": "No network connection",
     "networkOffline": "No network connection detected",
     "networkRestored": "Network connection restored",
+    "dismiss": "Dismiss",
     "diskUsage": "{{free}} free of {{total}}",
     "contextMenu": {
       "selectAll": "Select all",
@@ -280,10 +281,6 @@
       "restrictPowerfulModels": {
         "label": "Restrict powerful local models",
         "description": "When enabled, the model picker blocks local models whose memory footprint exceeds what your system can handle comfortably (~55% of total RAM). This prevents severe slowdowns, swap thrashing, and system instability caused by loading oversized models. Turning this off lets you install and run any model regardless of hardware limits — not recommended. Oversized models force your system into heavy disk swapping, making both Wolffish and your entire machine unresponsive."
-      },
-      "showChatAnalytics": {
-        "label": "Show in-chat analytics",
-        "description": "Display a small strip next to the chat input showing elapsed turn time, output tokens, and context size. Off by default — turn it on if you want live visibility into model usage and timing."
       },
       "weekStartsOn": {
         "label": "Start of week",
@@ -1445,6 +1442,13 @@
     "errorPrefix": "Something went wrong",
     "newChat": "New chat",
     "attachFile": "Attach file",
+    "downloadPdf": "Download chat as PDF",
+    "pdfExport": {
+      "you": "You",
+      "untitled": "Wolffish chat",
+      "saved": "PDF saved",
+      "error": "Couldn't export the PDF"
+    },
     "selectFolder": "Select working folder",
     "clearFolder": "Clear working folder",
     "workingFolder": "Working folders",
@@ -1455,8 +1459,7 @@
       "maxFiles": "Maximum {{count}} files per message",
       "totalExceeded": "Total attachments cannot exceed {{limit}}",
       "typeNotSupported": "File type not supported",
-      "videoNotAllowed": "Video files are not supported",
-      "visionNotSupported": "{{model}} doesn't support image uploads"
+      "videoNotAllowed": "Video files are not supported"
     },
     "pdfViewer": {
       "loading": "Loading PDF",
@@ -1581,15 +1584,34 @@
     "providerChange": {
       "label": "Switched to local model"
     },
-    "contextMeter": {
-      "tooltip": "{{used}} out of {{max}}"
-    },
-    "status": {
-      "tokenUsage": "{{input}} in · {{output}} out",
-      "tokenUsageCached": "{{cached}} cached · {{input}} new · {{output}} out",
-      "contextTokens": "{{count}} ctx",
-      "elapsedSeconds": "{{seconds}}s",
-      "elapsedMinutes": "{{minutes}}m {{seconds}}s"
+    "contextCard": {
+      "aria": "Context and usage details",
+      "noModel": "No model",
+      "empty": "No usage yet — send a message to start measuring.",
+      "context": "Context window",
+      "usage": "{{used}} of {{max}} ({{percent}}%)",
+      "compactAt": "Auto-compacts at {{value}}",
+      "fresh": "fresh",
+      "cacheRead": "Cache read",
+      "cacheWrite": "Cache write",
+      "inContext": "in context",
+      "usageUnavailable": "Provider reported no usage — showing last known reading",
+      "measuredUnder": "Measured under {{model}}",
+      "thisTurn": "This turn",
+      "lastTurn": "Last turn",
+      "input": "Input",
+      "output": "Output",
+      "calls": "API calls",
+      "tools": "{{count}} tools",
+      "cost": "Cost",
+      "workers": "workers: {{turns}} turns · {{tokens}} tokens",
+      "summaries": "summaries: {{calls}} calls · {{tokens}} tokens",
+      "allTime": "All time",
+      "turns": "Turns",
+      "apiCalls": "API calls",
+      "toolCalls": "Tool calls",
+      "cachedShare": "{{percent}}% of ingested context came from cache",
+      "lastCall": "Last call"
     },
     "timeline": {
       "viewLogs": "View Logs",
@@ -1598,6 +1620,7 @@
         "turn.started": "New turn",
         "context.built": "Context built",
         "llm.response": "Model responded",
+        "turn.usage": "Usage summary",
         "tool.called": "Tool called",
         "tool.completed": "Tool completed",
         "tool.failed": "Tool failed",
@@ -1623,6 +1646,9 @@
       "viewFiles": "View Files",
       "title": "Files",
       "fileCount": "{{count}} files"
+    },
+    "logsFiles": {
+      "label": "Logs & files"
     },
     "modeToggle": {
       "ariaLabel": "Provider mode",
@@ -1654,7 +1680,11 @@
       "on": "Thinking on — reasons before answering.",
       "high": "High effort — more thorough reasoning.",
       "max": "Max effort — deepest, most thorough reasoning.",
-      "unsupported": "Reasoning is not supported by this model."
+      "unsupported": "Reasoning is not supported by this model.",
+      "shortOff": "Off",
+      "shortOn": "Normal",
+      "shortHigh": "High",
+      "shortMax": "Max"
     },
     "newChatShort": "New",
     "approval": {

@@ -33,7 +33,6 @@ export type ValidationError =
   | { code: 'max_files_reached'; max: number }
   | { code: 'total_size_exceeded'; maxBytes: number }
   | { code: 'type_not_supported' }
-  | { code: 'vision_not_supported'; model: string }
 
 export function categorizeFile(fileName: string): FileCategory {
   const ext = path.extname(fileName).toLowerCase()
@@ -80,22 +79,4 @@ export function validateFile(
   if (sizeBytes > maxForType) return { code: 'file_too_large', maxBytes: maxForType }
 
   return null
-}
-
-export function isVisionModel(modelName: string): boolean {
-  const lower = modelName.toLowerCase()
-  return /vision|vl|multimodal|llava|moondream|bakllava|gemma.*4/.test(lower)
-}
-
-export function getAllowedExtensions(supportsVision: boolean): string[] {
-  const exts: string[] = [
-    ...ALLOWED_DOCUMENT_EXTS,
-    ...ALLOWED_AUDIO_EXTS,
-    ...ALLOWED_PDF_EXTS,
-    ...VIDEO_EXTS
-  ]
-  if (supportsVision) {
-    exts.push(...ALLOWED_IMAGE_EXTS)
-  }
-  return exts
 }

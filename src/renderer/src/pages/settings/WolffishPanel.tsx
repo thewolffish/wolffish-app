@@ -17,19 +17,12 @@ export function WolffishPanel(): React.JSX.Element {
     config?.safety?.blockCredentials ?? false
   )
   const [bypass, setBypass] = useState<boolean>(config?.safety?.bypassPermissions ?? false)
-  const [showAnalytics, setShowAnalytics] = useState<boolean>(config?.showChatAnalytics ?? true)
   const [restrictModels, setRestrictModels] = useState<boolean>(
     config?.llm.restrictPowerfulModels ?? true
   )
   const [weekStartsOn, setWeekStartsOnState] = useState<WeekStartsOn>(config?.weekStartsOn ?? 1)
   const [savingKey, setSavingKey] = useState<
-    | 'launchAtStartup'
-    | 'blockCredentials'
-    | 'bypass'
-    | 'analytics'
-    | 'restrictModels'
-    | 'weekStart'
-    | null
+    'launchAtStartup' | 'blockCredentials' | 'bypass' | 'restrictModels' | 'weekStart' | null
   >(null)
 
   useEffect(() => {
@@ -78,18 +71,6 @@ export function WolffishPanel(): React.JSX.Element {
     try {
       await window.api.runtime.setBypassPermissions(next)
       setBypass(next)
-      await refreshStatus()
-    } finally {
-      setSavingKey(null)
-    }
-  }
-
-  const onChangeAnalytics = async (next: boolean): Promise<void> => {
-    if (savingKey !== null || next === showAnalytics) return
-    setSavingKey('analytics')
-    try {
-      await window.api.runtime.setShowChatAnalytics(next)
-      setShowAnalytics(next)
       await refreshStatus()
     } finally {
       setSavingKey(null)
@@ -164,14 +145,6 @@ export function WolffishPanel(): React.JSX.Element {
             value={restrictModels}
             onChange={onChangeRestrictModels}
             disabled={savingKey === 'restrictModels'}
-          />
-          <div className="border-border/60 border-t" />
-          <SettingToggle
-            label={t('settings.wolffish.showChatAnalytics.label')}
-            description={t('settings.wolffish.showChatAnalytics.description')}
-            value={showAnalytics}
-            onChange={onChangeAnalytics}
-            disabled={savingKey === 'analytics'}
           />
           <div className="border-border/60 border-t" />
           <WeekStartChoice

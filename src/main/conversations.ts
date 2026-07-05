@@ -79,6 +79,50 @@ export type TimelineEntry = {
   detail?: string
 }
 
+/** Frozen roll-up of the most recent completed turn (dual decl — see src/preload/index.ts). */
+export type ConversationTurnStats = {
+  endedAt: number
+  elapsedMs: number
+  apiMs: number
+  apiCalls: number
+  toolCalls: number
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheCreationTokens: number
+  cost: number
+  provider: string | null
+  model: string | null
+}
+
+/**
+ * Persisted per-conversation tokenomics (dual decl — see src/preload/index.ts).
+ * Written by the renderer alongside messages; the context-meter card restores
+ * from it on reopen so all-time totals, the last turn's elapsed/token split
+ * and the meter reading survive restarts.
+ */
+export type ConversationStats = {
+  allTime: {
+    processingMs: number
+    apiMs: number
+    turns: number
+    apiCalls: number
+    toolCalls: number
+    inputTokens: number
+    outputTokens: number
+    cacheReadTokens: number
+    cacheCreationTokens: number
+    cost: number
+  }
+  lastTurn: ConversationTurnStats | null
+  meter: {
+    contextTokens: number
+    contextBudget: number
+    compactionAt?: number | null
+    model?: string | null
+  } | null
+}
+
 export type ConversationFile = {
   id: string
   title: string
@@ -89,7 +133,9 @@ export type ConversationFile = {
   channel?: ConversationChannel
   sealed?: boolean
   workingFolder?: string[] | null
+  /** Legacy meter snapshot — superseded by `stats.meter`, still read as a fallback. */
   contextMeter?: { contextTokens: number; contextBudget: number } | null
+  stats?: ConversationStats | null
   timeline?: TimelineEntry[]
   /**
    * Rolling prefix summary of messages[0..summarizedThroughMessage-1],

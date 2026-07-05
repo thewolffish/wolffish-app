@@ -10,6 +10,8 @@ import { OpenAIProvider } from '@main/runtime/providers/openai'
 import { OpenRouterProvider } from '@main/runtime/providers/openrouter'
 import { QwenProvider } from '@main/runtime/providers/qwen'
 import { StepfunProvider } from '@main/runtime/providers/stepfun'
+// Safe runtime import: usage.ts only imports the ProviderId TYPE from here.
+import { calculateCost } from '@main/runtime/usage'
 import { XAIProvider } from '@main/runtime/providers/xai'
 import { ZaiProvider } from '@main/runtime/providers/zai'
 import {
@@ -116,9 +118,12 @@ export type ProviderStreamOptions = {
    * Which model resolves this call. 'worker' (orchestrator mode) uses the
    * worker model; anything else uses the Brain/single model. Per-call, so it's
    * concurrency-safe — a worker turn and the orchestrator turn can stream at
-   * once without sharing global role state.
+   * once without sharing global role state. 'summary' resolves like the Brain
+   * but stamps the emitted llm.response with role:'summary' so summarization
+   * side-calls (memory compaction) are itemized as overhead, never fed into
+   * a conversation's context meter.
    */
-  role?: 'orchestrator' | 'worker'
+  role?: 'orchestrator' | 'worker' | 'summary'
 }
 
 export type StopReason = 'end_turn' | 'tool_use' | 'max_tokens' | 'stop_sequence' | 'unknown'
@@ -495,16 +500,47 @@ export class Thalamus {
 
     for (let attempt = 0; attempt < 5; attempt++) {
       if (signal?.aborted) return null
+      const startedAt = Date.now()
       try {
         let text = ''
+        let usage: StreamUsage | null = null
         for await (const chunk of entry.provider.stream({
           system: '',
           messages: msgs,
           signal
         })) {
           if (chunk.type === 'text') text += chunk.text
+          else if (chunk.type === 'turn_meta' && chunk.usage) usage = chunk.usage
         }
-        if (text.length > 0) return { text, provider: entry.id, model: entry.model }
+        if (text.length > 0) {
+          // Summarization spend is real billed tokens. Emit it with
+          // role 'summary' so the ledger listener records it and the
+          // renderer can itemize it as overhead — without it feeding
+          // the context meter (a summary call is not conversation
+          // context). Cost rides along so the renderer's all-time
+          // totals stay cost-complete for summary spend too.
+          if (usage) {
+            this.emit('llm.response', {
+              provider: entry.id,
+              model: entry.model,
+              role: 'summary',
+              inputTokens: usage.inputTokens,
+              outputTokens: usage.outputTokens,
+              cacheCreationTokens: usage.cacheCreationTokens ?? 0,
+              cacheReadTokens: usage.cacheReadTokens ?? 0,
+              durationMs: Date.now() - startedAt,
+              cost: calculateCost(
+                entry.id,
+                entry.model,
+                usage.inputTokens,
+                usage.outputTokens,
+                usage.cacheCreationTokens,
+                usage.cacheReadTokens
+              )
+            })
+          }
+          return { text, provider: entry.id, model: entry.model }
+        }
       } catch {
         if (attempt >= 4) return null
         await sleep(delays[attempt], signal)
@@ -660,6 +696,9 @@ export class Thalamus {
         const durationMs = Date.now() - startedAt
         this.emit('llm.response', {
           provider: entry.id,
+          model: entry.model,
+          role:
+            options.role === 'worker' ? 'worker' : options.role === 'summary' ? 'summary' : 'brain',
           inputTokens,
           outputTokens,
           cacheCreationTokens,
@@ -851,11 +890,14 @@ export class Thalamus {
       : K extends 'llm.response'
         ? {
             provider: string
+            model: string
+            role: 'brain' | 'worker' | 'summary'
             inputTokens: number
             outputTokens: number
             cacheCreationTokens: number
             cacheReadTokens: number
             durationMs: number
+            cost?: number
           }
         : K extends 'llm.error'
           ? { provider: string; error: string }
@@ -869,11 +911,14 @@ export class Thalamus {
         'llm.response',
         payload as {
           provider: string
+          model: string
+          role: 'brain' | 'worker' | 'summary'
           inputTokens: number
           outputTokens: number
           cacheCreationTokens: number
           cacheReadTokens: number
           durationMs: number
+          cost?: number
         }
       )
     } else if (event === 'llm.error') {

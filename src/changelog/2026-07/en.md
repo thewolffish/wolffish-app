@@ -1,4 +1,26 @@
-## v1.0.203 — 2026-07-04 `Latest`
+## v1.0.204 — 2026-07-05 `Latest`
+
+### Save Any Conversation as a PDF
+
+A new download button in the chat footer turns the conversation you're looking at into a PDF — the same feed, faithfully: your messages, Wolffish's replies, tool cards, code blocks, and file attachments, laid out for print and offline reading. One click and it's saved.
+
+### The Usage Meter, Rebuilt
+
+The old opt-in "Show in-chat analytics" strip is gone, and with it the setting that hid it. In its place, the context pill beside the chat input is always there — and now it opens. Hover or pin it for the full picture: how much of your model's context window is in use and exactly where auto-compaction will trigger — drawn as a tick, so the percentage and the trigger are finally the same number — how much of that context arrived warm from cache versus freshly ingested, and a running ledger for this turn, last turn, and all time of input and output tokens, API calls, tool calls, and cost. When the orchestrator is running, its workers and background summaries get their own sub-totals. It's the honest answer to "what is this conversation actually doing," one glance away.
+
+### Watch Your Workers on WhatsApp and Telegram
+
+When Wolffish runs in orchestrator mode, its background workers used to be invisible on the channels — you saw only the final reply. Now, with verbose mode on, each worker narrates its own thread: its prose and tool cards arrive as labeled messages, coalesced per worker so concurrent workers never scramble into one another, mirroring the subagent rail you see in the app. Verbose off still gives you the clean feed — the orchestrator's answer, and nothing else.
+
+### Send an Image to Any Model
+
+The capability gate that rejected images on non-vision models is gone. Attach an image to any model, on any surface — in-app, WhatsApp, Telegram — and it goes through. A model that can't see the pixels now receives the file's name and location plus guidance on the tools that can read it, and tells you plainly what it can and can't do with it, instead of bouncing your upload with an error.
+
+### Offline, Treated as a State
+
+Losing your connection is a condition, not a blip — so the offline notice now behaves like one. It's a sticky warning pinned to the top of the window with its own close button, and it stays until the connection returns, at which point it's swapped in place for a brief "connection restored." Wolffish itself now knows when it's offline, too: instead of burning turns on tools that need the internet, it leans on what works without it — memory, your files, the shell. And every toast can now be dismissed with a click.
+
+## v1.0.203 — 2026-07-04
 
 ### A New Brain Economy: Lean Context, Total Recall
 

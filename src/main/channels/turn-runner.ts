@@ -13,6 +13,7 @@ import type { ChatHistoryMessage } from '@preload/index'
 export const TURN_RELAYED_EVENTS: CorpusEvent[] = [
   'context.built',
   'llm.response',
+  'turn.usage',
   'task.created',
   'task.stepCompleted',
   'task.completed',

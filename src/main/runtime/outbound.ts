@@ -38,6 +38,20 @@ const PAGE_STATE_TOOLS = new Set(['browser_page_content', 'ext_read_page'])
 const MIN_STUB_CHARS = 2_000
 
 /**
+ * Told to the model only while the host is definitively offline (Electron's
+ * net.isOnline() — the same signal the thalamus uses to skip cloud
+ * providers). Sampled fresh every iteration, so the notice appears the
+ * moment the network drops mid-turn and disappears the moment it returns.
+ * Nothing is rendered while online: the online state is the silent default,
+ * so the common case costs zero tokens and zero cache churn.
+ */
+export const OFFLINE_NOTICE =
+  'NETWORK: OFFLINE — this machine has no internet connection right now. ' +
+  'Any tool that needs the network (web search/fetch, browsing, downloads, package installs, cloud APIs, messaging channels) WILL fail — do not attempt them. ' +
+  'Work fully offline: rely on your own knowledge and the tools that run locally (memory recall, reading/writing files, shell, skills). ' +
+  'If the task genuinely requires the internet, say so plainly, do the offline part now, and suggest retrying once the connection returns.'
+
+/**
  * Live runtime context, injected at the tail of the outbound clone each
  * iteration instead of into the system prompt. Two kinds of volatile fact
  * ride here: the host clock (current date/time, UTC offset, and IANA zone
@@ -61,14 +75,15 @@ const MIN_STUB_CHARS = 2_000
  * task is truly complete or hopeless.
  */
 export function formatRuntimeStatus(runtime: RuntimeContext, now: Date = new Date()): string {
-  // Files a tool already auto-attached this turn ride here (after every cache
-  // breakpoint) rather than in a tool-result message — so reminding the model
-  // not to re-send them via send_file never perturbs the cached history prefix.
+  // Files the model already delivered this turn (via send_file's marker) ride
+  // here (after every cache breakpoint) rather than in a tool-result message —
+  // so reminding it not to re-send them never perturbs the cached history prefix.
   const delivered = deliveredFilesReminder(runtime.deliveredFiles ?? [])
   return (
     `[runtime] Current date/time: ${formatClock(now)}. ` +
     `Tool iteration this turn: ${runtime.iteration}. Tools called this turn: ${runtime.toolsCalled}. ` +
     (delivered ? `${delivered} ` : '') +
+    (runtime.online === false ? `${OFFLINE_NOTICE} ` : '') +
     `(Automated telemetry, not a user message — do not reply to it or summarize progress because of it. ` +
     `If the task is unfinished, keep calling tools: a response without tool calls ends the task; there is no next turn.)`
   )

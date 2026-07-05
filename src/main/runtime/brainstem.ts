@@ -1,6 +1,6 @@
 import { diskWriter } from '@main/io/diskWriter'
 import type { Agent } from '@main/runtime/agent'
-import type { Corpus } from '@main/runtime/corpus'
+import { autonomousTurnScope, type Corpus } from '@main/runtime/corpus'
 import type { Cortex } from '@main/runtime/cortex'
 import { isIndexablePath } from '@main/runtime/cortexIngest'
 import type { Hippocampus, KnowledgeFile } from '@main/runtime/hippocampus'
@@ -495,21 +495,24 @@ export class Brainstem {
     ]
 
     let response = ''
+    const thalamus = this.thalamus
     try {
-      for await (const chunk of this.thalamus.stream({
-        system: COMPACTION_SYSTEM_PROMPT,
-        messages
-      })) {
-        if (chunk.type === 'text') response += chunk.text
-        else if (chunk.type === 'error') {
-          return {
-            date: targetDate,
-            promoted: 0,
-            skipped: true,
-            reason: `llm error: ${chunk.message}`
-          }
+      // role:'summary' stamps the emitted llm.response as summarization
+      // overhead (itemized, never fed into a conversation's context meter,
+      // recorded to the usage ledger by the agent's summary listener); the
+      // autonomousTurnScope wrapper keeps the emit out of any live turn's
+      // relay — this cron can fire mid-chat and previously overwrote the
+      // live meter with the compaction prompt's token count.
+      await autonomousTurnScope.run(true, async () => {
+        for await (const chunk of thalamus.stream({
+          system: COMPACTION_SYSTEM_PROMPT,
+          messages,
+          role: 'summary'
+        })) {
+          if (chunk.type === 'text') response += chunk.text
+          else if (chunk.type === 'error') throw new Error(chunk.message)
         }
-      }
+      })
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       return { date: targetDate, promoted: 0, skipped: true, reason: `llm error: ${message}` }

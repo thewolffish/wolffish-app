@@ -4,7 +4,7 @@ import { AttachmentList } from '@components/common/attachment-list/AttachmentLis
 import { AudioPlayer } from '@components/common/audio-player/AudioPlayer'
 import { CodeFileViewer } from '@components/common/code-file-viewer/CodeFileViewer'
 import { CompactionCard } from '@components/common/compaction-card/CompactionCard'
-import { ContextMeter } from '@components/common/context-meter/ContextMeter'
+import { ContextMeter, type SideSpend } from '@components/common/context-meter/ContextMeter'
 import { DocxViewer } from '@components/common/docx-viewer/DocxViewer'
 import { FileCard } from '@components/common/file-card/FileCard'
 import { PathCard } from '@components/common/path-card/PathCard'
@@ -46,6 +46,7 @@ import {
 } from '@components/core/ProviderLogos'
 import { useToast } from '@components/core/toast/useToast'
 import { Tooltip } from '@components/core/Tooltip'
+import { buildChatPdfHtml, hasExportableContent } from '@lib/chat-export/buildChatPdfHtml'
 import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
 import { formatBytes } from '@lib/utils/format'
@@ -56,6 +57,8 @@ import type {
   ChatHistoryMessage,
   ConversationChannel,
   ConversationFile,
+  ConversationStats,
+  ConversationTurnStats,
   MessageAttachment,
   MessageAttachmentType,
   Segment,
@@ -87,6 +90,7 @@ import {
   CloudIcon,
   CloudUploadIcon,
   Delete02Icon,
+  Download01Icon,
   FileEditIcon,
   Files01Icon,
   Folder01Icon,
@@ -106,7 +110,6 @@ import {
 } from 'hugeicons-react'
 import {
   createContext,
-  Fragment,
   memo,
   useCallback,
   useContext,
@@ -150,7 +153,6 @@ export function Chat(): React.JSX.Element {
   } = useFlow()
 
   const currentModel = status?.config?.llm.local.model ?? null
-  const showAnalytics = status?.config?.showChatAnalytics ?? true
   const localOnly = status?.config?.llm.localOnly ?? false
   const cloudProviders = useMemo(
     () => status?.config?.llm.providers ?? [],
@@ -324,6 +326,30 @@ export function Chat(): React.JSX.Element {
   const [streaming, setStreaming] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
+  // On turn end (done, error, cancel, failed send), return focus to the
+  // composer so the user can keep typing without reaching for the mouse. The
+  // textarea is disabled while streaming, so this must run AFTER the commit
+  // that re-enables it — an effect on `streaming` guarantees that; the old
+  // rAF-after-onDone version raced the re-render and silently lost. Don't
+  // steal focus if the user is deliberately typing in another field, and it's
+  // a no-op when Chat is hidden (display:none can't hold focus) or while the
+  // voice recorder has replaced the textarea (ref is null).
+  const prevStreamingRef = useRef(false)
+  useEffect(() => {
+    const wasStreaming = prevStreamingRef.current
+    prevStreamingRef.current = streaming
+    if (!wasStreaming || streaming) return
+    const el = textareaRef.current
+    if (!el || el.disabled) return
+    const active = document.activeElement as HTMLElement | null
+    const typingElsewhere =
+      !!active &&
+      active !== el &&
+      (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)
+    if (typingElsewhere) return
+    el.focus()
+  }, [streaming])
+
   const { onContextMenu: onTextareaContextMenu, menu: textareaMenu } = useContextMenu(
     useCallback(() => {
       const el = textareaRef.current
@@ -403,7 +429,6 @@ export function Chat(): React.JSX.Element {
     () => (activeConversationId ? storedFolders : []),
     [activeConversationId, storedFolders]
   )
-  const [folderListOpen, setFolderListOpen] = useState(false)
   /**
    * Files the user has staged but not yet sent. Each entry holds the
    * already-saved metadata returned from upload:saveFile so the file is
@@ -413,25 +438,53 @@ export function Chat(): React.JSX.Element {
    * them up if it ever becomes a problem.
    */
   const [pendingAttachments, setPendingAttachments] = useState<MessageAttachment[]>([])
-  // Active model's vision support, used to proactively reject image
-  // uploads on local non-vision models. Refreshed when the active model
-  // changes; defaults to true (cloud providers always support vision)
-  // so image uploads aren't blocked while the first probe is in flight.
-  const [modelVisionSupport, setModelVisionSupport] = useState<{
-    supportsVision: boolean
-    model: string | null
-  }>({ supportsVision: true, model: null })
+  // Active model's name, fed to the context meter. Refreshed when the
+  // active model changes. Uploads are never gated on model capability —
+  // a non-vision model receives a text note about the file instead of
+  // the image bytes and can still operate on it with tools.
+  const [activeModelName, setActiveModelName] = useState<string | null>(null)
   const [dragActive, setDragActive] = useState(false)
   const [contextTokens, setContextTokens] = useState<number | null>(null)
   const [contextBudget, setContextBudget] = useState<number | null>(null)
+  // Token count where auto-compaction actually triggers for the active model
+  // — drawn as a tick on the meter so the visible % and the compaction
+  // trigger share one denominator story.
+  const [compactionAt, setCompactionAt] = useState<number | null>(null)
   const [inputTokens, setInputTokens] = useState<number | null>(null)
   const [outputTokens, setOutputTokens] = useState<number | null>(null)
   const [cacheReadTokens, setCacheReadTokens] = useState<number | null>(null)
+  const [cacheWriteTokens, setCacheWriteTokens] = useState<number | null>(null)
   const [turnStartedAt, setTurnStartedAt] = useState<number | null>(null)
   // Set when the turn finishes; freezes the elapsed-time display until
   // the next message is sent. Stays visible between turns so the user
   // can see how long the last reply took.
   const [turnEndedAt, setTurnEndedAt] = useState<number | null>(null)
+  // Persisted per-conversation tokenomics: lifetime totals plus the last
+  // turn's frozen roll-up. Restored on conversation load so the meter card
+  // shows the last state (including the previous turn's elapsed time) after
+  // a reload or restart.
+  const [convStats, setConvStats] = useState<ConversationStats | null>(null)
+  // True when the latest brain call reported no usage (Ollama blip, stream
+  // died before the terminal meta). The meter keeps its last reading instead
+  // of wiping to 0%; the card labels the reading as unavailable.
+  const [usageUnavailable, setUsageUnavailable] = useState(false)
+  // Most recent brain API call — the card's footnote row plus the window
+  // composition (fresh / cache-read / cache-written) for the segmented bar.
+  const [lastCall, setLastCall] = useState<{
+    provider: string
+    model: string
+    durationMs: number
+    fresh: number
+    cacheRead: number
+    cacheWrite: number
+  } | null>(null)
+  // Orchestrator-worker + summarization spend observed during the live turn,
+  // itemized separately so it never pollutes the brain's meter or counters.
+  const [sideSpend, setSideSpend] = useState<SideSpend | null>(null)
+  // Model the current meter reading was measured under. Guards restores and
+  // model switches from dividing an old model's numerator by a different
+  // model's window.
+  const [meterModel, setMeterModel] = useState<string | null>(null)
 
   const [timelineEntries, setTimelineEntries] = useState<TimelineEntry[]>([])
   const [timelineOpen, setTimelineOpen] = useState(false)
@@ -479,11 +532,23 @@ export function Chat(): React.JSX.Element {
   const resetTurnStats = useCallback(() => {
     setContextTokens(null)
     setContextBudget(null)
+    setCompactionAt(null)
     setInputTokens(null)
     setOutputTokens(null)
     setCacheReadTokens(null)
+    setCacheWriteTokens(null)
     setTurnStartedAt(null)
     setTurnEndedAt(null)
+    setConvStats(null)
+    setUsageUnavailable(false)
+    setLastCall(null)
+    setSideSpend(null)
+    setMeterModel(null)
+    // State-only on purpose: the ref twins (meterModelRef, turnStartedAtRef,
+    // pendingTurnUsageRef, lastCallRef, turnStatsRef) reset inline at the
+    // conversation-switch effect and the send paths — mutating them here
+    // would freeze them component-wide (react-hooks/immutability) because
+    // this callback rides in hook dep arrays.
   }, [
     setContextTokens,
     setContextBudget,
@@ -504,16 +569,29 @@ export function Chat(): React.JSX.Element {
   const pendingTurnIdRef = useRef<string | null>(null)
   const conversationRef = useRef<ConversationFile | null>(null)
   const modelContextWindowRef = useRef<number | null>(null)
+  // Model name + compaction point from the last model:capabilities probe —
+  // read inside event/load closures where the state would be stale.
+  const activeModelNameRef = useRef<string | null>(null)
+  const activeCompactionAtRef = useRef<number | null>(null)
+  // Ref twin of `meterModel` for the same stale-closure reason.
+  const meterModelRef = useRef<string | null>(null)
+  // Wall-clock send instant, mirrored from turnStartedAt so finalizeTurn can
+  // compute elapsed inside the once-created event closure.
+  const turnStartedAtRef = useRef<number | null>(null)
+  // The brain turn's `turn.usage` roll-up (cost, provider, model, brain-only
+  // tool count) parked until chat:done folds it into the conversation stats.
+  const pendingTurnUsageRef = useRef<{
+    provider: string | null
+    model: string | null
+    cost: number
+    toolCalls: number | null
+  } | null>(null)
+  const lastCallRef = useRef<{ provider: string; model: string } | null>(null)
   // Mirror of the per-turn token/context aggregates, kept in a ref so the
   // `task.completed` timeline entry can read final totals synchronously.
   // The onTurnEvent closure is created once, so reading the token state
   // directly there would see stale (turn-start) values — the ref does not.
-  const turnStatsRef = useRef<TurnStats>({
-    inputTokens: 0,
-    outputTokens: 0,
-    cacheReadTokens: 0,
-    contextTokens: 0
-  })
+  const turnStatsRef = useRef<TurnStats>(emptyTurnStats())
   // Tracks the last working-folder value we communicated to the model
   // per conversation. Lets us emit a one-shot "cleared" notice on the
   // transition from set→null so the model stops referring to the old
@@ -702,8 +780,8 @@ export function Chat(): React.JSX.Element {
 
   // Re-sync model-dependent UI whenever the active model changes — the local
   // model, the local-only toggle, OR the cloud Brain (activeCloudModel). Two
-  // things ride on this: vision support (only Ollama models can come back as
-  // non-vision and need proactive UI gating), and the context-meter budget.
+  // things ride on this: the model name shown on the context meter, and the
+  // context-meter budget.
   // Pushing caps.contextWindow into contextBudget here makes the meter reflect
   // the new model's window immediately on switch — before any turn fires.
   // Without activeCloudModel in the deps the budget stayed pinned to the
@@ -712,14 +790,24 @@ export function Chat(): React.JSX.Element {
     let cancelled = false
     void window.api.model.capabilities().then((caps) => {
       if (cancelled) return
-      setModelVisionSupport({ supportsVision: caps.supportsVision, model: caps.model })
+      setActiveModelName(caps.model)
       // caps.provider is null exactly when no model is resolved (the backend's
       // 8 000 placeholder case); a non-null provider means contextWindow is the
       // real resolved window. Null the ref otherwise so the budget consumers
       // below treat any positive window as authoritative.
       const cw = caps.provider ? caps.contextWindow : null
       modelContextWindowRef.current = cw
-      if (cw && cw > 0) setContextBudget(cw)
+      activeModelNameRef.current = caps.model
+      activeCompactionAtRef.current = caps.compactionAt > 0 ? caps.compactionAt : null
+      // Only adopt the new model's window when the current meter reading was
+      // measured under the same model (or there is no reading yet). Otherwise
+      // keep the saved self-consistent pair — dividing an old model's
+      // numerator by a different model's window renders a fraudulent %.
+      const sameModel = meterModelRef.current === null || meterModelRef.current === caps.model
+      if (cw && cw > 0 && sameModel) {
+        setContextBudget(cw)
+        setCompactionAt(activeCompactionAtRef.current)
+      }
     })
     return () => {
       cancelled = true
@@ -749,11 +837,13 @@ export function Chat(): React.JSX.Element {
           return false
         })
         .map((m) => {
+          // Preserve each message's own send time — stamping Date.now() here
+          // rewrote every timestamp on every save, destroying real history.
           if (isUser(m)) {
             return {
               role: 'user' as const,
               content: m.content,
-              timestamp: Date.now(),
+              timestamp: m.timestamp ?? Date.now(),
               ...(m.attachments && m.attachments.length > 0 ? { attachments: m.attachments } : {})
             }
           }
@@ -769,7 +859,7 @@ export function Chat(): React.JSX.Element {
             toolTimings: am.toolTimings,
             stopReason: am.stopReason,
             ...(am.status === 'error' && am.error ? { error: am.error } : {}),
-            timestamp: Date.now()
+            timestamp: am.timestamp ?? Date.now()
           }
         })
 
@@ -783,17 +873,41 @@ export function Chat(): React.JSX.Element {
 
       conversationRef.current.messages = convMessages
       conversationRef.current.updatedAt = Date.now()
-      conversationRef.current.contextMeter =
+      // Persist the full tokenomics snapshot: lifetime totals, the last
+      // turn's roll-up, and the meter reading stamped with the model it was
+      // measured under. Supersedes the legacy `contextMeter` field (still
+      // read as a fallback on load).
+      const meter =
         contextTokens != null && contextBudget != null
-          ? { contextTokens, contextBudget }
-          : (conversationRef.current.contextMeter ?? null)
+          ? {
+              contextTokens,
+              contextBudget,
+              compactionAt: compactionAt ?? null,
+              model: meterModelRef.current === LEGACY_METER_MODEL ? null : meterModelRef.current
+            }
+          : (conversationRef.current.stats?.meter ?? null)
+      if (convStats || meter) {
+        conversationRef.current.stats = {
+          allTime: convStats?.allTime ?? conversationRef.current.stats?.allTime ?? EMPTY_ALL_TIME,
+          lastTurn: convStats?.lastTurn ?? conversationRef.current.stats?.lastTurn ?? null,
+          meter
+        }
+      }
       conversationRef.current.timeline =
         timelineEntries.length > 0
           ? timelineEntries
           : (conversationRef.current.timeline ?? undefined)
       await window.api.conversation.save(conversationRef.current)
     },
-    [currentModel, setActiveConversationId, contextTokens, contextBudget, timelineEntries]
+    [
+      currentModel,
+      setActiveConversationId,
+      contextTokens,
+      contextBudget,
+      compactionAt,
+      convStats,
+      timelineEntries
+    ]
   )
 
   useEffect(() => {
@@ -809,18 +923,67 @@ export function Chat(): React.JSX.Element {
         // newer effect run is now in flight and owns conversationRef.
         if (!conv || activeConversationId !== targetId) return
         conversationRef.current = conv
-        if (conv.contextMeter) {
-          setContextTokens(conv.contextMeter.contextTokens)
+        // A turn still in flight for the OUTGOING conversation must not
+        // bleed into this one (its llm.response events would overwrite the
+        // restored meter and its done would persist the wrong reading here).
+        // Reachable via the voice-send transcription window, where nav isn't
+        // locked yet. Kill it and drop its pending events — the spend still
+        // lands in the global usage ledger.
+        if (pendingTurnIdRef.current !== null) {
+          pendingTurnIdRef.current = null
+          setStreaming(false)
+          void window.api.chat.cancel()
+        }
+        // Wipe the previous conversation's live counters FIRST — a direct
+        // A→B switch used to leak A's frozen elapsed and token counts into
+        // B's composer — then restore B's persisted state on top.
+        resetTurnStats()
+        turnStartedAtRef.current = null
+        pendingTurnUsageRef.current = null
+        lastCallRef.current = null
+        meterModelRef.current = null
+        turnStatsRef.current = emptyTurnStats()
+        setConvStats(conv.stats ?? null)
+        const meter =
+          conv.stats?.meter ??
+          (conv.contextMeter
+            ? {
+                contextTokens: conv.contextMeter.contextTokens,
+                contextBudget: conv.contextMeter.contextBudget,
+                compactionAt: null,
+                model: null
+              }
+            : null)
+        if (meter) {
+          setContextTokens(meter.contextTokens)
+          // Legacy snapshots carry no model stamp. Mark the ref with a
+          // sentinel (never a real model name) so the capabilities effect
+          // treats the reading as "measured under an unknown model" and
+          // keeps the saved self-consistent budget instead of swapping the
+          // denominator. Display state stays null (no bogus header text).
+          meterModelRef.current = meter.model ?? LEGACY_METER_MODEL
+          setMeterModel(meter.model ?? null)
+          // Adopt the live model's window only when the saved reading was
+          // measured under the same model; otherwise keep the saved
+          // self-consistent pair (old numerator ÷ new denominator lies).
           const cw = modelContextWindowRef.current
-          setContextBudget(cw && cw > 0 ? cw : conv.contextMeter.contextBudget)
+          const sameModel = meter.model != null && meter.model === activeModelNameRef.current
+          setContextBudget(sameModel && cw && cw > 0 ? cw : meter.contextBudget)
+          setCompactionAt(
+            sameModel
+              ? (activeCompactionAtRef.current ?? meter.compactionAt ?? null)
+              : (meter.compactionAt ?? null)
+          )
         } else {
-          setContextTokens(null)
-          setContextBudget(null)
+          const cw = modelContextWindowRef.current
+          if (cw && cw > 0) {
+            setContextBudget(cw)
+            setCompactionAt(activeCompactionAtRef.current)
+          }
         }
         const raw = conv.workingFolder
         const folders = Array.isArray(raw) ? raw : typeof raw === 'string' ? [raw] : []
         setStoredFolders(folders)
-        setFolderListOpen(false)
         setTimelineEntries(conv.timeline ?? [])
         setFilesOpen(false)
       })
@@ -832,7 +995,19 @@ export function Chat(): React.JSX.Element {
       // points that can't reach this component's state directly.
       conversationRef.current = null
       queueMicrotask(() => {
+        // Same in-flight guard as the load branch — a stray turn from the
+        // conversation we just left must not repopulate the fresh chat.
+        if (pendingTurnIdRef.current !== null) {
+          pendingTurnIdRef.current = null
+          setStreaming(false)
+          void window.api.chat.cancel()
+        }
         resetTurnStats()
+        turnStartedAtRef.current = null
+        pendingTurnUsageRef.current = null
+        lastCallRef.current = null
+        meterModelRef.current = null
+        turnStatsRef.current = emptyTurnStats()
         setTimelineEntries([])
         setFilesOpen(false)
       })
@@ -896,11 +1071,77 @@ export function Chat(): React.JSX.Element {
         }
       }
     })
+    // Fold the finished turn into the persisted conversation stats: the last
+    // turn's frozen roll-up plus the lifetime totals (which include worker
+    // and summarization side-spend so the all-time numbers reflect what the
+    // conversation actually consumed).
+    const finalizeTurn = (endedAt: number): void => {
+      const startedAt = turnStartedAtRef.current
+      if (startedAt === null) return
+      turnStartedAtRef.current = null
+      const elapsedMs = Math.max(0, endedAt - startedAt)
+      const stats = turnStatsRef.current
+      const pending = pendingTurnUsageRef.current
+      pendingTurnUsageRef.current = null
+      const lastTurn: ConversationTurnStats = {
+        endedAt,
+        elapsedMs,
+        apiMs: stats.apiMs,
+        apiCalls: stats.apiCalls,
+        // Prefer the agent's brain-only count — the live counter also saw
+        // relayed worker tool events during orchestrator turns.
+        toolCalls: pending?.toolCalls ?? stats.toolCalls,
+        inputTokens: stats.inputTokens,
+        outputTokens: stats.outputTokens,
+        cacheReadTokens: stats.cacheReadTokens,
+        cacheCreationTokens: stats.cacheCreationTokens,
+        cost: (pending?.cost ?? 0) + stats.worker.cost + stats.summary.cost,
+        provider: pending?.provider ?? lastCallRef.current?.provider ?? null,
+        model: pending?.model ?? lastCallRef.current?.model ?? null
+      }
+      setConvStats((prev) => {
+        const base = prev?.allTime ?? conversationRef.current?.stats?.allTime ?? EMPTY_ALL_TIME
+        return {
+          allTime: {
+            processingMs: base.processingMs + elapsedMs,
+            apiMs: base.apiMs + stats.apiMs,
+            turns: base.turns + 1,
+            apiCalls: base.apiCalls + stats.apiCalls + stats.worker.calls + stats.summary.calls,
+            toolCalls: base.toolCalls + lastTurn.toolCalls,
+            inputTokens:
+              base.inputTokens +
+              stats.inputTokens +
+              stats.worker.inputTokens +
+              stats.summary.inputTokens,
+            outputTokens:
+              base.outputTokens +
+              stats.outputTokens +
+              stats.worker.outputTokens +
+              stats.summary.outputTokens,
+            cacheReadTokens:
+              base.cacheReadTokens +
+              stats.cacheReadTokens +
+              stats.worker.cacheReadTokens +
+              stats.summary.cacheReadTokens,
+            cacheCreationTokens:
+              base.cacheCreationTokens +
+              stats.cacheCreationTokens +
+              stats.worker.cacheCreationTokens +
+              stats.summary.cacheCreationTokens,
+            cost: base.cost + lastTurn.cost
+          },
+          lastTurn,
+          meter: prev?.meter ?? null
+        }
+      })
+    }
     const offDone = window.api.chat.onDone(({ turnId }) => {
       if (pendingTurnIdRef.current !== turnId) return
       pendingTurnIdRef.current = null
       setStreaming(false)
-      setTurnEndedAt(Date.now())
+      const endedAt = Date.now()
+      setTurnEndedAt(endedAt)
+      finalizeTurn(endedAt)
       shouldPersistRef.current = true
       setMessages((prev) => markComplete(prev, turnId))
     })
@@ -908,7 +1149,9 @@ export function Chat(): React.JSX.Element {
       if (pendingTurnIdRef.current !== turnId) return
       pendingTurnIdRef.current = null
       setStreaming(false)
-      setTurnEndedAt(Date.now())
+      const endedAt = Date.now()
+      setTurnEndedAt(endedAt)
+      finalizeTurn(endedAt)
       shouldPersistRef.current = true
       setMessages((prev) => markError(prev, turnId, error))
     })
@@ -925,33 +1168,114 @@ export function Chat(): React.JSX.Element {
         if (typeof payload.tokenBudget === 'number' && payload.tokenBudget > 0) {
           modelContextWindowRef.current = payload.tokenBudget
           setContextBudget(payload.tokenBudget)
+          // A turn is running under the active model now. If the reading on
+          // screen was measured under a DIFFERENT model, blank it until this
+          // turn's first usage-bearing llm.response measures fresh — the old
+          // numerator against the new budget is a fabricated percentage.
+          if (
+            meterModelRef.current !== null &&
+            meterModelRef.current !== activeModelNameRef.current
+          ) {
+            setContextTokens(null)
+          }
+          meterModelRef.current = activeModelNameRef.current
+          setMeterModel(activeModelNameRef.current)
+        }
+        if (typeof payload.compactionAt === 'number' && payload.compactionAt > 0) {
+          setCompactionAt(payload.compactionAt)
         }
       } else if (type === 'llm.response') {
+        const role = typeof payload.role === 'string' ? payload.role : 'brain'
         const uncached = typeof payload.inputTokens === 'number' ? payload.inputTokens : 0
         const cacheRead = typeof payload.cacheReadTokens === 'number' ? payload.cacheReadTokens : 0
         const cacheCreated =
           typeof payload.cacheCreationTokens === 'number' ? payload.cacheCreationTokens : 0
         const out = typeof payload.outputTokens === 'number' ? payload.outputTokens : 0
-        setContextTokens(uncached + cacheRead + cacheCreated)
-        if (typeof payload.inputTokens === 'number') {
-          const v = payload.inputTokens
-          setInputTokens((prev) => (prev ?? 0) + v)
-        }
-        if (typeof payload.outputTokens === 'number') {
-          const v = payload.outputTokens
-          setOutputTokens((prev) => (prev ?? 0) + v)
-        }
-        if (typeof payload.cacheReadTokens === 'number') {
-          const v = payload.cacheReadTokens
-          setCacheReadTokens((prev) => (prev ?? 0) + v)
-        }
-        // Mirror into the ref (final context size is absolute; the rest
-        // accumulate) so task.completed can report end-of-turn totals.
+        const durationMs = typeof payload.durationMs === 'number' ? payload.durationMs : 0
         const stats = turnStatsRef.current
-        stats.inputTokens += uncached
-        stats.outputTokens += out
-        stats.cacheReadTokens += cacheRead
-        stats.contextTokens = uncached + cacheRead + cacheCreated
+        if (role === 'worker') {
+          // Orchestrator workers stream through the same relay stamped with
+          // this turn's id. Itemize their spend separately — folding it into
+          // the brain's counters overwrote the meter with the worker's
+          // (smaller) context and inflated the turn totals.
+          stats.worker.calls += 1
+          stats.worker.inputTokens += uncached
+          stats.worker.outputTokens += out
+          stats.worker.cacheReadTokens += cacheRead
+          stats.worker.cacheCreationTokens += cacheCreated
+          setSideSpend(sideSpendOf(stats))
+        } else if (role === 'summary') {
+          // Compaction / summarizer side-calls: real spend, not context.
+          stats.summary.calls += 1
+          stats.summary.inputTokens += uncached
+          stats.summary.outputTokens += out
+          stats.summary.cacheReadTokens += cacheRead
+          stats.summary.cacheCreationTokens += cacheCreated
+          stats.summary.cost += typeof payload.cost === 'number' ? payload.cost : 0
+          setSideSpend(sideSpendOf(stats))
+        } else {
+          const hasUsage = uncached > 0 || cacheRead > 0 || cacheCreated > 0 || out > 0
+          if (hasUsage) {
+            // Prompt side of the latest call — what is resident in the
+            // model's window right now (fresh + cached prefix + cache
+            // writes; output lands in the next call's prompt).
+            setContextTokens(uncached + cacheRead + cacheCreated)
+            setUsageUnavailable(false)
+            if (typeof payload.model === 'string') {
+              meterModelRef.current = payload.model
+              setMeterModel(payload.model)
+            }
+            stats.contextTokens = uncached + cacheRead + cacheCreated
+          } else {
+            // Provider reported no usage (Ollama blip, stream died before
+            // the terminal meta). Keep the last known reading instead of
+            // wiping the meter to 0% — but say so.
+            setUsageUnavailable(true)
+          }
+          setInputTokens((prev) => (prev ?? 0) + uncached)
+          setOutputTokens((prev) => (prev ?? 0) + out)
+          setCacheReadTokens((prev) => (prev ?? 0) + cacheRead)
+          setCacheWriteTokens((prev) => (prev ?? 0) + cacheCreated)
+          if (typeof payload.provider === 'string' && typeof payload.model === 'string') {
+            lastCallRef.current = { provider: payload.provider, model: payload.model }
+            setLastCall({
+              provider: payload.provider,
+              model: payload.model,
+              durationMs,
+              fresh: uncached,
+              cacheRead,
+              cacheWrite: cacheCreated
+            })
+          }
+          // Mirror into the ref (final context size is absolute; the rest
+          // accumulate) so task.completed can report end-of-turn totals.
+          stats.inputTokens += uncached
+          stats.outputTokens += out
+          stats.cacheReadTokens += cacheRead
+          stats.cacheCreationTokens += cacheCreated
+          stats.apiCalls += 1
+          stats.apiMs += durationMs
+        }
+      } else if (type === 'turn.usage') {
+        const stats = turnStatsRef.current
+        const cost = typeof payload.cost === 'number' ? payload.cost : 0
+        if (payload.role === 'worker') {
+          stats.worker.turns += 1
+          stats.worker.cost += cost
+          setSideSpend(sideSpendOf(stats))
+        } else {
+          pendingTurnUsageRef.current = {
+            provider: typeof payload.provider === 'string' ? payload.provider : null,
+            model: typeof payload.model === 'string' ? payload.model : null,
+            cost,
+            // Brain-only tool count from the agent loop — the live
+            // tool.called counter below also sees relayed WORKER tool
+            // events, so this is the authoritative per-turn number.
+            toolCalls: typeof payload.toolCalls === 'number' ? payload.toolCalls : null
+          }
+        }
+      } else if (type === 'tool.called') {
+        turnStatsRef.current.toolCalls += 1
       }
       if (
         type !== 'tool.called' &&
@@ -1162,17 +1486,18 @@ export function Chat(): React.JSX.Element {
       setMessages((prev) => [...prev, userMessage, assistantPlaceholder])
       scrollToBottom()
       setStreaming(true)
-      setTurnStartedAt(Date.now())
+      const sendNow = Date.now()
+      setTurnStartedAt(sendNow)
+      turnStartedAtRef.current = sendNow
       setTurnEndedAt(null)
       setInputTokens(0)
       setOutputTokens(0)
       setCacheReadTokens(0)
-      turnStatsRef.current = {
-        inputTokens: 0,
-        outputTokens: 0,
-        cacheReadTokens: 0,
-        contextTokens: 0
-      }
+      setCacheWriteTokens(0)
+      setSideSpend(null)
+      setUsageUnavailable(false)
+      pendingTurnUsageRef.current = null
+      turnStatsRef.current = emptyTurnStats()
       // Keep the timeline additive across the whole conversation — seed a
       // boundary for this turn instead of wiping the prior turns' events.
       setTimelineEntries((prev) => [...prev, makeTurnBoundary(trimmed)])
@@ -1190,6 +1515,8 @@ export function Chat(): React.JSX.Element {
         pendingTurnIdRef.current = null
         setStreaming(false)
         setTurnEndedAt(Date.now())
+        // The send never became a turn — don't let a later finalize fold it.
+        turnStartedAtRef.current = null
         shouldPersistRef.current = true
         setMessages((prev) => markError(prev, response.turnId, response.error ?? 'unknown error'))
       }
@@ -1332,17 +1659,18 @@ export function Chat(): React.JSX.Element {
       setMessages((prev) => [...prev, assistantPlaceholder])
       scrollToBottom()
       setStreaming(true)
-      setTurnStartedAt(Date.now())
+      const sendNow = Date.now()
+      setTurnStartedAt(sendNow)
+      turnStartedAtRef.current = sendNow
       setTurnEndedAt(null)
       setInputTokens(0)
       setOutputTokens(0)
       setCacheReadTokens(0)
-      turnStatsRef.current = {
-        inputTokens: 0,
-        outputTokens: 0,
-        cacheReadTokens: 0,
-        contextTokens: 0
-      }
+      setCacheWriteTokens(0)
+      setSideSpend(null)
+      setUsageUnavailable(false)
+      pendingTurnUsageRef.current = null
+      turnStatsRef.current = emptyTurnStats()
       // Keep the timeline additive across the whole conversation — seed a
       // boundary for this turn instead of wiping the prior turns' events.
       setTimelineEntries((prev) => [...prev, makeTurnBoundary(transcript)])
@@ -1360,6 +1688,8 @@ export function Chat(): React.JSX.Element {
         pendingTurnIdRef.current = null
         setStreaming(false)
         setTurnEndedAt(Date.now())
+        // The send never became a turn — don't let a later finalize fold it.
+        turnStartedAtRef.current = null
         shouldPersistRef.current = true
         setMessages((prev) => markError(prev, response.turnId, response.error ?? 'unknown error'))
       }
@@ -1411,14 +1741,6 @@ export function Chat(): React.JSX.Element {
             const fileName = pastedFileName(source.file)
             meta = await window.api.upload.saveBuffer({ conversationId, buffer, fileName })
           }
-          if (meta.type === 'image' && !modelVisionSupport.supportsVision) {
-            const msg = validationErrorMessage(
-              { code: 'vision_not_supported', model: modelVisionSupport.model ?? 'current model' },
-              t
-            )
-            toast.show({ message: msg, tone: 'error' })
-            continue
-          }
           const error = await window.api.upload.validate({
             fileName: meta.originalName,
             sizeBytes: meta.sizeBytes,
@@ -1441,7 +1763,7 @@ export function Chat(): React.JSX.Element {
         setPendingAttachments((prev) => [...prev, ...next])
       }
     },
-    [ensureConversationId, pendingAttachments, toast, t, modelVisionSupport]
+    [ensureConversationId, pendingAttachments, toast, t]
   )
 
   const stageFiles = useCallback(
@@ -1472,6 +1794,52 @@ export function Chat(): React.JSX.Element {
   const removePending = useCallback((filePath: string) => {
     setPendingAttachments((prev) => prev.filter((a) => a.filePath !== filePath))
   }, [])
+
+  const [exportingPdf, setExportingPdf] = useState(false)
+  const canExportPdf = useMemo(
+    () => hasExportableContent(messages, inAppVerbose),
+    [messages, inAppVerbose]
+  )
+
+  const exportChatPdf = useCallback(async () => {
+    if (exportingPdf || streaming || !hasExportableContent(messages, inAppVerbose)) return
+    setExportingPdf(true)
+    try {
+      const firstUser = messages.find(isUser)?.content.replace(/\s+/g, ' ').trim() ?? ''
+      const title = (firstUser || t('chat.pdfExport.untitled')).slice(0, 80)
+      const exportedAt = `Wolffish · ${new Date().toLocaleString(locale, {
+        dateStyle: 'long',
+        timeStyle: 'short'
+      })}`
+      const html = buildChatPdfHtml({
+        title,
+        exportedAt,
+        userLabel: t('chat.pdfExport.you'),
+        assistantLabel: 'Wolffish',
+        toolStatusLabels: {
+          running: t('chat.toolCard.status.running'),
+          success: t('chat.toolCard.status.success'),
+          failed: t('chat.toolCard.status.failed'),
+          denied: t('chat.toolCard.status.denied')
+        },
+        verbose: inAppVerbose,
+        locale,
+        rtl: isRtl,
+        messages
+      })
+      const fileName = `${
+        title
+          .replace(/[\\/:*?"<>|]/g, '-')
+          .trim()
+          .slice(0, 60) || 'wolffish-chat'
+      }.pdf`
+      const result = await window.api.chat.exportPdf({ html, fileName })
+      if (result.ok) toast.show({ message: t('chat.pdfExport.saved'), tone: 'success' })
+      else if (!result.canceled) toast.show({ message: t('chat.pdfExport.error'), tone: 'error' })
+    } finally {
+      setExportingPdf(false)
+    }
+  }, [exportingPdf, streaming, messages, inAppVerbose, t, locale, isRtl, toast])
 
   const persistWorkingFolders = useCallback(
     async (folders: string[]) => {
@@ -1816,47 +2184,16 @@ export function Chat(): React.JSX.Element {
               </div>
             </div>
           )}
-          <div className="relative mx-auto flex max-w-xl items-end gap-2">
-            <div className="pointer-events-auto absolute inset-e-full top-1/2 me-6 -translate-y-1/2 flex items-center gap-2 whitespace-nowrap">
-              {(timelineEntries.length > 0 || conversationFiles.length > 0) && (
-                <div className="border-border bg-surface absolute bottom-full mb-6 inline-flex items-center gap-0.5 rounded-lg border p-0.5 shadow-sm">
-                  {timelineEntries.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => setTimelineOpen(true)}
-                      title={t('chat.timeline.viewLogs')}
-                      aria-label={t('chat.timeline.viewLogs')}
-                      className={cn(
-                        'text-muted hover:text-fg flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1',
-                        'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
-                      )}
-                    >
-                      <ListViewIcon size={15} />
-                      <span className="bg-bg border-border text-fg inline-flex h-4 min-w-4 items-center justify-center rounded-full border px-1 text-[10px] font-semibold tabular-nums">
-                        {timelineEventCount}
-                      </span>
-                    </button>
-                  )}
-                  {conversationFiles.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => setFilesOpen(true)}
-                      title={t('chat.files.viewFiles')}
-                      aria-label={t('chat.files.viewFiles')}
-                      className={cn(
-                        'text-muted hover:text-fg flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1',
-                        'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
-                      )}
-                    >
-                      <Files01Icon size={15} />
-                      <span className="bg-bg border-border text-fg inline-flex h-4 min-w-4 items-center justify-center rounded-full border px-1 text-[10px] font-semibold tabular-nums">
-                        {conversationFiles.length}
-                      </span>
-                    </button>
-                  )}
-                </div>
-              )}
-              <div className="border-border bg-surface inline-flex items-center rounded-lg border p-0.5">
+          <div className="relative flex w-full items-end gap-2">
+            {/* Full-width composer, three zones. START: session/config controls
+                (new chat, cloud/local, reasoning, meter, logs). MIDDLE: the
+                textarea — it lives in the trailing group but takes `order-first`
+                there, so it renders between the two button clusters and grows
+                (flex-1) to fill the gap, giving the row breathing room. END:
+                message actions (attach, folder, mic) as light ghost icons +
+                the primary send. */}
+            <div className="flex shrink-0 items-end gap-2">
+              <div className="border-border bg-surface inline-flex shrink-0 items-center rounded-lg border p-0.5">
                 <button
                   type="button"
                   onClick={onNewChat}
@@ -1887,116 +2224,129 @@ export function Chat(): React.JSX.Element {
                 isOrchestrator={orchestratorMode === 'orchestrator'}
                 worker={workerSel}
               />
-            </div>
-            <button
-              type="button"
-              onClick={pickUploads}
-              disabled={streaming}
-              title={
-                modelVisionSupport.supportsVision
-                  ? t('chat.attachFile')
-                  : t('chat.upload.visionNotSupported', {
-                      model: modelVisionSupport.model ?? 'current model'
-                    })
-              }
-              aria-label={t('chat.attachFile')}
-              className={cn(
-                'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border',
-                'border-border bg-surface text-muted hover:text-fg hover:border-muted',
-                'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-                'disabled:cursor-not-allowed disabled:opacity-50',
-                !streaming && 'cursor-pointer'
+              {recPhase === 'idle' && (
+                <BrainButton
+                  modes={reasoningModes}
+                  value={thinkingMode}
+                  onCycle={setThinkingMode}
+                  disabled={savingMode || streaming}
+                />
               )}
-            >
-              <Image02Icon size={18} />
-            </button>
-            <div className="relative">
+              {recPhase === 'idle' && (
+                <ContextMeter
+                  used={contextTokens ?? 0}
+                  budget={contextBudget ?? 0}
+                  compactionAt={compactionAt}
+                  locale={locale}
+                  turnStartedAt={turnStartedAt}
+                  turnEndedAt={turnEndedAt}
+                  turnInputTokens={inputTokens}
+                  turnOutputTokens={outputTokens}
+                  turnCacheReadTokens={cacheReadTokens}
+                  turnCacheWriteTokens={cacheWriteTokens}
+                  lastTurn={convStats?.lastTurn ?? null}
+                  allTime={convStats?.allTime ?? null}
+                  sideSpend={sideSpend}
+                  lastCall={lastCall}
+                  usageUnavailable={usageUnavailable}
+                  meterModel={meterModel}
+                  activeModel={activeModelName}
+                  provider={
+                    lastCall?.provider ??
+                    convStats?.lastTurn?.provider ??
+                    (localOnly ? 'local' : activeCloudProvider)
+                  }
+                />
+              )}
+              {(timelineEntries.length > 0 || conversationFiles.length > 0) && (
+                <LogsFilesButton
+                  hasLogs={timelineEntries.length > 0}
+                  logsCount={timelineEventCount}
+                  hasFiles={conversationFiles.length > 0}
+                  filesCount={conversationFiles.length}
+                  onOpenTimeline={() => setTimelineOpen(true)}
+                  onOpenFiles={() => setFilesOpen(true)}
+                />
+              )}
+            </div>
+            <div className="flex min-w-0 flex-1 items-end gap-2">
               <button
                 type="button"
-                onClick={
-                  workingFolders.length > 0 ? () => setFolderListOpen((p) => !p) : addWorkingFolder
-                }
-                disabled={streaming}
-                title={workingFolders.length > 0 ? t('chat.workingFolder') : t('chat.selectFolder')}
-                aria-label={
-                  workingFolders.length > 0 ? t('chat.workingFolder') : t('chat.selectFolder')
-                }
+                onClick={() => void exportChatPdf()}
+                disabled={streaming || exportingPdf || !canExportPdf}
+                title={t('chat.downloadPdf')}
+                aria-label={t('chat.downloadPdf')}
                 className={cn(
                   'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border',
+                  'border-border bg-surface text-muted enabled:hover:text-fg enabled:hover:border-muted',
                   'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
                   'disabled:cursor-not-allowed disabled:opacity-50',
-                  !streaming && 'cursor-pointer',
-                  workingFolders.length > 0
-                    ? 'border-primary/40 bg-primary/10 text-primary hover:border-primary/60'
-                    : 'border-border bg-surface text-muted hover:text-fg hover:border-muted'
+                  !streaming && !exportingPdf && canExportPdf && 'cursor-pointer'
                 )}
               >
-                <Folder01Icon size={18} />
+                <Download01Icon size={18} />
               </button>
-              {folderListOpen && workingFolders.length > 0 && (
-                <>
-                  <div className="fixed inset-0 z-10" onClick={() => setFolderListOpen(false)} />
-                  <div className="border-border bg-surface text-fg absolute bottom-full inset-s-0 z-20 mb-2 rounded-lg border px-2 py-2 text-xs shadow-md min-w-[200px] max-w-[280px]">
-                    <div className="text-muted mb-1.5 text-[10px] font-medium uppercase tracking-wide whitespace-nowrap">
-                      {t('chat.workingFolder')}
-                    </div>
-                    <div dir="ltr" className="space-y-1.5">
-                      {workingFolders.map((folder) => (
-                        <div key={folder} className="space-y-0.5">
-                          <div className="truncate text-xs" title={folder}>
-                            {folder.split('/').pop()}
-                          </div>
-                          <div className="flex items-center gap-1">
-                            <code
-                              className="border-border bg-bg text-muted block min-w-0 flex-1 truncate rounded border px-1 py-0.5 font-mono text-[9px]"
-                              title={folder}
-                            >
-                              {folder}
-                            </code>
-                            <button
-                              type="button"
-                              onClick={() => void removeWorkingFolder(folder)}
-                              className="text-muted/40 hover:text-red-500 shrink-0 cursor-pointer"
-                              title="Remove"
-                            >
-                              <Delete02Icon size={12} />
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={addWorkingFolder}
-                      disabled={streaming}
-                      className="text-muted hover:text-fg mt-1.5 flex w-full cursor-pointer items-center gap-1 text-[10px]"
-                    >
-                      <PlusSignIcon size={10} />
-                      {t('chat.addMore')}
-                    </button>
-                  </div>
-                </>
+              <button
+                type="button"
+                onClick={pickUploads}
+                disabled={streaming}
+                title={t('chat.attachFile')}
+                aria-label={t('chat.attachFile')}
+                className={cn(
+                  'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border',
+                  'border-border bg-surface text-muted enabled:hover:text-fg enabled:hover:border-muted',
+                  'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+                  'disabled:cursor-not-allowed disabled:opacity-50',
+                  !streaming && 'cursor-pointer'
+                )}
+              >
+                <Image02Icon size={18} />
+              </button>
+              <WorkingFolderButton
+                key={activeConversationId ?? 'none'}
+                folders={workingFolders}
+                onAdd={() => void addWorkingFolder()}
+                onRemove={(folder) => void removeWorkingFolder(folder)}
+                disabled={streaming}
+              />
+              <button
+                type="button"
+                onClick={recPhase === 'idle' ? () => void startRecording() : undefined}
+                disabled={streaming || !micAvailable || recPhase !== 'idle'}
+                title={!micAvailable ? t('chat.voice.noMic') : t('chat.voice.record')}
+                aria-label={t('chat.voice.record')}
+                className={cn(
+                  'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border',
+                  'border-border bg-surface text-muted enabled:hover:text-fg enabled:hover:border-muted',
+                  'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+                  'disabled:cursor-not-allowed disabled:opacity-50',
+                  !streaming && micAvailable && recPhase === 'idle' && 'cursor-pointer'
+                )}
+              >
+                <Mic01Icon size={18} />
+              </button>
+              {recPhase === 'idle' && (
+                <button
+                  type="submit"
+                  disabled={
+                    !hasAnyModel ||
+                    (!streaming && draft.trim().length === 0 && pendingAttachments.length === 0)
+                  }
+                  aria-label={streaming ? t('chat.stop') : t('chat.send')}
+                  className={cn(
+                    'flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-lg',
+                    'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+                    'disabled:cursor-not-allowed disabled:opacity-50',
+                    streaming
+                      ? 'bg-red-600 text-white enabled:hover:bg-red-700'
+                      : 'bg-primary text-primary-fg enabled:hover:brightness-110'
+                  )}
+                >
+                  {streaming ? <StopCircleIcon size={18} /> : <ArrowUp02Icon size={18} />}
+                </button>
               )}
-            </div>
-            <button
-              type="button"
-              onClick={recPhase === 'idle' ? () => void startRecording() : undefined}
-              disabled={streaming || !micAvailable || recPhase !== 'idle'}
-              title={!micAvailable ? t('chat.voice.noMic') : t('chat.voice.record')}
-              aria-label={t('chat.voice.record')}
-              className={cn(
-                'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border',
-                'border-border bg-surface text-muted hover:text-fg hover:border-muted',
-                'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-                'disabled:cursor-not-allowed disabled:opacity-50',
-                !streaming && micAvailable && recPhase === 'idle' && 'cursor-pointer'
-              )}
-            >
-              <Mic01Icon size={18} />
-            </button>
-            {recPhase === 'idle' ? (
-              <>
-                <div className="relative flex min-w-0 flex-1 flex-col">
+              {recPhase === 'idle' ? (
+                <div className="relative order-first flex min-w-0 flex-1 flex-col">
                   <textarea
                     ref={textareaRef}
                     value={draft}
@@ -2013,7 +2363,7 @@ export function Chat(): React.JSX.Element {
                     dir={isRtl ? 'rtl' : 'ltr'}
                     disabled={streaming}
                     className={cn(
-                      'bg-surface text-fg border-border placeholder:text-muted hover:border-muted',
+                      'bg-surface text-fg border-border placeholder:text-muted enabled:hover:border-muted',
                       'min-h-10 max-h-40 w-full resize-none rounded-lg border px-3 py-2 text-sm',
                       'focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
                       'disabled:cursor-not-allowed disabled:opacity-50',
@@ -2025,7 +2375,7 @@ export function Chat(): React.JSX.Element {
                     disabled={streaming}
                     onClick={() => setDraftExpanded(true)}
                     className={cn(
-                      'text-muted hover:text-fg absolute inset-e-2 top-1/2 z-10 -translate-y-1/2 opacity-50 hover:opacity-100',
+                      'text-muted hover:text-fg absolute inset-e-2.5 top-1/2 z-10 -translate-y-1/2 opacity-50 hover:opacity-100',
                       'disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:text-muted',
                       !streaming && 'cursor-pointer'
                     )}
@@ -2033,103 +2383,57 @@ export function Chat(): React.JSX.Element {
                     <ArrowExpandIcon size={14} />
                   </button>
                 </div>
-                <BrainButton
-                  modes={reasoningModes}
-                  value={thinkingMode}
-                  onCycle={setThinkingMode}
-                  disabled={savingMode || streaming}
-                />
-                <button
-                  type="submit"
-                  disabled={
-                    !hasAnyModel ||
-                    (!streaming && draft.trim().length === 0 && pendingAttachments.length === 0)
-                  }
-                  aria-label={streaming ? t('chat.stop') : t('chat.send')}
-                  className={cn(
-                    'flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-lg',
-                    'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-                    'disabled:cursor-not-allowed disabled:opacity-50',
-                    streaming
-                      ? 'bg-border text-fg hover:brightness-95'
-                      : 'bg-primary text-primary-fg hover:brightness-110'
-                  )}
-                >
-                  {streaming ? <StopCircleIcon size={18} /> : <ArrowUp02Icon size={18} />}
-                </button>
-                {showAnalytics && (
-                  <ContextMeter
-                    used={contextTokens ?? 0}
-                    budget={contextBudget ?? 0}
-                    locale={locale}
-                  />
-                )}
-              </>
-            ) : recPhase === 'recording' ? (
-              <div className="bg-surface border-border flex min-h-10 flex-1 items-center gap-3 rounded-lg border px-3">
-                <span className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-red-500" />
-                <span className="text-fg tabular-nums text-sm font-medium">
-                  {formatRecTime(recElapsed)}
-                </span>
-                <span className="text-muted flex-1 text-xs">{t('chat.voice.recording')}</span>
-                <button
-                  type="button"
-                  onClick={stopRecording}
-                  className="bg-border text-fg flex h-7 w-7 items-center justify-center rounded-md hover:brightness-95"
-                  aria-label={t('chat.stop')}
-                >
-                  <StopCircleIcon size={14} />
-                </button>
-              </div>
-            ) : (
-              <div className="bg-surface border-border flex min-h-10 flex-1 items-center gap-2 rounded-lg border px-3">
-                <button
-                  type="button"
-                  onClick={togglePlayback}
-                  className="text-muted hover:text-fg flex h-7 w-7 shrink-0 items-center justify-center rounded-md"
-                  aria-label={recPlaying ? t('chat.stop') : 'Play'}
-                >
-                  {recPlaying ? <PauseIcon size={14} /> : <PlayIcon size={14} />}
-                </button>
-                <span className="text-fg tabular-nums text-sm font-medium">
-                  {formatRecTime(recElapsed)}
-                </span>
-                <div className="flex-1" />
-                <button
-                  type="button"
-                  onClick={discardRecording}
-                  className="text-muted hover:text-fg flex h-7 w-7 shrink-0 items-center justify-center rounded-md"
-                  aria-label={t('chat.voice.delete')}
-                  title={t('chat.voice.delete')}
-                >
-                  <Delete02Icon size={14} />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void sendRecording()}
-                  className="bg-primary text-primary-fg flex h-7 w-7 shrink-0 items-center justify-center rounded-md hover:brightness-110"
-                  aria-label={t('chat.voice.send')}
-                  title={t('chat.voice.send')}
-                >
-                  <ArrowUp02Icon size={14} />
-                </button>
-              </div>
-            )}
-            {showAnalytics && (
-              <div
-                aria-hidden
-                className="pointer-events-none absolute inset-s-full top-1/2 ms-6 -translate-y-1/2 whitespace-nowrap"
-              >
-                <StatusBar
-                  inputTokens={inputTokens}
-                  outputTokens={outputTokens}
-                  cacheReadTokens={cacheReadTokens}
-                  turnStartedAt={turnStartedAt}
-                  turnEndedAt={turnEndedAt}
-                  locale={locale}
-                />
-              </div>
-            )}
+              ) : recPhase === 'recording' ? (
+                <div className="bg-surface border-border order-first flex min-h-10 flex-1 items-center gap-3 rounded-lg border px-3">
+                  <span className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-red-500" />
+                  <span className="text-fg tabular-nums text-sm font-medium">
+                    {formatRecTime(recElapsed)}
+                  </span>
+                  <span className="text-muted flex-1 text-xs">{t('chat.voice.recording')}</span>
+                  <button
+                    type="button"
+                    onClick={stopRecording}
+                    className="bg-red-600 text-white flex h-7 w-7 items-center justify-center rounded-md hover:bg-red-700"
+                    aria-label={t('chat.stop')}
+                  >
+                    <StopCircleIcon size={14} />
+                  </button>
+                </div>
+              ) : (
+                <div className="bg-surface border-border order-first flex min-h-10 flex-1 items-center gap-2 rounded-lg border px-3">
+                  <button
+                    type="button"
+                    onClick={togglePlayback}
+                    className="text-muted hover:text-fg flex h-7 w-7 shrink-0 items-center justify-center rounded-md"
+                    aria-label={recPlaying ? t('chat.stop') : 'Play'}
+                  >
+                    {recPlaying ? <PauseIcon size={14} /> : <PlayIcon size={14} />}
+                  </button>
+                  <span className="text-fg tabular-nums text-sm font-medium">
+                    {formatRecTime(recElapsed)}
+                  </span>
+                  <div className="flex-1" />
+                  <button
+                    type="button"
+                    onClick={discardRecording}
+                    className="text-muted hover:text-fg flex h-7 w-7 shrink-0 items-center justify-center rounded-md"
+                    aria-label={t('chat.voice.delete')}
+                    title={t('chat.voice.delete')}
+                  >
+                    <Delete02Icon size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void sendRecording()}
+                    className="bg-primary text-primary-fg flex h-7 w-7 shrink-0 items-center justify-center rounded-md hover:brightness-110"
+                    aria-label={t('chat.voice.send')}
+                    title={t('chat.voice.send')}
+                  >
+                    <ArrowUp02Icon size={14} />
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </form>
       )}
@@ -2324,12 +2628,101 @@ function fmtNum(n: number): string {
 }
 
 // Per-turn aggregates mirrored from the live token state (see turnStatsRef)
-// so terminal timeline entries can report end-of-turn totals.
+// so terminal timeline entries can report end-of-turn totals. `worker` and
+// `summary` itemize side-spend (orchestrator workers, compaction/summarizer
+// calls) so it never pollutes the brain's meter or counters but still counts
+// toward the conversation's all-time totals.
 type TurnStats = {
   inputTokens: number
   outputTokens: number
   cacheReadTokens: number
+  cacheCreationTokens: number
   contextTokens: number
+  apiCalls: number
+  apiMs: number
+  toolCalls: number
+  worker: {
+    turns: number
+    calls: number
+    cost: number
+    inputTokens: number
+    outputTokens: number
+    cacheReadTokens: number
+    cacheCreationTokens: number
+  }
+  summary: {
+    calls: number
+    cost: number
+    inputTokens: number
+    outputTokens: number
+    cacheReadTokens: number
+    cacheCreationTokens: number
+  }
+}
+
+// Sentinel for meter readings restored from legacy `contextMeter` snapshots
+// (no model stamp). Never equals a real model name, so the capabilities
+// effect won't swap the denominator under an unknown-provenance numerator.
+// Normalized back to null at persist time.
+const LEGACY_METER_MODEL = ' legacy'
+
+function emptyTurnStats(): TurnStats {
+  return {
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
+    contextTokens: 0,
+    apiCalls: 0,
+    apiMs: 0,
+    toolCalls: 0,
+    worker: {
+      turns: 0,
+      calls: 0,
+      cost: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0
+    },
+    summary: {
+      calls: 0,
+      cost: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0
+    }
+  }
+}
+
+// Compact display snapshot of the live turn's side-spend for the meter card.
+function sideSpendOf(stats: TurnStats): SideSpend | null {
+  const w = stats.worker
+  const s = stats.summary
+  if (w.calls === 0 && w.turns === 0 && s.calls === 0) return null
+  return {
+    workerTurns: w.turns,
+    workerCalls: w.calls,
+    workerTokens: w.inputTokens + w.outputTokens,
+    workerCost: w.cost,
+    summaryCalls: s.calls,
+    summaryTokens: s.inputTokens + s.outputTokens,
+    summaryCost: s.cost
+  }
+}
+
+const EMPTY_ALL_TIME: ConversationStats['allTime'] = {
+  processingMs: 0,
+  apiMs: 0,
+  turns: 0,
+  apiCalls: 0,
+  toolCalls: 0,
+  inputTokens: 0,
+  outputTokens: 0,
+  cacheReadTokens: 0,
+  cacheCreationTokens: 0,
+  cost: 0
 }
 
 // Render a duration in seconds — never raw milliseconds. Sub-ten-second
@@ -2348,6 +2741,264 @@ function formatDuration(ms: number): string {
   const hr = Math.floor(min / 60)
   const remMin = min % 60
   return remMin === 0 ? `${hr}h` : `${hr}h ${remMin}m`
+}
+
+// The working-folder control: a bordered card that reveals the folder list on
+// hover and pins it open on click — the same hover(150ms)/pin/Escape/outside-
+// click model as the context meter. With no folders yet it is a plain "select
+// folder" button (click opens the picker). The parent keys this by conversation
+// id, so it remounts (popover reset) when the conversation changes.
+function WorkingFolderButton({
+  folders,
+  onAdd,
+  onRemove,
+  disabled
+}: {
+  folders: string[]
+  onAdd: () => void
+  onRemove: (folder: string) => void
+  disabled: boolean
+}): React.JSX.Element {
+  const { t } = useTranslation()
+  const [open, setOpen] = useState(false)
+  const [pinned, setPinned] = useState(false)
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const rootRef = useRef<HTMLDivElement>(null)
+  const hasFolders = folders.length > 0
+
+  // Escape unpins/closes; clicking outside while open/pinned closes.
+  useEffect(() => {
+    if (!open && !pinned) return
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') {
+        setPinned(false)
+        setOpen(false)
+      }
+    }
+    const onDown = (e: MouseEvent): void => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
+        setPinned(false)
+        setOpen(false)
+      }
+    }
+    document.addEventListener('keydown', onKey)
+    document.addEventListener('mousedown', onDown)
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      document.removeEventListener('mousedown', onDown)
+    }
+  }, [open, pinned])
+
+  useEffect(() => {
+    return () => {
+      if (hoverTimer.current) clearTimeout(hoverTimer.current)
+    }
+  }, [])
+
+  const onEnter = (): void => {
+    if (!hasFolders) return
+    if (hoverTimer.current) clearTimeout(hoverTimer.current)
+    hoverTimer.current = setTimeout(() => setOpen(true), 150)
+  }
+  const onLeave = (): void => {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current)
+    if (pinned) return
+    hoverTimer.current = setTimeout(() => setOpen(false), 200)
+  }
+  const cardVisible = (open || pinned) && hasFolders
+
+  return (
+    <div ref={rootRef} className="relative" onMouseEnter={onEnter} onMouseLeave={onLeave}>
+      <button
+        type="button"
+        onClick={() => {
+          if (!hasFolders) {
+            onAdd()
+            return
+          }
+          setPinned((p) => {
+            const next = !p
+            if (next) setOpen(true)
+            return next
+          })
+        }}
+        onFocus={onEnter}
+        onBlur={onLeave}
+        disabled={disabled}
+        aria-expanded={cardVisible}
+        title={hasFolders ? t('chat.workingFolder') : t('chat.selectFolder')}
+        aria-label={hasFolders ? t('chat.workingFolder') : t('chat.selectFolder')}
+        className={cn(
+          'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border',
+          'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+          'disabled:cursor-not-allowed disabled:opacity-50',
+          !disabled && 'cursor-pointer',
+          hasFolders
+            ? 'border-primary/40 bg-primary/10 text-primary enabled:hover:border-primary/60'
+            : 'border-border bg-surface text-muted enabled:hover:text-fg enabled:hover:border-muted'
+        )}
+      >
+        <Folder01Icon size={18} />
+      </button>
+      {cardVisible && (
+        <div className="border-border bg-surface text-fg absolute bottom-full inset-e-0 z-20 mb-2 rounded-lg border px-2 py-2 text-xs shadow-md min-w-[200px] max-w-[280px]">
+          <div className="text-muted mb-1.5 text-[10px] font-medium uppercase tracking-wide whitespace-nowrap">
+            {t('chat.workingFolder')}
+          </div>
+          <div dir="ltr" className="space-y-1.5">
+            {folders.map((folder) => (
+              <div key={folder} className="space-y-0.5">
+                <div className="truncate text-xs" title={folder}>
+                  {folder.split('/').pop()}
+                </div>
+                <div className="flex items-center gap-1">
+                  <code
+                    className="border-border bg-bg text-muted block min-w-0 flex-1 truncate rounded border px-1 py-0.5 font-mono text-[9px]"
+                    title={folder}
+                  >
+                    {folder}
+                  </code>
+                  <button
+                    type="button"
+                    onClick={() => onRemove(folder)}
+                    className="text-muted/40 hover:text-red-500 shrink-0 cursor-pointer"
+                    title="Remove"
+                  >
+                    <Delete02Icon size={12} />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={onAdd}
+            disabled={disabled}
+            className="text-muted enabled:hover:text-fg disabled:cursor-not-allowed disabled:opacity-50 mt-1.5 flex w-full cursor-pointer items-center gap-1 text-[10px]"
+          >
+            <PlusSignIcon size={10} />
+            {t('chat.addMore')}
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Composer button replacing the old floating logs/files badge. A bordered
+// card (like the meter) that on hover/click reveals "View Logs" and "View
+// Files" rows with counts; clicking a row opens its dialog. Only rendered
+// when there is at least one log or file.
+function LogsFilesButton({
+  hasLogs,
+  logsCount,
+  hasFiles,
+  filesCount,
+  onOpenTimeline,
+  onOpenFiles
+}: {
+  hasLogs: boolean
+  logsCount: number
+  hasFiles: boolean
+  filesCount: number
+  onOpenTimeline: () => void
+  onOpenFiles: () => void
+}): React.JSX.Element {
+  const { t } = useTranslation()
+  const [open, setOpen] = useState(false)
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const rootRef = useRef<HTMLSpanElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    const onDown = (e: MouseEvent): void => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('keydown', onKey)
+    document.addEventListener('mousedown', onDown)
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      document.removeEventListener('mousedown', onDown)
+    }
+  }, [open])
+
+  useEffect(() => {
+    return () => {
+      if (hoverTimer.current) clearTimeout(hoverTimer.current)
+    }
+  }, [])
+
+  const onEnter = (): void => {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current)
+    hoverTimer.current = setTimeout(() => setOpen(true), 150)
+  }
+  const onLeave = (): void => {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current)
+    hoverTimer.current = setTimeout(() => setOpen(false), 200)
+  }
+
+  const badge = (n: number): React.JSX.Element => (
+    <span className="bg-bg border-border text-fg inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full border px-1 text-[10px] font-semibold tabular-nums">
+      {n}
+    </span>
+  )
+
+  return (
+    <span
+      ref={rootRef}
+      className="relative inline-flex shrink-0"
+      onMouseEnter={onEnter}
+      onMouseLeave={onLeave}
+    >
+      <button
+        type="button"
+        aria-label={t('chat.logsFiles.label')}
+        title={t('chat.logsFiles.label')}
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        onFocus={onEnter}
+        onBlur={onLeave}
+        className="border-border bg-surface text-muted enabled:hover:text-fg enabled:hover:border-muted flex h-[42.5px] w-10 shrink-0 cursor-pointer items-center justify-center rounded-lg border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
+      >
+        <ListViewIcon size={18} />
+      </button>
+      {open && (
+        <div className="border-border bg-surface absolute bottom-full inset-s-0 z-50 mb-2 w-44 rounded-xl border p-1 shadow-xl">
+          {hasLogs && (
+            <button
+              type="button"
+              onClick={() => {
+                onOpenTimeline()
+                setOpen(false)
+              }}
+              className="text-fg hover:bg-border/40 flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-xs"
+            >
+              <ListViewIcon size={15} className="text-muted shrink-0" />
+              <span className="flex-1 text-start">{t('chat.timeline.viewLogs')}</span>
+              {badge(logsCount)}
+            </button>
+          )}
+          {hasFiles && (
+            <button
+              type="button"
+              onClick={() => {
+                onOpenFiles()
+                setOpen(false)
+              }}
+              className="text-fg hover:bg-border/40 flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-xs"
+            >
+              <Files01Icon size={15} className="text-muted shrink-0" />
+              <span className="flex-1 text-start">{t('chat.files.viewFiles')}</span>
+              {badge(filesCount)}
+            </button>
+          )}
+        </div>
+      )}
+    </span>
+  )
 }
 
 function TimelineList({
@@ -2552,14 +3203,44 @@ function timelineEventSummary(
         typeof payload.cacheCreationTokens === 'number' ? payload.cacheCreationTokens : 0
       const dur = typeof payload.durationMs === 'number' ? payload.durationMs : null
       const provider = typeof payload.provider === 'string' ? payload.provider : null
+      const model = typeof payload.model === 'string' ? payload.model : null
+      const role = typeof payload.role === 'string' ? payload.role : null
       const lines: string[] = []
       lines.push(`Input: ${fmtNum(inp)} tokens`)
       lines.push(`Output: ${fmtNum(out)} tokens`)
       if (cache > 0) lines.push(`Cache read: ${fmtNum(cache)} tokens`)
       if (cacheCreated > 0) lines.push(`Cache created: ${fmtNum(cacheCreated)} tokens`)
       if (provider) lines.push(`Provider: ${provider}`)
+      if (model) lines.push(`Model: ${model}`)
+      if (role && role !== 'brain') lines.push(`Role: ${role}`)
       if (dur != null) lines.push(`Duration: ${formatDuration(dur)}`)
-      return { summary: `${fmtNum(inp)} in / ${fmtNum(out)} out`, detail: lines.join('\n') }
+      const roleTag = role && role !== 'brain' ? ` (${role})` : ''
+      return {
+        summary: `${fmtNum(inp)} in / ${fmtNum(out)} out${roleTag}`,
+        detail: lines.join('\n')
+      }
+    }
+    case 'turn.usage': {
+      const cost = typeof payload.cost === 'number' ? payload.cost : null
+      const hitRate = typeof payload.cacheHitRate === 'number' ? payload.cacheHitRate : null
+      const iterations = typeof payload.iterations === 'number' ? payload.iterations : null
+      const toolCalls = typeof payload.toolCalls === 'number' ? payload.toolCalls : null
+      const model = typeof payload.model === 'string' ? payload.model : null
+      const role = typeof payload.role === 'string' ? payload.role : null
+      const lines: string[] = []
+      if (model) lines.push(`Model: ${model}`)
+      if (cost != null) lines.push(`Cost: $${cost.toFixed(4)}`)
+      if (hitRate != null) lines.push(`Cache hit: ${Math.round(hitRate * 100)}%`)
+      if (iterations != null) lines.push(`Iterations: ${iterations}`)
+      if (toolCalls != null) lines.push(`Tool calls: ${toolCalls}`)
+      const roleTag = role === 'worker' ? 'worker · ' : ''
+      const summaryParts: string[] = []
+      if (cost != null) summaryParts.push(`$${cost.toFixed(4)}`)
+      if (hitRate != null) summaryParts.push(`${Math.round(hitRate * 100)}% cached`)
+      return {
+        summary: `${roleTag}${summaryParts.join(' · ')}` || undefined,
+        detail: lines.length > 0 ? lines.join('\n') : undefined
+      }
     }
     case 'safety.blocked':
       return {
@@ -3082,6 +3763,13 @@ function renderSegments(
         continue
       }
 
+      // Workers narrate, then the orchestrator acts: drain every pending
+      // worker buffer before this orchestrator action. A worker's FINAL
+      // report has no following worker tool call to flush it — without this
+      // drain it sat buffered past the orchestrator's closing build/deliver
+      // cards and rendered AFTER the delivered file (the send_file card),
+      // reading as workers still talking after the turn's deliverable.
+      for (const id of workerText.keys()) flushWorkerText(id)
       flushText()
       const result = resultByToolCall.get(seg.toolCallId)
 
@@ -3500,65 +4188,6 @@ function PendingAttachmentChip({
   )
 }
 
-function StatusBar({
-  inputTokens,
-  outputTokens,
-  cacheReadTokens,
-  turnStartedAt,
-  turnEndedAt,
-  locale
-}: {
-  inputTokens: number | null
-  outputTokens: number | null
-  cacheReadTokens: number | null
-  turnStartedAt: number | null
-  turnEndedAt: number | null
-  locale: string
-}): React.JSX.Element | null {
-  const { t } = useTranslation()
-  const [now, setNow] = useState<number>(() => Date.now())
-
-  useEffect(() => {
-    if (turnStartedAt === null || turnEndedAt !== null) return
-    const id = setInterval(() => setNow(Date.now()), 200)
-    return () => clearInterval(id)
-  }, [turnStartedAt, turnEndedAt])
-
-  const elapsedMs = turnStartedAt === null ? 0 : Math.max(0, (turnEndedAt ?? now) - turnStartedAt)
-  const hasCacheTokens = (cacheReadTokens ?? 0) > 0
-  const parts: string[] = [
-    formatElapsed(elapsedMs, t),
-    hasCacheTokens
-      ? t('chat.status.tokenUsageCached', {
-          cached: formatTokensCompact(cacheReadTokens ?? 0, locale),
-          input: formatTokensCompact(inputTokens ?? 0, locale),
-          output: formatTokensCompact(outputTokens ?? 0, locale)
-        })
-      : t('chat.status.tokenUsage', {
-          input: formatTokensCompact(inputTokens ?? 0, locale),
-          output: formatTokensCompact(outputTokens ?? 0, locale)
-        })
-  ]
-
-  return (
-    <code
-      aria-hidden
-      className="text-muted bg-surface border-border flex h-5 items-center gap-1.5 rounded border px-1.5 font-mono text-[10px]"
-    >
-      {parts.map((part, i) => (
-        <Fragment key={i}>
-          {i > 0 && (
-            <span aria-hidden className="text-border">
-              ·
-            </span>
-          )}
-          <span>{part}</span>
-        </Fragment>
-      ))}
-    </code>
-  )
-}
-
 function CloudOffIcon({ size = 24 }: { size?: number }): React.JSX.Element {
   return (
     <svg
@@ -3690,7 +4319,7 @@ function ModeToggle({
           </button>
         )
         return (
-          <Tooltip key={m.key} content={m.tooltip} side="top">
+          <Tooltip key={m.key} content={m.tooltip} side="top" align="start">
             {btn}
           </Tooltip>
         )
@@ -3699,10 +4328,7 @@ function ModeToggle({
   )
 }
 
-const IMAGE_EXTS_RE = /\.(?:png|jpe?g|gif|webp|bmp|tiff?)$/i
 const DOCUMENT_EXTS_RE = /\.(?:pdf|docx?|xlsx?|pptx?|csv)$/i
-// const AUDIO_EXTS_RE = /\.(?:mp3|wav|m4a|ogg|flac|aac|wma|opus)$/i
-// const VIDEO_EXTS_RE = /\.(?:mp4|mov|avi|mkv|m4v|wmv|flv|webm)$/i
 const CODE_EXTS_RE =
   /\.(?:js|jsx|mjs|cjs|ts|tsx|vue|svelte|py|rb|rs|go|java|kt|kts|swift|c|cpp|h|hpp|cs|css|scss|less|sass|html|htm|xml|json|yaml|yml|toml|ini|conf|env|sh|bash|zsh|fish|bat|cmd|ps1|sql|graphql|gql|md|mdx|txt|log|php|lua|r|pl|dart|scala|groovy|proto|zig|ex|exs|erl|hs|clj|ml|dockerfile|makefile)$/i
 
@@ -3749,34 +4375,13 @@ function extractToolResultCodeFile(
 
 function extractToolResultImage(result?: ToolResultSegment): string | null {
   if (!result?.output || result.status !== 'success') return null
-  const output = result.output.trim()
-
-  // Prefer the explicit [wolffish-output: path (image)] marker — it
-  // identifies the output file unambiguously even when the ffmpeg
-  // stderr also contains the input file path.
-  const marker = output.match(/\[wolffish-output:\s*([^\]]+?)\s+\(image\)\]/)
-  if (marker) return marker[1].trim()
-
-  try {
-    const parsed = JSON.parse(output)
-    if (typeof parsed?.path === 'string' && IMAGE_EXTS_RE.test(parsed.path)) {
-      return parsed.path
-    }
-    if (typeof parsed?.media_url === 'string') return parsed.media_url
-  } catch {
-    /* not JSON */
-  }
-  // Bare-path fallback for tools (e.g. ext_screenshot) whose plain-text output
-  // is just a saved screenshot path. Require the path to live inside the
-  // workspace — that's the only image the viewer can actually load, and the
-  // restriction stops incidental image URLs embedded in fetched page content
-  // (e.g. browser_page_content returning HTML full of /preview.redd.it/*.png)
-  // from being mis-detected and rendered as a broken "image unavailable" card.
-  const m = output.match(
-    /(\/[^\s",:)]*\.wolffish\/workspace\/[^\s",:)]+\.(?:png|jpe?g|gif|webp|bmp|tiff?))\b/i
-  )
-  if (m) return m[1]
-  return null
+  // MARKER-ONLY by design: the [wolffish-output: path (image)] marker is
+  // send_file's transport — the model's own explicit delivery act. Bare
+  // workspace paths, {path} JSON and media_url fields are mere generation
+  // (a screenshot tool naming its output file); the harness never delivers
+  // a file the model didn't send.
+  const marker = result.output.match(/\[wolffish-output:\s*([^\]]+?)\s+\(image\)\]/)
+  return marker ? marker[1].trim() : null
 }
 
 /** Tools whose successful output is a fetched web page worth rendering as a card. */
@@ -3833,8 +4438,12 @@ function extractToolResultDocuments(
   const docs: { path: string; size: number }[] = []
   const seen = new Set<string>()
 
-  // [wolffish-output: path (document)] markers from the shell plugin's
-  // opened-file detection — explicit markers survive paths with spaces.
+  // MARKER-ONLY by design: the [wolffish-output: path (document)] marker is
+  // send_file's transport — the model's own explicit delivery act. The old
+  // {path}/{files:[{path}]} JSON detection is gone: a tool naming its output
+  // file (e.g. browser_pdf returning {"path": …}) is mere generation, and
+  // auto-attaching it delivered the file mid-turn before the model's own
+  // send_file. Delivery is 100% the model's call.
   const markerRegex = /\[wolffish-output:\s*([^\]]+?)\s+\(document\)\]/g
   let marker: RegExpExecArray | null
   while ((marker = markerRegex.exec(output)) !== null) {
@@ -3845,64 +4454,24 @@ function extractToolResultDocuments(
     }
   }
 
-  try {
-    const parsed = JSON.parse(output)
-    if (typeof parsed?.path === 'string' && DOCUMENT_EXTS_RE.test(parsed.path)) {
-      seen.add(parsed.path)
-      docs.push({ path: parsed.path, size: parsed.size ?? 0 })
-    }
-    if (Array.isArray(parsed?.files)) {
-      for (const f of parsed.files) {
-        if (typeof f?.path === 'string' && DOCUMENT_EXTS_RE.test(f.path) && !seen.has(f.path)) {
-          seen.add(f.path)
-          docs.push({ path: f.path, size: f.size ?? 0 })
-        }
-      }
-    }
-  } catch {
-    /* not JSON */
-  }
-
   return docs.length > 0 ? docs : null
 }
 
 /**
- * Extract audio/video file paths from tool result output. Detects the
- * `[wolffish-output: /path (type)]` marker emitted by the ffmpeg plugin,
- * as well as bare absolute paths with known media extensions.
+ * Extract an audio/video file path from tool result output. MARKER-ONLY by
+ * design: the `[wolffish-output: /path (audio|video)]` marker is send_file's
+ * transport — the model's own explicit delivery act. The old bare-workspace-
+ * path fallback is gone: a tool naming a media file it generated is not a
+ * delivery, and auto-rendering it overrode the model's send timing.
  */
 function extractToolResultMedia(
   result?: ToolResultSegment
 ): { path: string; type: 'audio' | 'video' } | null {
   if (!result?.output || result.status !== 'success') return null
-  const output = result.output
-
-  // Match the wolffish-output marker: [wolffish-output: /path/to/file.mp3 (audio)]
-  const marker = output.match(/\[wolffish-output:\s*([^\]]+?)\s+\((audio|video)\)\]/)
+  const marker = result.output.match(/\[wolffish-output:\s*([^\]]+?)\s+\((audio|video)\)\]/)
   if (marker) {
     return { path: marker[1].trim(), type: marker[2] as 'audio' | 'video' }
   }
-
-  // Bare-path fallback for tools whose plain-text output is just a saved media
-  // path. Require the path to live inside the workspace — same restriction the
-  // image extractor uses — so incidental media URLs embedded in tool output
-  // (e.g. a web_search result snippet linking a .mp4) aren't mis-detected and
-  // rendered as a broken "deleted or unavailable" player.
-  //
-  // webm is matched as AUDIO here (tested before video): wolffish's own webm
-  // outputs are voice/TTS, and a native <video> card for a voice clip is the
-  // "weird card" we're fixing. A genuine webm *video* still renders correctly
-  // because it carries the explicit (video) marker handled above.
-  const audioMatch = output.match(
-    /(\/[^\s",:)]*\.wolffish\/workspace\/[^\s",:)]+\.(?:mp3|wav|m4a|ogg|flac|aac|wma|opus|webm))\b/i
-  )
-  if (audioMatch) return { path: audioMatch[1], type: 'audio' }
-
-  const videoMatch = output.match(
-    /(\/[^\s",:)]*\.wolffish\/workspace\/[^\s",:)]+\.(?:mp4|mov|avi|mkv|m4v|wmv|flv))\b/i
-  )
-  if (videoMatch) return { path: videoMatch[1], type: 'video' }
-
   return null
 }
 
@@ -4454,40 +5023,11 @@ function hasFiles(e: React.DragEvent<HTMLDivElement>): boolean {
   return false
 }
 
-function formatTokensCompact(n: number, locale: string): string {
-  // Hand-rolled k/m/b suffix so the unit letters stay Latin in every
-  // locale (matches how technical token counts are usually displayed).
-  // The numeric portion is locale-formatted so RTL users see the right
-  // decimal separator.
-  const fmt = (value: number): string => {
-    try {
-      return new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(value)
-    } catch {
-      return String(value)
-    }
-  }
-  if (n >= 1_000_000_000) return `${fmt(n / 1_000_000_000)}b`
-  if (n >= 1_000_000) return `${fmt(n / 1_000_000)}m`
-  if (n >= 1_000) return `${fmt(n / 1_000)}k`
-  return fmt(n)
-}
-
-function formatElapsed(ms: number, t: (k: string, v?: Record<string, unknown>) => string): string {
-  const totalSeconds = Math.floor(ms / 1000)
-  if (totalSeconds < 60) {
-    return t('chat.status.elapsedSeconds', { seconds: totalSeconds })
-  }
-  const minutes = Math.floor(totalSeconds / 60)
-  const seconds = totalSeconds % 60
-  return t('chat.status.elapsedMinutes', { minutes, seconds })
-}
-
 type ValidationErrorType =
   | { code: 'file_too_large'; maxBytes: number }
   | { code: 'max_files_reached'; max: number }
   | { code: 'total_size_exceeded'; maxBytes: number }
   | { code: 'type_not_supported' }
-  | { code: 'vision_not_supported'; model: string }
 
 function validationErrorMessage(
   error: ValidationErrorType,
@@ -4502,7 +5042,5 @@ function validationErrorMessage(
       return t('chat.upload.totalExceeded', { limit: formatBytes(error.maxBytes, 0) })
     case 'type_not_supported':
       return t('chat.upload.typeNotSupported')
-    case 'vision_not_supported':
-      return t('chat.upload.visionNotSupported', { model: error.model })
   }
 }

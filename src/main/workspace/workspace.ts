@@ -283,9 +283,6 @@ export type WorkspaceConfig = {
   }
   // Optional so configs written before this field shipped still parse.
   safety?: SafetyConfig
-  // On by default. When true, the chat input shows a small strip with
-  // elapsed time, output tokens, and context size.
-  showChatAnalytics?: boolean
   // Context optimization (prompt caching). On by default; set
   // enabled: false to restore the legacy per-iteration prompt rebuild
   // for debugging. Gates the per-turn pinning of system prompt + tools,
@@ -592,7 +589,6 @@ function defaultConfig(): WorkspaceConfig {
     },
     safety: { bypassPermissions: true, blockCredentials: false },
     updates: { enabled: true },
-    showChatAnalytics: true,
     weekStartsOn: 1,
     locale: 'en',
     theme: 'system',
@@ -1239,10 +1235,6 @@ export async function setLocalOnly(value: boolean): Promise<WorkspaceConfig> {
     ...c,
     llm: { ...c.llm, localOnly: value }
   }))
-}
-
-export async function setShowChatAnalytics(value: boolean): Promise<WorkspaceConfig> {
-  return patchConfig((c) => ({ ...c, showChatAnalytics: value }))
 }
 
 export async function setWeekStartsOn(value: WeekStartsOn): Promise<WorkspaceConfig> {

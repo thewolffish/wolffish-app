@@ -9,6 +9,7 @@
     "offline": "لا يوجد اتصال بالإنترنت",
     "networkOffline": "انقطع الاتصال بالإنترنت",
     "networkRestored": "عاد الاتصال بالإنترنت",
+    "dismiss": "إغلاق",
     "diskUsage": "{{free}} متاح من أصل {{total}}",
     "contextMenu": {
       "selectAll": "تحديد الكل",
@@ -280,10 +281,6 @@
       "restrictPowerfulModels": {
         "label": "تقييد النماذج المحلية القوية",
         "description": "عند تفعيله، يمنع منتقي النماذج تثبيت النماذج المحلية التي تتجاوز حاجتها للذاكرة ما يستطيع جهازك تحمّله بارتياح (حوالي 55% من إجمالي الذاكرة). هذا يمنع التباطؤ الشديد وتبديل القرص المكثّف وعدم استقرار النظام الناتج عن تحميل نماذج كبيرة جداً. تعطيل هذا الخيار يسمح لك بتثبيت وتشغيل أي نموذج بصرف النظر عن حدود العتاد — لا يُوصى بذلك. النماذج الكبيرة جداً تُجبر نظامك على التبديل المكثّف للقرص، مما يجعل وولف‌ فيش وجهازك بالكامل غير مستجيبين."
-      },
-      "showChatAnalytics": {
-        "label": "إظهار إحصائيات المحادثة",
-        "description": "يعرض شريطاً صغيراً بجانب حقل الإدخال يبيّن الزمن المنقضي للدور والتوكنات الناتجة وحجم السياق. مُعطّل افتراضياً — فعّله إن أردت رؤية مباشرة لاستهلاك النموذج وزمنه."
       },
       "weekStartsOn": {
         "label": "بداية الأسبوع",
@@ -1436,6 +1433,13 @@
     "errorPrefix": "حدث خطأ",
     "newChat": "محادثة جديدة",
     "attachFile": "إرفاق ملف",
+    "downloadPdf": "تنزيل المحادثة كملف PDF",
+    "pdfExport": {
+      "you": "أنت",
+      "untitled": "محادثة Wolffish",
+      "saved": "تم حفظ ملف PDF",
+      "error": "تعذّر تصدير ملف PDF"
+    },
     "selectFolder": "اختر مجلد العمل",
     "clearFolder": "إزالة مجلد العمل",
     "workingFolder": "مجلدات العمل",
@@ -1446,8 +1450,7 @@
       "maxFiles": "الحد الأقصى {{count}} ملفات لكل رسالة",
       "totalExceeded": "المرفقات لا يمكن أن تتجاوز {{limit}}",
       "typeNotSupported": "نوع الملف غير مدعوم",
-      "videoNotAllowed": "ملفات الفيديو غير مدعومة",
-      "visionNotSupported": "{{model}} لا يدعم رفع الصور"
+      "videoNotAllowed": "ملفات الفيديو غير مدعومة"
     },
     "pdfViewer": {
       "loading": "جارٍ تحميل الملف",
@@ -1572,15 +1575,34 @@
     "providerChange": {
       "label": "تم التحويل إلى النموذج المحلي"
     },
-    "contextMeter": {
-      "tooltip": "{{used}} من {{max}}"
-    },
-    "status": {
-      "tokenUsage": "{{input}} وارد · {{output}} صادر",
-      "tokenUsageCached": "{{cached}} مخزن · {{input}} جديد · {{output}} صادر",
-      "contextTokens": "{{count}} سياق",
-      "elapsedSeconds": "{{seconds}} ث",
-      "elapsedMinutes": "{{minutes}} د {{seconds}} ث"
+    "contextCard": {
+      "aria": "تفاصيل السياق والاستهلاك",
+      "noModel": "لا يوجد نموذج",
+      "empty": "لا يوجد استهلاك بعد — أرسل رسالة لبدء القياس.",
+      "context": "نافذة السياق",
+      "usage": "{{used}} من {{max}} ({{percent}}٪)",
+      "compactAt": "يُضغط تلقائياً عند {{value}}",
+      "fresh": "جديد",
+      "cacheRead": "قراءة كاش",
+      "cacheWrite": "كتابة كاش",
+      "inContext": "في السياق",
+      "usageUnavailable": "لم يُبلغ المزوّد عن الاستهلاك — تُعرض آخر قراءة معروفة",
+      "measuredUnder": "قيست تحت {{model}}",
+      "thisTurn": "هذه الجولة",
+      "lastTurn": "الجولة الأخيرة",
+      "input": "إدخال",
+      "output": "إخراج",
+      "calls": "نداءات API",
+      "tools": "{{count}} أدوات",
+      "cost": "التكلفة",
+      "workers": "العمّال: {{turns}} جولات · {{tokens}} رموز",
+      "summaries": "التلخيصات: {{calls}} نداءات · {{tokens}} رموز",
+      "allTime": "الإجمالي الكلي",
+      "turns": "الجولات",
+      "apiCalls": "نداءات API",
+      "toolCalls": "نداءات الأدوات",
+      "cachedShare": "{{percent}}٪ من السياق المُستوعَب جاء من الكاش",
+      "lastCall": "آخر نداء"
     },
     "timeline": {
       "viewLogs": "عرض السجلات",
@@ -1589,6 +1611,7 @@
         "turn.started": "جولة جديدة",
         "context.built": "تم بناء السياق",
         "llm.response": "استجاب النموذج",
+        "turn.usage": "ملخّص الاستهلاك",
         "tool.called": "تم استدعاء أداة",
         "tool.completed": "اكتملت الأداة",
         "tool.failed": "فشلت الأداة",
@@ -1614,6 +1637,9 @@
       "viewFiles": "عرض الملفات",
       "title": "الملفات",
       "fileCount": "{{count}} ملفات"
+    },
+    "logsFiles": {
+      "label": "السجلات والملفات"
     },
     "modeToggle": {
       "ariaLabel": "وضع المزوّد",
@@ -1645,7 +1671,11 @@
       "on": "التفكير مُفعّل — يفكر قبل الإجابة.",
       "high": "جهد عالٍ — استدلال أكثر شمولاً.",
       "max": "أقصى جهد — أعمق استدلال وأكثره تفصيلاً.",
-      "unsupported": "هذا النموذج لا يدعم الاستدلال."
+      "unsupported": "هذا النموذج لا يدعم الاستدلال.",
+      "shortOff": "معطل",
+      "shortOn": "عادي",
+      "shortHigh": "عالي",
+      "shortMax": "أقصى"
     },
     "newChatShort": "جديد",
     "approval": {

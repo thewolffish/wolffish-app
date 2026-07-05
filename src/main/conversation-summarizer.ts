@@ -4,6 +4,7 @@ import {
   type ConversationFile,
   type ConversationMessage
 } from '@main/conversations'
+import { autonomousTurnScope } from '@main/runtime/corpus'
 import type { Thalamus } from '@main/runtime/thalamus'
 
 /**
@@ -63,7 +64,14 @@ export function configureSummarizer(deps: {
 export function queueConversationSummarization(conversationId: string): void {
   if (!configured) return
   const { thalamus, onUpdated } = configured
-  void maybeSummarizeConversation(conversationId, thalamus, onUpdated)
+  // autonomousTurnScope keeps the summary call's llm.response emit out of
+  // any live turn's relay — this runs post-save for one conversation while a
+  // DIFFERENT conversation's turn may be streaming, and the relay would
+  // stamp the spend onto that unrelated turn. The ledger listener records
+  // it regardless (corpus-level, not relay-level).
+  void autonomousTurnScope.run(true, () =>
+    maybeSummarizeConversation(conversationId, thalamus, onUpdated)
+  )
 }
 
 /**

@@ -65,6 +65,7 @@ import { diskWriter } from '@main/io/diskWriter'
 import { Agent } from '@main/runtime/agent'
 import type { ApprovalDecision } from '@main/runtime/amygdala'
 import { previewSchedule } from '@main/runtime/brainstem'
+import { COMPACTION_THRESHOLD } from '@main/runtime/compactor'
 import type { AskUserResponse } from '@main/runtime/cerebellum'
 import { deleteCapabilityFolder, importCapability } from '@main/runtime/capabilityImport'
 import { McpManager } from '@main/runtime/mcp/manager'
@@ -153,7 +154,6 @@ import {
   setMemesConfig as persistMemesConfig,
   setNotionConfig as persistNotionConfig,
   setRestrictPowerfulModels as persistRestrictPowerfulModels,
-  setShowChatAnalytics as persistShowChatAnalytics,
   setSttConfig as persistSttConfig,
   setTelegramConfig as persistTelegramConfig,
   setTheme as persistTheme,
@@ -524,10 +524,24 @@ async function fetchProviderModels(
     }
 
     if (id === 'openrouter') {
-      const res = await fetch('https://openrouter.ai/api/v1/models', {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${apiKey}` }
-      })
+      // OpenRouter's /v1/models is public — it returns 200 with no auth at
+      // all — so unlike every other provider's catalogue endpoint it can't
+      // double as key validation. Probe /v1/key alongside it: that endpoint
+      // 401s on a revoked/invalid key.
+      const [keyRes, res] = await Promise.all([
+        fetch('https://openrouter.ai/api/v1/key', {
+          method: 'GET',
+          headers: { Authorization: `Bearer ${apiKey}` }
+        }),
+        fetch('https://openrouter.ai/api/v1/models', {
+          method: 'GET',
+          headers: { Authorization: `Bearer ${apiKey}` }
+        })
+      ])
+      if (!keyRes.ok) {
+        const text = await keyRes.text().catch(() => '')
+        return { ok: false, ...classifyHttpError(keyRes.status, text) }
+      }
       if (!res.ok) {
         const text = await res.text().catch(() => '')
         return { ok: false, ...classifyHttpError(res.status, text) }
@@ -1347,10 +1361,6 @@ app.whenReady().then(async () => {
   ipcMain.handle('runtime:setBlockCredentials', async (_e, value: boolean) => {
     await persistBlockCredentials(value)
     turnRunner.setBlockCredentials(value)
-    return { value }
-  })
-  ipcMain.handle('runtime:setShowChatAnalytics', async (_e, value: boolean) => {
-    await persistShowChatAnalytics(value)
     return { value }
   })
   ipcMain.handle('runtime:setLocalOnly', async (_e, value: boolean) => {
@@ -3197,20 +3207,26 @@ app.whenReady().then(async () => {
       model: string | null
       supportsVision: boolean
       contextWindow: number
+      compactionAt: number
     }> => {
       const contextWindow = await agent.thalamus.resolveActiveContextWindow()
+      // Real auto-compaction trigger point for the active model, in tokens —
+      // the meter draws it as a tick so the visible % and the compaction
+      // trigger share one denominator story.
+      const compactionAt = Math.floor(agent.thalamus.getContextBudget() * COMPACTION_THRESHOLD)
       const provider = agent.thalamus.getActiveProvider()
-      if (!provider) return { provider: null, model: null, supportsVision: false, contextWindow }
+      if (!provider)
+        return { provider: null, model: null, supportsVision: false, contextWindow, compactionAt }
       if (provider === 'local') {
         const model = agent.thalamus.getLocalModelName()
         const supportsVision = await agent.thalamus.localSupportsVision()
-        return { provider, model, supportsVision, contextWindow }
+        return { provider, model, supportsVision, contextWindow, compactionAt }
       }
       const cloudProviders = agent.thalamus.getCloudProviders()
       const active = cloudProviders.find((p) => p.id === provider)
       const model = active?.model ?? null
       const supportsVision = model !== null && cloudModelSupportsVision(provider, model)
-      return { provider, model, supportsVision, contextWindow }
+      return { provider, model, supportsVision, contextWindow, compactionAt }
     }
   )
 
@@ -3404,6 +3420,62 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('chat:askRespond', (_e, payload: { id: string; response: AskUserResponse }) =>
     electronChannel.respondAsk(payload)
+  )
+
+  // Export the current conversation as a paginated PDF. The renderer builds a
+  // self-contained transcript HTML (content + print stylesheet); main renders
+  // it in a hidden, script-less window and prints it via Chromium's print
+  // pipeline — same engine as the browser's "Save as PDF", so page-break CSS
+  // in the stylesheet drives clean pagination. The HTML goes through a temp
+  // file because data: URLs cap out below real conversation sizes.
+  ipcMain.handle(
+    'chat:exportPdf',
+    async (
+      _e,
+      payload: { html: string; fileName: string }
+    ): Promise<{ ok: boolean; canceled?: boolean; error?: string }> => {
+      const mainWin = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+      if (!mainWin) return { ok: false, error: 'no window' }
+      const safeName = payload.fileName.replace(/[\\/:*?"<>|]/g, '-')
+      const result = await dialog.showSaveDialog(mainWin, {
+        defaultPath: join(app.getPath('downloads'), safeName),
+        filters: [{ name: 'PDF', extensions: ['pdf'] }]
+      })
+      if (result.canceled || !result.filePath) return { ok: false, canceled: true }
+
+      const { writeFile, unlink } = await import('node:fs/promises')
+      const tmpPath = join(app.getPath('temp'), `wolffish-chat-export-${Date.now()}.html`)
+      let printWin: BrowserWindow | null = null
+      try {
+        await writeFile(tmpPath, payload.html, 'utf8')
+        printWin = new BrowserWindow({
+          show: false,
+          webPreferences: {
+            javascript: false,
+            nodeIntegration: false,
+            contextIsolation: true
+          }
+        })
+        await printWin.loadFile(tmpPath)
+        const pdf = await printWin.webContents.printToPDF({
+          pageSize: 'A4',
+          printBackground: true,
+          displayHeaderFooter: true,
+          headerTemplate: '<span></span>',
+          footerTemplate:
+            '<div style="width:100%;text-align:center;font-family:Helvetica,Arial,sans-serif;font-size:8px;color:#9ca3af;">' +
+            '<span class="pageNumber"></span> / <span class="totalPages"></span></div>',
+          margins: { top: 0.55, bottom: 0.65, left: 0.55, right: 0.55 }
+        })
+        await writeFile(result.filePath, pdf)
+        return { ok: true }
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      } finally {
+        printWin?.destroy()
+        void unlink(tmpPath).catch(() => undefined)
+      }
+    }
   )
 
   // Usage — aggregated token & cost data from markdown files.

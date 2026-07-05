@@ -7,6 +7,7 @@ import {
   type ConversationMessage
 } from '@main/conversations'
 import { diskWriter } from '@main/io/diskWriter'
+import { net } from 'electron'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { deliveredFileNames } from '@main/runtime/agent/delivered-files'
 import { emptyTurnNudge, MAX_EMPTY_TURN_NUDGES } from '@main/runtime/agent/empty-turn-guard'
@@ -324,6 +325,34 @@ export class Agent {
       hippocampus: this.hippocampus
     })
     this.usage = new Usage({ workspaceRoot, corpus })
+    // Summarization side-calls (compaction, post-turn conversation
+    // summarizer) bypass the turn loop's captureUsage, so their spend never
+    // reached the ledger. Thalamus emits them as llm.response role:'summary'
+    // — record them here, where Usage lives.
+    corpus.on('llm.response', (payload) => {
+      if (payload.role !== 'summary') return
+      const provider = payload.provider as ProviderId
+      const cost = calculateCost(
+        provider,
+        payload.model,
+        payload.inputTokens,
+        payload.outputTokens,
+        payload.cacheCreationTokens,
+        payload.cacheReadTokens
+      )
+      void this.usage
+        .recordUsage({
+          timestamp: new Date(),
+          provider,
+          model: payload.model,
+          inputTokens: payload.inputTokens,
+          outputTokens: payload.outputTokens,
+          cacheCreationTokens: payload.cacheCreationTokens,
+          cacheReadTokens: payload.cacheReadTokens,
+          cost
+        })
+        .catch(() => undefined)
+    })
   }
 
   /**
@@ -694,11 +723,20 @@ export class Agent {
 
         iterationCount += 1
 
+        // Host connectivity, sampled fresh each iteration — the same signal
+        // the thalamus uses to skip cloud providers. When definitively
+        // offline, the runtime context tells the model so it works from its
+        // own knowledge and offline tools instead of burning iterations on
+        // internet tools that can only fail. Fail-open: a detection error
+        // must never mislabel a healthy connection.
+        const online = isHostOnline()
+
         const runtime = {
           iteration: iterationCount,
           toolsCalled: totalToolCalls,
           renderCounters: !optimizeContext,
-          deliveredFiles: [...deliveredThisTurn]
+          deliveredFiles: [...deliveredThisTurn],
+          online
         }
 
         let systemPrompt: string
@@ -808,15 +846,18 @@ export class Agent {
           truncateOutbound,
           // The live runtime tail (host clock + loop counters) rides at the
           // very end of the outbound clone — omitted on iteration 1 (unless
-          // working folders need announcing) so the first cache write is a
-          // clean prefix. It renders strictly after every cache breakpoint
-          // (see anthropic.ts), so it never perturbs a prefix hash.
+          // working folders need announcing or the host is offline, both
+          // facts the model needs before its first tool pick) so the first
+          // cache write is a clean prefix. It renders strictly after every
+          // cache breakpoint (see anthropic.ts), so it never perturbs a
+          // prefix hash.
           volatileStatus:
-            optimizeContext && (iterationCount > 1 || workingFoldersBlock)
+            optimizeContext && (iterationCount > 1 || workingFoldersBlock || !online)
               ? formatRuntimeStatus({
                   iteration: iterationCount,
                   toolsCalled: totalToolCalls,
-                  deliveredFiles: [...deliveredThisTurn]
+                  deliveredFiles: [...deliveredThisTurn],
+                  online
                 }) + (workingFoldersBlock ? `\n${workingFoldersBlock}` : '')
               : undefined
         })
@@ -1191,8 +1232,9 @@ export class Agent {
             })
             .catch(() => undefined)
 
-          // Record any file this tool auto-delivered (the [wolffish-output]
-          // marker or the bare {path} JSON generation tools return). The
+          // Record any file the model delivered through this tool (the
+          // [wolffish-output] marker — send_file's transport; bare {path}
+          // JSON is mere generation and never counts as delivery). The
           // reminder rides the runtime tail (deliveredThisTurn → runtime /
           // volatileStatus), NOT this tool message — keeping it out of the
           // cached history prefix. Tool result content stays byte-identical to
@@ -1245,45 +1287,6 @@ export class Agent {
         })
         .catch(() => undefined)
 
-      if (turnProvider && turnModel && (turnUsage.inputTokens > 0 || turnUsage.outputTokens > 0)) {
-        const cost = calculateCost(
-          turnProvider,
-          turnModel,
-          turnUsage.inputTokens,
-          turnUsage.outputTokens,
-          turnUsage.cacheCreationTokens,
-          turnUsage.cacheReadTokens
-        )
-        await this.usage
-          .recordUsage({
-            timestamp: new Date(),
-            provider: turnProvider,
-            model: turnModel,
-            inputTokens: turnUsage.inputTokens,
-            outputTokens: turnUsage.outputTokens,
-            cacheCreationTokens: turnUsage.cacheCreationTokens,
-            cacheReadTokens: turnUsage.cacheReadTokens,
-            cost
-          })
-          .catch(() => undefined)
-        // Whole-turn roll-up with the cache split, so a 200-iteration task
-        // leaves one line that says whether caching actually worked.
-        const cacheRead = turnUsage.cacheReadTokens ?? 0
-        const totalInput = turnUsage.inputTokens + cacheRead
-        this.corpus.emit('turn.usage', {
-          provider: turnProvider,
-          model: turnModel,
-          iterations: iterationCount,
-          toolCalls: totalToolCalls,
-          inputTokens: turnUsage.inputTokens,
-          outputTokens: turnUsage.outputTokens,
-          cacheCreationTokens: turnUsage.cacheCreationTokens ?? 0,
-          cacheReadTokens: cacheRead,
-          cacheHitRate: totalInput > 0 ? cacheRead / totalInput : 0,
-          cost
-        })
-      }
-
       broca.emitTurnEnd(
         turn.turnId,
         segmentReasonFor(stopReason),
@@ -1309,6 +1312,54 @@ export class Agent {
       }
       throw err
     } finally {
+      // Ledger truth must survive every exit path. This used to run only on
+      // the success path, so a turn that errored on iteration 51 silently
+      // dropped 50 iterations of real billed usage from the ledger while the
+      // renderer had already shown the tokens live. Runs here so success,
+      // cancel AND error all record.
+      if (turnProvider && turnModel && (turnUsage.inputTokens > 0 || turnUsage.outputTokens > 0)) {
+        const cost = calculateCost(
+          turnProvider,
+          turnModel,
+          turnUsage.inputTokens,
+          turnUsage.outputTokens,
+          turnUsage.cacheCreationTokens,
+          turnUsage.cacheReadTokens
+        )
+        await this.usage
+          .recordUsage({
+            timestamp: new Date(),
+            provider: turnProvider,
+            model: turnModel,
+            inputTokens: turnUsage.inputTokens,
+            outputTokens: turnUsage.outputTokens,
+            cacheCreationTokens: turnUsage.cacheCreationTokens,
+            cacheReadTokens: turnUsage.cacheReadTokens,
+            cost
+          })
+          .catch(() => undefined)
+        // Whole-turn roll-up with the cache split, so a 200-iteration task
+        // leaves one line that says whether caching actually worked. Hit
+        // rate counts cache writes in the denominator: on Anthropic each
+        // iteration's fresh extension reports as cache_creation, not input,
+        // and omitting it overstated the rate.
+        const cacheRead = turnUsage.cacheReadTokens ?? 0
+        const cacheWrite = turnUsage.cacheCreationTokens ?? 0
+        const totalIngested = turnUsage.inputTokens + cacheRead + cacheWrite
+        this.corpus.emit('turn.usage', {
+          provider: turnProvider,
+          model: turnModel,
+          role: turn.role === 'worker' ? 'worker' : 'brain',
+          iterations: iterationCount,
+          toolCalls: totalToolCalls,
+          inputTokens: turnUsage.inputTokens,
+          outputTokens: turnUsage.outputTokens,
+          cacheCreationTokens: cacheWrite,
+          cacheReadTokens: cacheRead,
+          cacheHitRate: totalIngested > 0 ? cacheRead / totalIngested : 0,
+          cost
+        })
+      }
       broca.endTurn()
       if (turn.role !== 'worker') this.cerebellum.setCurrentConversationId(null)
       if (orchestration) {
@@ -1547,6 +1598,22 @@ function mapProviderStopReason(s: StopReason): SegmentTurnEndReason {
 // isn't a model-side reason. Surface it as end_turn so no footer chip
 // renders; the renderer already knows the user canceled because the
 // chat:error event arrived.
+
+/**
+ * Definitive-offline detection for the runtime context — Chromium's network
+ * change notifier via Electron, the same signal the thalamus consults before
+ * dispatching to a cloud provider. `false` means provably offline; `true`
+ * means "possibly online" (the API can't promise reachability), which is why
+ * only the offline state is ever rendered to the model. Fail-open: if the
+ * probe itself throws, report online rather than falsely alarming the model.
+ */
+function isHostOnline(): boolean {
+  try {
+    return net.isOnline()
+  } catch {
+    return true
+  }
+}
 
 /** Entries listed per working folder in the volatile tail. */
 const WORKING_FOLDER_MAX_ENTRIES = 200

@@ -27,8 +27,12 @@ import { type ChatMessage, type Thalamus, type ToolDefinition } from '@main/runt
 // for non-English-optimized tokenizers on structured content.
 const CHARS_PER_TOKEN = 1.5
 
-/** Trigger compaction when payload exceeds this fraction of the input budget. */
-const COMPACTION_THRESHOLD = 0.75
+/**
+ * Trigger compaction when payload exceeds this fraction of the input budget.
+ * Exported so the context meter can draw the real trigger point instead of
+ * inventing its own thresholds — one denominator story everywhere.
+ */
+export const COMPACTION_THRESHOLD = 0.75
 /** Compact down to this fraction — leaves headroom for the model to keep working. */
 const COMPACTION_TARGET = 0.5
 /** Number of most-recent messages per role to protect from compaction. */

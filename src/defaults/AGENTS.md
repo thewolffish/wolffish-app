@@ -466,7 +466,6 @@ Reading these confidently lets you answer almost any question about the agent.
   },
   "safety": { "bypassPermissions": true, "blockCredentials": false },
   "updates": { "enabled": true },
-  "showChatAnalytics": true,
   "weekStartsOn": 1,
   "locale": "en",                            // en | ar
   "theme": "light",                          // light | dark | system
@@ -480,7 +479,12 @@ Reading these confidently lets you answer almost any question about the agent.
 
 ### Conversation — `brain/conversations/conv-*.json`
 Top-level keys: `id`, `title`, `model`, `messages[]`, `createdAt`, `updatedAt`,
-`contextMeter {contextTokens, contextBudget}`, `timeline[]`.
+`stats { allTime, lastTurn, meter }`, `timeline[]`. `stats.allTime` holds the
+conversation's lifetime totals (processingMs, turns, apiCalls, toolCalls,
+token splits, cost); `stats.lastTurn` the previous turn's roll-up;
+`stats.meter {contextTokens, contextBudget, compactionAt, model}` the context
+meter reading. Older files may carry the legacy
+`contextMeter {contextTokens, contextBudget}` instead.
 - user message: `{ role, content, timestamp }`
 - assistant message: `{ role, content, segments[], toolTimings, stopReason, timestamp }`
 - segment kinds: `text`, `tool_call`, `tool_result`, `active_model`, `turn_end`.

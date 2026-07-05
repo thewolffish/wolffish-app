@@ -4,7 +4,9 @@
  * (never on a volatile block), and the compaction trigger calibration
  * that replaces the 1.5 chars/token heuristic with provider actuals.
  *
- * Run: npx tsx src/main/runtime/__tests__/context-optimization.test.ts
+ * Run: TSX_TSCONFIG_PATH=tsconfig.node.json npx tsx src/main/runtime/__tests__/context-optimization.test.ts
+ * (the root tsconfig is solution-style with no paths — tsx needs the node
+ * project config to resolve the @main/* alias reached via anthropic.ts)
  */
 
 import { effectivePayloadTokens } from '../compactor'
@@ -143,6 +145,20 @@ check(
   true
 )
 check('status: embeds the host clock', status.includes('Current date/time:'), true)
+// online is the silent default — the notice renders ONLY on a definitive false
+check('status: no offline notice by default', status.includes('NETWORK: OFFLINE'), false)
+check(
+  'status: no offline notice while online',
+  formatRuntimeStatus({ iteration: 1, toolsCalled: 0, online: true }).includes('NETWORK: OFFLINE'),
+  false
+)
+check(
+  'status: offline notice when host is offline',
+  formatRuntimeStatus({ iteration: 1, toolsCalled: 0, online: false }).includes(
+    'NETWORK: OFFLINE'
+  ),
+  true
+)
 
 // ---------------------------------------------------------------------------
 // formatClock — deterministic given (now, timeZone)

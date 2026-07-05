@@ -125,11 +125,15 @@ const DEEPSEEK_PRICING: Record<string, ModelPricing> = {
 // https://platform.xiaomimimo.com/docs/en-US/pricing (overseas USD)
 // Input rates are for the ≤256K tier; the 256K-1M tier is ~5× higher but
 // most Wolffish turns stay under 256K. Cache write is free (limited time).
+// cacheRead is a FRACTION of the input rate (cached-input price / input
+// price) — these were previously entered as percentages (15.0/25.0),
+// billing cache hits at 15-25× the input rate and grossly over-costing
+// every cache-heavy Mimo turn.
 const MIMO_PRICING: Record<string, ModelPricing> = {
-  'mimo-v2.5-pro': { input: 0.2 / 1e6, output: 2.0 / 1e6, cacheWrite: 0, cacheRead: 15.0 },
-  'mimo-v2-pro': { input: 0.2 / 1e6, output: 2.0 / 1e6, cacheWrite: 0, cacheRead: 15.0 },
-  'mimo-v2.5': { input: 0.08 / 1e6, output: 0.8 / 1e6, cacheWrite: 0, cacheRead: 25.0 },
-  'mimo-v2-omni': { input: 0.08 / 1e6, output: 0.8 / 1e6, cacheWrite: 0, cacheRead: 25.0 },
+  'mimo-v2.5-pro': { input: 0.2 / 1e6, output: 2.0 / 1e6, cacheWrite: 0, cacheRead: 0.15 },
+  'mimo-v2-pro': { input: 0.2 / 1e6, output: 2.0 / 1e6, cacheWrite: 0, cacheRead: 0.15 },
+  'mimo-v2.5': { input: 0.08 / 1e6, output: 0.8 / 1e6, cacheWrite: 0, cacheRead: 0.25 },
+  'mimo-v2-omni': { input: 0.08 / 1e6, output: 0.8 / 1e6, cacheWrite: 0, cacheRead: 0.25 },
   'mimo-v2-flash': { input: 0.01 / 1e6, output: 0.3 / 1e6, cacheWrite: 0, cacheRead: 0 }
 }
 
@@ -405,6 +409,8 @@ export class Usage {
       model: entry.model,
       inputTokens: entry.inputTokens,
       outputTokens: entry.outputTokens,
+      cacheCreationTokens: entry.cacheCreationTokens ?? 0,
+      cacheReadTokens: entry.cacheReadTokens ?? 0,
       cost: entry.cost
     })
   }

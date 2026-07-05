@@ -21,6 +21,12 @@ export type FileProcessorOptions = {
    * enum can never silently misroute onto the lossy path again.
    */
   pdfAsText: boolean
+  /**
+   * Whether the active model accepts image content parts. False never
+   * rejects an upload — images are handed to the model as a text note
+   * (name + on-disk path + how to operate on it with tools) instead of
+   * a base64 block a text-only API would 400 on.
+   */
   supportsVision: boolean
 }
 
@@ -73,7 +79,7 @@ export async function processAttachment(
   const ext = path.extname(originalName).toLowerCase()
 
   if (IMAGE_MIMES.has(mimeType)) {
-    if (!options.supportsVision) return null
+    if (!options.supportsVision) return imageAsTextNote(abs, originalName)
     return processImage(abs, mimeType, originalName)
   }
 
@@ -98,6 +104,27 @@ export async function processAttachment(
   if (mimeType.startsWith('video/')) return null
 
   return null
+}
+
+/**
+ * Text-only models never receive image bytes (their APIs hard-reject image
+ * parts), but the upload is accepted like any other file: instead of a
+ * base64 block the model gets this note naming the file on disk, so it can
+ * still operate on it with tools — and knows to tell the user it can't see
+ * the pixels. Mirrors the <video_instructions> pattern in
+ * compose-attachments.ts.
+ */
+function imageAsTextNote(absPath: string, originalName: string): ProcessedAttachment {
+  return {
+    originalName,
+    fileType: 'image',
+    blocks: [
+      {
+        type: 'text',
+        text: `[Image attached: ${originalName} — saved at ${absPath}]\nThe active model is text-only and cannot view this image, but the file is on disk and fully workable. Use your shell tool to inspect or operate on it: metadata via ffprobe/exiftool/sips, conversions/resizes/crops via ffmpeg, plus any move/copy/rename or other file operations the user asks for. Let the user know you can't see the image's content but can still work on the file.`
+      }
+    ]
+  }
 }
 
 async function processImage(
