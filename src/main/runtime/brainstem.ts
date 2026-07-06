@@ -47,6 +47,11 @@ export type BrainstemJob = {
   task: ScheduledTask | null
   /** Epoch ms a one-time ('once') job fires; null for recurring/startup jobs. */
   runAt?: number | null
+  /**
+   * The job's own chat mode (its `mode: …` marker line). Overrides the
+   * global mode for this job's runs; absent ⇒ follows the global mode.
+   */
+  mode?: 'single' | 'workflow' | null
 }
 
 export type CompactionResult = {
@@ -138,6 +143,8 @@ export type ParsedSchedule = {
   body: string
   /** Epoch ms a one-time ('once') schedule fires; undefined for recurring. */
   runAt?: number | null
+  /** Per-job chat mode from the `mode: …` marker line; absent ⇒ global. */
+  mode?: 'single' | 'workflow' | null
 }
 
 export type RunningJobInfo = {
@@ -356,7 +363,8 @@ export class Brainstem {
           cron: null,
           label: schedule.label,
           body: schedule.body,
-          task: null
+          task: null,
+          mode: schedule.mode ?? null
         })
         continue
       }
@@ -371,14 +379,15 @@ export class Brainstem {
           label: schedule.label,
           body: schedule.body,
           task: null,
-          runAt: schedule.runAt ?? null
+          runAt: schedule.runAt ?? null,
+          mode: schedule.mode ?? null
         })
         this.scheduleOnce(schedule, runStartup)
         continue
       }
 
       if (!schedule.cron) continue
-      const handler = this.handlerFor(schedule.kind, schedule.body, schedule.label)
+      const handler = this.handlerFor(schedule.kind, schedule.body, schedule.label, schedule.mode)
       if (!handler) continue
 
       let task: ScheduledTask
@@ -395,7 +404,8 @@ export class Brainstem {
         cron: schedule.cron,
         label: schedule.label,
         body: schedule.body,
-        task
+        task,
+        mode: schedule.mode ?? null
       })
     }
 
@@ -405,7 +415,7 @@ export class Brainstem {
     if (runStartup) {
       await this.runCatchUp(schedules)
       for (const startup of startupJobs) {
-        const handler = this.handlerFor(startup.kind, startup.body, startup.label)
+        const handler = this.handlerFor(startup.kind, startup.body, startup.label, startup.mode)
         if (!handler) continue
         this.enqueue(startup, handler)
       }
@@ -453,13 +463,15 @@ export class Brainstem {
     cron: string | null
     label: string
     body: string
+    mode: 'single' | 'workflow' | null
   }> {
     return [...this.jobs.values()].map((j) => ({
       id: j.id,
       type: j.type,
       cron: j.cron,
       label: j.label,
-      body: j.body
+      body: j.body,
+      mode: j.mode ?? null
     }))
   }
 
@@ -684,7 +696,7 @@ export class Brainstem {
    */
   private scheduleOnce(schedule: ParsedSchedule, runStartup: boolean): void {
     if (this.firedOnce.has(schedule.label)) return
-    const handler = this.handlerFor('once', schedule.body, schedule.label)
+    const handler = this.handlerFor('once', schedule.body, schedule.label, schedule.mode)
     if (!handler) return
     const runAt = schedule.runAt ?? 0
     const delay = runAt - Date.now()
@@ -768,7 +780,7 @@ export class Brainstem {
       // Missed iff the most recent scheduled fire happened during the downtime
       // window (after we went down, within 24h).
       if (lastFire !== null && lastFire > windowStart) {
-        const handler = this.handlerFor(s.kind, s.body, s.label)
+        const handler = this.handlerFor(s.kind, s.body, s.label, s.mode)
         if (!handler) continue
         this.corpus?.emit('brainstem.jobCatchup', {
           job: s.id,
@@ -879,7 +891,7 @@ export class Brainstem {
         error: `Automation "${job.label}" has no instruction body.`
       }
     }
-    const handler = this.handlerFor(job.type, job.body, job.label)
+    const handler = this.handlerFor(job.type, job.body, job.label, job.mode)
     if (!handler)
       return {
         ok: false,
@@ -892,7 +904,8 @@ export class Brainstem {
       cron: job.cron,
       label: job.label,
       body: job.body,
-      runAt: job.runAt ?? null
+      runAt: job.runAt ?? null,
+      mode: job.mode ?? null
     }
     const accepted = this.enqueue(schedule, handler)
     if (!accepted) {
@@ -916,7 +929,8 @@ export class Brainstem {
   runDetached(
     instruction: string,
     label: string,
-    key: string
+    key: string,
+    mode?: 'single' | 'workflow' | null
   ): { ok: boolean; started: boolean; error?: string } {
     if (!this.agent) return { ok: false, started: false, error: 'The agent is not ready yet.' }
     if (instruction.trim().length === 0) {
@@ -936,7 +950,7 @@ export class Brainstem {
       runAt: null
     }
     const accepted = this.enqueue(schedule, () =>
-      this.runHeartbeatJob(instruction, label, 'procedure')
+      this.runHeartbeatJob(instruction, label, 'procedure', mode)
     )
     if (!accepted) {
       return {
@@ -963,16 +977,18 @@ export class Brainstem {
   private handlerFor(
     _kind: ScheduleKind,
     body: string,
-    label: string
+    label: string,
+    mode?: 'single' | 'workflow' | null
   ): (() => Promise<void>) | null {
     if (body.trim().length === 0) return null
-    return () => this.runHeartbeatJob(body, label)
+    return () => this.runHeartbeatJob(body, label, 'heartbeat', mode)
   }
 
   private async runHeartbeatJob(
     instruction: string,
     label: string,
-    channel: 'heartbeat' | 'procedure' = 'heartbeat'
+    channel: 'heartbeat' | 'procedure' = 'heartbeat',
+    mode?: 'single' | 'workflow' | null
   ): Promise<void> {
     if (!this.agent) return
     // Serialization is handled by the drain loop, so this just runs the turn.
@@ -980,7 +996,12 @@ export class Brainstem {
     // procedure (not an automation) in history.
     const startedAt = Date.now()
     try {
-      await this.agent.processAutonomous({ instruction, jobLabel: label, channel })
+      await this.agent.processAutonomous({
+        instruction,
+        jobLabel: label,
+        channel,
+        mode: mode ?? undefined
+      })
       await this.appendRunHistory(label, channel, 'ok', Date.now() - startedAt)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -1191,7 +1212,7 @@ export function parseHeartbeat(raw: string): ParsedSchedule[] {
     if (!heading) continue
 
     const headingText = heading[1]
-    const body = collectBody(lines, i + 1)
+    const { body, mode } = splitModeMarker(collectBody(lines, i + 1))
     const parsed = matchSchedule(headingText)
 
     if (!parsed) continue
@@ -1206,11 +1227,35 @@ export function parseHeartbeat(raw: string): ParsedSchedule[] {
       cron: parsed.cron,
       label: headingText,
       body,
-      runAt: parsed.runAt ?? null
+      runAt: parsed.runAt ?? null,
+      mode
     })
   }
 
   return out
+}
+
+/**
+ * A job's optional per-job chat mode rides its FIRST body line as a plain
+ * `mode: single` / `mode: workflow` marker (headings are the schedule+label
+ * identity, and HTML comments are stripped wholesale before parsing — neither
+ * can carry it). The marker is split OFF the body here so it never leaks into
+ * the instruction the model receives. The renderer's sidebar parser and the
+ * automations plugin's block parser mirror this rule — keep all three in sync.
+ */
+export const MODE_MARKER_RE = /^mode:\s*(single|workflow)\s*$/i
+
+export function splitModeMarker(body: string): {
+  body: string
+  mode: 'single' | 'workflow' | null
+} {
+  const lines = body.split('\n')
+  const first = lines[0]?.match(MODE_MARKER_RE)
+  if (!first) return { body, mode: null }
+  return {
+    body: lines.slice(1).join('\n').trim(),
+    mode: first[1].toLowerCase() as 'single' | 'workflow'
+  }
 }
 
 function collectBody(lines: string[], startIndex: number): string {

@@ -42,13 +42,7 @@ const PROVIDER_URLS: Record<ProviderId, string> = {
   zai: 'https://z.ai/manage-apikey/apikey-list'
 }
 
-export function CloudProviderPanel({
-  provider,
-  onOpenBrain
-}: {
-  provider: ProviderId
-  onOpenBrain: () => void
-}): React.JSX.Element {
+export function CloudProviderPanel({ provider }: { provider: ProviderId }): React.JSX.Element {
   const { t } = useTranslation()
   const toast = useToast()
   const providerLabel = t(`settings.model.providers.${provider}`)
@@ -332,16 +326,7 @@ export function CloudProviderPanel({
 
           <div className="border-border/60 bg-bg/40 text-muted flex items-start gap-2.5 rounded-xl border px-4 py-3 text-xs leading-relaxed">
             <InformationCircleIcon size={14} className="mt-0.5 shrink-0" aria-hidden />
-            <p className="flex-1">
-              {t('settings.model.cloud.brainNotice')}{' '}
-              <button
-                type="button"
-                onClick={onOpenBrain}
-                className="text-primary cursor-pointer font-medium hover:underline"
-              >
-                {t('settings.model.cloud.brainNoticeLink')}
-              </button>
-            </p>
+            <p className="flex-1">{t('settings.model.cloud.brainNotice')}</p>
           </div>
 
           <StatusLine status={status} error={error} hasModels={hasModels} />

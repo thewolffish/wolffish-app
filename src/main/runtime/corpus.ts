@@ -31,7 +31,7 @@ import path from 'node:path'
  * the live conversation's context meter, token counters, and timeline, and its
  * task.created would hijack the channel's active task id (so Stop aborts the
  * wrong task). Fail-open: `undefined` ⇒ a normal interactive/worker turn, relay
- * as before. Only processAutonomous ever sets it, so channel and orchestrator
+ * as before. Only processAutonomous ever sets it, so channel and workflow
  * worker turns are unaffected.
  */
 export const autonomousTurnScope = new AsyncLocalStorage<boolean>()
@@ -59,7 +59,7 @@ export type CorpusEvents = {
   'llm.response': {
     provider: string
     model: string
-    // Who consumed these tokens: the Brain's own turn loop, an orchestrator
+    // Who consumed these tokens: the Brain's own turn loop, a workflow
     // worker, or a summarization side-call (compaction / conversation
     // summarizer / memory compaction). The renderer routes on this — only
     // 'brain' calls feed the context meter; the rest are itemized separately.

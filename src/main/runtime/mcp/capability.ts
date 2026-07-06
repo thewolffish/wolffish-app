@@ -15,7 +15,7 @@ import { mcpCapabilityName, namespaceToolNames } from '@main/runtime/mcp/naming'
 /**
  * How much of a server's `instructions` blob rides along in the
  * capability description (and therefore in every turn's <tools> block,
- * for Brain and workers alike). Servers ship multi-KB display charters;
+ * for Brain and workflow agents alike). Servers ship multi-KB display charters;
  * beyond this cap the token cost outweighs the guidance.
  */
 const INSTRUCTIONS_MAX_CHARS = 2_000

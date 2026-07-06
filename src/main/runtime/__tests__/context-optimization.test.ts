@@ -154,9 +154,7 @@ check(
 )
 check(
   'status: offline notice when host is offline',
-  formatRuntimeStatus({ iteration: 1, toolsCalled: 0, online: false }).includes(
-    'NETWORK: OFFLINE'
-  ),
+  formatRuntimeStatus({ iteration: 1, toolsCalled: 0, online: false }).includes('NETWORK: OFFLINE'),
   true
 )
 

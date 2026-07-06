@@ -40,12 +40,27 @@ export const PROVIDER_LOGOS: Record<
 
 export type BadgeKind = 'frontier' | 'vision' | 'reasoning' | 'code' | 'fast' | 'voice'
 
+/** Display order for provider groups (chat model picker, settings sub-tabs). */
+export const PROVIDER_ORDER: ProviderId[] = [
+  'deepseek',
+  'zai',
+  'qwen',
+  'kimi',
+  'minimax',
+  'mimo',
+  'stepfun',
+  'anthropic',
+  'openai',
+  'xai',
+  'openrouter'
+]
+
 /**
  * The model auto-selected when a provider first connects (when the user hasn't
  * already picked one). Each is the provider's current flagship; if it isn't in
  * the freshly fetched catalogue the connect flow falls back to the first
  * selectable model. Purely a sensible default — the user can change it any time
- * in the Modes page.
+ * from the chat composer's model picker.
  */
 export const DEFAULT_MODEL: Partial<Record<ProviderId, string>> = {
   deepseek: 'deepseek-v4-pro',
@@ -948,6 +963,19 @@ export const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
 }
 
 /** Look up a model's rich metadata by provider + model id. Null when absent. */
+/**
+ * Compact display name for a model id — fits composer pills and tight rows.
+ * Keeps the last path segment (OpenRouter ids are vendor/model) and strips
+ * date stamps and -latest/-preview suffixes. Conservative: never rewrites
+ * the family/version part, so the name stays recognizable.
+ */
+export function shortModelName(id: string): string {
+  let name = id.split('/').pop() ?? id
+  name = name.replace(/[-_.](20\d{6}|20\d{2}-\d{2}-\d{2})$/, '')
+  name = name.replace(/-(latest|preview)$/i, '')
+  return name
+}
+
 export function findModelSpec(provider: ProviderId, modelId: string): ModelSpec | null {
   return MODEL_SPECS[provider]?.find((m) => m.name === modelId) ?? null
 }

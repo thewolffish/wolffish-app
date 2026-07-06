@@ -115,15 +115,21 @@ export type ProviderStreamOptions = {
    */
   cacheKey?: string
   /**
-   * Which model resolves this call. 'worker' (orchestrator mode) uses the
-   * worker model; anything else uses the Brain/single model. Per-call, so it's
-   * concurrency-safe — a worker turn and the orchestrator turn can stream at
-   * once without sharing global role state. 'summary' resolves like the Brain
-   * but stamps the emitted llm.response with role:'summary' so summarization
-   * side-calls (memory compaction) are itemized as overhead, never fed into
-   * a conversation's context meter.
+   * Turn role for this call. 'agent' marks a workflow subagent (its effort is
+   * clamped to the resolved model's reasoning support and it gets NO retry
+   * budget — the master owns retries); 'summary' resolves like the Brain but
+   * stamps the emitted llm.response with role:'summary' so summarization
+   * side-calls are itemized as overhead. Per-call, so it's concurrency-safe.
    */
-  role?: 'orchestrator' | 'worker' | 'summary'
+  role?: 'master' | 'agent' | 'summary'
+  /**
+   * Explicit provider+model for this call — the master's per-agent choice in
+   * workflow mode. Resolved against the connected cloud providers; when the
+   * provider isn't connected the call fails with a deterministic error (no
+   * silent fallback — the failure is the master's signal to pick again).
+   * Omitted ⇒ the Brain / local resolution.
+   */
+  modelOverride?: { provider: ProviderId; model: string }
 }
 
 export type StopReason = 'end_turn' | 'tool_use' | 'max_tokens' | 'stop_sequence' | 'unknown'
@@ -283,13 +289,12 @@ type CascadeEntry = {
  * when the chat switcher is in local-only mode. It retries the same model on
  * transient failures and exposes a single async-generator interface so
  * downstream regions don't need to know which provider is responding. Model
- * resolution lives behind one seam (resolveEntry) so a future orchestrator
- * can swap it without touching any caller.
+ * resolution lives behind one seam (resolveEntry) so a different resolver
+ * can swap in without touching any caller.
  */
 export class Thalamus {
   private cloudProviders: CloudProviderConfig[] = []
   private brain: BrainSelection | null = null
-  private workerModel: BrainSelection | null = null
   private health = new Map<ProviderId, ProviderHealth>()
   private corpus: Corpus | null
   private localOnly = false
@@ -319,11 +324,6 @@ export class Thalamus {
    */
   setBrain(brain: BrainSelection | null): void {
     this.brain = brain ? { ...brain } : null
-  }
-
-  /** Set the worker model — what worker sessions stream on in orchestrator mode. */
-  setWorkerModel(worker: BrainSelection | null): void {
-    this.workerModel = worker ? { ...worker } : null
   }
 
   setLocalOnly(value: boolean): void {
@@ -418,6 +418,44 @@ export class Thalamus {
     const window = this.windowForEntry(entry)
     const outputReserve = maxOutputForModel(entry.model)
     return Math.max(window - outputReserve, Math.floor(window * 0.5))
+  }
+
+  /**
+   * Context window for an explicit per-agent model choice, falling back to
+   * the active model when null. Workflow subagents on overridden models must
+   * be budgeted against THEIR window, not the Brain's — an 8k-window agent
+   * budgeted as a 200k brain overflows with a 400 instead of compacting.
+   */
+  getContextWindowFor(sel: { provider: ProviderId; model: string } | null): number {
+    if (!sel) return this.getActiveContextWindow()
+    return contextWindowForModel(sel.model)
+  }
+
+  /** Budget sibling of {@link getContextWindowFor} — window minus output reserve. */
+  getContextBudgetFor(sel: { provider: ProviderId; model: string } | null): number {
+    if (!sel) return this.getContextBudget()
+    const window = contextWindowForModel(sel.model)
+    const outputReserve = maxOutputForModel(sel.model)
+    return Math.max(window - outputReserve, Math.floor(window * 0.5))
+  }
+
+  /**
+   * Spawn-time validation for a master-supplied model choice. Returns an
+   * error string when the provider isn't connected (immediate, deterministic
+   * tool error), null when the choice is streamable. A model id missing from
+   * the provider's cached catalog is deliberately accepted — the catalog can
+   * lag the provider; a genuinely dead id surfaces as that agent's failure.
+   */
+  validateModelChoice(sel: { provider: ProviderId; model: string }): string | null {
+    if (sel.provider === 'local') {
+      return 'per-agent model choices are cloud only — omit the model to run the agent on your own model'
+    }
+    const cfg = this.cloudProviders.find((p) => p.id === sel.provider)
+    if (!cfg) {
+      const connected = this.cloudProviders.map((p) => p.id).join(', ') || 'none'
+      return `provider "${sel.provider}" is not connected (connected: ${connected}) — pick a model from <workflow_models> or omit for your own model`
+    }
+    return null
   }
 
   /**
@@ -566,14 +604,15 @@ export class Thalamus {
    * error rather than retrying.
    */
   async *stream(options: ProviderStreamOptions): AsyncGenerator<StreamChunk> {
-    const entry = options.role === 'worker' ? this.resolveWorker() : this.resolveEntry()
+    const entry = options.modelOverride
+      ? this.resolveOverride(options.modelOverride)
+      : this.resolveEntry()
     if (!entry) {
-      const message =
-        options.role === 'worker'
-          ? 'no worker model selected — choose one in Brain settings'
-          : this.localOnly
-            ? 'no local model loaded — pick one in the model picker'
-            : 'no model selected — choose a Brain in settings or switch to local'
+      const message = options.modelOverride
+        ? `provider "${options.modelOverride.provider}" is not connected — the requested model ${options.modelOverride.model} cannot stream`
+        : this.localOnly
+          ? 'no local model loaded — pick one in the model picker'
+          : 'no model selected — choose a model in the chat composer or switch to local'
       this.emit('llm.error', { provider: 'none', error: message })
       yield { type: 'error', message, recoverable: false }
       return
@@ -582,13 +621,13 @@ export class Thalamus {
     // Announce who's handling this turn so the renderer can show a chip.
     yield { type: 'active_model', provider: entry.id, model: entry.model }
 
-    // Worker effort is chosen by the orchestrator, which can't know the worker
+    // Agent effort is chosen by the master, which can't know each agent
     // model's reasoning support (it differs widely: none / always-on / graded).
     // Clamp it to what THIS model actually offers — same source of truth as the
     // Brain button — so an unsupported pick degrades gracefully (max→high→on; a
     // non-reasoning model → off) instead of being sent verbatim and erroring.
     let opts = options
-    if (options.role === 'worker') {
+    if (options.role === 'agent') {
       const openrouterReasoning =
         entry.id === 'openrouter'
           ? (this.cloudProviders
@@ -599,12 +638,12 @@ export class Thalamus {
       opts = { ...options, thinkingMode: normalizeReasoningMode(options.thinkingMode, modes) }
     }
 
-    // Same-model retry: the cloud Brain (orchestrator / single) gets the
-    // transient retry budget. WORKERS do NOT — a worker is single-shot and any
-    // failure surfaces immediately to the orchestrator, which owns all worker
-    // retry decisions end-to-end (re-run, re-scope, or report). The local model
-    // never retries either (Ollama errors are local and effectively permanent).
-    const retry = entry.id !== 'local' && options.role !== 'worker'
+    // Same-model retry: the cloud Brain (master / single) gets the transient
+    // retry budget. AGENTS do NOT — an agent is single-shot and any failure
+    // surfaces immediately to the master, which owns all agent retry decisions
+    // end-to-end (re-run, re-scope, or report). The local model never retries
+    // either (Ollama errors are local and effectively permanent).
+    const retry = entry.id !== 'local' && options.role !== 'agent'
     const result = yield* this.streamOnce(entry, opts, { retry })
     if (result.kind === 'success') return
     if (result.kind === 'committed-error') {
@@ -697,8 +736,10 @@ export class Thalamus {
         this.emit('llm.response', {
           provider: entry.id,
           model: entry.model,
+          // Subagent calls keep the 'worker' wire value — renderer meter
+          // routing and persisted stats predate the workflow rename.
           role:
-            options.role === 'worker' ? 'worker' : options.role === 'summary' ? 'summary' : 'brain',
+            options.role === 'agent' ? 'worker' : options.role === 'summary' ? 'summary' : 'brain',
           inputTokens,
           outputTokens,
           cacheCreationTokens,
@@ -796,8 +837,8 @@ export class Thalamus {
   /**
    * The resolution seam — the ONE place that answers "which provider+model
    * handles this request". Local-only mode resolves to the local model; the
-   * Brain otherwise; null when nothing is selected/ready. A future
-   * orchestrator swaps only this method body — callers never change.
+   * Brain otherwise; null when nothing is selected/ready. Swapping the
+   * resolution policy means swapping only this method body — callers never change.
    */
   private resolveEntry(): CascadeEntry | null {
     if (this.localOnly) {
@@ -811,15 +852,16 @@ export class Thalamus {
   }
 
   /**
-   * Resolve the worker model (orchestrator mode) — a pure cloud selection,
-   * independent of localOnly since orchestrator mode is a cloud feature. Null
-   * when unset or its provider is gone. The second Phase-2 routing seam.
+   * Resolve an explicit per-agent model choice (workflow mode) — a pure cloud
+   * selection, independent of localOnly. Null when the provider isn't
+   * connected; the caller surfaces that as a deterministic error, never a
+   * silent fallback.
    */
-  private resolveWorker(): CascadeEntry | null {
-    if (!this.workerModel) return null
-    const cfg = this.cloudProviders.find((p) => p.id === this.workerModel!.providerId)
+  private resolveOverride(sel: { provider: ProviderId; model: string }): CascadeEntry | null {
+    if (sel.provider === 'local') return null
+    const cfg = this.cloudProviders.find((p) => p.id === sel.provider)
     if (!cfg) return null
-    return this.instantiate(cfg, this.workerModel.model)
+    return this.instantiate(cfg, sel.model)
   }
 
   /** Construct the provider client for one cloud config + the Brain's model. */
@@ -997,7 +1039,7 @@ function extractProviderDetail(raw: string): string | null {
   }
 }
 
-function contextWindowForModel(model: string): number {
+export function contextWindowForModel(model: string): number {
   const m = model.toLowerCase()
   // Claude Fable 5 and 4.6+ — Fable 5, Opus 4.6/4.7/4.8, Sonnet 4.6 have 1M windows
   if (m.includes('fable')) return 1_000_000

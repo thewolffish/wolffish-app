@@ -43,6 +43,7 @@ export class ElectronChannel {
       conversationId?: string | null
       workingFolders?: string[]
       thinkingMode?: string
+      modeOverride?: 'single' | 'workflow'
     }
   ): { turnId: string; ok: true } {
     if (this.activeController) this.activeController.abort()
@@ -52,6 +53,7 @@ export class ElectronChannel {
       conversationId: payload.conversationId ?? null,
       workingFolders: payload.workingFolders,
       thinkingMode: (payload.thinkingMode as TurnSendOptions['thinkingMode']) ?? undefined,
+      modeOverride: payload.modeOverride,
       makeSink: ({ turnId, conversationId }) => this.createSink(turnId, conversationId, sender),
       onTurnStarted: ({ turnId, controller }) => {
         this.activeController = controller

@@ -1,4 +1,39 @@
-## v1.0.204 — 2026-07-05 `Latest`
+## v1.0.205 — 2026-07-06 `Latest`
+
+### Workflow Mode: One Master, Many Agents
+
+Orchestrator mode is gone, and what replaces it is bigger than a rename. In **Workflow mode**, your model becomes the master of a run it designs itself: it declares the phases of its plan, spawns live agents that work in parallel, collects each one's report the moment it lands, sends follow-ups, and cancels anything no longer worth finishing. Each agent is a real, bounded task — and the master picks **the right model for each one individually**, from every provider you've connected: it sees a catalog of your models with their context windows, reasoning support, and vision, and chooses accordingly — a frontier model to verify, a fast cheap one to sweep. The agents work in silence; you hear one voice, the master's, which weaves everything into the reply you actually read.
+
+The old machinery went with it: the fixed "worker model" slot, the greedy and autonomous toggles, the orchestrator's settings — all retired. If you were running orchestrator mode, you wake up in workflow mode, and leftovers from the old system are swept out of your workspace automatically.
+
+### The Workflow Card
+
+Every workflow run gets one card in the chat. Collapsed, it's a single quiet header; open, it's the whole run: the phase plan as chips that move from pending to active to done, and a live table with a row per agent — its name and task, the model it runs on, its phase, elapsed time, tokens, tool calls, and cost — with run totals up top. Every number is drawn from the harness's own telemetry, never from what the model claims, so the card you watch live and the card you reopen next week are the same card. It prints, too: PDF export renders the finished run as a clean static table.
+
+### Pick Your Model and Mode Where You Type
+
+The Brain settings page — the drag-and-drop model slots — is gone, and choosing what runs your conversation moved to where the conversation happens. Beside the chat input: a **Local/Cloud switch** showing exactly what's active, which opens into a searchable catalog of every model on every provider you've connected — capability badges, context sizes, one click to switch. Next to it, a **mode pill** — Single or Workflow — one click, effective from your next message. And the reasoning button grew up: instead of blind-cycling through efforts, hover it for a card of every level the current model supports — Off, On, High, Max — each explained, one click to pick.
+
+### Every Job Chooses Its Own Mode
+
+A heartbeat automation and a saved procedure can each carry their own mode now. Toggle Single/Workflow per job on the Heartbeat page and per procedure next to its Play button — the morning digest stays a quick single-model run while the weekly deep-dive fans out into agents. Under the hood it's one plain-text marker line (`mode: workflow`) at the top of the job, so Wolffish can set it by conversation too when you ask it to schedule something. Jobs without a marker simply follow the global mode.
+
+### Workflows on WhatsApp and Telegram
+
+The old per-worker narration retired with its mode. In its place, workflow runs report progress the deterministic way: a message when the run starts with its phase plan, one as each phase completes, a verdict line per agent as it lands (with verbose on — model, duration, tool calls), and a closing summary with totals. Verbose off keeps the feed clean as always: the master's answer, nothing else.
+
+### Sweat the Details
+
+- GitHub and Notion connection tests no longer fail into the void: a failed test now leaves a red alert with the reason on the connection card until you fix the token or a test passes — and the message follows your app language.
+- `.txt` attachments now open in a proper line-numbered text viewer instead of a bare file card.
+- Each workflow agent's context is budgeted against **its own model's** window — a small-window agent is no longer measured against the master's.
+- Agents fail honestly and fast — no hidden retry loops; the master decides whether to re-run, re-scope, or move on.
+- The attachments grid breathes: wider tiles, more spacing.
+- The clocks on running procedure and heartbeat overlays follow your app language's time format.
+- Model names show compactly everywhere the pickers list them, and error messages got shorter and plainer.
+- The drag-and-drop libraries the old Brain page needed are out of the app entirely.
+
+## v1.0.204 — 2026-07-05
 
 ### Save Any Conversation as a PDF
 

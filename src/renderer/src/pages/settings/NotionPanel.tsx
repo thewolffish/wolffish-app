@@ -4,15 +4,25 @@ import { NotionLogo } from '@components/core/ProviderLogos'
 import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn'
 import type { NotionConnection, NotionErrorKind } from '@preload/index'
-import { Delete02Icon, EyeIcon, LinkSquare02Icon, PlusSignIcon, ViewOffIcon } from 'hugeicons-react'
+import {
+  AlertCircleIcon,
+  Delete02Icon,
+  EyeIcon,
+  LinkSquare02Icon,
+  PlusSignIcon,
+  ViewOffIcon
+} from 'hugeicons-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 const NOTION_CONNECTIONS_URL = 'https://app.notion.com/developers/connections'
 
 // A connection row as edited in the UI: the persisted shape plus transient
-// view state (token visibility, in-flight test).
-type Row = NotionConnection & { tokenVisible: boolean; busy: boolean }
+// view state (token visibility, in-flight test, last test failure). The error
+// is stored as a kind (not translated text) so it re-renders on language
+// switch.
+type TestError = { kind: NotionErrorKind; message?: string | null }
+type Row = NotionConnection & { tokenVisible: boolean; busy: boolean; testError: TestError | null }
 
 function newRow(): Row {
   return {
@@ -22,12 +32,13 @@ function newRow(): Row {
     name: '',
     email: '',
     tokenVisible: false,
-    busy: false
+    busy: false,
+    testError: null
   }
 }
 
 function toRow(c: NotionConnection): Row {
-  return { ...c, tokenVisible: false, busy: false }
+  return { ...c, tokenVisible: false, busy: false, testError: null }
 }
 
 // Strip transient view fields before persisting. Only connections carrying a
@@ -130,15 +141,16 @@ export function NotionPanel(): React.JSX.Element {
         if (!hit || r.token.trim() !== hit.token) return r
         if (hit.res.ok) {
           const email = hit.res.email ?? ''
-          if (r.name === hit.res.name && r.email === email) return r
+          if (r.name === hit.res.name && r.email === email && !r.testError) return r
           changed = true
-          return { ...r, name: hit.res.name, email }
+          return { ...r, name: hit.res.name, email, testError: null }
         }
-        // Only a definitively invalid token clears the cached identity — a
-        // transient network/rate-limit blip must not drop the chip.
-        if (hit.res.kind !== 'invalid_token' || (!r.name && !r.email)) return r
+        // Only a definitively invalid token clears the cached identity and
+        // raises the card alert — a transient network/rate-limit blip must
+        // not drop the chip.
+        if (hit.res.kind !== 'invalid_token') return r
         changed = true
-        return { ...r, name: '', email: '' }
+        return { ...r, name: '', email: '', testError: { kind: 'invalid_token' as const } }
       })
       if (changed) {
         setRows(next)
@@ -204,9 +216,14 @@ export function NotionPanel(): React.JSX.Element {
   )
 
   // Editing the token invalidates the previously resolved account — a new
-  // token may belong to a different workspace, so clear the cached identity.
+  // token may belong to a different workspace, so clear the cached identity
+  // and any stale test failure.
   const handleTokenChange = useCallback((id: string, value: string) => {
-    setRows((rs) => rs.map((r) => (r.id === id ? { ...r, token: value, name: '', email: '' } : r)))
+    setRows((rs) =>
+      rs.map((r) =>
+        r.id === id ? { ...r, token: value, name: '', email: '', testError: null } : r
+      )
+    )
   }, [])
 
   const handleTest = useCallback(
@@ -249,7 +266,7 @@ export function NotionPanel(): React.JSX.Element {
           // still matches what we tested.
           const next = rowsRef.current.map((r) =>
             r.id === id && r.token.trim() === token
-              ? { ...r, name: result.name, email: result.email ?? '', busy: false }
+              ? { ...r, name: result.name, email: result.email ?? '', busy: false, testError: null }
               : r
           )
           setRows(next)
@@ -262,7 +279,12 @@ export function NotionPanel(): React.JSX.Element {
             tone: 'success'
           })
         } else {
-          patchRow(id, { busy: false, name: '', email: '' })
+          patchRow(id, {
+            busy: false,
+            name: '',
+            email: '',
+            testError: { kind: result.kind, message: result.message ?? null }
+          })
           toast.show({
             message: t('settings.services.notion.testFailure', {
               message: translateError(result.kind, result.message)
@@ -324,8 +346,14 @@ export function NotionPanel(): React.JSX.Element {
         const hit = byId.get(r.id)
         if (!hit || r.token.trim() !== hit.token) return { ...r, busy: false }
         return hit.res.ok
-          ? { ...r, name: hit.res.name, email: hit.res.email ?? '', busy: false }
-          : { ...r, name: '', email: '', busy: false }
+          ? { ...r, name: hit.res.name, email: hit.res.email ?? '', busy: false, testError: null }
+          : {
+              ...r,
+              name: '',
+              email: '',
+              busy: false,
+              testError: { kind: hit.res.kind, message: hit.res.message ?? null }
+            }
       })
       .filter((r) => r.token.trim().length > 0 || !savedIds.has(r.id))
     setRows(next)
@@ -396,6 +424,9 @@ export function NotionPanel(): React.JSX.Element {
                 row={row}
                 index={index}
                 labelError={labelError(row)}
+                testErrorText={
+                  row.testError ? translateError(row.testError.kind, row.testError.message) : null
+                }
                 onLabel={(v) => patchRow(row.id, { label: v })}
                 onToken={(v) => handleTokenChange(row.id, v)}
                 onToggleToken={() => patchRow(row.id, { tokenVisible: !row.tokenVisible })}
@@ -433,6 +464,7 @@ type CardProps = {
   row: Row
   index: number
   labelError: 'required' | 'duplicate' | null
+  testErrorText: string | null
   onLabel: (v: string) => void
   onToken: (v: string) => void
   onToggleToken: () => void
@@ -444,6 +476,7 @@ function ConnectionCard({
   row,
   index,
   labelError,
+  testErrorText,
   onLabel,
   onToken,
   onToggleToken,
@@ -496,6 +529,16 @@ function ConnectionCard({
           <span className="text-fg truncate text-sm font-medium">
             {row.email ? `${row.name} (${row.email})` : row.name}
           </span>
+        </div>
+      )}
+
+      {!connected && testErrorText && (
+        <div
+          role="alert"
+          className="flex items-start gap-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-900 dark:border-red-700 dark:bg-red-900/40 dark:text-red-100"
+        >
+          <AlertCircleIcon size={16} className="mt-0.5 shrink-0" />
+          <span>{testErrorText}</span>
         </div>
       )}
 

@@ -2,7 +2,6 @@ import { ApprovalCard } from '@components/common/approval-card/ApprovalCard'
 import { QuestionCard } from '@components/common/question-card/QuestionCard'
 import { AttachmentList } from '@components/common/attachment-list/AttachmentList'
 import { AudioPlayer } from '@components/common/audio-player/AudioPlayer'
-import { CodeFileViewer } from '@components/common/code-file-viewer/CodeFileViewer'
 import { CompactionCard } from '@components/common/compaction-card/CompactionCard'
 import { ContextMeter, type SideSpend } from '@components/common/context-meter/ContextMeter'
 import { DocxViewer } from '@components/common/docx-viewer/DocxViewer'
@@ -20,6 +19,9 @@ import { ProviderErrorCards } from '@components/common/provider-error-card/Provi
 import { Sidebar } from '@components/common/sidebar/Sidebar'
 import { SpreadsheetViewer } from '@components/common/spreadsheet-viewer/SpreadsheetViewer'
 import { BrainButton } from '@components/common/brain-button/BrainButton'
+import { ModelSwitch } from '@components/common/model-switch/ModelSwitch'
+import { ChatModeButton } from '@components/common/chat-mode-button/ChatModeButton'
+import { WorkflowCard } from '@components/common/workflow-card/WorkflowCard'
 import { ToolCard } from '@components/common/tool-card/ToolCard'
 import { TurnFooter } from '@components/common/turn-footer/TurnFooter'
 import { UpdateCard } from '@components/common/update-card/UpdateCard'
@@ -28,24 +30,8 @@ import { CodeEditor } from '@components/core/CodeEditor'
 import { useContextMenu } from '@components/core/ContextMenu'
 import { CopyButton } from '@components/core/CopyButton'
 import { Markdown } from '@components/core/Markdown'
-import {
-  AnthropicLogo,
-  DeepSeekLogo,
-  KimiLogo,
-  MimoLogo,
-  MiniMaxLogo,
-  OllamaLogo,
-  OpenAILogo,
-  OpenRouterLogo,
-  QwenLogo,
-  StepfunLogo,
-  ZaiLogo,
-  TelegramLogo,
-  WhatsAppLogo,
-  XAILogo
-} from '@components/core/ProviderLogos'
+import { TelegramLogo, WhatsAppLogo } from '@components/core/ProviderLogos'
 import { useToast } from '@components/core/toast/useToast'
-import { Tooltip } from '@components/core/Tooltip'
 import { buildChatPdfHtml, hasExportableContent } from '@lib/chat-export/buildChatPdfHtml'
 import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
@@ -70,8 +56,10 @@ import {
   reasoningModesFor,
   type ReasoningMode
 } from '@main/runtime/reasoning'
+import { upsertWorkflowSegment, WORKFLOW_TOOL_NAMES } from '@main/runtime/broca'
 import {
   useFlow,
+  type PendingProcedure,
   type ApprovalCardState,
   type AskCardState,
   type AssistantMessage,
@@ -83,12 +71,14 @@ import { useTheme } from '@providers/theme/useTheme'
 import iconTransparent from '@resources/images/icon_transparent.png'
 import {
   Activity04Icon,
+  AngelIcon,
   ArrowExpandIcon,
+  BubbleChatIcon,
   ArrowUp02Icon,
   CancelCircleIcon,
   Clock01Icon,
-  CloudIcon,
   CloudUploadIcon,
+  ComputerTerminal01Icon,
   Delete02Icon,
   Download01Icon,
   FileEditIcon,
@@ -98,9 +88,9 @@ import {
   Image02Icon,
   ListViewIcon,
   Robot01Icon,
-  SparklesIcon,
   UserIcon,
   Mic01Icon,
+  WorkflowSquare03Icon,
   PauseIcon,
   PlayIcon,
   PlayListIcon,
@@ -174,17 +164,9 @@ export function Chat(): React.JSX.Element {
     [activeCloudProvider, brain]
   )
 
-  // Orchestrator mode: the cloud switcher tab reflects BOTH models — the
-  // orchestrator (the Brain, shown via activeCloud*) and the worker model below.
-  const orchestratorMode = status?.config?.llm.orchestratorMode ?? 'single'
-  const workerModel = status?.config?.llm.workerModel ?? null
-  const workerSel = useMemo(() => {
-    if (!workerModel) return null
-    const provider = cloudProviders.find((p) => p.id === workerModel.providerId)
-    return provider && provider.apiKey && provider.apiKey.length > 0
-      ? { provider: workerModel.providerId as string, model: workerModel.model }
-      : null
-  }, [workerModel, cloudProviders])
+  // Chat mode: 'single' (solo turns) vs 'workflow' (model-led agents).
+  // Switched from the composer's mode button; global, like the Brain.
+  const chatMode = status?.config?.llm.mode === 'workflow' ? 'workflow' : 'single'
   const persistedThinkingModes = status?.config?.llm.thinkingModes
 
   // Ordered reasoning modes this model honours (canonical scale). Drives the
@@ -478,7 +460,7 @@ export function Chat(): React.JSX.Element {
     cacheRead: number
     cacheWrite: number
   } | null>(null)
-  // Orchestrator-worker + summarization spend observed during the live turn,
+  // Workflow-agent + summarization spend observed during the live turn,
   // itemized separately so it never pollutes the brain's meter or counters.
   const [sideSpend, setSideSpend] = useState<SideSpend | null>(null)
   // Model the current meter reading was measured under. Guards restores and
@@ -866,7 +848,9 @@ export function Chat(): React.JSX.Element {
       if (convMessages.length === 0) return
 
       if (!conversationRef.current) {
-        const conv = await window.api.conversation.create(currentModel)
+        const conv = await window.api.conversation.create(
+          localOnly ? currentModel : activeCloudModel
+        )
         conversationRef.current = conv
         setActiveConversationId(conv.id)
       }
@@ -901,6 +885,8 @@ export function Chat(): React.JSX.Element {
     },
     [
       currentModel,
+      localOnly,
+      activeCloudModel,
       setActiveConversationId,
       contextTokens,
       contextBudget,
@@ -1052,10 +1038,23 @@ export function Chat(): React.JSX.Element {
       if (pendingTurnIdRef.current !== segment.turnId) return
       setMessages((prev) => appendSegment(prev, segment))
       const segKind = segment.kind
-      if (segKind === 'tool_call' || segKind === 'tool_result' || segKind === 'compaction') {
+      if (
+        segKind === 'tool_call' ||
+        segKind === 'tool_result' ||
+        segKind === 'compaction' ||
+        segKind === 'workflow'
+      ) {
         const entry = buildSegmentTimelineEntry(segment)
         if (entry) {
-          if (segKind === 'compaction') {
+          if (segKind === 'workflow') {
+            // Snapshots also emit on throttled token ticks — only a CHANGED
+            // one-liner (status/phase/agent/tool transition) earns an entry.
+            setTimelineEntries((prev) => {
+              const last = prev.findLast((e) => e.kind === 'segment.workflow')
+              if (last?.summary === entry.summary) return prev
+              return [...prev, entry]
+            })
+          } else if (segKind === 'compaction') {
             setTimelineEntries((prev) => {
               const idx = prev.findLastIndex((e) => e.kind === 'compaction.started')
               if (idx !== -1) {
@@ -1089,7 +1088,7 @@ export function Chat(): React.JSX.Element {
         apiMs: stats.apiMs,
         apiCalls: stats.apiCalls,
         // Prefer the agent's brain-only count — the live counter also saw
-        // relayed worker tool events during orchestrator turns.
+        // relayed agent tool events during workflow turns.
         toolCalls: pending?.toolCalls ?? stats.toolCalls,
         inputTokens: stats.inputTokens,
         outputTokens: stats.outputTokens,
@@ -1194,7 +1193,7 @@ export function Chat(): React.JSX.Element {
         const durationMs = typeof payload.durationMs === 'number' ? payload.durationMs : 0
         const stats = turnStatsRef.current
         if (role === 'worker') {
-          // Orchestrator workers stream through the same relay stamped with
+          // Workflow agents stream through the same relay stamped with
           // this turn's id. Itemize their spend separately — folding it into
           // the brain's counters overwrote the meter with the worker's
           // (smaller) context and inflated the turn totals.
@@ -1430,14 +1429,18 @@ export function Chat(): React.JSX.Element {
       }
       return activeConversationId
     }
-    const conv = await window.api.conversation.create(currentModel)
+    const conv = await window.api.conversation.create(localOnly ? currentModel : activeCloudModel)
     conversationRef.current = conv
     setActiveConversationId(conv.id)
     return conv.id
-  }, [activeConversationId, currentModel, setActiveConversationId])
+  }, [activeConversationId, currentModel, localOnly, activeCloudModel, setActiveConversationId])
 
   const sendContent = useCallback(
-    async (content: string, attachments: MessageAttachment[] = []) => {
+    async (
+      content: string,
+      attachments: MessageAttachment[] = [],
+      opts?: { modeOverride?: 'single' | 'workflow' }
+    ) => {
       const trimmed = content.trim()
       // Allow attachment-only messages: a file with no caption is still a
       // valid send. We require at least one of the two so a stray Enter
@@ -1508,7 +1511,10 @@ export function Chat(): React.JSX.Element {
         history,
         conversationId,
         workingFolders,
-        thinkingMode: thinkingMode as import('@preload/index').ThinkingMode
+        thinkingMode: thinkingMode as import('@preload/index').ThinkingMode,
+        // Per-call only (procedure Play): a lingering state-based override
+        // would leak the procedure's mode into later sends.
+        ...(opts?.modeOverride ? { modeOverride: opts.modeOverride } : {})
       })
       pendingTurnIdRef.current = response.turnId
       if (!response.ok && response.error) {
@@ -1547,13 +1553,15 @@ export function Chat(): React.JSX.Element {
   // runs, so `sendContent` already closes over an empty history — auto-send it
   // as a brand-new conversation. The ref guards against a re-fire (e.g. the
   // `streaming` flip) before the pending flag is cleared in `finally`.
-  const procedureRunRef = useRef<string | null>(null)
+  const procedureRunRef = useRef<PendingProcedure | null>(null)
   useEffect(() => {
     if (pendingProcedure == null || streaming) return
+    // Reference identity: the SAME queued object must not re-fire on a
+    // `streaming` flip, while a new Play (new object) always does.
     if (procedureRunRef.current === pendingProcedure) return
     procedureRunRef.current = pendingProcedure
-    const prompt = pendingProcedure
-    void sendContent(prompt).finally(() => {
+    const { prompt, mode } = pendingProcedure
+    void sendContent(prompt, [], mode ? { modeOverride: mode } : undefined).finally(() => {
       setPendingProcedure(null)
       procedureRunRef.current = null
     })
@@ -1961,7 +1969,7 @@ export function Chat(): React.JSX.Element {
         items={[
           {
             key: 'soul',
-            icon: SparklesIcon,
+            icon: AngelIcon,
             label: t('chat.soul'),
             onClick: () => goTo('soul'),
             disabled: streaming
@@ -2068,7 +2076,7 @@ export function Chat(): React.JSX.Element {
                     <button
                       type="button"
                       onClick={() => {
-                        preselectSettingsTab('brain')
+                        preselectSettingsTab('model')
                         goTo('settings')
                       }}
                       className="text-primary hover:underline cursor-pointer font-medium"
@@ -2107,7 +2115,7 @@ export function Chat(): React.JSX.Element {
                 <button
                   type="button"
                   onClick={() => {
-                    preselectSettingsTab('brain')
+                    preselectSettingsTab('model')
                     goTo('settings')
                   }}
                   className="text-primary hover:underline cursor-pointer font-medium"
@@ -2184,7 +2192,7 @@ export function Chat(): React.JSX.Element {
               </div>
             </div>
           )}
-          <div className="relative flex w-full items-end gap-2">
+          <div className="relative flex w-full items-end gap-1">
             {/* Full-width composer, three zones. START: session/config controls
                 (new chat, cloud/local, reasoning, meter, logs). MIDDLE: the
                 textarea — it lives in the trailing group but takes `order-first`
@@ -2192,7 +2200,7 @@ export function Chat(): React.JSX.Element {
                 (flex-1) to fill the gap, giving the row breathing room. END:
                 message actions (attach, folder, mic) as light ghost icons +
                 the primary send. */}
-            <div className="flex shrink-0 items-end gap-2">
+            <div className="flex shrink-0 items-end gap-1">
               <div className="border-border bg-surface inline-flex shrink-0 items-center rounded-lg border p-0.5">
                 <button
                   type="button"
@@ -2214,22 +2222,35 @@ export function Chat(): React.JSX.Element {
                   </span>
                 </button>
               </div>
-              <ModeToggle
-                value={localOnly}
-                onChange={onModeChange}
-                disabled={savingMode || streaming}
-                activeCloudProvider={activeCloudProvider}
-                cloudModel={activeCloudModel}
+              <ModelSwitch
+                localOnly={localOnly}
                 localModel={currentModel}
-                isOrchestrator={orchestratorMode === 'orchestrator'}
-                worker={workerSel}
+                providers={cloudProviders}
+                brain={brain}
+                disabled={savingMode || streaming}
+                onModeChange={onModeChange}
+                onSelectModel={async (sel) => {
+                  await window.api.provider.setBrain(sel)
+                  await refreshStatus()
+                }}
               />
               {recPhase === 'idle' && (
                 <BrainButton
                   modes={reasoningModes}
                   value={thinkingMode}
-                  onCycle={setThinkingMode}
+                  onSelect={setThinkingMode}
                   disabled={savingMode || streaming}
+                />
+              )}
+              {recPhase === 'idle' && (
+                <ChatModeButton
+                  mode={chatMode}
+                  disabled={savingMode || streaming}
+                  onSelect={async (mode) => {
+                    if (mode === chatMode) return
+                    await window.api.provider.setMode(mode)
+                    await refreshStatus()
+                  }}
                 />
               )}
               {recPhase === 'idle' && (
@@ -2269,7 +2290,7 @@ export function Chat(): React.JSX.Element {
                 />
               )}
             </div>
-            <div className="flex min-w-0 flex-1 items-end gap-2">
+            <div className="flex min-w-0 flex-1 items-end gap-1">
               <button
                 type="button"
                 onClick={() => void exportChatPdf()}
@@ -2277,7 +2298,7 @@ export function Chat(): React.JSX.Element {
                 title={t('chat.downloadPdf')}
                 aria-label={t('chat.downloadPdf')}
                 className={cn(
-                  'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border',
+                  'flex h-[42.5px] w-10 shrink-0 items-center justify-center rounded-lg border',
                   'border-border bg-surface text-muted enabled:hover:text-fg enabled:hover:border-muted',
                   'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
                   'disabled:cursor-not-allowed disabled:opacity-50',
@@ -2293,7 +2314,7 @@ export function Chat(): React.JSX.Element {
                 title={t('chat.attachFile')}
                 aria-label={t('chat.attachFile')}
                 className={cn(
-                  'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border',
+                  'flex h-[42.5px] w-10 shrink-0 items-center justify-center rounded-lg border',
                   'border-border bg-surface text-muted enabled:hover:text-fg enabled:hover:border-muted',
                   'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
                   'disabled:cursor-not-allowed disabled:opacity-50',
@@ -2316,7 +2337,7 @@ export function Chat(): React.JSX.Element {
                 title={!micAvailable ? t('chat.voice.noMic') : t('chat.voice.record')}
                 aria-label={t('chat.voice.record')}
                 className={cn(
-                  'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border',
+                  'flex h-[42.5px] w-10 shrink-0 items-center justify-center rounded-lg border',
                   'border-border bg-surface text-muted enabled:hover:text-fg enabled:hover:border-muted',
                   'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
                   'disabled:cursor-not-allowed disabled:opacity-50',
@@ -2334,7 +2355,7 @@ export function Chat(): React.JSX.Element {
                   }
                   aria-label={streaming ? t('chat.stop') : t('chat.send')}
                   className={cn(
-                    'flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-lg',
+                    'flex h-[42.5px] w-10 shrink-0 cursor-pointer items-center justify-center rounded-lg',
                     'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
                     'disabled:cursor-not-allowed disabled:opacity-50',
                     streaming
@@ -2364,7 +2385,7 @@ export function Chat(): React.JSX.Element {
                     disabled={streaming}
                     className={cn(
                       'bg-surface text-fg border-border placeholder:text-muted enabled:hover:border-muted',
-                      'min-h-10 max-h-40 w-full resize-none rounded-lg border px-3 py-2 text-sm',
+                      'min-h-[42.5px] max-h-40 w-full resize-none rounded-lg border px-3 py-2 text-sm',
                       'focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
                       'disabled:cursor-not-allowed disabled:opacity-50',
                       placeholderAlign
@@ -2384,7 +2405,7 @@ export function Chat(): React.JSX.Element {
                   </button>
                 </div>
               ) : recPhase === 'recording' ? (
-                <div className="bg-surface border-border order-first flex min-h-10 flex-1 items-center gap-3 rounded-lg border px-3">
+                <div className="bg-surface border-border order-first flex min-h-[42.5px] flex-1 items-center gap-3 rounded-lg border px-3">
                   <span className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-red-500" />
                   <span className="text-fg tabular-nums text-sm font-medium">
                     {formatRecTime(recElapsed)}
@@ -2400,7 +2421,7 @@ export function Chat(): React.JSX.Element {
                   </button>
                 </div>
               ) : (
-                <div className="bg-surface border-border order-first flex min-h-10 flex-1 items-center gap-2 rounded-lg border px-3">
+                <div className="bg-surface border-border order-first flex min-h-[42.5px] flex-1 items-center gap-2 rounded-lg border px-3">
                   <button
                     type="button"
                     onClick={togglePlayback}
@@ -2482,6 +2503,23 @@ export function Chat(): React.JSX.Element {
                 <h2 className="text-fg min-w-0 flex-1 truncate text-sm font-semibold">
                   {messages.find((m) => m.role === 'user')?.content || t('chat.timeline.title')}
                 </h2>
+                <span
+                  className={cn(
+                    'ms-3 inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium',
+                    chatMode === 'workflow'
+                      ? 'border-primary/40 bg-primary/10 text-primary'
+                      : 'border-border text-muted'
+                  )}
+                >
+                  {chatMode === 'workflow' ? (
+                    <WorkflowSquare03Icon size={11} />
+                  ) : (
+                    <BubbleChatIcon size={11} />
+                  )}
+                  {t(
+                    chatMode === 'workflow' ? 'chat.modePicker.workflow' : 'chat.modePicker.single'
+                  )}
+                </span>
                 <span className="text-muted ms-3 shrink-0 text-[10px] tabular-nums">
                   {t('chat.timeline.eventCount', { count: timelineEventCount })}
                 </span>
@@ -2508,6 +2546,23 @@ export function Chat(): React.JSX.Element {
                 <h2 className="text-fg min-w-0 flex-1 truncate text-sm font-semibold">
                   {t('chat.files.title')}
                 </h2>
+                <span
+                  className={cn(
+                    'ms-3 inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium',
+                    chatMode === 'workflow'
+                      ? 'border-primary/40 bg-primary/10 text-primary'
+                      : 'border-border text-muted'
+                  )}
+                >
+                  {chatMode === 'workflow' ? (
+                    <WorkflowSquare03Icon size={11} />
+                  ) : (
+                    <BubbleChatIcon size={11} />
+                  )}
+                  {t(
+                    chatMode === 'workflow' ? 'chat.modePicker.workflow' : 'chat.modePicker.single'
+                  )}
+                </span>
                 <span className="text-muted ms-3 shrink-0 text-[10px] tabular-nums">
                   {t('chat.files.fileCount', { count: conversationFiles.length })}
                 </span>
@@ -2565,6 +2620,7 @@ const TIMELINE_KIND_COLOR: Record<string, string> = {
   'task.failed': 'bg-red-500',
   'task.stopped': 'bg-amber-500',
   'segment.tool_call': 'bg-blue-500',
+  'segment.workflow': 'bg-primary',
   'segment.tool_result': 'bg-violet-500',
   'segment.compaction': 'bg-violet-500'
 }
@@ -2629,7 +2685,7 @@ function fmtNum(n: number): string {
 
 // Per-turn aggregates mirrored from the live token state (see turnStatsRef)
 // so terminal timeline entries can report end-of-turn totals. `worker` and
-// `summary` itemize side-spend (orchestrator workers, compaction/summarizer
+// `summary` itemize side-spend (workflow agents, compaction/summarizer
 // calls) so it never pollutes the brain's meter or counters but still counts
 // toward the conversation's all-time totals.
 type TurnStats = {
@@ -2664,7 +2720,7 @@ type TurnStats = {
 // (no model stamp). Never equals a real model name, so the capabilities
 // effect won't swap the denominator under an unknown-provenance numerator.
 // Normalized back to null at persist time.
-const LEGACY_METER_MODEL = ' legacy'
+const LEGACY_METER_MODEL = '\u0000legacy'
 
 function emptyTurnStats(): TurnStats {
   return {
@@ -2829,7 +2885,7 @@ function WorkingFolderButton({
         title={hasFolders ? t('chat.workingFolder') : t('chat.selectFolder')}
         aria-label={hasFolders ? t('chat.workingFolder') : t('chat.selectFolder')}
         className={cn(
-          'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border',
+          'flex h-[42.5px] w-10 shrink-0 items-center justify-center rounded-lg border',
           'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
           'disabled:cursor-not-allowed disabled:opacity-50',
           !disabled && 'cursor-pointer',
@@ -2976,7 +3032,7 @@ function LogsFilesButton({
               }}
               className="text-fg hover:bg-border/40 flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-xs"
             >
-              <ListViewIcon size={15} className="text-muted shrink-0" />
+              <ComputerTerminal01Icon size={15} className="text-muted shrink-0" />
               <span className="flex-1 text-start">{t('chat.timeline.viewLogs')}</span>
               {badge(logsCount)}
             </button>
@@ -3130,6 +3186,25 @@ function makeTurnBoundary(text: string): TimelineEntry {
 function buildSegmentTimelineEntry(segment: Segment): TimelineEntry | null {
   const segKind = segment.kind
   const ts = Date.now()
+  if (segKind === 'workflow') {
+    // One line, dot-separated, no detail — mirrors the drawer's other rows.
+    const snap = segment.snapshot
+    const activePhase = snap.phases.find((p) => p.status === 'active')?.title
+    const line = [
+      snap.status,
+      activePhase ?? null,
+      `${snap.totals.agents} agent${snap.totals.agents === 1 ? '' : 's'}`,
+      `${snap.totals.toolCalls} tool${snap.totals.toolCalls === 1 ? '' : 's'}`
+    ]
+      .filter(Boolean)
+      .join(' · ')
+    return {
+      id: segment.segmentId,
+      timestamp: ts,
+      kind: 'segment.workflow',
+      summary: line
+    }
+  }
   if (segKind === 'tool_call') {
     const args = segment.args
     const action =
@@ -3212,7 +3287,7 @@ function timelineEventSummary(
       if (cacheCreated > 0) lines.push(`Cache created: ${fmtNum(cacheCreated)} tokens`)
       if (provider) lines.push(`Provider: ${provider}`)
       if (model) lines.push(`Model: ${model}`)
-      if (role && role !== 'brain') lines.push(`Role: ${role}`)
+      if (role && role !== 'brain') lines.push(`Role: ${role === 'worker' ? 'agent' : role}`)
       if (dur != null) lines.push(`Duration: ${formatDuration(dur)}`)
       const roleTag = role && role !== 'brain' ? ` (${role})` : ''
       return {
@@ -3233,7 +3308,8 @@ function timelineEventSummary(
       if (hitRate != null) lines.push(`Cache hit: ${Math.round(hitRate * 100)}%`)
       if (iterations != null) lines.push(`Iterations: ${iterations}`)
       if (toolCalls != null) lines.push(`Tool calls: ${toolCalls}`)
-      const roleTag = role === 'worker' ? 'worker · ' : ''
+      // 'worker' is the wire value for workflow-agent turns (legacy name).
+      const roleTag = role === 'worker' ? 'agent · ' : ''
       const summaryParts: string[] = []
       if (cost != null) summaryParts.push(`$${cost.toFixed(4)}`)
       if (hitRate != null) summaryParts.push(`${Math.round(hitRate * 100)}% cached`)
@@ -3595,40 +3671,6 @@ function renderSegments(
   const blocks: ReactNode[] = []
   let textBuffer = ''
   let textRun = 0
-  // Wrap a subagent block in a left accent rail + a small worker-label chip so
-  // it reads as marked subagent activity. The wrapper spans the message width
-  // (no max-w of its own) so the inner bubble/card gets the SAME width it would
-  // in single mode; logical props (border-s / ps / ms) mirror in RTL; colors
-  // come from theme tokens (dark/light).
-  const wrapSubagent = (
-    worker: { id: string; label: string },
-    key: string,
-    node: ReactNode
-  ): ReactNode => (
-    <div key={key} className="border-primary/30 ms-2 flex w-full flex-col gap-1 border-s-2 ps-3">
-      <span className="text-primary/80 inline-flex w-fit items-center rounded text-[10px] font-medium tracking-wide uppercase">
-        {worker.label}
-      </span>
-      {node}
-    </div>
-  )
-  // Per-worker text buffer. Concurrent workers interleave their text deltas
-  // token-by-token in the merged stream, so we coalesce each worker's text by id
-  // and flush it as ONE bubble at that worker's next tool call (narration →
-  // action) or at the end — never a tiny bubble per interleave.
-  const workerText = new Map<string, { label: string; buf: string; run: number }>()
-  let workerRun = 0
-  const flushWorkerText = (id: string): void => {
-    const e = workerText.get(id)
-    if (!e || e.buf.length === 0) return
-    workerText.delete(id)
-    const bubble = (
-      <div className="bg-surface border-border text-fg max-w-[85%] rounded-2xl border px-4 py-2.5 text-sm leading-relaxed self-start wrap-anywhere">
-        <Markdown content={e.buf} />
-      </div>
-    )
-    blocks.push(wrapSubagent({ id, label: e.label }, `wmd-${id}-${e.run}`, bubble))
-  }
   // Generic guard: every file path already rendered as a player/viewer in this
   // message. Prevents the same file showing twice when it's reachable from more
   // than one detector (e.g. a voice result that also matches the generic media
@@ -3727,50 +3769,27 @@ function renderSegments(
   for (let segIdx = 0; segIdx < segments.length; segIdx++) {
     const seg = segments[segIdx]
     if (seg.kind === 'text') {
-      if (seg.worker) {
-        // Subagent text is verbose-only (clean feed = orchestrator's reply
-        // only); coalesce per worker so interleaved deltas don't fragment.
-        if (!verbose) continue
-        const e = workerText.get(seg.worker.id) ?? {
-          label: seg.worker.label,
-          buf: '',
-          run: ++workerRun
-        }
-        e.buf += seg.delta
-        e.label = seg.worker.label
-        workerText.set(seg.worker.id, e)
-      } else {
-        textBuffer += seg.delta
-      }
-    } else if (seg.kind === 'tool_call') {
-      // Subagent tool calls (forwarded from a worker, tagged `worker`) render as
-      // the SAME tool card, marked as that subagent's activity — verbose-only,
-      // since the clean feed hides all subagent internals. No black box: every
-      // worker tool call is right here and persisted.
-      if (seg.worker) {
-        flushWorkerText(seg.worker.id) // narration before this worker's action
-        if (verbose) {
-          const wResult = resultByToolCall.get(seg.toolCallId)
-          const wTiming = toolTimings?.[seg.toolCallId]
-          blocks.push(
-            wrapSubagent(
-              seg.worker,
-              `wtc-${seg.segmentId}`,
-              <ToolCard call={seg} result={wResult} timing={wTiming} />
-            )
-          )
-        }
-        continue
-      }
-
-      // Workers narrate, then the orchestrator acts: drain every pending
-      // worker buffer before this orchestrator action. A worker's FINAL
-      // report has no following worker tool call to flush it — without this
-      // drain it sat buffered past the orchestrator's closing build/deliver
-      // cards and rendered AFTER the delivered file (the send_file card),
-      // reading as workers still talking after the turn's deliverable.
-      for (const id of workerText.keys()) flushWorkerText(id)
+      // LEGACY: worker-tagged segments only exist in conversations persisted
+      // by the removed Orchestrator mode — never render them (subagent output
+      // was the master's input, not the user's; the workflow card is today's
+      // subagent surface).
+      if (seg.worker) continue
+      textBuffer += seg.delta
+    } else if (seg.kind === 'workflow') {
+      // The workflow card: one full-width, deterministic, collapsible block
+      // per run. Snapshots are upserted by workflowId on append, so exactly
+      // one segment (the latest state) exists per run — live and reloaded
+      // conversations render identically.
       flushText()
+      blocks.push(<WorkflowCard key={`wf-${seg.snapshot.workflowId}`} snapshot={seg.snapshot} />)
+    } else if (seg.kind === 'tool_call') {
+      if (seg.worker) continue // LEGACY orchestrator-mode segments — see text branch
+      flushText()
+      // The master's workflow tools never render as chips (even in verbose) —
+      // the workflow card above is their surface; their segments still
+      // persist and replay so the master keeps its agent reports across
+      // turns.
+      if (WORKFLOW_TOOL_NAMES.has(seg.name)) continue
       const result = resultByToolCall.get(seg.toolCallId)
 
       // ask_user renders a dedicated interactive question card instead of a
@@ -3800,8 +3819,6 @@ function renderSegments(
       // An stt_* result's filePath is the user's SOURCE recording (an input),
       // never a deliverable — don't echo it back as an audio card.
       const isSttResult = (seg.name ?? '').startsWith('stt_')
-
-      const codeFile = extractToolResultCodeFile(seg, result)
 
       // Clean feed (verbose off): the activity card is dropped for plain
       // successful tool calls — the file viewers below still render, so
@@ -3846,46 +3863,21 @@ function renderSegments(
         blocks.push(<ToolCard key={seg.segmentId} call={seg} result={result} timing={timing} />)
       }
 
-      const page = codeFile ? null : extractToolResultPage(seg, result)
+      const fileContent = isFileContentResult(seg, result)
+      const page = fileContent ? null : extractToolResultPage(seg, result)
 
-      // Code-file content and fetched-page content are renderings of routine
-      // successful output, not delivered files — the channel clean feed skips
-      // them, so we only show them when verbose. They still own the branch
-      // (no fall-through to the delivered-file viewers, which never coincide).
-      if (codeFile) {
-        if (verbose) {
-          // Reveal/download the read/written file via the OS. revealPath and
-          // downloadPath resolve ~ and absolute paths (file_read/file_write
-          // targets live anywhere on the user's machine, not just the
-          // workspace); a relative path can't be resolved from the renderer, so
-          // the buttons are omitted for it.
-          const codeFilePath = codeFile.filePath
-          const pathActionable = /^(?:~|\/)/.test(codeFilePath)
-          blocks.push(
-            <CodeFileViewer
-              key={`code_${seg.segmentId}`}
-              content={codeFile.content}
-              fileName={codeFile.fileName}
-              htmlPreview={/\.html?$/i.test(codeFile.fileName)}
-              onReveal={
-                pathActionable
-                  ? () =>
-                      void window.api.upload.revealPath(codeFilePath).catch(() => {
-                        // best-effort
-                      })
-                  : undefined
-              }
-              onDownload={
-                pathActionable
-                  ? () =>
-                      void window.api.upload.downloadPath(codeFilePath).catch(() => {
-                        // best-effort
-                      })
-                  : undefined
-              }
-            />
-          )
-        }
+      // File-content results (file_read/file_write/file_patch — the body of
+      // the file named by args.path) render NOTHING, but still own their
+      // branch: generating or touching a file is not delivering it — the model
+      // shows a file only via its own send_file act (the [wolffish-output:]
+      // marker paths below) — and marker text or paths quoted INSIDE file
+      // content must never be mistaken for a delivery or earn a path card.
+      // Fetched-page content is a rendering of routine successful output, not
+      // a delivered file — the channel clean feed skips it, so we only show it
+      // when verbose. It too owns its branch (no fall-through to the
+      // delivered-file viewers, which never coincide).
+      if (fileContent) {
+        // Deliberately empty — file content is invisible in the feed.
       } else if (page) {
         if (verbose) {
           blocks.push(
@@ -3955,6 +3947,19 @@ function renderSegments(
                   fileExists={true}
                   fileName={fileName}
                   sizeBytes={doc.size}
+                />
+              )
+            } else if (ext === 'txt') {
+              // Plain text delivered as a (document) renders the same inline
+              // text card as .txt via the (file) catch-all.
+              blocks.push(
+                <MarkdownFileViewer
+                  key={`doc_${seg.segmentId}_${di}`}
+                  filePath={doc.path}
+                  fileExists={true}
+                  fileName={fileName}
+                  sizeBytes={doc.size}
+                  mimeType="text/plain"
                 />
               )
             } else {
@@ -4039,6 +4044,20 @@ function renderSegments(
                 mimeType="text/markdown"
               />
             )
+          } else if (gExt === 'txt') {
+            // Plain text delivered via the (file) catch-all renders inline as a
+            // line-numbered text card — same loader/viewer .md files use —
+            // instead of a bare file card.
+            blocks.push(
+              <MarkdownFileViewer
+                key={`file_${seg.segmentId}_${gi}`}
+                filePath={gPath}
+                fileExists={true}
+                fileName={gName}
+                sizeBytes={0}
+                mimeType="text/plain"
+              />
+            )
           } else if (gExt === 'html' || gExt === 'htm') {
             // HTML delivered via the (file) catch-all renders inline as
             // highlighted source with a live, sandboxed preview on expand —
@@ -4118,15 +4137,6 @@ function renderSegments(
         />
       )
     } else if (seg.kind === 'turn_end') {
-      // Workers flush and finish first. A worker's closing narration has no
-      // following tool call to flush it, so it sits buffered in `workerText`
-      // until the post-loop drain below. But `turn_end` is the orchestrator's
-      // final segment, and this flushText() would emit its closing synthesis
-      // HERE — before that drain — burying the summary above the very worker
-      // reports it summarizes. Drain the workers first so the orchestrator's
-      // reply lands last. (The post-loop drain stays as the streaming-render
-      // fallback for an in-flight turn that has no turn_end yet.)
-      for (const id of workerText.keys()) flushWorkerText(id)
       flushText()
       if (seg.providerErrors?.length) {
         blocks.push(<ProviderErrorCards key={seg.segmentId} failures={seg.providerErrors} />)
@@ -4136,9 +4146,6 @@ function renderSegments(
     }
   }
 
-  // Flush any trailing subagent narration (a worker's final text with no
-  // following tool call) before the orchestrator's closing synthesis.
-  for (const id of workerText.keys()) flushWorkerText(id)
   flushText()
 
   // Openable cards for every filesystem path named this turn, rendered together
@@ -4188,146 +4195,6 @@ function PendingAttachmentChip({
   )
 }
 
-function CloudOffIcon({ size = 24 }: { size?: number }): React.JSX.Element {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 24 24"
-      width={size}
-      height={size}
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.5}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M6.5 19h-1a4.5 4.5 0 0 1-.42-8.98A7 7 0 0 1 18.42 12H19a3 3 0 0 1 2.07 5.17" />
-      <line x1="3" y1="3" x2="21" y2="21" />
-    </svg>
-  )
-}
-
-const CLOUD_PROVIDER_LOGOS: Record<string, React.ComponentType<{ size?: number }>> = {
-  anthropic: AnthropicLogo,
-  openai: OpenAILogo,
-  openrouter: OpenRouterLogo,
-  deepseek: DeepSeekLogo,
-  mimo: MimoLogo,
-  kimi: KimiLogo,
-  minimax: MiniMaxLogo,
-  xai: XAILogo,
-  qwen: QwenLogo,
-  stepfun: StepfunLogo,
-  zai: ZaiLogo
-}
-
-function ModeToggle({
-  value,
-  onChange,
-  disabled,
-  activeCloudProvider,
-  cloudModel,
-  localModel,
-  isOrchestrator = false,
-  worker = null
-}: {
-  value: boolean
-  onChange: (next: boolean) => void
-  disabled: boolean
-  activeCloudProvider: string | null
-  cloudModel: string | null
-  localModel: string | null
-  isOrchestrator?: boolean
-  worker?: { provider: string; model: string } | null
-}): React.JSX.Element {
-  const { t } = useTranslation()
-
-  const hasCloudModel = cloudModel !== null
-  const cloudFallback = hasCloudModel ? CloudIcon : CloudOffIcon
-  const CloudIconCmp =
-    (activeCloudProvider && CLOUD_PROVIDER_LOGOS[activeCloudProvider]) || cloudFallback
-  const cloudLabel = activeCloudProvider
-    ? t(`settings.model.providers.${activeCloudProvider}`)
-    : t('chat.modeToggle.cloud')
-
-  // Orchestrator mode: the SAME cloud tab carries both models. Its icon becomes
-  // the two provider logos (orchestrator + worker) side by side, and its tooltip
-  // names each role + model — so the switcher reflects the mode in place.
-  const WorkerLogo = worker ? (CLOUD_PROVIDER_LOGOS[worker.provider] ?? CloudIcon) : null
-  const dual = isOrchestrator && WorkerLogo !== null
-  const cloudIconNode = dual ? (
-    <span className="inline-flex items-center gap-0.5">
-      <CloudIconCmp size={13} />
-      {WorkerLogo ? <WorkerLogo size={13} /> : null}
-    </span>
-  ) : undefined
-  const cloudTooltip = dual
-    ? `${t('settings.brain.orchestratorSlot')} — ${cloudModel ?? t('chat.modeToggle.noModel')}  ·  ${t('settings.brain.workerSlot')} — ${worker?.model ?? t('chat.modeToggle.noModel')}`
-    : cloudModel || t('chat.modeToggle.noModel')
-
-  const modes: {
-    key: 'local' | 'cloud'
-    label: string
-    tooltip: string
-    Icon: React.ComponentType<{ size?: number }>
-    iconNode?: React.ReactNode
-  }[] = [
-    {
-      key: 'local',
-      label: t('chat.modeToggle.local'),
-      tooltip: localModel || t('chat.modeToggle.noModel'),
-      Icon: OllamaLogo
-    },
-    {
-      key: 'cloud',
-      label: cloudLabel,
-      tooltip: cloudTooltip,
-      Icon: CloudIconCmp,
-      iconNode: cloudIconNode
-    }
-  ]
-  const current: 'local' | 'cloud' = value ? 'local' : 'cloud'
-  return (
-    <div
-      role="tablist"
-      aria-label={t('chat.modeToggle.ariaLabel')}
-      className="border-border bg-surface inline-flex items-center gap-0.5 rounded-lg border p-0.5"
-    >
-      {modes.map((m) => {
-        const active = m.key === current
-        const Icon = m.Icon
-        const btn = (
-          <button
-            role="tab"
-            type="button"
-            disabled={disabled}
-            aria-selected={active}
-            onClick={() => onChange(m.key === 'local')}
-            className={cn(
-              'flex w-18 cursor-pointer flex-col items-center gap-0.5 rounded-md px-1.5 py-1',
-              'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-              active
-                ? 'bg-primary text-primary-fg'
-                : cn('text-muted', !disabled && 'hover:text-fg'),
-              disabled && 'cursor-not-allowed opacity-60'
-            )}
-          >
-            {m.iconNode ?? <Icon size={14} />}
-            <span className="max-w-full truncate text-[10px] leading-tight font-medium">
-              {m.label}
-            </span>
-          </button>
-        )
-        return (
-          <Tooltip key={m.key} content={m.tooltip} side="top" align="start">
-            {btn}
-          </Tooltip>
-        )
-      })}
-    </div>
-  )
-}
-
 const DOCUMENT_EXTS_RE = /\.(?:pdf|docx?|xlsx?|pptx?|csv)$/i
 const CODE_EXTS_RE =
   /\.(?:js|jsx|mjs|cjs|ts|tsx|vue|svelte|py|rb|rs|go|java|kt|kts|swift|c|cpp|h|hpp|cs|css|scss|less|sass|html|htm|xml|json|yaml|yml|toml|ini|conf|env|sh|bash|zsh|fish|bat|cmd|ps1|sql|graphql|gql|md|mdx|txt|log|php|lua|r|pl|dart|scala|groovy|proto|zig|ex|exs|erl|hs|clj|ml|dockerfile|makefile)$/i
@@ -4352,25 +4219,23 @@ type ToolCallSegment = Extract<Segment, { kind: 'tool_call' }>
 // A tool result whose entire output is a `[wolffish-output: <path> (<type>)]`
 // delivery marker is a file *delivery*, not file *content* — the path-keyed
 // viewers (image/doc/media/generic) own those. send_file accepts both `file`
-// and `path` args, so a `{path: 'report.md'}` mis-call would otherwise make
-// extractToolResultCodeFile treat the marker string as code and render it as a
-// code block, shadowing the correct MarkdownFileViewer/FileCard rendering.
+// and `path` args, so a `{path: 'report.md'}` mis-call would otherwise be
+// classified as file content below and its delivery would never render.
 const DELIVERY_MARKER_ONLY_RE =
   /^\[wolffish-output:\s*[^\]]+?\s+\((?:image|audio|video|document|file)\)\]$/
 
-function extractToolResultCodeFile(
-  call: ToolCallSegment,
-  result?: ToolResultSegment
-): { filePath: string; fileName: string; content: string } | null {
-  if (!result?.output || result.status !== 'success') return null
-  if (DELIVERY_MARKER_ONLY_RE.test(result.output.trim())) return null
+/**
+ * True when a successful tool result is the CONTENT of the code/text file
+ * named by the call's `path` arg (file_read/file_write/file_patch). Such
+ * results render nothing in the feed — a file is shown only via the model's
+ * own send_file act — but they must still be recognized so marker text or
+ * paths quoted inside file content are never treated as deliveries/cards.
+ */
+function isFileContentResult(call: ToolCallSegment, result?: ToolResultSegment): boolean {
+  if (!result?.output || result.status !== 'success') return false
+  if (DELIVERY_MARKER_ONLY_RE.test(result.output.trim())) return false
   const argsPath = typeof call.args?.path === 'string' ? call.args.path : null
-  if (!argsPath || !CODE_EXTS_RE.test(argsPath)) return null
-  return {
-    filePath: argsPath,
-    fileName: argsPath.split('/').pop() ?? 'file',
-    content: result.output
-  }
+  return argsPath != null && CODE_EXTS_RE.test(argsPath)
 }
 
 function extractToolResultImage(result?: ToolResultSegment): string | null {
@@ -4525,7 +4390,8 @@ function collectConversationFiles(messages: ChatMessage[]): MessageAttachment[] 
       continue
     }
     // Index this message's tool_calls so each result can be paired with its
-    // call — the codeFile/page short-circuit below needs the call's args/name.
+    // call — the file-content/page short-circuit below needs the call's
+    // args/name.
     const callById = new Map<string, ToolCallSegment>()
     for (const seg of message.segments) {
       if (seg.kind === 'tool_call') callById.set(seg.toolCallId, seg)
@@ -4534,14 +4400,17 @@ function collectConversationFiles(messages: ChatMessage[]): MessageAttachment[] 
       if (seg.kind !== 'tool_result' || seg.status !== 'success' || !seg.output) continue
       const call = callById.get(seg.toolCallId)
       // Mirror renderSegments' branch order exactly: a file-content result
-      // (file_read/file_write → codeFile) or a fetched-page result never
-      // yields a *delivered* file there, so it must not here either — otherwise
-      // a workspace media path embedded in file content or page text would be
-      // mis-detected by the image/media bare-path fallbacks and surface as a
-      // phantom file the feed never shows.
-      if (call && (extractToolResultCodeFile(call, seg) || extractToolResultPage(call, seg))) {
+      // (file_read/file_write/file_patch) or a fetched-page result never
+      // yields a *delivered* file there, so it must not here either —
+      // otherwise a delivery marker quoted inside file content or page text
+      // would surface as a phantom file the feed never shows.
+      if (call && (isFileContentResult(call, seg) || extractToolResultPage(call, seg))) {
         continue
       }
+      // The master's workflow tool results are agent reports, not deliveries —
+      // the feed hides those chips entirely, so a delivery marker quoted inside
+      // an agents_await report must not surface as a phantom file here either.
+      if (call && WORKFLOW_TOOL_NAMES.has(call.name)) continue
       for (const att of deliveredFilesToAttachments(seg)) push(att)
     }
   }
@@ -4645,7 +4514,13 @@ function appendSegment(messages: ChatMessage[], segment: Segment): ChatMessage[]
   for (let i = out.length - 1; i >= 0; i--) {
     const m = out[i]
     if (isAssistant(m) && m.status === 'streaming') {
-      const next: AssistantMessage = { ...m, segments: [...m.segments, segment] }
+      // Workflow snapshots REPLACE their predecessor for the same run — the
+      // segment kind's documented contract (see broca.ts WorkflowSnapshot),
+      // not render-layer dedup. Everything else appends.
+      const nextSegments = [...m.segments]
+      if (segment.kind === 'workflow') upsertWorkflowSegment(nextSegments, segment)
+      else nextSegments.push(segment)
+      const next: AssistantMessage = { ...m, segments: nextSegments }
       if (segment.kind === 'turn_end') next.stopReason = segment.stopReason
       if (segment.kind === 'tool_call') {
         next.toolTimings = {

@@ -38,6 +38,11 @@ tools:
       instruction:
         type: string
         description: What to do when it fires — plain natural-language instruction, exactly as you'd phrase a task to yourself. It runs as an autonomous turn with tools available and tool calls auto-approved. No markdown headings (no lines starting with "## ").
+      mode:
+        type: string
+        required: false
+        enum: ['single', 'workflow']
+        description: Which chat mode the automation runs in — 'single' (one model, direct) or 'workflow' (the run can plan phases and drive parallel agents). Omit to use whatever mode the chat is in right now.
   - name: automation_edit
     description: Change an existing automation's schedule and/or its instruction. Identify it by the number from automation_list or its exact schedule label.
     parameters:
@@ -52,6 +57,12 @@ tools:
         type: string
         required: false
         description: New instruction body. Omit to keep the current instruction.
+      mode:
+        type: string
+        required: false
+        enum: ['single', 'workflow']
+        description: Change which chat mode the automation runs in ('single' or 'workflow'). Omit to keep its current mode.
+
   - name: automation_delete
     description: Permanently remove an automation so it stops firing. Identify it by its number from automation_list or its exact schedule label.
     parameters:

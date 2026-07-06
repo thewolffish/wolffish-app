@@ -52,7 +52,10 @@ export function Procedures(): React.JSX.Element {
   const { isDark } = useTheme()
   const isRtl = RTL_LOCALES.has(locale)
   const BackIcon = isRtl ? ArrowRight02Icon : ArrowLeft02Icon
-  const { goTo, setMessages, setActiveConversationId, setPendingProcedure } = useFlow()
+  const { goTo, setMessages, setActiveConversationId, setPendingProcedure, status } = useFlow()
+  // Rows without a stamp follow the global mode — the pill shows that
+  // effective value; clicking a tab stamps the row explicitly.
+  const globalMode = status?.config?.llm.mode === 'workflow' ? 'workflow' : 'single'
   const toast = useToast()
 
   const [procedures, setProcedures] = useState<Procedure[]>([])
@@ -172,11 +175,24 @@ export function Procedures(): React.JSX.Element {
   // Play: start a fresh conversation (clear the shared Flow state), queue this
   // procedure's prompt, and reveal Chat — which auto-sends it. Navigating away
   // unmounts this page, so the page closes for free.
+  // The mode toggle persists immediately (per-field merge, so a concurrent
+  // title/prompt autosave can't clobber it) with optimistic local state.
+  const handleSetMode = useCallback(async (procedure: Procedure, mode: 'single' | 'workflow') => {
+    if ((procedure.mode ?? 'single') === mode) return
+    setProcedures((prev) => prev.map((p) => (p.id === procedure.id ? { ...p, mode } : p)))
+    try {
+      await window.api.procedures.update({ id: procedure.id, mode })
+    } catch {
+      // Reload the truth if the write failed.
+      void window.api.procedures.list().then(setProcedures)
+    }
+  }, [])
+
   const handlePlay = useCallback(
     (procedure: Procedure) => {
       setMessages([])
       setActiveConversationId(null)
-      setPendingProcedure(procedure.prompt)
+      setPendingProcedure({ prompt: procedure.prompt, mode: procedure.mode })
       goTo('chat')
     },
     [goTo, setMessages, setActiveConversationId, setPendingProcedure]
@@ -242,6 +258,37 @@ export function Procedures(): React.JSX.Element {
                         </span>
                       </div>
                       <div className="flex shrink-0 items-center gap-1">
+                        <div
+                          role="tablist"
+                          aria-label={t('procedures.modeAria')}
+                          className="border-border bg-bg/40 me-1 inline-flex items-center gap-0.5 rounded-lg border p-0.5"
+                        >
+                          {(['single', 'workflow'] as const).map((m) => {
+                            const active = (procedure.mode ?? globalMode) === m
+                            return (
+                              <button
+                                key={m}
+                                role="tab"
+                                type="button"
+                                aria-selected={active}
+                                onClick={() => void handleSetMode(procedure, m)}
+                                className={cn(
+                                  'cursor-pointer rounded-md px-2 py-1 text-[10px] font-medium',
+                                  'focus-visible:ring-2 focus-visible:ring-accent',
+                                  active
+                                    ? 'bg-primary text-primary-fg shadow-sm'
+                                    : 'text-muted hover:text-fg'
+                                )}
+                              >
+                                {t(
+                                  m === 'workflow'
+                                    ? 'chat.modePicker.workflow'
+                                    : 'chat.modePicker.single'
+                                )}
+                              </button>
+                            )
+                          })}
+                        </div>
                         <button
                           type="button"
                           onClick={() => handlePlay(procedure)}

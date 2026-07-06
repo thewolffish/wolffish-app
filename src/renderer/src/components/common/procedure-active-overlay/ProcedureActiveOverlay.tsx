@@ -13,7 +13,7 @@ import { useTranslation } from 'react-i18next'
 const MAX_LOG_ENTRIES = 50
 
 export function ProcedureActiveOverlay(): React.JSX.Element | null {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const [runningJob, setRunningJob] = useState<HeartbeatRunningJob | null>(null)
   const [logs, setLogs] = useState<HeartbeatLogEntry[]>([])
   const [now, setNow] = useState(() => Date.now())
@@ -67,7 +67,7 @@ export function ProcedureActiveOverlay(): React.JSX.Element | null {
   const mm = Math.floor(elapsed / 60)
   const ss = elapsed % 60
   const elapsedStr = `${mm}:${ss.toString().padStart(2, '0')}`
-  const startedStr = new Date(runningJob.startedAt).toLocaleTimeString([], {
+  const startedStr = new Date(runningJob.startedAt).toLocaleTimeString(i18n.language, {
     hour: '2-digit',
     minute: '2-digit'
   })

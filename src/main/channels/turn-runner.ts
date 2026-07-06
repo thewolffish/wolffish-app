@@ -48,6 +48,12 @@ export type TurnSendOptions = {
   workingFolders?: string[]
   thinkingMode?: 'off' | 'on' | 'high' | 'max'
   /**
+   * Per-turn chat-mode override — the Procedures Play button threads the
+   * procedure's own mode through here so a live procedure run honors its
+   * stamp. Omitted (every normal channel turn) ⇒ the global mode.
+   */
+  modeOverride?: 'single' | 'workflow'
+  /**
    * External controller. Lets channels tie cancellation to a parent
    * lifecycle (e.g. closing the renderer window aborts every pending
    * Electron turn).
@@ -201,7 +207,8 @@ export class TurnRunner {
           workingFolders: opts.workingFolders,
           signal: controller.signal,
           onSegment: (segment) => sink.onSegment(segment),
-          thinkingMode: opts.thinkingMode
+          thinkingMode: opts.thinkingMode,
+          modeOverride: opts.modeOverride
         })
         sink.onDone()
       } catch (err) {

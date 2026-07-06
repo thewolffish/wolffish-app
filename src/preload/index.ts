@@ -213,15 +213,10 @@ export type WorkspaceConfig = {
   llm: {
     local: LocalModelConfig
     providers: CloudProviderConfig[]
-    /** The single user-chosen cloud model — the Brain (orchestrator/single). */
+    /** The single user-chosen cloud model — the Brain. */
     brain?: BrainSelection | null
-    /** Orchestrator mode (Phase 2): 'single' (default) vs 'orchestrator'. */
-    orchestratorMode?: 'single' | 'orchestrator'
-    /** Worker-session model in orchestrator mode. */
-    workerModel?: BrainSelection | null
-    /** Behavior modifiers — append a system-prompt block when on. */
-    greedy?: boolean
-    autonomous?: boolean
+    /** Chat mode: 'single' (default, solo turns) vs 'workflow' (model-led agents). */
+    mode?: 'single' | 'workflow'
     localOnly?: boolean
     restrictPowerfulModels?: boolean
     /** Per-model thinking mode. Key is model name, value is ThinkingMode. */
@@ -349,9 +344,9 @@ export type ConversationTurnStats = {
 /** Persisted per-conversation tokenomics (dual decl — see src/main/conversations.ts). */
 export type ConversationStats = {
   /**
-   * Lifetime totals for this conversation. Includes orchestrator-worker
-   * spend; accrues from the first turn after this feature shipped for
-   * pre-existing conversations.
+   * Lifetime totals for this conversation. Includes workflow-agent spend;
+   * accrues from the first turn after this feature shipped for pre-existing
+   * conversations.
    */
   allTime: {
     processingMs: number
@@ -662,10 +657,7 @@ export type ProviderApi = {
   }) => Promise<{ ok: true } | { ok: false; error: string }>
   remove: (id: CloudProviderConfig['id']) => Promise<{ ok: true }>
   setBrain: (brain: BrainSelection | null) => Promise<{ ok: true }>
-  setWorkerModel: (worker: BrainSelection | null) => Promise<{ ok: true }>
-  setOrchestratorMode: (mode: 'single' | 'orchestrator') => Promise<{ ok: true }>
-  setGreedy: (greedy: boolean) => Promise<{ ok: true }>
-  setAutonomous: (autonomous: boolean) => Promise<{ ok: true }>
+  setMode: (mode: 'single' | 'workflow') => Promise<{ ok: true }>
   onUpdated: (listener: (event: ProviderUpdatedEvent) => void) => () => void
 }
 
@@ -680,6 +672,8 @@ export type ChatApi = {
     /** Active working-folder paths — the agent injects fresh listings into the outbound volatile tail. */
     workingFolders?: string[]
     thinkingMode?: ThinkingMode
+    /** Per-turn chat-mode override (procedure Play honors the procedure's stamp). */
+    modeOverride?: 'single' | 'workflow'
   }) => Promise<{ turnId: string; ok: boolean; error?: string }>
   cancel: () => Promise<{ canceled: boolean }>
   respondApproval: (payload: { id: string; decision: ApprovalDecision }) => Promise<{ ok: boolean }>
@@ -794,6 +788,8 @@ export type HeartbeatJobView = {
   cron: string | null
   label: string
   body: string
+  /** The job's own chat mode (its `mode: …` marker); null ⇒ follows global. */
+  mode: 'single' | 'workflow' | null
   nextRunMs: number | null
 }
 
@@ -827,14 +823,25 @@ export type Procedure = {
   id: string
   title: string
   prompt: string
+  /** The procedure's own chat mode; absent (legacy rows) ⇒ follows global. */
+  mode?: 'single' | 'workflow'
   createdAt: number
   updatedAt: number
 }
 
 export type ProceduresApi = {
   list: () => Promise<Procedure[]>
-  create: (payload: { title: string; prompt: string }) => Promise<Procedure>
-  update: (payload: { id: string; title?: string; prompt?: string }) => Promise<Procedure>
+  create: (payload: {
+    title: string
+    prompt: string
+    mode?: 'single' | 'workflow'
+  }) => Promise<Procedure>
+  update: (payload: {
+    id: string
+    title?: string
+    prompt?: string
+    mode?: 'single' | 'workflow'
+  }) => Promise<Procedure>
   delete: (id: string) => Promise<{ ok: true }>
 }
 
@@ -1504,10 +1511,7 @@ const api: WolffishApi = {
     save: (payload) => ipcRenderer.invoke('provider:save', payload),
     remove: (id) => ipcRenderer.invoke('provider:remove', id),
     setBrain: (brain) => ipcRenderer.invoke('provider:setBrain', brain),
-    setWorkerModel: (worker) => ipcRenderer.invoke('provider:setWorkerModel', worker),
-    setOrchestratorMode: (mode) => ipcRenderer.invoke('provider:setOrchestratorMode', mode),
-    setGreedy: (greedy) => ipcRenderer.invoke('provider:setGreedy', greedy),
-    setAutonomous: (autonomous) => ipcRenderer.invoke('provider:setAutonomous', autonomous),
+    setMode: (mode) => ipcRenderer.invoke('provider:setMode', mode),
     onUpdated: (listener) => subscribe('provider:updated', listener)
   },
   chat: {

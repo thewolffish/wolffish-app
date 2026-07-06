@@ -254,21 +254,12 @@ export type WorkspaceConfig = {
     // Null/absent means no cloud model is selected yet. Set from the Brain
     // settings page; the matching provider's `model` field is mirrored to it.
     brain?: { providerId: CloudProviderConfig['id']; model: string } | null
-    // Orchestrator mode (Phase 2). 'single' (default) is the Phase-1 single-model
-    // app. 'orchestrator' = a frontier orchestrator (the `brain` model) drives
-    // live parallel worker sessions running on `workerModel`. Global toggle.
-    orchestratorMode?: 'single' | 'orchestrator'
-    // The model worker sessions run on in orchestrator mode. Mirrors `brain`'s
-    // shape; null/absent until chosen.
-    workerModel?: { providerId: CloudProviderConfig['id']; model: string } | null
-    // Behavior modifiers — append a system-prompt block when on (prefrontal
-    // reads these). Apply to every turn (single, orchestrator, worker).
-    // `greedy`: persist hard — many retries, several approaches, ignore
-    // token/time budgets until the job is truly done.
-    greedy?: boolean
-    // `autonomous`: high agency — ask the user as little as possible, decide and
-    // act, drive end-to-end. Both default off (no prompt added).
-    autonomous?: boolean
+    // Chat mode, switched from the chat composer's mode button. 'single'
+    // (default) runs every turn solo. 'workflow' makes each top-level turn a
+    // workflow master: it can plan phases and spawn live parallel subagents
+    // (per-agent models it chooses) through the `workflow` capability.
+    // Global — heartbeat/procedure runs inherit it, like the Brain itself.
+    mode?: 'single' | 'workflow'
     // When true, cloud is skipped entirely and only the local model runs.
     // Toggled from the chat input's mode switch.
     localOnly?: boolean
@@ -631,10 +622,11 @@ export async function ensureWorkspace(): Promise<void> {
   await migrateBrain()
   await migrateConnections()
   await migrateTtsConfig()
-  await migrateStaleArtifacts()
   await migrateAgentsCore()
   await migrateAgentsGuide()
   await migrateIdentityRoleFiles()
+  // The standing removed-feature sweep — one function, extended in place.
+  await cleanupWorkspace()
 
   // Always sync bundled capabilities — new ones get added and existing
   // ones get refreshed on every launch, so plugin bug fixes shipped by an
@@ -901,11 +893,62 @@ async function migrateTtsConfig(): Promise<void> {
  * environment: openai-whisper's `~/.cache/whisper` model cache and the system
  * `edge-tts` package the old text-to-speech engine installed.)
  */
-async function migrateStaleArtifacts(): Promise<void> {
+/**
+ * THE one permanent home for sweeping out what removed features left behind
+ * in deployed footprints — retired capabilities, replaced prompt files, dead
+ * config keys, stale caches. Runs every launch; every block is idempotent
+ * (no-ops once clean) and strictly scoped to our own ~/.wolffish footprint.
+ * When a feature is removed from the app, append its cleanup HERE — never
+ * mint a new one-off function for it.
+ */
+async function cleanupWorkspace(): Promise<void> {
+  // Old speech-to-text engine (openai-whisper): its managed venv pulled a
+  // ~2 GB PyTorch; faster-whisper lives in venvs/faster-whisper now. (Left
+  // alone, because outside our footprint: ~/.cache/whisper and the system
+  // edge-tts package.)
   const binRoot = path.join(path.dirname(WORKSPACE_ROOT), 'bin')
   const staleWhisperVenv = path.join(binRoot, 'python', 'venvs', 'whisper')
   if (existsSync(staleWhisperVenv)) {
     await fs.rm(staleWhisperVenv, { recursive: true, force: true }).catch(() => undefined)
+  }
+
+  // Orchestrator mode (replaced by workflow mode): its deployed capability —
+  // ensureBundledCapabilities only ever copies, never prunes a skill whose
+  // bundled source was deleted, so the dead `.orchestrator` would keep
+  // loading with tools whose host bridge is gone…
+  for (const dir of ['.orchestrator', 'orchestrator']) {
+    const target = path.join(WORKSPACE_ROOT, 'brain', 'cerebellum', dir)
+    if (existsSync(target)) {
+      await fs.rm(target, { recursive: true, force: true }).catch(() => undefined)
+    }
+  }
+  // …its role prompt files (the identity copy loop only ever adds)…
+  for (const stale of ['orchestrator.md', 'worker.md']) {
+    const target = path.join(WORKSPACE_ROOT, 'brain', 'identity', stale)
+    if (existsSync(target)) await fs.rm(target, { force: true }).catch(() => undefined)
+  }
+  // …and its config keys (plus the retired greedy/autonomous toggles),
+  // seeding `mode`. A user who ran Orchestrator mode was running
+  // multi-agent — carry that intent into the replacement rather than
+  // silently downgrading to single.
+  const config = await readConfig()
+  if (!config) return
+  const llm = config.llm as typeof config.llm & {
+    orchestratorMode?: string
+    workerModel?: unknown
+    greedy?: boolean
+    autonomous?: boolean
+  }
+  const hasDeadKeys =
+    'orchestratorMode' in llm || 'workerModel' in llm || 'greedy' in llm || 'autonomous' in llm
+  if (hasDeadKeys || !('mode' in llm)) {
+    const mode =
+      config.llm.mode ?? (llm.orchestratorMode === 'orchestrator' ? 'workflow' : 'single')
+    delete llm.orchestratorMode
+    delete llm.workerModel
+    delete llm.greedy
+    delete llm.autonomous
+    await writeConfig({ ...config, llm: { ...llm, mode } })
   }
 }
 
@@ -939,13 +982,14 @@ async function migrateAgentsGuide(): Promise<void> {
 }
 
 /**
- * The orchestrator/worker role prompts (brain/identity/) are APP-MANAGED, like
- * agents.core.md: overwritten on every launch so prompt improvements ship with
- * an upgrade. They're framework behaviour, not personalization — custom agent
- * instructions belong in brain/prefrontal/agents.md, which we never overwrite.
+ * The workflow master/agent role prompts (brain/identity/) are APP-MANAGED,
+ * like agents.core.md: overwritten on every launch so prompt improvements ship
+ * with an upgrade. They're framework behaviour, not personalization — custom
+ * agent instructions belong in brain/prefrontal/agents.md, which we never
+ * overwrite.
  */
 async function migrateIdentityRoleFiles(): Promise<void> {
-  for (const name of ['orchestrator.md', 'worker.md']) {
+  for (const name of ['workflow.md', 'workflow-agent.md']) {
     const bundled = path.join(defaultsWorkspacePath(), 'brain', 'identity', name)
     if (!existsSync(bundled)) continue
     const target = path.join(WORKSPACE_ROOT, 'brain', 'identity', name)
@@ -1118,13 +1162,11 @@ export async function setCloudProvider(provider: CloudProviderConfig): Promise<W
 export async function removeCloudProvider(id: CloudProviderConfig['id']): Promise<WorkspaceConfig> {
   return patchConfig((c) => {
     const nextProviders = c.llm.providers.filter((p) => p.id !== id)
-    // Clear the Brain / worker model if either pointed at the removed provider.
+    // Clear the Brain if it pointed at the removed provider.
     const brain = c.llm.brain && c.llm.brain.providerId === id ? null : c.llm.brain
-    const workerModel =
-      c.llm.workerModel && c.llm.workerModel.providerId === id ? null : c.llm.workerModel
     return {
       ...c,
-      llm: { ...c.llm, providers: nextProviders, brain, workerModel }
+      llm: { ...c.llm, providers: nextProviders, brain }
     }
   })
 }
@@ -1146,42 +1188,9 @@ export async function setBrain(
   })
 }
 
-/** Set the orchestrator-mode toggle: 'single' (Phase-1 app) vs 'orchestrator'. */
-export async function setOrchestratorMode(
-  mode: 'single' | 'orchestrator'
-): Promise<WorkspaceConfig> {
-  return patchConfig((c) => {
-    const llm = { ...c.llm, orchestratorMode: mode }
-    // Default the worker to the same model as the orchestrator (the brain) the
-    // first time orchestrator mode is enabled, so it works out of the box. Only
-    // when no worker is set yet — never overrides a user's explicit choice.
-    if (mode === 'orchestrator' && !llm.workerModel && llm.brain) {
-      llm.workerModel = llm.brain
-    }
-    return { ...c, llm }
-  })
-}
-
-/**
- * Set (or clear) the worker model — what live worker sessions run on in
- * orchestrator mode. Stored independently of `brain` and NOT mirrored onto the
- * provider record (brain owns that mirror; a shared provider has one `model`
- * field that can't represent both roles). resolveWorker reads this directly.
- */
-export async function setWorkerModel(
-  worker: { providerId: CloudProviderConfig['id']; model: string } | null
-): Promise<WorkspaceConfig> {
-  return patchConfig((c) => ({ ...c, llm: { ...c.llm, workerModel: worker } }))
-}
-
-/** Toggle greedy effort — see the `greedy` config field. */
-export async function setGreedy(greedy: boolean): Promise<WorkspaceConfig> {
-  return patchConfig((c) => ({ ...c, llm: { ...c.llm, greedy } }))
-}
-
-/** Toggle autonomy — see the `autonomous` config field. */
-export async function setAutonomous(autonomous: boolean): Promise<WorkspaceConfig> {
-  return patchConfig((c) => ({ ...c, llm: { ...c.llm, autonomous } }))
+/** Set the chat mode: 'single' (solo turns) vs 'workflow' (model-led agents). */
+export async function setMode(mode: 'single' | 'workflow'): Promise<WorkspaceConfig> {
+  return patchConfig((c) => ({ ...c, llm: { ...c.llm, mode } }))
 }
 
 // If the config records a model name no longer in our curated catalog (e.g.

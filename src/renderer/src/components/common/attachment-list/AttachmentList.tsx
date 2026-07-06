@@ -48,16 +48,16 @@ export function AttachmentList({
 
   if (variant === 'grid') {
     return (
-      // CSS multi-column masonry: tiles flow into as many ~18rem columns as
+      // CSS multi-column masonry: tiles flow into as many ~26rem columns as
       // fit and keep their natural height, so a short audio card sits beside a
       // tall image without the single-column dead space. The per-tile wrapper
       // neutralizes each viewer's built-in max-w-[85%]/self-start so tiles fill
       // their column edge to edge (break-inside-avoid keeps a tile whole).
-      <div className="columns-[18rem] gap-3">
+      <div className="columns-[26rem] gap-4">
         {attachments.map((att, idx) => (
           <div
             key={`${att.filePath}-${idx}`}
-            className="mb-3 break-inside-avoid [&>*]:w-full [&>*]:max-w-none!"
+            className="mb-4 break-inside-avoid [&>*]:w-full [&>*]:max-w-none!"
           >
             {renderViewer(att, existence[att.filePath] ?? true)}
           </div>
@@ -131,7 +131,7 @@ function renderViewer(att: MessageAttachment, exists: boolean): React.JSX.Elemen
       />
     )
   }
-  if (isMarkdownAttachment(att)) {
+  if (isMarkdownAttachment(att) || isPlainTextAttachment(att)) {
     return (
       <MarkdownFileViewer
         filePath={att.filePath}
@@ -166,6 +166,10 @@ function renderViewer(att: MessageAttachment, exists: boolean): React.JSX.Elemen
 
 function isMarkdownAttachment(att: MessageAttachment): boolean {
   return att.mimeType === 'text/markdown' || /\.(md|mdx|markdown)$/i.test(att.originalName)
+}
+
+function isPlainTextAttachment(att: MessageAttachment): boolean {
+  return att.mimeType === 'text/plain' || /\.txt$/i.test(att.originalName)
 }
 
 function isHtmlAttachment(att: MessageAttachment): boolean {

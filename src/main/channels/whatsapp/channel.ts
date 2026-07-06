@@ -52,7 +52,13 @@ import {
   type AskUserRequest,
   type AskUserResponse
 } from '@main/runtime/cerebellum'
-import type { Segment, SegmentTurnEndReason } from '@main/runtime/broca'
+import {
+  upsertWorkflowSegment,
+  WORKFLOW_TOOL_NAMES,
+  type Segment,
+  type SegmentTurnEndReason,
+  type WorkflowSnapshot
+} from '@main/runtime/broca'
 import type { CorpusEvents } from '@main/runtime/corpus'
 import type { LocalProvider } from '@main/runtime/providers/local'
 import { composeAttachmentContext } from '@main/uploads/compose-attachments'
@@ -142,18 +148,14 @@ type ActiveTurn = {
   conversation: ConversationFile
   textBuffer: string
   /**
-   * Per-worker narration buffers (orchestrator mode). Concurrent workers
-   * interleave their text deltas token-by-token in the merged stream, so
-   * each worker's prose coalesces by id here — never in textBuffer — and
-   * flushes as its own labeled message at that worker's next tool call,
-   * before any orchestrator action, and at turn_end. Verbose-only: the
-   * clean feed is the orchestrator's reply alone, so nothing is buffered
-   * when verbose is off.
+   * Last seen workflow snapshot per run (workflow mode). renderSegment
+   * diffs the incoming snapshot against this to derive phase-transition
+   * and per-agent progress messages deterministically.
    */
-  workerText: Map<string, { label: string; buf: string }>
+  workflowState: Map<string, WorkflowSnapshot>
   /**
-   * Full prose the model produced this turn. Orchestrator-only: worker
-   * narration is persisted in `segments` (worker-tagged), not here.
+   * Full prose the model produced this turn. Master-only: legacy worker
+   * narration stays in `segments` (worker-tagged), never here.
    */
   assistantContent: string
   segments: Segment[]
@@ -1339,7 +1341,7 @@ export class WhatsAppChannel {
           jid,
           conversation,
           textBuffer: '',
-          workerText: new Map(),
+          workflowState: new Map(),
           assistantContent: '',
           segments: [],
           approvals: new Map(),
@@ -1506,24 +1508,21 @@ export class WhatsAppChannel {
     const active = this.activeByJid.get(jid)
     if (!active) return
 
-    active.segments.push(segment)
+    // Workflow snapshots supersede each other — keep only the latest per run
+    // or a long workflow persists hundreds of full snapshots.
+    if (segment.kind === 'workflow') upsertWorkflowSegment(active.segments, segment)
+    else active.segments.push(segment)
+
+    if (segment.kind === 'workflow') {
+      await this.renderWorkflowUpdate(jid, segment.snapshot)
+      return
+    }
 
     if (segment.kind === 'text') {
-      if (segment.worker) {
-        // Subagent narration: verbose-only (the clean feed is the
-        // orchestrator's reply alone), coalesced per worker so concurrent
-        // workers' token-interleaved deltas don't scramble into one message
-        // — and never mixed into textBuffer/assistantContent.
-        if (!active.verbose) return
-        const entry = active.workerText.get(segment.worker.id) ?? {
-          label: segment.worker.label,
-          buf: ''
-        }
-        entry.buf += segment.delta
-        entry.label = segment.worker.label
-        active.workerText.set(segment.worker.id, entry)
-        return
-      }
+      // LEGACY: worker-tagged segments only exist in conversations persisted
+      // by the removed Orchestrator mode — never render them (subagent output
+      // was the master's input, not the user's).
+      if (segment.worker) return
       await this.flushPendingActiveModel(jid)
       active.textBuffer += segment.delta
       active.assistantContent += segment.delta
@@ -1533,27 +1532,16 @@ export class WhatsAppChannel {
     if (segment.kind === 'tool_call') {
       active.toolCallNames.set(segment.toolCallId, segment.name)
       active.toolTimings.set(segment.toolCallId, { startedAt: Date.now() })
-      if (segment.worker) {
-        // Narration before this worker's action, then a labeled card —
-        // verbose-only, mirroring the in-app subagent rail.
-        await this.flushWorkerText(jid, segment.worker.id)
-        if (!active.verbose) return
-        const wArgs = formatArgs(segment.args)
-        const wHeading = `⚙️ *${segment.worker.label} · ${segment.name}*`
-        const wMsg = wArgs.length > 0 ? `${wHeading}\n\`\`\`\n${wArgs}\n\`\`\`` : wHeading
-        await this.safeSend(jid, wMsg)
-        return
-      }
+      if (segment.worker) return // LEGACY orchestrator-mode segments — see text branch
       await this.flushPendingActiveModel(jid)
-      // Workers narrate, then the orchestrator acts: drain every pending
-      // worker buffer before this orchestrator action so no worker message
-      // lands after a later main-flow send (e.g. the file the orchestrator
-      // delivers via send_file near the end of the turn).
-      await this.flushAllWorkerText(jid)
       await this.flushBufferedText(jid)
       // ask_user posts its own formatted question via onAskUserRequest — never
       // surface the raw tool call (even in verbose), or the question doubles up.
       if (segment.name === ASK_USER_TOOL) return
+      // The master's workflow tools never render as cards (even in verbose) —
+      // the workflow snapshot messages above are their surface. Prose was
+      // already flushed, so ordering stays: narration → phase updates.
+      if (WORKFLOW_TOOL_NAMES.has(segment.name)) return
       // Clean feed: skip the tool-call card. Prose preceding the call has
       // already been flushed above; bookkeeping (names/timings) stands so a
       // file-bearing result can still render its heading.
@@ -1569,26 +1557,14 @@ export class WhatsAppChannel {
       const timing = active.toolTimings.get(segment.toolCallId)
       if (timing) timing.endedAt = Date.now()
       const icon = segment.status === 'success' ? '✅' : segment.status === 'denied' ? '❌' : '⚠️'
-      if (segment.worker) {
-        // Subagent results are the ORCHESTRATOR's input, not a user-facing
-        // delivery: no native file sends here (the orchestrator delivers
-        // through its own send_file), no clean-feed surfacing. Verbose gets
-        // a labeled result card, same as the in-app subagent rail.
-        if (!active.verbose) return
-        const wName = active.toolCallNames.get(segment.toolCallId)
-        const wHeading = `${icon} *${segment.worker.label}${wName ? ` · ${wName}` : ''}*`
-        const wOutput = segment.output?.trim() ?? ''
-        if (wOutput.length === 0) {
-          await this.safeSend(jid, wHeading)
-          return
-        }
-        await this.safeSend(jid, `${wHeading}\n${blockquote(truncateToolOutput(wOutput))}`)
-        return
-      }
+      if (segment.worker) return // LEGACY orchestrator-mode segments — see text branch
       const name = active.toolCallNames.get(segment.toolCallId)
       // ask_user's result is the user's own answer, already acknowledged inline
       // when they replied — don't echo it back as a tool-result block.
       if (name === ASK_USER_TOOL) return
+      // Workflow tool results are the master's input — the phase messages are
+      // the user surface.
+      if (name && WORKFLOW_TOOL_NAMES.has(name)) return
       const heading = name ? `${icon} *${name}*` : icon
       const output = segment.output?.trim() ?? ''
       // An stt_* result's file payload is the user's SOURCE recording (an
@@ -1688,9 +1664,6 @@ export class WhatsAppChannel {
     if (segment.kind === 'turn_end') {
       active.stopReason = segment.stopReason
       active.pendingActiveModel = null
-      // Workers flush and finish first; the orchestrator's closing reply
-      // is the LAST message of the turn.
-      await this.flushAllWorkerText(jid)
       await this.flushBufferedText(jid)
       return
     }
@@ -1718,29 +1691,76 @@ export class WhatsAppChannel {
   }
 
   /**
-   * Flush one worker's coalesced narration as its own labeled message.
-   * Buffers only fill when verbose is on, so this is a no-op on clean feeds.
+   * Turn a workflow snapshot into channel progress messages by diffing it
+   * against the last seen snapshot: run start (with the plan), phase
+   * start/completion (always sent — the channel has no card, these ARE the
+   * workflow surface), per-agent landings (verbose only), and the closing
+   * summary. Deterministic: everything derives from harness telemetry.
+   * Plain WhatsApp formatting only — these are channel-constructed lines,
+   * not model prose, so they never pass through markdownToWhatsApp.
    */
-  private async flushWorkerText(jid: string, workerId: string): Promise<void> {
+  private async renderWorkflowUpdate(jid: string, snapshot: WorkflowSnapshot): Promise<void> {
     const active = this.activeByJid.get(jid)
     if (!active) return
-    const entry = active.workerText.get(workerId)
-    if (!entry) return
-    active.workerText.delete(workerId)
-    const text = entry.buf.trim()
-    if (text.length === 0) return
-    const body = markdownToWhatsApp(text).trim()
-    for (const chunk of splitForWhatsApp(`🔹 *${entry.label}*\n${body}`)) {
-      await this.safeSend(jid, chunk)
+    const prev = active.workflowState.get(snapshot.workflowId)
+    active.workflowState.set(snapshot.workflowId, snapshot)
+    // Master narration lands before the progress it precedes.
+    await this.flushBufferedText(jid)
+    const phaseTitles = snapshot.phases.map((p) => p.title)
+    if (!prev) {
+      const planLine = phaseTitles.length > 0 ? `\n${phaseTitles.join(' → ')}` : ''
+      const noteLine = snapshot.note ? `\n_${snapshot.note}_` : ''
+      await this.safeSend(jid, `🔀 *Workflow started*${planLine}${noteLine}`)
+    } else {
+      const prevPlan = prev.phases.map((p) => p.title).join('|')
+      if (phaseTitles.length > 0 && prevPlan !== phaseTitles.join('|')) {
+        await this.safeSend(jid, `🔀 *Plan:* ${phaseTitles.join(' → ')}`)
+      }
     }
-  }
-
-  /** Drain every pending worker buffer — workers speak before the orchestrator's next move. */
-  private async flushAllWorkerText(jid: string): Promise<void> {
-    const active = this.activeByJid.get(jid)
-    if (!active) return
-    for (const id of [...active.workerText.keys()]) {
-      await this.flushWorkerText(jid, id)
+    const prevPhase = new Map((prev?.phases ?? []).map((p) => [p.title, p.status]))
+    const total = snapshot.phases.length
+    // Phase transitions announce only while the run is LIVE — the terminal
+    // snapshot flips statuses in bulk (agentless greening, cancel sweeps),
+    // which would read as a spurious phase burst before the summary line.
+    for (let i = 0; snapshot.status === 'running' && i < snapshot.phases.length; i++) {
+      const ph = snapshot.phases[i]
+      const before = prevPhase.get(ph.title)
+      if (ph.status === 'active' && before !== 'active') {
+        await this.safeSend(jid, `▶️ *Phase ${i + 1}/${total}:* ${ph.title}`)
+      } else if (ph.status === 'done' && before === 'active') {
+        const count = snapshot.agents.filter((a) => a.phase === ph.title).length
+        await this.safeSend(
+          jid,
+          `✅ *Phase ${i + 1}/${total} done:* ${ph.title} (${count} agent${count === 1 ? '' : 's'})`
+        )
+      }
+    }
+    if (active.verbose && prev) {
+      const before = new Map(prev.agents.map((a) => [a.id, a.status]))
+      for (const a of snapshot.agents) {
+        const b = before.get(a.id)
+        const landed = a.status === 'completed' || a.status === 'failed' || a.status === 'cancelled'
+        if (landed && a.status !== b) {
+          const icon = a.status === 'completed' ? '✅' : a.status === 'failed' ? '⚠️' : '✖️'
+          const secs = a.endedAt ? Math.max(1, Math.round((a.endedAt - a.startedAt) / 1000)) : 0
+          await this.safeSend(
+            jid,
+            `${icon} *${a.name}* · ${a.provider}/${a.model} — ${a.status}${secs ? ` in ${formatWorkflowDuration(secs)}` : ''} · ${a.toolCalls} tool${a.toolCalls === 1 ? '' : 's'}`
+          )
+        }
+      }
+    }
+    if (snapshot.status !== 'running' && (!prev || prev.status === 'running')) {
+      const secs = Math.max(
+        1,
+        Math.round(((snapshot.endedAt ?? snapshot.startedAt) - snapshot.startedAt) / 1000)
+      )
+      const icon =
+        snapshot.status === 'completed' ? '🏁' : snapshot.status === 'canceled' ? '✖️' : '⚠️'
+      await this.safeSend(
+        jid,
+        `${icon} *Workflow ${snapshot.status}* — ${snapshot.totals.agents} agent${snapshot.totals.agents === 1 ? '' : 's'} · ${snapshot.totals.toolCalls} tool call${snapshot.totals.toolCalls === 1 ? '' : 's'} · ${formatWorkflowDuration(secs)}`
+      )
     }
   }
 
@@ -2332,6 +2352,12 @@ function extractAudioVideoPaths(output: string): { path: string; type: 'audio' |
 }
 
 const WHATSAPP_MESSAGE_LIMIT = 4096
+
+/** "42s" under 90s, then "3m 20s" — compact wall-clock for workflow messages. */
+function formatWorkflowDuration(secs: number): string {
+  if (secs < 90) return `${secs}s`
+  return `${Math.floor(secs / 60)}m ${secs % 60}s`
+}
 
 function splitForWhatsApp(text: string): string[] {
   if (text.length <= WHATSAPP_MESSAGE_LIMIT) return [text]

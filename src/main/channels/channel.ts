@@ -175,11 +175,13 @@ export function stubStaleToolResults(
  * preserving tool calls and tool results from assistant segments. This gives
  * the model access to its prior tool interactions across turns.
  *
- * Worker-tagged segments (orchestrator mode) are excluded — mirrors the
- * renderer's textHistory. The orchestrator's real context received worker
- * output through its own await_workers tool results (main segments); replaying
- * the forwarded worker segments too would interleave worker prose into the
- * assistant's text and present worker tool calls as the orchestrator's own.
+ * Worker-tagged segments (LEGACY, from the removed Orchestrator mode) are
+ * excluded — mirrors the renderer's textHistory. The master's real context
+ * received subagent output through its own await tool results (main
+ * segments); replaying the forwarded worker segments too would interleave
+ * subagent prose into the assistant's text and present subagent tool calls
+ * as the master's own. Workflow-mode `workflow` snapshot segments fall
+ * through the kind dispatch below untouched — display-only by design.
  */
 export function assistantSegmentsToHistory(msg: ConversationMessage): ChatHistoryMessage[] {
   const segments = msg.segments?.filter((s) => !('worker' in s && s.worker))

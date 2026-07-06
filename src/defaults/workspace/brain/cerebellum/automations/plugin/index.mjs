@@ -32,6 +32,12 @@ const toolDefinitions = [
     parameters: {
       type: 'object',
       properties: {
+        mode: {
+          type: 'string',
+          enum: ['single', 'workflow'],
+          description:
+            "Which chat mode the automation runs in — 'single' or 'workflow'. Optional."
+        },
         schedule: {
           type: 'string',
           description:
@@ -53,6 +59,12 @@ const toolDefinitions = [
     parameters: {
       type: 'object',
       properties: {
+        mode: {
+          type: 'string',
+          enum: ['single', 'workflow'],
+          description:
+            "Which chat mode the automation runs in — 'single' or 'workflow'. Optional."
+        },
         identifier: {
           type: 'string',
           description: 'The automation to edit — its number from automation_list, or its exact schedule label (e.g. "Daily (08:00)").'
@@ -132,7 +144,8 @@ async function listAutomations() {
     const valid = preview.ok
     const timing = valid ? preview.human : '⚠ invalid schedule — will NOT run'
     const runningTag = job && job.running ? ' · **running now**' : ''
-    lines.push(`${b.index}. **${b.label}** — ${timing}${runningTag}`)
+    const modeTag = b.mode ? ` · mode: ${b.mode}` : ''
+    lines.push(`${b.index}. **${b.label}** — ${timing}${runningTag}${modeTag}`)
     if (valid && preview.cron) lines.push(`   cron: \`${preview.cron}\``)
     lines.push(`   ${oneLine(b.body) || '(no instruction)'}`)
     if (job) lines.push(`   ${formatLastRun(job)}`)
@@ -152,9 +165,13 @@ async function createAutomation(args) {
   if (!automations) return missingBridge()
   const rawSchedule = typeof args?.schedule === 'string' ? args.schedule.trim() : ''
   const instruction = typeof args?.instruction === 'string' ? args.instruction.trim() : ''
+  const modeArg = typeof args?.mode === 'string' ? args.mode.trim().toLowerCase() : ''
 
   if (!rawSchedule) return { success: false, error: 'automation_create: provide a `schedule`.' }
   if (!instruction) return { success: false, error: 'automation_create: provide an `instruction` to run.' }
+  if (modeArg && modeArg !== 'single' && modeArg !== 'workflow') {
+    return { success: false, error: "automation_create: `mode` must be 'single' or 'workflow'." }
+  }
 
   const badBody = checkInstruction(instruction)
   if (badBody) return { success: false, error: badBody }
@@ -170,8 +187,12 @@ async function createAutomation(args) {
   const onceGuard = preview.kind === 'once' ? checkOnceTime(preview.runAt) : null
   if (onceGuard) return { success: false, error: `automation_create: ${onceGuard}` }
 
+  // Every automation is stamped with a mode at creation — the caller's pick,
+  // else whatever chat mode the user is running right now.
+  const mode = modeArg || (automations.getGlobalMode ? await automations.getGlobalMode() : 'single')
+
   const raw = await loadHeartbeat()
-  const next = insertBlock(raw, normalizeHeading(schedule), instruction)
+  const next = insertBlock(raw, normalizeHeading(schedule), composeBody(mode, instruction))
   const result = await automations.writeHeartbeat(next)
   if (!result.ok) {
     return { success: false, error: `automation_create: couldn't save — ${result.error ?? 'unknown error'}` }
@@ -203,10 +224,14 @@ async function editAutomation(args) {
   const identifier = typeof args?.identifier === 'string' ? args.identifier.trim() : `${args?.identifier ?? ''}`.trim()
   const newSchedule = typeof args?.schedule === 'string' ? args.schedule.trim() : ''
   const newInstruction = typeof args?.instruction === 'string' ? args.instruction.trim() : ''
+  const newMode = typeof args?.mode === 'string' ? args.mode.trim().toLowerCase() : ''
 
   if (!identifier) return { success: false, error: 'automation_edit: provide an `identifier` (number or label).' }
-  if (!newSchedule && !newInstruction) {
-    return { success: false, error: 'automation_edit: provide a new `schedule`, a new `instruction`, or both.' }
+  if (!newSchedule && !newInstruction && !newMode) {
+    return { success: false, error: 'automation_edit: provide a new `schedule`, `instruction`, or `mode`.' }
+  }
+  if (newMode && newMode !== 'single' && newMode !== 'workflow') {
+    return { success: false, error: "automation_edit: `mode` must be 'single' or 'workflow'." }
   }
 
   const raw = await loadHeartbeat()
@@ -232,8 +257,10 @@ async function editAutomation(args) {
 
   const heading = normalizeHeading(resolvedHeading)
   const body = newInstruction || target.block.body
+  // Preserve the block's mode stamp across edits unless explicitly changed.
+  const mode = newMode || target.block.mode
 
-  const next = applyEdit(raw, target.block, heading, body)
+  const next = applyEdit(raw, target.block, heading, composeBody(mode, body))
   const result = await automations.writeHeartbeat(next)
   if (!result.ok) {
     return { success: false, error: `automation_edit: couldn't save — ${result.error ?? 'unknown error'}` }
@@ -395,12 +422,13 @@ function parseActiveBlocks(raw) {
     for (const [s] of ranges) {
       if (s >= h.lineEnd && s < end) end = s
     }
-    const body = raw
+    const rawBody = raw
       .slice(h.lineEnd, end)
       .replace(/^---+\s*$/gm, '')
       .replace(/\n{3,}/g, '\n\n')
       .trim()
-    blocks.push({ index: i + 1, label: h.label, body, headingStart: h.headingStart, end })
+    const { body, mode } = splitModeMarker(rawBody)
+    blocks.push({ index: i + 1, label: h.label, body, mode, headingStart: h.headingStart, end })
   }
   return blocks
 }
@@ -423,6 +451,26 @@ function tidyOutsideComments(raw) {
   }
   out += raw.slice(last).replace(/\n{3,}/g, '\n\n')
   return out
+}
+
+/**
+ * Per-job chat mode rides the block body's FIRST line as a plain marker
+ * (`mode: single` / `mode: workflow`). The engine and the Heartbeat page
+ * parse and strip the same line — keep the three parsers in sync. Bodies
+ * exposed by parseActiveBlocks are always CLEAN (marker split off), so
+ * label+body matching against live jobs stays symmetric.
+ */
+const MODE_MARKER_RE = /^mode:\s*(single|workflow)\s*$/i
+
+function splitModeMarker(body) {
+  const lines = body.split('\n')
+  const m = lines[0] ? MODE_MARKER_RE.exec(lines[0]) : null
+  if (!m) return { body, mode: null }
+  return { body: lines.slice(1).join('\n').trim(), mode: m[1].toLowerCase() }
+}
+
+function composeBody(mode, body) {
+  return mode ? `mode: ${mode}\n\n${body.trim()}` : body.trim()
 }
 
 function formatBlock(heading, body) {

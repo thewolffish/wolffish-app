@@ -132,6 +132,13 @@ export type AssistantMessage = {
 
 export type ChatMessage = UserMessage | AssistantMessage
 
+/**
+ * A procedure queued for auto-send into a fresh chat (the Play button).
+ * Carries the procedure's own chat mode so the run honors its stamp — the
+ * override rides THIS object into the single send, never renderer state.
+ */
+export type PendingProcedure = { prompt: string; mode?: 'single' | 'workflow' }
+
 export type FlowContextValue = {
   screen: Screen
   status: WorkspaceStatus | null
@@ -145,8 +152,8 @@ export type FlowContextValue = {
    * fresh conversation and auto-sending the prompt — then clears it back to
    * null. Not persisted; it's a one-shot hand-off between pages.
    */
-  pendingProcedure: string | null
-  setPendingProcedure: Dispatch<SetStateAction<string | null>>
+  pendingProcedure: PendingProcedure | null
+  setPendingProcedure: Dispatch<SetStateAction<PendingProcedure | null>>
   /**
    * Navigate to a screen. Optional `returnTo` records where a follow-up
    * "Continue" should land — e.g. opening ollama-setup from Settings sets

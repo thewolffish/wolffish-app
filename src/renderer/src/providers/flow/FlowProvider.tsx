@@ -3,6 +3,7 @@ import {
   FlowContext,
   type ChatMessage,
   type FlowContextValue,
+  type PendingProcedure,
   type Screen
 } from '@providers/flow/useFlow'
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
@@ -18,7 +19,7 @@ export function FlowProvider({ children }: { children: ReactNode }): React.JSX.E
   const [ready, setReady] = useState(false)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
-  const [pendingProcedure, setPendingProcedure] = useState<string | null>(null)
+  const [pendingProcedure, setPendingProcedure] = useState<PendingProcedure | null>(null)
   const [dataAnalytics, setDataAnalytics] = useState<DataAnalytics | null>(null)
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null)
 

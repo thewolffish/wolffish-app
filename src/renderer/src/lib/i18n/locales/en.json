@@ -191,7 +191,6 @@
   "settings": {
     "tabs": {
       "appearance": "Appearance",
-      "brain": "Modes",
       "model": "Models",
       "wolffish": "Preferences",
       "variables": "Variables",
@@ -203,58 +202,6 @@
       "data": "Data",
       "updates": "Updates",
       "hippocampus": "Hippocampus"
-    },
-    "brain": {
-      "title": "Modes",
-      "subtitle": "Configure Wolffish's modes of operation and the models that power them.",
-      "empty": {
-        "title": "No Brain selected",
-        "hint": "Drag a model here, or click one below."
-      },
-      "spec": {
-        "context": "context",
-        "in": "in",
-        "out": "out"
-      },
-      "noDetails": "No pricing details available.",
-      "activeChip": "Active",
-      "clear": "Clear Brain",
-      "unavailable": "This model's provider is no longer connected — pick a new Brain.",
-      "noProviders": "No providers connected yet. Add an API key in a provider's settings to choose a Brain.",
-      "providerNoModels": "Test this provider's connection to load its models.",
-      "cardAria": "Set {{model}} as the Brain",
-      "mode": {
-        "single": "Single",
-        "orchestrator": "Orchestrator"
-      },
-      "modeDesc": {
-        "single": "Wolffish runs on one model — the Brain. Simple and predictable.",
-        "orchestrator": "The Brain becomes an orchestrator that can spin up live parallel worker sessions on the worker model, drive them, and synthesize one reply. You still talk to one agent."
-      },
-      "orchestratorSlot": "Orchestrator",
-      "workerSlot": "Worker",
-      "workerEmpty": {
-        "title": "No Worker selected",
-        "hint": "Drag a model here, or click one below."
-      },
-      "applyClick": "Click sets:",
-      "prefs": {
-        "default": "Default",
-        "mode": {
-          "title": "Orchestrator mode",
-          "description": "Let the Brain spin up live parallel worker sessions on the worker model, drive them, and synthesize a single reply. You still talk to one agent."
-        },
-        "greedy": {
-          "title": "Greedy effort",
-          "description": "Push the model to go the extra mile — retry up to ~10 times instead of stopping at 3, try several approaches instead of one, and keep going regardless of token count or elapsed time until the job is truly done.",
-          "label": "Greedy"
-        },
-        "autonomy": {
-          "title": "Autonomy",
-          "description": "Tell the model to act with high agency — ask you as little as possible, make reasonable decisions on its own, and drive the task to the best possible outcome without waiting for input.",
-          "label": "Autonomous"
-        }
-      }
     },
     "wolffish": {
       "title": "Wolffish",
@@ -406,16 +353,11 @@
       },
       "cloud": {
         "title": "{{provider}}",
-        "subtitle": "Used when reachable. Falls back to your local model.",
         "apiKey": "API key",
         "apiKeyPlaceholder": "Paste your {{provider}} key",
         "showKey": "Show key",
         "hideKey": "Hide key",
-        "model": "Model",
-        "modelHint": "Add a key and test the connection below.",
-        "searchModels": "Search for a model",
-        "brainNotice": "Which model runs and how it executes are set in the Modes page.",
-        "brainNoticeLink": "Open the Modes page",
+        "brainNotice": "Pick the active model and mode from the chat composer.",
         "modelsBreakdown": "Models",
         "breakdown": {
           "model": "Model",
@@ -439,8 +381,6 @@
         "platform": "Platform",
         "test": "Save",
         "testConnection": "Test connection",
-        "save": "Save",
-        "saving": "Saving…",
         "remove": "Disconnect",
         "keyWorksToast": "{{provider}} key seems to work correctly",
         "removedToast": "{{provider}} key removed",
@@ -575,12 +515,12 @@
         },
         "errors": {
           "missing_token": "Bot token is required.",
-          "token_format": "Invalid token format — check BotFather.",
-          "invalid_token": "Token rejected — copy a fresh one from @BotFather.",
-          "invalid_user_id": "Invalid user ID — get yours from @userinfobot.",
-          "rate_limit": "Rate-limited — wait a minute and retry.",
-          "network": "Can't reach Telegram — check connection.",
-          "unknown": "Telegram returned an error: {{message}}"
+          "token_format": "Invalid token format.",
+          "invalid_token": "Telegram rejected the token.",
+          "invalid_user_id": "Invalid user ID — see @userinfobot.",
+          "rate_limit": "Rate limited — retry later.",
+          "network": "Can't reach Telegram.",
+          "unknown": "Telegram error: {{message}}"
         },
         "autoRefresh": {
           "label": "Auto-refresh conversations",
@@ -704,10 +644,10 @@
         },
         "errors": {
           "missing_token": "Integration token is required.",
-          "invalid_token": "Token rejected — copy a fresh one from Notion.",
-          "rate_limit": "Rate-limited by Notion — wait and retry.",
-          "network": "Can’t reach Notion — check connection.",
-          "unknown": "Notion returned an error: {{message}}"
+          "invalid_token": "Notion rejected the token.",
+          "rate_limit": "Rate limited — retry later.",
+          "network": "Can’t reach Notion.",
+          "unknown": "Notion error: {{message}}"
         },
         "howItWorksTitle": "How it works",
         "howItWorks": {
@@ -759,11 +699,11 @@
         },
         "errors": {
           "missing_token": "Personal Access Token is required.",
-          "invalid_token": "Token rejected — copy a fresh one from GitHub.",
-          "rate_limit": "Rate-limited by GitHub — wait and retry.",
+          "invalid_token": "GitHub rejected the token.",
+          "rate_limit": "Rate limited — retry later.",
           "insufficient_scope": "Token missing 'repo' scope.",
-          "network": "Can't reach GitHub — check connection.",
-          "unknown": "GitHub returned an error: {{message}}"
+          "network": "Can't reach GitHub.",
+          "unknown": "GitHub error: {{message}}"
         },
         "howItWorksTitle": "How it works",
         "howItWorks": {
@@ -1192,7 +1132,7 @@
       "how": {
         "title": "How this works",
         "add": "Add a connection with a command (for servers that run on this machine) or a URL (for remote servers). Wolffish connects right away — no restart, no setup steps. If a server requires sign-in, you'll see one button for it here.",
-        "tools": "Everything a connected server offers becomes available to Wolffish on your very next message, in normal chat and in orchestrator mode alike.",
+        "tools": "Everything a connected server offers becomes available to Wolffish on your very next message, in normal chat and to workflow agents alike.",
         "background": "Wolffish keeps each connection healthy on its own: it checks in periodically, reconnects with steadily-spaced retries if one drops, refreshes a server's tools whenever it reconnects, and keeps every connection isolated so one failing never touches another.",
         "offline": "If a server crashes or drops offline, its tools quietly step aside while Wolffish reconnects in the background. Nothing breaks, and there's nothing you need to do."
       },
@@ -1604,7 +1544,7 @@
       "calls": "API calls",
       "tools": "{{count}} tools",
       "cost": "Cost",
-      "workers": "workers: {{turns}} turns · {{tokens}} tokens",
+      "workers": "agents: {{turns}} turns · {{tokens}} tokens",
       "summaries": "summaries: {{calls}} calls · {{tokens}} tokens",
       "allTime": "All time",
       "turns": "Turns",
@@ -1654,7 +1594,7 @@
       "ariaLabel": "Provider mode",
       "local": "Local",
       "cloud": "Cloud",
-      "noModel": "No model selected"
+      "noModelShort": "No model"
     },
     "thinkingMode": {
       "ariaLabel": "Thinking mode",
@@ -1704,6 +1644,47 @@
       "deny": "Deny",
       "approved": "Approved",
       "denied": "Denied"
+    },
+    "modelPicker": {
+      "search": "Search models",
+      "noProviders": "Connect a provider API key in Settings first.",
+      "noResults": "No models match your search."
+    },
+    "modePicker": {
+      "ariaLabel": "Choose the chat mode",
+      "single": "Single",
+      "singleDesc": "One model answers directly — everyday questions.",
+      "workflow": "Workflow",
+      "workflowDesc": "Many agents plan, verify — complex tasks."
+    },
+    "workflow": {
+      "title": "Workflow",
+      "toggleAria": "Expand or collapse the workflow details",
+      "headStats": "{{done}}/{{agents}} agents done · {{tools}} tool calls",
+      "noAgents": "No agents spawned yet.",
+      "status": {
+        "running": "running",
+        "completed": "completed",
+        "canceled": "canceled",
+        "error": "error"
+      },
+      "agentStatus": {
+        "queued": "queued",
+        "running": "running",
+        "completed": "completed",
+        "failed": "failed",
+        "cancelled": "cancelled"
+      },
+      "col": {
+        "agent": "Agent",
+        "model": "Model",
+        "phase": "Phase",
+        "time": "Time",
+        "tokens": "Tokens",
+        "tools": "Tools",
+        "cost": "Cost"
+      },
+      "tokens": "{{compact}} tok"
     }
   },
   "workspace": {
@@ -1780,7 +1761,8 @@
       "blocked": "Chat is paused while a heartbeat job is running.",
       "compactionDaily": "Summarize today's episodes and promote key facts to long-term knowledge.",
       "compactionWeekly": "Consolidate the past week's episodes into a digest."
-    }
+    },
+    "modeAria": "Run mode"
   },
   "procedures": {
     "title": "Procedures",
@@ -1811,7 +1793,8 @@
       "activity": "Activity",
       "waiting": "Waiting for output…",
       "blocked": "Chat is paused while a procedure is running."
-    }
+    },
+    "modeAria": "Run mode"
   },
   "history": {
     "loading": "Loading conversations…",

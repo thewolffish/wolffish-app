@@ -17,7 +17,8 @@ import {
   type ScoredCandidate
 } from '@main/runtime/ras'
 import { reasoningModesFor } from '@main/runtime/reasoning'
-import type { ToolDefinition } from '@main/runtime/thalamus'
+import { contextWindowForModel, type ToolDefinition } from '@main/runtime/thalamus'
+import { cloudModelSupportsVision } from '@main/runtime/vision'
 import { readConfig } from '@main/workspace/workspace'
 import fs from 'node:fs/promises'
 import path from 'node:path'
@@ -92,12 +93,13 @@ const ALWAYS_INCLUDED: Array<{ category: ContextCategory; rel: string; tag: stri
 const SECTION_ORDER: ContextCategory[] = ['identity', 'prefrontal', 'memory', 'skills', 'history']
 
 /**
- * The delegation capability — spawning/driving live workers. It is surfaced ONLY
- * to an orchestrator turn: a single-mode turn and a worker turn never see it.
- * Keeping it from workers is load-bearing — it holds the worker tree flat (a
- * worker can't spawn workers), so the registry stays one finite source of truth.
+ * The delegation capability — planning/spawning/driving live subagents. It is
+ * surfaced ONLY to a workflow master turn: a single-mode turn and an agent
+ * turn never see it. Keeping it from agents is load-bearing — it holds the
+ * agent tree flat (an agent can't spawn agents), so the registry stays one
+ * finite source of truth with no await-stealing between concurrent consumers.
  */
-const DELEGATION_CAPABILITIES: ReadonlySet<string> = new Set(['orchestrator'])
+const DELEGATION_CAPABILITIES: ReadonlySet<string> = new Set(['workflow'])
 
 /**
  * Channel egress capabilities — the live messaging channels register their send
@@ -110,24 +112,18 @@ const DELEGATION_CAPABILITIES: ReadonlySet<string> = new Set(['orchestrator'])
 const CHANNEL_CAPABILITIES: ReadonlySet<string> = new Set(['telegram', 'whatsapp'])
 
 /**
- * Everything a worker role is denied on top of delegation: channel egress stays
- * orchestrator-only — a worker must never message the user directly; only the
- * orchestrator speaks (the single voice).
+ * Everything an agent role is denied on top of delegation: channel egress
+ * stays master-only — an agent must never message the user directly; only the
+ * master speaks (the single voice). The `ask` capability is also withheld: a
+ * subagent's ask_user card can't anchor in the chat (its toolCallId never
+ * reaches the renderer) and would park the agent on a question that can't be
+ * answered — blockers belong in its report to the master.
  */
-const WORKER_EXCLUDED_CAPABILITIES: ReadonlySet<string> = new Set([
+const AGENT_EXCLUDED_CAPABILITIES: ReadonlySet<string> = new Set([
   ...DELEGATION_CAPABILITIES,
-  ...CHANNEL_CAPABILITIES
+  ...CHANNEL_CAPABILITIES,
+  'ask'
 ])
-
-// Behavior overlays appended to the system prompt when the matching Brain toggle
-// is on (config.llm.greedy / autonomous). Default = neither → no change.
-const GREEDY_PROMPT = `<effort_mode>
-Greedy effort is ON. Persistence outranks speed and cost on this turn:
-- Don't stop at the first sign of trouble. If an approach fails, try another, then another — where you'd normally give up after ~3 attempts, push to ~10.
-- Don't settle on a single strategy. Explore several genuinely different approaches (aim for ~5) before concluding something can't be done.
-- Disregard token budget and elapsed time completely. Going the extra mile to actually finish the job, and finish it well, is always worth it here.
-- Verify your work and push past "good enough" to genuinely complete and correct.
-</effort_mode>`
 
 // Self-qualifying overlay for locally-run models. Deliberately NOT a
 // capability claim ("you are small") — a capable local 70B would be lied to,
@@ -136,13 +132,6 @@ Greedy effort is ON. Persistence outranks speed and cost on this turn:
 const LOCAL_MODEL_PROMPT = `<local_model>
 You are running as a locally-hosted model on the user's own machine. If a task exceeds what you can do reliably, say so plainly and suggest switching to a capable cloud model — hallucinating capability serves nobody. But if the user insists, comply fully: you have the same tools, memory, and context as any other model here, and nothing is withheld from you.
 </local_model>`
-
-const AUTONOMOUS_PROMPT = `<autonomy_mode>
-Autonomy is ON. Act with high agency and minimal hand-holding:
-- Ask the user as little as possible — ideally nothing. Make reasonable assumptions and decide for yourself instead of stopping to ask.
-- Default to action: when a step is clearly needed to reach the goal, just do it rather than proposing it and waiting for approval.
-- Drive the task end-to-end to the best possible outcome on your own. Only surface to the user for genuine blockers you truly cannot resolve.
-</autonomy_mode>`
 
 // Channel formatting overlays, keyed by the turn's delivery channel (see
 // AgentTurnOptions.channel). Appended when the turn's prose is delivered
@@ -167,6 +156,11 @@ You are talking with the user over WhatsApp: every prose reply you write is deli
 // verbatim, into the (RAS-bypassing) <variables> block. Generous enough that
 // real values — URLs, names, IDs, keys — are never touched.
 const VARIABLE_VALUE_MAX_CHARS = 400
+
+// <workflow_models> caps: enough for a realistic multi-provider setup while
+// keeping the master's overlay lean (the block is per-turn pinned prompt text).
+const MODELS_BLOCK_PER_PROVIDER = 10
+const MODELS_BLOCK_MAX_LINES = 40
 
 const SECTION_TAGS: Record<ContextCategory, string> = {
   identity: 'identity',
@@ -212,7 +206,7 @@ export class Prefrontal {
   async buildSystemPrompt(
     message = '',
     runtime?: RuntimeContext,
-    role?: 'orchestrator' | 'worker',
+    role?: 'master' | 'agent',
     opts?: {
       /**
        * True when the resolved model runs locally. Adds the self-qualifying
@@ -228,7 +222,6 @@ export class Prefrontal {
     const blocks = [
       bundle.systemPrompt,
       await this.buildRoleBlock(role),
-      await this.buildBehaviorBlock(),
       opts?.localModel ? LOCAL_MODEL_PROMPT : '',
       opts?.channel ? (CHANNEL_PROMPTS[opts.channel] ?? '') : ''
     ].filter((b) => b && b.length > 0)
@@ -236,86 +229,76 @@ export class Prefrontal {
   }
 
   /**
-   * Behavior overlay driven by the Brain settings toggles (config.llm.greedy /
-   * autonomous), appended to the prompt. Off by default → nothing added. Applies
-   * to every turn (single, orchestrator, worker). Read from config at build time
-   * so a toggle change takes effect on the next turn.
+   * Role overlay for workflow mode, appended after the assembled prompt. A
+   * master gets the workflow doctrine (it designs and drives the run) plus
+   * the live model catalog for per-agent choices; an agent gets the subagent
+   * framing (bounded task, reports to the master, never the user). A
+   * single-mode turn (no role) gets nothing.
    */
-  private async buildBehaviorBlock(): Promise<string> {
-    const cfg = await readConfig().catch(() => null)
-    const parts: string[] = []
-    if (cfg?.llm.greedy) parts.push(GREEDY_PROMPT)
-    if (cfg?.llm.autonomous) parts.push(AUTONOMOUS_PROMPT)
-    return parts.join('\n\n')
-  }
-
-  /**
-   * Role overlay for orchestrator mode (Phase 2), appended after the assembled
-   * prompt. An orchestrator gets the delegation playbook (it drives live
-   * workers); a worker gets the worker framing (bounded task, reports to the
-   * orchestrator, never the user). A single-mode turn (no role) gets nothing —
-   * the Phase-1 prompt, untouched.
-   */
-  private async buildRoleBlock(role?: 'orchestrator' | 'worker'): Promise<string> {
-    if (role === 'orchestrator') {
-      const md = (await this.readFile('brain/identity/orchestrator.md'))?.trim() ?? ''
-      const efforts = await this.workerReasoningBlock()
-      return efforts ? `${md}\n\n${efforts}` : md
+  private async buildRoleBlock(role?: 'master' | 'agent'): Promise<string> {
+    if (role === 'master') {
+      const md = (await this.readFile('brain/identity/workflow.md'))?.trim() ?? ''
+      const models = await this.workflowModelsBlock()
+      return models ? `${md}\n\n${models}` : md
     }
-    if (role === 'worker') return (await this.readFile('brain/identity/worker.md'))?.trim() ?? ''
+    if (role === 'agent') {
+      return (await this.readFile('brain/identity/workflow-agent.md'))?.trim() ?? ''
+    }
     return ''
   }
 
   /**
-   * Tell the orchestrator exactly which reasoning efforts ITS worker model
-   * supports — models differ widely (none / always-on / graded), and the
-   * orchestrator otherwise picks `effort` blind. (The thalamus also clamps an
-   * out-of-range pick at the seam, so this is guidance, not a hard guard.)
+   * Tell the master exactly which models it can spawn agents on — the
+   * connected providers' validated catalogs, each with its reasoning efforts,
+   * context window and vision support — so per-agent model choice is informed,
+   * not blind. (The thalamus also clamps an out-of-range effort and rejects an
+   * unconnected provider at the seam, so this is guidance, not a hard guard.)
+   * Capped per provider to keep the overlay lean; rebuilt with the turn pin,
+   * so it is byte-stable across iterations.
    */
-  private async workerReasoningBlock(): Promise<string> {
+  private async workflowModelsBlock(): Promise<string> {
     const cfg = await readConfig().catch(() => null)
-    const w = cfg?.llm.workerModel
-    if (!w) return ''
-    const openrouterReasoning =
-      w.providerId === 'openrouter'
-        ? (cfg?.llm.providers
-            .find((p) => p.id === 'openrouter')
-            ?.reasoningModels?.includes(w.model) ?? false)
-        : false
-    const modes = reasoningModesFor(w.providerId, w.model, { openrouterReasoning })
-    if (modes.length === 0) {
-      return `<worker_reasoning>\nYour worker model (\`${w.model}\`) has no adjustable reasoning — spawn_worker's \`effort\` argument has no effect for it, so omit it.\n</worker_reasoning>`
+    if (!cfg) return ''
+    const connected = cfg.llm.providers.filter((p) => p.apiKey)
+    if (connected.length === 0) return ''
+    const brain = cfg.llm.brain
+    const lines: string[] = []
+    for (const p of connected) {
+      const models = (p.models ?? []).filter(Boolean).slice(0, MODELS_BLOCK_PER_PROVIDER)
+      // A provider with an empty cached catalog still has its saved model.
+      if (models.length === 0 && p.model) models.push(p.model)
+      for (const m of models) {
+        const openrouterReasoning =
+          p.id === 'openrouter' ? (p.reasoningModels?.includes(m) ?? false) : false
+        const modes = reasoningModesFor(p.id, m, { openrouterReasoning })
+        const traits: string[] = []
+        traits.push(`~${Math.round(contextWindowForModel(m) / 1000)}k ctx`)
+        if (modes.length > 0) traits.push(`effort: ${modes.join('/')}`)
+        if (cloudModelSupportsVision(p.id, m)) traits.push('vision')
+        const isBrain = brain && brain.providerId === p.id && brain.model === m
+        lines.push(`- ${p.id}/${m} (${traits.join(', ')})${isBrain ? ' ← your own model' : ''}`)
+      }
     }
-    const list = modes.map((m) => `\`${m}\``).join(', ')
-    return `<worker_reasoning>\nYour worker model is \`${w.model}\`. The only reasoning efforts it supports are: ${list}. Pass spawn_worker's \`effort\` from this set (a higher value is automatically clamped down to the model's max).\n</worker_reasoning>`
+    if (lines.length === 0) return ''
+    return `<workflow_models>\nModels you can run agents on — pass agent_spawn's \`model\` exactly as listed (\`provider/model-id\`), or omit it to run the agent on your own model. Match the model to the slice: frontier models for hard reasoning, cheaper/faster ones for mechanical work. Default to models from YOUR OWN provider's family (yours is marked below); pick another family only when the slice clearly benefits from it.\n${lines.slice(0, MODELS_BLOCK_MAX_LINES).join('\n')}\n</workflow_models>`
   }
 
   /**
-   * Pick the tools the LLM gets to see for this iteration. Role-gated:
-   * - `orchestrator` → the full list, delegation included.
-   * - `worker` → full minus delegation minus channel egress (flat tree, no
-   *   direct user contact).
-   * - default (single-mode turn) → full minus delegation (no live workers
-   *   without an orchestrator to own them).
+   * The capabilities a given role must NOT see. A master gets everything
+   * (incl. delegation); an agent loses delegation, channel egress AND ask; a
+   * single-mode turn loses only delegation. Used for BOTH the API tool array
+   * (`getToolDefinitions`) and the `<capabilities>` prompt block so the two
+   * never drift — an agent shouldn't read about tools it can't call.
    */
-  /**
-   * The capabilities a given role must NOT see. Orchestrator gets everything
-   * (incl. delegation); a worker loses delegation AND channel egress; single
-   * mode loses only delegation. Used for BOTH the API tool array
-   * (`getToolDefinitions`) and the `<tools>` prompt-text block so the two never
-   * drift — a worker shouldn't read about tools it can't call.
-   */
-  private excludedCapabilitiesFor(
-    role?: 'orchestrator' | 'worker'
-  ): ReadonlySet<string> | undefined {
-    return role === 'orchestrator'
+  private excludedCapabilitiesFor(role?: 'master' | 'agent'): ReadonlySet<string> | undefined {
+    return role === 'master'
       ? undefined
-      : role === 'worker'
-        ? WORKER_EXCLUDED_CAPABILITIES
+      : role === 'agent'
+        ? AGENT_EXCLUDED_CAPABILITIES
         : DELEGATION_CAPABILITIES
   }
 
-  selectTools(role?: 'orchestrator' | 'worker', conversationId?: string | null): ToolDefinition[] {
+  selectTools(role?: 'master' | 'agent', conversationId?: string | null): ToolDefinition[] {
     return (
       this.cerebellum?.getToolDefinitions(this.excludedCapabilitiesFor(role), {
         conversationId: conversationId ?? null
@@ -333,7 +316,7 @@ export class Prefrontal {
   async buildContext(
     message = '',
     runtime?: RuntimeContext,
-    role?: 'orchestrator' | 'worker',
+    role?: 'master' | 'agent',
     opts?: { localModel?: boolean; conversationId?: string | null }
   ): Promise<ContextBundle> {
     // LEAN BY DESIGN: the prompt carries the essentials only — identity, the
@@ -343,10 +326,10 @@ export class Prefrontal {
     // indexed on disk and retrieved surgically (memory_search / tool_search)
     // when the turn actually needs it.
     //
-    // A worker runs a bounded, self-contained task the orchestrator composed —
-    // it additionally skips the preferences digest and the memory map (those
-    // are about the live user thread, not the worker's slice).
-    const lean = role === 'worker'
+    // An agent runs a bounded, self-contained task the master composed — it
+    // additionally skips the preferences digest and the memory map (those are
+    // about the live user thread, not the agent's slice).
+    const lean = role === 'agent'
     const conversationId = opts?.conversationId ?? null
     // Assemble against a clamped budget, not the raw model window — the guard
     // that keeps a pathological candidate from ever ballooning the prompt.

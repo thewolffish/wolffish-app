@@ -18,6 +18,12 @@ Behavior worth knowing:
   a single catch-up), for misses within the last 24 hours.
 - **One-time jobs self-delete.** A `Once (YYYY-MM-DD HH:MM)` heading fires a
   single time, then removes its own entry from this file.
+- **Per-job mode.** An optional FIRST body line `mode: single` or
+  `mode: workflow` picks how the job runs — `single` (one model, direct) or
+  `workflow` (the run can plan phases and drive parallel agents). The line is
+  stripped before the instruction reaches the agent. Without it, the job
+  follows whatever chat mode is active when it fires. The Heartbeat page has
+  a per-job toggle for this.
 
 You don't have to hand-edit this file: just ask Wolffish ("every morning…", "in
 2 days remind me…") and it manages these jobs for you with its `automation_*`
@@ -113,7 +119,14 @@ Runs once per day at the specified time. "Daily" and "Nightly" are
 interchangeable — both map to the same schedule kind.
 Format: Daily (<HH>:<MM>) or Nightly (<HH>:<MM>)
 
+The first example also shows the optional per-job mode line: as the FIRST
+body line, `mode: workflow` runs the job as a multi-agent workflow and
+`mode: single` as a plain single-model turn. Any job form can carry it;
+omit it to follow the current chat mode.
+
 ## Daily (08:00)
+
+mode: workflow
 
 Good morning routine. Summarize overnight messages, list today's
 calendar events, and highlight the top 3 priorities from my task

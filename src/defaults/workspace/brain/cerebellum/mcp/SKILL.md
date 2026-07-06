@@ -18,7 +18,7 @@ tools:
     description: List every configured MCP server — its name, whether it's a local command (stdio) or a remote URL, its live status (connected, connecting, needs sign-in, offline, disabled), and how many tools it currently exposes. Call this first so you can reference a server by name or number for the other tools.
     parameters: {}
   - name: mcp_add
-    description: Add and immediately connect a new MCP server. Give a command for a server that runs on this machine (e.g. "uvx tafsir-mcp", "npx -y some-server") or an http(s) URL for a remote one. Transport is auto-detected. Its tools become available to you (and to orchestrator workers) on the next turn, namespaced by the server. If the remote server needs sign-in, the result says so — then call mcp_authorize.
+    description: Add and immediately connect a new MCP server. Give a command for a server that runs on this machine (e.g. "uvx tafsir-mcp", "npx -y some-server") or an http(s) URL for a remote one. Transport is auto-detected. Its tools become available to you (and to workflow agents) on the next turn, namespaced by the server. If the remote server needs sign-in, the result says so — then call mcp_authorize.
     parameters:
       target:
         type: string

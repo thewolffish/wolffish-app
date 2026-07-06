@@ -1,7 +1,7 @@
-import { Tooltip } from '@components/core/Tooltip'
 import { cn } from '@lib/utils/cn'
 import type { ReasoningMode } from '@main/runtime/reasoning'
-import { BrainIcon } from 'hugeicons-react'
+import { AiBrain01Icon, BrainIcon, FireIcon, FlashIcon } from 'hugeicons-react'
+import { useEffect, useRef, useState } from 'react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -10,20 +10,12 @@ type BrainButtonProps = {
   modes: readonly ReasoningMode[]
   /** Currently-selected mode (already clamped to `modes`). */
   value: ReasoningMode
-  /** Called with the next mode when the user cycles. */
-  onCycle: (next: ReasoningMode) => void
+  /** Called with the mode the user picked from the card. */
+  onSelect: (next: ReasoningMode) => void
   disabled?: boolean
 }
 
-/** Full-sentence tooltip per mode. */
-const MODE_TOOLTIP_KEY: Record<ReasoningMode, string> = {
-  off: 'chat.reasoning.off',
-  on: 'chat.reasoning.on',
-  high: 'chat.reasoning.high',
-  max: 'chat.reasoning.max'
-}
-
-/** One-word label shown under the brain icon inside the card. */
+/** One-word title shown on the pill and as each card row's name. */
 const MODE_SHORT_KEY: Record<ReasoningMode, string> = {
   off: 'chat.reasoning.shortOff',
   on: 'chat.reasoning.shortOn',
@@ -31,75 +23,185 @@ const MODE_SHORT_KEY: Record<ReasoningMode, string> = {
   max: 'chat.reasoning.shortMax'
 }
 
+/** One-line description per mode, shown under the title on its card row. */
+const MODE_DESC_KEY: Record<ReasoningMode, string> = {
+  off: 'chat.reasoning.off',
+  on: 'chat.reasoning.on',
+  high: 'chat.reasoning.high',
+  max: 'chat.reasoning.max'
+}
+
 /**
- * Single per-model reasoning control, styled like the composer's other card
- * buttons (new chat / mode toggle): a bordered surface card holding a w-14
- * column button — brain icon on top, one-word mode label (Off / Normal /
- * High / Max) beneath. Clicking cycles through this model's reasoning modes,
- * wrapping. State is conveyed by the label alone (uniform muted text, no
- * per-tier colours) and a localized hover tooltip naming the current mode in
- * one sentence.
+ * Effort ladder, one icon per mode: instant (no thinking) → brain →
+ * amped brain → full burn. The pill wears the ACTIVE mode's icon.
+ */
+const MODE_ICON: Record<ReasoningMode, typeof BrainIcon> = {
+  off: FlashIcon,
+  on: BrainIcon,
+  high: AiBrain01Icon,
+  max: FireIcon
+}
+
+/**
+ * Per-model reasoning control, matching the mode button's UX: a card-style
+ * pill (brain icon + the current effort's one-word label) opening a hover/pin
+ * card that lists every effort this model supports — title + one-line
+ * description each, active row highlighted, one click to switch.
  *
- * Uses the shared Tooltip so it is byte-for-byte the same as every other
- * tooltip in the app (e.g. the cloud/local model switch). `pointer-events-none`
- * on the disabled button lets the tooltip wrapper still receive hover, so the
- * tooltip shows for unsupported/always-on models too.
- *
- * Rendered for every provider. When the model has no reasoning modes ([]) or
- * exactly one always-on mode (['on']) the button is disabled rather than hidden
- * so the control's position stays stable across model switches.
+ * Rendered for every provider. When the model has no adjustable reasoning the
+ * pill is disabled rather than hidden (stable composer layout) and the hover
+ * card explains why instead of listing modes.
  */
 export function BrainButton({
   modes,
   value,
-  onCycle,
+  onSelect,
   disabled = false
 }: BrainButtonProps): React.JSX.Element {
   const { t } = useTranslation()
+  const [open, setOpen] = useState(false)
+  const [pinned, setPinned] = useState(false)
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const rootRef = useRef<HTMLSpanElement>(null)
+
+  useEffect(() => {
+    if (!open && !pinned) return
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') {
+        setPinned(false)
+        setOpen(false)
+      }
+    }
+    const onDown = (e: MouseEvent): void => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
+        setPinned(false)
+        setOpen(false)
+      }
+    }
+    document.addEventListener('keydown', onKey)
+    document.addEventListener('mousedown', onDown)
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      document.removeEventListener('mousedown', onDown)
+    }
+  }, [open, pinned])
+
+  useEffect(() => {
+    return () => {
+      if (hoverTimer.current) clearTimeout(hoverTimer.current)
+    }
+  }, [])
 
   const supported = modes.length > 0
-  const cyclable = modes.length > 1
-  const active = supported && value !== 'off'
+  const switchable = modes.length > 1
 
-  const tooltip = supported
-    ? t(MODE_TOOLTIP_KEY[value] ?? MODE_TOOLTIP_KEY.on)
-    : t('chat.reasoning.unsupported')
-  const label = t(MODE_SHORT_KEY[value] ?? MODE_SHORT_KEY.off)
+  const onEnter = (): void => {
+    if (disabled) return
+    if (hoverTimer.current) clearTimeout(hoverTimer.current)
+    hoverTimer.current = setTimeout(() => setOpen(true), 150)
+  }
+  const onLeave = (): void => {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current)
+    if (pinned) return
+    hoverTimer.current = setTimeout(() => setOpen(false), 200)
+  }
+  const cardVisible = (open || pinned) && !disabled
 
-  const handleClick = (): void => {
-    if (!cyclable) return
-    const idx = modes.indexOf(value)
-    const next = modes[(idx + 1) % modes.length] ?? modes[0]
-    onCycle(next)
+  const label = t(MODE_SHORT_KEY[supported ? value : 'off'])
+  const PillIcon = supported ? MODE_ICON[value] : BrainIcon
+
+  const pick = (next: ReasoningMode): void => {
+    if (next !== value) onSelect(next)
+    setPinned(false)
+    setOpen(false)
   }
 
-  const interactive = cyclable && !disabled
-
   return (
-    <span className="inline-flex shrink-0">
-      <Tooltip content={tooltip} side="top" align="start">
-        <div className="border-border bg-surface inline-flex shrink-0 items-center rounded-lg border p-0.5">
-          <button
-            type="button"
-            onClick={handleClick}
-            disabled={disabled || !cyclable}
-            aria-label={t('chat.reasoning.ariaLabel')}
-            aria-pressed={active}
-            className={cn(
-              'flex w-14 flex-col items-center gap-0.5 rounded-md px-1.5 py-1',
-              'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-              'disabled:pointer-events-none disabled:opacity-60',
-              'text-muted',
-              interactive ? 'cursor-pointer hover:text-fg' : 'cursor-not-allowed'
-            )}
-          >
-            <BrainIcon size={14} />
-            <span className="max-w-full truncate text-[10px] leading-tight font-medium">
-              {label}
-            </span>
-          </button>
+    <span
+      ref={rootRef}
+      className="relative inline-flex shrink-0"
+      onMouseEnter={onEnter}
+      onMouseLeave={onLeave}
+    >
+      <span className="border-border bg-surface inline-flex shrink-0 items-center rounded-lg border p-0.5">
+        <button
+          type="button"
+          disabled={disabled}
+          aria-label={t('chat.reasoning.ariaLabel')}
+          aria-expanded={cardVisible}
+          onClick={() => {
+            if (disabled) return
+            setPinned((p) => {
+              const next = !p
+              if (next) setOpen(true)
+              return next
+            })
+          }}
+          onFocus={onEnter}
+          onBlur={onLeave}
+          className={cn(
+            'flex w-14 flex-col items-center gap-0.5 rounded-md px-1.5 py-1',
+            'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+            'text-muted',
+            !disabled && 'cursor-pointer hover:text-fg',
+            disabled && 'cursor-not-allowed opacity-60'
+          )}
+        >
+          <PillIcon size={14} />
+          <span className="max-w-full truncate text-[10px] leading-tight font-medium">{label}</span>
+        </button>
+      </span>
+
+      {cardVisible && (
+        <div
+          role="dialog"
+          className="border-border bg-surface absolute bottom-full inset-s-0 z-50 mb-2 flex w-80 max-w-[90vw] flex-col gap-1.5 rounded-xl border p-1.5 shadow-xl"
+        >
+          {!supported ? (
+            <div className="text-muted px-2.5 py-2 text-[11px] leading-snug" dir="auto">
+              {t('chat.reasoning.unsupported')}
+            </div>
+          ) : (
+            modes.map((m) => {
+              const isActive = m === value
+              const RowIcon = MODE_ICON[m]
+              return (
+                <button
+                  key={m}
+                  type="button"
+                  disabled={!switchable}
+                  onClick={() => pick(m)}
+                  className={cn(
+                    'flex w-full items-start gap-2.5 rounded-lg border px-2.5 py-2 text-start',
+                    'focus-visible:ring-2 focus-visible:ring-accent',
+                    isActive ? 'border-primary/40 bg-primary/10' : 'border-border',
+                    switchable && !isActive && 'hover:bg-border/40',
+                    switchable ? 'cursor-pointer' : 'cursor-default'
+                  )}
+                >
+                  <RowIcon
+                    size={16}
+                    className={cn('mt-0.5 shrink-0', isActive ? 'text-primary' : 'text-muted')}
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span
+                      className={cn(
+                        'block text-xs font-medium',
+                        isActive ? 'text-primary' : 'text-fg'
+                      )}
+                    >
+                      {t(MODE_SHORT_KEY[m])}
+                    </span>
+                    <span className="text-muted block text-[11px] leading-snug">
+                      {t(MODE_DESC_KEY[m])}
+                    </span>
+                  </span>
+                </button>
+              )
+            })
+          )}
         </div>
-      </Tooltip>
+      )}
     </span>
   )
 }

@@ -16,7 +16,8 @@ import type {
   McpServerSnapshot,
   McpTestResult
 } from '@main/runtime/mcp/types'
-import type { WorkerEffort, WorkerResult, WorkerView } from '@main/runtime/orchestrator'
+import type { WorkflowAgentResult, WorkflowEffort } from '@main/runtime/workflow'
+import type { WorkflowAgentView } from '@main/runtime/broca'
 import { sudoSession, type SudoSession } from '@main/runtime/sudoSession'
 import type { ToolDefinition } from '@main/runtime/thalamus'
 import type { ToolCall } from '@main/runtime/wernicke'
@@ -306,6 +307,8 @@ export type AutomationJobInfo = {
   lastStatus: 'completed' | 'failed' | 'skipped' | null
   /** Error text from the last run, when it failed. */
   lastError?: string
+  /** The job's own chat mode (its `mode: …` marker); null ⇒ follows global. */
+  mode: 'single' | 'workflow' | null
 }
 
 /**
@@ -318,6 +321,11 @@ export type AutomationJobInfo = {
  * PluginContext — every plugin other than `automations` ignores it.
  */
 export type AutomationsHost = {
+  /**
+   * The CURRENT global chat mode — automation_create stamps it on new jobs
+   * as their default (the "mode the user was in when they created it").
+   */
+  getGlobalMode: () => Promise<'single' | 'workflow'>
   /** Read the raw brainstem/heartbeat.md file verbatim. */
   readHeartbeat: () => Promise<string>
   /** Overwrite brainstem/heartbeat.md, reload the scheduler, return the new live jobs. */
@@ -349,6 +357,8 @@ export type ProcedureInfo = {
   id: string
   title: string
   prompt: string
+  /** The procedure's own chat mode; absent ⇒ follows the global mode. */
+  mode?: 'single' | 'workflow'
   createdAt: number
   updatedAt: number
 }
@@ -358,8 +368,11 @@ export type ProceduresHost = {
   list: () => Promise<ProcedureInfo[]>
   /** Save a new procedure; returns the created row. */
   create: (title: string, prompt: string) => Promise<ProcedureInfo>
-  /** Edit title and/or prompt (omitted fields kept); returns the updated row. */
-  update: (id: string, patch: { title?: string; prompt?: string }) => Promise<ProcedureInfo>
+  /** Edit title/prompt/mode (omitted fields kept); returns the updated row. */
+  update: (
+    id: string,
+    patch: { title?: string; prompt?: string; mode?: 'single' | 'workflow' }
+  ) => Promise<ProcedureInfo>
   /** Permanently delete a procedure by id. */
   delete: (id: string) => Promise<{ ok: boolean; error?: string }>
   /**
@@ -371,34 +384,46 @@ export type ProceduresHost = {
 }
 
 /**
- * Worker-management surface injected into the `orchestrator` capability's plugin
- * via its init context (PluginContext.orchestrator). Implemented in the main
- * process (index.ts) over the Agent's active orchestration session — the single
- * source of truth for a turn's live workers. Present only to the orchestrator
- * role in orchestrator mode; undefined for every other plugin and for workers
- * (two-level: a worker never delegates). All methods throw if called outside an
- * active orchestrator turn.
+ * Agent-management surface injected into the `workflow` capability's plugin
+ * via its init context (PluginContext.workflow). Implemented by the Agent
+ * (workflowHost) over the active WorkflowSession — the single source of truth
+ * for a master turn's live subagents. Present only to the master role in
+ * workflow mode; undefined for every other plugin and for agents themselves
+ * (two-level: an agent never delegates). All methods throw if called outside
+ * an active workflow turn.
  */
-export type OrchestratorHost = {
+export type WorkflowHost = {
   /**
-   * Spawn a live worker with an initial prompt. Non-blocking — returns its id.
-   * `effort` sets the worker's reasoning level (orchestrator-chosen; omitted ⇒
-   * the worker model's default).
+   * Declare (or revise) the run's intended phases. Recorded deterministically
+   * on the workflow card; agents reference a phase by its exact title.
    */
-  spawnWorker: (prompt: string, branchLabel?: string, effort?: WorkerEffort) => string
-  /** Send a follow-up to an awaiting worker, optionally re-tuning its effort. */
-  sendToWorker: (workerId: string, prompt: string, effort?: WorkerEffort) => void
+  plan: (phases: string[], note?: string) => void
   /**
-   * Block until the NEXT worker (optionally restricted to `workerIds`) lands,
-   * returning its id + result — or null when none is still running.
+   * Spawn a live agent on a task. Non-blocking — returns its id. `model` is a
+   * `provider/model-id` string (validated against the connected providers;
+   * omitted ⇒ the master's own model); `effort` sets the agent's reasoning
+   * level (clamped to the resolved model's support).
    */
-  awaitWorkers: (workerIds?: string[]) => Promise<{ id: string; result: WorkerResult } | null>
-  /** Close a worker for good — it stops accepting follow-ups. */
-  closeWorker: (workerId: string) => void
-  /** Cancel a worker, aborting its in-flight tool calls. */
-  cancelWorker: (workerId: string) => void
-  /** Snapshot every worker in the active turn's registry. */
-  listWorkers: () => WorkerView[]
+  spawnAgent: (args: {
+    task: string
+    name?: string
+    model?: string
+    effort?: WorkflowEffort
+    phase?: string
+  }) => string
+  /** Send a follow-up to a landed agent, optionally re-tuning its effort. */
+  sendToAgent: (agentId: string, message: string, effort?: WorkflowEffort) => void
+  /**
+   * Block until the NEXT agent (optionally restricted to `agentIds`) lands,
+   * returning its id + name + result — or null when none is still live.
+   */
+  awaitAgents: (
+    agentIds?: string[]
+  ) => Promise<{ id: string; name: string; result: WorkflowAgentResult } | null>
+  /** Cancel an agent, aborting its in-flight tool calls. */
+  cancelAgent: (agentId: string) => void
+  /** Snapshot every agent in the active turn's registry. */
+  listAgents: () => WorkflowAgentView[]
 }
 
 /**
@@ -522,12 +547,12 @@ export type PluginContext = {
    */
   procedures?: ProceduresHost
   /**
-   * Worker-management surface. Present only when the host wired one in via
-   * setOrchestratorHost — used by the `orchestrator` capability to spawn, drive,
-   * await, and cancel live worker sessions. Undefined for every other plugin
-   * and for workers themselves (two-level: a worker never delegates).
+   * Agent-management surface. Present only when the host wired one in via
+   * setWorkflowHost — used by the `workflow` capability to plan, spawn, drive,
+   * await, and cancel live subagent sessions. Undefined for every other plugin
+   * and for agents themselves (two-level: an agent never delegates).
    */
-  orchestrator?: OrchestratorHost
+  workflow?: WorkflowHost
   /**
    * MCP-management surface. Present only when the host wired one in via
    * setMcpHost — used by the `mcp` capability to list, add, test, enable,
@@ -610,10 +635,10 @@ const PLUGIN_FILES = ['index.mjs', 'index.js', 'index.cjs']
  */
 export const CORE_CAPABILITIES: ReadonlySet<string> = new Set([
   'tool-discovery',
-  // Delegation must be core: orchestrator.md commands spawn_worker at turn
-  // start, so its schemas must ship without a discovery hop. Role gating
-  // (excludedCapabilitiesFor) still hides it from single-mode/worker turns.
-  'orchestrator',
+  // Delegation must be core: workflow.md commands workflow_plan/agent_spawn
+  // at turn start, so its schemas must ship without a discovery hop. Role
+  // gating (excludedCapabilitiesFor) still hides it from single-mode/agent turns.
+  'workflow',
   'introspect',
   'filesystem',
   'shell',
@@ -655,11 +680,11 @@ export class Cerebellum {
   private dependencyCache = new Map<string, boolean>()
   private loaded = false
   private currentConversationId: string | null = null
-  // Per-turn conversation scope. Under concurrent turns (orchestrator + live
+  // Per-turn conversation scope. Under concurrent turns (workflow master + live
   // workers) a single global field is clobbered — a worker running with no
-  // conversation would null out the orchestrator's stamp. AsyncLocalStorage
+  // conversation would null out the master's stamp. AsyncLocalStorage
   // gives every turn (and the tool calls inside it) its OWN value that follows
-  // the async call tree, so a worker's null can't bleed into the orchestrator's
+  // the async call tree, so a subagent's null can't bleed into the master's
   // artifact stamping. `currentConversationId` remains the fallback for the
   // imperative callers outside a turn (STT path, channel pre-roll).
   private conversationCtx = new AsyncLocalStorage<string | null>()
@@ -667,7 +692,7 @@ export class Cerebellum {
   private pluginHost?: CerebellumPluginHost
   private automationsHost?: AutomationsHost
   private proceduresHost?: ProceduresHost
-  private orchestratorHost?: OrchestratorHost
+  private workflowHost?: WorkflowHost
   private mcpHost?: McpHost
   private cortexHost?: CortexHost
   /**
@@ -776,12 +801,12 @@ export class Cerebellum {
   }
 
   /**
-   * Wire the worker-management host (implemented in the main process over the
-   * Agent's active orchestration session) that the `orchestrator` capability's
-   * plugin receives in its init context. Set once at startup; survives reload().
+   * Wire the agent-management host (implemented by the Agent over the active
+   * WorkflowSession) that the `workflow` capability's plugin receives in its
+   * init context. Set once at startup; survives reload().
    */
-  setOrchestratorHost(host: OrchestratorHost): void {
-    this.orchestratorHost = host
+  setWorkflowHost(host: WorkflowHost): void {
+    this.workflowHost = host
   }
 
   /**
@@ -830,7 +855,7 @@ export class Cerebellum {
    * Run `fn` with `id` as the turn-scoped conversation. Every getCurrentConversationId
    * call inside `fn` (including nested tool plugins) resolves to `id` regardless
    * of what other concurrent turns set — the isolation that lets workers run with
-   * a null conversation without disturbing the orchestrator's. Does NOT touch the
+   * a null conversation without disturbing the master's. Does NOT touch the
    * global or emit conversation.changed; the agent does that, once, for real
    * (non-worker) turns so the UI/extension only ever track visible conversations.
    */
@@ -1696,7 +1721,7 @@ export class Cerebellum {
         host: this.pluginHost,
         automations: this.automationsHost,
         procedures: this.proceduresHost,
-        orchestrator: this.orchestratorHost,
+        workflow: this.workflowHost,
         mcp: this.mcpHost,
         cortex: this.cortexHost,
         askUser: (input) => this.dispatchAskUser(input),

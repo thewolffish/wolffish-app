@@ -13,12 +13,13 @@ export type MarkdownFileViewerProps = {
 }
 
 /**
- * Inline renderer for markdown attachments (README.md and friends).
- * Loads the file text over the upload IPC channel and reuses the
- * CodeFileViewer card so attached readmes look identical to tool-result
- * ones: rendered markdown in a max-height scrollable block with copy and
- * download in the footer. Falls back to the plain FileCard while loading,
- * on read failure, or for files too large to render inline.
+ * Inline renderer for markdown and plain-text attachments (README.md, .txt
+ * and friends). Loads the file text over the upload IPC channel and reuses
+ * the CodeFileViewer card so attached readmes look identical to tool-result
+ * ones: rendered markdown (or line-numbered plain text, keyed off the file
+ * extension) in a max-height scrollable block with copy and download in the
+ * footer. Falls back to the plain FileCard while loading, on read failure,
+ * or for files too large to render inline.
  */
 const MAX_INLINE_BYTES = 512 * 1024
 

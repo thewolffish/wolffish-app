@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { diskWriter } from '@main/io/diskWriter'
-import { workspaceRoot } from '@main/workspace/workspace'
+import { readConfig, workspaceRoot } from '@main/workspace/workspace'
 
 /**
  * Procedures — saved prompts the user runs on demand from the Procedures page.
@@ -14,6 +14,12 @@ export type Procedure = {
   id: string
   title: string
   prompt: string
+  /**
+   * The procedure's own chat mode — stamped with the global mode at creation,
+   * user-overridable per procedure. Runs use it over the global setting.
+   * Optional: rows saved before the field shipped follow the global mode.
+   */
+  mode?: 'single' | 'workflow'
   createdAt: number
   updatedAt: number
 }
@@ -59,14 +65,23 @@ export function listProcedures(): Promise<Procedure[]> {
   })
 }
 
-export function createProcedure(payload: { title: string; prompt: string }): Promise<Procedure> {
+export function createProcedure(payload: {
+  title: string
+  prompt: string
+  mode?: 'single' | 'workflow'
+}): Promise<Procedure> {
   return serialize(async () => {
     const procedures = await loadProcedures()
     const now = Date.now()
+    // Default the procedure's mode to whatever the user is running RIGHT NOW —
+    // one funnel covers the UI's blank-stub create and the agent's
+    // procedure_create alike.
+    const globalMode = (await readConfig().catch(() => null))?.llm.mode ?? 'single'
     const procedure: Procedure = {
       id: randomUUID(),
       title: payload.title,
       prompt: payload.prompt,
+      mode: payload.mode ?? (globalMode === 'workflow' ? 'workflow' : 'single'),
       createdAt: now,
       updatedAt: now
     }
@@ -80,6 +95,7 @@ export function updateProcedure(payload: {
   id: string
   title?: string
   prompt?: string
+  mode?: 'single' | 'workflow'
 }): Promise<Procedure> {
   return serialize(async () => {
     const procedures = await loadProcedures()
@@ -87,6 +103,7 @@ export function updateProcedure(payload: {
     if (!procedure) throw new Error(`procedure not found: ${payload.id}`)
     if (payload.title !== undefined) procedure.title = payload.title
     if (payload.prompt !== undefined) procedure.prompt = payload.prompt
+    if (payload.mode !== undefined) procedure.mode = payload.mode
     procedure.updatedAt = Date.now()
     await saveProcedures(procedures)
     return procedure

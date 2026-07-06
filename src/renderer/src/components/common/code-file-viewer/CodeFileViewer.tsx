@@ -54,6 +54,7 @@ const EXT_LANG: Record<string, string> = {
   graphql: 'graphql',
   md: 'markdown',
   mdx: 'markdown',
+  txt: 'plaintext',
   php: 'php',
   lua: 'lua',
   r: 'r',

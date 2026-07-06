@@ -27,13 +27,116 @@ export type SegmentTurnEndReason =
 export type ToolResultStatus = 'success' | 'failed' | 'denied'
 
 /**
- * Set on a segment that originated inside a subagent (worker) turn and was
- * forwarded into the orchestrator turn's stream. The renderer marks these as
- * subagent activity (the worker's label) and verbose-gates them, so orchestrator
- * mode is no black box — every worker tool call is right there and persisted.
- * Absent on ordinary (orchestrator / single-mode) segments.
+ * LEGACY (removed Orchestrator mode, ≤1.0.204): segments persisted by old
+ * conversations may carry this tag, set on subagent output that was forwarded
+ * into the orchestrator turn's stream. Workflow mode no longer forwards
+ * subagent segments — the workflow card is the subagent surface — but every
+ * render/replay path must keep SKIPPING worker-tagged segments or old
+ * conversations replay subagent prose as the assistant's own.
  */
 export type SegmentWorker = { id: string; label: string }
+
+export type WorkflowPhaseStatus = 'pending' | 'active' | 'done'
+
+export type WorkflowAgentView = {
+  id: string
+  name: string
+  /** Truncated task snippet for display — the full prompt lives in logs. */
+  task: string
+  phase?: string
+  provider: string
+  model: string
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
+  startedAt: number
+  endedAt?: number
+  llmCalls: number
+  toolCalls: number
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+  cost: number
+  resultChars?: number
+}
+
+/**
+ * The deterministic state of one workflow-mode run, built by WorkflowSession
+ * from the harness's own observations (spawn lifecycle, LLM usage callbacks,
+ * tool-call counts, wall-clock) — never from model claims. Carried whole on
+ * every `workflow` segment: each snapshot REPLACES the previous one for the
+ * same workflowId (see upsertWorkflowSegment), so exactly one card persists
+ * per run and live/reload render identically.
+ */
+export type WorkflowSnapshot = {
+  workflowId: string
+  status: 'running' | 'completed' | 'canceled' | 'error'
+  startedAt: number
+  endedAt?: number
+  /** Optional master-declared plan note (via workflow_plan). */
+  note?: string
+  phases: Array<{ title: string; status: WorkflowPhaseStatus }>
+  agents: WorkflowAgentView[]
+  /** Agents-only sums (one row per agent above). */
+  totals: {
+    agents: number
+    toolCalls: number
+    inputTokens: number
+    outputTokens: number
+    cacheReadTokens: number
+    cacheWriteTokens: number
+    cost: number
+  }
+  /**
+   * The master turn's OWN LLM usage, fed per-call from the agent loop so the
+   * card can show the true whole-turn cost — agents-only totals under-report
+   * the run (the first real run hid ~4.6% of spend). Optional: snapshots
+   * persisted before this field shipped lack it.
+   */
+  master?: {
+    llmCalls: number
+    inputTokens: number
+    outputTokens: number
+    cacheReadTokens: number
+    cacheWriteTokens: number
+    cost: number
+  }
+}
+
+/**
+ * The master's workflow-management tools. Their tool_call/tool_result
+ * segments persist and replay into model context like any tool (the master's
+ * memory of agent reports lives in agents_await results), but NO render
+ * surface shows them as chips — the workflow card and the channels' phase
+ * messages are their user-facing surface.
+ */
+export const WORKFLOW_TOOL_NAMES: ReadonlySet<string> = new Set([
+  'workflow_plan',
+  'agent_spawn',
+  'agent_send',
+  'agents_await',
+  'agent_cancel'
+])
+
+/**
+ * Replace-by-id upsert for workflow snapshot segments: the latest snapshot
+ * for a workflowId supersedes any earlier one in an accumulated segment
+ * array. Shared by every surface that accumulates segments (renderer
+ * messages, channel ActiveTurn.segments, autonomous-run sinks) so persisted
+ * conversations hold exactly ONE card per workflow run.
+ */
+export function upsertWorkflowSegment(
+  segments: Segment[],
+  segment: Extract<Segment, { kind: 'workflow' }>
+): void {
+  for (let i = segments.length - 1; i >= 0; i--) {
+    const s = segments[i]
+    if (s.kind === 'workflow' && s.snapshot.workflowId === segment.snapshot.workflowId) {
+      segments[i] = segment
+      return
+    }
+  }
+  segments.push(segment)
+}
 
 export type Segment =
   | { kind: 'text'; turnId: string; segmentId: string; delta: string; worker?: SegmentWorker }
@@ -73,6 +176,17 @@ export type Segment =
       reasoningContent?: string
     }
   | { kind: 'separator'; turnId: string; segmentId: string }
+  | {
+      /**
+       * Full-state snapshot of a workflow-mode run (see WorkflowSnapshot).
+       * Replace-by-workflowId semantics — NOT append — on every surface.
+       * Display-only: both model-context rebuild paths ignore it.
+       */
+      kind: 'workflow'
+      turnId: string
+      segmentId: string
+      snapshot: WorkflowSnapshot
+    }
   | {
       kind: 'compaction_started'
       turnId: string
@@ -332,6 +446,16 @@ export class Broca {
   emitSeparator(turnId: string): void {
     if (this.turnId !== turnId || !this.sink) return
     this.emit({ kind: 'separator', turnId, segmentId: this.nextId() })
+  }
+
+  /**
+   * Emit a workflow snapshot into the active turn. The WorkflowSession is
+   * the only caller; it throttles token-only updates itself. Consumers
+   * upsert by snapshot.workflowId — see upsertWorkflowSegment.
+   */
+  emitWorkflow(turnId: string, snapshot: WorkflowSnapshot): void {
+    if (this.turnId !== turnId || !this.sink) return
+    this.emit({ kind: 'workflow', turnId, segmentId: this.nextId(), snapshot })
   }
 
   emitCompactionStarted(

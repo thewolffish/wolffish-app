@@ -191,7 +191,20 @@ type SidebarJob = {
   cron: string | null
   lineIndex: number
   endLineIndex: number
+  /** The job's `mode: …` marker value; null ⇒ follows the global mode. */
+  mode: 'single' | 'workflow' | null
+  /** Absolute file line of the marker, for in-place rewrites; null if absent. */
+  modeLineIndex: number | null
 }
+
+/**
+ * Per-job chat mode marker — the FIRST non-empty body line, `mode: single` /
+ * `mode: workflow`. Mirrors the engine's splitModeMarker (brainstem.ts) and
+ * the automations plugin: parsed here so DISABLED jobs (which never reach
+ * heartbeat:getJobs) show their mode too, and stripped from the preview so
+ * the marker never reads as instruction text.
+ */
+const MODE_MARKER_RE = /^mode:\s*(single|workflow)\s*$/i
 
 function parseSidebarJobs(
   content: string,
@@ -230,6 +243,9 @@ function parseSidebarJobs(
     const isBlock = !!inactiveBlock
     const bodyLines: string[] = []
     let endIdx = i
+    let mode: 'single' | 'workflow' | null = null
+    let modeLineIndex: number | null = null
+    let sawContent = false
 
     for (let j = i + 1; j < lines.length; j++) {
       if (isBlock && /^\s*-->\s*$/.test(lines[j])) {
@@ -242,6 +258,25 @@ function parseSidebarJobs(
       // so deleting/toggling the job would strip that comment and un-comment the
       // examples it wraps.
       if (/^##\s+/.test(lines[j]) || /^\s*<!--/.test(lines[j])) break
+      // Dashed separators are not content (the engine drops them wholesale) —
+      // they must not stop the marker scan or a marker after one would be
+      // missed and the toggle would insert a duplicate.
+      if (/^---+\s*$/.test(lines[j])) {
+        if (!isBlock) endIdx = j
+        continue
+      }
+      // The mode marker is the first non-empty body line — capture and skip it
+      // so it never shows in the preview.
+      if (!sawContent && lines[j].trim() !== '') {
+        const marker = lines[j].trim().match(MODE_MARKER_RE)
+        sawContent = true
+        if (marker) {
+          mode = marker[1].toLowerCase() as 'single' | 'workflow'
+          modeLineIndex = j
+          if (!isBlock) endIdx = j
+          continue
+        }
+      }
       bodyLines.push(lines[j])
       if (!isBlock && lines[j].trim() !== '') endIdx = j
     }
@@ -261,7 +296,9 @@ function parseSidebarJobs(
       body: activeJob?.body ?? body,
       cron,
       lineIndex: i,
-      endLineIndex: endIdx
+      endLineIndex: endIdx,
+      mode: activeJob?.mode ?? mode,
+      modeLineIndex
     })
   }
 
@@ -274,7 +311,10 @@ export function Heartbeat(): React.JSX.Element {
   const { isDark } = useTheme()
   const isRtl = RTL_LOCALES.has(locale)
   const BackIcon = isRtl ? ArrowRight02Icon : ArrowLeft02Icon
-  const { goTo } = useFlow()
+  const { goTo, status } = useFlow()
+  // Jobs without a marker follow the global mode — show that as the effective
+  // selection; clicking a tab stamps an explicit marker.
+  const globalMode = status?.config?.llm.mode === 'workflow' ? 'workflow' : 'single'
   const toast = useToast()
 
   const [jobs, setJobs] = useState<HeartbeatJobView[]>([])
@@ -393,6 +433,40 @@ export function Heartbeat(): React.JSX.Element {
             if (/^##\s+/.test(lines[j]) || /^<!--\s*##/.test(lines[j])) break
           }
         }
+      }
+      const newContent = lines.join('\n')
+      setContent(newContent)
+      setOriginalContent(newContent)
+      try {
+        await window.api.viewer.writeFile(HEARTBEAT_PATH, newContent)
+        const jobList = await window.api.heartbeat.getJobs()
+        setJobs(jobList)
+      } catch {
+        toast.show({ tone: 'error', message: t('workspace.saveError') })
+      }
+    },
+    [content, t, toast]
+  )
+
+  // Rewrite (or insert) the job's `mode:` marker line and save — same
+  // viewer:writeFile + refetch pattern as the on/off toggle. Works for
+  // disabled jobs too (the marker is a plain line inside the comment block).
+  const handleSetMode = useCallback(
+    async (job: SidebarJob, mode: 'single' | 'workflow'): Promise<void> => {
+      if (job.mode === mode) return
+      const lines = content.split('\n')
+      const singleLineDisabled = /^<!--\s*##\s+.+?\s*-->\s*$/.test(lines[job.lineIndex])
+      if (job.modeLineIndex !== null) {
+        lines[job.modeLineIndex] = `mode: ${mode}`
+      } else if (singleLineDisabled) {
+        // A body-less disabled job is a one-line comment — splicing the marker
+        // after it would put it OUTSIDE the comment, where the engine's
+        // comment strip folds it into the PREVIOUS job's instruction. Convert
+        // to the block-comment form with the marker inside.
+        const heading = lines[job.lineIndex].replace(/^<!--\s*/, '').replace(/\s*-->\s*$/, '')
+        lines.splice(job.lineIndex, 1, `<!-- ${heading}`, '', `mode: ${mode}`, '-->')
+      } else {
+        lines.splice(job.lineIndex + 1, 0, '', `mode: ${mode}`)
       }
       const newContent = lines.join('\n')
       setContent(newContent)
@@ -558,6 +632,38 @@ export function Heartbeat(): React.JSX.Element {
                         >
                           {t('settings.wolffish.toggle.off')}
                         </button>
+                      </div>
+                      <div
+                        role="tablist"
+                        aria-label={t('heartbeat.modeAria')}
+                        className="border-border bg-bg/40 inline-flex shrink-0 items-center rounded-lg border p-0.5"
+                      >
+                        {(['single', 'workflow'] as const).map((m) => {
+                          const selected = (job.mode ?? globalMode) === m
+                          return (
+                            <button
+                              key={m}
+                              role="tab"
+                              type="button"
+                              aria-selected={selected}
+                              onClick={() => {
+                                if (!selected) void handleSetMode(job, m)
+                              }}
+                              className={cn(
+                                'rounded-md px-2 py-0.5 text-[10px] font-medium',
+                                selected
+                                  ? 'bg-primary text-primary-fg shadow-sm'
+                                  : 'text-muted hover:text-fg cursor-pointer'
+                              )}
+                            >
+                              {t(
+                                m === 'workflow'
+                                  ? 'chat.modePicker.workflow'
+                                  : 'chat.modePicker.single'
+                              )}
+                            </button>
+                          )
+                        })}
                       </div>
                     </div>
                     <div className="text-fg mt-2 truncate text-sm font-medium">{job.label}</div>

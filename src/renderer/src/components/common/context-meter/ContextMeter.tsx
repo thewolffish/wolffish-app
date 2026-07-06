@@ -46,7 +46,7 @@ const PROVIDER_LOGOS: Record<string, ComponentType<{ size?: number; className?: 
   local: OllamaLogo
 }
 
-/** Orchestrator-worker + summarization spend observed during the live turn. */
+/** Workflow-agent + summarization spend observed during the live turn. */
 export type SideSpend = {
   workerTurns: number
   workerCalls: number

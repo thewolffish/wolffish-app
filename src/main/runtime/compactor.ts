@@ -444,10 +444,16 @@ export async function compactOverflow(
     tools?: ToolDefinition[]
     lastKnownInputTokens?: number
     force?: boolean
+    /**
+     * Budget of the model actually serving this turn — a workflow subagent
+     * on a per-agent model must compact against ITS window, not the Brain's.
+     * Omitted ⇒ the active (Brain/local) budget.
+     */
+    inputBudget?: number
     onStarted?: (targetsCount: number, currentTokens: number, inputBudget: number) => void
   }
 ): Promise<CompactionResult | null> {
-  const inputBudget = thalamus.getContextBudget()
+  const inputBudget = options?.inputBudget ?? thalamus.getContextBudget()
 
   const charEstimate = estimatePayloadTokens(systemPrompt, messages, options?.tools)
 

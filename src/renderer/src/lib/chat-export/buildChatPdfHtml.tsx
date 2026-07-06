@@ -1,4 +1,5 @@
 import type { Segment } from '@preload/index'
+import { WORKFLOW_TOOL_NAMES, type WorkflowSnapshot } from '@main/runtime/broca'
 import type { ChatMessage } from '@providers/flow/useFlow'
 import { renderToStaticMarkup } from 'react-dom/server'
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
@@ -163,16 +164,33 @@ function markdownPart(text: string): string {
   return `<div class="content" dir="auto">${markdownHtml(text)}</div>`
 }
 
-function workerWrap(label: string, inner: string): string {
-  return `<div class="worker"><span class="worker-label">${escapeHtml(label)}</span>${inner}</div>`
+/** Static print rendering of a workflow run's final snapshot. */
+function workflowBlock(snapshot: WorkflowSnapshot): string {
+  const phases =
+    snapshot.phases.length > 0
+      ? `<div class="wf-phases" dir="auto">${snapshot.phases
+          .map((p) => `<span class="wf-phase wf-phase-${p.status}">${escapeHtml(p.title)}</span>`)
+          .join('')}</div>`
+      : ''
+  const rows = snapshot.agents
+    .map((a) => {
+      const secs = a.endedAt ? Math.max(1, Math.round((a.endedAt - a.startedAt) / 1000)) : 0
+      const tokens = a.inputTokens + a.cacheReadTokens + a.cacheWriteTokens
+      return `<tr><td>${escapeHtml(a.name)}</td><td dir="ltr">${escapeHtml(`${a.provider}/${a.model}`)}</td><td>${escapeHtml(a.phase ?? '—')}</td><td>${escapeHtml(a.status)}</td><td dir="ltr">${secs ? `${secs}s` : '—'}</td><td dir="ltr">${tokens}</td><td dir="ltr">${a.toolCalls}</td></tr>`
+    })
+    .join('')
+  const table = snapshot.agents.length
+    ? `<table class="wf-table"><thead><tr><th>agent</th><th>model</th><th>phase</th><th>status</th><th>time</th><th>tokens</th><th>tools</th></tr></thead><tbody>${rows}</tbody></table>`
+    : ''
+  return `<div class="tool wf"><div class="tool-head"><span class="tool-name">workflow · ${escapeHtml(snapshot.status)}</span></div>${snapshot.note ? `<div class="wf-note" dir="auto">${escapeHtml(snapshot.note)}</div>` : ''}${phases}${table}</div>`
 }
 
 /**
  * Walk one assistant message's segments in feed order and emit its printed
- * parts. Mirrors renderSegments' flush discipline: orchestrator text buffers
- * and flushes at tool calls / separators / turn end; worker text coalesces
- * per worker and flushes at that worker's next tool call, draining before
- * orchestrator actions and at turn end.
+ * parts. Mirrors renderSegments' rules: master text buffers and flushes at
+ * tool calls / separators / turn end; LEGACY worker-tagged segments (removed
+ * Orchestrator mode) are skipped; workflow snapshots print as a static card;
+ * the master's workflow tool calls never print (the card is their surface).
  */
 function assistantParts(
   segments: Segment[],
@@ -187,48 +205,23 @@ function assistantParts(
 
   const parts: string[] = []
   let textBuffer = ''
-  const workerText = new Map<string, { label: string; buf: string }>()
 
   const flushText = (): void => {
     if (textBuffer.trim().length > 0) parts.push(markdownPart(textBuffer))
     textBuffer = ''
   }
-  const flushWorkerText = (id: string): void => {
-    const e = workerText.get(id)
-    if (!e) return
-    workerText.delete(id)
-    if (e.buf.trim().length > 0) parts.push(workerWrap(e.label, markdownPart(e.buf)))
-  }
-  const drainWorkers = (): void => {
-    for (const id of [...workerText.keys()]) flushWorkerText(id)
-  }
 
   for (const seg of segments) {
     if (seg.kind === 'text') {
-      if (seg.worker) {
-        if (!verbose) continue
-        const e = workerText.get(seg.worker.id) ?? { label: seg.worker.label, buf: '' }
-        e.buf += seg.delta
-        e.label = seg.worker.label
-        workerText.set(seg.worker.id, e)
-      } else {
-        textBuffer += seg.delta
-      }
-    } else if (seg.kind === 'tool_call') {
-      if (seg.worker) {
-        flushWorkerText(seg.worker.id)
-        if (verbose) {
-          parts.push(
-            workerWrap(
-              seg.worker.label,
-              toolBlock(seg, resultByToolCall.get(seg.toolCallId), statusLabels)
-            )
-          )
-        }
-        continue
-      }
-      drainWorkers()
+      if (seg.worker) continue // LEGACY orchestrator-mode segments — never printed
+      textBuffer += seg.delta
+    } else if (seg.kind === 'workflow') {
       flushText()
+      parts.push(workflowBlock(seg.snapshot))
+    } else if (seg.kind === 'tool_call') {
+      if (seg.worker) continue // LEGACY orchestrator-mode segments — never printed
+      flushText()
+      if (WORKFLOW_TOOL_NAMES.has(seg.name)) continue
       const result = resultByToolCall.get(seg.toolCallId)
       if (seg.name === ASK_USER_TOOL) {
         // Answered questions always print, matching the always-visible card.
@@ -240,12 +233,10 @@ function assistantParts(
         parts.push(toolBlock(seg, result, statusLabels))
       }
     } else if (seg.kind === 'separator' || seg.kind === 'turn_end') {
-      drainWorkers()
       flushText()
     }
     // active_model / compaction segments are transient system chrome — skipped.
   }
-  drainWorkers()
   flushText()
   return parts
 }
@@ -282,7 +273,7 @@ const STYLE = `
     break-after: avoid;
   }
   .content { overflow-wrap: anywhere; margin-bottom: 8px; }
-  .msg > :last-child, .worker > :last-child { margin-bottom: 0; }
+  .msg > :last-child { margin-bottom: 0; }
   .content > :first-child { margin-top: 0; }
   .content > :last-child { margin-bottom: 0; }
   .user .content {
@@ -315,16 +306,20 @@ const STYLE = `
   .ask-options { margin: 5px 0 0; padding-inline-start: 22px; font-size: 12px; }
   .ask-answer { margin-top: 6px; padding-top: 6px; border-top: 1px solid #eceef2; color: #5b6270; font-size: 11px; }
 
-  /* Subagent rail — accent border + label, like the feed's worker wrapper. */
-  .worker {
-    border-inline-start: 2px solid #c7d2fe; padding-inline-start: 10px;
-    margin: 0 0 8px 4px;
+  /* Workflow card — static print of the run's final snapshot. */
+  .wf-note { margin-top: 5px; font-size: 11px; color: #5b6270; }
+  .wf-phases { margin-top: 6px; }
+  .wf-phase {
+    display: inline-block; border: 1px solid #e2e5ea; border-radius: 999px;
+    padding: 1px 8px; font-size: 9.5px; font-weight: 600; margin-inline-end: 5px;
   }
-  .worker-label {
-    display: block; font-size: 9px; font-weight: 600; letter-spacing: 0.08em;
-    text-transform: uppercase; color: #6366f1; margin-bottom: 3px;
-    break-after: avoid;
+  .wf-phase-done { background: #ecfdf5; color: #047857; border-color: #a7f3d0; }
+  .wf-phase-active { background: #eff6ff; color: #1d4ed8; border-color: #bfdbfe; }
+  .wf-table { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 10px; }
+  .wf-table th, .wf-table td {
+    border-bottom: 1px solid #eceef2; padding: 3px 6px; text-align: start;
   }
+  .wf-table th { font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em; color: #7a8190; }
 
   /* Pagination: fill pages, break politely. */
   p, li { orphans: 3; widows: 3; }

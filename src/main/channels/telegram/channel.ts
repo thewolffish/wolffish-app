@@ -44,7 +44,13 @@ import {
   type AskUserRequest,
   type AskUserResponse
 } from '@main/runtime/cerebellum'
-import type { Segment, SegmentTurnEndReason } from '@main/runtime/broca'
+import {
+  upsertWorkflowSegment,
+  WORKFLOW_TOOL_NAMES,
+  type Segment,
+  type SegmentTurnEndReason,
+  type WorkflowSnapshot
+} from '@main/runtime/broca'
 import type { CorpusEvents } from '@main/runtime/corpus'
 import type { LocalProvider } from '@main/runtime/providers/local'
 import { composeAttachmentContext } from '@main/uploads/compose-attachments'
@@ -211,20 +217,16 @@ type ActiveTurn = {
    */
   textBuffer: string
   /**
-   * Per-worker narration buffers (orchestrator mode). Concurrent workers
-   * interleave their text deltas token-by-token in the merged stream, so
-   * each worker's prose coalesces by id here — never in textBuffer — and
-   * flushes as its own labeled message at that worker's next tool call,
-   * before any orchestrator action, and at turn_end. Verbose-only: the
-   * clean feed is the orchestrator's reply alone, so nothing is buffered
-   * when verbose is off.
+   * Last seen workflow snapshot per run (workflow mode). renderSegment
+   * diffs the incoming snapshot against this to derive phase-transition
+   * and per-agent progress messages deterministically.
    */
-  workerText: Map<string, { label: string; buf: string }>
+  workflowState: Map<string, WorkflowSnapshot>
   /**
    * Full prose the model produced this turn — accumulated alongside
    * textBuffer but NEVER cleared. Used to derive the assistant
-   * message's `content` field at save time. Orchestrator-only: worker
-   * narration is persisted in `segments` (worker-tagged), not here.
+   * message's `content` field at save time. Master-only: legacy worker
+   * narration stays in `segments` (worker-tagged), never here.
    */
   assistantContent: string
   /**
@@ -1515,7 +1517,7 @@ export class TelegramChannel {
             chatId,
             conversation,
             textBuffer: '',
-            workerText: new Map(),
+            workflowState: new Map(),
             assistantContent: '',
             segments: [],
             approvals: new Map(),
@@ -1562,67 +1564,77 @@ export class TelegramChannel {
           void turnId
         },
         onTurnEnded: () => {
-          const finished = this.activeByChat.get(chatId)
-          if (finished) {
-            // Mark any approval still pending at end-of-turn as denied
-            // so the saved record matches the real outcome — the runner
-            // also denies the Promise via pendingApprovalResolve below,
-            // but the persisted decision needs the same write.
-            if (finished.pendingApprovalId) {
-              const stored = finished.approvals.get(finished.pendingApprovalId)
-              if (stored && !stored.decision) stored.decision = 'denied'
-            }
+          // Drain the render chain BEFORE persisting/cleanup — the terminal
+          // workflow snapshot (emitted in the agent's finally, i.e. always the
+          // chain's tail) and any late tool_result are otherwise still queued
+          // when activeByChat is deleted, so renderSegment's `if (!active)`
+          // guard would drop them from both the feed and the saved
+          // conversation. Mirrors WhatsApp's queue drain.
+          const finishedTurn = this.activeByChat.get(chatId)
+          const chain = finishedTurn?.renderChain ?? Promise.resolve()
+          void chain.then(() => {
+            const finished = this.activeByChat.get(chatId)
+            if (finished) {
+              // Mark any approval still pending at end-of-turn as denied
+              // so the saved record matches the real outcome — the runner
+              // also denies the Promise via pendingApprovalResolve below,
+              // but the persisted decision needs the same write.
+              if (finished.pendingApprovalId) {
+                const stored = finished.approvals.get(finished.pendingApprovalId)
+                if (stored && !stored.decision) stored.decision = 'denied'
+              }
 
-            // Persist the full assistant turn — text, every segment in
-            // order, approvals (with decisions), tool timings, stop
-            // reason. Same shape the in-app Electron channel saves.
-            // Save as long as we have anything to save (text OR
-            // segments) so tool-only turns aren't dropped.
-            const content = finished.assistantContent.trim()
-            const hasSegments = finished.segments.length > 0
-            if (content.length > 0 || hasSegments) {
-              const assistant: ConversationMessage = {
-                role: 'assistant',
-                content,
-                timestamp: Date.now()
+              // Persist the full assistant turn — text, every segment in
+              // order, approvals (with decisions), tool timings, stop
+              // reason. Same shape the in-app Electron channel saves.
+              // Save as long as we have anything to save (text OR
+              // segments) so tool-only turns aren't dropped.
+              const content = finished.assistantContent.trim()
+              const hasSegments = finished.segments.length > 0
+              if (content.length > 0 || hasSegments) {
+                const assistant: ConversationMessage = {
+                  role: 'assistant',
+                  content,
+                  timestamp: Date.now()
+                }
+                if (hasSegments) assistant.segments = finished.segments
+                if (finished.approvals.size > 0) {
+                  // Re-key by toolCallId so the in-app renderer can look up
+                  // approvals via seg.toolCallId (same as the Electron flow).
+                  assistant.approvals = Object.fromEntries(
+                    [...finished.approvals.values()].map((a) => [a.toolCallId, a])
+                  )
+                }
+                if (finished.toolTimings.size > 0) {
+                  assistant.toolTimings = Object.fromEntries(finished.toolTimings)
+                }
+                if (finished.stopReason) assistant.stopReason = finished.stopReason
+                finished.conversation.messages.push(assistant)
+                finished.conversation.updatedAt = assistant.timestamp
+                void saveConversation(finished.conversation)
+                  .then(() => queueConversationSummarization(finished.conversation.id))
+                  .catch(() => undefined)
+                void this.maybeGenerateTitle(finished.conversation)
               }
-              if (hasSegments) assistant.segments = finished.segments
-              if (finished.approvals.size > 0) {
-                // Re-key by toolCallId so the in-app renderer can look up
-                // approvals via seg.toolCallId (same as the Electron flow).
-                assistant.approvals = Object.fromEntries(
-                  [...finished.approvals.values()].map((a) => [a.toolCallId, a])
-                )
+              if (finished.typingTimer) {
+                clearInterval(finished.typingTimer)
+                finished.typingTimer = null
               }
-              if (finished.toolTimings.size > 0) {
-                assistant.toolTimings = Object.fromEntries(finished.toolTimings)
+              if (finished.pendingApprovalResolve) {
+                finished.pendingApprovalResolve('denied')
+                finished.pendingApprovalId = null
+                finished.pendingApprovalResolve = null
               }
-              if (finished.stopReason) assistant.stopReason = finished.stopReason
-              finished.conversation.messages.push(assistant)
-              finished.conversation.updatedAt = assistant.timestamp
-              void saveConversation(finished.conversation)
-                .then(() => queueConversationSummarization(finished.conversation.id))
-                .catch(() => undefined)
-              void this.maybeGenerateTitle(finished.conversation)
+              // An unanswered question at end-of-turn resolves canceled so the
+              // ask tool's execute() unwinds and the run can finish.
+              if (finished.pendingAskResolve) {
+                finished.pendingAskResolve({ kind: 'canceled' })
+                finished.pendingAsk = null
+                finished.pendingAskResolve = null
+              }
             }
-            if (finished.typingTimer) {
-              clearInterval(finished.typingTimer)
-              finished.typingTimer = null
-            }
-            if (finished.pendingApprovalResolve) {
-              finished.pendingApprovalResolve('denied')
-              finished.pendingApprovalId = null
-              finished.pendingApprovalResolve = null
-            }
-            // An unanswered question at end-of-turn resolves canceled so the
-            // ask tool's execute() unwinds and the run can finish.
-            if (finished.pendingAskResolve) {
-              finished.pendingAskResolve({ kind: 'canceled' })
-              finished.pendingAsk = null
-              finished.pendingAskResolve = null
-            }
-          }
-          this.activeByChat.delete(chatId)
+            this.activeByChat.delete(chatId)
+          })
         }
       })
 
@@ -1725,24 +1737,21 @@ export class TelegramChannel {
     // assistant messages from this list (text + tool cards + chips),
     // so dropping any of them would degrade the history view —
     // tool calls would disappear, approvals would orphan, etc.
-    active.segments.push(segment)
+    // Workflow snapshots supersede each other — keep only the latest
+    // per run or a long workflow persists hundreds of full snapshots.
+    if (segment.kind === 'workflow') upsertWorkflowSegment(active.segments, segment)
+    else active.segments.push(segment)
+
+    if (segment.kind === 'workflow') {
+      await this.renderWorkflowUpdate(chatId, segment.snapshot)
+      return
+    }
 
     if (segment.kind === 'text') {
-      if (segment.worker) {
-        // Subagent narration: verbose-only (the clean feed is the
-        // orchestrator's reply alone), coalesced per worker so concurrent
-        // workers' token-interleaved deltas don't scramble into one message
-        // — and never mixed into textBuffer/assistantContent.
-        if (!active.verbose) return
-        const entry = active.workerText.get(segment.worker.id) ?? {
-          label: segment.worker.label,
-          buf: ''
-        }
-        entry.buf += segment.delta
-        entry.label = segment.worker.label
-        active.workerText.set(segment.worker.id, entry)
-        return
-      }
+      // LEGACY: worker-tagged segments only exist in conversations persisted
+      // by the removed Orchestrator mode — never render them (subagent output
+      // was the master's input, not the user's).
+      if (segment.worker) return
       await this.flushPendingActiveModel(chatId)
       active.textBuffer += segment.delta
       active.assistantContent += segment.delta
@@ -1759,27 +1768,16 @@ export class TelegramChannel {
       // structure stays legible.
       active.toolCallNames.set(segment.toolCallId, segment.name)
       active.toolTimings.set(segment.toolCallId, { startedAt: Date.now() })
-      if (segment.worker) {
-        // Narration before this worker's action, then a labeled card —
-        // verbose-only, mirroring the in-app subagent rail.
-        await this.flushWorkerText(chatId, segment.worker.id)
-        if (!active.verbose) return
-        const heading = `⚙️ <b>${escapeHtml(segment.worker.label)} · ${escapeHtml(segment.name)}</b>`
-        const args = formatArgsForTelegram(segment.args)
-        const html = args.length > 0 ? `${heading}\n<pre>${escapeHtml(args)}</pre>` : heading
-        await this.sendHtml(chatId, html)
-        return
-      }
+      if (segment.worker) return // LEGACY orchestrator-mode segments — see text branch
       await this.flushPendingActiveModel(chatId)
-      // Workers narrate, then the orchestrator acts: drain every pending
-      // worker buffer before this orchestrator action so no worker message
-      // lands after a later main-flow send (e.g. the file the orchestrator
-      // delivers via send_file near the end of the turn).
-      await this.flushAllWorkerText(chatId)
       await this.flushBufferedText(chatId)
       // ask_user posts its own formatted question via onAskUserRequest — never
       // surface the raw tool call (even in verbose), or the question doubles up.
       if (segment.name === ASK_USER_TOOL) return
+      // The master's workflow tools never render as cards (even in verbose) —
+      // the workflow snapshot messages above are their surface. Prose was
+      // already flushed, so ordering stays: narration → phase updates.
+      if (WORKFLOW_TOOL_NAMES.has(segment.name)) return
       // Clean feed: skip the tool-call card. Prose preceding the call has
       // already been flushed above; bookkeeping (names/timings) stands so a
       // file-bearing result can still render its heading.
@@ -1795,30 +1793,14 @@ export class TelegramChannel {
       const timing = active.toolTimings.get(segment.toolCallId)
       if (timing) timing.endedAt = Date.now()
       const icon = segment.status === 'success' ? '✅' : segment.status === 'denied' ? '❌' : '⚠️'
-      if (segment.worker) {
-        // Subagent results are the ORCHESTRATOR's input, not a user-facing
-        // delivery: no native file sends here (the orchestrator delivers
-        // through its own send_file), no clean-feed surfacing. Verbose gets
-        // a labeled result card, same as the in-app subagent rail.
-        if (!active.verbose) return
-        const wName = active.toolCallNames.get(segment.toolCallId)
-        const wHeading = `${icon} <b>${escapeHtml(segment.worker.label)}${wName ? ` · ${escapeHtml(wName)}` : ''}</b>`
-        const wOutput = segment.output?.trim() ?? ''
-        if (wOutput.length === 0) {
-          await this.sendHtml(chatId, wHeading)
-          return
-        }
-        const wCleaned = markdownToPlain(wOutput)
-        await this.sendHtml(
-          chatId,
-          `${wHeading}\n<pre>${escapeHtml(truncateToolOutput(wCleaned))}</pre>`
-        )
-        return
-      }
+      if (segment.worker) return // LEGACY orchestrator-mode segments — see text branch
       const name = active.toolCallNames.get(segment.toolCallId)
       // ask_user's result is the user's own answer, already acknowledged inline
       // when they replied — don't echo it back as a tool-result block.
       if (name === ASK_USER_TOOL) return
+      // Workflow tool results are the master's input — the card/phase
+      // messages are the user surface.
+      if (name && WORKFLOW_TOOL_NAMES.has(name)) return
       const heading = name ? `${icon} <b>${escapeHtml(name)}</b>` : icon
       const output = segment.output?.trim() ?? ''
       // An stt_* result's file payload is the user's SOURCE recording (an
@@ -1946,9 +1928,6 @@ export class TelegramChannel {
       // Drop any pending model chip — the iteration ended without
       // committing real content (e.g. silent wrap-up after voice_respond).
       active.pendingActiveModel = null
-      // Workers flush and finish first; the orchestrator's closing reply
-      // is the LAST message of the turn.
-      await this.flushAllWorkerText(chatId)
       await this.flushBufferedText(chatId)
       return
     }
@@ -2066,28 +2045,74 @@ export class TelegramChannel {
   }
 
   /**
-   * Flush one worker's coalesced narration as its own labeled message.
-   * Buffers only fill when verbose is on, so this is a no-op on clean feeds.
+   * Turn a workflow snapshot into channel progress messages by diffing it
+   * against the last seen snapshot: run start (with the plan), phase
+   * start/completion (always sent — the channel has no card, these ARE the
+   * workflow surface), per-agent landings (verbose only), and the closing
+   * summary. Deterministic: everything derives from harness telemetry.
    */
-  private async flushWorkerText(chatId: number, workerId: string): Promise<void> {
+  private async renderWorkflowUpdate(chatId: number, snapshot: WorkflowSnapshot): Promise<void> {
     const active = this.activeByChat.get(chatId)
     if (!active) return
-    const entry = active.workerText.get(workerId)
-    if (!entry) return
-    active.workerText.delete(workerId)
-    const text = entry.buf.trim()
-    if (text.length === 0) return
-    for (const chunk of splitForTelegram(`🔹 **${entry.label}**\n${text}`)) {
-      await this.safeSend(chatId, chunk)
+    const prev = active.workflowState.get(snapshot.workflowId)
+    active.workflowState.set(snapshot.workflowId, snapshot)
+    // Master narration lands before the progress it precedes.
+    await this.flushBufferedText(chatId)
+    const phaseTitles = snapshot.phases.map((p) => p.title)
+    if (!prev) {
+      const planLine = phaseTitles.length > 0 ? `\n${escapeHtml(phaseTitles.join(' → '))}` : ''
+      const noteLine = snapshot.note ? `\n<i>${escapeHtml(snapshot.note)}</i>` : ''
+      await this.sendHtml(chatId, `🔀 <b>Workflow started</b>${planLine}${noteLine}`)
+    } else {
+      const prevPlan = prev.phases.map((p) => p.title).join('|')
+      if (phaseTitles.length > 0 && prevPlan !== phaseTitles.join('|')) {
+        await this.sendHtml(chatId, `🔀 <b>Plan</b>: ${escapeHtml(phaseTitles.join(' → '))}`)
+      }
     }
-  }
-
-  /** Drain every pending worker buffer — workers speak before the orchestrator's next move. */
-  private async flushAllWorkerText(chatId: number): Promise<void> {
-    const active = this.activeByChat.get(chatId)
-    if (!active) return
-    for (const id of [...active.workerText.keys()]) {
-      await this.flushWorkerText(chatId, id)
+    const prevPhase = new Map((prev?.phases ?? []).map((p) => [p.title, p.status]))
+    const total = snapshot.phases.length
+    // Phase transitions announce only while the run is LIVE — the terminal
+    // snapshot flips statuses in bulk (agentless greening, cancel sweeps),
+    // which would read as a spurious phase burst before the summary line.
+    for (let i = 0; snapshot.status === 'running' && i < snapshot.phases.length; i++) {
+      const ph = snapshot.phases[i]
+      const before = prevPhase.get(ph.title)
+      if (ph.status === 'active' && before !== 'active') {
+        await this.sendHtml(chatId, `▶️ <b>Phase ${i + 1}/${total}</b>: ${escapeHtml(ph.title)}`)
+      } else if (ph.status === 'done' && before === 'active') {
+        const count = snapshot.agents.filter((a) => a.phase === ph.title).length
+        await this.sendHtml(
+          chatId,
+          `✅ <b>Phase ${i + 1}/${total} done</b>: ${escapeHtml(ph.title)} (${count} agent${count === 1 ? '' : 's'})`
+        )
+      }
+    }
+    if (active.verbose && prev) {
+      const before = new Map(prev.agents.map((a) => [a.id, a.status]))
+      for (const a of snapshot.agents) {
+        const b = before.get(a.id)
+        const landed = a.status === 'completed' || a.status === 'failed' || a.status === 'cancelled'
+        if (landed && a.status !== b) {
+          const icon = a.status === 'completed' ? '✅' : a.status === 'failed' ? '⚠️' : '✖️'
+          const secs = a.endedAt ? Math.max(1, Math.round((a.endedAt - a.startedAt) / 1000)) : 0
+          await this.sendHtml(
+            chatId,
+            `${icon} <b>${escapeHtml(a.name)}</b> · ${escapeHtml(`${a.provider}/${a.model}`)} — ${a.status}${secs ? ` in ${formatWorkflowDuration(secs)}` : ''} · ${a.toolCalls} tool${a.toolCalls === 1 ? '' : 's'}`
+          )
+        }
+      }
+    }
+    if (snapshot.status !== 'running' && (!prev || prev.status === 'running')) {
+      const secs = Math.max(
+        1,
+        Math.round(((snapshot.endedAt ?? snapshot.startedAt) - snapshot.startedAt) / 1000)
+      )
+      const icon =
+        snapshot.status === 'completed' ? '🏁' : snapshot.status === 'canceled' ? '✖️' : '⚠️'
+      await this.sendHtml(
+        chatId,
+        `${icon} <b>Workflow ${snapshot.status}</b> — ${snapshot.totals.agents} agent${snapshot.totals.agents === 1 ? '' : 's'} · ${snapshot.totals.toolCalls} tool call${snapshot.totals.toolCalls === 1 ? '' : 's'} · ${formatWorkflowDuration(secs)}`
+      )
     }
   }
 
@@ -2288,6 +2313,12 @@ export class TelegramChannel {
  * boundaries when possible so a long reply doesn't get sliced
  * mid-sentence; fall back to hard-cut for monolithic blocks.
  */
+/** "42s" under 90s, then "3m 20s" — compact wall-clock for workflow messages. */
+function formatWorkflowDuration(secs: number): string {
+  if (secs < 90) return `${secs}s`
+  return `${Math.floor(secs / 60)}m ${secs % 60}s`
+}
+
 function splitForTelegram(text: string): string[] {
   if (text.length <= MESSAGE_LIMIT) return [text]
   const out: string[] = []
