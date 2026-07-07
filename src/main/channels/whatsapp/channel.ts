@@ -66,9 +66,18 @@ import { composeAttachmentContext } from '@main/uploads/compose-attachments'
 import { saveUploadFromBuffer } from '@main/uploads/uploads'
 import {
   getWhatsAppConfig,
+  readConfig,
+  setBrain as persistBrain,
   setLocalOnly as persistLocalOnly,
+  setMode as persistMode,
   workspaceRoot
 } from '@main/workspace/workspace'
+import {
+  collectModelOptions,
+  filterModelOptions,
+  MODEL_LIST_CAP,
+  type ModelOption
+} from '@main/channels/model-picker'
 import type {
   ChatHistoryMessage,
   PersistedApproval,
@@ -139,6 +148,8 @@ const COMMANDS_HELP =
   '/delete — delete a saved conversation\n' +
   '/current — show the active conversation\n' +
   '/status — system status report\n' +
+  '/mode — single or workflow mode\n' +
+  '/model — pick the cloud model\n' +
   '/local — switch to local model\n' +
   '/cloud — switch to cloud model'
 
@@ -206,10 +217,9 @@ type ActiveTurn = {
   voiceReplySent: boolean
 }
 
-type PendingSelection = {
-  command: 'resume' | 'delete'
-  conversationIds: string[]
-}
+type PendingSelection =
+  | { command: 'resume' | 'delete'; conversationIds: string[] }
+  | { command: 'model'; models: ModelOption[] }
 
 export class WhatsAppChannel {
   private sock: WASocket | null = null
@@ -894,7 +904,7 @@ export class WhatsAppChannel {
         await this.sendBusyReply(jid, trimmed)
         return
       }
-      await this.handleModeSwitchCommand(jid, true)
+      await this.handleLocalCloudCommand(jid, true)
       return
     }
     if (lower === '/cloud' || lower === 'cloud') {
@@ -902,7 +912,34 @@ export class WhatsAppChannel {
         await this.sendBusyReply(jid, trimmed)
         return
       }
-      await this.handleModeSwitchCommand(jid, false)
+      await this.handleLocalCloudCommand(jid, false)
+      return
+    }
+
+    // /mode — set single vs workflow (the global chat mode). Bare `/mode`
+    // reports the current mode; `/mode single` / `/mode workflow` set it.
+    // Setting is busy-blocked inside the handler; reading is always allowed.
+    if (
+      lower === '/mode' ||
+      lower === 'mode' ||
+      lower.startsWith('/mode ') ||
+      lower.startsWith('mode ')
+    ) {
+      await this.handleModeCommand(jid, commandArg(trimmed), trimmed)
+      return
+    }
+
+    // /model — list connected cloud models and switch the Brain. Bare
+    // `/model` lists (read-only, allowed mid-turn); `/model <query>` filters
+    // and, on a single match, switches directly. Selecting is busy-blocked
+    // inside the handler.
+    if (
+      lower === '/model' ||
+      lower === 'model' ||
+      lower.startsWith('/model ') ||
+      lower.startsWith('model ')
+    ) {
+      await this.handleModelCommand(jid, commandArg(trimmed), trimmed)
       return
     }
 
@@ -983,17 +1020,20 @@ export class WhatsAppChannel {
       return
     }
 
-    // Number reply for an outstanding /resume or /delete picker
+    // Number reply for an outstanding /resume, /delete, or /model picker
     const pending = this.pendingSelections.get(jid)
     if (pending) {
       const num = parseSelectionNumber(trimmed)
-      if (num !== null && num >= 1 && num <= pending.conversationIds.length) {
-        const targetId = pending.conversationIds[num - 1]
+      const count =
+        pending.command === 'model' ? pending.models.length : pending.conversationIds.length
+      if (num !== null && num >= 1 && num <= count) {
         this.pendingSelections.delete(jid)
-        if (pending.command === 'resume') {
-          await this.handleResumeSelection(jid, targetId)
+        if (pending.command === 'model') {
+          await this.applyModelSelection(jid, pending.models[num - 1], trimmed)
+        } else if (pending.command === 'resume') {
+          await this.handleResumeSelection(jid, pending.conversationIds[num - 1])
         } else {
-          await this.handleDeleteSelection(jid, targetId)
+          await this.handleDeleteSelection(jid, pending.conversationIds[num - 1])
         }
         return
       }
@@ -1062,10 +1102,122 @@ export class WhatsAppChannel {
     await this.safeSend(jid, `*${conv.title}*\n${msgs} messages · updated ${ago}`)
   }
 
-  private async handleModeSwitchCommand(jid: string, localOnly: boolean): Promise<void> {
+  /**
+   * Handle /local and /cloud — flip llm.localOnly (persist + live thalamus),
+   * mirroring the in-app local/cloud switch and the main-process IPC handler.
+   * Distinct from /mode (single vs workflow — see handleModeCommand).
+   */
+  private async handleLocalCloudCommand(jid: string, localOnly: boolean): Promise<void> {
     await persistLocalOnly(localOnly)
     this.agent.thalamus.setLocalOnly(localOnly)
     await this.safeSend(jid, localOnly ? 'Switched to local model.' : 'Switched to cloud model.')
+  }
+
+  /**
+   * Handle /mode — read or set the global chat mode (single vs workflow),
+   * mirroring the in-app mode picker's two steps: persist (setMode) + live
+   * (agent.setMode). Bare `/mode` reports the current mode. Setting is
+   * busy-blocked because mode is global (like the Brain and localOnly) —
+   * switching while a turn is in flight would change the next iteration out
+   * from under it. `arg` is lower-cased; `raw` is the original text.
+   */
+  private async handleModeCommand(jid: string, arg: string, raw: string): Promise<void> {
+    const config = await readConfig()
+    const current = config?.llm.mode === 'workflow' ? 'workflow' : 'single'
+    if (!arg) {
+      await this.safeSend(jid, `Mode: *${current}*\nSwitch with /mode single or /mode workflow.`)
+      return
+    }
+    const next = arg === 'workflow' ? 'workflow' : arg === 'single' ? 'single' : null
+    if (!next) {
+      await this.safeSend(jid, 'Usage: /mode single or /mode workflow.')
+      return
+    }
+    if (next === current) {
+      await this.safeSend(jid, `Already in ${current} mode.`)
+      return
+    }
+    if (this.activeByJid.size > 0) {
+      await this.sendBusyReply(jid, raw)
+      return
+    }
+    await persistMode(next)
+    this.agent.setMode(next)
+    await this.safeSend(jid, next === 'workflow' ? 'Mode: workflow.' : 'Mode: single.')
+  }
+
+  /**
+   * Handle /model — list connected cloud models and switch the Brain. Bare
+   * `/model` lists them numbered (read-only, so allowed even mid-turn) and
+   * arms a numbered picker; `/model <query>` filters by substring and, on a
+   * single match, switches directly. The switch mirrors the in-app model
+   * picker (persist setBrain + live thalamus.setBrain) and also clears
+   * localOnly — a deliberately chosen cloud model would otherwise be ignored
+   * while local-only mode is on (resolveEntry short-circuits to local).
+   */
+  private async handleModelCommand(jid: string, query: string, raw: string): Promise<void> {
+    const options = collectModelOptions(this.agent.thalamus.getCloudProviders())
+    if (options.length === 0) {
+      await this.safeSend(
+        jid,
+        'No cloud providers connected. Add an API key in Settings, or use /local for the on-device model.'
+      )
+      return
+    }
+    const matches = filterModelOptions(options, query)
+    // A query that pins exactly one model switches straight to it.
+    if (query && matches.length === 1) {
+      await this.applyModelSelection(jid, matches[0], raw)
+      return
+    }
+    if (matches.length === 0) {
+      await this.safeSend(jid, `No cloud model matches "${query}".`)
+      return
+    }
+    const activeProvider = this.agent.thalamus.getActiveProvider()
+    const activeModel = this.agent.thalamus.getActiveModel()
+    const shown = matches.slice(0, MODEL_LIST_CAP)
+    this.pendingSelections.set(jid, { command: 'model', models: shown })
+    const lines = shown.map((o, i) => {
+      const current = o.providerId === activeProvider && o.model === activeModel ? ' ✅' : ''
+      return `${i + 1}. *${o.providerId}* · ${o.model}${current}`
+    })
+    const header =
+      query && matches.length !== options.length
+        ? `*Models matching "${query}"* — reply with the number:`
+        : '*Pick a model* — reply with the number:'
+    const more =
+      matches.length > shown.length
+        ? `\n\n…and ${matches.length - shown.length} more — narrow with /model <name>.`
+        : ''
+    await this.safeSend(jid, `${header}\n\n${lines.join('\n')}${more}`)
+  }
+
+  /**
+   * Commit a chosen cloud model as the Brain (persist + live), clearing
+   * localOnly so it actually takes effect. Busy-blocked: the Brain is global,
+   * so swapping it mid-turn would change the in-flight turn's next iteration.
+   */
+  private async applyModelSelection(jid: string, option: ModelOption, raw: string): Promise<void> {
+    if (this.activeByJid.size > 0) {
+      await this.sendBusyReply(jid, raw)
+      return
+    }
+    // Capture the prior local-only state before switching — only to decide
+    // whether to note the mode flip in the reply.
+    const config = await readConfig()
+    const wasLocalOnly = config?.llm.localOnly ?? false
+    await persistBrain(option)
+    this.agent.thalamus.setBrain(option)
+    // Choosing a specific cloud model IS a request to run on the cloud, so
+    // force localOnly OFF — unconditionally, so a failed config read can never
+    // leave the pick shadowed by local mode (resolveEntry would keep serving
+    // the on-device model). Mirrors the in-app ModelSwitch, which flips to
+    // cloud on select.
+    await persistLocalOnly(false)
+    this.agent.thalamus.setLocalOnly(false)
+    const note = wasLocalOnly ? ' (switched to cloud)' : ''
+    await this.safeSend(jid, `Model: ${option.providerId} · ${option.model}${note}`)
   }
 
   private async handleNewCommand(jid: string): Promise<void> {
@@ -1664,10 +1816,11 @@ export class WhatsAppChannel {
       // input, already transcribed), not a deliverable — never echo its audio.
       const isSttResult = name?.startsWith('stt_') ?? false
       // One voice memo reply per turn: suppress a redone voice_respond so the
-      // model responding twice can't send two memos. Gated on success so a
-      // FAILED duplicate still falls through to the normal error-surfacing path
-      // (failures always surface). voice_generate assets (isResponse:false) are
-      // unaffected — they fall through and each send.
+      // model responding twice can't send two memos. Gated on success so the
+      // dedup only ever suppresses a *successful* re-send; a FAILED voice_respond
+      // isn't deduped here — in verbose it surfaces as an error, on the clean
+      // feed it's dropped by the gate below. voice_generate assets
+      // (isResponse:false) are unaffected — they fall through and each send.
       if (name === 'voice_respond' && active.voiceReplySent && segment.status === 'success') {
         return
       }
@@ -1720,10 +1873,13 @@ export class WhatsAppChannel {
         return
       }
 
-      // Clean feed: file-bearing results returned above. A plain, successful
-      // result is routine activity — skip it. Failed/denied results fall
-      // through (they read as errors, which always surface).
-      if (!active.verbose && segment.status === 'success') return
+      // Clean feed: file-bearing results already returned above (their delivery
+      // branches don't check verbose). Everything reaching here is tool
+      // mechanics — skip it whether it succeeded, failed, or was denied. The
+      // clean feed relays only agent prose and delivered files; tool activity,
+      // including errors, is verbose-only. (The model still receives the full
+      // result in its context — this gate only affects what the channel shows.)
+      if (!active.verbose) return
 
       if (output.length === 0) {
         await this.safeSend(jid, heading)
@@ -1787,8 +1943,9 @@ export class WhatsAppChannel {
    * Turn a workflow snapshot into channel progress messages by diffing it
    * against the last seen snapshot: run start (with the plan), phase
    * start/completion (always sent — the channel has no card, these ARE the
-   * workflow surface), per-agent landings (verbose only), and the closing
-   * summary. Deterministic: everything derives from harness telemetry.
+   * workflow surface), per-agent landings (also always sent — the workflow
+   * panel surfaces in ALL modes, the clean feed never suppresses it), and the
+   * closing summary. Deterministic: everything derives from harness telemetry.
    * Composed directly in WhatsApp's own formatting — these are
    * channel-constructed lines, not model prose.
    */
@@ -1828,7 +1985,11 @@ export class WhatsAppChannel {
         )
       }
     }
-    if (active.verbose && prev) {
+    // Per-agent landings belong to the workflow panel, which surfaces in ALL
+    // modes and channels — the clean feed's tool-card suppression never applies
+    // to the workflow surface — so these are NOT verbose-gated. `prev` guards
+    // the diff (the first snapshot has nothing to diff against).
+    if (prev) {
       const before = new Map(prev.agents.map((a) => [a.id, a.status]))
       for (const a of snapshot.agents) {
         const b = before.get(a.id)
@@ -2276,6 +2437,23 @@ function parseSelectionNumber(text: string): number | null {
   if (cleaned.length === 0) return null
   const n = parseInt(cleaned, 10)
   return Number.isFinite(n) && n > 0 ? n : null
+}
+
+/**
+ * The argument tail after a command word, lower-cased and trimmed — recovers
+ * "workflow" from "/mode workflow" (or "mode workflow") and "opus" from
+ * "/model opus". WhatsApp accepts both slashed and bare command words, so
+ * this keys off the first whitespace rather than a leading slash.
+ */
+function commandArg(text: string): string {
+  const sp = text.trim().search(/\s/)
+  return sp === -1
+    ? ''
+    : text
+        .trim()
+        .slice(sp + 1)
+        .trim()
+        .toLowerCase()
 }
 
 /**

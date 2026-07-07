@@ -53,9 +53,18 @@ import { composeAttachmentContext } from '@main/uploads/compose-attachments'
 import { saveUploadFromBuffer } from '@main/uploads/uploads'
 import {
   getTelegramConfig,
+  readConfig,
+  setBrain as persistBrain,
   setLocalOnly as persistLocalOnly,
+  setMode as persistMode,
   workspaceRoot
 } from '@main/workspace/workspace'
+import {
+  collectModelOptions,
+  filterModelOptions,
+  MODEL_LIST_CAP,
+  type ModelOption
+} from '@main/channels/model-picker'
 import type {
   ChatHistoryMessage,
   PersistedApproval,
@@ -92,11 +101,15 @@ const DELETE_COMMAND = '/delete'
 const CLEAR_COMMAND = '/clear'
 const LOCAL_COMMAND = '/local'
 const CLOUD_COMMAND = '/cloud'
+const MODE_COMMAND = '/mode'
+const MODEL_COMMAND = '/model'
 const STOP_COMMANDS = new Set(['/stop', '/cancel'])
 const NEW_COMMANDS = new Set(['/new', '/start'])
 
 const COMMANDS_HELP_HTML = [
   '<b>Commands:</b>',
+  '/mode — single or workflow mode',
+  '/model — pick the cloud model',
   '/resume — continue a previous chat',
   '/delete — delete a saved conversation',
   '/clear — clear messages from this chat',
@@ -198,10 +211,9 @@ export type TelegramChannelStatus = {
  * channel renders a numbered list of conversation ids and stores
  * them here; the next number-only reply selects one.
  */
-type PendingSelection = {
-  command: 'resume' | 'delete'
-  conversationIds: string[]
-}
+type PendingSelection =
+  | { command: 'resume' | 'delete'; conversationIds: string[] }
+  | { command: 'model'; models: ModelOption[] }
 
 type ActiveTurn = {
   chatId: number
@@ -500,6 +512,8 @@ export class TelegramChannel {
         { command: 'approve', description: 'Approve a pending action' },
         { command: 'deny', description: 'Deny a pending action' },
         { command: 'status', description: 'Wolffish current status' },
+        { command: 'mode', description: 'Set single or workflow mode' },
+        { command: 'model', description: 'Pick the cloud model' },
         { command: 'local', description: 'Switch to local model' },
         { command: 'cloud', description: 'Switch to cloud model' }
       ])
@@ -808,7 +822,25 @@ export class TelegramChannel {
         await this.sendBusyReply(chatId, trimmed)
         return
       }
-      await this.handleModeSwitchCommand(chatId, command === LOCAL_COMMAND)
+      await this.handleLocalCloudCommand(chatId, command === LOCAL_COMMAND)
+      return
+    }
+
+    // /mode — set single vs workflow (the global chat mode). Bare `/mode`
+    // reports the current mode; `/mode single` / `/mode workflow` set it.
+    // Setting is busy-blocked inside the handler (mode is global, like the
+    // Brain); reading is always allowed.
+    if (command === MODE_COMMAND) {
+      await this.handleModeCommand(chatId, commandArg(trimmed), trimmed)
+      return
+    }
+
+    // /model — list connected cloud models and switch the Brain. Bare
+    // `/model` lists (read-only, allowed even mid-turn); `/model <query>`
+    // filters and, on a single match, switches directly. Selecting is
+    // busy-blocked inside the handler.
+    if (command === MODEL_COMMAND) {
+      await this.handleModelCommand(chatId, commandArg(trimmed), trimmed)
       return
     }
 
@@ -925,13 +957,16 @@ export class TelegramChannel {
     const pending = this.pendingSelections.get(chatId)
     if (pending) {
       const num = parseSelectionNumber(trimmed)
-      if (num !== null && num >= 1 && num <= pending.conversationIds.length) {
-        const targetId = pending.conversationIds[num - 1]
+      const count =
+        pending.command === 'model' ? pending.models.length : pending.conversationIds.length
+      if (num !== null && num >= 1 && num <= count) {
         this.pendingSelections.delete(chatId)
-        if (pending.command === 'resume') {
-          await this.handleResumeSelection(chatId, targetId)
+        if (pending.command === 'model') {
+          await this.applyModelSelection(chatId, pending.models[num - 1], trimmed)
+        } else if (pending.command === 'resume') {
+          await this.handleResumeSelection(chatId, pending.conversationIds[num - 1])
         } else {
-          await this.handleDeleteSelection(chatId, targetId)
+          await this.handleDeleteSelection(chatId, pending.conversationIds[num - 1])
         }
         return
       }
@@ -1076,19 +1111,140 @@ export class TelegramChannel {
 
   /**
    * Handle /local and /cloud — flip llm.localOnly via the same code
-   * path the chat input's mode switch uses: persist the config, then
-   * push the new value into the live thalamus so the next turn's model
-   * resolution picks it up. The IPC handler in main does the same two
-   * steps; we mirror them here so a Telegram-driven switch and an
+   * path the chat input's local/cloud switch uses: persist the config,
+   * then push the new value into the live thalamus so the next turn's
+   * model resolution picks it up. The IPC handler in main does the same
+   * two steps; we mirror them here so a Telegram-driven switch and an
    * Electron-driven switch leave the runtime in identical state.
+   * (Distinct from /mode, which is single-vs-workflow — see
+   * handleModeCommand.)
    */
-  private async handleModeSwitchCommand(chatId: number, localOnly: boolean): Promise<void> {
+  private async handleLocalCloudCommand(chatId: number, localOnly: boolean): Promise<void> {
     await persistLocalOnly(localOnly)
     this.agent.thalamus.setLocalOnly(localOnly)
     await this.safeSend(
       chatId,
       localOnly ? '🖥 Switched to local model.' : '☁️ Switched to cloud model.'
     )
+  }
+
+  /**
+   * Handle /mode — read or set the global chat mode (single vs workflow),
+   * mirroring the in-app mode picker's two steps: persist (setMode) + live
+   * (agent.setMode). Bare `/mode` reports the current mode. Setting is
+   * busy-blocked because mode is global (like the Brain and localOnly) —
+   * switching while a turn is in flight would change the next iteration out
+   * from under it. `arg` is lower-cased; `raw` is the original text (for the
+   * busy reply echo).
+   */
+  private async handleModeCommand(chatId: number, arg: string, raw: string): Promise<void> {
+    const config = await readConfig()
+    const current = config?.llm.mode === 'workflow' ? 'workflow' : 'single'
+    if (!arg) {
+      await this.sendHtml(
+        chatId,
+        `Mode: <b>${current}</b>\nSwitch with <code>/mode single</code> or <code>/mode workflow</code>.`
+      )
+      return
+    }
+    const next = arg === 'workflow' ? 'workflow' : arg === 'single' ? 'single' : null
+    if (!next) {
+      await this.sendHtml(
+        chatId,
+        'Usage: <code>/mode single</code> or <code>/mode workflow</code>.'
+      )
+      return
+    }
+    if (next === current) {
+      await this.safeSend(chatId, `Already in ${current} mode.`)
+      return
+    }
+    if (this.activeByChat.size > 0) {
+      await this.sendBusyReply(chatId, raw)
+      return
+    }
+    await persistMode(next)
+    this.agent.setMode(next)
+    await this.safeSend(chatId, next === 'workflow' ? '🔀 Mode: workflow.' : '💬 Mode: single.')
+  }
+
+  /**
+   * Handle /model — list connected cloud models and switch the Brain. Bare
+   * `/model` lists them numbered (read-only, so allowed even mid-turn) and
+   * arms a numbered picker; `/model <query>` filters by substring and, on a
+   * single match, switches directly. The switch mirrors the in-app model
+   * picker (persist setBrain + live thalamus.setBrain) and also clears
+   * localOnly — a deliberately chosen cloud model would otherwise be ignored
+   * while local-only mode is on (resolveEntry short-circuits to the local
+   * model).
+   */
+  private async handleModelCommand(chatId: number, query: string, raw: string): Promise<void> {
+    const options = collectModelOptions(this.agent.thalamus.getCloudProviders())
+    if (options.length === 0) {
+      await this.sendHtml(
+        chatId,
+        'No cloud providers connected. Add an API key in Settings, or use <code>/local</code> for the on-device model.'
+      )
+      return
+    }
+    const matches = filterModelOptions(options, query)
+    // A query that pins exactly one model switches straight to it.
+    if (query && matches.length === 1) {
+      await this.applyModelSelection(chatId, matches[0], raw)
+      return
+    }
+    if (matches.length === 0) {
+      await this.sendHtml(chatId, `No cloud model matches <b>${escapeHtml(query)}</b>.`)
+      return
+    }
+    const activeProvider = this.agent.thalamus.getActiveProvider()
+    const activeModel = this.agent.thalamus.getActiveModel()
+    const shown = matches.slice(0, MODEL_LIST_CAP)
+    this.pendingSelections.set(chatId, { command: 'model', models: shown })
+    const lines = shown.map((o, i) => {
+      const current = o.providerId === activeProvider && o.model === activeModel ? ' ✅' : ''
+      return `${i + 1}. <b>${escapeHtml(o.providerId)}</b> · ${escapeHtml(o.model)}${current}`
+    })
+    const header =
+      query && matches.length !== options.length
+        ? `<b>Models matching “${escapeHtml(query)}”</b> — reply with the number:`
+        : '<b>Pick a model</b> — reply with the number:'
+    const more =
+      matches.length > shown.length
+        ? `\n\n…and ${matches.length - shown.length} more — narrow with <code>/model &lt;name&gt;</code>.`
+        : ''
+    await this.sendHtml(chatId, `${header}\n\n${lines.join('\n')}${more}`)
+  }
+
+  /**
+   * Commit a chosen cloud model as the Brain (persist + live), clearing
+   * localOnly so it actually takes effect. Busy-blocked: the Brain is global,
+   * so swapping it mid-turn would change the in-flight turn's next iteration.
+   */
+  private async applyModelSelection(
+    chatId: number,
+    option: ModelOption,
+    raw: string
+  ): Promise<void> {
+    if (this.activeByChat.size > 0) {
+      await this.sendBusyReply(chatId, raw)
+      return
+    }
+    // Capture the prior local-only state before switching — only to decide
+    // whether to note the mode flip in the reply.
+    const config = await readConfig()
+    const wasLocalOnly = config?.llm.localOnly ?? false
+    await persistBrain(option)
+    this.agent.thalamus.setBrain(option)
+    // Choosing a specific cloud model IS a request to run on the cloud, so
+    // force localOnly OFF — unconditionally, so a failed config read can never
+    // leave the pick shadowed by local mode (resolveEntry would keep serving
+    // the on-device model). Mirrors the in-app ModelSwitch, which flips to
+    // cloud on select.
+    await persistLocalOnly(false)
+    this.agent.thalamus.setLocalOnly(false)
+    const note = wasLocalOnly ? ' (switched to cloud)' : ''
+    await this.safeSend(chatId, `☁️ Model: ${option.providerId} · ${option.model}${note}`)
   }
 
   /**
@@ -1859,9 +2015,10 @@ export class TelegramChannel {
       const isSttResult = name?.startsWith('stt_') ?? false
       // One voice memo reply per turn: suppress a redone voice_respond no matter
       // which send path it would take (parsed voice branch OR the av fallback).
-      // Gated on success so a FAILED duplicate still falls through to the normal
-      // error-surfacing path (failures always surface). voice_generate assets
-      // are unaffected and always delivered.
+      // Gated on success so the dedup only ever suppresses a *successful*
+      // re-send; a FAILED voice_respond isn't deduped here — in verbose it
+      // surfaces as an error, on the clean feed it's dropped by the gate below.
+      // voice_generate assets are unaffected and always delivered.
       if (name === 'voice_respond' && active.voiceReplySent && segment.status === 'success') {
         return
       }
@@ -1931,10 +2088,13 @@ export class TelegramChannel {
         return
       }
 
-      // Clean feed: file-bearing results returned above. A plain, successful
-      // result is routine activity — skip it. Failed/denied results fall
-      // through (they read as errors, which always surface).
-      if (!active.verbose && segment.status === 'success') return
+      // Clean feed: file-bearing results already returned above (their delivery
+      // branches don't check verbose). Everything reaching here is tool
+      // mechanics — skip it whether it succeeded, failed, or was denied. The
+      // clean feed relays only agent prose and delivered files; tool activity,
+      // including errors, is verbose-only. (The model still receives the full
+      // result in its context — this gate only affects what the channel shows.)
+      if (!active.verbose) return
 
       if (output.length === 0) {
         await this.sendHtml(chatId, heading)
@@ -2098,8 +2258,9 @@ export class TelegramChannel {
    * Turn a workflow snapshot into channel progress messages by diffing it
    * against the last seen snapshot: run start (with the plan), phase
    * start/completion (always sent — the channel has no card, these ARE the
-   * workflow surface), per-agent landings (verbose only), and the closing
-   * summary. Deterministic: everything derives from harness telemetry.
+   * workflow surface), per-agent landings (also always sent — the workflow
+   * panel surfaces in ALL modes, the clean feed never suppresses it), and the
+   * closing summary. Deterministic: everything derives from harness telemetry.
    */
   private async renderWorkflowUpdate(chatId: number, snapshot: WorkflowSnapshot): Promise<void> {
     const active = this.activeByChat.get(chatId)
@@ -2137,7 +2298,11 @@ export class TelegramChannel {
         )
       }
     }
-    if (active.verbose && prev) {
+    // Per-agent landings belong to the workflow panel, which surfaces in ALL
+    // modes and channels — the clean feed's tool-card suppression never applies
+    // to the workflow surface — so these are NOT verbose-gated. `prev` guards
+    // the diff (the first snapshot has nothing to diff against).
+    if (prev) {
       const before = new Map(prev.agents.map((a) => [a.id, a.status]))
       for (const a of snapshot.agents) {
         const b = before.get(a.id)
@@ -2590,6 +2755,22 @@ function parseSlashCommand(lower: string): string | null {
   const head = lower.split(/\s+/, 1)[0]
   const at = head.indexOf('@')
   return at >= 0 ? head.slice(0, at) : head
+}
+
+/**
+ * The argument tail after a `/command` token, lower-cased and trimmed —
+ * parseSlashCommand keeps only the leading token, so `/mode workflow` and
+ * `/model opus` need this to recover "workflow" / "opus".
+ */
+function commandArg(text: string): string {
+  const sp = text.trim().search(/\s/)
+  return sp === -1
+    ? ''
+    : text
+        .trim()
+        .slice(sp + 1)
+        .trim()
+        .toLowerCase()
 }
 
 /** Thrown when the launch handshake (bot.init) outlives LAUNCH_TIMEOUT_MS. */

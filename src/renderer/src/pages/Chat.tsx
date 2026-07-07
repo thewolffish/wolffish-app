@@ -3852,10 +3852,16 @@ function renderSegments(
   // resumed chat auto-scrolls to the bottom — so an inline card ends up scrolled
   // off-screen. The end is where the closing summary points and where the eye
   // lands, and it's identical whether the message is live or restored.
+  //
+  // Verbose-only: a path merely *named* is a "manual" file surface, not a file
+  // the model deliberately delivered via send_file / an output marker. The
+  // clean feed shows only prose and explicitly delivered files, so collection
+  // is short-circuited when verbose is off (this also skips the regex scan on
+  // the default, hot render path).
   const pathCandidates: string[] = []
   const pathSeen = new Set<string>()
   const collectPaths = (text: string): void => {
-    if (isStreaming) return
+    if (!verbose || isStreaming) return
     for (const candidate of extractPathCandidates(text)) {
       // Dedup on the canonical (home-folded) path so `~/x` and `/Users/me/x`
       // don't both render; keep the first-seen spelling for display.
@@ -3983,12 +3989,15 @@ function renderSegments(
       // never a deliverable — don't echo it back as an audio card.
       const isSttResult = (seg.name ?? '').startsWith('stt_')
 
-      // Clean feed (verbose off): the activity card is dropped for plain
-      // successful tool calls — the file viewers below still render, so
-      // file-bearing results survive. Failed/denied results keep the card
-      // (errors must surface); a still-running call (no result yet) stays
-      // hidden until it completes. Mirrors the channel renderSegment rules.
-      const cardVisible = verbose || (result != null && result.status !== 'success')
+      // Clean feed (verbose off): the tool-activity card is dropped entirely —
+      // successful, failed, AND denied calls alike. The clean feed relays only
+      // what the model produces FOR the user: prose plus the file viewers below
+      // (files delivered via send_file / [wolffish-output:] markers), which
+      // render in their own branches regardless of this flag. Tool mechanics,
+      // including failures, are verbose-only. Mirrors the channel renderSegment
+      // rules. (The model still sees every result — segment.output replays into
+      // its context; this gate is purely what the UI shows.)
+      const cardVisible = verbose
 
       if (voiceData) {
         if (cardVisible) {
@@ -4314,7 +4323,8 @@ function renderSegments(
   // Openable cards for every filesystem path named this turn, rendered together
   // at the end so they sit with the closing summary and survive a resumed chat's
   // auto-scroll to the bottom. Each verifies on-device and renders nothing if the
-  // path no longer exists.
+  // path no longer exists. Verbose-only: pathCandidates stays empty on the clean
+  // feed (collectPaths short-circuits), so this loop no-ops there.
   for (const candidate of pathCandidates) {
     blocks.push(<PathCard key={`path-${candidate}`} path={candidate} />)
   }

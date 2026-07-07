@@ -11,11 +11,11 @@ import remarkGfm from 'remark-gfm'
  * The feed (renderSegments in Chat.tsx) is the source of truth: the export
  * walks each assistant message's segments in the same order with the same
  * visibility rules — verbose on prints tool cards (and subagent rails)
- * inline where they appear; verbose off prints the clean feed: text plus
- * failed/denied tool cards and answered ask_user questions. What it doesn't
- * reproduce is interactive chrome (expand toggles, players, file viewers,
- * compaction cards) — file deliveries stay visible through the tool output
- * itself.
+ * inline where they appear; verbose off prints the clean feed: text and
+ * answered ask_user questions only — tool cards (successful, failed, and
+ * denied alike) are dropped. What it doesn't reproduce is interactive chrome
+ * (expand toggles, players, file viewers, compaction cards) — file deliveries
+ * stay visible through the model's prose, which always prints.
  *
  * Deliberately independent from the app's Markdown component: that one is
  * Tailwind-bound and interactive. Here markdown renders to plain semantic
@@ -228,8 +228,9 @@ function assistantParts(
         if (result) parts.push(askBlock(seg, result))
         continue
       }
-      // The feed's clean-mode rule: plain successful calls drop, failures stay.
-      if (verbose || (result != null && result.status !== 'success')) {
+      // The feed's clean-mode rule: tool cards are verbose-only — successful
+      // and failed/denied calls alike drop from the clean feed.
+      if (verbose) {
         parts.push(toolBlock(seg, result, statusLabels))
       }
     } else if (seg.kind === 'separator' || seg.kind === 'turn_end') {

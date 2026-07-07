@@ -1,4 +1,14 @@
-## v1.0.206 — 2026-07-07 `Latest`
+## v1.0.207 — 2026-07-07 `Latest`
+
+### Set Your Model and Mode from WhatsApp and Telegram
+
+The pickers that live beside the chat input came to the channels. Two new commands steer a chat without ever opening the app. **`/mode`** switches between Single and Workflow — send it bare to see which you're in, or `/mode workflow` to change. **`/model`** lists every cloud model across every provider you've connected, numbered; reply with a number to switch, with the one you're on marked. In a hurry, `/model opus` filters by name and, when it pins a single match, switches straight to it. Choosing a cloud model this way also flips local-only off, so the model you asked for is the model you get. Listing is always allowed, even mid-turn; switching waits for the current turn to finish, since the model and mode are shared across the whole app. Both channels' `/help` and command menus now carry the two commands.
+
+### A Quieter Clean Feed
+
+Verbose off now means exactly what it says: Wolffish's own words and the files it hands you, and nothing else. Tool cards — successful, failed, and denied alike — no longer surface on the clean feed, and neither do the "here's a path" cards that used to appear whenever a file location was merely mentioned in passing. The rule is consistent everywhere now: in-app, WhatsApp, Telegram, and PDF export all draw the same clean feed. Flip verbose on and every card, error, and detail is back — and the model always receives the full result either way; this only changes what *you're* shown. Workflow progress is the one thing that always shows through: its phase and per-agent updates aren't tool mechanics, so they land in every mode.
+
+## v1.0.206 — 2026-07-07
 
 ### Conversations, Running Side by Side
 

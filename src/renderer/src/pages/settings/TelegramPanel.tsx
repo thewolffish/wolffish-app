@@ -4,9 +4,9 @@ import { TelegramLogo } from '@components/core/ProviderLogos'
 import { Select, type SelectOption } from '@components/core/Select'
 import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn'
-import type { TelegramChannelStatus, TelegramErrorKind } from '@preload/index'
+import type { TelegramChannelStatus, TelegramConfig, TelegramErrorKind } from '@preload/index'
 import { EyeIcon, ViewOffIcon } from 'hugeicons-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 const STATUS_DOT: Record<TelegramChannelStatus['status'], string> = {
@@ -16,63 +16,125 @@ const STATUS_DOT: Record<TelegramChannelStatus['status'], string> = {
   stopped: 'bg-border'
 }
 
+// Module-level snapshot of the bot config + live status, warmed once at app
+// start (this panel is eagerly imported via Settings.tsx, so the load below
+// runs during startup). By the time the user opens the panel the data is
+// already in memory and paints on the first frame — no getConfig()/status()
+// round-trip, no defaults→loaded flash. Mirrors GitHubPanel / GooglePanel.
+// `null` means "not loaded yet".
+type TelegramSnapshot = { config: TelegramConfig; status: TelegramChannelStatus }
+let cachedSnapshot: TelegramSnapshot | null = null
+let loadPromise: Promise<TelegramSnapshot | null> | null = null
+
+function loadTelegramSnapshot(): Promise<TelegramSnapshot | null> {
+  if (cachedSnapshot) return Promise.resolve(cachedSnapshot)
+  const api = window.api?.telegram
+  if (!api) return Promise.resolve(null) // preload not ready yet; retry on mount
+  if (!loadPromise) {
+    loadPromise = Promise.all([api.getConfig(), api.status()])
+      .then(([config, status]) => {
+        cachedSnapshot = { config, status }
+        return cachedSnapshot
+      })
+      .catch(() => null) // leave the cache cold so the mount effect can retry
+      .finally(() => {
+        loadPromise = null
+      })
+  }
+  return loadPromise
+}
+
+// Prefill the cache at app start.
+void loadTelegramSnapshot()
+
+// Keep the cached status fresh even while the panel is closed, so reopening
+// paints the current bot state (not a stale one). Intentionally never torn
+// down — it mirrors live status into the module cache for the next open.
+window.api?.telegram?.onStatusChange((s) => {
+  if (cachedSnapshot) cachedSnapshot = { ...cachedSnapshot, status: s }
+})
+
 export function TelegramPanel(): React.JSX.Element {
   const { t } = useTranslation()
   const toast = useToast()
 
-  // null while config is still loading; gives us a single render for
-  // "I don't know yet" so the toggle never paints in a guessed state
-  // and then transitions on load.
-  const [enabled, setEnabled] = useState<boolean | null>(null)
-  const [botToken, setBotToken] = useState('')
-  const [hasSavedToken, setHasSavedToken] = useState(false)
-  const [allowedUsersInput, setAllowedUsersInput] = useState('')
+  // Seed from the module cache so the panel paints real config + status on the
+  // first frame instead of flashing "I don't know yet" defaults → loaded
+  // values. When the cache isn't warm yet (cold first open right after startup)
+  // these fall back to null/empty and the mount effect below hydrates.
+  const [enabled, setEnabled] = useState<boolean | null>(cachedSnapshot?.config.enabled ?? null)
+  const [botToken, setBotToken] = useState(cachedSnapshot?.config.botToken ?? '')
+  const [hasSavedToken, setHasSavedToken] = useState(
+    (cachedSnapshot?.config.botToken.length ?? 0) > 0
+  )
+  const [allowedUsersInput, setAllowedUsersInput] = useState(() =>
+    (cachedSnapshot?.config.allowedUserIds ?? []).join(', ')
+  )
   // Last persisted token + allow-list, so the Test/save button can disable
   // when nothing has changed since the last successful connect.
-  const [savedBotToken, setSavedBotToken] = useState('')
-  const [savedAllowedUsers, setSavedAllowedUsers] = useState('')
+  const [savedBotToken, setSavedBotToken] = useState(cachedSnapshot?.config.botToken ?? '')
+  const [savedAllowedUsers, setSavedAllowedUsers] = useState(() =>
+    (cachedSnapshot?.config.allowedUserIds ?? []).join(', ')
+  )
   const [tokenVisible, setTokenVisible] = useState(false)
-  const [status, setStatus] = useState<TelegramChannelStatus>({
-    status: 'stopped',
-    errorKind: null,
-    error: null,
-    botUsername: null,
-    botName: null
-  })
-  const [autoRefresh, setAutoRefresh] = useState<boolean | null>(null)
-  const [staleHours, setStaleHours] = useState(3)
-  const [verbose, setVerbose] = useState<boolean | null>(null)
+  const [status, setStatus] = useState<TelegramChannelStatus>(
+    () =>
+      cachedSnapshot?.status ?? {
+        status: 'stopped',
+        errorKind: null,
+        error: null,
+        botUsername: null,
+        botName: null
+      }
+  )
+  const [autoRefresh, setAutoRefresh] = useState<boolean | null>(
+    cachedSnapshot ? (cachedSnapshot.config.autoRefresh ?? true) : null
+  )
+  const [staleHours, setStaleHours] = useState(cachedSnapshot?.config.staleHours ?? 3)
+  const [verbose, setVerbose] = useState<boolean | null>(
+    cachedSnapshot ? (cachedSnapshot.config.verbose ?? false) : null
+  )
   // Remembered bot identity so the connected-bot card stays visible when the
   // channel is toggled off (a stopped bot reports a null username). Cleared
   // only on disconnect, when the token — and thus the bot — is actually gone.
-  const [lastBot, setLastBot] = useState<{ username: string; name: string | null } | null>(null)
+  const [lastBot, setLastBot] = useState<{ username: string; name: string | null } | null>(() =>
+    cachedSnapshot?.status.botUsername
+      ? { username: cachedSnapshot.status.botUsername, name: cachedSnapshot.status.botName }
+      : null
+  )
   const [busy, setBusy] = useState<'idle' | 'saving' | 'testing'>('idle')
   const [validation, setValidation] = useState<string | null>(null)
+  // Whether the first render was seeded from the warm cache — if so the mount
+  // hydrate is skipped (there's nothing left to fill in). Captured once.
+  const seededRef = useRef(cachedSnapshot !== null)
   const loaded = enabled !== null
 
-  // Hydrate from disk on mount. setState only fires inside the
-  // async IIFE — never synchronously in the effect body — so the
-  // react-hooks set-state-in-effect rule stays happy. The cancelled
-  // flag protects against the user navigating away mid-load.
+  // Hydrate from disk on mount only when the cache wasn't already warm (cold
+  // first open right after startup). setState only fires inside the async IIFE
+  // — never synchronously in the effect body — so the react-hooks
+  // set-state-in-effect rule stays happy. The cancelled flag protects against
+  // the user navigating away mid-load.
   useEffect(() => {
+    if (seededRef.current) return // already painted from the warm cache
     let cancelled = false
     void (async () => {
-      const cfg = await window.api.telegram.getConfig()
-      const live = await window.api.telegram.status()
-      if (cancelled) return
-      setBotToken(cfg.botToken)
-      setHasSavedToken(cfg.botToken.length > 0)
-      setAllowedUsersInput(cfg.allowedUserIds.join(', '))
-      setSavedBotToken(cfg.botToken)
-      setSavedAllowedUsers(cfg.allowedUserIds.join(', '))
-      setAutoRefresh(cfg.autoRefresh ?? true)
-      setStaleHours(cfg.staleHours ?? 3)
-      setVerbose(cfg.verbose ?? false)
-      setStatus(live)
-      if (live.botUsername) setLastBot({ username: live.botUsername, name: live.botName })
+      const snap = await loadTelegramSnapshot()
+      if (cancelled || !snap) return
+      setBotToken(snap.config.botToken)
+      setHasSavedToken(snap.config.botToken.length > 0)
+      setAllowedUsersInput(snap.config.allowedUserIds.join(', '))
+      setSavedBotToken(snap.config.botToken)
+      setSavedAllowedUsers(snap.config.allowedUserIds.join(', '))
+      setAutoRefresh(snap.config.autoRefresh ?? true)
+      setStaleHours(snap.config.staleHours ?? 3)
+      setVerbose(snap.config.verbose ?? false)
+      setStatus(snap.status)
+      if (snap.status.botUsername) {
+        setLastBot({ username: snap.status.botUsername, name: snap.status.botName })
+      }
       // Set `enabled` last so the first render with a real boolean
       // has the rest of the form already populated. Avoids sub-flicker.
-      setEnabled(cfg.enabled)
+      setEnabled(snap.config.enabled)
     })()
     return () => {
       cancelled = true
@@ -111,6 +173,36 @@ export function TelegramPanel(): React.JSX.Element {
     [t]
   )
 
+  // Mirror the committed panel state back into the module cache so reopening
+  // the panel paints the latest values (never a stale snapshot). Covers every
+  // mutation path uniformly — toggle, test/connect, disconnect, verbose —
+  // without threading a cache write through each handler. Skipped until the
+  // first real load (enabled !== null).
+  useEffect(() => {
+    if (enabled === null) return
+    const parsed = parseUserIds(savedAllowedUsers)
+    cachedSnapshot = {
+      config: {
+        enabled,
+        botToken: savedBotToken,
+        allowedUserIds: parsed.ok ? parsed.ids : [],
+        autoRefresh: autoRefresh ?? true,
+        staleHours,
+        verbose: verbose ?? false
+      },
+      status
+    }
+  }, [
+    enabled,
+    savedBotToken,
+    savedAllowedUsers,
+    autoRefresh,
+    staleHours,
+    verbose,
+    status,
+    parseUserIds
+  ])
+
   const handleToggle = useCallback(async (value: boolean) => {
     setEnabled(value)
     const response = await window.api.telegram.setConfig({ enabled: value })
@@ -124,6 +216,22 @@ export function TelegramPanel(): React.JSX.Element {
     setVerbose(value)
     const response = await window.api.telegram.setConfig({ verbose: value })
     setStatus(response.status)
+  }, [])
+
+  // Auto-refresh + stale-window persist immediately (prefs-only patches — the
+  // main process writes them without restarting the bot; read fresh per turn),
+  // exactly like WhatsApp's handleAutoRefresh/handleStaleHours. Previously these
+  // toggles mutated local state ONLY and rode along on the next Test/connect, so
+  // toggling without a token change never reached disk. These controls are gated
+  // on `connected`, so enabled is always true here — the patch never restarts.
+  const handleAutoRefresh = useCallback(async (value: boolean) => {
+    setAutoRefresh(value)
+    await window.api.telegram.setConfig({ autoRefresh: value })
+  }, [])
+
+  const handleStaleHours = useCallback(async (hours: number) => {
+    setStaleHours(hours)
+    await window.api.telegram.setConfig({ staleHours: hours })
   }, [])
 
   const translateError = useCallback(
@@ -501,7 +609,9 @@ export function TelegramPanel(): React.JSX.Element {
                         type="button"
                         aria-selected={active}
                         disabled={!connected}
-                        onClick={() => setAutoRefresh(opt.value)}
+                        onClick={() => {
+                          if (opt.value !== autoRefresh) void handleAutoRefresh(opt.value)
+                        }}
                         className={cn(
                           'rounded-md px-3 py-1 text-xs font-medium',
                           'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
@@ -524,7 +634,7 @@ export function TelegramPanel(): React.JSX.Element {
               label={t('settings.services.telegram.autoRefresh.staleLabel')}
               value={String(staleHours)}
               options={staleHoursOptions}
-              onChange={(next) => setStaleHours(Number(next))}
+              onChange={(next) => void handleStaleHours(Number(next))}
               disabled={!connected || autoRefresh !== true}
             />
           </div>
@@ -644,7 +754,9 @@ function CommandsSection(): React.JSX.Element {
     { name: '/stop', description: t('settings.services.telegram.commands.stop') },
     { name: '/approve', description: t('settings.services.telegram.commands.approve') },
     { name: '/deny', description: t('settings.services.telegram.commands.deny') },
-    { name: '/status', description: t('settings.services.telegram.commands.status') }
+    { name: '/status', description: t('settings.services.telegram.commands.status') },
+    { name: '/mode', description: t('settings.services.telegram.commands.mode') },
+    { name: '/model', description: t('settings.services.telegram.commands.model') }
   ]
   const limitations: string[] = [
     t('settings.services.telegram.limitations.singleConversation'),

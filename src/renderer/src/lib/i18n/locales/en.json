@@ -544,7 +544,9 @@
           "stop": "Cancel the task currently running in this chat.",
           "approve": "Approve a pending confirmation prompt (e.g. before a destructive action runs).",
           "deny": "Deny a pending confirmation prompt.",
-          "status": "Wolffish current status."
+          "status": "Wolffish current status.",
+          "mode": "Show or set the chat mode — /mode single or /mode workflow.",
+          "model": "List connected cloud models and switch. Reply with a number, or /model <name> to filter."
         },
         "limitationsTitle": "Limitations",
         "limitations": {
@@ -962,6 +964,8 @@
           "approve": "Approve a pending tool call",
           "deny": "Deny a pending tool call",
           "status": "System status report",
+          "mode": "Single or workflow mode",
+          "model": "Pick the cloud model",
           "local": "Switch to local model",
           "cloud": "Switch to cloud model"
         },

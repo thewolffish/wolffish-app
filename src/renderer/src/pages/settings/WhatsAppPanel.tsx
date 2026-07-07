@@ -3,7 +3,7 @@ import { Input } from '@components/core/Input'
 import { Select, type SelectOption } from '@components/core/Select'
 import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn'
-import type { WhatsAppChannelStatus } from '@preload/index'
+import type { WhatsAppChannelStatus, WhatsAppConfig } from '@preload/index'
 import { WhatsappIcon } from 'hugeicons-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -16,44 +16,100 @@ const STATUS_DOT: Record<WhatsAppChannelStatus['status'], string> = {
   disconnected: 'bg-border'
 }
 
+// Module-level snapshot of the channel's config + live status, warmed once at
+// app start (this panel is eagerly imported via Settings.tsx, so the load
+// below runs during startup). By the time the user opens the panel the data is
+// already in memory and paints on the first frame — no getConfig()/status()
+// round-trip, no defaults→loaded flash. Mirrors GitHubPanel / GooglePanel.
+// `null` means "not loaded yet".
+type WhatsAppSnapshot = { config: WhatsAppConfig; status: WhatsAppChannelStatus }
+let cachedSnapshot: WhatsAppSnapshot | null = null
+let loadPromise: Promise<WhatsAppSnapshot | null> | null = null
+
+function loadWhatsAppSnapshot(): Promise<WhatsAppSnapshot | null> {
+  if (cachedSnapshot) return Promise.resolve(cachedSnapshot)
+  const api = window.api?.whatsapp
+  if (!api) return Promise.resolve(null) // preload not ready yet; retry on mount
+  if (!loadPromise) {
+    loadPromise = Promise.all([api.getConfig(), api.status()])
+      .then(([config, status]) => {
+        cachedSnapshot = { config, status }
+        return cachedSnapshot
+      })
+      .catch(() => null) // leave the cache cold so the mount effect can retry
+      .finally(() => {
+        loadPromise = null
+      })
+  }
+  return loadPromise
+}
+
+// Prefill the cache at app start.
+void loadWhatsAppSnapshot()
+
+// Keep the cached status fresh even while the panel is closed, so reopening
+// paints the current connection state (not a stale one). Intentionally never
+// torn down — it mirrors live status into the module cache for the next open.
+window.api?.whatsapp?.onStatusChange((s) => {
+  if (cachedSnapshot) cachedSnapshot = { ...cachedSnapshot, status: s }
+})
+
 export function WhatsAppPanel(): React.JSX.Element {
   const { t } = useTranslation()
   const toast = useToast()
 
-  const [enabled, setEnabled] = useState<boolean | null>(null)
-  const [allowedPhonesInput, setAllowedPhonesInput] = useState('')
-  const [savedPhones, setSavedPhones] = useState('')
-  const [status, setStatus] = useState<WhatsAppChannelStatus>({
-    status: 'disconnected',
-    error: null,
-    qr: null,
-    connectedPhone: null,
-    connectedName: null,
-    hasSession: false
-  })
-  const [qrCode, setQrCode] = useState<string | null>(null)
+  // Seed from the module cache so the panel paints real config + status on the
+  // first frame instead of flashing defaults → loaded values. When the cache
+  // isn't warm yet (cold first open right after startup) these fall back to the
+  // loading defaults and the mount effect below hydrates.
+  const [enabled, setEnabled] = useState<boolean | null>(cachedSnapshot?.config.enabled ?? null)
+  const [allowedPhonesInput, setAllowedPhonesInput] = useState(() =>
+    (cachedSnapshot?.config.allowedPhoneNumbers ?? []).join(', ')
+  )
+  const [savedPhones, setSavedPhones] = useState(() =>
+    (cachedSnapshot?.config.allowedPhoneNumbers ?? []).join(', ')
+  )
+  const [status, setStatus] = useState<WhatsAppChannelStatus>(
+    () =>
+      cachedSnapshot?.status ?? {
+        status: 'disconnected',
+        error: null,
+        qr: null,
+        connectedPhone: null,
+        connectedName: null,
+        hasSession: false
+      }
+  )
+  const [qrCode, setQrCode] = useState<string | null>(cachedSnapshot?.status.qr ?? null)
   const [busy, setBusy] = useState(false)
-  const [autoRefresh, setAutoRefresh] = useState<boolean | null>(null)
-  const [staleHours, setStaleHours] = useState(3)
-  const [verbose, setVerbose] = useState<boolean | null>(null)
+  const [autoRefresh, setAutoRefresh] = useState<boolean | null>(
+    cachedSnapshot ? (cachedSnapshot.config.autoRefresh ?? true) : null
+  )
+  const [staleHours, setStaleHours] = useState(cachedSnapshot?.config.staleHours ?? 3)
+  const [verbose, setVerbose] = useState<boolean | null>(
+    cachedSnapshot ? (cachedSnapshot.config.verbose ?? false) : null
+  )
   const loggingOut = useRef(false)
+  // Whether the first render was seeded from the warm cache — if so the mount
+  // hydrate is skipped (there's nothing left to fill in). Captured once.
+  const seededRef = useRef(cachedSnapshot !== null)
   const loaded = enabled !== null
 
   useEffect(() => {
+    if (seededRef.current) return // already painted from the warm cache
     let cancelled = false
     void (async () => {
-      const cfg = await window.api.whatsapp.getConfig()
-      const live = await window.api.whatsapp.status()
-      if (cancelled) return
-      const phonesStr = (cfg.allowedPhoneNumbers ?? []).join(', ')
+      const snap = await loadWhatsAppSnapshot()
+      if (cancelled || !snap) return
+      const phonesStr = (snap.config.allowedPhoneNumbers ?? []).join(', ')
       setAllowedPhonesInput(phonesStr)
       setSavedPhones(phonesStr)
-      setStatus(live)
-      if (live.qr) setQrCode(live.qr)
-      setAutoRefresh(cfg.autoRefresh ?? true)
-      setStaleHours(cfg.staleHours ?? 3)
-      setVerbose(cfg.verbose ?? false)
-      setEnabled(cfg.enabled)
+      setStatus(snap.status)
+      if (snap.status.qr) setQrCode(snap.status.qr)
+      setAutoRefresh(snap.config.autoRefresh ?? true)
+      setStaleHours(snap.config.staleHours ?? 3)
+      setVerbose(snap.config.verbose ?? false)
+      setEnabled(snap.config.enabled)
     })()
     return () => {
       cancelled = true
@@ -82,6 +138,25 @@ export function WhatsAppPanel(): React.JSX.Element {
         .filter((s) => s.length > 0),
     []
   )
+
+  // Mirror the committed panel state back into the module cache so reopening
+  // the panel paints the latest values (never a stale snapshot). Covers every
+  // mutation path uniformly — toggle, save, logout, verbose, auto-refresh —
+  // without threading a cache write through each handler. Skipped until the
+  // first real load (enabled !== null).
+  useEffect(() => {
+    if (enabled === null) return
+    cachedSnapshot = {
+      config: {
+        enabled,
+        allowedPhoneNumbers: parsePhones(savedPhones),
+        autoRefresh: autoRefresh ?? true,
+        staleHours,
+        verbose: verbose ?? false
+      },
+      status
+    }
+  }, [enabled, savedPhones, autoRefresh, staleHours, verbose, status, parsePhones])
 
   // Toggle immediately starts/stops WhatsApp
   const handleToggle = useCallback(async (next: boolean) => {
@@ -575,6 +650,8 @@ function CommandsSection(): React.JSX.Element {
     { name: '/approve', description: t('settings.services.whatsapp.commands.approve') },
     { name: '/deny', description: t('settings.services.whatsapp.commands.deny') },
     { name: '/status', description: t('settings.services.whatsapp.commands.status') },
+    { name: '/mode', description: t('settings.services.whatsapp.commands.mode') },
+    { name: '/model', description: t('settings.services.whatsapp.commands.model') },
     { name: '/local', description: t('settings.services.whatsapp.commands.local') },
     { name: '/cloud', description: t('settings.services.whatsapp.commands.cloud') }
   ]
