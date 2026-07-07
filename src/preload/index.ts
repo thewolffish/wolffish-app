@@ -240,6 +240,7 @@ export type WorkspaceConfig = {
     service?: string
     hippocampusTab?: string
     sidebarCollapsed?: string
+    rightSidebarCollapsed?: string
   }
   locale: Locale
   theme: ThemeSource
@@ -430,11 +431,26 @@ export type ChatHistoryMessage =
       content: string
       isError?: boolean
     }
-export type ChatDoneEvent = { turnId: string }
-export type ChatErrorEvent = { turnId: string; error: string }
+export type ChatDoneEvent = { turnId: string; conversationId: string | null }
+export type ChatErrorEvent = { turnId: string; conversationId: string | null; error: string }
+
+/**
+ * Turn lifecycle broadcast (chat:turnState) — fired for EVERY channel's
+ * turns (in-app, WhatsApp, Telegram) so the Conversations sidebar can show
+ * live status chips without owning the turn.
+ */
+export type ChatTurnStateEvent = {
+  phase: 'started' | 'done' | 'canceled' | 'error'
+  turnId: string
+  conversationId: string | null
+  channel: string
+  title?: string | null
+  error?: string
+}
 
 export type ChatTurnEvent = {
   turnId: string
+  conversationId: string | null
   type:
     | 'context.built'
     | 'llm.response'
@@ -470,7 +486,8 @@ export type ApprovalDescription = {
 }
 
 export type ChatApprovalRequestEvent = {
-  turnId: string | null
+  turnId: string
+  conversationId: string | null
   id: string
   toolCallId: string
   tool: string
@@ -495,7 +512,8 @@ export type AskUserResponse =
 
 /** Emitted when the agent asks the user a multiple-choice question. */
 export type ChatAskRequestEvent = {
-  turnId: string | null
+  turnId: string
+  conversationId: string | null
   id: string
   toolCallId: string
   question: string
@@ -508,6 +526,7 @@ export type ChatAskRequestEvent = {
 
 export type ChatCredentialBlockedEvent = {
   turnId: string
+  conversationId: string | null
   type: string
 }
 
@@ -675,7 +694,8 @@ export type ChatApi = {
     /** Per-turn chat-mode override (procedure Play honors the procedure's stamp). */
     modeOverride?: 'single' | 'workflow'
   }) => Promise<{ turnId: string; ok: boolean; error?: string }>
-  cancel: () => Promise<{ canceled: boolean }>
+  /** Cancel one conversation's in-flight turn; omitted id cancels all. */
+  cancel: (payload?: { conversationId?: string | null }) => Promise<{ canceled: boolean }>
   respondApproval: (payload: { id: string; decision: ApprovalDecision }) => Promise<{ ok: boolean }>
   respondAsk: (payload: { id: string; response: AskUserResponse }) => Promise<{ ok: boolean }>
   /** Save-dialog + Chromium print of a renderer-built transcript HTML. */
@@ -683,13 +703,17 @@ export type ChatApi = {
     html: string
     fileName: string
   }) => Promise<{ ok: boolean; canceled?: boolean; error?: string }>
-  onSegment: (listener: (segment: Segment) => void) => () => void
+  onSegment: (
+    listener: (segment: Segment & { conversationId?: string | null }) => void
+  ) => () => void
   onDone: (listener: (event: ChatDoneEvent) => void) => () => void
   onError: (listener: (event: ChatErrorEvent) => void) => () => void
   onTurnEvent: (listener: (event: ChatTurnEvent) => void) => () => void
   onApprovalRequest: (listener: (event: ChatApprovalRequestEvent) => void) => () => void
   onAskRequest: (listener: (event: ChatAskRequestEvent) => void) => () => void
   onCredentialBlocked: (listener: (event: ChatCredentialBlockedEvent) => void) => () => void
+  /** Turn lifecycle across ALL channels — backs the sidebar status chips. */
+  onTurnState: (listener: (event: ChatTurnStateEvent) => void) => () => void
 }
 
 export type ConversationSummaryUpdate = {
@@ -702,7 +726,8 @@ export type ConversationApi = {
   list: () => Promise<ConversationMeta[]>
   load: (id: string) => Promise<ConversationFile | null>
   save: (conv: ConversationFile) => Promise<{ ok: true }>
-  delete: (id: string) => Promise<{ ok: true }>
+  /** ok:false ⇒ refused (conversation has a turn in flight). */
+  delete: (id: string) => Promise<{ ok: boolean }>
   create: (model: string | null) => Promise<ConversationFile>
   /**
    * Fired when the main-side rolling summarizer persisted a new prefix
@@ -710,6 +735,12 @@ export type ConversationApi = {
    * next whole-file save preserves it and the next send replays lean.
    */
   onSummaryUpdated: (listener: (update: ConversationSummaryUpdate) => void) => () => void
+  /**
+   * Fired when a conversation was deleted anywhere (in-app History OR a
+   * channel /delete). The sidebar prunes its live run-status so a
+   * channel-side delete doesn't leave a ghost row.
+   */
+  onDeleted: (listener: (event: { id: string }) => void) => () => void
 }
 
 export type ViewerTreeNode =
@@ -798,6 +829,8 @@ export type HeartbeatRunningJob = {
   label: string
   body: string
   startedAt: number
+  /** The run's own mode (stamped marker / procedure field); null ⇒ global. */
+  mode: 'single' | 'workflow' | null
 }
 
 export type HeartbeatLogEntry = {
@@ -1083,6 +1116,10 @@ export type GoogleApi = {
   authAdd: (email: string) => Promise<GoogleAuthResult>
   cancelAuth: () => Promise<boolean>
   listAccounts: () => Promise<string[]>
+  // Best-effort per-account token health: email → true (refresh token still
+  // valid) / false (expired or revoked). Accounts we couldn't evaluate are
+  // omitted, not marked unhealthy.
+  checkAccounts: () => Promise<Record<string, boolean>>
   removeAccount: (
     email: string
   ) => Promise<{ ok: true; accounts: string[] } | { ok: false; message: string }>
@@ -1516,7 +1553,7 @@ const api: WolffishApi = {
   },
   chat: {
     send: (payload) => ipcRenderer.invoke('chat:send', payload),
-    cancel: () => ipcRenderer.invoke('chat:cancel'),
+    cancel: (payload) => ipcRenderer.invoke('chat:cancel', payload),
     respondApproval: (payload) => ipcRenderer.invoke('chat:approvalRespond', payload),
     respondAsk: (payload) => ipcRenderer.invoke('chat:askRespond', payload),
     exportPdf: (payload) => ipcRenderer.invoke('chat:exportPdf', payload),
@@ -1526,7 +1563,8 @@ const api: WolffishApi = {
     onTurnEvent: (listener) => subscribe('chat:turnEvent', listener),
     onApprovalRequest: (listener) => subscribe('chat:approvalRequest', listener),
     onAskRequest: (listener) => subscribe('chat:askRequest', listener),
-    onCredentialBlocked: (listener) => subscribe('chat:credentialBlocked', listener)
+    onCredentialBlocked: (listener) => subscribe('chat:credentialBlocked', listener),
+    onTurnState: (listener) => subscribe('chat:turnState', listener)
   },
   conversation: {
     list: () => ipcRenderer.invoke('conversation:list'),
@@ -1534,7 +1572,8 @@ const api: WolffishApi = {
     save: (conv) => ipcRenderer.invoke('conversation:save', conv),
     delete: (id) => ipcRenderer.invoke('conversation:delete', id),
     create: (model) => ipcRenderer.invoke('conversation:create', model),
-    onSummaryUpdated: (listener) => subscribe('conversation:summaryUpdated', listener)
+    onSummaryUpdated: (listener) => subscribe('conversation:summaryUpdated', listener),
+    onDeleted: (listener) => subscribe('conversation:deleted', listener)
   },
   viewer: {
     readTree: () => ipcRenderer.invoke('viewer:readTree'),
@@ -1705,6 +1744,7 @@ const api: WolffishApi = {
     authAdd: (email) => ipcRenderer.invoke('google:authAdd', email),
     cancelAuth: () => ipcRenderer.invoke('google:cancelAuth'),
     listAccounts: () => ipcRenderer.invoke('google:listAccounts'),
+    checkAccounts: () => ipcRenderer.invoke('google:checkAccounts'),
     removeAccount: (email) => ipcRenderer.invoke('google:removeAccount', email)
   },
   mic: {

@@ -1,11 +1,11 @@
 import {
   createConversation,
-  generateTitle,
   saveConversation,
   type ConversationChannel,
   type ConversationFile,
   type ConversationMessage
 } from '@main/conversations'
+import { titleFromMessage } from '@main/conversation-titler'
 import { diskWriter } from '@main/io/diskWriter'
 import { net } from 'electron'
 import { AsyncLocalStorage } from 'node:async_hooks'
@@ -25,7 +25,7 @@ import {
 } from '@main/runtime/broca'
 import { Cerebellum, type WorkflowHost } from '@main/runtime/cerebellum'
 import { compactOverflow } from '@main/runtime/compactor'
-import { autonomousTurnScope, Corpus } from '@main/runtime/corpus'
+import { Corpus, turnScope } from '@main/runtime/corpus'
 import { Cortex } from '@main/runtime/cortex'
 import { Device } from '@main/runtime/device'
 import { Hippocampus, type TurnToolCall } from '@main/runtime/hippocampus'
@@ -159,11 +159,20 @@ export type AgentTurnOptions = {
    */
   workingFolders?: string[]
   /**
-   * Isolated Broca instance for this turn. When provided, the turn uses
-   * this instead of the shared `this.broca`, preventing state collision
-   * between concurrent turns (e.g. heartbeat jobs vs interactive chat).
+   * Isolated Broca instance for this turn. Every turn gets its OWN Broca —
+   * omitted, respond() constructs a fresh one. Callers that need to read
+   * the segment stream around the turn (processAutonomous, workflow
+   * subagents) pass theirs explicitly.
    */
   broca?: import('@main/runtime/broca').Broca
+  /**
+   * Publish this turn's conversation as the app-wide "current conversation"
+   * (cerebellum global + conversation.changed emit, consumed by the
+   * extension server). Defaults to true for channel turns; sealed
+   * background runs (heartbeat/procedures) pass false so a scheduled run
+   * can never flip the visible conversation mid-chat.
+   */
+  publishConversation?: boolean
   /**
    * When true, confirm/destructive tool calls are auto-approved without
    * going through the approval bridge. Block-level calls still block.
@@ -269,7 +278,6 @@ export class Agent {
   readonly hippocampus: Hippocampus
   readonly cerebellum: Cerebellum
   readonly wernicke: Wernicke
-  readonly broca: Broca
   readonly amygdala: Amygdala
   readonly motor: Motor
   readonly basalganglia: BasalGanglia
@@ -326,7 +334,6 @@ export class Agent {
       getContextWindow: () => this.thalamus.getActiveContextWindow()
     })
     this.wernicke = new Wernicke({ corpus })
-    this.broca = new Broca({ corpus, shouldSilenceToolCall: isInternalToolCall })
     this.motor = new Motor({ workspaceRoot, cerebellum: this.cerebellum, corpus })
     this.hypothalamus = new Hypothalamus({
       corpus,
@@ -353,12 +360,14 @@ export class Agent {
       hippocampus: this.hippocampus
     })
     this.usage = new Usage({ workspaceRoot, corpus })
-    // Summarization side-calls (compaction, post-turn conversation
-    // summarizer) bypass the turn loop's captureUsage, so their spend never
-    // reached the ledger. Thalamus emits them as llm.response role:'summary'
-    // — record them here, where Usage lives.
+    // Side-calls that bypass the turn loop's captureUsage — summarization
+    // (compaction / post-turn summarizer) and conversation titling — never
+    // reached the ledger on their own. Thalamus emits them as llm.response
+    // role:'summary' / role:'title'; record both here, where Usage lives.
+    // (Titling is its own role so the ledger can itemize it as titling, not
+    // summary.)
     corpus.on('llm.response', (payload) => {
-      if (payload.role !== 'summary') return
+      if (payload.role !== 'summary' && payload.role !== 'title') return
       const provider = payload.provider as ProviderId
       const cost = calculateCost(
         provider,
@@ -608,6 +617,12 @@ export class Agent {
    * are nested respond() calls; each gets its own scope here.
    */
   async respond(turn: AgentTurnOptions): Promise<AgentTurnResult> {
+    // Every turn gets its own segment emitter. Turns run concurrently, so a
+    // shared Broca would let turn B's beginTurn re-point the sink mid-stream
+    // and stamp A's output with B's turnId — per-turn instances make that
+    // class of collision structurally impossible.
+    const broca =
+      turn.broca ?? new Broca({ corpus: this.corpus, shouldSilenceToolCall: isInternalToolCall })
     // A top-level turn in workflow mode owns an agent registry; a subagent
     // turn and single mode do not. The session is created here and pinned to
     // this turn's async scope (workflowCtx.run) so the WorkflowHost resolves
@@ -628,19 +643,19 @@ export class Agent {
           // broca.endTurn() are dropped by broca's guard, which is why the
           // finally block finalizes the session BEFORE ending the turn.
           (snapshot) => {
-            const broca = turn.broca ?? this.broca
             broca.emitWorkflow(turn.turnId, snapshot)
           }
         )
       : null
     return this.cerebellum.runWithConversation(turn.conversationId ?? null, () =>
-      this.workflowCtx.run(workflow, () => this.runRespond(turn, workflow))
+      this.workflowCtx.run(workflow, () => this.runRespond(turn, workflow, broca))
     )
   }
 
   private async runRespond(
     turn: AgentTurnOptions,
-    workflow: WorkflowSession | null
+    workflow: WorkflowSession | null,
+    broca: Broca
   ): Promise<AgentTurnResult> {
     await this.init().catch(() => undefined)
 
@@ -655,8 +670,6 @@ export class Agent {
       content: userContent,
       timestamp: new Date().toISOString()
     })
-
-    const broca = turn.broca ?? this.broca
 
     const messages: ChatMessage[] = await this.processHistoryAttachments(
       [...turn.history],
@@ -747,9 +760,13 @@ export class Agent {
     broca.beginTurn(turn.turnId, turn.onSegment)
     // Publish the active conversation to the UI/extension ONCE, for real
     // (non-agent) turns only — a subagent is invisible and must never flip the
-    // visible conversation. The turn-scoped stamp itself rides on ALS (see
-    // respond), so this is purely the global + conversation.changed emit.
-    if (turn.role !== 'agent') {
+    // visible conversation, and a sealed background run (publishConversation:
+    // false) must never flip it either. The turn-scoped stamp itself rides on
+    // ALS (see respond), so this is purely the global + conversation.changed
+    // emit. With concurrent turns the global is last-started-wins by design —
+    // it is a UI/extension display pointer, not a correctness input.
+    const publishConversation = turn.role !== 'agent' && turn.publishConversation !== false
+    if (publishConversation) {
       this.cerebellum.setCurrentConversationId(turn.conversationId ?? null, turn.conversationTitle)
     }
 
@@ -1469,7 +1486,12 @@ export class Agent {
         )
       }
       broca.endTurn()
-      if (turn.role !== 'agent') this.cerebellum.setCurrentConversationId(null)
+      // Guarded clear: with concurrent turns, another conversation may have
+      // published itself since this turn started — clearing unconditionally
+      // would null a sibling turn's live pointer.
+      if (publishConversation) {
+        this.cerebellum.clearCurrentConversationId(turn.conversationId ?? null)
+      }
       if (workflow) {
         // Flush queued disk writes so nothing lands half-written after the
         // turn closes.
@@ -1596,14 +1618,10 @@ export class Agent {
   async processAutonomous(opts: AutonomousTurnOptions): Promise<AutonomousTurnResult> {
     await this.init().catch(() => undefined)
 
-    const summary = generateTitle({
-      id: '',
-      title: 'Untitled',
-      model: null,
-      messages: [{ role: 'user', content: opts.instruction, timestamp: 0 }],
-      createdAt: 0,
-      updatedAt: 0
-    })
+    // Pure LLM title of the job's instruction (falls back to a plain trim if
+    // the model is unreachable), prefixed with the job label so a scheduled
+    // run reads e.g. "Hourly (15): Summarize unread email".
+    const summary = await titleFromMessage(opts.instruction, this.thalamus).catch(() => 'Untitled')
 
     const conv: ConversationFile = {
       ...createConversation(null),
@@ -1658,11 +1676,14 @@ export class Agent {
     }
     const localBroca = new Broca({ corpus: this.corpus, shouldSilenceToolCall: isInternalToolCall })
 
-    // Run inside the autonomous-turn scope so this background run's corpus
-    // events (context/tokens/tools/tasks) are NOT relayed into a live chat that
-    // may still be streaming — they'd otherwise corrupt that conversation's
-    // meter/timeline and hijack its active task id. See autonomousTurnScope.
-    const result = await autonomousTurnScope.run(true, () =>
+    // Run inside a sealed autonomous turn scope so this background run's
+    // corpus events (context/tokens/tools/tasks) are NOT relayed into a live
+    // chat that may still be streaming — they'd otherwise corrupt that
+    // conversation's meter/timeline and hijack its active task id. The scope
+    // still carries the run's identity for daily-log attribution. See
+    // turnScope in corpus.ts. publishConversation:false keeps a scheduled run
+    // from flipping the app-wide visible-conversation pointer mid-chat.
+    const result = await turnScope.run({ turnId, conversationId: conv.id, autonomous: true }, () =>
       this.respond({
         history: [{ role: 'user', content: opts.instruction }],
         turnId,
@@ -1672,6 +1693,7 @@ export class Agent {
         conversationTitle: conv.title,
         broca: localBroca,
         bypassApproval: true,
+        publishConversation: false,
         modeOverride: opts.mode
       })
     )

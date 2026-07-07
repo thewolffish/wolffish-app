@@ -358,6 +358,8 @@ export class Usage {
   private cache: CachedEntry[] = []
   private braveCache: CachedBraveEntry[] = []
   private loaded = false
+  /** In-flight load, so concurrent turns finishing together share ONE parse. */
+  private loadPromise: Promise<void> | null = null
 
   constructor(options: UsageOptions = {}) {
     this.workspaceRoot = options.workspaceRoot ?? null
@@ -366,12 +368,23 @@ export class Usage {
 
   async load(): Promise<void> {
     if (this.loaded || !this.workspaceRoot) return
-    this.cache = await this.parseAllProviderFiles()
-    this.braveCache = await this.parseBraveFile()
-    this.loaded = true
+    // Single-flight: without this, two turns finishing near-simultaneously each
+    // parse the files fresh and each OVERWRITE this.cache — the second parse
+    // clobbers the entry the first already push()ed, silently dropping recorded
+    // spend from the in-memory ledger until the next restart/sync.
+    if (this.loadPromise) return this.loadPromise
+    this.loadPromise = (async () => {
+      this.cache = await this.parseAllProviderFiles()
+      this.braveCache = await this.parseBraveFile()
+      this.loaded = true
+    })().finally(() => {
+      this.loadPromise = null
+    })
+    return this.loadPromise
   }
 
   async sync(): Promise<void> {
+    this.loadPromise = null
     this.loaded = false
     this.cache = []
     this.braveCache = []
@@ -569,30 +582,24 @@ export class Usage {
         : ''
     const line = `- ${date} ${time} | ${entry.model} | in:${entry.inputTokens} out:${entry.outputTokens}${cachePart} | $${entry.cost.toFixed(6)}\n`
 
-    let existing = ''
-    try {
-      existing = await fs.readFile(filepath, 'utf8')
-    } catch {
-      existing = ''
-    }
-
+    // Header/date-section decision runs INSIDE the file's write queue — the
+    // probe used to run outside it, so two turns finishing together wrote
+    // duplicate date headers.
     const dateHeader = `## ${date}`
-    if (!existing.includes(dateHeader)) {
-      const body =
-        existing.length === 0
-          ? `# ${providerLabel(entry.provider)}\n\n${dateHeader}\n\n${line}`
-          : `\n${dateHeader}\n\n${line}`
-      try {
-        await diskWriter.appendLine(filepath, body)
-      } catch {
-        return
-      }
-    } else {
-      try {
-        await diskWriter.appendLine(filepath, line)
-      } catch {
-        return
-      }
+    try {
+      await diskWriter.update(filepath, (raw) => {
+        const existing = raw ?? ''
+        if (!existing.includes(dateHeader)) {
+          const body =
+            existing.length === 0
+              ? `# ${providerLabel(entry.provider)}\n\n${dateHeader}\n\n${line}`
+              : `\n${dateHeader}\n\n${line}`
+          return existing + body
+        }
+        return existing + line
+      })
+    } catch {
+      return
     }
   }
 
@@ -614,17 +621,10 @@ export class Usage {
         : ''
     const line = `- ${time} | ${providerName} | ${entry.model} | in:${entry.inputTokens} out:${entry.outputTokens}${cachePart} | $${entry.cost.toFixed(6)}\n`
 
-    let needsHeader = true
     try {
-      await fs.access(filepath)
-      needsHeader = false
-    } catch {
-      // file doesn't exist
-    }
-
-    const body = (needsHeader ? `# ${date}\n\n` : '') + line
-    try {
-      await diskWriter.appendLine(filepath, body)
+      await diskWriter.appendWithInit(filepath, (exists) =>
+        exists ? line : `# ${date}\n\n${line}`
+      )
     } catch {
       return
     }

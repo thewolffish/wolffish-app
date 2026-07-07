@@ -1,10 +1,10 @@
 import {
   loadConversation,
-  saveConversation,
+  updateConversation,
   type ConversationFile,
   type ConversationMessage
 } from '@main/conversations'
-import { autonomousTurnScope } from '@main/runtime/corpus'
+import { turnScope } from '@main/runtime/corpus'
 import type { Thalamus } from '@main/runtime/thalamus'
 
 /**
@@ -64,12 +64,12 @@ export function configureSummarizer(deps: {
 export function queueConversationSummarization(conversationId: string): void {
   if (!configured) return
   const { thalamus, onUpdated } = configured
-  // autonomousTurnScope keeps the summary call's llm.response emit out of
+  // The sealed turnScope keeps the summary call's llm.response emit out of
   // any live turn's relay — this runs post-save for one conversation while a
   // DIFFERENT conversation's turn may be streaming, and the relay would
   // stamp the spend onto that unrelated turn. The ledger listener records
   // it regardless (corpus-level, not relay-level).
-  void autonomousTurnScope.run(true, () =>
+  void turnScope.run({ turnId: null, conversationId, autonomous: true }, () =>
     maybeSummarizeConversation(conversationId, thalamus, onUpdated)
   )
 }
@@ -118,14 +118,19 @@ export async function maybeSummarizeConversation(
     if (!text) return null
     if (text.length > SUMMARY_MAX_CHARS) text = text.slice(0, SUMMARY_MAX_CHARS) + '…'
 
-    // Re-load before writing: the renderer (or a channel) may have appended a
-    // newer turn while the LLM call ran — write the summary onto the freshest
-    // copy so we never clobber messages.
-    const fresh = await loadConversation(conversationId)
-    if (!fresh) return null
-    fresh.summary = text
-    fresh.summarizedThroughMessage = newMark
-    await saveConversation(fresh)
+    // RMW inside the file's write queue: the renderer (or a channel) may
+    // append a newer turn while the LLM call runs — the summary lands on the
+    // freshest copy atomically, so concurrent writers can't clobber messages
+    // and a racing whole-file save can't drop this summary.
+    let wrote = false
+    await updateConversation(conversationId, (fresh) => {
+      if (!fresh) return null
+      wrote = true
+      fresh.summary = text
+      fresh.summarizedThroughMessage = newMark
+      return fresh
+    })
+    if (!wrote) return null
 
     const update: SummaryUpdate = {
       conversationId,

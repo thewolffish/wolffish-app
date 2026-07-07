@@ -1,4 +1,3 @@
-import { markdownToWhatsApp } from '@main/channels/whatsapp/format'
 import type {
   Capability,
   SkillToolDescriptor,
@@ -120,7 +119,7 @@ export function buildWhatsAppCapability(deps: ToolDeps): {
         message: {
           type: 'string',
           description:
-            'The message body. WhatsApp formatting only — *bold*, _italic_, ~strikethrough~, `inline code`, ```monospace```, "- " bullets, "1. " numbered items, "> " quotes. Never Markdown (no **, no # headings, no | tables |, no [text](url)); leaked Markdown is auto-converted best-effort.',
+            'The message body, delivered VERBATIM — nothing converts it. WhatsApp formatting only: *bold* (single asterisks), _italic_, ~strikethrough~, `inline code`, ```monospace```, "- " bullets, "1. " numbered items, "> " quotes. NEVER Markdown (no **, no # headings, no | tables |, no [text](url), no --- rules) — leaked Markdown reaches the recipient as raw syntax. Instead of a table write one "*Label:* value" line per fact; paste links as bare URLs.',
           required: true
         }
       }
@@ -149,7 +148,8 @@ export function buildWhatsAppCapability(deps: ToolDeps): {
         },
         caption: {
           type: 'string',
-          description: 'Optional caption shown beneath the image.',
+          description:
+            'Optional caption shown beneath the image, delivered VERBATIM. WhatsApp formatting only (*bold*, _italic_) — never Markdown.',
           required: false
         },
         mimetype: {
@@ -190,7 +190,8 @@ export function buildWhatsAppCapability(deps: ToolDeps): {
         },
         caption: {
           type: 'string',
-          description: 'Optional caption.',
+          description:
+            'Optional caption, delivered VERBATIM. WhatsApp formatting only (*bold*, _italic_) — never Markdown.',
           required: false
         },
         mimetype: {
@@ -249,7 +250,7 @@ export function buildWhatsAppCapability(deps: ToolDeps): {
         message: {
           type: 'string',
           description:
-            'The reply text. WhatsApp formatting only (*bold*, _italic_, `inline code`, "- " bullets) — never Markdown.',
+            'The reply text, delivered VERBATIM — nothing converts it. WhatsApp formatting only (*bold*, _italic_, `inline code`, "- " bullets) — never Markdown; leaked Markdown reaches the recipient as raw syntax.',
           required: true
         }
       }
@@ -470,9 +471,9 @@ async function sendText(
   const message = stringArg(args.message)
   if (!message) return failure('message is required')
   try {
-    // Model-authored body — convert any Markdown to WhatsApp formatting
-    // (idempotent for text that is already WhatsApp-formatted).
-    const result = await sock.sendMessage(jid, { text: markdownToWhatsApp(message) })
+    // Sent VERBATIM — the tool description carries the formatting
+    // contract; nothing rewrites the model's text on the way out.
+    const result = await sock.sendMessage(jid, { text: message })
     if (result?.key.id) track(result.key.id)
     return success(`Sent. messageId=${result?.key.id} to=${jid}`)
   } catch (err) {
@@ -489,8 +490,7 @@ async function sendImage(
   if (!jid) return failure('jid is required')
   const media = await loadMedia(args, 'imageBase64', 'image')
   if ('error' in media) return failure(media.error)
-  const rawCaption = stringArg(args.caption)
-  const caption = rawCaption ? markdownToWhatsApp(rawCaption) : undefined
+  const caption = stringArg(args.caption) ?? undefined
   try {
     const result = await sock.sendMessage(jid, {
       image: media.buffer,
@@ -514,8 +514,7 @@ async function sendDocument(
   const media = await loadMedia(args, 'documentBase64', 'document')
   if ('error' in media) return failure(media.error)
   const fileName = stringArg(args.fileName) ?? media.basename ?? 'file'
-  const rawCaption = stringArg(args.caption)
-  const caption = rawCaption ? markdownToWhatsApp(rawCaption) : undefined
+  const caption = stringArg(args.caption) ?? undefined
   try {
     const result = await sock.sendMessage(jid, {
       document: media.buffer,
@@ -566,7 +565,7 @@ async function replyTo(
   try {
     const result = await sock.sendMessage(
       jid,
-      { text: markdownToWhatsApp(message) },
+      { text: message },
       {
         quoted: {
           key: { remoteJid: jid, id: quotedId },

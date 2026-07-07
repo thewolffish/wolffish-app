@@ -11,7 +11,8 @@ import {
   getConversationIdForJid,
   setConversationIdForJid
 } from '@main/channels/whatsapp/conversations'
-import { markdownToWhatsApp, stripInlineMarkup } from '@main/channels/whatsapp/format'
+import { markdownToPlain } from '@main/channels/format'
+import { stripInlineMarkup } from '@main/channels/whatsapp/format'
 import {
   extractInboundMedia,
   extractTextBody,
@@ -34,10 +35,10 @@ import {
 import {
   createConversation,
   deleteConversation,
-  generateTitle,
   listConversations,
   loadConversation,
   saveConversation,
+  updateConversation,
   type ConversationFile,
   type ConversationMessage,
   type ConversationMeta,
@@ -59,7 +60,7 @@ import {
   type SegmentTurnEndReason,
   type WorkflowSnapshot
 } from '@main/runtime/broca'
-import type { CorpusEvents } from '@main/runtime/corpus'
+import { turnScope, type CorpusEvents } from '@main/runtime/corpus'
 import type { LocalProvider } from '@main/runtime/providers/local'
 import { composeAttachmentContext } from '@main/uploads/compose-attachments'
 import { saveUploadFromBuffer } from '@main/uploads/uploads'
@@ -125,7 +126,7 @@ const STALE_DEFAULT_HOURS = 3
 const MAX_WHATSAPP_MEDIA_BYTES = 1024 * 1024 * 1024
 
 const BUSY_SYSTEM_PROMPT =
-  "You are a friendly assistant currently working on a previous task for the user. The user has just sent a NEW message but you cannot address it yet — another task is still running. Reply briefly (1-2 short sentences) acknowledging their new message and politely asking them to wait. Do NOT attempt to answer their question, perform any action, or speculate about an answer. Just say you're busy and will get to it. Be warm and natural."
+  "You are a friendly assistant currently working on a previous task for the user. The user has just sent a NEW message but you cannot address it yet — another task is still running. Reply briefly (1-2 short sentences) acknowledging their new message and politely asking them to wait. Do NOT attempt to answer their question, perform any action, or speculate about an answer. Just say you're busy and will get to it. Be warm and natural. Write plain conversational text only — no Markdown, no formatting markup of any kind (your reply is delivered verbatim to a phone chat)."
 const BUSY_REPLY_TIMEOUT_MS = 8000
 const FALLBACK_BUSY_REPLY = "Hold on — I'm working on something. I'll get back to you in a moment."
 
@@ -145,6 +146,12 @@ const KEYCAP_DIGITS = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6
 
 type ActiveTurn = {
   jid: string
+  /**
+   * The owning turn's id. Sink callbacks and the end-of-turn cleanup verify
+   * it before touching this state — a late event from an aborted turn on
+   * the same jid must never write into (or tear down) its successor's turn.
+   */
+  turnId: string
   conversation: ConversationFile
   textBuffer: string
   /**
@@ -213,6 +220,18 @@ export class WhatsAppChannel {
   private reconnectTimer: NodeJS.Timeout | null = null
   private authDir: string | null = null
   private readonly activeByJid = new Map<string, ActiveTurn>()
+  /**
+   * Synchronous per-jid "a turn is being set up" claim. Inbound messages are
+   * fired via `void` per upsert with no per-jid serialization, so a batch (a
+   * reconnect backlog, or two rapid sends coalesced into one notify) can land
+   * two same-jid messages that BOTH pass the arrival gate before either turn
+   * starts (activeByJid is only set at onTurnStarted, after the async
+   * download/STT/title/queue window). This set is claimed synchronously at the
+   * top of dispatchTurn and released once the turn hands off to activeByJid —
+   * so the second same-jid dispatch is declined instead of double-dispatching
+   * (two conversations, a lost turn, an orphaned ActiveTurn).
+   */
+  private readonly dispatchingByJid = new Set<string>()
   private readonly sentIds = new Set<string>()
   private readonly pendingSelections = new Map<string, PendingSelection>()
   private allowedPhoneNumbers: string[] = []
@@ -895,7 +914,16 @@ export class WhatsAppChannel {
       }
       active.controller.abort()
       if (active.taskId) {
-        await this.agent.motor.stopTask(active.taskId).catch(() => undefined)
+        // Scope the stop to the target turn: motor.stopTask emits
+        // task.stopped synchronously, and a scope-less emit would fan out to
+        // every live turn's relay (fail-open), polluting other
+        // conversations' timelines.
+        await turnScope
+          .run(
+            { turnId: active.turnId, conversationId: active.conversation.id, autonomous: false },
+            () => this.agent.motor.stopTask(active.taskId!)
+          )
+          .catch(() => undefined)
       }
       await this.safeSend(jid, 'Stopping...')
       const deadline = Date.now() + 10_000
@@ -924,9 +952,10 @@ export class WhatsAppChannel {
       }
     }
 
-    // /new — start fresh conversation. Busy-blocked.
+    // /new — start fresh conversation. Busy-blocked per chat: it rewires
+    // THIS jid's conversation mapping, so only this jid's own turn matters.
     if (lower === '/new' || lower === 'new' || lower === '/start') {
-      if (this.activeByJid.size > 0) {
+      if (this.activeByJid.has(jid)) {
         await this.sendBusyReply(jid, trimmed)
         return
       }
@@ -936,7 +965,7 @@ export class WhatsAppChannel {
 
     // /resume — conversation picker
     if (lower === '/resume' || lower === 'resume') {
-      if (this.activeByJid.size > 0) {
+      if (this.activeByJid.has(jid)) {
         await this.sendBusyReply(jid, trimmed)
         return
       }
@@ -946,7 +975,7 @@ export class WhatsAppChannel {
 
     // /delete — conversation picker for deletion
     if (lower === '/delete' || lower === 'delete') {
-      if (this.activeByJid.size > 0) {
+      if (this.activeByJid.has(jid)) {
         await this.sendBusyReply(jid, trimmed)
         return
       }
@@ -980,8 +1009,11 @@ export class WhatsAppChannel {
       return
     }
 
-    // Busy check — only one turn at a time across all JIDs
-    if (this.activeByJid.size > 0) {
+    // Busy check — one turn at a time PER CHAT. Other chats (and other
+    // channels, and the in-app renderer) run their own turns concurrently;
+    // the TurnRunner serializes per conversation, so per-jid gating is the
+    // whole story for ordering.
+    if (this.activeByJid.has(jid)) {
       await this.sendBusyReply(jid, trimmed)
       return
     }
@@ -1006,7 +1038,9 @@ export class WhatsAppChannel {
     try {
       const report = await this.agent.insula.reflect()
       const text = typeof report === 'string' ? report : JSON.stringify(report, null, 2)
-      await this.safeSend(jid, markdownToWhatsApp(text))
+      // The insula report is Markdown; nothing downstream converts it
+      // anymore, so flatten it to plain text before sending.
+      await this.safeSend(jid, markdownToPlain(text))
     } catch {
       await this.safeSend(jid, 'Unable to generate status report.')
     }
@@ -1082,6 +1116,7 @@ export class WhatsAppChannel {
     const wasActive = currentId === conversationId
 
     await deleteConversation(conversationId)
+    this.agent.corpus.emit('conversation.deleted', { id: conversationId })
 
     if (wasActive) {
       const fresh = createConversation(null)
@@ -1104,7 +1139,7 @@ export class WhatsAppChannel {
    */
   private async handleInboundVoice(jid: string, msg: WAMessage): Promise<void> {
     // One turn per chat at a time — mirrors Telegram's busy-guard.
-    if (this.activeByJid.size > 0) {
+    if (this.activeByJid.has(jid)) {
       await this.sendBusyReply(jid, '(voice message)')
       return
     }
@@ -1139,19 +1174,17 @@ export class WhatsAppChannel {
         return
       }
 
-      // Stamp the conversation id so the transcript persists under the right
+      // Scope the conversation id so the transcript persists under the right
       // folder, and ensure ffmpeg (silent self-install) since this direct tool
-      // call bypasses the agent loop's dependency resolution.
-      this.agent.cerebellum.setCurrentConversationId(conversation.id)
+      // call bypasses the agent loop's dependency resolution. runWithConversation
+      // (ALS) instead of the imperative global — setting/clearing the global
+      // here would clobber whichever conversation a concurrent turn published.
       await this.agent.cerebellum.ensureSystemTool('ffmpeg')
-      let result: Awaited<ReturnType<typeof this.agent.cerebellum.executeTool>>
-      try {
-        result = await this.agent.cerebellum.executeTool('stt_transcribe', {
+      const result = await this.agent.cerebellum.runWithConversation(conversation.id, () =>
+        this.agent.cerebellum.executeTool('stt_transcribe', {
           filePath: attachment.filePath
         })
-      } finally {
-        this.agent.cerebellum.setCurrentConversationId(null)
-      }
+      )
       if (!result.success) {
         await this.safeSend(
           jid,
@@ -1199,7 +1232,7 @@ export class WhatsAppChannel {
   ): Promise<void> {
     // One turn per chat at a time — mirrors the voice + text paths. Decline
     // BEFORE downloading so a busy agent never pulls a large blob it can't use.
-    if (this.activeByJid.size > 0) {
+    if (this.activeByJid.has(jid)) {
       await this.sendBusyReply(jid, media.caption || `(${media.kind})`)
       return
     }
@@ -1285,7 +1318,38 @@ export class WhatsAppChannel {
     attachments: MessageAttachment[] = [],
     options: { voicePrompt?: boolean; voiceLang?: string } = {}
   ): Promise<void> {
+    // SYNCHRONOUS per-jid claim BEFORE any await — closes the TOCTOU where two
+    // same-jid messages both reach dispatch (both past the arrival gate, both
+    // before activeByJid is set) and double-dispatch. The second is declined.
+    if (this.dispatchingByJid.has(jid) || this.activeByJid.has(jid)) {
+      await this.sendBusyReply(jid, userText || '(message)')
+      return
+    }
+    this.dispatchingByJid.add(jid)
+    try {
+      await this.dispatchTurnInner(jid, userText, attachments, options)
+    } finally {
+      // Safety net for early-return paths before onTurnStarted handed the
+      // claim off to activeByJid (a no-op once already released there).
+      this.dispatchingByJid.delete(jid)
+    }
+  }
+
+  private async dispatchTurnInner(
+    jid: string,
+    userText: string,
+    attachments: MessageAttachment[],
+    options: { voicePrompt?: boolean; voiceLang?: string }
+  ): Promise<void> {
     const conversation = await this.loadOrCreateConversation(jid)
+
+    // A turn still QUEUED on this conversation's lane (not yet started, so not
+    // in activeByJid) is also busy — decline rather than stack a second turn.
+    if (this.runner.isConversationActive(conversation.id)) {
+      await this.sendBusyReply(jid, userText || '(message)')
+      return
+    }
+
     // Resolve the verbosity preference once per turn. false (default) =
     // clean feed (agent messages + file results + errors only).
     const verbose = (await getWhatsAppConfig()).verbose ?? false
@@ -1298,9 +1362,19 @@ export class WhatsAppChannel {
       ...(options.voicePrompt ? { voicePrompt: true } : {}),
       ...(options.voiceLang ? { voiceLang: options.voiceLang } : {})
     }
+    // Local copy feeds the replay-history build below; the persist itself is
+    // an append-RMW against the freshest disk state so a concurrent writer
+    // (summarizer, another surface) is never clobbered by this stale copy.
+    // A null disk means the conversation was deleted out from under us —
+    // skip the write rather than resurrect the file.
     conversation.messages.push(userMessage)
     conversation.updatedAt = userMessage.timestamp
-    await saveConversation(conversation)
+    await updateConversation(conversation.id, (disk) => {
+      if (!disk) return null
+      disk.messages.push(userMessage)
+      disk.updatedAt = userMessage.timestamp
+      return disk
+    })
 
     const window = replayWindow(conversation)
     const history: ChatHistoryMessage[] = stubStaleToolResults(
@@ -1331,14 +1405,19 @@ export class WhatsAppChannel {
       conversation.id
     )
 
+    // This dispatch's own ActiveTurn, captured so the end-of-turn cleanup
+    // always operates on OUR turn's state — never a successor's that may
+    // have taken the per-jid slot while our render queue drained.
+    let dispatchedTurn: ActiveTurn | null = null
     const handle = this.runner.send({
       history,
       conversationId: conversation.id,
       channel: 'whatsapp',
       makeSink: ({ turnId, conversationId }) => this.createSink(turnId, conversationId, jid),
-      onTurnStarted: ({ controller }) => {
+      onTurnStarted: ({ turnId, controller }) => {
         const active: ActiveTurn = {
           jid,
+          turnId,
           conversation,
           textBuffer: '',
           workflowState: new Map(),
@@ -1360,14 +1439,22 @@ export class WhatsAppChannel {
           verbose,
           voiceReplySent: false
         }
+        dispatchedTurn = active
         this.activeByJid.set(jid, active)
+        // Hand the synchronous claim off to activeByJid — from here the active
+        // turn itself is the per-jid guard.
+        this.dispatchingByJid.delete(jid)
       },
       onTurnEnded: () => {
         // Drain the render queue (which includes the final text flush
         // enqueued by onDone) before cleaning up the active turn.
         const pending = this.segmentQueue.get(jid) ?? Promise.resolve()
         void pending.then(() => {
-          const finished = this.activeByJid.get(jid)
+          // Persist and resolve against OUR captured turn object — the
+          // per-jid slot may already belong to a successor turn by the time
+          // this network-bound drain fires, and reading the map here used to
+          // silently drop the finished turn's transcript.
+          const finished = dispatchedTurn
           if (finished) {
             if (finished.pendingApprovalId) {
               const stored = finished.approvals.get(finished.pendingApprovalId)
@@ -1394,10 +1481,19 @@ export class WhatsAppChannel {
               if (finished.stopReason) assistant.stopReason = finished.stopReason
               finished.conversation.messages.push(assistant)
               finished.conversation.updatedAt = assistant.timestamp
-              void saveConversation(finished.conversation)
+              // Append-RMW: the copy held since dispatch may be stale w.r.t.
+              // the summarizer (summary fields) — append the assistant
+              // message onto the freshest disk state instead of whole-saving
+              // the held copy over it. A null disk means the conversation was
+              // deleted mid-drain — skip rather than resurrect it.
+              void updateConversation(finished.conversation.id, (disk) => {
+                if (!disk) return null
+                disk.messages.push(assistant)
+                disk.updatedAt = assistant.timestamp
+                return disk
+              })
                 .then(() => queueConversationSummarization(finished.conversation.id))
                 .catch(() => undefined)
-              void this.maybeGenerateTitle(finished.conversation)
             }
 
             if (finished.pendingApprovalResolve) {
@@ -1413,8 +1509,12 @@ export class WhatsAppChannel {
               finished.pendingAskResolve = null
             }
           }
-          this.activeByJid.delete(jid)
-          this.segmentQueue.delete(jid)
+          // Release the per-jid slot and render queue only if WE still own
+          // them — a successor turn's entries must survive our teardown.
+          if (!finished || this.activeByJid.get(jid) === finished) {
+            this.activeByJid.delete(jid)
+            this.segmentQueue.delete(jid)
+          }
         })
       }
     })
@@ -1456,16 +1556,6 @@ export class WhatsAppChannel {
     return fresh
   }
 
-  private async maybeGenerateTitle(conv: ConversationFile): Promise<void> {
-    if (conv.title !== 'Untitled') return
-    if (!conv.messages.some((m) => m.role === 'user')) return
-    const title = generateTitle(conv)
-    if (title === 'Untitled') return
-    conv.title = title
-    conv.updatedAt = Date.now()
-    await saveConversation(conv).catch(() => undefined)
-  }
-
   // --- TurnSink (renders segments into WhatsApp messages) ---
 
   private createSink(turnId: string, conversationId: string | null, jid: string): TurnSink {
@@ -1478,14 +1568,14 @@ export class WhatsAppChannel {
       },
       onTurnEvent: <E extends keyof CorpusEvents>(type: E, payload: CorpusEvents[E]): void => {
         const active = this.activeByJid.get(jid)
-        if (!active) return
+        if (!active || active.turnId !== turnId) return
         if (type === 'task.created') {
           const task = payload as CorpusEvents['task.created']
           if (task.taskId) active.taskId = task.taskId
         }
       },
-      onApprovalRequest: (req) => this.handleApprovalRequest(jid, req),
-      onAskUserRequest: (req) => this.handleAskRequest(jid, req),
+      onApprovalRequest: (req) => this.handleApprovalRequest(jid, turnId, req),
+      onAskUserRequest: (req) => this.handleAskRequest(jid, turnId, req),
       onDone: () => {
         this.enqueueRender(jid, () => this.flushFinalText(jid))
       },
@@ -1507,6 +1597,9 @@ export class WhatsAppChannel {
   private async renderSegment(jid: string, segment: Segment): Promise<void> {
     const active = this.activeByJid.get(jid)
     if (!active) return
+    // A late segment from an aborted predecessor turn on this jid must not
+    // bleed into the successor's transcript.
+    if (segment.turnId !== active.turnId) return
 
     // Workflow snapshots supersede each other — keep only the latest per run
     // or a long workflow persists hundreds of full snapshots.
@@ -1696,8 +1789,8 @@ export class WhatsAppChannel {
    * start/completion (always sent — the channel has no card, these ARE the
    * workflow surface), per-agent landings (verbose only), and the closing
    * summary. Deterministic: everything derives from harness telemetry.
-   * Plain WhatsApp formatting only — these are channel-constructed lines,
-   * not model prose, so they never pass through markdownToWhatsApp.
+   * Composed directly in WhatsApp's own formatting — these are
+   * channel-constructed lines, not model prose.
    */
   private async renderWorkflowUpdate(jid: string, snapshot: WorkflowSnapshot): Promise<void> {
     const active = this.activeByJid.get(jid)
@@ -1771,13 +1864,15 @@ export class WhatsAppChannel {
     active.textBuffer = ''
 
     // The wolffish-media:// scheme is honored here — in the model's OWN
-    // prose — because embedding it in markdown is the model's deliberate
-    // act of showing an image. Tool results don't get that treatment (see
-    // extractWolffishMediaPaths). Extracted from the RAW text first — the
-    // Markdown converter would rewrite ![...](wolffish-media://...) syntax
-    // before the extractor could see it. Conversion runs on cleaned prose.
+    // prose — because embedding it is the model's deliberate act of
+    // showing an image (the one image-marker exception in the channel
+    // overlay). Tool results don't get that treatment (see
+    // extractWolffishMediaPaths). Beyond stripping those markers the
+    // prose is sent VERBATIM: the model writes WhatsApp formatting
+    // itself (CHANNEL_PROMPTS in runtime/prefrontal.ts) — there is no
+    // Markdown converter between the model and the user.
     const imagePaths = extractWolffishMediaPaths(raw, { includeMediaScheme: true })
-    const cleaned = markdownToWhatsApp(stripWolffishMediaMarkdown(raw)).trim()
+    const cleaned = stripWolffishMediaMarkdown(raw).trim()
 
     if (cleaned.length > 0) {
       for (const chunk of splitForWhatsApp(cleaned)) {
@@ -1795,11 +1890,15 @@ export class WhatsAppChannel {
 
   private handleApprovalRequest(
     jid: string,
+    turnId: string,
     req: ApprovalRequest & { id: string }
   ): Promise<ApprovalDecision> {
     return new Promise<ApprovalDecision>((resolve) => {
       const active = this.activeByJid.get(jid)
-      if (!active) {
+      // Requesting turn must still own this jid's slot — a stale request
+      // from an aborted predecessor fails closed instead of hijacking the
+      // successor's pending-approval state.
+      if (!active || active.turnId !== turnId) {
         resolve('denied')
         return
       }
@@ -1846,11 +1945,12 @@ export class WhatsAppChannel {
    */
   private handleAskRequest(
     jid: string,
+    turnId: string,
     req: AskUserRequest & { id: string }
   ): Promise<AskUserResponse> {
     return new Promise<AskUserResponse>((resolve) => {
       const active = this.activeByJid.get(jid)
-      if (!active) {
+      if (!active || active.turnId !== turnId) {
         resolve({ kind: 'canceled' })
         return
       }
@@ -1929,7 +2029,7 @@ export class WhatsAppChannel {
     }
 
     const trimmed = response.trim()
-    await this.safeSend(jid, trimmed.length > 0 ? markdownToWhatsApp(trimmed) : FALLBACK_BUSY_REPLY)
+    await this.safeSend(jid, trimmed.length > 0 ? trimmed : FALLBACK_BUSY_REPLY)
   }
 
   // --- Sending ---
@@ -2185,14 +2285,17 @@ function parseSelectionNumber(text: string): number | null {
  * user they can just type their own instructions instead.
  */
 function formatAskRequestPlain(req: AskUserRequest): string {
-  // Question and labels are model-authored — strip/convert any Markdown so
-  // the card renders with WhatsApp formatting, not raw syntax.
+  // The channel overlay instructs the model to write ask_user text as
+  // plain prose, so details/descriptions pass through verbatim. The
+  // question and labels are embedded inside this card's own *bold*
+  // wrappers — flatten any stray inline markers so they can't break
+  // the span.
   const parts: string[] = [`❓ *${stripInlineMarkup(req.question)}*`]
-  if (req.details) parts.push(markdownToWhatsApp(req.details))
+  if (req.details) parts.push(req.details)
   const list = req.options
     .map((opt, i) => {
       const head = `*${i + 1}.* ${stripInlineMarkup(opt.label)}`
-      return opt.description ? `${head}\n${markdownToWhatsApp(opt.description)}` : head
+      return opt.description ? `${head}\n${opt.description}` : head
     })
     .join('\n\n')
   parts.push(list)

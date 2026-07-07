@@ -4,6 +4,9 @@ import { ThemeProvider } from '@providers/theme/ThemeProvider'
 import { LocaleProvider } from '@providers/locale/LocaleProvider'
 import { FlowProvider } from '@providers/flow/FlowProvider'
 import { useFlow, type Screen } from '@providers/flow/useFlow'
+import { ChatSessionsProvider } from '@providers/sessions/ChatSessionsProvider'
+import { useSessions } from '@providers/sessions/useSessions'
+import { ConversationsSidebar } from '@components/common/sidebar/ConversationsSidebar'
 import { ToastProvider } from '@components/core/toast/ToastProvider'
 import { useToast } from '@components/core/toast/useToast'
 import { InputContextMenu } from '@components/core/InputContextMenu'
@@ -102,10 +105,14 @@ function useActiveRun(): ActiveRun {
   return active
 }
 
-// Main-app screens the user reaches from an active conversation (via the
-// sidebar). Chat stays mounted for the whole set so dipping into settings/
-// history/etc. and back never tears it down. Onboarding/setup screens are
-// excluded — there's no conversation to preserve there yet.
+// Screens the user can reach WHILE holding live conversations. Chat sessions
+// stay mounted for the whole set so navigating anywhere and back never tears
+// live state down — with concurrent sessions, an unmount would silently
+// reset every feed to its open-time seed and orphan in-flight turns.
+// ollama-setup and model-picker are included because both are reachable
+// mid-session (Settings' "install Ollama" button, clearing the model);
+// only the pre-conversation launch screens (welcome, low-disk-space) stay
+// out — no session can exist there yet.
 const CHAT_KEEPALIVE_SCREENS = new Set<Screen>([
   'chat',
   'settings',
@@ -116,7 +123,9 @@ const CHAT_KEEPALIVE_SCREENS = new Set<Screen>([
   'procedures',
   'soul',
   'user',
-  'agents'
+  'agents',
+  'ollama-setup',
+  'model-picker'
 ])
 
 // Every screen EXCEPT chat, which is rendered persistently by Screens() so its
@@ -165,19 +174,21 @@ function NetworkToasts(): null {
 
 function Screens(): React.JSX.Element {
   const { screen } = useFlow()
+  const { sessions, activeSessionKey } = useSessions()
   const activeRun = useActiveRun()
-  // Keep Chat MOUNTED (just hidden) across main-app navigation AND during a
-  // background run. `contents` makes the wrapper layout-invisible when shown so
-  // the chat view renders exactly as it would unwrapped; `hidden` (display:none)
-  // takes it out of layout without unmounting — no reload, no reset, no flash.
+  // Keep every chat SESSION mounted (just hidden) across main-app navigation
+  // AND during a background run. One <Chat> instance per open session: each
+  // owns its own feed, composer, meter and in-flight turn, so conversations
+  // stream concurrently and switching between them never tears live state
+  // down. `contents` makes the active wrapper layout-invisible so the chat
+  // view renders exactly as it would unwrapped; `hidden` (display:none) takes
+  // the rest out of layout without unmounting — no reload, no reset, no flash.
   //
-  // Critically, staying mounted through a run is what keeps the conversation
-  // that TRIGGERED the run from being lost: an electron conversation is
-  // persisted only by this renderer, so unmounting Chat mid-turn (when a
-  // procedure_run/automation_run fires and the overlay takes over) would drop
-  // the triggering turn before it saves. Mounted-but-hidden, Chat still receives
-  // its own turn events and persists them; the run's own events never reach it
-  // (they go through the autonomous turn's isolated sink, not this channel).
+  // Critically, staying mounted is what keeps a background conversation's
+  // output from being lost: an electron conversation is persisted only by its
+  // renderer instance, so unmounting a Chat mid-turn would drop the turn
+  // before it saves. Mounted-but-hidden, each Chat still receives its own
+  // turn's events (demuxed by conversationId/turnId) and persists them.
   const chatMounted = CHAT_KEEPALIVE_SCREENS.has(screen)
   const chatVisible = chatMounted && screen === 'chat' && activeRun === null
   return (
@@ -189,9 +200,23 @@ function Screens(): React.JSX.Element {
       ) : (
         <NonChatScreen screen={screen} />
       )}
+      {chatMounted &&
+        sessions.map((session) => {
+          const show = chatVisible && session.key === activeSessionKey
+          return (
+            <div key={session.key} className={show ? 'contents' : 'hidden'}>
+              <Chat sessionKey={session.key} visible={show} descriptor={session} />
+            </div>
+          )
+        })}
+      {/* ONE app-level conversations rail — mounted whenever the chat is,
+          hidden (not unmounted) when it isn't. Rendering it per-Chat-instance
+          made opening an unloaded conversation spawn a fresh session whose new
+          rail reset to empty and re-fetched — a visible flicker on every
+          switch. A single persistent instance never remounts. */}
       {chatMounted && (
         <div className={chatVisible ? 'contents' : 'hidden'}>
-          <Chat />
+          <ConversationsSidebar />
         </div>
       )}
     </>
@@ -227,10 +252,12 @@ function App(): React.JSX.Element {
         <ToastProvider>
           <NetworkToasts />
           <FlowProvider>
-            <div className="app-titlebar" aria-hidden />
-            <Screens />
-            <ClosingOverlay />
-            <InputContextMenu />
+            <ChatSessionsProvider>
+              <div className="app-titlebar" aria-hidden />
+              <Screens />
+              <ClosingOverlay />
+              <InputContextMenu />
+            </ChatSessionsProvider>
           </FlowProvider>
         </ToastProvider>
       </LocaleProvider>

@@ -809,6 +809,7 @@
           "cancel": "Cancel",
           "addMore": "Add account",
           "active": "Active",
+          "inactive": "Inactive",
           "remove": "Remove",
           "accountLabel": "Authorized account {{account}}",
           "linkNote": "If the browser didn't open,",
@@ -1475,6 +1476,8 @@
     },
     "settings": "Settings",
     "history": "History",
+    "conversations": "Conversations",
+    "conversationsUntitled": "Untitled",
     "workspace": "Workspace",
     "soul": "Soul",
     "user": "User",
@@ -1804,7 +1807,8 @@
     "deleteWarning": "This conversation will be permanently deleted. This cannot be undone.",
     "deleteConfirm": "Delete",
     "deleteCancel": "Cancel",
-    "newChat": "New chat"
+    "newChat": "New chat",
+    "processing": "Processing…"
   },
   "units": {
     "seconds": "{{value}}s",

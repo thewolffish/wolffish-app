@@ -495,7 +495,7 @@ export class Thalamus {
     const available = modelWindow - maxOutput
 
     if (promptTokens <= available) {
-      const result = await this.summarizeSingle(entry, prompt, signal)
+      const result = await this.completeSingle(entry, '', prompt, 'summary', signal)
       if (result) return result
       throw new Error('Summarization provider failed')
     }
@@ -507,7 +507,7 @@ export class Thalamus {
     }
 
     const summaries = await Promise.all(
-      parts.map((part) => this.summarizeSingle(entry, part, signal))
+      parts.map((part) => this.completeSingle(entry, '', part, 'summary', signal))
     )
     const valid = summaries.filter(Boolean) as {
       text: string
@@ -525,12 +525,37 @@ export class Thalamus {
   }
 
   /**
-   * Single summarization call. 5 retries with escalating backoff
-   * (1s, 2s, 4s, 8s, 16s).
+   * Title a conversation. This is a dedicated TITLING call — NOT a summarize:
+   * the caller's titling instructions ride in the SYSTEM prompt and the user's
+   * message is the user turn, so the model is asked to name the conversation
+   * rather than compress it. Shares completeSingle's 5× retry so titling is as
+   * resilient as everything else; throws only if every attempt fails (the
+   * titler treats that as unreachable and falls back to a plain slice).
    */
-  private async summarizeSingle(
+  async title(
+    userMessage: string,
+    systemPrompt: string,
+    signal?: AbortSignal
+  ): Promise<{ text: string; provider: string; model: string }> {
+    const entry = this.resolveEntry()
+    if (!entry) throw new Error('No titling provider available')
+    const result = await this.completeSingle(entry, systemPrompt, userMessage, 'title', signal)
+    if (result) return result
+    throw new Error('Titling provider failed')
+  }
+
+  /**
+   * Single non-streaming completion with 5 retries and escalating backoff
+   * (1s, 2s, 4s, 8s, 16s). `system` may be '' (plain summarize during
+   * compaction) or a task prompt (titling). `role` tags the emitted spend so
+   * the ledger itemizes titling distinctly from summarization — a title is not
+   * a summary — while both stay OFF a conversation's context meter (overhead).
+   */
+  private async completeSingle(
     entry: CascadeEntry,
+    system: string,
     prompt: string,
+    role: 'summary' | 'title',
     signal?: AbortSignal
   ): Promise<{ text: string; provider: string; model: string } | null> {
     const msgs: ChatMessage[] = [{ role: 'user', content: prompt }]
@@ -543,7 +568,7 @@ export class Thalamus {
         let text = ''
         let usage: StreamUsage | null = null
         for await (const chunk of entry.provider.stream({
-          system: '',
+          system,
           messages: msgs,
           signal
         })) {
@@ -561,7 +586,7 @@ export class Thalamus {
             this.emit('llm.response', {
               provider: entry.id,
               model: entry.model,
-              role: 'summary',
+              role,
               inputTokens: usage.inputTokens,
               outputTokens: usage.outputTokens,
               cacheCreationTokens: usage.cacheCreationTokens ?? 0,
@@ -933,7 +958,7 @@ export class Thalamus {
         ? {
             provider: string
             model: string
-            role: 'brain' | 'worker' | 'summary'
+            role: 'brain' | 'worker' | 'summary' | 'title'
             inputTokens: number
             outputTokens: number
             cacheCreationTokens: number
@@ -954,7 +979,7 @@ export class Thalamus {
         payload as {
           provider: string
           model: string
-          role: 'brain' | 'worker' | 'summary'
+          role: 'brain' | 'worker' | 'summary' | 'title'
           inputTokens: number
           outputTokens: number
           cacheCreationTokens: number

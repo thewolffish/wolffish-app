@@ -1,7 +1,7 @@
 import type { ApprovalDecision, ApprovalRequest } from '@main/runtime/amygdala'
 import type { AskUserRequest, AskUserResponse } from '@main/runtime/cerebellum'
 import type { Segment } from '@main/runtime/broca'
-import type { CorpusEvent, CorpusEvents } from '@main/runtime/corpus'
+import { turnScope, type CorpusEvent, type CorpusEvents } from '@main/runtime/corpus'
 import type { ConversationFile, ConversationMessage } from '@main/conversations'
 import type { ChatHistoryMessage } from '@preload/index'
 
@@ -70,30 +70,48 @@ export interface TurnSink {
 }
 
 /**
- * Singleton router that connects amygdala's global approval bridge to
- * whichever channel currently owns the active turn. The agent runs one
- * turn at a time — the runner sets the active sink before agent.respond
- * and clears it in the finally block.
+ * Singleton router that connects amygdala's global approval bridge (and the
+ * ask_user bridge) to the channel sink that owns the REQUESTING turn. Turns
+ * run concurrently, so there is no single "active" sink — the runner
+ * registers each turn's sink under its turnId, and dispatch resolves the
+ * caller's turn through the turn-identity AsyncLocalStorage (approval/ask
+ * requests are awaited inside the turn's async call tree, so getStore()
+ * names the right turn). An unresolvable request fails closed: approvals
+ * deny, ask_user degrades to 'unsupported' — a sealed background run
+ * (autonomous scope, no registered sink) lands here by design.
  */
 class TurnRouter {
-  private active: TurnSink | null = null
+  private readonly sinks = new Map<string, TurnSink>()
 
-  setActive(sink: TurnSink | null): void {
-    this.active = sink
+  register(turnId: string, sink: TurnSink): void {
+    this.sinks.set(turnId, sink)
   }
 
-  getActive(): TurnSink | null {
-    return this.active
+  unregister(turnId: string): void {
+    this.sinks.delete(turnId)
+  }
+
+  /** Number of live registered turns (quit-drain diagnostics). */
+  activeCount(): number {
+    return this.sinks.size
+  }
+
+  private resolveSink(): TurnSink | null {
+    const scope = turnScope.getStore()
+    if (!scope || scope.autonomous || !scope.turnId) return null
+    return this.sinks.get(scope.turnId) ?? null
   }
 
   async dispatchApproval(req: ApprovalRequest & { id: string }): Promise<ApprovalDecision> {
-    if (!this.active) return 'denied'
-    return this.active.onApprovalRequest(req)
+    const sink = this.resolveSink()
+    if (!sink) return 'denied'
+    return sink.onApprovalRequest(req)
   }
 
   async dispatchAskUser(req: AskUserRequest & { id: string }): Promise<AskUserResponse> {
-    if (!this.active || !this.active.onAskUserRequest) return { kind: 'unsupported' }
-    return this.active.onAskUserRequest(req)
+    const sink = this.resolveSink()
+    if (!sink || !sink.onAskUserRequest) return { kind: 'unsupported' }
+    return sink.onAskUserRequest(req)
   }
 }
 

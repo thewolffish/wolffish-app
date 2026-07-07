@@ -27,6 +27,11 @@ const EXEC_TIMEOUT_MS = 15_000
 // before some users finished consent.
 const AUTH_TIMEOUT_MS = 10 * 60_000
 const INSTALL_TIMEOUT_MS = 2 * 60_000
+// `auth doctor --check` exchanges every stored refresh token for a fresh
+// access token (a network round-trip per account). Bound the whole probe so a
+// hung network can't wedge the health check; individual tokens get a tighter
+// per-token cap via gogcli's own --timeout below.
+const DOCTOR_TIMEOUT_MS = 30_000
 
 // gogcli release assets are named: gogcli_<version>_<platform>_<arch>.<ext>
 const PLATFORM_MAP: Record<string, string> = { darwin: 'darwin', linux: 'linux', win32: 'windows' }
@@ -540,6 +545,58 @@ class GoogleService {
     } catch {
       return []
     }
+  }
+
+  /**
+   * Per-account token health probe for the settings panel. gogcli's stored
+   * refresh token can silently expire or be revoked by Google; once it does,
+   * every google_* tool call for that account fails with `invalid_grant`.
+   * `auth doctor --check` performs exactly that refresh-token exchange for
+   * each stored account, so it's the honest signal for "is this account still
+   * usable". Returns a map of email → healthy. An account is only reported
+   * `false` when its refresh check positively fails; when we can't tell
+   * (binary missing, parse error, killed, no matching check) the account is
+   * left out of the map so the UI leaves its chip untouched rather than
+   * flapping. Never throws — health is best-effort.
+   */
+  async checkAccounts(): Promise<Record<string, boolean>> {
+    const accounts = await this.listAccounts()
+    if (accounts.length === 0) return {}
+    // doctor exits non-zero when any token check fails, but still prints the
+    // per-check JSON to stdout — so read stdout regardless of exit code
+    // instead of going through `exec`, which discards it on a non-zero exit.
+    const stdout = await new Promise<string>((resolve) => {
+      execFile(
+        GOG_PATH,
+        ['--json', '--no-input', 'auth', 'doctor', '--check', '--timeout=10s'],
+        { timeout: DOCTOR_TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024 },
+        (_err, out) => resolve(out ?? '')
+      )
+    })
+    let checks: Array<{ name?: string; status?: string }> = []
+    try {
+      const parsed = JSON.parse(stdout) as {
+        checks?: Array<{ name?: string; status?: string }>
+      }
+      if (Array.isArray(parsed?.checks)) checks = parsed.checks
+    } catch {
+      return {}
+    }
+    const health: Record<string, boolean> = {}
+    for (const email of accounts) {
+      // Check names are `refresh.<client>.<email>`. Emails contain dots, so
+      // anchor on the separator dot before the email to match unambiguously.
+      const check = checks.find(
+        (c) =>
+          typeof c?.name === 'string' &&
+          c.name.startsWith('refresh.') &&
+          c.name.endsWith(`.${email}`)
+      )
+      // Only a positive, explicit non-ok result flips an account to unhealthy;
+      // a missing check leaves it out (treated as "unknown" by the UI).
+      if (check) health[email] = check.status === 'ok'
+    }
+    return health
   }
 
   private async isAccountAuthorized(email: string): Promise<boolean> {

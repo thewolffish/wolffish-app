@@ -10,12 +10,8 @@ import {
   getConversationIdForChat,
   setConversationIdForChat
 } from '@main/channels/telegram/conversations'
-import {
-  bidiMark,
-  escapeHtml,
-  markdownToPlain,
-  markdownToTelegramHtml
-} from '@main/channels/telegram/format'
+import { markdownToPlain } from '@main/channels/format'
+import { bidiMark, escapeHtml } from '@main/channels/telegram/format'
 import {
   flushMessageIds,
   loadMessageIds,
@@ -27,10 +23,10 @@ import type { TurnRunner } from '@main/channels/turn-runner'
 import {
   createConversation,
   deleteConversation,
-  generateTitle,
   listConversations,
   loadConversation,
   saveConversation,
+  updateConversation,
   type ConversationFile,
   type ConversationMessage,
   type ConversationMeta,
@@ -51,7 +47,7 @@ import {
   type SegmentTurnEndReason,
   type WorkflowSnapshot
 } from '@main/runtime/broca'
-import type { CorpusEvents } from '@main/runtime/corpus'
+import { turnScope, type CorpusEvents } from '@main/runtime/corpus'
 import type { LocalProvider } from '@main/runtime/providers/local'
 import { composeAttachmentContext } from '@main/uploads/compose-attachments'
 import { saveUploadFromBuffer } from '@main/uploads/uploads'
@@ -130,7 +126,7 @@ const FALLBACK_BUSY_REPLY = "Hold on — I'm working on something. I'll get back
  * resend after the active turn finishes.
  */
 const BUSY_SYSTEM_PROMPT =
-  "You are a friendly assistant currently working on a previous task for the user. The user has just sent a NEW message but you cannot address it yet — another task is still running. Reply briefly (1-2 short sentences) acknowledging their new message and politely asking them to wait. Do NOT attempt to answer their question, perform any action, or speculate about an answer. Just say you're busy and will get to it. Be warm and natural."
+  "You are a friendly assistant currently working on a previous task for the user. The user has just sent a NEW message but you cannot address it yet — another task is still running. Reply briefly (1-2 short sentences) acknowledging their new message and politely asking them to wait. Do NOT attempt to answer their question, perform any action, or speculate about an answer. Just say you're busy and will get to it. Be warm and natural. Write plain conversational text only — no Markdown, no formatting markup of any kind (your reply is delivered verbatim to a phone chat)."
 
 /**
  * Cap how long we wait for the local model to produce the decline.
@@ -209,6 +205,12 @@ type PendingSelection = {
 
 type ActiveTurn = {
   chatId: number
+  /**
+   * The owning turn's id. Sink callbacks and the end-of-turn cleanup verify
+   * it before touching this state — a late event from an aborted turn on
+   * the same chat must never write into (or tear down) its successor's turn.
+   */
+  turnId: string
   conversation: ConversationFile
   /**
    * Pending text we haven't sent to Telegram yet — drained and
@@ -818,7 +820,7 @@ export class TelegramChannel {
     // pile up). Caller can /stop first if they want to clear
     // mid-task.
     if (command === CLEAR_COMMAND) {
-      if (this.activeByChat.size > 0) {
+      if (this.activeByChat.has(chatId)) {
         await this.sendBusyReply(chatId, trimmed)
         return
       }
@@ -836,7 +838,16 @@ export class TelegramChannel {
       }
       active.controller.abort()
       if (active.taskId) {
-        await this.agent.motor.stopTask(active.taskId).catch(() => undefined)
+        // Scope the stop to the target turn: motor.stopTask emits
+        // task.stopped synchronously, and a scope-less emit would fan out to
+        // every live turn's relay (fail-open), polluting other
+        // conversations' timelines.
+        await turnScope
+          .run(
+            { turnId: active.turnId, conversationId: active.conversation.id, autonomous: false },
+            () => this.agent.motor.stopTask(active.taskId!)
+          )
+          .catch(() => undefined)
       }
       await this.safeSend(chatId, '⏹ Stopping…')
       const deadline = Date.now() + 10_000
@@ -881,7 +892,7 @@ export class TelegramChannel {
     // that's actively reading from it. Decline if anything is in
     // flight; the user has to /stop or wait first.
     if (command && NEW_COMMANDS.has(command)) {
-      if (this.activeByChat.size > 0) {
+      if (this.activeByChat.has(chatId)) {
         await this.sendBusyReply(chatId, trimmed)
         return
       }
@@ -889,7 +900,7 @@ export class TelegramChannel {
       return
     }
     if (command === RESUME_COMMAND) {
-      if (this.activeByChat.size > 0) {
+      if (this.activeByChat.has(chatId)) {
         await this.sendBusyReply(chatId, trimmed)
         return
       }
@@ -897,7 +908,7 @@ export class TelegramChannel {
       return
     }
     if (command === DELETE_COMMAND) {
-      if (this.activeByChat.size > 0) {
+      if (this.activeByChat.has(chatId)) {
         await this.sendBusyReply(chatId, trimmed)
         return
       }
@@ -939,12 +950,12 @@ export class TelegramChannel {
       return
     }
 
-    // Only one Telegram conversation processes at a time. If anything
-    // is in flight (this chat or another allowed user's chat), the
-    // local model produces a polite "I'm busy" reply. Active turn
-    // keeps running; new message is dropped, not queued — the user
-    // resends once the bot is free.
-    if (this.activeByChat.size > 0) {
+    // One turn at a time PER CHAT. Another allowed user's chat (and every
+    // other channel, and the in-app renderer) runs its own turn
+    // concurrently — the TurnRunner serializes per conversation. A new
+    // message while THIS chat is busy gets the polite decline; the user
+    // resends once this chat is free.
+    if (this.activeByChat.has(chatId)) {
       await this.sendBusyReply(chatId, trimmed)
       return
     }
@@ -971,16 +982,18 @@ export class TelegramChannel {
       report = await this.agent.insula.reflect()
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
-      await this.safeSend(chatId, `⚠️ Couldn't generate status: ${message}`)
+      await this.sendPlain(chatId, `⚠️ Couldn't generate status: ${message}`)
       return
     }
-    const trimmed = report.trim()
+    // The insula report is Markdown; nothing downstream converts it
+    // anymore, so flatten it to plain text before sending.
+    const trimmed = markdownToPlain(report).trim()
     if (trimmed.length === 0) {
       await this.safeSend(chatId, 'No status data available yet.')
       return
     }
     for (const chunk of splitForTelegram(trimmed)) {
-      await this.safeSend(chatId, chunk)
+      await this.sendPlain(chatId, chunk)
     }
   }
 
@@ -1142,6 +1155,7 @@ export class TelegramChannel {
     const wasActive = currentId === conversationId
 
     await deleteConversation(conversationId)
+    this.agent.corpus.emit('conversation.deleted', { id: conversationId })
 
     if (wasActive) {
       const fresh = createConversation(null)
@@ -1224,7 +1238,7 @@ export class TelegramChannel {
     const fileInfo = extractFileInfo(message)
     if (!fileInfo) return
 
-    if (this.activeByChat.size > 0) {
+    if (this.activeByChat.has(chatId)) {
       await this.sendBusyReply(chatId, '(voice message)')
       return
     }
@@ -1279,30 +1293,26 @@ export class TelegramChannel {
         })
       } catch (err) {
         const errMessage = err instanceof Error ? err.message : String(err)
-        await this.safeSend(chatId, `⚠️ Voice download failed: ${errMessage}`)
+        await this.sendPlain(chatId, `⚠️ Voice download failed: ${errMessage}`)
         return
       }
 
-      // Stamp the conversation id on cerebellum BEFORE invoking the tool
-      // so the speech-to-text plugin's persistTranscription() routes the
-      // transcript into speech/conv-{id}/ instead of speech/orphan/. The
-      // agent's respond() does this for in-turn tool calls, but this
-      // path runs the tool directly, outside any turn.
-      this.agent.cerebellum.setCurrentConversationId(conversation.id)
-      // This path runs the tool directly, outside the agent loop, so its
-      // ffmpeg dependency isn't auto-resolved. Ensure it (silent self-install)
-      // before transcribing so a fresh machine self-heals instead of erroring.
+      // Scope the conversation id (ALS, not the imperative global) BEFORE
+      // invoking the tool so the speech-to-text plugin's
+      // persistTranscription() routes the transcript into speech/conv-{id}/
+      // instead of speech/orphan/. This path runs the tool directly, outside
+      // any turn — setting the GLOBAL here would clobber whichever
+      // conversation a concurrent turn published.
+      // Also ensure ffmpeg (silent self-install): direct tool calls bypass
+      // the agent loop's dependency resolution.
       await this.agent.cerebellum.ensureSystemTool('ffmpeg')
-      let result: Awaited<ReturnType<typeof this.agent.cerebellum.executeTool>>
-      try {
-        result = await this.agent.cerebellum.executeTool('stt_transcribe', {
+      const result = await this.agent.cerebellum.runWithConversation(conversation.id, () =>
+        this.agent.cerebellum.executeTool('stt_transcribe', {
           filePath: attachment.filePath
         })
-      } finally {
-        this.agent.cerebellum.setCurrentConversationId(null)
-      }
+      )
       if (!result.success) {
-        await this.safeSend(
+        await this.sendPlain(
           chatId,
           `⚠️ Couldn't transcribe voice message: ${result.error ?? 'unknown error'}`
         )
@@ -1367,8 +1377,8 @@ export class TelegramChannel {
 
     // Busy check happens BEFORE the download — no point pulling 50 MB
     // off Telegram's servers if we're just going to decline anyway.
-    // Same one-active-conversation rule the text path enforces.
-    if (this.activeByChat.size > 0) {
+    // Same one-turn-per-chat rule the text path enforces.
+    if (this.activeByChat.has(chatId)) {
       const declineContext = caption.length > 0 ? caption : '(media file)'
       await this.sendBusyReply(chatId, declineContext)
       return
@@ -1422,7 +1432,7 @@ export class TelegramChannel {
         })
       } catch (err) {
         const errMessage = err instanceof Error ? err.message : String(err)
-        await this.safeSend(chatId, `⚠️ Media upload failed: ${errMessage}`)
+        await this.sendPlain(chatId, `⚠️ Media upload failed: ${errMessage}`)
         return
       }
 
@@ -1454,6 +1464,20 @@ export class TelegramChannel {
     this.startPreTyping(chatId, ctx)
     try {
       const conversation = preloadedConversation ?? (await this.loadOrCreateConversation(chatId))
+
+      // Re-check the busy state at DISPATCH time, not just message arrival.
+      // The voice/media paths spend seconds between their entry gate and
+      // this point (download + ffmpeg + STT), and activeByChat is only set
+      // when the runner lane actually starts — so a second message could
+      // slip past the arrival gate and queue a second turn onto the same
+      // conversation lane, where the two turns' per-chat state would
+      // collide. isConversationActive also covers a turn still QUEUED on
+      // the lane (not yet started).
+      if (this.activeByChat.has(chatId) || this.runner.isConversationActive(conversation.id)) {
+        await this.sendBusyReply(chatId, userText || '(message)')
+        return
+      }
+
       // Resolve the verbosity preference once per turn. false (default) =
       // clean feed (agent messages + file results + errors only).
       const verbose = (await getTelegramConfig()).verbose ?? false
@@ -1466,9 +1490,19 @@ export class TelegramChannel {
         ...(options.voicePrompt ? { voicePrompt: true } : {}),
         ...(options.voiceLang ? { voiceLang: options.voiceLang } : {})
       }
+      // Local copy feeds the replay-history build below; the persist itself
+      // is an append-RMW against the freshest disk state so a concurrent
+      // writer (summarizer, another surface) is never clobbered by this
+      // stale copy. A null disk means the conversation was deleted out from
+      // under us — skip the write rather than resurrect the file.
       conversation.messages.push(userMessage)
       conversation.updatedAt = userMessage.timestamp
-      await saveConversation(conversation)
+      await updateConversation(conversation.id, (disk) => {
+        if (!disk) return null
+        disk.messages.push(userMessage)
+        disk.updatedAt = userMessage.timestamp
+        return disk
+      })
 
       // History exposed to the agent. Voice-prompt messages keep their
       // raw transcript only — the audio stays on disk for chat replay
@@ -1507,6 +1541,10 @@ export class TelegramChannel {
         conversation.id
       )
 
+      // This dispatch's own ActiveTurn, captured so the end-of-turn cleanup
+      // always operates on OUR turn's state — never a successor's that may
+      // have taken the per-chat slot while our render chain drained.
+      let dispatchedTurn: ActiveTurn | null = null
       const handle = this.runner.send({
         history,
         conversationId: conversation.id,
@@ -1515,6 +1553,7 @@ export class TelegramChannel {
         onTurnStarted: ({ turnId, controller }) => {
           const active: ActiveTurn = {
             chatId,
+            turnId,
             conversation,
             textBuffer: '',
             workflowState: new Map(),
@@ -1539,6 +1578,7 @@ export class TelegramChannel {
             verbose,
             voiceReplySent: false
           }
+          dispatchedTurn = active
           this.activeByChat.set(chatId, active)
           // Hand off from the pre-turn heartbeat — the turn timer below
           // covers the rest of the window. Stopping the pre-typer here
@@ -1560,8 +1600,6 @@ export class TelegramChannel {
           // unref so this timer doesn't keep node.js alive on its own
           // during a graceful shutdown.
           active.typingTimer.unref?.()
-          // Suppress unused-turnId — captured by sink closures.
-          void turnId
         },
         onTurnEnded: () => {
           // Drain the render chain BEFORE persisting/cleanup — the terminal
@@ -1570,10 +1608,14 @@ export class TelegramChannel {
           // when activeByChat is deleted, so renderSegment's `if (!active)`
           // guard would drop them from both the feed and the saved
           // conversation. Mirrors WhatsApp's queue drain.
-          const finishedTurn = this.activeByChat.get(chatId)
-          const chain = finishedTurn?.renderChain ?? Promise.resolve()
+          const chain = dispatchedTurn?.renderChain ?? Promise.resolve()
           void chain.then(() => {
-            const finished = this.activeByChat.get(chatId)
+            // Persist and resolve against OUR captured turn object — the
+            // per-chat slot may already belong to a successor turn by the
+            // time this network-bound drain fires, and reading the map here
+            // used to silently drop the finished turn's transcript (and leak
+            // its typing timer).
+            const finished = dispatchedTurn
             if (finished) {
               // Mark any approval still pending at end-of-turn as denied
               // so the saved record matches the real outcome — the runner
@@ -1611,10 +1653,19 @@ export class TelegramChannel {
                 if (finished.stopReason) assistant.stopReason = finished.stopReason
                 finished.conversation.messages.push(assistant)
                 finished.conversation.updatedAt = assistant.timestamp
-                void saveConversation(finished.conversation)
+                // Append-RMW: the copy held since dispatch may be stale
+                // w.r.t. the summarizer — append onto the freshest disk
+                // state instead of whole-saving the held copy over it. A
+                // null disk means the conversation was deleted mid-drain —
+                // skip rather than resurrect it.
+                void updateConversation(finished.conversation.id, (disk) => {
+                  if (!disk) return null
+                  disk.messages.push(assistant)
+                  disk.updatedAt = assistant.timestamp
+                  return disk
+                })
                   .then(() => queueConversationSummarization(finished.conversation.id))
                   .catch(() => undefined)
-                void this.maybeGenerateTitle(finished.conversation)
               }
               if (finished.typingTimer) {
                 clearInterval(finished.typingTimer)
@@ -1633,7 +1684,11 @@ export class TelegramChannel {
                 finished.pendingAskResolve = null
               }
             }
-            this.activeByChat.delete(chatId)
+            // Release the per-chat slot only if WE still own it — a
+            // successor turn's entry must survive our teardown.
+            if (!finished || this.activeByChat.get(chatId) === finished) {
+              this.activeByChat.delete(chatId)
+            }
           })
         }
       })
@@ -1680,16 +1735,6 @@ export class TelegramChannel {
     return fresh
   }
 
-  private async maybeGenerateTitle(conv: ConversationFile): Promise<void> {
-    if (conv.title !== 'Untitled') return
-    if (!conv.messages.some((m) => m.role === 'user')) return
-    const title = generateTitle(conv)
-    if (title === 'Untitled') return
-    conv.title = title
-    conv.updatedAt = Date.now()
-    await saveConversation(conv).catch(() => undefined)
-  }
-
   private createSink(turnId: string, conversationId: string | null, chatId: number): TurnSink {
     return {
       channelId: 'telegram',
@@ -1697,30 +1742,32 @@ export class TelegramChannel {
       conversationId,
       onSegment: (segment) => {
         const active = this.activeByChat.get(chatId)
-        if (active) {
+        // Only our own turn's segments — a late emit from an aborted
+        // predecessor must not chain into the successor's render queue.
+        if (active && active.turnId === turnId) {
           active.renderChain = active.renderChain.then(() => this.renderSegment(chatId, segment))
         }
       },
       onTurnEvent: <E extends keyof CorpusEvents>(type: E, payload: CorpusEvents[E]): void => {
         const active = this.activeByChat.get(chatId)
-        if (!active) return
+        if (!active || active.turnId !== turnId) return
         if (type === 'task.created') {
           const task = payload as CorpusEvents['task.created']
           if (task.taskId) active.taskId = task.taskId
         }
       },
-      onApprovalRequest: (req) => this.handleApprovalRequest(chatId, req),
-      onAskUserRequest: (req) => this.handleAskRequest(chatId, req),
+      onApprovalRequest: (req) => this.handleApprovalRequest(chatId, turnId, req),
+      onAskUserRequest: (req) => this.handleAskRequest(chatId, turnId, req),
       onDone: () => {
         const active = this.activeByChat.get(chatId)
-        if (active) {
+        if (active && active.turnId === turnId) {
           active.renderChain = active.renderChain.then(() => this.flushFinalText(chatId))
-        } else {
+        } else if (!active) {
           void this.flushFinalText(chatId)
         }
       },
       onError: (error) => {
-        void this.safeSend(chatId, `⚠️ ${truncateForTelegram(error)}`)
+        void this.sendPlain(chatId, `⚠️ ${truncateForTelegram(error)}`)
       },
       onCredentialBlocked: () => {
         // The runner already pushed the canned reply through onSegment;
@@ -1732,6 +1779,9 @@ export class TelegramChannel {
   private async renderSegment(chatId: number, segment: Segment): Promise<void> {
     const active = this.activeByChat.get(chatId)
     if (!active) return
+    // A late segment from an aborted predecessor turn on this chat must not
+    // bleed into the successor's transcript.
+    if (segment.turnId !== active.turnId) return
 
     // Persist EVERY segment in turn order. The in-app chat replays
     // assistant messages from this list (text + tool cards + chips),
@@ -2145,11 +2195,15 @@ export class TelegramChannel {
 
   private handleApprovalRequest(
     chatId: number,
+    turnId: string,
     req: ApprovalRequest & { id: string }
   ): Promise<ApprovalDecision> {
     return new Promise<ApprovalDecision>((resolve) => {
       const active = this.activeByChat.get(chatId)
-      if (!active) {
+      // Requesting turn must still own this chat's slot — a stale request
+      // from an aborted predecessor fails closed instead of hijacking the
+      // successor's pending-approval state.
+      if (!active || active.turnId !== turnId) {
         resolve('denied')
         return
       }
@@ -2204,11 +2258,12 @@ export class TelegramChannel {
    */
   private handleAskRequest(
     chatId: number,
+    turnId: string,
     req: AskUserRequest & { id: string }
   ): Promise<AskUserResponse> {
     return new Promise<AskUserResponse>((resolve) => {
       const active = this.activeByChat.get(chatId)
-      if (!active) {
+      if (!active || active.turnId !== turnId) {
         resolve({ kind: 'canceled' })
         return
       }
@@ -2232,9 +2287,11 @@ export class TelegramChannel {
       active.pendingAsk = null
       active.pendingAskResolve = null
       resolve({ kind: 'option', index: outcome.index })
-      await this.safeSend(
+      // Escaped like the question card itself — a label whose plain text
+      // mentions something tag-shaped must render identically in both.
+      await this.sendHtml(
         chatId,
-        `✅ Option ${outcome.index + 1}: ${pending.options[outcome.index].label}`
+        `✅ Option ${outcome.index + 1}: ${escapeHtml(pending.options[outcome.index].label)}`
       )
       return
     }
@@ -2255,21 +2312,38 @@ export class TelegramChannel {
   }
 
   /**
-   * Send a Markdown-formatted message. Converts the text to the
-   * subset of HTML Telegram supports — plain prose passes through
-   * with HTML entities escaped; Markdown markup (`**bold**`, fenced
-   * code, links, etc.) renders as proper formatting instead of
-   * literal asterisks and backticks.
+   * Send a message VERBATIM with parse_mode HTML. Model prose is
+   * already Telegram HTML — the channel overlay (CHANNEL_PROMPTS in
+   * runtime/prefrontal.ts) teaches the model the exact tag subset, so
+   * nothing rewrites its text here; the model is the formatter.
+   * Code-composed callers write plain prose (delivered as-is) or
+   * Telegram HTML themselves.
    *
-   * If Telegram rejects the HTML (parse error on input the converter
-   * didn't anticipate), falls back to plain text so the user still
-   * sees the content rather than nothing.
+   * If Telegram rejects the HTML (bad tag, unclosed pair, bare `<`),
+   * falls back to the same text with known Telegram tags stripped so
+   * the user still sees the content rather than nothing.
    */
   private async safeSend(chatId: number, text: string): Promise<void> {
     // ⚠️ Potential breaking change — the leading zero-width mark may
     // interfere with downstream text matching, hashing, or /command parsing.
+    // The mark is derived from the TAG-STRIPPED text: tag names are Latin
+    // letters, so scanning raw HTML would give an Arabic reply that opens
+    // with <b> a wrong LTR mark — the exact reordering bug the mark exists
+    // to prevent.
+    const mark = bidiMark(stripHtmlTags(text))
+    await this.dispatchSend(chatId, mark + text, mark + stripHtmlTags(text))
+  }
+
+  /**
+   * Send CODE-composed plain text that embeds arbitrary dynamic content —
+   * error strings, report fragments, titles. Entity-escaped so the HTML
+   * parse can never reject it (a message mentioning "<pre>" would
+   * otherwise bounce and lose that substring to the tag-stripping
+   * fallback). Model prose never comes through here — that's safeSend.
+   */
+  private async sendPlain(chatId: number, text: string): Promise<void> {
     const mark = bidiMark(text)
-    await this.dispatchSend(chatId, mark + markdownToTelegramHtml(text), mark + text)
+    await this.dispatchSend(chatId, mark + escapeHtml(text), mark + text)
   }
 
   /**
@@ -2381,13 +2455,19 @@ function stringifyArg(value: unknown): string {
  */
 /**
  * Strip Telegram-flavored HTML tags and decode the four entities the
- * channel emits. Used as the plain-text fallback for sendHtml when
- * Telegram rejects the HTML — the user still sees readable content,
- * just without formatting.
+ * channel emits. Used as the plain-text fallback for safeSend/sendHtml
+ * when Telegram rejects the HTML — the user still sees readable
+ * content, just without formatting. Scoped to Telegram's known tag set
+ * on purpose: a code-authored error message containing something
+ * tag-shaped like "Expected <string>" must not lose text on the
+ * fallback path.
  */
+const TELEGRAM_TAG =
+  /<\/?(?:b|strong|i|em|u|ins|s|strike|del|tg-spoiler|pre|span(?:\s[^>]*)?|a(?:\s[^>]*)?|code(?:\s[^>]*)?|blockquote(?:\s[^>]*)?|tg-emoji(?:\s[^>]*)?|tg-time(?:\s[^>]*)?)>/gi
+
 function stripHtmlTags(html: string): string {
   return html
-    .replace(/<[^>]+>/g, '')
+    .replace(TELEGRAM_TAG, '')
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')

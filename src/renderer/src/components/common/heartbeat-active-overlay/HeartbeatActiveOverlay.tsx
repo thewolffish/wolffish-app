@@ -1,6 +1,7 @@
 import { cn } from '@lib/utils/cn'
 import type { HeartbeatLogEntry, HeartbeatRunningJob } from '@preload/index'
 import { Activity04Icon } from 'hugeicons-react'
+import { useFlow } from '@providers/flow/useFlow'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -8,6 +9,9 @@ const MAX_LOG_ENTRIES = 50
 
 export function HeartbeatActiveOverlay(): React.JSX.Element | null {
   const { t, i18n } = useTranslation()
+  const { status } = useFlow()
+  // Unstamped runs follow the global mode — show the effective value.
+  const globalMode = status?.config?.llm.mode === 'workflow' ? 'workflow' : 'single'
   const [runningJob, setRunningJob] = useState<HeartbeatRunningJob | null>(null)
   const [logs, setLogs] = useState<HeartbeatLogEntry[]>([])
   const [now, setNow] = useState(() => Date.now())
@@ -82,6 +86,21 @@ export function HeartbeatActiveOverlay(): React.JSX.Element | null {
             <span>{t('heartbeat.overlay.startedAt', { time: startedStr })}</span>
             <span className="text-border">·</span>
             <span className="tabular-nums font-mono">{elapsedStr}</span>
+            <span className="text-border">·</span>
+            <span
+              className={cn(
+                'inline-flex items-center rounded-full px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide',
+                (runningJob.mode ?? globalMode) === 'workflow'
+                  ? 'bg-primary/15 text-primary'
+                  : 'text-muted bg-surface border-border border'
+              )}
+            >
+              {t(
+                (runningJob.mode ?? globalMode) === 'workflow'
+                  ? 'chat.modePicker.workflow'
+                  : 'chat.modePicker.single'
+              )}
+            </span>
           </div>
         </div>
 

@@ -7,7 +7,7 @@ import type {
 import { workspaceRoot } from '@main/workspace/workspace'
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { Bot, InputFile } from 'grammy'
+import { Bot, GrammyError, InputFile } from 'grammy'
 
 /**
  * Capability name used to register Telegram tools with the cerebellum.
@@ -58,11 +58,12 @@ export function buildTelegramCapability(deps: ToolDeps): {
     {
       name: 'telegram_send',
       description:
-        'Send a plain text message to one of the allowed Telegram users. Use to notify the user out-of-band — for example when a long-running task you started in the chat finishes. Plain text only; no markdown. Returns the Telegram message_id so a later edit can target this message.',
+        'Send a text message to one of the allowed Telegram users. Use to notify the user out-of-band — for example when a long-running task you started in the chat finishes. Returns the Telegram message_id so a later edit can target this message.',
       parameters: {
         message: {
           type: 'string',
-          description: 'The message body. 1–4096 characters. Plain text.',
+          description:
+            'The message body. 1–4096 characters, delivered with Telegram parse_mode HTML. Telegram does NOT render Markdown (no **, no # headings, no | tables |, no [text](url) — they show as raw syntax). Formatting, if any, must be Telegram HTML only: <b>, <i>, <u>, <s>, <code>, <pre>, <a href="…">, <blockquote>; escape literal & < > as &amp; &lt; &gt;. Plain text with no markup is always safe.',
           required: true
         },
         userId: {
@@ -174,7 +175,8 @@ export function buildTelegramCapability(deps: ToolDeps): {
         },
         message: {
           type: 'string',
-          description: 'New text body. 1–4096 characters. Plain text.',
+          description:
+            'New text body. 1–4096 characters, delivered with Telegram parse_mode HTML — same formatting rules as telegram_send (Telegram HTML subset only, never Markdown; escape literal & < > as entities).',
           required: true
         },
         userId: {
@@ -247,10 +249,25 @@ async function sendText(
   }
   const target = resolveTarget(deps, args.userId)
   if (!target.ok) return failure(target.error)
+  // parse_mode HTML matches what the channel overlay teaches the model.
+  // ONLY an entity-parse reject falls through to the plain retry —
+  // delivery beats formatting there, and the result tells the model so
+  // it can fix its markup next time. Any other error (network, rate
+  // limit, bad chat) surfaces as a failure with the HTML intact, so the
+  // model never gets steered into stripping valid formatting.
+  try {
+    const result = await bot.api.sendMessage(target.id, message, { parse_mode: 'HTML' })
+    deps.trackOutgoing?.(target.id, result.message_id)
+    return success(`Sent. message_id=${result.message_id} to=${target.id}`)
+  } catch (err) {
+    if (!isHtmlParseError(err)) return failure(`send failed: ${errMessage(err)}`)
+  }
   try {
     const result = await bot.api.sendMessage(target.id, message)
     deps.trackOutgoing?.(target.id, result.message_id)
-    return success(`Sent. message_id=${result.message_id} to=${target.id}`)
+    return success(
+      `Sent as PLAIN text (Telegram rejected the HTML entities — any tags were shown literally). message_id=${result.message_id} to=${target.id}`
+    )
   } catch (err) {
     return failure(`send failed: ${errMessage(err)}`)
   }
@@ -339,12 +356,46 @@ async function editText(
   }
   const target = resolveTarget(deps, args.userId)
   if (!target.ok) return failure(target.error)
+  // No plain retry here, unlike sendText: the edit target already shows
+  // correctly rendered content, and re-sending the same string without
+  // parse_mode would REPLACE it with literal tag soup. An entity-parse
+  // reject therefore fails with instructions (the original message stays
+  // intact), and an identical-content edit is a successful no-op — not a
+  // reason to rewrite the message.
   try {
-    await bot.api.editMessageText(target.id, messageId, message)
+    await bot.api.editMessageText(target.id, messageId, message, { parse_mode: 'HTML' })
     return success(`Edited. message_id=${messageId} to=${target.id}`)
   } catch (err) {
+    if (isNotModifiedError(err)) {
+      return success(
+        `Edit skipped — the message already has this exact content. message_id=${messageId} to=${target.id}`
+      )
+    }
+    if (isHtmlParseError(err)) {
+      return failure(
+        `edit failed: Telegram rejected the HTML entities (${errMessage(err)}). The existing message was left unchanged — fix the markup and retry.`
+      )
+    }
     return failure(`edit failed: ${errMessage(err)}`)
   }
+}
+
+/** Telegram 400 "can't parse entities" — malformed HTML in the payload. */
+function isHtmlParseError(err: unknown): boolean {
+  return (
+    err instanceof GrammyError &&
+    err.error_code === 400 &&
+    /can't parse entities/i.test(err.description)
+  )
+}
+
+/** Telegram 400 for an edit whose text+entities match the current message. */
+function isNotModifiedError(err: unknown): boolean {
+  return (
+    err instanceof GrammyError &&
+    err.error_code === 400 &&
+    /message is not modified/i.test(err.description)
+  )
 }
 
 function resolveTarget(

@@ -121,10 +121,56 @@ export const diskWriter = {
     return enqueue(absPath, () => atomicWrite(absPath, data))
   },
 
+  /**
+   * Read-modify-write INSIDE the path's queue, so concurrent updates to one
+   * file can never lose each other's changes (the classic two-writers-load-
+   * the-same-copy clobber). `mutate` receives the current raw contents (null
+   * when the file doesn't exist) and returns the new contents — or null to
+   * skip writing. The write itself is atomic like writeFileAtomic.
+   */
+  update(
+    absPath: string,
+    mutate: (current: string | null) => string | Buffer | null | Promise<string | Buffer | null>
+  ): Promise<void> {
+    return enqueue(absPath, async () => {
+      let current: string | null
+      try {
+        current = await fs.readFile(absPath, 'utf8')
+      } catch {
+        current = null
+      }
+      const next = await mutate(current)
+      if (next === null) return
+      await atomicWrite(absPath, next)
+    })
+  },
+
   /** Serialized append — lines never interleave across writers to one file. */
   appendLine(absPath: string, text: string): Promise<void> {
     return enqueue(absPath, () =>
       withDir(path.dirname(absPath), () => fs.appendFile(absPath, text, 'utf8'))
+    )
+  },
+
+  /**
+   * Serialized append where the text depends on whether the file already
+   * exists (date headers, section preambles). The existence probe runs
+   * INSIDE the queue — a probe outside it races a concurrent creator and
+   * duplicates the header. `make` may return null to skip the append.
+   */
+  appendWithInit(absPath: string, make: (exists: boolean) => string | null): Promise<void> {
+    return enqueue(absPath, () =>
+      withDir(path.dirname(absPath), async () => {
+        let exists = true
+        try {
+          await fs.access(absPath)
+        } catch {
+          exists = false
+        }
+        const text = make(exists)
+        if (text === null) return
+        await fs.appendFile(absPath, text, 'utf8')
+      })
     )
   },
 
@@ -140,8 +186,12 @@ export const diskWriter = {
 
   /**
    * Await in-flight queued writes. With a path, awaits that file's queue;
-   * without, awaits every currently-queued write — used on turn cancellation so
-   * queued json lands atomically before teardown. Best-effort: never rejects.
+   * without, awaits every write queued AT CALL TIME (one snapshot round) —
+   * used on turn teardown so queued json lands atomically before the turn
+   * closes. Deliberately NOT drain-until-empty: with concurrent turns other
+   * writers keep enqueueing (per-line logs, the corpus 2s flush), and a
+   * finishing turn waiting for global quiescence would spin forever.
+   * Best-effort: never rejects.
    */
   async flush(absPath?: string): Promise<void> {
     if (absPath) {
@@ -153,11 +203,6 @@ export const diskWriter = {
       }
       return
     }
-    // Cancellation barrier: drain every path until the queue is empty. Converges
-    // once producers have stopped (the caller's teardown contract); writes
-    // enqueued during a drain round are caught by the next round.
-    while (queues.size > 0) {
-      await Promise.allSettled([...queues.values()])
-    }
+    await Promise.allSettled([...queues.values()])
   }
 }

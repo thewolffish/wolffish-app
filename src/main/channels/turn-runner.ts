@@ -1,7 +1,8 @@
 import { turnRouter, type TurnSink } from '@main/channels/channel'
-import { generateTitle, type ConversationChannel } from '@main/conversations'
+import type { ConversationChannel } from '@main/conversations'
+import { ensureConversationTitle } from '@main/conversation-titler'
 import type { Agent } from '@main/runtime/agent'
-import { autonomousTurnScope, type CorpusEvent } from '@main/runtime/corpus'
+import { turnScope, type CorpusEvent } from '@main/runtime/corpus'
 import { CREDENTIAL_BLOCKED_REPLY, detectSensitiveData } from '@main/runtime/sensitiveDataFilter'
 import type { ChatHistoryMessage } from '@preload/index'
 
@@ -79,23 +80,64 @@ export type TurnHandle = {
 }
 
 /**
+ * Lifecycle notifications for every foreground turn, regardless of channel.
+ * Broadcast to the renderer (chat:turnState) so the Conversations sidebar
+ * can show live status chips for in-app, WhatsApp and Telegram runs alike.
+ */
+export type TurnLifecycleEvent = {
+  phase: 'started' | 'done' | 'canceled' | 'error'
+  turnId: string
+  conversationId: string | null
+  channel: string
+  title?: string | null
+  error?: string
+}
+
+/**
  * Single agent-wide dispatcher. Drives every turn through agent.respond
  * regardless of which channel originated it. Owns:
  *  - the sensitive-data gate,
- *  - per-turn corpus listener registration,
- *  - amygdala approval routing via turnRouter,
- *  - cross-channel serialization. Broca/amygdala state lives on the
- *    agent, so two concurrent respond() calls would corrupt it. The
- *    runner queues send() calls behind a Promise chain so a Telegram
- *    message arriving mid-Electron-turn waits politely.
+ *  - per-turn corpus listener registration (keyed by turn identity),
+ *  - amygdala approval / ask_user routing via turnRouter (keyed by turnId),
+ *  - PER-CONVERSATION serialization: turns for the SAME conversation queue
+ *    behind each other (a conversation is one ordered transcript), while
+ *    turns for different conversations run in parallel. Every turn gets its
+ *    own Broca (agent-side default) and runs inside a turnScope ALS entry,
+ *    so concurrent respond() calls share no per-turn state.
  *
- * A channel can still preempt by aborting the previous controller
- * before calling send — that lets the queued head unwind quickly.
+ * A channel can still preempt its own conversation's in-flight turn by
+ * aborting the previous controller before calling send — that lets the
+ * queued head unwind quickly.
  */
 export class TurnRunner {
-  private chain: Promise<void> = Promise.resolve()
+  /**
+   * One promise tail per conversation (turns without a conversation id get a
+   * private lane keyed by turnId). Entries are dropped once the tail settles
+   * and is still the live tail — mirrors diskWriter's per-path queues.
+   */
+  private readonly chains = new Map<string, Promise<void>>()
+  /** Live turn count per conversation key — backs isConversationActive. */
+  private readonly activeTurns = new Map<string, number>()
+  /**
+   * Titles resolved this session, keyed by conversation id — skips the
+   * per-turn disk check + LLM titling on every follow-up turn while still
+   * feeding the real title to the lifecycle broadcast / cerebellum. Seeded on
+   * the first turn (from an existing on-disk title for a resumed chat, or a
+   * freshly generated one).
+   */
+  private readonly titledCache = new Map<string, string>()
   private blockCredentials: boolean = false
   private locale: 'en' | 'ar' = 'en'
+  private lifecycleListener: ((ev: TurnLifecycleEvent) => void) | null = null
+  /**
+   * Deadline (ms) for the title-first LLM call. Titling is awaited BEFORE
+   * agent.respond, and the underlying summarize() retries with backoff — a hung
+   * or very slow provider must never wedge the turn. On expiry titling is
+   * aborted and the turn proceeds untitled (self-healing on a later turn).
+   * Generous enough that a normal cloud title (1–4s) never trips it; only a
+   * pathological hang or a chronically slow local model degrades to Untitled.
+   */
+  private titleTimeoutMs = 15_000
 
   constructor(private readonly agent: Agent) {}
 
@@ -103,8 +145,38 @@ export class TurnRunner {
     this.blockCredentials = value
   }
 
+  /** Override the title-first deadline (tests use a short value). */
+  setTitleTimeout(ms: number): void {
+    this.titleTimeoutMs = ms
+  }
+
   setLocale(value: 'en' | 'ar'): void {
     this.locale = value
+  }
+
+  /** Wire the turn lifecycle broadcast (renderer status chips). */
+  setLifecycleListener(listener: ((ev: TurnLifecycleEvent) => void) | null): void {
+    this.lifecycleListener = listener
+  }
+
+  /** True while any turn for this conversation is queued or running. */
+  isConversationActive(conversationId: string): boolean {
+    return (this.activeTurns.get(conversationId) ?? 0) > 0
+  }
+
+  /** Total queued+running turns across all conversations (quit-drain). */
+  activeTurnCount(): number {
+    let n = 0
+    for (const count of this.activeTurns.values()) n += count
+    return n
+  }
+
+  private emitLifecycle(ev: TurnLifecycleEvent): void {
+    try {
+      this.lifecycleListener?.(ev)
+    } catch {
+      // a broken listener must never tear down a turn
+    }
   }
 
   send(opts: TurnSendOptions): TurnHandle {
@@ -152,14 +224,18 @@ export class TurnRunner {
       }
     }
 
-    const prevChain = this.chain
     const agent = this.agent
+    const conversationId = opts.conversationId ?? null
+    // Turns for the SAME conversation serialize (one transcript, one order);
+    // a turn with no conversation gets a private lane and runs immediately.
+    const laneKey = conversationId ?? `turn:${turnId}`
+    const prevChain = this.chains.get(laneKey) ?? Promise.resolve()
+    this.activeTurns.set(laneKey, (this.activeTurns.get(laneKey) ?? 0) + 1)
 
     const done = (async () => {
-      // Wait for any in-flight turn to finish before touching shared
-      // state. A channel that wants priority should abort the previous
-      // turn's controller before calling send — that lets the head
-      // unwind quickly rather than playing out fully.
+      // Wait for any in-flight turn OF THIS CONVERSATION to finish. A channel
+      // that wants priority should abort the previous turn's controller
+      // before calling send — that lets the queued head unwind quickly.
       await prevChain.catch(() => undefined)
 
       opts.onTurnStarted?.({ turnId, controller })
@@ -167,63 +243,124 @@ export class TurnRunner {
       const offs: Array<() => void> = []
       for (const eventName of TURN_RELAYED_EVENTS) {
         const off = agent.corpus.on(eventName, (payload) => {
-          // Drop events emitted from inside a background autonomous run
-          // (a procedure/automation firing while this channel turn is still
-          // streaming). Relaying them would pollute this turn's context meter,
-          // token counters, and timeline and hijack its active task id — the
-          // events are stamped with THIS turn's id downstream, so the renderer
-          // can't tell them apart. Corpus emit is synchronous, so this reads the
-          // emitter's scope. Fail-open: no scope ⇒ relay as before.
-          if (autonomousTurnScope.getStore()) return
+          // Relay only events emitted from inside THIS turn's async call tree.
+          // Corpus emit is synchronous (mitt), so getStore() reads the
+          // EMITTER's scope: background autonomous runs are dropped outright,
+          // a concurrent foreground turn's events are dropped because their
+          // turnId differs (they have their own relay), and scope-less emits
+          // (outside any turn) stay fail-open and relay as they always have.
+          // Without the turnId check, every live turn's meter/token/task
+          // events would blend into every other turn's sink.
+          const scope = turnScope.getStore()
+          if (scope?.autonomous) return
+          if (scope?.turnId && scope.turnId !== turnId) return
           sink.onTurnEvent(eventName, payload)
         })
         offs.push(off)
       }
 
-      turnRouter.setActive(sink)
+      turnRouter.register(turnId, sink)
+
+      // Title FIRST, before any processing. For a new conversation this is a
+      // pure LLM call to the chosen model; it also persists the title (writing
+      // a titled shell for an in-app chat whose file doesn't exist yet), so
+      // the conversation is saved with its title before agent.respond runs.
+      // Idempotent + session-cached: a conversation already titled skips the
+      // LLM (and the disk check) entirely, so follow-up turns pay nothing.
+      let title =
+        opts.conversationTitle ??
+        (conversationId ? this.titledCache.get(conversationId) : undefined)
+      if (!title) {
+        // Bound the title-first call with a PRIVATE deadline that aborts ONLY
+        // titling — never the turn's own controller (that would kill the turn).
+        // On timeout the titler unwinds to '' (its abort contract), leaving the
+        // conversation Untitled to be re-titled later, and agent.respond still
+        // runs. A genuine turn cancel is chained in so it also unwinds titling
+        // promptly. thalamus retries the model call internally; this only caps
+        // a hung/slow provider so it can't wedge the turn.
+        const titleController = new AbortController()
+        const abortTitling = (): void => titleController.abort()
+        if (controller.signal.aborted) abortTitling()
+        else controller.signal.addEventListener('abort', abortTitling, { once: true })
+        const titleTimer = setTimeout(abortTitling, this.titleTimeoutMs)
+        try {
+          title = await ensureConversationTitle(
+            conversationId,
+            userContent,
+            opts.channel,
+            agent.thalamus,
+            titleController.signal
+          )
+        } finally {
+          clearTimeout(titleTimer)
+          controller.signal.removeEventListener('abort', abortTitling)
+        }
+        if (conversationId && title && title !== 'Untitled') {
+          this.titledCache.set(conversationId, title)
+        }
+      }
+
+      this.emitLifecycle({
+        phase: 'started',
+        turnId,
+        conversationId,
+        channel: sink.channelId,
+        title
+      })
 
       try {
-        let title = opts.conversationTitle
-        if (!title) {
-          const firstUser = opts.history.find((m) => m.role === 'user')
-          if (firstUser) {
-            title = generateTitle({
-              id: '',
-              title: 'Untitled',
-              model: null,
-              messages: [{ role: 'user', content: firstUser.content, timestamp: 0 }],
-              createdAt: 0,
-              updatedAt: 0
-            })
-          }
-        }
-
-        await agent.respond({
-          history: opts.history,
-          turnId,
-          conversationId: opts.conversationId ?? null,
-          conversationTitle: title,
-          channel: opts.channel,
-          workingFolders: opts.workingFolders,
-          signal: controller.signal,
-          onSegment: (segment) => sink.onSegment(segment),
-          thinkingMode: opts.thinkingMode,
-          modeOverride: opts.modeOverride
-        })
+        // The turnScope entry is what keys everything per-turn downstream:
+        // the corpus relays above, approval/ask routing in turnRouter, and
+        // the daily-log attribution — all read the emitter's scope.
+        const result = await turnScope.run({ turnId, conversationId, autonomous: false }, () =>
+          agent.respond({
+            history: opts.history,
+            turnId,
+            conversationId,
+            conversationTitle: title,
+            channel: opts.channel,
+            workingFolders: opts.workingFolders,
+            signal: controller.signal,
+            onSegment: (segment) => sink.onSegment(segment),
+            thinkingMode: opts.thinkingMode,
+            modeOverride: opts.modeOverride
+          })
+        )
         sink.onDone()
+        this.emitLifecycle({
+          phase: result.stopReason === 'canceled' ? 'canceled' : 'done',
+          turnId,
+          conversationId,
+          channel: sink.channelId,
+          title
+        })
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
-        sink.onError(humanizeProviderError(message, this.locale))
+        const humanized = humanizeProviderError(message, this.locale)
+        sink.onError(humanized)
+        this.emitLifecycle({
+          phase: controller.signal.aborted ? 'canceled' : 'error',
+          turnId,
+          conversationId,
+          channel: sink.channelId,
+          title,
+          error: humanized
+        })
       } finally {
         for (const off of offs) off()
-        if (turnRouter.getActive() === sink) {
-          turnRouter.setActive(null)
-        }
+        turnRouter.unregister(turnId)
         opts.onTurnEnded?.({ turnId })
       }
     })()
 
-    this.chain = done.catch(() => undefined)
+    const tail = done.catch(() => undefined)
+    this.chains.set(laneKey, tail)
+    void tail.then(() => {
+      const remaining = (this.activeTurns.get(laneKey) ?? 1) - 1
+      if (remaining <= 0) this.activeTurns.delete(laneKey)
+      else this.activeTurns.set(laneKey, remaining)
+      if (this.chains.get(laneKey) === tail) this.chains.delete(laneKey)
+    })
 
     return { turnId, controller, done }
   }

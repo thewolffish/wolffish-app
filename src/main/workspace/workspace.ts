@@ -340,6 +340,8 @@ export type WorkspaceConfig = {
     channel?: string
     service?: string
     hippocampusTab?: string
+    sidebarCollapsed?: string
+    rightSidebarCollapsed?: string
   }
   disabledCapabilities?: string[]
   /**

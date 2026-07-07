@@ -107,19 +107,13 @@ export class BasalGanglia {
       return
     }
 
-    let needsHeader = true
-    try {
-      await fs.access(filepath)
-      needsHeader = false
-    } catch {
-      // file doesn't exist
-    }
-
     const line = renderEntry(entry)
-    const body = (needsHeader ? `# ${date}\n\n` : '') + line
-
     try {
-      await diskWriter.appendLine(filepath, body)
+      // Header decision inside the write queue — concurrent turns' tool
+      // outcomes land in one file without duplicate date headers.
+      await diskWriter.appendWithInit(filepath, (exists) =>
+        exists ? line : `# ${date}\n\n${line}`
+      )
     } catch {
       return
     }

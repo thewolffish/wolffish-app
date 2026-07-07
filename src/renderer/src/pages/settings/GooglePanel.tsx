@@ -68,6 +68,10 @@ export function GooglePanel(): React.JSX.Element {
     setupBusy ? cachedSetup.percent : initial?.binary.gogInstalled ? 100 : 0
   )
   const [accounts, setAccounts] = useState<string[]>(initial?.accounts ?? [])
+  // Per-account token health (email → false when its refresh token has
+  // expired/been revoked). Missing entries mean "healthy or not-yet-checked" —
+  // the chip stays green so healthy accounts never flicker.
+  const [health, setHealth] = useState<Record<string, boolean>>({})
   const [authUrl, setAuthUrl] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const authCanceledRef = useRef(false)
@@ -146,6 +150,31 @@ export function GooglePanel(): React.JSX.Element {
       cancelled = true
     }
   }, [binary.gogInstalled])
+
+  // Silently verify each authorized account's refresh token whenever the set of
+  // accounts changes. gogcli refresh tokens expire/get revoked over time, and
+  // when they do every google_* call for that account fails — this flips its
+  // chip to "inactive" (red) so the panel tells the truth. Best-effort and
+  // non-blocking: on any failure we leave chips as-is (no toast, no flicker).
+  const accountsKey = accounts.join('\n')
+  useEffect(() => {
+    // Nothing to probe (no binary / no accounts) — leave `health` as-is; the
+    // chips only render when there are accounts, and the next successful probe
+    // replaces the whole map anyway.
+    if (!binary.gogInstalled || accountsKey === '') return
+    let cancelled = false
+    void window.api.google.checkAccounts().then(
+      (map) => {
+        if (!cancelled) setHealth(map)
+      },
+      () => {
+        /* best-effort — leave existing chips untouched on failure */
+      }
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [accountsKey, binary.gogInstalled])
 
   const handleSetup = useCallback(async () => {
     setStage('setup')
@@ -412,6 +441,7 @@ export function GooglePanel(): React.JSX.Element {
           stage={stage}
           email={email}
           accounts={accounts}
+          health={health}
           authUrl={authUrl}
           onEmailChange={setEmail}
           onAuthorize={() => void handleAuth()}
@@ -676,6 +706,7 @@ function AuthSection({
   stage,
   email,
   accounts,
+  health,
   authUrl,
   onEmailChange,
   onAuthorize,
@@ -686,6 +717,7 @@ function AuthSection({
   stage: Stage
   email: string
   accounts: string[]
+  health: Record<string, boolean>
   authUrl: string | null
   onEmailChange: (v: string) => void
   onAuthorize: () => void
@@ -712,41 +744,58 @@ function AuthSection({
 
       {accounts.length > 0 && (
         <div className="flex flex-col gap-2">
-          {accounts.map((acc) => (
-            <div key={acc} className="flex items-center gap-2">
-              <div
-                className={cn(
-                  'flex h-9 flex-1 items-center gap-2 rounded-md border px-3',
-                  'border-border bg-bg/30'
-                )}
-                aria-label={t('settings.services.google.auth.accountLabel', { account: acc })}
-              >
-                <span className="text-fg flex-1 truncate font-mono text-sm select-text">{acc}</span>
-                <span
+          {accounts.map((acc) => {
+            // Only an explicit `false` (refresh token positively failed) flips
+            // the chip to inactive; unknown/not-yet-checked accounts stay green.
+            const expired = health[acc] === false
+            return (
+              <div key={acc} className="flex items-center gap-2">
+                <div
                   className={cn(
-                    'shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider',
-                    'bg-emerald-500/10 text-emerald-500'
+                    'flex h-9 flex-1 items-center gap-2 rounded-md border px-3',
+                    'border-border bg-bg/30'
                   )}
-                  aria-label={t('settings.services.google.auth.active')}
+                  aria-label={t('settings.services.google.auth.accountLabel', { account: acc })}
                 >
-                  {t('settings.services.google.auth.active')}
-                </span>
+                  <span className="text-fg flex-1 truncate font-mono text-sm select-text">
+                    {acc}
+                  </span>
+                  <span
+                    className={cn(
+                      'shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider',
+                      expired
+                        ? 'bg-rose-500/10 text-rose-500'
+                        : 'bg-emerald-500/10 text-emerald-500'
+                    )}
+                    aria-label={t(
+                      expired
+                        ? 'settings.services.google.auth.inactive'
+                        : 'settings.services.google.auth.active'
+                    )}
+                  >
+                    {t(
+                      expired
+                        ? 'settings.services.google.auth.inactive'
+                        : 'settings.services.google.auth.active'
+                    )}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onRemove(acc)}
+                  title={t('settings.services.google.auth.remove')}
+                  aria-label={t('settings.services.google.auth.remove')}
+                  className={cn(
+                    'flex h-9 w-9 items-center justify-center rounded-md cursor-pointer',
+                    'text-muted hover:bg-rose-500/10 hover:text-rose-500',
+                    'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
+                  )}
+                >
+                  <Delete02Icon size={16} />
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={() => onRemove(acc)}
-                title={t('settings.services.google.auth.remove')}
-                aria-label={t('settings.services.google.auth.remove')}
-                className={cn(
-                  'flex h-9 w-9 items-center justify-center rounded-md cursor-pointer',
-                  'text-muted hover:bg-rose-500/10 hover:text-rose-500',
-                  'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
-                )}
-              >
-                <Delete02Icon size={16} />
-              </button>
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
 

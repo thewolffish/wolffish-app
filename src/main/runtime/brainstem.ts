@@ -1,6 +1,6 @@
 import { diskWriter } from '@main/io/diskWriter'
 import type { Agent } from '@main/runtime/agent'
-import { autonomousTurnScope, type Corpus } from '@main/runtime/corpus'
+import { runDetached, type Corpus } from '@main/runtime/corpus'
 import type { Cortex } from '@main/runtime/cortex'
 import { isIndexablePath } from '@main/runtime/cortexIngest'
 import type { Hippocampus, KnowledgeFile } from '@main/runtime/hippocampus'
@@ -152,6 +152,8 @@ export type RunningJobInfo = {
   label: string
   body: string
   startedAt: number
+  /** The run's own mode (stamped marker / procedure field); null ⇒ global. */
+  mode: 'single' | 'workflow' | null
 }
 
 /**
@@ -512,10 +514,10 @@ export class Brainstem {
       // role:'summary' stamps the emitted llm.response as summarization
       // overhead (itemized, never fed into a conversation's context meter,
       // recorded to the usage ledger by the agent's summary listener); the
-      // autonomousTurnScope wrapper keeps the emit out of any live turn's
+      // sealed-scope wrapper keeps the emit out of any live turn's
       // relay — this cron can fire mid-chat and previously overwrote the
       // live meter with the compaction prompt's token count.
-      await autonomousTurnScope.run(true, async () => {
+      await runDetached(async () => {
         for await (const chunk of thalamus.stream({
           system: COMPACTION_SYSTEM_PROMPT,
           messages,
@@ -619,7 +621,8 @@ export class Brainstem {
       id: schedule.id,
       label: schedule.label,
       body: schedule.body,
-      startedAt: start
+      startedAt: start,
+      mode: schedule.mode ?? null
     }
     this.runningJobInfo = info
     this.corpus?.emit('brainstem.jobStarted', {
@@ -747,9 +750,15 @@ export class Brainstem {
     if (!this.workspaceRoot) return
     const p = path.join(this.workspaceRoot, 'brain', 'brainstem', 'heartbeat.md')
     try {
-      const raw = await fs.readFile(p, 'utf8')
-      const next = stripHeartbeatHeading(raw, label)
-      if (next !== raw) await diskWriter.writeFileAtomic(p, next)
+      // RMW inside the file's write queue: a self-retire firing while the
+      // automations tool (or the user's editor) writes the same file must
+      // strip from the FRESH contents, not a stale pre-write copy — the
+      // stale-copy path silently resurrected or dropped sibling jobs.
+      await diskWriter.update(p, (raw) => {
+        if (raw === null) return null
+        const next = stripHeartbeatHeading(raw, label)
+        return next !== raw ? next : null
+      })
     } catch {
       // best-effort — worst case the entry lingers and is retired next launch
     }
@@ -947,7 +956,8 @@ export class Brainstem {
       cron: null,
       label,
       body: instruction,
-      runAt: null
+      runAt: null,
+      mode: mode ?? null
     }
     const accepted = this.enqueue(schedule, () =>
       this.runHeartbeatJob(instruction, label, 'procedure', mode)

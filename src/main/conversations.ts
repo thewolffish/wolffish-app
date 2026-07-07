@@ -3,7 +3,6 @@ import type { Segment, SegmentTurnEndReason } from '@main/runtime/broca'
 import type { NoProviderAvailableInfo } from '@main/runtime/thalamus'
 import { workspaceRoot } from '@main/workspace/workspace'
 import type { PersistedApproval, PersistedToolTiming } from '@preload/index'
-import nlp from 'compromise'
 import { randomBytes } from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
@@ -308,6 +307,61 @@ export async function saveConversation(conv: ConversationFile): Promise<void> {
   await diskWriter.writeFileAtomic(filePathForId(conv.id), JSON.stringify(conv, null, 2))
 }
 
+/**
+ * Read-modify-write a conversation INSIDE its file's write queue, so
+ * concurrent writers (a channel's end-of-turn append, the summarizer, the
+ * renderer's whole-file save) can never lose each other's changes by both
+ * loading the same stale copy. `mutate` gets the freshest on-disk state
+ * (null when the file doesn't exist yet) and returns what to persist — or
+ * null to skip the write. Unparseable files surface as null too, so a
+ * mutate can choose to rebuild rather than crash.
+ */
+export async function updateConversation(
+  id: string,
+  mutate: (current: ConversationFile | null) => ConversationFile | null
+): Promise<void> {
+  await diskWriter.update(filePathForId(id), (raw) => {
+    let current: ConversationFile | null = null
+    if (raw !== null) {
+      try {
+        current = JSON.parse(raw) as ConversationFile
+        migrateSegments(current)
+      } catch {
+        current = null
+      }
+    }
+    const next = mutate(current)
+    if (next === null) return null
+    return JSON.stringify(next, null, 2)
+  })
+}
+
+/**
+ * Merge a full in-memory copy over the on-disk state, preserving the fields
+ * that OTHER writers own when the incoming copy is staler than the disk:
+ *  - the rolling prefix summary (written by the post-turn summarizer) wins
+ *    when the disk's mark is ahead of the incoming copy's,
+ *  - a real on-disk title beats an incoming 'Untitled'.
+ * Everything else — messages, stats, timeline — belongs to the caller's copy.
+ */
+export function mergeConversationOnto(
+  disk: ConversationFile | null,
+  incoming: ConversationFile
+): ConversationFile {
+  if (!disk) return incoming
+  const merged: ConversationFile = { ...incoming }
+  const diskMark = disk.summarizedThroughMessage ?? 0
+  const incomingMark = incoming.summarizedThroughMessage ?? 0
+  if (disk.summary && diskMark > incomingMark) {
+    merged.summary = disk.summary
+    merged.summarizedThroughMessage = disk.summarizedThroughMessage
+  }
+  if (incoming.title === 'Untitled' && disk.title && disk.title !== 'Untitled') {
+    merged.title = disk.title
+  }
+  return merged
+}
+
 export async function deleteConversation(id: string): Promise<void> {
   await diskWriter.deleteFile(filePathForId(id))
 
@@ -335,143 +389,7 @@ export function createConversation(model: string | null): ConversationFile {
   }
 }
 
-const MAX_TITLE_WORDS = 8
-
-const FILLER_RE = [
-  /^(hey|hi|hello|yo|so|ok|okay)\s*[,.]?\s*/i,
-  /^(can|could|would) you (please\s+)?/i,
-  /^(i need|i want|i'd like|i would like) (you )?to\s+/i,
-  /^(i'm trying|i am trying) to\s+/i,
-  /^(please|pls)\s+/i,
-  /^tell me (about\s+)?/i,
-  /^(show|explain|describe) (me\s+)?/i
-]
-
-const NOISE_RE =
-  /\b(right now|right away|at the moment|for me|for now|just|actually|basically|simply|really|literally)\b/gi
-
-const BREAK_WORDS = new Set([
-  'that',
-  'which',
-  'who',
-  'whom',
-  'where',
-  'when',
-  'while',
-  'because',
-  'since',
-  'if',
-  'although',
-  'unless',
-  'after',
-  'before',
-  'and',
-  'but',
-  'or',
-  'so',
-  'yet',
-  'with',
-  'without',
-  'about',
-  'from',
-  'for',
-  'into'
-])
-
-const DANGLING = new Set([
-  'of',
-  'to',
-  'in',
-  'on',
-  'at',
-  'by',
-  'for',
-  'with',
-  'from',
-  'a',
-  'an',
-  'the'
-])
-
-function stripFiller(s: string): string {
-  let out = s
-  for (const re of FILLER_RE) out = out.replace(re, '')
-  return out.trim() || s
-}
-
-function stripNoise(s: string): string {
-  const out = s
-    .replace(NOISE_RE, '')
-    .replace(/\s{2,}/g, ' ')
-    .trim()
-  return out || s
-}
-
-function stripTrailingRepeat(s: string): string {
-  const words = s.split(/\s+/)
-  if (words.length < 4) return s
-  const head = words[0].toLowerCase()
-  for (let i = words.length - 1; i > words.length / 2; i--) {
-    if (words[i].toLowerCase() === head) {
-      return words.slice(0, i).join(' ')
-    }
-  }
-  return s
-}
-
-function smartTruncate(s: string, max: number): string {
-  const words = s.split(/\s+/)
-  if (words.length <= max) return s
-
-  const half = Math.ceil(max / 2)
-
-  for (let i = max; i >= half; i--) {
-    if (BREAK_WORDS.has(words[i]?.toLowerCase())) {
-      let cut = i
-      while (cut > half && DANGLING.has(words[cut - 1]?.toLowerCase())) cut--
-      if (cut >= half) return words.slice(0, cut).join(' ')
-    }
-  }
-
-  let end = max
-  while (end > half && DANGLING.has(words[end - 1]?.toLowerCase())) end--
-  return words.slice(0, end).join(' ')
-}
-
-export function generateTitle(conv: ConversationFile): string {
-  const userMsg = conv.messages.find((m) => m.role === 'user')
-  if (!userMsg) return 'Untitled'
-
-  const raw = userMsg.content.trim()
-  if (!raw) return 'Untitled'
-
-  const text =
-    raw
-      .replace(/^```[\s\S]*?```\s*/g, '')
-      .replace(/^#{1,6}\s+/gm, '')
-      .replace(/(\*{1,3}|_{1,3}|~~|`)(.*?)\1/g, '$2')
-      .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
-      .replace(/^\s*[-*+>]\s+/gm, '')
-      .trim() || raw
-  const doc = nlp(text)
-  const first = (doc.sentences().first().text() || text).trim()
-
-  let stripped = stripFiller(first)
-    .replace(/[?.!]+$/, '')
-    .trim()
-  stripped = stripNoise(stripped)
-  stripped = stripTrailingRepeat(stripped)
-
-  const words = stripped.split(/\s+/)
-  if (words.length <= MAX_TITLE_WORDS) {
-    return cap(stripped)
-  }
-
-  return cap(smartTruncate(stripped, MAX_TITLE_WORDS))
-}
-
-function cap(s: string): string {
-  const t = s.replace(/\s+/g, ' ').trim()
-  if (!t) return 'Untitled'
-  return t.charAt(0).toUpperCase() + t.slice(1)
-}
+// Conversation titling is no longer a heuristic here — a pure LLM call to the
+// chosen model produces the title up front, in the TurnRunner, before a turn
+// processes (see conversation-titler.ts). This module stays the pure data
+// layer.

@@ -812,6 +812,7 @@
           "cancel": "إلغاء",
           "addMore": "إضافة حساب",
           "active": "نشط",
+          "inactive": "غير نشط",
           "remove": "إزالة",
           "accountLabel": "حساب مفوّض {{account}}",
           "linkNote": "إذا لم يفتح المتصفح،",
@@ -1326,6 +1327,7 @@
     "stop": "إيقاف",
     "telegramReadOnly": "تابع هذه المحادثة على تيليجرام.",
     "whatsappReadOnly": "تابع هذه المحادثة على واتساب.",
+    "heartbeatReadOnly": "مهمة تلقائية — للقراءة فقط.",
     "procedureReadOnly": "تشغيل إجراء — للقراءة فقط.",
     "empty": {
       "title": "وولف‌ فيش جاهز",
@@ -1466,6 +1468,8 @@
     },
     "settings": "الاعدادات",
     "history": "السجل",
+    "conversations": "المحادثات",
+    "conversationsUntitled": "بدون عنوان",
     "workspace": "مساحة العمل",
     "soul": "الروح",
     "user": "المستخدم",
@@ -2052,7 +2056,8 @@
     "deleteWarning": "ستُحذف هذه المحادثة نهائياً. هذا الإجراء لا يمكن التراجع عنه.",
     "deleteConfirm": "حذف",
     "deleteCancel": "إلغاء",
-    "newChat": "محادثة جديدة"
+    "newChat": "محادثة جديدة",
+    "processing": "قيد المعالجة…"
   },
   "units": {
     "seconds": "{{value}} ثانية",

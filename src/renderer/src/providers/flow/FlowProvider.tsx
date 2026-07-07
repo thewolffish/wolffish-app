@@ -1,11 +1,5 @@
 import type { DataAnalytics, SystemInfo, WorkspaceStatus } from '@preload/index'
-import {
-  FlowContext,
-  type ChatMessage,
-  type FlowContextValue,
-  type PendingProcedure,
-  type Screen
-} from '@providers/flow/useFlow'
+import { FlowContext, type FlowContextValue, type Screen } from '@providers/flow/useFlow'
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 
 // 5 GiB. Anything below this and Wolffish can't pull a model, persist
@@ -17,9 +11,6 @@ export function FlowProvider({ children }: { children: ReactNode }): React.JSX.E
   const [screen, setScreen] = useState<Screen>('welcome')
   const [returnTo, setReturnTo] = useState<Screen | null>(null)
   const [ready, setReady] = useState(false)
-  const [messages, setMessages] = useState<ChatMessage[]>([])
-  const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
-  const [pendingProcedure, setPendingProcedure] = useState<PendingProcedure | null>(null)
   const [dataAnalytics, setDataAnalytics] = useState<DataAnalytics | null>(null)
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null)
 
@@ -125,12 +116,6 @@ export function FlowProvider({ children }: { children: ReactNode }): React.JSX.E
     () => ({
       screen,
       status,
-      messages,
-      setMessages,
-      activeConversationId,
-      setActiveConversationId,
-      pendingProcedure,
-      setPendingProcedure,
       dataAnalytics,
       systemInfo,
       refreshData,
@@ -143,9 +128,6 @@ export function FlowProvider({ children }: { children: ReactNode }): React.JSX.E
     [
       screen,
       status,
-      messages,
-      activeConversationId,
-      pendingProcedure,
       dataAnalytics,
       systemInfo,
       refreshData,

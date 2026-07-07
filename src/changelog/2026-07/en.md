@@ -1,4 +1,32 @@
-## v1.0.205 — 2026-07-06 `Latest`
+## v1.0.206 — 2026-07-07 `Latest`
+
+### Conversations, Running Side by Side
+
+Wolffish is no longer a single chat window that empties when you open another. Every conversation now runs **concurrently**: each keeps its own feed, composer, context meter, and in-flight turn, all mounted at once. Start a second chat while the first is still streaming, flip back to it, and both are exactly where you left them — switching conversations never pauses, resets, or drops a turn that's mid-flight. A conversation only ever advances when *its* turn does.
+
+### The Conversations Rail
+
+A new rail down the right edge lists every conversation you have, across every channel, newest first. Each carries a small numbered status chip that tells you what it's doing at a glance: it **pulses** while a turn is running and settles into a color when it's done — green for finished, red for failed, amber for stopped — and holds that color for the rest of your session. Collapsed, the rail is just the chips; expanded, each shows its title. Click any one to jump straight to it — including a conversation still mid-turn that hasn't been written to disk yet, which the rail reopens by its live session rather than dead-ending on a missing file. It mirrors the left nav rail exactly, so the two frame the app symmetrically.
+
+### Every Conversation Names Itself
+
+Conversations title themselves now. The moment one begins, Wolffish reads your first message and writes a short, specific title for it — so the rail and the History page read like a table of contents instead of a wall of identical "New chat" rows. The titling runs quietly in the background on your chosen model; its cost is recorded on your usage ledger but is walled off from the conversation's own context meter, so naming a chat never eats into its window. If the model can't be reached, the title falls back to a trimmed slice of your opening line, and a later turn tries again — a chat is never stuck nameless because of one blip.
+
+### Channels Stop Waiting in Line
+
+Until now every turn everywhere was serialized into a single queue: a Telegram message landing in the middle of an in-app turn had to wait for it to finish. That queue is now **per conversation**. A single conversation is still one ordered transcript — its own turns take their turns — but *different* conversations run in parallel, in any mix of in-app, WhatsApp, and Telegram. Your morning WhatsApp thread and a long in-app task no longer block each other. Every turn also reports its live status back to the app, which is what lets the rail's chips pulse for channel runs and not just the one on your screen.
+
+### Sidebars, Squared Up
+
+Both rails were rebuilt to match. They're mirror-symmetric now — the same widths, both defaulting to collapsed, and they **snap** open and closed instead of animating a width that used to make the icons visibly jump mid-slide. Each rail ends cleanly at the top of the action bar rather than running behind it. The History page joined the family too: it shows the same live status chips and shares one open-or-activate path with the rail, so resuming a conversation there behaves identically to opening it from the sidebar.
+
+### Sweat the Details
+
+- Running procedure and heartbeat overlays now wear a **Single / Workflow** badge, so you can see at a glance which mode an automated run is executing in — and a job with no marker shows the global mode it's inheriting.
+- The Arabic interface caught up on the "automated task — read only" notice shown on heartbeat runs.
+- Opening a conversation warms its file cards before it paints, so a resumed chat lands fully formed instead of popping its attachments in one by one.
+
+## v1.0.205 — 2026-07-06
 
 ### Workflow Mode: One Master, Many Agents
 

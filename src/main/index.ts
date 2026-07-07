@@ -13,10 +13,10 @@ import {
   countConversationsSince,
   createConversation,
   deleteConversation,
-  generateTitle,
   listConversations,
   loadConversation,
-  saveConversation,
+  mergeConversationOnto,
+  updateConversation,
   type ConversationFile,
   type ConversationMeta
 } from '@main/conversations'
@@ -736,10 +736,19 @@ const agent = new Agent({
 
 // Channels are the user-facing surfaces wolffish speaks through. The
 // Electron renderer is the original; Telegram is the second. They share
-// one TurnRunner so cross-channel turns serialize on the agent's shared
-// broca/amygdala state. Amygdala's approval bridge dispatches to
-// whichever channel owns the active turn via the singleton turnRouter.
+// one TurnRunner, which serializes turns PER CONVERSATION (one ordered
+// transcript each) while conversations — across channels and within the
+// renderer — run concurrently. Amygdala's approval bridge dispatches to
+// the sink of the turn that asked, resolved through the turn-identity
+// AsyncLocalStorage via the singleton turnRouter.
 const turnRunner = new TurnRunner(agent)
+// Every turn's lifecycle (any channel) is broadcast so the renderer's
+// Conversations sidebar can show live status chips for in-app, WhatsApp,
+// Telegram runs alike.
+turnRunner.setLifecycleListener((ev) => broadcast('chat:turnState', ev))
+// Relay conversation deletions to the renderer so the sidebar prunes its live
+// run-status — a channel-side /delete never touches the renderer otherwise.
+agent.corpus.on('conversation.deleted', ({ id }) => broadcast('conversation:deleted', { id }))
 const electronChannel = new ElectronChannel(agent, turnRunner)
 const telegramChannel = new TelegramChannel(agent, turnRunner, localProvider)
 const whatsappChannel = new WhatsAppChannel(agent, turnRunner, localProvider)
@@ -1909,6 +1918,11 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('google:listAccounts', (): Promise<string[]> => googleService.listAccounts())
 
+  ipcMain.handle(
+    'google:checkAccounts',
+    (): Promise<Record<string, boolean>> => googleService.checkAccounts()
+  )
+
   ipcMain.handle('google:cancelAuth', (): boolean => googleService.cancelAuth())
 
   ipcMain.handle(
@@ -1986,28 +2000,27 @@ app.whenReady().then(async () => {
       { ok: true; transcript: string; language?: string } | { ok: false; error: string }
     > => {
       try {
-        if (payload.conversationId) {
-          agent.cerebellum.setCurrentConversationId(payload.conversationId)
-        }
         // Whisper decodes audio through ffmpeg. On a fresh machine ffmpeg is
         // absent, so transcription would dead-end with a long install-it-yourself
         // error. This IPC path calls the tool directly (bypassing the agent
         // loop's dependency resolution), so ensure ffmpeg here first — it
         // self-installs silently and continues.
         await agent.cerebellum.ensureSystemTool('ffmpeg')
-        let result = await agent.cerebellum.executeTool('stt_transcribe', {
-          filePath: payload.filePath
-        })
+        // Conversation id rides the ALS scope (not the imperative global) so
+        // this out-of-turn call can't clobber the conversation a concurrent
+        // turn published.
+        const transcribe = (): Promise<Awaited<ReturnType<typeof agent.cerebellum.executeTool>>> =>
+          agent.cerebellum.runWithConversation(payload.conversationId ?? null, () =>
+            agent.cerebellum.executeTool('stt_transcribe', {
+              filePath: payload.filePath
+            })
+          )
+        let result = await transcribe()
         // Belt-and-suspenders: if it still failed on ffmpeg (e.g. a stale PATH),
         // ensure once more and retry exactly once.
         if (!result.success && /ffmpeg/i.test(result.error ?? '')) {
           await agent.cerebellum.ensureSystemTool('ffmpeg')
-          result = await agent.cerebellum.executeTool('stt_transcribe', {
-            filePath: payload.filePath
-          })
-        }
-        if (payload.conversationId) {
-          agent.cerebellum.setCurrentConversationId(null)
+          result = await transcribe()
         }
         if (!result.success) {
           // Keep the toast to one line — collapse the multi-line plugin message
@@ -3038,11 +3051,19 @@ app.whenReady().then(async () => {
   )
   ipcMain.handle('conversation:save', (_e, conv: ConversationFile): Promise<{ ok: true }> => {
     return trackBackgroundTask(async () => {
-      if (conv.title === 'Untitled' && conv.messages.some((m) => m.role === 'user')) {
-        conv.title = generateTitle(conv)
-      }
-      await saveConversation(conv)
-      extensionServer.updateTitle(conv.id, conv.title)
+      // Titling is done up front by the TurnRunner (a pure LLM call that
+      // persists the title before processing), so there's nothing to generate
+      // here — just persist. Merge-write: the renderer's copy owns
+      // messages/stats, but the disk holds the LLM title and any rolling
+      // summary the summarizer advanced since the renderer last synced — a
+      // blind whole-file save would clobber those.
+      let effectiveTitle = conv.title
+      await updateConversation(conv.id, (disk) => {
+        const merged = mergeConversationOnto(disk, conv)
+        effectiveTitle = merged.title
+        return merged
+      })
+      extensionServer.updateTitle(conv.id, effectiveTitle)
       // Post-persist rolling-summary check (fire-and-forget). When it writes
       // a summary, the onUpdated push folds it into the renderer's in-memory
       // conversation so the NEXT whole-file save keeps it.
@@ -3050,8 +3071,16 @@ app.whenReady().then(async () => {
       return { ok: true as const }
     })
   })
-  ipcMain.handle('conversation:delete', async (_e, id: string): Promise<{ ok: true }> => {
+  ipcMain.handle('conversation:delete', async (_e, id: string): Promise<{ ok: boolean }> => {
+    // Deleting a conversation whose turn is still running would race the
+    // end-of-turn persist and resurrect the file (or strand a live stream
+    // with no home). The sidebar disables delete for processing rows; this
+    // is the authoritative backstop.
+    if (turnRunner.isConversationActive(id)) {
+      return { ok: false }
+    }
     await deleteConversation(id)
+    agent.corpus.emit('conversation.deleted', { id })
     return { ok: true }
   })
   ipcMain.handle(
@@ -3378,7 +3407,9 @@ app.whenReady().then(async () => {
     ) => electronChannel.send(e.sender, payload)
   )
 
-  ipcMain.handle('chat:cancel', () => electronChannel.cancel())
+  ipcMain.handle('chat:cancel', (_e, payload?: { conversationId?: string | null }) =>
+    electronChannel.cancel(payload?.conversationId ?? null)
+  )
 
   ipcMain.handle(
     'chat:approvalRespond',

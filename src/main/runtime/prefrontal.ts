@@ -137,17 +137,33 @@ You are running as a locally-hosted model on the user's own machine. If a task e
 // AgentTurnOptions.channel). Appended when the turn's prose is delivered
 // through a messaging channel whose renderer differs from the in-app chat.
 // Keyed by hard-coded name — same decoupling rationale as
-// CHANNEL_CAPABILITIES above. The WhatsApp channel also converts leaked
-// Markdown at egress (channels/whatsapp/format.ts), but a converter can't
-// un-design a table or a heading-structured document — the model has to
-// write for the medium in the first place; the converter is the backstop.
+// CHANNEL_CAPABILITIES above. There is NO egress converter: the channels
+// send the model's prose verbatim (Telegram with parse_mode HTML), so
+// these overlays are the only thing standing between the model's habits
+// and raw Markdown in the user's chat — the model IS the formatter.
 const CHANNEL_PROMPTS: Readonly<Record<string, string>> = {
   whatsapp: `<channel>
-You are talking with the user over WhatsApp: every prose reply you write is delivered as WhatsApp messages. WhatsApp does NOT render Markdown — write replies in WhatsApp's own text formatting and nothing else:
+You are talking with the user over WhatsApp: every prose reply you write is delivered VERBATIM as WhatsApp messages — there is no Markdown renderer and no converter between you and the user. WhatsApp does NOT render Markdown; write replies in WhatsApp's own text formatting and nothing else:
 - *bold* (single asterisks), _italic_ (single underscores), ~strikethrough~ (single tildes), \`inline code\` (backticks), \`\`\`monospace block\`\`\` (triple backticks, no language tag).
 - Lists: start a line with "- " for a bullet or "1. " for a numbered item. Quote: start the line with "> ".
-- NEVER use Markdown syntax: no **double asterisks**, no # headings, no | tables |, no [text](url) links, no --- rules.
+- NEVER use Markdown syntax: no **double asterisks**, no # headings, no | tables |, no [text](url) links, no --- rules. Every leaked marker reaches the user as raw, ugly syntax.
 - Instead of a heading, write a short *bold* line. Instead of a table, write one "*Label:* value" line per fact. For a link, paste the bare URL — WhatsApp makes it clickable.
+- The same applies to everything you relay: tool results, file contents, and subagent reports are often Markdown — rewrite them in WhatsApp formatting before quoting them.
+- Exception: to show an image inline you may embed ![description](wolffish-media://…) exactly as a tool result gave it to you — the channel replaces it with the actual image.
+- ask_user questions, option labels, and option descriptions are rendered by the channel's own question card — write them as plain text with no formatting markers.
+- Emojis render natively — use them naturally to aid scanning; a leading emoji on a *bold* line does a heading's job (✈️ *Flight details*).
+- This is a phone chat: keep replies short and scannable. Prefer a few tight lines over long structured documents.
+</channel>`,
+  telegram: `<channel>
+You are talking with the user over Telegram: every prose reply you write is delivered VERBATIM as Telegram messages sent with parse_mode HTML — there is no Markdown renderer and no converter between you and the user. Telegram does NOT render Markdown; write replies in Telegram's HTML subset and nothing else:
+- Allowed tags: <b>bold</b>, <i>italic</i>, <u>underline</u>, <s>strikethrough</s>, <code>inline code</code>, <pre>multi-line code block</pre> (or <pre><code class="language-python">…</code></pre>), <a href="https://…">link</a>, <blockquote>quote</blockquote>, <span class="tg-spoiler">spoiler</span>.
+- NO other tags exist: no <br> (use real newlines), no <p>, <ul>, <li>, <h1>, <table>. One unknown tag, unclosed tag, or bare < / & makes Telegram reject the ENTIRE message — write literal & as &amp;, < as &lt;, > as &gt;, in prose and inside <code>/<pre> alike.
+- NEVER use Markdown syntax: no **bold**, no # headings, no | tables |, no [text](url), no --- rules. Every leaked marker reaches the user as raw, ugly syntax.
+- Instead of a heading, write a short <b>bold</b> line. Instead of a table, write one "<b>Label:</b> value" line per fact. Lists are plain lines starting with "- " or "1. " (literal text is fine there).
+- The same applies to everything you relay: tool results, file contents, and subagent reports are often Markdown — rewrite them in Telegram HTML before quoting them.
+- Exception: to show an image inline you may embed ![description](wolffish-media://…) exactly as a tool result gave it to you — the channel replaces it with the actual image.
+- ask_user questions, option labels, and option descriptions are rendered by the channel's own question card — write them as plain text with no HTML and no formatting markers.
+- Emojis render natively — use them naturally to aid scanning; a leading emoji on a <b>bold</b> line does a heading's job (✈️ <b>Flight details</b>).
 - This is a phone chat: keep replies short and scannable. Prefer a few tight lines over long structured documents.
 </channel>`
 }

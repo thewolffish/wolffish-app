@@ -92,19 +92,14 @@ export class Hippocampus {
       return
     }
 
-    let needsHeader = true
-    try {
-      await fs.access(filepath)
-      needsHeader = false
-    } catch {
-      // file doesn't exist
-    }
-
+    // Header decision runs INSIDE the file's write queue (appendWithInit) —
+    // two turns finishing in the same instant used to both probe a missing
+    // file and write duplicate `# date` headers.
     const block = renderTurn(turn)
-    const body = (needsHeader ? `# ${date}\n\n` : '') + block
-
     try {
-      await diskWriter.appendLine(filepath, body)
+      await diskWriter.appendWithInit(filepath, (exists) =>
+        exists ? block : `# ${date}\n\n${block}`
+      )
     } catch {
       return
     }
@@ -196,25 +191,26 @@ export class Hippocampus {
       return
     }
 
-    let existing = ''
+    // RMW inside the file's write queue: the dedup check and the append are
+    // one atomic step, so two concurrent promotions of the same fact can't
+    // both pass the check and write duplicate bullets.
+    let wrote = false
     try {
-      existing = await fs.readFile(filepath, 'utf8')
-    } catch {
-      existing = `# ${capitalize(file)}\n\n`
-    }
-
-    // Append-only WITH dedup: the nightly consolidation re-derives the same
-    // facts night after night — without this, knowledge files silently fill
-    // with duplicate bullets (observed live in preferences.md).
-    if (existing.split(/\r?\n/).some((l) => l.trim() === line)) return
-
-    const needsNewline = existing.length > 0 && !existing.endsWith('\n')
-    const body = `${needsNewline ? '\n' : ''}${line}\n`
-    try {
-      await diskWriter.appendLine(filepath, body)
+      await diskWriter.update(filepath, (raw) => {
+        const existing = raw ?? `# ${capitalize(file)}\n\n`
+        // Append-only WITH dedup: the nightly consolidation re-derives the
+        // same facts night after night — without this, knowledge files
+        // silently fill with duplicate bullets (observed live in
+        // preferences.md).
+        if (existing.split(/\r?\n/).some((l) => l.trim() === line)) return null
+        wrote = true
+        const needsNewline = existing.length > 0 && !existing.endsWith('\n')
+        return `${existing}${needsNewline ? '\n' : ''}${line}\n`
+      })
     } catch {
       return
     }
+    if (!wrote) return
 
     this.corpus?.emit('memory.knowledgeUpdated', { file, fact: trimmed })
   }
@@ -233,16 +229,13 @@ export class Hippocampus {
     } catch {
       return
     }
-    let existing = ''
     try {
-      existing = await fs.readFile(filepath, 'utf8')
-    } catch {
-      existing = ''
-    }
-    const header = existing.length === 0 ? `# ${weekKey}\n\n` : ''
-    const sep = existing.length > 0 && !existing.endsWith('\n\n') ? '\n\n' : ''
-    try {
-      await diskWriter.appendLine(filepath, `${header}${sep}${content.trim()}\n`)
+      await diskWriter.update(filepath, (raw) => {
+        const existing = raw ?? ''
+        const header = existing.length === 0 ? `# ${weekKey}\n\n` : ''
+        const sep = existing.length > 0 && !existing.endsWith('\n\n') ? '\n\n' : ''
+        return `${existing}${header}${sep}${content.trim()}\n`
+      })
     } catch {
       return
     }

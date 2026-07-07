@@ -13,7 +13,6 @@
  * the module directly.
  */
 
-import { is } from '@electron-toolkit/utils'
 import { diskWriter } from '@main/io/diskWriter'
 import mitt, { type Emitter, type Handler } from 'mitt'
 import { AsyncLocalStorage } from 'node:async_hooks'
@@ -21,20 +20,41 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 
 /**
- * Set (via `.run(true, …)`) for the duration of an AUTONOMOUS turn — the sealed
- * background runs from Agent.processAutonomous (heartbeat automations AND
- * procedure runs). Corpus events are emitted SYNCHRONOUSLY (mitt), so a listener
- * runs inside the emitter's async context and can read this at emit time to tell
- * whether an event originated inside a background run. The Electron TurnRunner
- * uses it to NOT relay a background run's events to the live chat — otherwise a
- * procedure/automation firing while a chat turn is still streaming would pollute
- * the live conversation's context meter, token counters, and timeline, and its
- * task.created would hijack the channel's active task id (so Stop aborts the
- * wrong task). Fail-open: `undefined` ⇒ a normal interactive/worker turn, relay
- * as before. Only processAutonomous ever sets it, so channel and workflow
- * worker turns are unaffected.
+ * The identity of the turn whose async call tree we are inside. Corpus events
+ * are emitted SYNCHRONOUSLY (mitt), so a listener runs inside the emitter's
+ * async context and can read this at emit time to tell WHICH turn an event
+ * originated from. Two consumers:
+ *
+ *  - The TurnRunner enters a scope (`autonomous: false`, real turnId +
+ *    conversationId) around every foreground channel turn, and its per-turn
+ *    relay listeners drop any event whose emitter scope names a DIFFERENT
+ *    turn — with concurrent conversations, this is what keeps one turn's
+ *    meter/token/task events out of every other turn's sink.
+ *  - Sealed background runs (Agent.processAutonomous for heartbeat
+ *    automations and procedure runs, the post-turn conversation summarizer,
+ *    brainstem side-emits) enter an `autonomous: true` scope, which every
+ *    relay drops unconditionally — background runs must never write into a
+ *    live chat's timeline or hijack its active task id.
+ *
+ * Fail-open: no scope (`undefined`) ⇒ an emit from outside any turn (IPC
+ * handlers, watchers); relays forward those as they always have. Workflow
+ * subagent turns intentionally DON'T open their own scope — they run inside
+ * the master's async context, so their usage events relay to the master's
+ * sink, which is how the workflow card accounts agent spend.
  */
-export const autonomousTurnScope = new AsyncLocalStorage<boolean>()
+export type TurnScope = {
+  turnId: string | null
+  conversationId: string | null
+  /** True for sealed background runs that must never reach a live sink. */
+  autonomous: boolean
+}
+
+export const turnScope = new AsyncLocalStorage<TurnScope>()
+
+/** Run `fn` inside an anonymous sealed-background scope (no turn identity). */
+export function runDetached<T>(fn: () => T): T {
+  return turnScope.run({ turnId: null, conversationId: null, autonomous: true }, fn)
+}
 
 export type CorpusEvents = {
   'message.received': { content: string; timestamp: string }
@@ -60,10 +80,11 @@ export type CorpusEvents = {
     provider: string
     model: string
     // Who consumed these tokens: the Brain's own turn loop, a workflow
-    // worker, or a summarization side-call (compaction / conversation
-    // summarizer / memory compaction). The renderer routes on this — only
+    // worker, a summarization side-call (compaction / conversation summarizer /
+    // memory compaction), or a conversation-titling call. Titling is its OWN
+    // role — a title is not a summary. The renderer routes on this — only
     // 'brain' calls feed the context meter; the rest are itemized separately.
-    role: 'brain' | 'worker' | 'summary'
+    role: 'brain' | 'worker' | 'summary' | 'title'
     inputTokens: number
     outputTokens: number
     cacheCreationTokens: number
@@ -238,6 +259,13 @@ export type CorpusEvents = {
   'whatsapp.message.sent': { remoteJid: string }
 
   'conversation.changed': { conversationId: string | null; title?: string | null }
+  /**
+   * A conversation was deleted (from the in-app History OR a channel's /delete
+   * flow). Relayed to the renderer so the sidebar can prune its live run-status
+   * for it — otherwise a channel-side delete (which never touches the renderer)
+   * leaves a ghost row synthesized from the lingering status.
+   */
+  'conversation.deleted': { id: string }
 }
 
 export type CorpusEvent = keyof CorpusEvents
@@ -255,6 +283,8 @@ type BufferedEvent = {
   name: CorpusEvent
   payload: unknown
   timestamp: Date
+  /** Emitting turn's identity, captured at emit time (sync mitt dispatch). */
+  scope?: TurnScope
 }
 
 // Batch event writes so a chatty turn doesn't fsync once per emit. 2s
@@ -263,6 +293,22 @@ type BufferedEvent = {
 // crash are bounded to <2s of activity, which is acceptable for a log.
 const FLUSH_INTERVAL_MS = 2000
 const RETENTION_DAYS = 7
+
+/**
+ * `is.dev` (`!app.isPackaged`) without a hard electron dependency: corpus is
+ * imported by plain-node test harnesses (via channels/channel.ts), where
+ * @electron-toolkit/utils crashes at import time. Guarded require keeps the
+ * exact same answer inside Electron and falls back to false outside it.
+ */
+function isDevRuntime(): boolean {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { is } = require('@electron-toolkit/utils') as { is: { dev: boolean } }
+    return is.dev
+  } catch {
+    return false
+  }
+}
 
 export class Corpus {
   private emitter: Emitter<CorpusEvents> = mitt<CorpusEvents>()
@@ -279,11 +325,15 @@ export class Corpus {
       : null
     this.flushIntervalMs = options.flushIntervalMs ?? FLUSH_INTERVAL_MS
     this.retentionDays = options.retentionDays ?? RETENTION_DAYS
-    this.devLog = options.devLog ?? is.dev
+    this.devLog = options.devLog ?? isDevRuntime()
 
     this.emitter.on('*', (type, payload) => {
       const timestamp = new Date()
-      this.buffer.push({ name: type as CorpusEvent, payload, timestamp })
+      // Mitt dispatch is synchronous, so this reads the EMITTER's turn scope —
+      // stamping every buffered event with the turn/conversation it came from
+      // keeps the daily log forensically readable when turns run concurrently.
+      const scope = turnScope.getStore()
+      this.buffer.push({ name: type as CorpusEvent, payload, timestamp, scope })
       if (this.devLog) {
         console.log(`[${formatTimestamp(timestamp)}] ${String(type)}`, payload)
       }
@@ -331,7 +381,10 @@ export class Corpus {
     for (const item of items) {
       const date = formatDate(item.timestamp)
       const filename = `${date}.log.md`
-      const block = `## ${formatTimestamp(item.timestamp)}\n- ${item.name} → ${safeStringify(item.payload)}\n\n`
+      const attribution = item.scope
+        ? ` [${item.scope.autonomous ? 'bg' : 'turn'}${item.scope.turnId ? ` ${item.scope.turnId}` : ''}${item.scope.conversationId ? ` conv ${item.scope.conversationId}` : ''}]`
+        : ''
+      const block = `## ${formatTimestamp(item.timestamp)}${attribution}\n- ${item.name} → ${safeStringify(item.payload)}\n\n`
       const list = grouped.get(filename) ?? []
       list.push(block)
       grouped.set(filename, list)
@@ -340,16 +393,13 @@ export class Corpus {
     for (const [filename, blocks] of grouped) {
       const filepath = path.join(this.logsDir, filename)
       const date = filename.replace(/\.log\.md$/, '')
-      let needsHeader = true
+      const body = blocks.join('')
       try {
-        await fs.access(filepath)
-        needsHeader = false
-      } catch {
-        // file doesn't exist — write header
-      }
-      const body = (needsHeader ? `# ${date}\n\n` : '') + blocks.join('')
-      try {
-        await diskWriter.appendLine(filepath, body)
+        // Header decision inside the write queue — a concurrent flush from
+        // another Corpus instance can't race it into duplicate headers.
+        await diskWriter.appendWithInit(filepath, (exists) =>
+          exists ? body : `# ${date}\n\n${body}`
+        )
       } catch {
         // best-effort: drop on persistent IO failure rather than retry-loop
       }

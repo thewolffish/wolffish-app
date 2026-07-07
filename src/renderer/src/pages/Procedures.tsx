@@ -7,6 +7,7 @@ import { cn } from '@lib/utils/cn'
 import { pageTopPadding } from '@lib/utils/platform'
 import type { Procedure } from '@preload/index'
 import { useFlow } from '@providers/flow/useFlow'
+import { useSessions } from '@providers/sessions/useSessions'
 import { useLocale } from '@providers/locale/useLocale'
 import { useTheme } from '@providers/theme/useTheme'
 import {
@@ -52,7 +53,8 @@ export function Procedures(): React.JSX.Element {
   const { isDark } = useTheme()
   const isRtl = RTL_LOCALES.has(locale)
   const BackIcon = isRtl ? ArrowRight02Icon : ArrowLeft02Icon
-  const { goTo, setMessages, setActiveConversationId, setPendingProcedure, status } = useFlow()
+  const { goTo, status } = useFlow()
+  const { newSession } = useSessions()
   // Rows without a stamp follow the global mode — the pill shows that
   // effective value; clicking a tab stamps the row explicitly.
   const globalMode = status?.config?.llm.mode === 'workflow' ? 'workflow' : 'single'
@@ -190,12 +192,13 @@ export function Procedures(): React.JSX.Element {
 
   const handlePlay = useCallback(
     (procedure: Procedure) => {
-      setMessages([])
-      setActiveConversationId(null)
-      setPendingProcedure({ prompt: procedure.prompt, mode: procedure.mode })
+      // A fresh SESSION per run: the procedure auto-sends into its own new
+      // conversation while every other session (including a streaming one)
+      // keeps running untouched.
+      newSession({ procedure: { prompt: procedure.prompt, mode: procedure.mode } })
       goTo('chat')
     },
-    [goTo, setMessages, setActiveConversationId, setPendingProcedure]
+    [goTo, newSession]
   )
 
   return (

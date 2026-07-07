@@ -4,7 +4,7 @@ import { pageTopPadding } from '@lib/utils/platform'
 import { useFlow } from '@providers/flow/useFlow'
 import { useLocale } from '@providers/locale/useLocale'
 import { SidebarLeftIcon } from 'hugeicons-react'
-import { useCallback, useState, type ComponentType } from 'react'
+import { Fragment, useCallback, useState, type ComponentType, type ReactNode } from 'react'
 
 export type SidebarItem = {
   key: string
@@ -12,6 +12,8 @@ export type SidebarItem = {
   label: string
   onClick: () => void
   disabled?: boolean
+  /** Rendered nested under this item (e.g. the recent-conversations list). */
+  nested?: (collapsed: boolean) => ReactNode
 }
 
 type SidebarProps = {
@@ -39,8 +41,8 @@ export function Sidebar({ items, className }: SidebarProps): React.JSX.Element {
   const { status } = useFlow()
   const saved = status?.config?.lastSettingsState?.sidebarCollapsed
   const [collapsed, setCollapsed] = useState(() => {
-    // Default to open (expanded) unless explicitly persisted as collapsed.
-    if (liveCollapsed === null) liveCollapsed = saved === 'true'
+    // Default to collapsed unless the user explicitly persisted it expanded.
+    if (liveCollapsed === null) liveCollapsed = saved !== 'false'
     return liveCollapsed
   })
 
@@ -55,25 +57,33 @@ export function Sidebar({ items, className }: SidebarProps): React.JSX.Element {
 
   return (
     <aside
+      style={{ bottom: 'var(--wf-actionbar-h, 5.5rem)' }}
       className={cn(
-        'pointer-events-none fixed top-0 z-30 flex h-full flex-col items-center gap-1.5 overflow-x-hidden overflow-y-auto px-2 transition-[width] duration-200',
+        // No width transition: animating the width while the collapsed
+        // content re-centers made the icons visibly jump. Toggling snaps
+        // instantly instead. The inner border rides on the aside (border-e)
+        // and the rail ends at the action-bar top (bottom = --wf-actionbar-h),
+        // exactly like the right conversations rail — so the border no longer
+        // pokes a few px into the action area.
+        'pointer-events-none border-e-border/40 fixed top-0 z-30 flex flex-col items-center gap-1.5 overflow-x-hidden overflow-y-auto border-e px-2 pb-2',
         pageTopPadding,
         isRtl ? 'right-0' : 'left-0',
-        collapsed ? 'w-12' : 'w-44',
+        // Same widths as the right conversations rail so the two are
+        // mirror-symmetric (w-14 also fits its 3-digit number chips).
+        collapsed ? 'w-14' : 'w-44',
         className
       )}
     >
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-e-0 top-0 bottom-18 w-px bg-border/40"
-      />
       <button
         type="button"
         onClick={toggle}
         aria-label="Toggle sidebar"
         className={cn(
-          'pointer-events-auto text-muted hover:text-fg mt-3 flex shrink-0 cursor-pointer items-center self-start rounded-lg p-2',
-          'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
+          'pointer-events-auto text-muted hover:text-fg mt-3 flex shrink-0 cursor-pointer items-center rounded-lg p-2',
+          'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+          // Collapsed: center the icon over the centered nav icons (mirror of
+          // the right rail). Expanded: sit at the leading edge.
+          collapsed ? 'self-center' : 'self-start'
         )}
       >
         <SidebarLeftIcon size={16} />
@@ -83,24 +93,30 @@ export function Sidebar({ items, className }: SidebarProps): React.JSX.Element {
           {items.map((item) => {
             const Icon = item.icon
             return (
-              <button
-                key={item.key}
-                type="button"
-                onClick={item.onClick}
-                disabled={item.disabled}
-                aria-label={item.label}
-                title={collapsed ? item.label : undefined}
-                className={cn(
-                  'text-muted hover:text-fg flex w-full cursor-pointer items-center gap-2.5 overflow-hidden rounded-lg px-2 py-2 text-sm',
-                  'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-                  'disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-muted'
-                )}
-              >
-                <span className="flex shrink-0 items-center">
-                  <Icon size={16} />
-                </span>
-                <span className="shrink-0 whitespace-nowrap">{item.label}</span>
-              </button>
+              <Fragment key={item.key}>
+                <button
+                  type="button"
+                  onClick={item.onClick}
+                  disabled={item.disabled}
+                  aria-label={item.label}
+                  title={collapsed ? item.label : undefined}
+                  className={cn(
+                    'text-muted hover:text-fg flex w-full cursor-pointer items-center gap-2.5 overflow-hidden rounded-lg px-2 py-2 text-sm',
+                    'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+                    'disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-muted',
+                    // Collapsed: icon only, centered — the label is fully
+                    // removed (not just clipped, which let its first character
+                    // peek once the rail widened to w-14).
+                    collapsed && 'justify-center'
+                  )}
+                >
+                  <span className="flex shrink-0 items-center">
+                    <Icon size={16} />
+                  </span>
+                  {!collapsed && <span className="shrink-0 whitespace-nowrap">{item.label}</span>}
+                </button>
+                {item.nested?.(collapsed)}
+              </Fragment>
             )
           })}
         </nav>

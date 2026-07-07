@@ -66,6 +66,7 @@ import {
   type ChatMessage,
   type ToolTiming
 } from '@providers/flow/useFlow'
+import { useSessions, type SessionDescriptor } from '@providers/sessions/useSessions'
 import { useLocale } from '@providers/locale/useLocale'
 import { useTheme } from '@providers/theme/useTheme'
 import iconTransparent from '@resources/images/icon_transparent.png'
@@ -123,24 +124,35 @@ type ToolResultSegment = Extract<Segment, { kind: 'tool_result' }>
 // by Chat, read in AssistantBubble.
 const InAppVerboseContext = createContext(false)
 
-export function Chat(): React.JSX.Element {
+export type ChatProps = {
+  /** Stable identity of this session in the ChatSessionsProvider. */
+  sessionKey: string
+  /**
+   * True only for the active session while the chat screen is showing.
+   * Hidden instances keep streaming and persisting but must not run
+   * portals, media, focus-stealing, or keyboard-owning behavior.
+   */
+  visible: boolean
+  descriptor: SessionDescriptor
+}
+
+export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.Element {
   const { t } = useTranslation()
   const { locale } = useLocale()
   const { isDark } = useTheme()
   const toast = useToast()
   const isRtl = RTL_LOCALES.has(locale)
-  const {
-    goTo,
-    screen,
-    status,
-    messages,
-    setMessages,
-    refreshStatus,
-    activeConversationId,
-    setActiveConversationId,
-    pendingProcedure,
-    setPendingProcedure
-  } = useFlow()
+  const { goTo, status, refreshStatus } = useFlow()
+  const { newSession, reportSession, markSending, consumeProcedure } = useSessions()
+  // Per-session conversation state. Each mounted Chat instance owns ONE
+  // conversation for its whole life: a fresh session starts null and gets an
+  // id on first send; an opened conversation starts seeded. Switching
+  // conversations switches INSTANCES (see ChatSessionsProvider) — the id
+  // never changes from one conversation to another within an instance.
+  const [messages, setMessages] = useState<ChatMessage[]>(descriptor.initialMessages ?? [])
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(
+    descriptor.initialConversationId
+  )
 
   const currentModel = status?.config?.llm.local.model ?? null
   const localOnly = status?.config?.llm.localOnly ?? false
@@ -321,6 +333,9 @@ export function Chat(): React.JSX.Element {
     const wasStreaming = prevStreamingRef.current
     prevStreamingRef.current = streaming
     if (!wasStreaming || streaming) return
+    // A hidden session finishing in the background must not yank focus from
+    // whatever the user is doing in the visible one.
+    if (!visible) return
     const el = textareaRef.current
     if (!el || el.disabled) return
     const active = document.activeElement as HTMLElement | null
@@ -330,7 +345,7 @@ export function Chat(): React.JSX.Element {
       (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)
     if (typingElsewhere) return
     el.focus()
-  }, [streaming])
+  }, [streaming, visible])
 
   const { onContextMenu: onTextareaContextMenu, menu: textareaMenu } = useContextMenu(
     useCallback(() => {
@@ -541,14 +556,35 @@ export function Chat(): React.JSX.Element {
     setTurnEndedAt
   ])
 
+  // New Chat spawns (or refocuses) a fresh SESSION — this instance keeps its
+  // conversation and any in-flight turn untouched. A session that never
+  // received a conversation just resets in place via the provider's
+  // blank-session reuse.
   const onNewChat = useCallback(() => {
-    setMessages([])
-    setActiveConversationId(null)
-    resetTurnStats()
-  }, [setMessages, setActiveConversationId, resetTurnStats])
+    newSession()
+  }, [newSession])
 
   const scrollerRef = useRef<HTMLDivElement>(null)
   const pendingTurnIdRef = useRef<string | null>(null)
+  // Ref twin of activeConversationId for the once-created event closures.
+  const conversationIdRef = useRef<string | null>(descriptor.initialConversationId)
+  // True from the moment a send is committed (conversation id reserved) until
+  // its chat:send invoke resolves with the turnId. Segments for OUR
+  // conversation arriving inside that window are adopted (see matchesTurn) —
+  // event delivery and the invoke reply race over the same IPC pipe.
+  const sendInFlightRef = useRef(false)
+  // The last turn whose terminal event (done/error) this session processed.
+  // A turn can complete BEFORE its chat:send invoke resolves (the
+  // sensitive-data gate emits everything synchronously inside the handler) —
+  // re-arming pendingTurnIdRef with an already-finished turn would wedge the
+  // composer forever, so the post-invoke assignment checks this first.
+  const lastTerminalTurnIdRef = useRef<string | null>(null)
+  // Synchronous re-entry guard for the send path. `streaming` doesn't flip
+  // until AFTER ensureConversationId() awaits a disk create for a fresh
+  // session — a second Enter in that window would fire a second turn for one
+  // conversation. This ref closes synchronously; it also drives the provider's
+  // mid-send eviction protection.
+  const sendingRef = useRef(false)
   const conversationRef = useRef<ConversationFile | null>(null)
   const modelContextWindowRef = useRef<number | null>(null)
   // Model name + compaction point from the last model:capabilities probe —
@@ -596,6 +632,24 @@ export function Chat(): React.JSX.Element {
   const recTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const recAudioRef = useRef<HTMLAudioElement | null>(null)
   const recBlobRef = useRef<Blob | null>(null)
+
+  // Keep the provider's picture of this session current — the sidebar chips,
+  // session reuse/eviction, and open-conversation routing all read it.
+  // `dirty` marks unsent composer state (draft text, staged attachments, a
+  // voice take, or a message still transcribing) so eviction never silently
+  // destroys work the user hasn't sent.
+  const sessionDirty =
+    draft.trim().length > 0 ||
+    pendingAttachments.length > 0 ||
+    recPhase !== 'idle' ||
+    messages.some((m) => m.role === 'user' && 'transcribing' in m && m.transcribing === true)
+  useEffect(() => {
+    reportSession(sessionKey, {
+      conversationId: activeConversationId,
+      streaming,
+      dirty: sessionDirty
+    })
+  }, [sessionKey, activeConversationId, streaming, sessionDirty, reportSession])
 
   useEffect(() => {
     navigator.mediaDevices
@@ -713,15 +767,15 @@ export function Chat(): React.JSX.Element {
     }
   }, [recBlobUrl])
 
-  // Chat stays MOUNTED (just hidden) when you navigate to another screen — see
-  // App.tsx. Media doesn't stop under display:none, so on leaving chat we stop
-  // it ourselves: end live mic capture (otherwise the mic stays hot with no UI
-  // to stop it), pause voice-review playback, and pause any feed audio/video
-  // that was playing (restores the pre-keepalive behavior where unmounting
-  // stopped them). Stopping while recording lands in 'review', so nothing is
-  // lost — the take is there when you come back.
+  // Chat stays MOUNTED (just hidden) when you navigate to another screen or
+  // switch to another session — see App.tsx. Media doesn't stop under
+  // display:none, so on becoming hidden we stop it ourselves: end live mic
+  // capture (otherwise the mic stays hot with no UI to stop it), pause
+  // voice-review playback, and pause any feed audio/video that was playing.
+  // Stopping while recording lands in 'review', so nothing is lost — the
+  // take is there when you come back.
   useEffect(() => {
-    if (screen === 'chat') return
+    if (visible) return
     if (recPhase === 'recording') stopRecording()
     if (recAudioRef.current && !recAudioRef.current.paused) {
       recAudioRef.current.pause()
@@ -731,7 +785,7 @@ export function Chat(): React.JSX.Element {
       const media = el as HTMLMediaElement
       if (!media.paused) media.pause()
     })
-  }, [screen, recPhase, stopRecording])
+  }, [visible, recPhase, stopRecording])
   // ── End voice recording ───────────────────────────────────────
 
   useEffect(() => {
@@ -759,6 +813,23 @@ export function Chat(): React.JSX.Element {
     isWhatsAppConversation ||
     isHeartbeatConversation ||
     isProcedureConversation
+
+  // Publish the live action-bar (composer / read-only banner) height as a CSS
+  // variable so the app-level conversations rail can end exactly at its top
+  // instead of running full-height behind it. The action bar is the scroller's
+  // next sibling; a ResizeObserver tracks it as the textarea grows / the
+  // recorder swaps in. Only the VISIBLE session writes the var.
+  useLayoutEffect(() => {
+    if (!visible) return
+    const el = scrollerRef.current?.nextElementSibling as HTMLElement | null
+    if (!el) return
+    const apply = (): void =>
+      document.documentElement.style.setProperty('--wf-actionbar-h', `${el.offsetHeight}px`)
+    apply()
+    const ro = new ResizeObserver(apply)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [visible, isExternalChannel, recPhase])
 
   // Re-sync model-dependent UI whenever the active model changes — the local
   // model, the local-only toggle, OR the cloud Brain (activeCloudModel). Two
@@ -847,6 +918,14 @@ export function Chat(): React.JSX.Element {
 
       if (convMessages.length === 0) return
 
+      // Never persist a channel-owned conversation from the renderer: those
+      // files belong to the WhatsApp/Telegram/heartbeat writers, and a
+      // whole-file save from this (possibly stale) copy would clobber
+      // messages their turns appended. In-app they are read-only anyway;
+      // this guard also covers the async window before activeChannel loads.
+      const ownedChannel = conversationRef.current?.channel
+      if (ownedChannel && ownedChannel !== 'electron') return
+
       if (!conversationRef.current) {
         const conv = await window.api.conversation.create(
           localOnly ? currentModel : activeCloudModel
@@ -897,6 +976,12 @@ export function Chat(): React.JSX.Element {
   )
 
   useEffect(() => {
+    // Within one session the conversation id only ever transitions null→id
+    // (first send / seeded open). A turn somehow pending across an id CHANGE
+    // belongs to the conversation being left — cancel THAT conversation's
+    // turn only; other sessions' streams must keep running.
+    const previousId = conversationIdRef.current
+    conversationIdRef.current = activeConversationId
     if (activeConversationId) {
       // Always (re)load on id change. The previous `&& !conversationRef.current`
       // guard left a stale ref behind when switching from one conversation
@@ -907,18 +992,17 @@ export function Chat(): React.JSX.Element {
       void window.api.conversation.load(targetId).then((conv) => {
         // Drop the result if the user has already switched again — the
         // newer effect run is now in flight and owns conversationRef.
-        if (!conv || activeConversationId !== targetId) return
+        if (!conv || conversationIdRef.current !== targetId) return
         conversationRef.current = conv
         // A turn still in flight for the OUTGOING conversation must not
         // bleed into this one (its llm.response events would overwrite the
         // restored meter and its done would persist the wrong reading here).
-        // Reachable via the voice-send transcription window, where nav isn't
-        // locked yet. Kill it and drop its pending events — the spend still
-        // lands in the global usage ledger.
-        if (pendingTurnIdRef.current !== null) {
+        // Kill it — scoped to that conversation — and drop its pending
+        // events; the spend still lands in the global usage ledger.
+        if (pendingTurnIdRef.current !== null && previousId !== targetId) {
           pendingTurnIdRef.current = null
           setStreaming(false)
-          void window.api.chat.cancel()
+          if (previousId) void window.api.chat.cancel({ conversationId: previousId })
         }
         // Wipe the previous conversation's live counters FIRST — a direct
         // A→B switch used to leak A's frozen elapsed and token counts into
@@ -986,7 +1070,7 @@ export function Chat(): React.JSX.Element {
         if (pendingTurnIdRef.current !== null) {
           pendingTurnIdRef.current = null
           setStreaming(false)
-          void window.api.chat.cancel()
+          if (previousId) void window.api.chat.cancel({ conversationId: previousId })
         }
         resetTurnStats()
         turnStartedAtRef.current = null
@@ -1034,8 +1118,27 @@ export function Chat(): React.JSX.Element {
   }, [])
 
   useEffect(() => {
+    // Demux for concurrent conversations: every chat:* event carries turnId +
+    // conversationId. An event is OURS when its turnId matches the pending
+    // turn — or, in the window where a send's events race its invoke reply
+    // (both ride the same IPC pipe), when it names OUR conversation while our
+    // send is in flight; the turnId is adopted then. Everything else belongs
+    // to another session's conversation and is ignored here.
+    const matchesTurn = (turnId: string, conversationId?: string | null): boolean => {
+      if (pendingTurnIdRef.current === turnId) return true
+      if (
+        pendingTurnIdRef.current === null &&
+        sendInFlightRef.current &&
+        conversationId != null &&
+        conversationId === conversationIdRef.current
+      ) {
+        pendingTurnIdRef.current = turnId
+        return true
+      }
+      return false
+    }
     const offSegment = window.api.chat.onSegment((segment) => {
-      if (pendingTurnIdRef.current !== segment.turnId) return
+      if (!matchesTurn(segment.turnId, segment.conversationId)) return
       setMessages((prev) => appendSegment(prev, segment))
       const segKind = segment.kind
       if (
@@ -1134,8 +1237,9 @@ export function Chat(): React.JSX.Element {
         }
       })
     }
-    const offDone = window.api.chat.onDone(({ turnId }) => {
-      if (pendingTurnIdRef.current !== turnId) return
+    const offDone = window.api.chat.onDone(({ turnId, conversationId }) => {
+      if (!matchesTurn(turnId, conversationId)) return
+      lastTerminalTurnIdRef.current = turnId
       pendingTurnIdRef.current = null
       setStreaming(false)
       const endedAt = Date.now()
@@ -1144,8 +1248,9 @@ export function Chat(): React.JSX.Element {
       shouldPersistRef.current = true
       setMessages((prev) => markComplete(prev, turnId))
     })
-    const offError = window.api.chat.onError(({ turnId, error }) => {
-      if (pendingTurnIdRef.current !== turnId) return
+    const offError = window.api.chat.onError(({ turnId, conversationId, error }) => {
+      if (!matchesTurn(turnId, conversationId)) return
+      lastTerminalTurnIdRef.current = turnId
       pendingTurnIdRef.current = null
       setStreaming(false)
       const endedAt = Date.now()
@@ -1154,153 +1259,163 @@ export function Chat(): React.JSX.Element {
       shouldPersistRef.current = true
       setMessages((prev) => markError(prev, turnId, error))
     })
-    const offTurnEvent = window.api.chat.onTurnEvent(({ turnId, type, payload }) => {
-      if (pendingTurnIdRef.current !== turnId) return
-      if (type === 'context.built') {
-        // The window the backend just built this turn with is the freshest
-        // reading there is — the turn resolves the local model's real context
-        // length (via /api/show) before this fires. Adopt it AND refresh the
-        // ref, so a capabilities fetch that happened to run while Ollama was
-        // still starting (and returned the 16k fallback) can't keep pinning the
-        // meter to that stale value. Previously the stale ref won here, which
-        // re-asserted 16k on every turn even after the backend had recovered.
-        if (typeof payload.tokenBudget === 'number' && payload.tokenBudget > 0) {
-          modelContextWindowRef.current = payload.tokenBudget
-          setContextBudget(payload.tokenBudget)
-          // A turn is running under the active model now. If the reading on
-          // screen was measured under a DIFFERENT model, blank it until this
-          // turn's first usage-bearing llm.response measures fresh — the old
-          // numerator against the new budget is a fabricated percentage.
-          if (
-            meterModelRef.current !== null &&
-            meterModelRef.current !== activeModelNameRef.current
-          ) {
-            setContextTokens(null)
-          }
-          meterModelRef.current = activeModelNameRef.current
-          setMeterModel(activeModelNameRef.current)
-        }
-        if (typeof payload.compactionAt === 'number' && payload.compactionAt > 0) {
-          setCompactionAt(payload.compactionAt)
-        }
-      } else if (type === 'llm.response') {
-        const role = typeof payload.role === 'string' ? payload.role : 'brain'
-        const uncached = typeof payload.inputTokens === 'number' ? payload.inputTokens : 0
-        const cacheRead = typeof payload.cacheReadTokens === 'number' ? payload.cacheReadTokens : 0
-        const cacheCreated =
-          typeof payload.cacheCreationTokens === 'number' ? payload.cacheCreationTokens : 0
-        const out = typeof payload.outputTokens === 'number' ? payload.outputTokens : 0
-        const durationMs = typeof payload.durationMs === 'number' ? payload.durationMs : 0
-        const stats = turnStatsRef.current
-        if (role === 'worker') {
-          // Workflow agents stream through the same relay stamped with
-          // this turn's id. Itemize their spend separately — folding it into
-          // the brain's counters overwrote the meter with the worker's
-          // (smaller) context and inflated the turn totals.
-          stats.worker.calls += 1
-          stats.worker.inputTokens += uncached
-          stats.worker.outputTokens += out
-          stats.worker.cacheReadTokens += cacheRead
-          stats.worker.cacheCreationTokens += cacheCreated
-          setSideSpend(sideSpendOf(stats))
-        } else if (role === 'summary') {
-          // Compaction / summarizer side-calls: real spend, not context.
-          stats.summary.calls += 1
-          stats.summary.inputTokens += uncached
-          stats.summary.outputTokens += out
-          stats.summary.cacheReadTokens += cacheRead
-          stats.summary.cacheCreationTokens += cacheCreated
-          stats.summary.cost += typeof payload.cost === 'number' ? payload.cost : 0
-          setSideSpend(sideSpendOf(stats))
-        } else {
-          const hasUsage = uncached > 0 || cacheRead > 0 || cacheCreated > 0 || out > 0
-          if (hasUsage) {
-            // Prompt side of the latest call — what is resident in the
-            // model's window right now (fresh + cached prefix + cache
-            // writes; output lands in the next call's prompt).
-            setContextTokens(uncached + cacheRead + cacheCreated)
-            setUsageUnavailable(false)
-            if (typeof payload.model === 'string') {
-              meterModelRef.current = payload.model
-              setMeterModel(payload.model)
+    const offTurnEvent = window.api.chat.onTurnEvent(
+      ({ turnId, conversationId, type, payload }) => {
+        if (!matchesTurn(turnId, conversationId)) return
+        if (type === 'context.built') {
+          // The window the backend just built this turn with is the freshest
+          // reading there is — the turn resolves the local model's real context
+          // length (via /api/show) before this fires. Adopt it AND refresh the
+          // ref, so a capabilities fetch that happened to run while Ollama was
+          // still starting (and returned the 16k fallback) can't keep pinning the
+          // meter to that stale value. Previously the stale ref won here, which
+          // re-asserted 16k on every turn even after the backend had recovered.
+          if (typeof payload.tokenBudget === 'number' && payload.tokenBudget > 0) {
+            modelContextWindowRef.current = payload.tokenBudget
+            setContextBudget(payload.tokenBudget)
+            // A turn is running under the active model now. If the reading on
+            // screen was measured under a DIFFERENT model, blank it until this
+            // turn's first usage-bearing llm.response measures fresh — the old
+            // numerator against the new budget is a fabricated percentage.
+            if (
+              meterModelRef.current !== null &&
+              meterModelRef.current !== activeModelNameRef.current
+            ) {
+              setContextTokens(null)
             }
-            stats.contextTokens = uncached + cacheRead + cacheCreated
+            meterModelRef.current = activeModelNameRef.current
+            setMeterModel(activeModelNameRef.current)
+          }
+          if (typeof payload.compactionAt === 'number' && payload.compactionAt > 0) {
+            setCompactionAt(payload.compactionAt)
+          }
+        } else if (type === 'llm.response') {
+          const role = typeof payload.role === 'string' ? payload.role : 'brain'
+          const uncached = typeof payload.inputTokens === 'number' ? payload.inputTokens : 0
+          const cacheRead =
+            typeof payload.cacheReadTokens === 'number' ? payload.cacheReadTokens : 0
+          const cacheCreated =
+            typeof payload.cacheCreationTokens === 'number' ? payload.cacheCreationTokens : 0
+          const out = typeof payload.outputTokens === 'number' ? payload.outputTokens : 0
+          const durationMs = typeof payload.durationMs === 'number' ? payload.durationMs : 0
+          const stats = turnStatsRef.current
+          if (role === 'worker') {
+            // Workflow agents stream through the same relay stamped with
+            // this turn's id. Itemize their spend separately — folding it into
+            // the brain's counters overwrote the meter with the worker's
+            // (smaller) context and inflated the turn totals.
+            stats.worker.calls += 1
+            stats.worker.inputTokens += uncached
+            stats.worker.outputTokens += out
+            stats.worker.cacheReadTokens += cacheRead
+            stats.worker.cacheCreationTokens += cacheCreated
+            setSideSpend(sideSpendOf(stats))
+          } else if (role === 'summary' || role === 'title') {
+            // Compaction / summarizer / titling side-calls: real spend, not
+            // context. Titling runs in a detached scope so its llm.response is
+            // normally never relayed here — this branch just guarantees a
+            // stray one can never feed the context meter (it never counts as
+            // 'brain').
+            stats.summary.calls += 1
+            stats.summary.inputTokens += uncached
+            stats.summary.outputTokens += out
+            stats.summary.cacheReadTokens += cacheRead
+            stats.summary.cacheCreationTokens += cacheCreated
+            stats.summary.cost += typeof payload.cost === 'number' ? payload.cost : 0
+            setSideSpend(sideSpendOf(stats))
           } else {
-            // Provider reported no usage (Ollama blip, stream died before
-            // the terminal meta). Keep the last known reading instead of
-            // wiping the meter to 0% — but say so.
-            setUsageUnavailable(true)
+            const hasUsage = uncached > 0 || cacheRead > 0 || cacheCreated > 0 || out > 0
+            if (hasUsage) {
+              // Prompt side of the latest call — what is resident in the
+              // model's window right now (fresh + cached prefix + cache
+              // writes; output lands in the next call's prompt).
+              setContextTokens(uncached + cacheRead + cacheCreated)
+              setUsageUnavailable(false)
+              if (typeof payload.model === 'string') {
+                meterModelRef.current = payload.model
+                setMeterModel(payload.model)
+              }
+              stats.contextTokens = uncached + cacheRead + cacheCreated
+            } else {
+              // Provider reported no usage (Ollama blip, stream died before
+              // the terminal meta). Keep the last known reading instead of
+              // wiping the meter to 0% — but say so.
+              setUsageUnavailable(true)
+            }
+            setInputTokens((prev) => (prev ?? 0) + uncached)
+            setOutputTokens((prev) => (prev ?? 0) + out)
+            setCacheReadTokens((prev) => (prev ?? 0) + cacheRead)
+            setCacheWriteTokens((prev) => (prev ?? 0) + cacheCreated)
+            if (typeof payload.provider === 'string' && typeof payload.model === 'string') {
+              lastCallRef.current = { provider: payload.provider, model: payload.model }
+              setLastCall({
+                provider: payload.provider,
+                model: payload.model,
+                durationMs,
+                fresh: uncached,
+                cacheRead,
+                cacheWrite: cacheCreated
+              })
+            }
+            // Mirror into the ref (final context size is absolute; the rest
+            // accumulate) so task.completed can report end-of-turn totals.
+            stats.inputTokens += uncached
+            stats.outputTokens += out
+            stats.cacheReadTokens += cacheRead
+            stats.cacheCreationTokens += cacheCreated
+            stats.apiCalls += 1
+            stats.apiMs += durationMs
           }
-          setInputTokens((prev) => (prev ?? 0) + uncached)
-          setOutputTokens((prev) => (prev ?? 0) + out)
-          setCacheReadTokens((prev) => (prev ?? 0) + cacheRead)
-          setCacheWriteTokens((prev) => (prev ?? 0) + cacheCreated)
-          if (typeof payload.provider === 'string' && typeof payload.model === 'string') {
-            lastCallRef.current = { provider: payload.provider, model: payload.model }
-            setLastCall({
-              provider: payload.provider,
-              model: payload.model,
-              durationMs,
-              fresh: uncached,
-              cacheRead,
-              cacheWrite: cacheCreated
-            })
+        } else if (type === 'turn.usage') {
+          const stats = turnStatsRef.current
+          const cost = typeof payload.cost === 'number' ? payload.cost : 0
+          if (payload.role === 'worker') {
+            stats.worker.turns += 1
+            stats.worker.cost += cost
+            setSideSpend(sideSpendOf(stats))
+          } else {
+            pendingTurnUsageRef.current = {
+              provider: typeof payload.provider === 'string' ? payload.provider : null,
+              model: typeof payload.model === 'string' ? payload.model : null,
+              cost,
+              // Brain-only tool count from the agent loop — the live
+              // tool.called counter below also sees relayed WORKER tool
+              // events, so this is the authoritative per-turn number.
+              toolCalls: typeof payload.toolCalls === 'number' ? payload.toolCalls : null
+            }
           }
-          // Mirror into the ref (final context size is absolute; the rest
-          // accumulate) so task.completed can report end-of-turn totals.
-          stats.inputTokens += uncached
-          stats.outputTokens += out
-          stats.cacheReadTokens += cacheRead
-          stats.cacheCreationTokens += cacheCreated
-          stats.apiCalls += 1
-          stats.apiMs += durationMs
+        } else if (type === 'tool.called') {
+          turnStatsRef.current.toolCalls += 1
         }
-      } else if (type === 'turn.usage') {
-        const stats = turnStatsRef.current
-        const cost = typeof payload.cost === 'number' ? payload.cost : 0
-        if (payload.role === 'worker') {
-          stats.worker.turns += 1
-          stats.worker.cost += cost
-          setSideSpend(sideSpendOf(stats))
-        } else {
-          pendingTurnUsageRef.current = {
-            provider: typeof payload.provider === 'string' ? payload.provider : null,
-            model: typeof payload.model === 'string' ? payload.model : null,
-            cost,
-            // Brain-only tool count from the agent loop — the live
-            // tool.called counter below also sees relayed WORKER tool
-            // events, so this is the authoritative per-turn number.
-            toolCalls: typeof payload.toolCalls === 'number' ? payload.toolCalls : null
-          }
+        if (
+          type !== 'tool.called' &&
+          type !== 'tool.completed' &&
+          type !== 'tool.failed' &&
+          type !== 'compaction.applied'
+        ) {
+          const { summary: tlSummary, detail: tlDetail } = timelineEventSummary(
+            type,
+            payload,
+            turnStatsRef.current
+          )
+          setTimelineEntries((prev) => [
+            ...prev,
+            {
+              id: `te_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+              timestamp: Date.now(),
+              kind: type,
+              ...(tlSummary ? { summary: tlSummary } : {}),
+              ...(tlDetail ? { detail: tlDetail } : {})
+            }
+          ])
         }
-      } else if (type === 'tool.called') {
-        turnStatsRef.current.toolCalls += 1
       }
-      if (
-        type !== 'tool.called' &&
-        type !== 'tool.completed' &&
-        type !== 'tool.failed' &&
-        type !== 'compaction.applied'
-      ) {
-        const { summary: tlSummary, detail: tlDetail } = timelineEventSummary(
-          type,
-          payload,
-          turnStatsRef.current
-        )
-        setTimelineEntries((prev) => [
-          ...prev,
-          {
-            id: `te_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-            timestamp: Date.now(),
-            kind: type,
-            ...(tlSummary ? { summary: tlSummary } : {}),
-            ...(tlDetail ? { detail: tlDetail } : {})
-          }
-        ])
-      }
-    })
+    )
     const offApprovalRequest = window.api.chat.onApprovalRequest((event) => {
-      if (event.turnId !== null && pendingTurnIdRef.current !== event.turnId) return
+      // turnId is always stamped now (the sink closes over it) — strict
+      // matching only, so a concurrent conversation's approval can never
+      // render (or be answered) on this session's card.
+      if (!matchesTurn(event.turnId, event.conversationId)) return
       setMessages((prev) =>
         attachApproval(prev, {
           approvalId: event.id,
@@ -1314,7 +1429,7 @@ export function Chat(): React.JSX.Element {
       )
     })
     const offAskRequest = window.api.chat.onAskRequest((event) => {
-      if (event.turnId !== null && pendingTurnIdRef.current !== event.turnId) return
+      if (!matchesTurn(event.turnId, event.conversationId)) return
       setMessages((prev) =>
         attachAsk(prev, {
           askId: event.id,
@@ -1431,6 +1546,9 @@ export function Chat(): React.JSX.Element {
     }
     const conv = await window.api.conversation.create(localOnly ? currentModel : activeCloudModel)
     conversationRef.current = conv
+    // Sync the ref immediately — the event demux (matchesTurn) may need it
+    // before the state commit re-runs the id effect.
+    conversationIdRef.current = conv.id
     setActiveConversationId(conv.id)
     return conv.id
   }, [activeConversationId, currentModel, localOnly, activeCloudModel, setActiveConversationId])
@@ -1446,85 +1564,113 @@ export function Chat(): React.JSX.Element {
       // valid send. We require at least one of the two so a stray Enter
       // on an empty input doesn't fire.
       if (!trimmed && attachments.length === 0) return
-      if (streaming) return
+      // `streaming` doesn't flip until after the ensureConversationId() await
+      // below (a disk create for a fresh session). sendingRef closes that
+      // window synchronously so a second Enter can't fire a second turn, and
+      // markSending tells the provider not to evict this session mid-create.
+      if (streaming || sendingRef.current) return
+      sendingRef.current = true
+      markSending(sessionKey, true)
 
-      const conversationId = await ensureConversationId()
+      try {
+        const conversationId = await ensureConversationId()
 
-      const userMessage: ChatMessage = {
-        id: cryptoId(),
-        role: 'user',
-        content: trimmed,
-        timestamp: Date.now(),
-        ...(attachments.length > 0 ? { attachments } : {})
-      }
-      const assistantPlaceholder: AssistantMessage = {
-        id: cryptoId(),
-        role: 'assistant',
-        segments: [],
-        status: 'streaming',
-        timestamp: Date.now()
-      }
-      // Prepend an attachment summary so the LLM knows what files came
-      // along with this turn even though it can't read them. Tools like
-      // stt_transcribe_upload can then pick up the file from this hint.
-      const workspaceRoot = status?.rootPath ?? null
-      // Working-folder listings no longer ride the user message: composing a
-      // fresh readdir into the persisted-vs-wire content rewrote the previous
-      // user message every send and invalidated the provider prompt-cache
-      // prefix. The folder paths travel in the chat:send payload instead and
-      // the agent injects a fresh listing into the outbound volatile tail.
-      const historyContent = composeHistoryContent(trimmed, attachments, workspaceRoot)
-      const currentEntry: {
-        role: 'user'
-        content: string
-        attachments?: MessageAttachment[]
-      } = { role: 'user', content: historyContent }
-      if (attachments.length > 0) currentEntry.attachments = attachments
-      const history = textHistory(messages, workspaceRoot, {
-        summary: conversationRef.current?.summary,
-        summarizedThroughMessage: conversationRef.current?.summarizedThroughMessage,
-        conversationId: conversationRef.current?.id ?? null
-      }).concat(currentEntry)
+        const userMessage: ChatMessage = {
+          id: cryptoId(),
+          role: 'user',
+          content: trimmed,
+          timestamp: Date.now(),
+          ...(attachments.length > 0 ? { attachments } : {})
+        }
+        const assistantPlaceholder: AssistantMessage = {
+          id: cryptoId(),
+          role: 'assistant',
+          segments: [],
+          status: 'streaming',
+          timestamp: Date.now()
+        }
+        // Prepend an attachment summary so the LLM knows what files came
+        // along with this turn even though it can't read them. Tools like
+        // stt_transcribe_upload can then pick up the file from this hint.
+        const workspaceRoot = status?.rootPath ?? null
+        // Working-folder listings no longer ride the user message: composing a
+        // fresh readdir into the persisted-vs-wire content rewrote the previous
+        // user message every send and invalidated the provider prompt-cache
+        // prefix. The folder paths travel in the chat:send payload instead and
+        // the agent injects a fresh listing into the outbound volatile tail.
+        const historyContent = composeHistoryContent(trimmed, attachments, workspaceRoot)
+        const currentEntry: {
+          role: 'user'
+          content: string
+          attachments?: MessageAttachment[]
+        } = { role: 'user', content: historyContent }
+        if (attachments.length > 0) currentEntry.attachments = attachments
+        const history = textHistory(messages, workspaceRoot, {
+          summary: conversationRef.current?.summary,
+          summarizedThroughMessage: conversationRef.current?.summarizedThroughMessage,
+          conversationId: conversationRef.current?.id ?? null
+        }).concat(currentEntry)
 
-      setMessages((prev) => [...prev, userMessage, assistantPlaceholder])
-      scrollToBottom()
-      setStreaming(true)
-      const sendNow = Date.now()
-      setTurnStartedAt(sendNow)
-      turnStartedAtRef.current = sendNow
-      setTurnEndedAt(null)
-      setInputTokens(0)
-      setOutputTokens(0)
-      setCacheReadTokens(0)
-      setCacheWriteTokens(0)
-      setSideSpend(null)
-      setUsageUnavailable(false)
-      pendingTurnUsageRef.current = null
-      turnStatsRef.current = emptyTurnStats()
-      // Keep the timeline additive across the whole conversation — seed a
-      // boundary for this turn instead of wiping the prior turns' events.
-      setTimelineEntries((prev) => [...prev, makeTurnBoundary(trimmed)])
-      setTimelineOpen(false)
-      setFilesOpen(false)
+        setMessages((prev) => [...prev, userMessage, assistantPlaceholder])
+        scrollToBottom()
+        setStreaming(true)
+        const sendNow = Date.now()
+        setTurnStartedAt(sendNow)
+        turnStartedAtRef.current = sendNow
+        setTurnEndedAt(null)
+        setInputTokens(0)
+        setOutputTokens(0)
+        setCacheReadTokens(0)
+        setCacheWriteTokens(0)
+        setSideSpend(null)
+        setUsageUnavailable(false)
+        pendingTurnUsageRef.current = null
+        turnStatsRef.current = emptyTurnStats()
+        // Keep the timeline additive across the whole conversation — seed a
+        // boundary for this turn instead of wiping the prior turns' events.
+        setTimelineEntries((prev) => [...prev, makeTurnBoundary(trimmed)])
+        setTimelineOpen(false)
+        setFilesOpen(false)
 
-      const response = await window.api.chat.send({
-        history,
-        conversationId,
-        workingFolders,
-        thinkingMode: thinkingMode as import('@preload/index').ThinkingMode,
-        // Per-call only (procedure Play): a lingering state-based override
-        // would leak the procedure's mode into later sends.
-        ...(opts?.modeOverride ? { modeOverride: opts.modeOverride } : {})
-      })
-      pendingTurnIdRef.current = response.turnId
-      if (!response.ok && response.error) {
-        pendingTurnIdRef.current = null
-        setStreaming(false)
-        setTurnEndedAt(Date.now())
-        // The send never became a turn — don't let a later finalize fold it.
-        turnStartedAtRef.current = null
-        shouldPersistRef.current = true
-        setMessages((prev) => markError(prev, response.turnId, response.error ?? 'unknown error'))
+        // Adoption window: events for this conversation may arrive before the
+        // invoke reply delivers the turnId (same IPC pipe, no ordering
+        // guarantee) — matchesTurn adopts them while this flag is up.
+        sendInFlightRef.current = true
+        const response = await window.api.chat.send({
+          history,
+          conversationId,
+          workingFolders,
+          thinkingMode: thinkingMode as import('@preload/index').ThinkingMode,
+          // Per-call only (procedure Play): a lingering state-based override
+          // would leak the procedure's mode into later sends.
+          ...(opts?.modeOverride ? { modeOverride: opts.modeOverride } : {})
+        })
+        sendInFlightRef.current = false
+        // matchesTurn may have adopted the turnId from an early event already —
+        // and the turn may have fully COMPLETED before this invoke resolved
+        // (the sensitive-data gate finishes synchronously). Re-arming with a
+        // finished turn would wedge the composer forever.
+        if (
+          pendingTurnIdRef.current === null &&
+          response.turnId !== lastTerminalTurnIdRef.current
+        ) {
+          pendingTurnIdRef.current = response.turnId
+        }
+        if (!response.ok && response.error) {
+          pendingTurnIdRef.current = null
+          setStreaming(false)
+          setTurnEndedAt(Date.now())
+          // The send never became a turn — don't let a later finalize fold it.
+          turnStartedAtRef.current = null
+          shouldPersistRef.current = true
+          setMessages((prev) => markError(prev, response.turnId, response.error ?? 'unknown error'))
+        }
+      } finally {
+        // Release the synchronous re-entry guard once the turn is in flight
+        // (or the send failed): `streaming` now guards further sends, and a
+        // streaming session is already eviction-proof.
+        sendingRef.current = false
+        markSending(sessionKey, false)
       }
     },
     [
@@ -1535,7 +1681,9 @@ export function Chat(): React.JSX.Element {
       status?.rootPath,
       workingFolders,
       thinkingMode,
-      scrollToBottom
+      scrollToBottom,
+      markSending,
+      sessionKey
     ]
   )
 
@@ -1548,29 +1696,34 @@ export function Chat(): React.JSX.Element {
     await sendContent(trimmed, atts)
   }, [draft, pendingAttachments, sendContent])
 
-  // A procedure's Play button clears the conversation (via Flow) and queues its
-  // prompt here, then switches to Chat. Clearing happens before this effect
-  // runs, so `sendContent` already closes over an empty history — auto-send it
-  // as a brand-new conversation. The ref guards against a re-fire (e.g. the
-  // `streaming` flip) before the pending flag is cleared in `finally`.
+  // A procedure's Play button spawns a fresh SESSION carrying the procedure
+  // on its descriptor, then switches to Chat — this instance auto-sends it
+  // into its brand-new conversation. The ref guards against a re-fire (e.g.
+  // the `streaming` flip): the descriptor's procedure object is stable for
+  // the life of the session, so reference identity is the one-shot latch.
   const procedureRunRef = useRef<PendingProcedure | null>(null)
   useEffect(() => {
-    if (pendingProcedure == null || streaming) return
-    // Reference identity: the SAME queued object must not re-fire on a
-    // `streaming` flip, while a new Play (new object) always does.
-    if (procedureRunRef.current === pendingProcedure) return
-    procedureRunRef.current = pendingProcedure
-    const { prompt, mode } = pendingProcedure
-    void sendContent(prompt, [], mode ? { modeOverride: mode } : undefined).finally(() => {
-      setPendingProcedure(null)
-      procedureRunRef.current = null
-    })
-  }, [pendingProcedure, streaming, sendContent, setPendingProcedure])
+    const procedure = descriptor.procedure
+    if (procedure == null || streaming) return
+    if (procedureRunRef.current === procedure) return
+    procedureRunRef.current = procedure
+    // Consume at the PROVIDER too: the descriptor outlives this instance, so
+    // without nulling it a remounted Chat would re-execute the procedure —
+    // duplicate autonomous runs with real side effects.
+    consumeProcedure(sessionKey)
+    const { prompt, mode } = procedure
+    void sendContent(prompt, [], mode ? { modeOverride: mode } : undefined)
+  }, [descriptor.procedure, streaming, sendContent, consumeProcedure, sessionKey])
 
   const sendRecording = useCallback(async () => {
     const blob = recBlobRef.current
     if (!blob) return
-    if (streaming) return
+    // Same synchronous re-entry + eviction guard as sendContent: the STT and
+    // upload awaits below all precede setStreaming(true), so `streaming`
+    // can't protect this window on its own.
+    if (streaming || sendingRef.current) return
+    sendingRef.current = true
+    markSending(sessionKey, true)
     const blobUrl = recBlobUrl
     if (recAudioRef.current) {
       recAudioRef.current.pause()
@@ -1685,13 +1838,17 @@ export function Chat(): React.JSX.Element {
       setTimelineOpen(false)
       setFilesOpen(false)
 
+      sendInFlightRef.current = true
       const response = await window.api.chat.send({
         history,
         conversationId,
         workingFolders,
         thinkingMode: thinkingMode as import('@preload/index').ThinkingMode
       })
-      pendingTurnIdRef.current = response.turnId
+      sendInFlightRef.current = false
+      if (pendingTurnIdRef.current === null && response.turnId !== lastTerminalTurnIdRef.current) {
+        pendingTurnIdRef.current = response.turnId
+      }
       if (!response.ok && response.error) {
         pendingTurnIdRef.current = null
         setStreaming(false)
@@ -1703,6 +1860,9 @@ export function Chat(): React.JSX.Element {
       }
     } catch {
       toast.show({ message: t('chat.voice.error'), tone: 'error' })
+    } finally {
+      sendingRef.current = false
+      markSending(sessionKey, false)
     }
   }, [
     recBlobUrl,
@@ -1712,6 +1872,8 @@ export function Chat(): React.JSX.Element {
     streaming,
     messages,
     setMessages,
+    markSending,
+    sessionKey,
     status,
     workingFolders,
     thinkingMode,
@@ -1719,7 +1881,11 @@ export function Chat(): React.JSX.Element {
   ])
 
   const stop = useCallback(() => {
-    void window.api.chat.cancel()
+    // Scoped: only THIS session's conversation stops — the other sessions'
+    // (and channels') turns keep running.
+    const conversationId = conversationIdRef.current
+    if (!conversationId) return
+    void window.api.chat.cancel({ conversationId })
   }, [])
 
   /**
@@ -1883,13 +2049,13 @@ export function Chat(): React.JSX.Element {
 
   const handleDragEnter = useCallback(
     (e: React.DragEvent<HTMLDivElement>) => {
-      if (streaming) return
+      if (streaming || isExternalChannel) return
       if (!hasFiles(e)) return
       e.preventDefault()
       e.stopPropagation()
       setDragActive(true)
     },
-    [streaming]
+    [streaming, isExternalChannel]
   )
 
   const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
@@ -1904,13 +2070,13 @@ export function Chat(): React.JSX.Element {
 
   const handleDragOver = useCallback(
     (e: React.DragEvent<HTMLDivElement>) => {
-      if (streaming) return
+      if (streaming || isExternalChannel) return
       if (!hasFiles(e)) return
       e.preventDefault()
       e.stopPropagation()
       e.dataTransfer.dropEffect = 'copy'
     },
-    [streaming]
+    [streaming, isExternalChannel]
   )
 
   const handleDrop = useCallback(
@@ -1918,17 +2084,17 @@ export function Chat(): React.JSX.Element {
       e.preventDefault()
       e.stopPropagation()
       setDragActive(false)
-      if (streaming) return
+      if (streaming || isExternalChannel) return
       const files = Array.from(e.dataTransfer.files ?? [])
       if (files.length === 0) return
       await stageFiles(files)
     },
-    [streaming, stageFiles]
+    [streaming, isExternalChannel, stageFiles]
   )
 
   const handlePaste = useCallback(
     async (e: React.ClipboardEvent<HTMLElement>) => {
-      if (streaming) return
+      if (streaming || isExternalChannel) return
       const files = Array.from(e.clipboardData?.files ?? [])
       if (files.length === 0) return
       // Intercept clipboard files so they don't end up as binary noise
@@ -1936,7 +2102,7 @@ export function Chat(): React.JSX.Element {
       e.preventDefault()
       await stageFiles(files)
     },
-    [streaming, stageFiles]
+    [streaming, isExternalChannel, stageFiles]
   )
 
   const hasMessages = messages.length > 0
@@ -1965,63 +2131,58 @@ export function Chat(): React.JSX.Element {
           {t('chat.dropToAttach')}
         </div>
       )}
+      {/* Navigation stays live while turns stream — conversations run
+          concurrently now, and every session keeps itself alive hidden. Only
+          the composer of a PROCESSING conversation is gated (below). */}
       <Sidebar
         items={[
           {
             key: 'soul',
             icon: AngelIcon,
             label: t('chat.soul'),
-            onClick: () => goTo('soul'),
-            disabled: streaming
+            onClick: () => goTo('soul')
           },
           {
             key: 'user',
             icon: UserIcon,
             label: t('chat.user'),
-            onClick: () => goTo('user'),
-            disabled: streaming
+            onClick: () => goTo('user')
           },
           {
             key: 'agents',
             icon: Robot01Icon,
             label: t('chat.agents'),
-            onClick: () => goTo('agents'),
-            disabled: streaming
+            onClick: () => goTo('agents')
           },
           {
             key: 'heartbeat',
             icon: HeartCheckIcon,
             label: t('chat.heartbeat'),
-            onClick: () => goTo('heartbeat'),
-            disabled: streaming
+            onClick: () => goTo('heartbeat')
           },
           {
             key: 'procedures',
             icon: PlayListIcon,
             label: t('chat.procedures'),
-            onClick: () => goTo('procedures'),
-            disabled: streaming
+            onClick: () => goTo('procedures')
           },
           {
             key: 'viewer',
             icon: FileEditIcon,
             label: t('chat.workspace'),
-            onClick: () => goTo('viewer'),
-            disabled: streaming
+            onClick: () => goTo('viewer')
           },
           {
-            key: 'history',
+            key: 'conversations',
             icon: Clock01Icon,
-            label: t('chat.history'),
-            onClick: () => goTo('history'),
-            disabled: streaming
+            label: t('chat.conversations'),
+            onClick: () => goTo('history')
           },
           {
             key: 'settings',
             icon: Settings02Icon,
             label: t('chat.settings'),
-            onClick: () => goTo('settings'),
-            disabled: streaming
+            onClick: () => goTo('settings')
           }
         ]}
       />
@@ -2128,339 +2289,340 @@ export function Chat(): React.JSX.Element {
         </div>
       </div>
 
-      {isExternalChannel ? (
-        <div className="border-border/60 bg-bg/80 border-t p-4 backdrop-blur">
-          <div className="bg-surface border-border mx-auto flex max-w-2xl items-center gap-2.5 rounded-xl border px-4 py-3">
-            {isHeartbeatConversation ? (
-              <Activity04Icon size={16} className="text-muted shrink-0" aria-hidden />
-            ) : isProcedureConversation ? (
-              <PlayIcon size={16} className="text-muted shrink-0" aria-hidden />
-            ) : isTelegramConversation ? (
-              <TelegramLogo size={16} className="text-muted shrink-0" aria-hidden />
-            ) : (
-              <WhatsAppLogo size={16} className="text-muted shrink-0" aria-hidden />
-            )}
-            <span className="text-muted flex-1 truncate text-sm cursor-default">
-              {t(
-                isHeartbeatConversation
-                  ? 'chat.heartbeatReadOnly'
-                  : isProcedureConversation
-                    ? 'chat.procedureReadOnly'
-                    : isTelegramConversation
-                      ? 'chat.telegramReadOnly'
-                      : 'chat.whatsappReadOnly'
-              )}
-            </span>
-            <button
-              type="button"
-              onClick={onNewChat}
-              title={t('chat.newChat')}
-              aria-label={t('chat.newChat')}
-              className={cn(
-                'border-border text-muted hover:text-fg flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs',
-                'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
-              )}
-            >
-              <PlusSignIcon size={12} />
-              <span>{t('chat.newChat')}</span>
-            </button>
-          </div>
-        </div>
-      ) : (
-        <form
-          onSubmit={(e) => {
-            e.preventDefault()
-            if (streaming) stop()
-            else void send()
-          }}
-          className={cn(
-            'bg-bg/80 relative z-40 p-4 backdrop-blur',
-            !streaming && 'border-t border-border/60'
-          )}
-        >
-          {streaming && <div className="rainbow-border" />}
-          {pendingAttachments.length > 0 && (
-            <div className="pointer-events-none absolute inset-x-0 bottom-full px-4 pb-2">
-              <div className="pointer-events-auto mx-auto flex max-w-xl flex-wrap gap-2">
-                {pendingAttachments.map((att) => (
-                  <PendingAttachmentChip
-                    key={att.filePath}
-                    attachment={att}
-                    onRemove={() => removePending(att.filePath)}
-                  />
-                ))}
-              </div>
+      {/* Composer: always rendered, including for channel-owned conversations
+          (WhatsApp / Telegram / heartbeat / procedure). For those, every action
+          button is disabled and the textarea slot shows the read-only channel
+          notice instead — the bar keeps its familiar shape, but the
+          conversation can only be continued from its own channel. */}
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          if (isExternalChannel) return
+          if (streaming) stop()
+          else void send()
+        }}
+        className={cn(
+          'bg-bg/80 relative z-40 p-4 backdrop-blur',
+          !streaming && 'border-t border-border/60'
+        )}
+      >
+        {streaming && <div className="rainbow-border" />}
+        {pendingAttachments.length > 0 && (
+          <div className="pointer-events-none absolute inset-x-0 bottom-full px-4 pb-2">
+            <div className="pointer-events-auto mx-auto flex max-w-xl flex-wrap gap-2">
+              {pendingAttachments.map((att) => (
+                <PendingAttachmentChip
+                  key={att.filePath}
+                  attachment={att}
+                  onRemove={() => removePending(att.filePath)}
+                />
+              ))}
             </div>
-          )}
-          <div className="relative flex w-full items-end gap-1">
-            {/* Full-width composer, three zones. START: session/config controls
+          </div>
+        )}
+        <div className="relative flex w-full items-end gap-1">
+          {/* Full-width composer, three zones. START: session/config controls
                 (new chat, cloud/local, reasoning, meter, logs). MIDDLE: the
                 textarea — it lives in the trailing group but takes `order-first`
                 there, so it renders between the two button clusters and grows
                 (flex-1) to fill the gap, giving the row breathing room. END:
                 message actions (attach, folder, mic) as light ghost icons +
                 the primary send. */}
-            <div className="flex shrink-0 items-end gap-1">
-              <div className="border-border bg-surface inline-flex shrink-0 items-center rounded-lg border p-0.5">
-                <button
-                  type="button"
-                  onClick={onNewChat}
-                  disabled={streaming}
-                  title={t('chat.newChat')}
-                  aria-label={t('chat.newChat')}
-                  className={cn(
-                    'flex w-14 flex-col items-center gap-0.5 rounded-md px-1.5 py-1',
-                    'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-                    'text-muted',
-                    !streaming && 'cursor-pointer hover:text-fg',
-                    streaming && 'cursor-not-allowed opacity-60'
-                  )}
-                >
-                  <PlusSignIcon size={14} />
-                  <span className="text-[10px] leading-tight font-medium">
-                    {t('chat.newChatShort')}
-                  </span>
-                </button>
-              </div>
-              <ModelSwitch
-                localOnly={localOnly}
-                localModel={currentModel}
-                providers={cloudProviders}
-                brain={brain}
-                disabled={savingMode || streaming}
-                onModeChange={onModeChange}
-                onSelectModel={async (sel) => {
-                  await window.api.provider.setBrain(sel)
+          <div className="flex shrink-0 items-end gap-1">
+            <div className="border-border bg-surface inline-flex shrink-0 items-center rounded-lg border p-0.5">
+              {/* Always enabled — New Chat opens a SEPARATE session, so a
+                    streaming conversation keeps running untouched while the
+                    user starts the next task. */}
+              <button
+                type="button"
+                onClick={onNewChat}
+                title={t('chat.newChat')}
+                aria-label={t('chat.newChat')}
+                className={cn(
+                  'flex w-14 flex-col items-center gap-0.5 rounded-md px-1.5 py-1',
+                  'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+                  'text-muted cursor-pointer hover:text-fg'
+                )}
+              >
+                <PlusSignIcon size={14} />
+                <span className="text-[10px] leading-tight font-medium">
+                  {t('chat.newChatShort')}
+                </span>
+              </button>
+            </div>
+            <ModelSwitch
+              localOnly={localOnly}
+              localModel={currentModel}
+              providers={cloudProviders}
+              brain={brain}
+              disabled={savingMode || streaming || isExternalChannel}
+              onModeChange={onModeChange}
+              onSelectModel={async (sel) => {
+                await window.api.provider.setBrain(sel)
+                await refreshStatus()
+              }}
+            />
+            {recPhase === 'idle' && (
+              <BrainButton
+                modes={reasoningModes}
+                value={thinkingMode}
+                onSelect={setThinkingMode}
+                disabled={savingMode || streaming || isExternalChannel}
+              />
+            )}
+            {recPhase === 'idle' && (
+              <ChatModeButton
+                mode={chatMode}
+                disabled={savingMode || streaming || isExternalChannel}
+                onSelect={async (mode) => {
+                  if (mode === chatMode) return
+                  await window.api.provider.setMode(mode)
                   await refreshStatus()
                 }}
               />
-              {recPhase === 'idle' && (
-                <BrainButton
-                  modes={reasoningModes}
-                  value={thinkingMode}
-                  onSelect={setThinkingMode}
-                  disabled={savingMode || streaming}
-                />
-              )}
-              {recPhase === 'idle' && (
-                <ChatModeButton
-                  mode={chatMode}
-                  disabled={savingMode || streaming}
-                  onSelect={async (mode) => {
-                    if (mode === chatMode) return
-                    await window.api.provider.setMode(mode)
-                    await refreshStatus()
-                  }}
-                />
-              )}
-              {recPhase === 'idle' && (
-                <ContextMeter
-                  used={contextTokens ?? 0}
-                  budget={contextBudget ?? 0}
-                  compactionAt={compactionAt}
-                  locale={locale}
-                  turnStartedAt={turnStartedAt}
-                  turnEndedAt={turnEndedAt}
-                  turnInputTokens={inputTokens}
-                  turnOutputTokens={outputTokens}
-                  turnCacheReadTokens={cacheReadTokens}
-                  turnCacheWriteTokens={cacheWriteTokens}
-                  lastTurn={convStats?.lastTurn ?? null}
-                  allTime={convStats?.allTime ?? null}
-                  sideSpend={sideSpend}
-                  lastCall={lastCall}
-                  usageUnavailable={usageUnavailable}
-                  meterModel={meterModel}
-                  activeModel={activeModelName}
-                  provider={
-                    lastCall?.provider ??
-                    convStats?.lastTurn?.provider ??
-                    (localOnly ? 'local' : activeCloudProvider)
-                  }
-                />
-              )}
-              {(timelineEntries.length > 0 || conversationFiles.length > 0) && (
-                <LogsFilesButton
-                  hasLogs={timelineEntries.length > 0}
-                  logsCount={timelineEventCount}
-                  hasFiles={conversationFiles.length > 0}
-                  filesCount={conversationFiles.length}
-                  onOpenTimeline={() => setTimelineOpen(true)}
-                  onOpenFiles={() => setFilesOpen(true)}
-                />
-              )}
-            </div>
-            <div className="flex min-w-0 flex-1 items-end gap-1">
-              <button
-                type="button"
-                onClick={() => void exportChatPdf()}
-                disabled={streaming || exportingPdf || !canExportPdf}
-                title={t('chat.downloadPdf')}
-                aria-label={t('chat.downloadPdf')}
-                className={cn(
-                  'flex h-[42.5px] w-10 shrink-0 items-center justify-center rounded-lg border',
-                  'border-border bg-surface text-muted enabled:hover:text-fg enabled:hover:border-muted',
-                  'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-                  'disabled:cursor-not-allowed disabled:opacity-50',
-                  !streaming && !exportingPdf && canExportPdf && 'cursor-pointer'
-                )}
-              >
-                <Download01Icon size={18} />
-              </button>
-              <button
-                type="button"
-                onClick={pickUploads}
-                disabled={streaming}
-                title={t('chat.attachFile')}
-                aria-label={t('chat.attachFile')}
-                className={cn(
-                  'flex h-[42.5px] w-10 shrink-0 items-center justify-center rounded-lg border',
-                  'border-border bg-surface text-muted enabled:hover:text-fg enabled:hover:border-muted',
-                  'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-                  'disabled:cursor-not-allowed disabled:opacity-50',
-                  !streaming && 'cursor-pointer'
-                )}
-              >
-                <Image02Icon size={18} />
-              </button>
-              <WorkingFolderButton
-                key={activeConversationId ?? 'none'}
-                folders={workingFolders}
-                onAdd={() => void addWorkingFolder()}
-                onRemove={(folder) => void removeWorkingFolder(folder)}
-                disabled={streaming}
+            )}
+            {recPhase === 'idle' && (
+              <ContextMeter
+                used={contextTokens ?? 0}
+                budget={contextBudget ?? 0}
+                compactionAt={compactionAt}
+                locale={locale}
+                turnStartedAt={turnStartedAt}
+                turnEndedAt={turnEndedAt}
+                turnInputTokens={inputTokens}
+                turnOutputTokens={outputTokens}
+                turnCacheReadTokens={cacheReadTokens}
+                turnCacheWriteTokens={cacheWriteTokens}
+                lastTurn={convStats?.lastTurn ?? null}
+                allTime={convStats?.allTime ?? null}
+                sideSpend={sideSpend}
+                lastCall={lastCall}
+                usageUnavailable={usageUnavailable}
+                meterModel={meterModel}
+                activeModel={activeModelName}
+                provider={
+                  lastCall?.provider ??
+                  convStats?.lastTurn?.provider ??
+                  (localOnly ? 'local' : activeCloudProvider)
+                }
               />
+            )}
+            {(timelineEntries.length > 0 || conversationFiles.length > 0) && (
+              <LogsFilesButton
+                hasLogs={timelineEntries.length > 0}
+                logsCount={timelineEventCount}
+                hasFiles={conversationFiles.length > 0}
+                filesCount={conversationFiles.length}
+                onOpenTimeline={() => setTimelineOpen(true)}
+                onOpenFiles={() => setFilesOpen(true)}
+              />
+            )}
+          </div>
+          <div className="flex min-w-0 flex-1 items-end gap-1">
+            <button
+              type="button"
+              onClick={() => void exportChatPdf()}
+              disabled={streaming || exportingPdf || !canExportPdf || isExternalChannel}
+              title={t('chat.downloadPdf')}
+              aria-label={t('chat.downloadPdf')}
+              className={cn(
+                'flex h-[42.5px] w-10 shrink-0 items-center justify-center rounded-lg border',
+                'border-border bg-surface text-muted enabled:hover:text-fg enabled:hover:border-muted',
+                'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+                'disabled:cursor-not-allowed disabled:opacity-50',
+                !streaming &&
+                  !exportingPdf &&
+                  canExportPdf &&
+                  !isExternalChannel &&
+                  'cursor-pointer'
+              )}
+            >
+              <Download01Icon size={18} />
+            </button>
+            <button
+              type="button"
+              onClick={pickUploads}
+              disabled={streaming || isExternalChannel}
+              title={t('chat.attachFile')}
+              aria-label={t('chat.attachFile')}
+              className={cn(
+                'flex h-[42.5px] w-10 shrink-0 items-center justify-center rounded-lg border',
+                'border-border bg-surface text-muted enabled:hover:text-fg enabled:hover:border-muted',
+                'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+                'disabled:cursor-not-allowed disabled:opacity-50',
+                !streaming && !isExternalChannel && 'cursor-pointer'
+              )}
+            >
+              <Image02Icon size={18} />
+            </button>
+            <WorkingFolderButton
+              key={activeConversationId ?? 'none'}
+              folders={workingFolders}
+              onAdd={() => void addWorkingFolder()}
+              onRemove={(folder) => void removeWorkingFolder(folder)}
+              disabled={streaming || isExternalChannel}
+            />
+            <button
+              type="button"
+              onClick={recPhase === 'idle' ? () => void startRecording() : undefined}
+              disabled={streaming || !micAvailable || recPhase !== 'idle' || isExternalChannel}
+              title={!micAvailable ? t('chat.voice.noMic') : t('chat.voice.record')}
+              aria-label={t('chat.voice.record')}
+              className={cn(
+                'flex h-[42.5px] w-10 shrink-0 items-center justify-center rounded-lg border',
+                'border-border bg-surface text-muted enabled:hover:text-fg enabled:hover:border-muted',
+                'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+                'disabled:cursor-not-allowed disabled:opacity-50',
+                !streaming &&
+                  micAvailable &&
+                  recPhase === 'idle' &&
+                  !isExternalChannel &&
+                  'cursor-pointer'
+              )}
+            >
+              <Mic01Icon size={18} />
+            </button>
+            {recPhase === 'idle' && (
               <button
-                type="button"
-                onClick={recPhase === 'idle' ? () => void startRecording() : undefined}
-                disabled={streaming || !micAvailable || recPhase !== 'idle'}
-                title={!micAvailable ? t('chat.voice.noMic') : t('chat.voice.record')}
-                aria-label={t('chat.voice.record')}
+                type="submit"
+                disabled={
+                  isExternalChannel ||
+                  !hasAnyModel ||
+                  (!streaming && draft.trim().length === 0 && pendingAttachments.length === 0)
+                }
+                aria-label={streaming ? t('chat.stop') : t('chat.send')}
                 className={cn(
-                  'flex h-[42.5px] w-10 shrink-0 items-center justify-center rounded-lg border',
-                  'border-border bg-surface text-muted enabled:hover:text-fg enabled:hover:border-muted',
+                  'flex h-[42.5px] w-10 shrink-0 cursor-pointer items-center justify-center rounded-lg',
                   'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
                   'disabled:cursor-not-allowed disabled:opacity-50',
-                  !streaming && micAvailable && recPhase === 'idle' && 'cursor-pointer'
+                  streaming
+                    ? 'bg-red-600 text-white enabled:hover:bg-red-700'
+                    : 'bg-primary text-primary-fg enabled:hover:brightness-110'
                 )}
               >
-                <Mic01Icon size={18} />
+                {streaming ? <StopCircleIcon size={18} /> : <ArrowUp02Icon size={18} />}
               </button>
-              {recPhase === 'idle' && (
-                <button
-                  type="submit"
-                  disabled={
-                    !hasAnyModel ||
-                    (!streaming && draft.trim().length === 0 && pendingAttachments.length === 0)
-                  }
-                  aria-label={streaming ? t('chat.stop') : t('chat.send')}
+            )}
+            {isExternalChannel ? (
+              /* Channel-owned conversation: the textarea slot carries the
+                   read-only notice instead of an input, same height as the
+                   textarea so the composer doesn't shift between chats. */
+              <div className="bg-surface border-border order-first flex min-h-[42.5px] min-w-0 flex-1 items-center gap-2.5 rounded-lg border px-3">
+                {isHeartbeatConversation ? (
+                  <Activity04Icon size={16} className="text-muted shrink-0" aria-hidden />
+                ) : isProcedureConversation ? (
+                  <PlayIcon size={16} className="text-muted shrink-0" aria-hidden />
+                ) : isTelegramConversation ? (
+                  <TelegramLogo size={16} className="text-muted shrink-0" aria-hidden />
+                ) : (
+                  <WhatsAppLogo size={16} className="text-muted shrink-0" aria-hidden />
+                )}
+                <span className="text-muted flex-1 truncate text-sm cursor-default">
+                  {t(
+                    isHeartbeatConversation
+                      ? 'chat.heartbeatReadOnly'
+                      : isProcedureConversation
+                        ? 'chat.procedureReadOnly'
+                        : isTelegramConversation
+                          ? 'chat.telegramReadOnly'
+                          : 'chat.whatsappReadOnly'
+                  )}
+                </span>
+              </div>
+            ) : recPhase === 'idle' ? (
+              <div className="relative order-first flex min-w-0 flex-1 flex-col">
+                <textarea
+                  ref={textareaRef}
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onContextMenu={onTextareaContextMenu}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault()
+                      if (!streaming) void send()
+                    }
+                  }}
+                  rows={1}
+                  placeholder={t('chat.placeholder')}
+                  dir={isRtl ? 'rtl' : 'ltr'}
+                  disabled={streaming}
                   className={cn(
-                    'flex h-[42.5px] w-10 shrink-0 cursor-pointer items-center justify-center rounded-lg',
-                    'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+                    'bg-surface text-fg border-border placeholder:text-muted enabled:hover:border-muted',
+                    'min-h-[42.5px] max-h-40 w-full resize-none rounded-lg border px-3 py-2 text-sm',
+                    'focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
                     'disabled:cursor-not-allowed disabled:opacity-50',
-                    streaming
-                      ? 'bg-red-600 text-white enabled:hover:bg-red-700'
-                      : 'bg-primary text-primary-fg enabled:hover:brightness-110'
+                    placeholderAlign
+                  )}
+                />
+                <button
+                  type="button"
+                  disabled={streaming}
+                  onClick={() => setDraftExpanded(true)}
+                  className={cn(
+                    'text-muted hover:text-fg absolute inset-e-2.5 top-1/2 z-10 -translate-y-1/2 opacity-50 hover:opacity-100',
+                    'disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:text-muted',
+                    !streaming && 'cursor-pointer'
                   )}
                 >
-                  {streaming ? <StopCircleIcon size={18} /> : <ArrowUp02Icon size={18} />}
+                  <ArrowExpandIcon size={14} />
                 </button>
-              )}
-              {recPhase === 'idle' ? (
-                <div className="relative order-first flex min-w-0 flex-1 flex-col">
-                  <textarea
-                    ref={textareaRef}
-                    value={draft}
-                    onChange={(e) => setDraft(e.target.value)}
-                    onContextMenu={onTextareaContextMenu}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault()
-                        if (!streaming) void send()
-                      }
-                    }}
-                    rows={1}
-                    placeholder={t('chat.placeholder')}
-                    dir={isRtl ? 'rtl' : 'ltr'}
-                    disabled={streaming}
-                    className={cn(
-                      'bg-surface text-fg border-border placeholder:text-muted enabled:hover:border-muted',
-                      'min-h-[42.5px] max-h-40 w-full resize-none rounded-lg border px-3 py-2 text-sm',
-                      'focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-                      'disabled:cursor-not-allowed disabled:opacity-50',
-                      placeholderAlign
-                    )}
-                  />
-                  <button
-                    type="button"
-                    disabled={streaming}
-                    onClick={() => setDraftExpanded(true)}
-                    className={cn(
-                      'text-muted hover:text-fg absolute inset-e-2.5 top-1/2 z-10 -translate-y-1/2 opacity-50 hover:opacity-100',
-                      'disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:text-muted',
-                      !streaming && 'cursor-pointer'
-                    )}
-                  >
-                    <ArrowExpandIcon size={14} />
-                  </button>
-                </div>
-              ) : recPhase === 'recording' ? (
-                <div className="bg-surface border-border order-first flex min-h-[42.5px] flex-1 items-center gap-3 rounded-lg border px-3">
-                  <span className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-red-500" />
-                  <span className="text-fg tabular-nums text-sm font-medium">
-                    {formatRecTime(recElapsed)}
-                  </span>
-                  <span className="text-muted flex-1 text-xs">{t('chat.voice.recording')}</span>
-                  <button
-                    type="button"
-                    onClick={stopRecording}
-                    className="bg-red-600 text-white flex h-7 w-7 items-center justify-center rounded-md hover:bg-red-700"
-                    aria-label={t('chat.stop')}
-                  >
-                    <StopCircleIcon size={14} />
-                  </button>
-                </div>
-              ) : (
-                <div className="bg-surface border-border order-first flex min-h-[42.5px] flex-1 items-center gap-2 rounded-lg border px-3">
-                  <button
-                    type="button"
-                    onClick={togglePlayback}
-                    className="text-muted hover:text-fg flex h-7 w-7 shrink-0 items-center justify-center rounded-md"
-                    aria-label={recPlaying ? t('chat.stop') : 'Play'}
-                  >
-                    {recPlaying ? <PauseIcon size={14} /> : <PlayIcon size={14} />}
-                  </button>
-                  <span className="text-fg tabular-nums text-sm font-medium">
-                    {formatRecTime(recElapsed)}
-                  </span>
-                  <div className="flex-1" />
-                  <button
-                    type="button"
-                    onClick={discardRecording}
-                    className="text-muted hover:text-fg flex h-7 w-7 shrink-0 items-center justify-center rounded-md"
-                    aria-label={t('chat.voice.delete')}
-                    title={t('chat.voice.delete')}
-                  >
-                    <Delete02Icon size={14} />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void sendRecording()}
-                    className="bg-primary text-primary-fg flex h-7 w-7 shrink-0 items-center justify-center rounded-md hover:brightness-110"
-                    aria-label={t('chat.voice.send')}
-                    title={t('chat.voice.send')}
-                  >
-                    <ArrowUp02Icon size={14} />
-                  </button>
-                </div>
-              )}
-            </div>
+              </div>
+            ) : recPhase === 'recording' ? (
+              <div className="bg-surface border-border order-first flex min-h-[42.5px] flex-1 items-center gap-3 rounded-lg border px-3">
+                <span className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-red-500" />
+                <span className="text-fg tabular-nums text-sm font-medium">
+                  {formatRecTime(recElapsed)}
+                </span>
+                <span className="text-muted flex-1 text-xs">{t('chat.voice.recording')}</span>
+                <button
+                  type="button"
+                  onClick={stopRecording}
+                  className="bg-red-600 text-white flex h-7 w-7 items-center justify-center rounded-md hover:bg-red-700"
+                  aria-label={t('chat.stop')}
+                >
+                  <StopCircleIcon size={14} />
+                </button>
+              </div>
+            ) : (
+              <div className="bg-surface border-border order-first flex min-h-[42.5px] flex-1 items-center gap-2 rounded-lg border px-3">
+                <button
+                  type="button"
+                  onClick={togglePlayback}
+                  className="text-muted hover:text-fg flex h-7 w-7 shrink-0 items-center justify-center rounded-md"
+                  aria-label={recPlaying ? t('chat.stop') : 'Play'}
+                >
+                  {recPlaying ? <PauseIcon size={14} /> : <PlayIcon size={14} />}
+                </button>
+                <span className="text-fg tabular-nums text-sm font-medium">
+                  {formatRecTime(recElapsed)}
+                </span>
+                <div className="flex-1" />
+                <button
+                  type="button"
+                  onClick={discardRecording}
+                  className="text-muted hover:text-fg flex h-7 w-7 shrink-0 items-center justify-center rounded-md"
+                  aria-label={t('chat.voice.delete')}
+                  title={t('chat.voice.delete')}
+                >
+                  <Delete02Icon size={14} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void sendRecording()}
+                  className="bg-primary text-primary-fg flex h-7 w-7 shrink-0 items-center justify-center rounded-md hover:brightness-110"
+                  aria-label={t('chat.voice.send')}
+                  title={t('chat.voice.send')}
+                >
+                  <ArrowUp02Icon size={14} />
+                </button>
+              </div>
+            )}
           </div>
-        </form>
-      )}
+        </div>
+      </form>
       {textareaMenu}
       {editorMenu}
-      {screen === 'chat' &&
+      {visible &&
         draftExpanded &&
         createPortal(
           <div
@@ -2485,9 +2647,10 @@ export function Chat(): React.JSX.Element {
           </div>,
           document.body
         )}
-      {/* Gated on the chat screen: these portal to <body>, so without this they
-          would escape the hidden wrapper and paint over another screen. */}
-      {screen === 'chat' &&
+      {/* Gated on visibility: these portal to <body>, so without this they would
+          escape the hidden wrapper and paint over another screen (or another
+          session's view). */}
+      {visible &&
         timelineOpen &&
         createPortal(
           <div
@@ -2529,7 +2692,7 @@ export function Chat(): React.JSX.Element {
           </div>,
           document.body
         )}
-      {screen === 'chat' &&
+      {visible &&
         filesOpen &&
         conversationFiles.length > 0 &&
         createPortal(

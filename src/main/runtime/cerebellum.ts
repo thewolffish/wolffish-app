@@ -1,7 +1,7 @@
 import type { Amygdala, DangerLevel, DangerPattern } from '@main/runtime/amygdala'
 import type { ChannelStatusSnapshot } from '@main/channels/status'
 import { diskWriter } from '@main/io/diskWriter'
-import type { Corpus } from '@main/runtime/corpus'
+import { turnScope, type Corpus } from '@main/runtime/corpus'
 import type {
   ArtifactHit,
   ConversationSummary,
@@ -678,6 +678,14 @@ export class Cerebellum {
   /** Extra always-exposed capabilities from config.pinnedCapabilities. */
   private pinnedCapabilities = new Set<string>()
   private dependencyCache = new Map<string, boolean>()
+  /**
+   * Single-flight guards for concurrent dependency resolution: keyed by
+   * capability name for whole-capability flights and `dep:<name>` for the
+   * per-dependency check→install blocks (see singleFlight).
+   */
+  private dependencyInflight = new Map<string, Promise<void>>()
+  /** Single-flight for ensureSystemTool's silent installs (ffmpeg etc.). */
+  private systemToolInflight = new Map<string, Promise<{ ok: boolean; error?: string }>>()
   private loaded = false
   private currentConversationId: string | null = null
   // Per-turn conversation scope. Under concurrent turns (workflow master + live
@@ -709,13 +717,15 @@ export class Cerebellum {
   private askBridge?: AskUserBridge
   private channelStatusProvider?: () => ChannelStatusSnapshot[]
   /**
-   * The toolCallId of the tool currently executing, set by executeTool for
-   * the duration of one plugin.execute call. The `ask` capability needs it
-   * to anchor its question card to the right tool_call segment, but
-   * plugin.execute isn't handed the id. Save/restore around each call keeps
-   * nested executeTool invocations (dependency checks) from clobbering it.
+   * The toolCallId of the tool currently executing, established by
+   * executeTool for the duration of one plugin.execute call. The `ask`
+   * capability needs it to anchor its question card to the right tool_call
+   * segment, but plugin.execute isn't handed the id. AsyncLocalStorage
+   * (not a field) because tool calls from CONCURRENT turns interleave —
+   * a save/restore field protects nesting, not interleaving, and would
+   * anchor one turn's ask card to another turn's tool_call segment.
    */
-  private activeToolCallId: string | null = null
+  private toolCallCtx = new AsyncLocalStorage<string>()
 
   constructor(private options: CerebellumOptions = {}) {}
 
@@ -746,7 +756,7 @@ export class Cerebellum {
    */
   private async dispatchAskUser(input: AskUserRequestInput): Promise<AskUserResponse> {
     const bridge = this.askBridge
-    const toolCallId = this.activeToolCallId
+    const toolCallId = this.toolCallCtx.getStore() ?? null
     if (!bridge || !toolCallId) return { kind: 'unsupported' }
     const id = `ask_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
     try {
@@ -842,6 +852,16 @@ export class Cerebellum {
   setCurrentConversationId(id: string | null, title?: string | null): void {
     this.currentConversationId = id
     this.options.corpus?.emit('conversation.changed', { conversationId: id, title })
+  }
+
+  /**
+   * Clear the global pointer ONLY if it still names `id`. Under concurrent
+   * turns the finishing turn must not null out a pointer a later-started
+   * conversation has since claimed.
+   */
+  clearCurrentConversationId(id: string | null): void {
+    if (this.currentConversationId !== id) return
+    this.setCurrentConversationId(null)
   }
 
   getCurrentConversationId(): string | null {
@@ -1309,15 +1329,13 @@ export class Cerebellum {
     toolCallId?: string
   ): Promise<ToolExecutionResult> {
     // Expose the toolCallId to plugins that ask the user a question (the
-    // `ask` capability anchors its card to it). Save/restore so a nested
-    // executeTool (e.g. a dependency check) can't strand a stale id.
-    const prevToolCallId = this.activeToolCallId
-    if (toolCallId) this.activeToolCallId = toolCallId
-    try {
-      return await this.executeToolInner(name, args, signal)
-    } finally {
-      this.activeToolCallId = prevToolCallId
+    // `ask` capability anchors its card to it). ALS follows this call's
+    // async tree only, so nested executeTool invocations (dependency checks)
+    // and concurrent turns' tool calls each resolve their own id.
+    if (toolCallId) {
+      return this.toolCallCtx.run(toolCallId, () => this.executeToolInner(name, args, signal))
     }
+    return this.executeToolInner(name, args, signal)
   }
 
   private async executeToolInner(
@@ -1421,7 +1439,39 @@ export class Cerebellum {
     depth = 0
   ): Promise<void> {
     if (this.dependencyCache.get(capabilityName)) return
+    return this.singleFlight(capabilityName, () =>
+      this.ensureDependenciesInner(capabilityName, hook, depth)
+    )
+  }
 
+  /**
+   * Single-flight per capability/dependency NAME (any depth): two concurrent
+   * turns needing the same uninstalled dependency — directly OR transitively
+   * (pdf and browser both require node; the STT/TTS pair shares ffmpeg) —
+   * must not race duplicate approval dialogs and parallel brew/npm
+   * installers. The second caller awaits the first resolution (approval
+   * dialogs and all). A rejected flight is evicted immediately (the .finally)
+   * so the next caller retries fresh in its own context. A sealed background
+   * run never PUBLISHES a flight — its approval-less context would deny the
+   * install and poison a concurrent foreground caller waiting on it — but it
+   * still awaits an existing foreground flight.
+   */
+  private singleFlight(name: string, work: () => Promise<void>): Promise<void> {
+    const inflight = this.dependencyInflight.get(name)
+    if (inflight) return inflight
+    if (turnScope.getStore()?.autonomous) return work()
+    const flight = work().finally(() => {
+      this.dependencyInflight.delete(name)
+    })
+    this.dependencyInflight.set(name, flight)
+    return flight
+  }
+
+  private async ensureDependenciesInner(
+    capabilityName: string,
+    hook?: DependencyEmitHook,
+    depth = 0
+  ): Promise<void> {
     if (depth > 3) {
       throw new Error(
         `Dependency depth exceeded (max 3) resolving "${capabilityName}". Possible circular dependency.`
@@ -1467,54 +1517,64 @@ export class Cerebellum {
         )
       }
 
-      const checkTool = depCap.tools.find((t) => t.name.endsWith('_check'))
-      if (!checkTool) {
-        // No check tool means the dependency is a pure logical capability
-        // (no installable software). Treat as satisfied.
-        this.dependencyCache.set(depName, true)
-        this.options.corpus?.emit('dependency.satisfied', {
-          capability: capabilityName,
-          dependency: depName,
-          cached: false
-        })
-        continue
-      }
+      // Single-flight the check→install of the dependency ITSELF, keyed by
+      // the dependency name. Two concurrent turns whose capabilities share a
+      // transitive dependency (pdf + browser both require node) would
+      // otherwise both pass the cache check above and race duplicate
+      // approval dialogs and parallel installers.
+      await this.singleFlight(`dep:${depName}`, async () => {
+        // Another flight may have satisfied it while we queued.
+        if (this.dependencyCache.get(depName)) return
 
-      const checkResult = await this.executeTool(checkTool.name, {})
-      const parsed = checkResult.success ? safeJsonParse(checkResult.output) : null
+        const checkTool = depCap.tools.find((t) => t.name.endsWith('_check'))
+        if (!checkTool) {
+          // No check tool means the dependency is a pure logical capability
+          // (no installable software). Treat as satisfied.
+          this.dependencyCache.set(depName, true)
+          this.options.corpus?.emit('dependency.satisfied', {
+            capability: capabilityName,
+            dependency: depName,
+            cached: false
+          })
+          return
+        }
 
-      if (parsed?.installed) {
-        this.dependencyCache.set(depName, true)
-        this.options.corpus?.emit('dependency.satisfied', {
-          capability: capabilityName,
-          dependency: depName,
-          cached: false
-        })
-        continue
-      }
+        const checkResult = await this.executeTool(checkTool.name, {})
+        const parsed = checkResult.success ? safeJsonParse(checkResult.output) : null
 
-      this.options.corpus?.emit('dependency.missing', {
-        capability: capabilityName,
-        dependency: depName
-      })
+        if (parsed?.installed) {
+          this.dependencyCache.set(depName, true)
+          this.options.corpus?.emit('dependency.satisfied', {
+            capability: capabilityName,
+            dependency: depName,
+            cached: false
+          })
+          return
+        }
 
-      try {
-        await this.installCapability(depCap, capabilityName, hook)
-        refreshPath()
-        this.dependencyCache.set(depName, true)
-        this.options.corpus?.emit('dependency.installed', {
+        this.options.corpus?.emit('dependency.missing', {
           capability: capabilityName,
           dependency: depName
         })
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err)
-        this.options.corpus?.emit('dependency.failed', {
-          capability: capabilityName,
-          dependency: depName,
-          error: message
-        })
-        throw new Error(`Cannot use ${capabilityName} — ${message}`)
-      }
+
+        try {
+          await this.installCapability(depCap, capabilityName, hook)
+          refreshPath()
+          this.dependencyCache.set(depName, true)
+          this.options.corpus?.emit('dependency.installed', {
+            capability: capabilityName,
+            dependency: depName
+          })
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err)
+          this.options.corpus?.emit('dependency.failed', {
+            capability: capabilityName,
+            dependency: depName,
+            error: message
+          })
+          throw new Error(`Cannot use ${capabilityName} — ${message}`)
+        }
+      })
     }
 
     // System requires are now satisfied. Install the capability's own npm
@@ -1547,6 +1607,19 @@ export class Cerebellum {
    * result the caller can fall through on.
    */
   async ensureSystemTool(capName: string): Promise<{ ok: boolean; error?: string }> {
+    if (this.dependencyCache.get(capName)) return { ok: true }
+    // Single-flight: two channels' voice notes arriving together (WhatsApp +
+    // Telegram both ensuring ffmpeg) must not race duplicate silent installs.
+    const inflight = this.systemToolInflight.get(capName)
+    if (inflight) return inflight
+    const flight = this.ensureSystemToolInner(capName).finally(() => {
+      this.systemToolInflight.delete(capName)
+    })
+    this.systemToolInflight.set(capName, flight)
+    return flight
+  }
+
+  private async ensureSystemToolInner(capName: string): Promise<{ ok: boolean; error?: string }> {
     if (this.dependencyCache.get(capName)) return { ok: true }
     const cap = this.capabilities.get(capName)
     // Unknown/failed capability — don't block the caller; let the tool run
