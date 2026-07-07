@@ -18,7 +18,8 @@ export function escapeHtml(s: string): string {
 
 const LRM = '\u200E'
 const RLM = '\u200F'
-const RTL_SCRIPT = /[\u0590-\u05FF\u0600-\u06FF\u0700-\u074F\u0780-\u07BF\uFB50-\uFDFF\uFE70-\uFEFF]/
+const RTL_SCRIPT =
+  /[\u0590-\u05FF\u0600-\u06FF\u0700-\u074F\u0780-\u07BF\uFB50-\uFDFF\uFE70-\uFEFF]/
 const LTR_SCRIPT = /[A-Za-z\u00C0-\u024F\u0370-\u03FF\u0400-\u04FF\u1E00-\u1EFF]/
 
 /**
