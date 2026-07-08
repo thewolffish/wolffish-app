@@ -1,4 +1,10 @@
-## v1.0.207 — 2026-07-07 `Latest`
+## v1.0.208 — 2026-07-08 `Latest`
+
+### Channel Messages That Never Arrive as Tag Soup
+
+On WhatsApp and Telegram, Wolffish is the only formatter standing between it and you — and now it can proofread its own markup before a message ever goes out. Two new tools, **`telegram_check_format`** and **`whatsapp_check_format`**, validate a message against the channel's exact rules *without sending it*: each returns "clean" or the precise list of what's wrong, and neither changes a thing — Wolffish fixes its own text and re-checks. On Telegram that catches the mistakes that make the Bot API reject the **whole** message and deliver it as raw tag soup: a stray wrapper like `</message>`, a leaked `<p>`/`<br>`/`<h2>`, an unclosed or orphaned tag, a bare `<` or `&` that should have been escaped. On WhatsApp it catches leaked Markdown that arrives as ugly literal syntax — `**double asterisks**`, `#` headings, `[text](url)` links, `| tables |`, `---` rules, a language tag stuck after a code fence. Both are pure checks that need no live connection, so they work even on background runs — a heartbeat digest, a workflow turn — exactly where a formatting slip used to sail through unnoticed. The upshot: fewer garbled messages, and when one would have garbled, it's caught before you ever see it.
+
+## v1.0.207 — 2026-07-07
 
 ### Set Your Model and Mode from WhatsApp and Telegram
 

@@ -1,3 +1,4 @@
+import { validateTelegramHtml } from '@main/channels/telegram/format'
 import type {
   Capability,
   SkillToolDescriptor,
@@ -5,9 +6,9 @@ import type {
   WolffishPlugin
 } from '@main/runtime/cerebellum'
 import { workspaceRoot } from '@main/workspace/workspace'
+import { Bot, GrammyError, InputFile } from 'grammy'
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { Bot, GrammyError, InputFile } from 'grammy'
 
 /**
  * Capability name used to register Telegram tools with the cerebellum.
@@ -56,6 +57,19 @@ export function buildTelegramCapability(deps: ToolDeps): {
 } {
   const tools: SkillToolDescriptor[] = [
     {
+      name: 'telegram_check_format',
+      description:
+        'Validate a message against Telegram\'s HTML rules WITHOUT sending it. Returns "valid" or the exact problems (unsupported tag, unclosed tag, orphan closing tag, bare < or &). It changes nothing — you fix your own text and re-check. ALWAYS call this right before telegram_send / telegram_edit_message whenever your message contains ANY HTML tag or any literal < & characters: one bad tag makes Telegram reject the ENTIRE message and it arrives as raw tag soup. Plain text with no tags never needs checking.',
+      parameters: {
+        message: {
+          type: 'string',
+          description:
+            'The exact message body you intend to send, checked as-is (do not pre-escape for this call).',
+          required: true
+        }
+      }
+    },
+    {
       name: 'telegram_send',
       description:
         'Send a text message to one of the allowed Telegram users. Use to notify the user out-of-band — for example when a long-running task you started in the chat finishes. Returns the Telegram message_id so a later edit can target this message.',
@@ -63,7 +77,7 @@ export function buildTelegramCapability(deps: ToolDeps): {
         message: {
           type: 'string',
           description:
-            'The message body. 1–4096 characters, delivered with Telegram parse_mode HTML. Telegram does NOT render Markdown (no **, no # headings, no | tables |, no [text](url) — they show as raw syntax). Formatting, if any, must be Telegram HTML only: <b>, <i>, <u>, <s>, <code>, <pre>, <a href="…">, <blockquote>; escape literal & < > as &amp; &lt; &gt;. Plain text with no markup is always safe.',
+            'The message body. 1–4096 characters, delivered with Telegram parse_mode HTML. Telegram does NOT render Markdown (no **, no # headings, no | tables |, no [text](url) — they show as raw syntax). Formatting, if any, is Telegram HTML ONLY: <b>, <i>, <u>, <s>, <code>, <pre>, <a href="…">, <blockquote>, <span class="tg-spoiler">. NO other tags exist — never wrap the body in a container like <message>/<html>/<p>, never use <br> (use a real newline), and close every tag you open. Escape literal & < > as &amp; &lt; &gt;. One unknown or unclosed tag makes Telegram reject the WHOLE message and it arrives as literal tag soup, so if the text has ANY tag, call telegram_check_format first and only send once it returns valid. GOOD: "📬 <b>Digest</b>\\n<i>2 unread</i>\\nTotal &lt;5 items&gt;". BAD: "📬 <b>Digest</b> …😄</message>" (stray wrapper tag), "**Digest**" (Markdown), "line<br>line" (no <br>), "cost < 5 & rising" (unescaped < &). Plain text with no markup is always safe.',
           required: true
         },
         userId: {
@@ -176,7 +190,7 @@ export function buildTelegramCapability(deps: ToolDeps): {
         message: {
           type: 'string',
           description:
-            'New text body. 1–4096 characters, delivered with Telegram parse_mode HTML — same formatting rules as telegram_send (Telegram HTML subset only, never Markdown; escape literal & < > as entities).',
+            'New text body. 1–4096 characters, delivered with Telegram parse_mode HTML — same formatting rules as telegram_send (Telegram HTML subset only, never Markdown, never a wrapper/<br> tag, close every tag, escape literal & < > as entities). If the new text has ANY tag, run telegram_check_format on it first — a rejected edit leaves the old message unchanged.',
           required: true
         },
         userId: {
@@ -212,6 +226,10 @@ export function buildTelegramCapability(deps: ToolDeps): {
       parameters: toJsonSchema(t.parameters)
     })),
     execute: async (toolName, args) => {
+      // Pure validation — no bot needed, so it works on overlay-less turns
+      // (heartbeat/procedure/workflow) exactly when the model most needs it.
+      if (toolName === 'telegram_check_format') return checkFormat(args)
+
       const bot = deps.getBot()
       if (!bot) return failure('Telegram bot is not running')
 
@@ -235,6 +253,18 @@ export function buildTelegramCapability(deps: ToolDeps): {
   }
 
   return { capability, plugin }
+}
+
+function checkFormat(args: Record<string, unknown>): ToolExecutionResult {
+  const message = stringArg(args.message)
+  if (!message) return failure('message is required and must be a non-empty string')
+  const { ok, issues } = validateTelegramHtml(message)
+  if (ok) {
+    return success('Valid Telegram HTML — safe to send with telegram_send / telegram_edit_message.')
+  }
+  return success(
+    `NOT CLEAN — fix these so the message renders right (an unsupported/unclosed tag or bare < & is REJECTED and arrives as raw tag soup; leaked Markdown is delivered but shows raw symbols). Fix, then re-check before sending:\n- ${issues.join('\n- ')}`
+  )
 }
 
 async function sendText(

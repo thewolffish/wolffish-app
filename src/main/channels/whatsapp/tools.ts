@@ -1,3 +1,4 @@
+import { validateWhatsAppFormat } from '@main/channels/whatsapp/format'
 import type {
   Capability,
   SkillToolDescriptor,
@@ -93,6 +94,18 @@ export function buildWhatsAppCapability(deps: ToolDeps): {
 } {
   const tools: SkillToolDescriptor[] = [
     {
+      name: 'whatsapp_check_format',
+      description:
+        'Check a message for leaked Markdown that WhatsApp would show as raw, ugly syntax WITHOUT sending it. Returns "clean" or the exact problems (**double asterisks**, # headings, [text](url) links, | tables |, --- rules, ```lang fences). It changes nothing — you fix your own text and re-check. Call this before whatsapp_send / whatsapp_reply whenever your message has any formatting, so the recipient never sees Markdown symbols. WhatsApp\'s real syntax is single-char: *bold* _italic_ ~strike~ `code`.',
+      parameters: {
+        message: {
+          type: 'string',
+          description: 'The exact message (or caption) text you intend to send.',
+          required: true
+        }
+      }
+    },
+    {
       name: 'whatsapp_check',
       description:
         'Look up whether one or more phone numbers are registered on WhatsApp and resolve them to the canonical JID to send to. Pass numbers in international format, with or without a leading "+" (e.g. "+966505349989"); separate multiple numbers with commas. Always run this before messaging a number you have not messaged before, then use the returned JID with the other whatsapp_* tools — do not hand-build the JID yourself.',
@@ -119,7 +132,7 @@ export function buildWhatsAppCapability(deps: ToolDeps): {
         message: {
           type: 'string',
           description:
-            'The message body, delivered VERBATIM — nothing converts it. WhatsApp formatting only: *bold* (single asterisks), _italic_, ~strikethrough~, `inline code`, ```monospace```, "- " bullets, "1. " numbered items, "> " quotes. NEVER Markdown (no **, no # headings, no | tables |, no [text](url), no --- rules) — leaked Markdown reaches the recipient as raw syntax. Instead of a table write one "*Label:* value" line per fact; paste links as bare URLs.',
+            'The message body, delivered VERBATIM — nothing converts it. WhatsApp formatting only: *bold* (single asterisks), _italic_, ~strikethrough~, `inline code`, ```monospace```, "- " bullets, "1. " numbered items, "> " quotes. NEVER Markdown (no **double asterisks**, no # headings, no | tables |, no [text](url), no --- rules) — leaked Markdown reaches the recipient as raw syntax. Instead of a table write one "*Label:* value" line per fact; paste links as bare URLs. If the message has ANY formatting, run whatsapp_check_format on it first. GOOD: "*Order arrived* 🍽\\nTotal: _53 SAR_". BAD: "**Order arrived**\\n| item | price |" (Markdown bold + table).',
           required: true
         }
       }
@@ -250,7 +263,7 @@ export function buildWhatsAppCapability(deps: ToolDeps): {
         message: {
           type: 'string',
           description:
-            'The reply text, delivered VERBATIM — nothing converts it. WhatsApp formatting only (*bold*, _italic_, `inline code`, "- " bullets) — never Markdown; leaked Markdown reaches the recipient as raw syntax.',
+            'The reply text, delivered VERBATIM — nothing converts it. WhatsApp formatting only (*bold*, _italic_, `inline code`, "- " bullets) — never Markdown (no **double asterisks**, no [text](url)); leaked Markdown reaches the recipient as raw syntax. Run whatsapp_check_format first if the text has any formatting.',
           required: true
         }
       }
@@ -385,6 +398,10 @@ export function buildWhatsAppCapability(deps: ToolDeps): {
       parameters: toJsonSchema(t.parameters)
     })),
     execute: async (toolName, args) => {
+      // Pure validation — no socket needed, so it works on overlay-less
+      // turns (heartbeat/procedure/workflow) exactly when it's most needed.
+      if (toolName === 'whatsapp_check_format') return checkFormat(args)
+
       const sock = deps.getSocket()
       if (!sock) return failure('WhatsApp is not connected')
 
@@ -421,6 +438,18 @@ export function buildWhatsAppCapability(deps: ToolDeps): {
   }
 
   return { capability, plugin }
+}
+
+function checkFormat(args: Record<string, unknown>): ToolExecutionResult {
+  const message = stringArg(args.message)
+  if (!message) return failure('message is required')
+  const { ok, issues } = validateWhatsAppFormat(message)
+  if (ok) {
+    return success('Clean — no leaked Markdown. Safe to send with whatsapp_send / whatsapp_reply.')
+  }
+  return success(
+    `LEAKED MARKDOWN — WhatsApp would show these as raw symbols. Fix, then re-check before sending:\n- ${issues.join('\n- ')}`
+  )
 }
 
 async function checkNumbers(

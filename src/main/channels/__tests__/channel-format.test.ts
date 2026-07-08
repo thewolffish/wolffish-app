@@ -17,8 +17,8 @@
  */
 
 import { markdownToPlain } from '../format'
-import { bidiMark, escapeHtml } from '../telegram/format'
-import { stripInlineMarkup } from '../whatsapp/format'
+import { bidiMark, escapeHtml, validateTelegramHtml } from '../telegram/format'
+import { stripInlineMarkup, validateWhatsAppFormat } from '../whatsapp/format'
 
 let passed = 0
 let failed = 0
@@ -31,6 +31,14 @@ function eq(label: string, actual: string, expected: string): void {
   console.error(
     `FAIL ${label}\n  expected: ${JSON.stringify(expected)}\n  actual:   ${JSON.stringify(actual)}`
   )
+}
+function ok(label: string, actual: boolean, expected: boolean): void {
+  if (actual === expected) {
+    passed++
+    return
+  }
+  failed++
+  console.error(`FAIL ${label}\n  expected ok=${expected}, got ok=${actual}`)
 }
 
 // --- markdownToPlain ---
@@ -71,6 +79,46 @@ eq('ltr text gets LRM', bidiMark('Hey! What is up?'), '\u200E')
 eq('rtl text gets RLM', bidiMark('مرحبا بك'), '\u200F')
 eq('leading punctuation skipped', bidiMark('«مرحبا»'), '\u200F')
 eq('digits-only gets no mark', bidiMark('42'), '')
+
+// --- validateTelegramHtml (the telegram_check_format engine) ---
+
+// The exact heartbeat failure: a stray </message> wrapper tag.
+ok('stray wrapper tag is invalid', validateTelegramHtml('<b>Total</b> 😄</message>').ok, false)
+ok('valid subset passes', validateTelegramHtml('<b>Digest</b>\n<i>2 unread</i> cost &lt;5').ok, true)
+ok('plain text passes', validateTelegramHtml('just plain text, nothing to parse').ok, true)
+ok('link with href passes', validateTelegramHtml('see <a href="https://x.example">docs</a>').ok, true)
+ok('spoiler span passes', validateTelegramHtml('<span class="tg-spoiler">boo</span>').ok, true)
+ok('unclosed tag is invalid', validateTelegramHtml('<b>bold with no close').ok, false)
+ok('orphan closing tag is invalid', validateTelegramHtml('text </i> more').ok, false)
+ok('leaked block tags invalid', validateTelegramHtml('<p>hi</p><br>').ok, false)
+ok('bare ampersand is invalid', validateTelegramHtml('Tom & Jerry').ok, false)
+ok('bare less-than is invalid', validateTelegramHtml('2 < 3 rule').ok, false)
+ok('bare greater-than is fine', validateTelegramHtml('5 > 3 rule').ok, true)
+// Leaked Markdown parses as HTML but renders raw on Telegram — also flagged.
+ok('markdown bold flagged on telegram', validateTelegramHtml('**Digest**').ok, false)
+ok('markdown heading flagged on telegram', validateTelegramHtml('# Digest\nbody').ok, false)
+ok('markdown link flagged on telegram', validateTelegramHtml('see [docs](https://x.example)').ok, false)
+ok('media marker fine on telegram', validateTelegramHtml('![m](wolffish-media://a.png)').ok, true)
+ok('self-closing br is invalid', validateTelegramHtml('a<br/>b').ok, false)
+// The reported problem is named in the issues so the model can self-correct.
+eq(
+  'stray tag issue names it',
+  validateTelegramHtml('x</message>').issues.some((s) => s.includes('<message>')) ? 'named' : 'missing',
+  'named'
+)
+
+// --- validateWhatsAppFormat (the whatsapp_check_format engine) ---
+
+ok('markdown bold flagged', validateWhatsAppFormat('**Order arrived**').ok, false)
+ok('whatsapp bold passes', validateWhatsAppFormat('*Order arrived* _53 SAR_').ok, true)
+ok('heading flagged', validateWhatsAppFormat('# Digest\nbody').ok, false)
+ok('markdown link flagged', validateWhatsAppFormat('see [docs](https://x.example)').ok, false)
+ok('bare url passes', validateWhatsAppFormat('see https://x.example').ok, true)
+ok('media marker not flagged', validateWhatsAppFormat('![meme](wolffish-media://a.png)').ok, true)
+ok('table flagged', validateWhatsAppFormat('| item | price |\n| a | 5 |').ok, false)
+ok('hr flagged', validateWhatsAppFormat('above\n---\nbelow').ok, false)
+ok('lang fence flagged', validateWhatsAppFormat('```python\nprint(1)\n```').ok, false)
+ok('bare fence passes', validateWhatsAppFormat('```\nprint(1)\n```').ok, true)
 
 const total = passed + failed
 console.log(`${passed}/${total} passed`)
