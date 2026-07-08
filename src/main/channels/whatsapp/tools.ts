@@ -162,7 +162,7 @@ export function buildWhatsAppCapability(deps: ToolDeps): {
         caption: {
           type: 'string',
           description:
-            'Optional caption shown beneath the image, delivered VERBATIM. WhatsApp formatting only (*bold*, _italic_) — never Markdown.',
+            'Optional caption shown beneath the image, delivered VERBATIM. WhatsApp formatting only (*bold*, _italic_) — never Markdown (no **double asterisks**, no [text](url)). If the caption has any formatting, run whatsapp_check_format on it first.',
           required: false
         },
         mimetype: {
@@ -204,7 +204,7 @@ export function buildWhatsAppCapability(deps: ToolDeps): {
         caption: {
           type: 'string',
           description:
-            'Optional caption, delivered VERBATIM. WhatsApp formatting only (*bold*, _italic_) — never Markdown.',
+            'Optional caption, delivered VERBATIM. WhatsApp formatting only (*bold*, _italic_) — never Markdown (no **double asterisks**, no [text](url)). If the caption has any formatting, run whatsapp_check_format on it first.',
           required: false
         },
         mimetype: {

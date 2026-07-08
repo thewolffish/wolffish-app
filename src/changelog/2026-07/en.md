@@ -1,4 +1,14 @@
-## v1.0.208 — 2026-07-08 `Latest`
+## v1.0.209 — 2026-07-09 `Latest`
+
+### Grok 4.5, xAI's New Frontier
+
+xAI's newest frontier model joins the lineup. **Grok 4.5** reasons always-on — you can't switch its thinking off, but you can dial it with the brain button between a lighter **on** and a heavier **high** — it reads images, and it carries a **500K-token** context window. It arrives as the default xAI model, ahead of Grok 4.3, and it's reachable on both fronts: connect xAI directly or go through OpenRouter. Its price shows straight in the model picker — $2 in / $6 out per million tokens, $0.50 cached — all of it verified against xAI live rather than guessed. While we were in there, we filled in the cached-input price for the *whole* Grok line, which used to sit blank on every card, and moved the "frontier" badge onto 4.5 where it now belongs.
+
+### Telegram Captions, Formatted Like Everything Else
+
+A caption you send under a photo, document, video, or audio file on Telegram now renders its formatting — the exact same HTML subset every other Telegram message uses — instead of arriving with the tags showing literally. And when a caption's markup is malformed, the **file still reaches you**: rather than failing the whole send, Wolffish delivers the attachment with the caption dropped to plain text and notes to fix the markup next time, so a formatting slip never costs you the file itself. The pre-send `telegram_check_format` check and Wolffish's own formatting rules now cover captions the same way they cover message text, and the WhatsApp caption guidance got the same sharpening. Switching your model over Telegram is safer too — the confirmation line now escapes the model and provider names, so an id carrying a stray `<` or `&` can't bounce the whole message.
+
+## v1.0.208 — 2026-07-08
 
 ### Channel Messages That Never Arrive as Tag Soup
 

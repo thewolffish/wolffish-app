@@ -72,7 +72,7 @@ export const DEFAULT_MODEL: Partial<Record<ProviderId, string>> = {
   stepfun: 'step-3.7-flash',
   anthropic: 'claude-opus-4-8',
   openai: 'gpt-5.5',
-  xai: 'grok-4.3',
+  xai: 'grok-4.5',
   openrouter: 'deepseek/deepseek-v4-pro'
 }
 
@@ -601,12 +601,21 @@ export const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
   ],
   xai: [
     {
+      name: 'grok-4.5',
+      context: '500K',
+      input: '$2.00',
+      output: '$6.00',
+      cached: '$0.50',
+      badges: ['frontier', 'vision', 'reasoning'],
+      modes: ['on', 'high']
+    },
+    {
       name: 'grok-4.3',
       context: '1M',
       input: '$1.25',
       output: '$2.50',
-      cached: null,
-      badges: ['frontier', 'vision', 'reasoning'],
+      cached: '$0.20',
+      badges: ['vision', 'reasoning'],
       modes: ['none', 'high']
     },
     {
@@ -614,7 +623,7 @@ export const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       context: '256K',
       input: '$1.25',
       output: '$2.50',
-      cached: null,
+      cached: '$0.20',
       badges: ['vision', 'reasoning'],
       modes: ['on']
     },
@@ -623,7 +632,7 @@ export const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       context: '256K',
       input: '$1.25',
       output: '$2.50',
-      cached: null,
+      cached: '$0.20',
       badges: ['vision']
     },
     {
@@ -631,7 +640,7 @@ export const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       context: '256K',
       input: '$1.00',
       output: '$2.00',
-      cached: null,
+      cached: '$0.20',
       badges: ['code', 'reasoning'],
       modes: ['on']
     }
@@ -892,6 +901,15 @@ export const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       output: '$0.79',
       cached: null,
       badges: ['reasoning'],
+      modes: ['none', 'high']
+    },
+    {
+      name: 'x-ai/grok-4.5',
+      context: '500K',
+      input: '$2.00',
+      output: '$6.00',
+      cached: null,
+      badges: ['vision', 'reasoning'],
       modes: ['none', 'high']
     },
     {

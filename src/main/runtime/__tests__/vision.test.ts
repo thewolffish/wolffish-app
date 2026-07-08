@@ -53,6 +53,7 @@ const CASES: Array<[provider: string, model: string, vision: boolean]> = [
   ['openai', 'gpt-4-0613', false],
   ['openai', 'gpt-4-32k', false],
   // xai — grok-4 onward is multimodal; older lines need the vision marker
+  ['xai', 'grok-4.5', true],
   ['xai', 'grok-4', true],
   ['xai', 'grok-4-fast-non-reasoning', true],
   ['xai', 'grok-2-vision-1212', true],

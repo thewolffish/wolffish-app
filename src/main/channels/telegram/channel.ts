@@ -1244,7 +1244,9 @@ export class TelegramChannel {
     await persistLocalOnly(false)
     this.agent.thalamus.setLocalOnly(false)
     const note = wasLocalOnly ? ' (switched to cloud)' : ''
-    await this.safeSend(chatId, `☁️ Model: ${option.providerId} · ${option.model}${note}`)
+    // sendPlain: code-composed text embedding dynamic provider/model ids —
+    // entity-escaped so an id containing < or & can't bounce the HTML parse.
+    await this.sendPlain(chatId, `☁️ Model: ${option.providerId} · ${option.model}${note}`)
   }
 
   /**

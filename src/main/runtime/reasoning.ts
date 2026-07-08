@@ -11,6 +11,7 @@
  *   ['off', 'high', 'max']  effort models   (off / high effort / max effort)
  *   ['off', 'high']         coarse effort   (off / on, no distinct max)
  *   ['off', 'on']           binary toggle   (off / on, no effort levels)
+ *   ['on', 'high']          always-on effort (cannot be disabled; low/high knob)
  *   ['on']                  always-on       (cannot be disabled; UI shows it locked)
  *   []                      unsupported     (no reasoning at all)
  *
@@ -61,12 +62,15 @@ export function reasoningModesFor(
       return []
 
     // ── xAI (Grok) ─────────────────────────────────────────────────────
-    // Verified live: grok-4.3 / grok-3-mini accept reasoning_effort none/low/
-    // high (grok-4.3 REJECTS 'max') → [off, high]. grok-4 / grok-4.20-reasoning
-    // / grok-build reason always-on with no effort knob → [on]. Explicit
-    // -non-reasoning variants and grok-3 base don't reason → [].
+    // Verified live: grok-4.5 reasons ALWAYS-ON with a low/high effort knob —
+    // accepts reasoning_effort low/high, REJECTS 'none' AND 'max' → [on, high].
+    // grok-4.3 / grok-3-mini accept reasoning_effort none/low/high (grok-4.3
+    // REJECTS 'max') → [off, high]. grok-4 / grok-4.20-reasoning / grok-build
+    // reason always-on with no effort knob → [on]. Explicit -non-reasoning
+    // variants and grok-3 base don't reason → [].
     case 'xai':
       if (m.includes('non-reasoning')) return []
+      if (m.includes('grok-4.5')) return ['on', 'high']
       if (m.includes('grok-4.3') || m.includes('grok-3-mini')) return ['off', 'high']
       if (m.includes('grok-build') || /grok-4/.test(m)) return ['on']
       return []

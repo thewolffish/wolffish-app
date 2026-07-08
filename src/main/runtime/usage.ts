@@ -224,10 +224,14 @@ const ZAI_PRICING: Record<string, ModelPricing> = {
 
 // https://docs.x.ai/docs/pricing
 // xAI auto-caches; no write premium. Reasoning tokens billed at output rate.
+// cacheRead = cached-input price / input price, from /v1/language-models.
+// grok-4.5 doubles input+output beyond a 200K long-context threshold; we
+// bill the flat base rate (same simplification as grok-4.3/4.20).
 const XAI_PRICING: Record<string, ModelPricing> = {
-  'grok-4.3': { input: 1.25 / 1e6, output: 2.5 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
-  'grok-4.20': { input: 1.25 / 1e6, output: 2.5 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
-  'grok-build': { input: 1.0 / 1e6, output: 2.0 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
+  'grok-4.5': { input: 2.0 / 1e6, output: 6.0 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 / 2.0 },
+  'grok-4.3': { input: 1.25 / 1e6, output: 2.5 / 1e6, cacheWrite: 1.0, cacheRead: 0.2 / 1.25 },
+  'grok-4.20': { input: 1.25 / 1e6, output: 2.5 / 1e6, cacheWrite: 1.0, cacheRead: 0.2 / 1.25 },
+  'grok-build': { input: 1.0 / 1e6, output: 2.0 / 1e6, cacheWrite: 1.0, cacheRead: 0.2 / 1.0 },
   'grok-4': { input: 3 / 1e6, output: 15 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
   'grok-3': { input: 2 / 1e6, output: 10 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
   'grok-3-mini': { input: 0.3 / 1e6, output: 0.5 / 1e6, cacheWrite: 1.0, cacheRead: 0.5 },
@@ -331,6 +335,8 @@ const OPENROUTER_PRICING: Record<string, ModelPricing> = {
   'mistralai/codestral': { input: 0.3 / 1e6, output: 0.9 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
   'qwen/qwq-32b': { input: 0.12 / 1e6, output: 0.18 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
   'qwen/qwen-2.5-72b': { input: 0.18 / 1e6, output: 0.18 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
+  'x-ai/grok-4.5': { input: 2 / 1e6, output: 6 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
+  'x-ai/grok-4.3': { input: 1.25 / 1e6, output: 2.5 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
   'x-ai/grok-3-beta': { input: 3 / 1e6, output: 15 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
   'x-ai/grok-3-mini-beta': { input: 0.3 / 1e6, output: 0.5 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
   'cohere/command-r-plus': { input: 2.5 / 1e6, output: 10 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },

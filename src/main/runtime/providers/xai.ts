@@ -19,13 +19,15 @@ function maxTokensFor(model: string): number {
   return 65536
 }
 
+// grok-4.5 reasons ALWAYS-ON with a low/high effort knob (verified live:
+// accepts reasoning_effort low/high, 400s on BOTH 'none' and 'max').
 // grok-4.3 / grok-3-mini accept reasoning_effort (none/low/high — grok-4.3
 // REJECTS 'max' with "Invalid reasoning effort"). grok-4 / grok-4.20-reasoning
 // / grok-build reason ALWAYS-ON and 400 ("does not support reasoningEffort") if
 // the param is sent. -non-reasoning variants don't reason at all.
 function supportsReasoningEffort(model: string): boolean {
   const m = model.toLowerCase()
-  return m.includes('grok-4.3') || m.includes('grok-3-mini')
+  return m.includes('grok-4.5') || m.includes('grok-4.3') || m.includes('grok-3-mini')
 }
 
 function reasons(model: string): boolean {
@@ -58,10 +60,16 @@ export class XAIProvider {
     if (reasons(this.model)) {
       body.max_completion_tokens = maxOutput
       if (supportsReasoningEffort(this.model)) {
-        // grok accepts none/low/high but rejects 'max'; the always-on grok-4 /
-        // grok-build models reject the reasoning_effort param entirely.
-        const effort = effortFromMode(options.thinkingMode)
-        body.reasoning_effort = effort === 'off' ? 'none' : 'high'
+        if (this.model.toLowerCase().includes('grok-4.5')) {
+          // grok-4.5 cannot be disabled: low|high only. thinkingMode arrives
+          // normalized to the model's [on, high] registry — 'on' rides low.
+          body.reasoning_effort = options.thinkingMode === 'high' ? 'high' : 'low'
+        } else {
+          // grok-4.3 / grok-3-mini accept none/low/high but reject 'max'; the
+          // always-on grok-4 / grok-build models reject the param entirely.
+          const effort = effortFromMode(options.thinkingMode)
+          body.reasoning_effort = effort === 'off' ? 'none' : 'high'
+        }
       }
     } else {
       body.max_tokens = maxOutput

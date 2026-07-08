@@ -59,7 +59,7 @@ export function buildTelegramCapability(deps: ToolDeps): {
     {
       name: 'telegram_check_format',
       description:
-        'Validate a message against Telegram\'s HTML rules WITHOUT sending it. Returns "valid" or the exact problems (unsupported tag, unclosed tag, orphan closing tag, bare < or &). It changes nothing — you fix your own text and re-check. ALWAYS call this right before telegram_send / telegram_edit_message whenever your message contains ANY HTML tag or any literal < & characters: one bad tag makes Telegram reject the ENTIRE message and it arrives as raw tag soup. Plain text with no tags never needs checking.',
+        'Validate text against Telegram\'s HTML rules WITHOUT sending it. Returns "valid" or the exact problems (unsupported tag, unclosed tag, orphan closing tag, bare < or &). It changes nothing — you fix your own text and re-check. ALWAYS call this right before you send any text OR MEDIA CAPTION that contains ANY HTML tag or literal < & characters — via telegram_send, telegram_edit_message, or the caption of telegram_send_photo / telegram_send_document / telegram_send_video / telegram_send_audio: one bad tag makes Telegram reject that message/caption and it arrives as raw tag soup. Plain text with no tags never needs checking.',
       parameters: {
         message: {
           type: 'string',
@@ -101,7 +101,8 @@ export function buildTelegramCapability(deps: ToolDeps): {
         },
         caption: {
           type: 'string',
-          description: 'Optional caption shown beneath the image. Up to 1024 characters.',
+          description:
+            'Optional caption shown beneath the image, up to 1024 characters. Delivered with Telegram parse_mode HTML — Telegram HTML subset ONLY (<b> <i> <u> <s> <code> <pre> <a href> <blockquote> <span class="tg-spoiler">), never Markdown (**, #, tables, [text](url) show raw), never a wrapper/<br> tag, close every tag, escape literal & < > as &amp; &lt; &gt;. If the caption has any tag, run telegram_check_format on it first.',
           required: false
         },
         userId: {
@@ -123,7 +124,8 @@ export function buildTelegramCapability(deps: ToolDeps): {
         },
         caption: {
           type: 'string',
-          description: 'Optional caption shown beneath the document.',
+          description:
+            'Optional caption shown beneath the document, up to 1024 characters. Delivered with Telegram parse_mode HTML — Telegram HTML subset ONLY (<b> <i> <u> <s> <code> <pre> <a href> <blockquote> <span class="tg-spoiler">), never Markdown, never a wrapper/<br> tag, close every tag, escape literal & < > as &amp; &lt; &gt;. If the caption has any tag, run telegram_check_format on it first.',
           required: false
         },
         userId: {
@@ -145,7 +147,8 @@ export function buildTelegramCapability(deps: ToolDeps): {
         },
         caption: {
           type: 'string',
-          description: 'Optional caption shown beneath the video.',
+          description:
+            'Optional caption shown beneath the video, up to 1024 characters. Delivered with Telegram parse_mode HTML — Telegram HTML subset ONLY (<b> <i> <u> <s> <code> <pre> <a href> <blockquote> <span class="tg-spoiler">), never Markdown, never a wrapper/<br> tag, close every tag, escape literal & < > as &amp; &lt; &gt;. If the caption has any tag, run telegram_check_format on it first.',
           required: false
         },
         userId: {
@@ -167,7 +170,8 @@ export function buildTelegramCapability(deps: ToolDeps): {
         },
         caption: {
           type: 'string',
-          description: 'Optional caption shown beneath the audio.',
+          description:
+            'Optional caption shown beneath the audio, up to 1024 characters. Delivered with Telegram parse_mode HTML — Telegram HTML subset ONLY (<b> <i> <u> <s> <code> <pre> <a href> <blockquote> <span class="tg-spoiler">), never Markdown, never a wrapper/<br> tag, close every tag, escape literal & < > as &amp; &lt; &gt;. If the caption has any tag, run telegram_check_format on it first.',
           required: false
         },
         userId: {
@@ -352,21 +356,37 @@ async function sendMedia(
   }
 
   const filename = path.basename(abs)
-  const file = new InputFile(buffer, filename)
+
+  // A caption is delivered with parse_mode HTML, exactly like telegram_send —
+  // the model writes Telegram's HTML subset and it renders. Without parse_mode
+  // the tags would show literally. A fresh InputFile per attempt is required:
+  // grammY consumes the buffer stream on send, so a retry needs a new one.
+  type CaptionOpts = { caption: string; parse_mode?: 'HTML' } | undefined
+  const send = (opts: CaptionOpts): Promise<{ message_id: number }> => {
+    const file = new InputFile(buffer, filename)
+    if (kind === 'photo') return bot.api.sendPhoto(target.id, file, opts)
+    if (kind === 'video') return bot.api.sendVideo(target.id, file, opts)
+    if (kind === 'audio') return bot.api.sendAudio(target.id, file, opts)
+    return bot.api.sendDocument(target.id, file, opts)
+  }
 
   try {
-    let result: { message_id: number }
-    if (kind === 'photo') {
-      result = await bot.api.sendPhoto(target.id, file, caption ? { caption } : undefined)
-    } else if (kind === 'video') {
-      result = await bot.api.sendVideo(target.id, file, caption ? { caption } : undefined)
-    } else if (kind === 'audio') {
-      result = await bot.api.sendAudio(target.id, file, caption ? { caption } : undefined)
-    } else {
-      result = await bot.api.sendDocument(target.id, file, caption ? { caption } : undefined)
-    }
+    const result = await send(caption ? { caption, parse_mode: 'HTML' } : undefined)
     deps.trackOutgoing?.(target.id, result.message_id)
     return success(`Sent. message_id=${result.message_id} to=${target.id} kind=${kind}`)
+  } catch (err) {
+    // Only a caption HTML-parse reject falls through, and only when a caption
+    // exists — the FILE still deserves delivery, so resend it with the caption
+    // as plain text (tags literal) and tell the model to fix its markup next
+    // time. Any other error surfaces with the caption HTML intact.
+    if (!caption || !isHtmlParseError(err)) return failure(`send failed: ${errMessage(err)}`)
+  }
+  try {
+    const result = await send({ caption })
+    deps.trackOutgoing?.(target.id, result.message_id)
+    return success(
+      `Sent, but the caption went as PLAIN text (Telegram rejected its HTML — tags shown literally; run telegram_check_format on the caption to fix). message_id=${result.message_id} to=${target.id} kind=${kind}`
+    )
   } catch (err) {
     return failure(`send failed: ${errMessage(err)}`)
   }
