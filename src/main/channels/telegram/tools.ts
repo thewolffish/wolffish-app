@@ -325,6 +325,11 @@ async function sendMedia(
     )
   }
 
+  // An animated GIF sent via sendPhoto is rejected/flattened by Telegram — it
+  // must go through sendAnimation to auto-play and loop. Detect it here and
+  // treat it like the larger-file kinds for the size limit.
+  const isGif = kind === 'photo' && path.extname(abs).toLowerCase() === '.gif'
+
   let stat: import('node:fs').Stats
   try {
     stat = await fs.stat(abs)
@@ -333,7 +338,7 @@ async function sendMedia(
   }
   if (!stat.isFile()) return failure(`not a file: ${relativePath}`)
 
-  const limit = kind === 'photo' ? PHOTO_LIMIT : DOCUMENT_LIMIT
+  const limit = kind === 'photo' && !isGif ? PHOTO_LIMIT : DOCUMENT_LIMIT
   if (stat.size > limit) {
     return failure(
       `file too large: ${formatBytes(stat.size)} > ${formatBytes(limit)} (telegram bot limit for ${kind})`
@@ -364,6 +369,7 @@ async function sendMedia(
   type CaptionOpts = { caption: string; parse_mode?: 'HTML' } | undefined
   const send = (opts: CaptionOpts): Promise<{ message_id: number }> => {
     const file = new InputFile(buffer, filename)
+    if (isGif) return bot.api.sendAnimation(target.id, file, opts)
     if (kind === 'photo') return bot.api.sendPhoto(target.id, file, opts)
     if (kind === 'video') return bot.api.sendVideo(target.id, file, opts)
     if (kind === 'audio') return bot.api.sendAudio(target.id, file, opts)

@@ -1,4 +1,14 @@
-## v1.0.209 — 2026-07-09 `Latest`
+## v1.0.210 — 2026-07-09 `Latest`
+
+### GIFs That Actually Send — and Play as GIFs
+
+WhatsApp has no real "GIF" type — a GIF there is a short, muted, looping video — so handing it an animated GIF as a plain image was a message it quietly dropped. That's why a GIF could report "sent" and never reach the other phone. Now Wolffish transcodes the GIF to mp4 and sends it the way WhatsApp expects: a **looping animation** that lands and plays. Short clips loop as a GIF; anything longer rides as a normal video so it still arrives whole. The **ffmpeg** that does the conversion self-installs the first time it's needed, and if it ever can't run, the GIF is still delivered as a file rather than disappearing. Telegram got the matching fix — a GIF sent through the image tool now goes out as an **animation** instead of a frozen still.
+
+### A "Sent" You Can Trust
+
+A WhatsApp send used to call itself a success the instant the message was queued locally — before WhatsApp had confirmed a thing — so a send that never actually left could still be reported as delivered. Now every WhatsApp send **waits for WhatsApp's own server acknowledgement**: a send the server rejects is surfaced as a real failure, one that goes unconfirmed is flagged as unconfirmed (never claimed as delivered), and only a server-confirmed send reports a clean success. It covers everything Wolffish sends — text, images, GIFs, documents, voice notes, and replies — so a message silently falling into the void can't be logged as done anymore.
+
+## v1.0.209 — 2026-07-09
 
 ### Grok 4.5, xAI's New Frontier
 

@@ -1,4 +1,5 @@
 import { validateWhatsAppFormat } from '@main/channels/whatsapp/format'
+import { GIF_PLAYBACK_MAX_SECONDS, isGifMime, transcodeGifToMp4 } from '@main/channels/whatsapp/gif'
 import type {
   Capability,
   SkillToolDescriptor,
@@ -42,6 +43,19 @@ type ToolDeps = {
    * only covers traffic seen since wolffish connected.
    */
   readMessages: (jid: string, count: number) => WhatsAppBufferedMessage[]
+  /**
+   * Make the bundled ffmpeg available (self-installs on first use), used to
+   * transcode GIFs to the mp4/gifPlayback form WhatsApp actually delivers.
+   * Idempotent and cheap after the first call; a no-op if unset.
+   */
+  ensureFfmpeg?: () => Promise<unknown>
+  /**
+   * Wait for WhatsApp's SERVER_ACK on a sent message id — 'acked' when the
+   * server confirmed receipt, 'error' when the send was rejected, 'timeout'
+   * when no ack arrived in time. Lets a send report honestly instead of
+   * trusting the locally-minted id sendMessage() resolves with.
+   */
+  confirmDelivery?: (id: string) => Promise<'acked' | 'error' | 'timeout'>
 }
 
 // WhatsApp practical upload ceilings. Images/audio are sent inline; documents
@@ -406,19 +420,20 @@ export function buildWhatsAppCapability(deps: ToolDeps): {
       if (!sock) return failure('WhatsApp is not connected')
 
       const track = deps.trackSentId
+      const confirm = deps.confirmDelivery
       switch (toolName) {
         case 'whatsapp_check':
           return checkNumbers(sock, args)
         case 'whatsapp_send':
-          return sendText(sock, args, track)
+          return sendText(sock, args, track, confirm)
         case 'whatsapp_send_image':
-          return sendImage(sock, args, track)
+          return sendImage(sock, args, track, confirm, deps.ensureFfmpeg)
         case 'whatsapp_send_document':
-          return sendDocument(sock, args, track)
+          return sendDocument(sock, args, track, confirm)
         case 'whatsapp_send_audio':
-          return sendAudio(sock, args, track)
+          return sendAudio(sock, args, track, confirm)
         case 'whatsapp_reply':
-          return replyTo(sock, args, track)
+          return replyTo(sock, args, track, confirm)
         case 'whatsapp_react':
           return reactTo(sock, args)
         case 'whatsapp_list_groups':
@@ -490,10 +505,46 @@ async function checkNumbers(
   }
 }
 
+type ConfirmDelivery = (id: string) => Promise<'acked' | 'error' | 'timeout'>
+
+/**
+ * Turn a completed sock.sendMessage() into an honest tool result. sendMessage
+ * resolves with a client-minted id the moment the message is queued locally —
+ * that is NOT proof of delivery. When a confirmer is available we wait for
+ * WhatsApp's SERVER_ACK and surface the truth: a real failure on an ERROR ack,
+ * an explicit "unconfirmed" note on timeout, plain success on ack.
+ */
+async function finalizeSend(
+  label: string,
+  jid: string,
+  result: { key: { id?: string | null } } | undefined,
+  track: (id: string) => void,
+  confirm?: ConfirmDelivery
+): Promise<ToolExecutionResult> {
+  const id = result?.key.id ?? undefined
+  if (id) track(id)
+  if (!id) {
+    return success(`Sent ${label} to=${jid}, but WhatsApp returned no message id to confirm it.`)
+  }
+  const ack = confirm ? await confirm(id) : 'acked'
+  if (ack === 'error') {
+    return failure(
+      `WhatsApp rejected the ${label} (server returned an ERROR ack). messageId=${id} to=${jid}`
+    )
+  }
+  if (ack === 'timeout') {
+    return success(
+      `Sent ${label}, but UNCONFIRMED — WhatsApp gave no server ack in time, so it may not have gone through. Do not claim it was delivered without checking. messageId=${id} to=${jid}`
+    )
+  }
+  return success(`Sent ${label}. messageId=${id} to=${jid}`)
+}
+
 async function sendText(
   sock: WASocket,
   args: Record<string, unknown>,
-  track: (id: string) => void
+  track: (id: string) => void,
+  confirm?: ConfirmDelivery
 ): Promise<ToolExecutionResult> {
   const jid = stringArg(args.jid)
   if (!jid) return failure('jid is required')
@@ -503,8 +554,7 @@ async function sendText(
     // Sent VERBATIM — the tool description carries the formatting
     // contract; nothing rewrites the model's text on the way out.
     const result = await sock.sendMessage(jid, { text: message })
-    if (result?.key.id) track(result.key.id)
-    return success(`Sent. messageId=${result?.key.id} to=${jid}`)
+    return finalizeSend('message', jid, result, track, confirm)
   } catch (err) {
     return failure(`send failed: ${errMessage(err)}`)
   }
@@ -513,30 +563,94 @@ async function sendText(
 async function sendImage(
   sock: WASocket,
   args: Record<string, unknown>,
-  track: (id: string) => void
+  track: (id: string) => void,
+  confirm?: ConfirmDelivery,
+  ensureFfmpeg?: () => Promise<unknown>
 ): Promise<ToolExecutionResult> {
   const jid = stringArg(args.jid)
   if (!jid) return failure('jid is required')
   const media = await loadMedia(args, 'imageBase64', 'image')
   if ('error' in media) return failure(media.error)
   const caption = stringArg(args.caption) ?? undefined
+  // An animated GIF cannot ride as an imageMessage — WhatsApp silently drops
+  // it. Route it through the video/gifPlayback path so it actually delivers
+  // and loops as a GIF on the recipient's phone.
+  if (isGifMime(media.mimetype)) {
+    return sendGif(sock, jid, media, caption, track, confirm, ensureFfmpeg)
+  }
   try {
     const result = await sock.sendMessage(jid, {
       image: media.buffer,
       caption,
       mimetype: media.mimetype
     })
-    if (result?.key.id) track(result.key.id)
-    return success(`Sent image. messageId=${result?.key.id} to=${jid}`)
+    return finalizeSend('image', jid, result, track, confirm)
   } catch (err) {
     return failure(`send image failed: ${errMessage(err)}`)
+  }
+}
+
+async function sendGif(
+  sock: WASocket,
+  jid: string,
+  media: LoadedMedia,
+  caption: string | undefined,
+  track: (id: string) => void,
+  confirm?: ConfirmDelivery,
+  ensureFfmpeg?: () => Promise<unknown>
+): Promise<ToolExecutionResult> {
+  // Self-install the bundled ffmpeg if it isn't present yet, so the GIF plays
+  // as a GIF instead of degrading to the document fallback below.
+  await ensureFfmpeg?.()
+  const converted = await transcodeGifToMp4(media.buffer)
+  if ('error' in converted) {
+    // ffmpeg unavailable or the encode failed. Deliver the original GIF as a
+    // document so it still reaches the recipient (a raw .gif imageMessage would
+    // silently drop); WhatsApp animates it when opened.
+    try {
+      const result = await sock.sendMessage(jid, {
+        document: media.buffer,
+        fileName: media.basename ?? 'animation.gif',
+        caption,
+        mimetype: 'image/gif'
+      })
+      return finalizeSend(
+        `GIF as document (transcode unavailable: ${converted.error})`,
+        jid,
+        result,
+        track,
+        confirm
+      )
+    } catch (err) {
+      return failure(`send gif failed: ${errMessage(err)}`)
+    }
+  }
+  // Short clips loop as a GIF; longer ones go as a normal (scrubbable) video.
+  const asGif = converted.durationSec <= GIF_PLAYBACK_MAX_SECONDS
+  try {
+    const result = await sock.sendMessage(jid, {
+      video: converted.mp4,
+      caption,
+      gifPlayback: asGif,
+      mimetype: 'video/mp4'
+    })
+    return finalizeSend(
+      `${asGif ? 'GIF' : 'video'} (${converted.durationSec.toFixed(1)}s)`,
+      jid,
+      result,
+      track,
+      confirm
+    )
+  } catch (err) {
+    return failure(`send gif failed: ${errMessage(err)}`)
   }
 }
 
 async function sendDocument(
   sock: WASocket,
   args: Record<string, unknown>,
-  track: (id: string) => void
+  track: (id: string) => void,
+  confirm?: ConfirmDelivery
 ): Promise<ToolExecutionResult> {
   const jid = stringArg(args.jid)
   if (!jid) return failure('jid is required')
@@ -551,8 +665,7 @@ async function sendDocument(
       caption,
       mimetype: media.mimetype
     })
-    if (result?.key.id) track(result.key.id)
-    return success(`Sent document. messageId=${result?.key.id} to=${jid}`)
+    return finalizeSend('document', jid, result, track, confirm)
   } catch (err) {
     return failure(`send document failed: ${errMessage(err)}`)
   }
@@ -561,7 +674,8 @@ async function sendDocument(
 async function sendAudio(
   sock: WASocket,
   args: Record<string, unknown>,
-  track: (id: string) => void
+  track: (id: string) => void,
+  confirm?: ConfirmDelivery
 ): Promise<ToolExecutionResult> {
   const jid = stringArg(args.jid)
   if (!jid) return failure('jid is required')
@@ -573,8 +687,7 @@ async function sendAudio(
       ptt: true,
       mimetype: media.mimetype
     })
-    if (result?.key.id) track(result.key.id)
-    return success(`Sent audio. messageId=${result?.key.id} to=${jid}`)
+    return finalizeSend('audio', jid, result, track, confirm)
   } catch (err) {
     return failure(`send audio failed: ${errMessage(err)}`)
   }
@@ -583,7 +696,8 @@ async function sendAudio(
 async function replyTo(
   sock: WASocket,
   args: Record<string, unknown>,
-  track: (id: string) => void
+  track: (id: string) => void,
+  confirm?: ConfirmDelivery
 ): Promise<ToolExecutionResult> {
   const jid = stringArg(args.jid)
   if (!jid) return failure('jid is required')
@@ -602,8 +716,7 @@ async function replyTo(
         }
       }
     )
-    if (result?.key.id) track(result.key.id)
-    return success(`Replied. messageId=${result?.key.id} to=${jid}`)
+    return finalizeSend('reply', jid, result, track, confirm)
   } catch (err) {
     return failure(`reply failed: ${errMessage(err)}`)
   }

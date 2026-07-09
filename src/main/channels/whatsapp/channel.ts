@@ -13,6 +13,7 @@ import {
 } from '@main/channels/whatsapp/conversations'
 import { markdownToPlain } from '@main/channels/format'
 import { stripInlineMarkup } from '@main/channels/whatsapp/format'
+import { GIF_PLAYBACK_MAX_SECONDS, transcodeGifToMp4 } from '@main/channels/whatsapp/gif'
 import {
   extractInboundMedia,
   extractTextBody,
@@ -243,6 +244,12 @@ export class WhatsAppChannel {
    */
   private readonly dispatchingByJid = new Set<string>()
   private readonly sentIds = new Set<string>()
+  // Delivery-ack tracking. WhatsApp reports a sent message's status via
+  // 'messages.update' (ERROR=0, PENDING=1, SERVER_ACK=2, DELIVERY_ACK=3, …).
+  // ackStatus holds the highest status seen per message id; ackWaiters holds
+  // the callbacks of confirmDelivery() calls still waiting on that id.
+  private readonly ackStatus = new Map<string, number>()
+  private readonly ackWaiters = new Map<string, Set<(status: number) => void>>()
   private readonly pendingSelections = new Map<string, PendingSelection>()
   private allowedPhoneNumbers: string[] = []
   private readonly lidToPhone = new Map<string, string>()
@@ -321,7 +328,9 @@ export class WhatsAppChannel {
     const { capability, plugin } = buildWhatsAppCapability({
       getSocket: () => this.sock,
       trackSentId: (id) => this.sentIds.add(id),
-      readMessages: (jid, count) => this.readMessages(jid, count)
+      readMessages: (jid, count) => this.readMessages(jid, count),
+      ensureFfmpeg: () => this.agent.cerebellum.ensureSystemTool('ffmpeg'),
+      confirmDelivery: (id) => this.confirmDelivery(id)
     })
     this.agent.cerebellum.registerInProcessCapability(capability, plugin)
 
@@ -480,6 +489,7 @@ export class WhatsAppChannel {
     })
     sock.ev.on('connection.update', (update) => this.handleConnectionUpdate(update, sock))
     sock.ev.on('messages.upsert', (upsert) => this.handleMessagesUpsert(upsert, sock))
+    sock.ev.on('messages.update', (updates) => this.handleMessagesUpdate(updates))
 
     sock.ev.on('messaging-history.set', ({ contacts }) => {
       if (this.sock !== sock) return
@@ -674,6 +684,61 @@ export class WhatsAppChannel {
       // so it won't reject; the catch is a defensive backstop only.
       void this.connect().catch(() => undefined)
     }, delayMs)
+  }
+
+  // WhatsApp acks a sent message by emitting 'messages.update' with a rising
+  // status. Record the highest status seen per id and wake any confirmDelivery()
+  // waiter. ERROR (0) is terminal and is processed even if a PENDING arrived
+  // first (it would otherwise be filtered as "not higher").
+  private handleMessagesUpdate(updates: BaileysEventMap['messages.update']): void {
+    for (const { key, update } of updates) {
+      const id = key.id
+      const status = update.status
+      if (!id || typeof status !== 'number') continue
+      const prev = this.ackStatus.get(id)
+      if (status !== 0 && prev !== undefined && status <= prev) continue
+      this.ackStatus.set(id, status)
+      if (this.ackStatus.size > 1000) {
+        const oldest = this.ackStatus.keys().next().value
+        if (oldest !== undefined) this.ackStatus.delete(oldest)
+      }
+      const waiters = this.ackWaiters.get(id)
+      if (waiters) for (const notify of [...waiters]) notify(status)
+    }
+  }
+
+  /**
+   * Resolve once WhatsApp confirms a sent message reached its servers
+   * (SERVER_ACK, status ≥ 2) — the honest signal that a send actually left,
+   * unlike sendMessage() resolving on a locally-queued, client-minted id.
+   * Returns 'acked' on SERVER_ACK+, 'error' on an ERROR status, or 'timeout'
+   * if no ack arrives in time. A recipient being offline only delays
+   * DELIVERY_ACK, not SERVER_ACK, so a timeout here is genuinely suspicious.
+   * Checks the recent-status cache first to avoid missing an ack that landed
+   * between sendMessage() resolving and this call.
+   */
+  confirmDelivery(id: string, timeoutMs = 8000): Promise<'acked' | 'error' | 'timeout'> {
+    const seen = this.ackStatus.get(id)
+    if (seen !== undefined) {
+      if (seen >= 2) return Promise.resolve('acked')
+      if (seen === 0) return Promise.resolve('error')
+    }
+    return new Promise((resolve) => {
+      const set = this.ackWaiters.get(id) ?? new Set<(status: number) => void>()
+      this.ackWaiters.set(id, set)
+      const settle = (result: 'acked' | 'error' | 'timeout'): void => {
+        clearTimeout(timer)
+        set.delete(notify)
+        if (set.size === 0) this.ackWaiters.delete(id)
+        resolve(result)
+      }
+      const notify = (status: number): void => {
+        if (status >= 2) settle('acked')
+        else if (status === 0) settle('error')
+      }
+      const timer = setTimeout(() => settle('timeout'), timeoutMs)
+      set.add(notify)
+    })
   }
 
   // --- Message store (in-memory, for getMessage retry decryption) ---
@@ -2217,6 +2282,13 @@ export class WhatsAppChannel {
       await fs.access(resolved)
       const buffer = await fs.readFile(resolved)
       const ext = path.extname(resolved).toLowerCase()
+      // Animated GIFs can't ride as an imageMessage (WhatsApp drops them) — send
+      // them through the video/gifPlayback path so they deliver and loop.
+      if (ext === '.gif') {
+        await this.sendGifFile(jid, resolved, buffer)
+        if (active) active.sentFiles.add(resolved)
+        return
+      }
       const IMAGE_MIME: Record<string, string> = {
         '.png': 'image/png',
         '.gif': 'image/gif',
@@ -2237,6 +2309,33 @@ export class WhatsAppChannel {
     } catch {
       // best-effort
     }
+  }
+
+  // Send an animated GIF the way WhatsApp expects: transcoded to mp4 and sent
+  // as video with gifPlayback so it loops. Long clips go as a normal video;
+  // if ffmpeg is unavailable the original GIF is delivered as a document so it
+  // still arrives rather than being silently dropped as an imageMessage.
+  private async sendGifFile(jid: string, resolved: string, buffer: Buffer): Promise<void> {
+    if (!this.sock) return
+    // Self-install the bundled ffmpeg if missing, so the GIF plays as a GIF
+    // rather than degrading to the document fallback.
+    await this.agent.cerebellum.ensureSystemTool('ffmpeg')
+    const converted = await transcodeGifToMp4(buffer)
+    if ('error' in converted) {
+      const sent = await this.sock.sendMessage(jid, {
+        document: buffer,
+        fileName: path.basename(resolved),
+        mimetype: 'image/gif'
+      })
+      if (sent?.key.id) this.sentIds.add(sent.key.id)
+      return
+    }
+    const sent = await this.sock.sendMessage(jid, {
+      video: converted.mp4,
+      gifPlayback: converted.durationSec <= GIF_PLAYBACK_MAX_SECONDS,
+      mimetype: 'video/mp4'
+    })
+    if (sent?.key.id) this.sentIds.add(sent.key.id)
   }
 
   private async sendDocumentFile(jid: string, filePath: string): Promise<void> {
