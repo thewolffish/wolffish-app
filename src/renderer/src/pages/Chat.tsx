@@ -486,38 +486,69 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
   const [timelineEntries, setTimelineEntries] = useState<TimelineEntry[]>([])
   const [timelineOpen, setTimelineOpen] = useState(false)
   const [filesOpen, setFilesOpen] = useState(false)
-  // Real events only — turn-boundary dividers structure the log but shouldn't
-  // count toward the "N events" badges.
-  const timelineEventCount = useMemo(
-    () => timelineEntries.reduce((n, e) => n + (e.kind === 'turn.started' ? 0 : 1), 0),
-    [timelineEntries]
-  )
   // Files that appear in the conversation — user uploads plus files delivered
   // by tools — unified into MessageAttachment[] so the files dialog can render
   // them through AttachmentList (the same per-type dispatch, existence checks
   // and viewers the feed already uses). collectConversationFiles reuses the
   // feed's extractors.
   //
-  // Files only ever change when a user attachment or a whole tool_result
-  // segment lands — never mid-text-stream — so we key the heavy scan on those
-  // cheap counts instead of `messages` identity. Otherwise it would re-run on
-  // every streaming token (messages gets a fresh identity per delta) and
-  // re-scan every historical tool_result, regressing the per-delta budget.
+  // Files only ever change when a user attachment or a whole tool_call /
+  // tool_result segment lands — never mid-text-stream — so we key the heavy
+  // scan on those cheap counts instead of `messages` identity. (tool_call is
+  // counted too: files are now pulled from call args, so a producer/send call
+  // must re-run the scan even before its result arrives.) Otherwise it would
+  // re-run on every streaming token (messages gets a fresh identity per delta)
+  // and re-scan every historical segment, regressing the per-delta budget.
   const filesKey = useMemo(() => {
     let userAttachments = 0
-    let toolResults = 0
+    let toolSegments = 0
     for (const m of messages) {
       if (m.role === 'user') userAttachments += m.attachments?.length ?? 0
-      else for (const s of m.segments) if (s.kind === 'tool_result') toolResults += 1
+      else
+        for (const s of m.segments)
+          if (s.kind === 'tool_result' || s.kind === 'tool_call') toolSegments += 1
     }
-    return `${userAttachments}:${toolResults}`
+    return `${userAttachments}:${toolSegments}`
   }, [messages])
   const conversationFiles = useMemo(
     () => collectConversationFiles(messages),
-    // Recompute only when the attachment/tool-result counts change; `messages`
+    // Recompute only when the attachment/tool-segment counts change; `messages`
     // is intentionally read fresh inside but excluded from the deps.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [filesKey]
+  )
+
+  // A conversation's event log. In-app turns build `timelineEntries` live and
+  // persist it; channel-owned conversations (WhatsApp / Telegram) never do —
+  // their turns run in the main process, which doesn't write a timeline. So
+  // when there is no stored/live timeline, derive one from the persisted
+  // messages (a turn divider per prompt + a row per tool call / result) so the
+  // "View Logs" button reflects real activity for channel conversations too.
+  // Keyed on a cheap prompt/segment count — like filesKey — so it doesn't
+  // re-run per streaming token; the derived result is discarded anyway while a
+  // live in-app timeline is accumulating.
+  const timelineKey = useMemo(() => {
+    let prompts = 0
+    let segs = 0
+    for (const m of messages) {
+      if (m.role === 'user') prompts += 1
+      else segs += m.segments.length
+    }
+    return `${prompts}:${segs}`
+  }, [messages])
+  const derivedTimeline = useMemo(
+    () => deriveTimelineFromMessages(messages),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [timelineKey]
+  )
+  // Prefer the live/stored timeline (in-app); fall back to the derived one
+  // (channel-owned or legacy conversations that never stored a timeline).
+  const displayTimeline = timelineEntries.length > 0 ? timelineEntries : derivedTimeline
+  // Real events only — turn-boundary dividers structure the log but shouldn't
+  // count toward the "N events" badges.
+  const timelineEventCount = useMemo(
+    () => displayTimeline.reduce((n, e) => n + (e.kind === 'turn.started' ? 0 : 1), 0),
+    [displayTimeline]
   )
 
   // Clears the context meter + per-turn token/timing readouts back to empty.
@@ -2407,16 +2438,12 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                 }
               />
             )}
-            {(timelineEntries.length > 0 || conversationFiles.length > 0) && (
-              <LogsFilesButton
-                hasLogs={timelineEntries.length > 0}
-                logsCount={timelineEventCount}
-                hasFiles={conversationFiles.length > 0}
-                filesCount={conversationFiles.length}
-                onOpenTimeline={() => setTimelineOpen(true)}
-                onOpenFiles={() => setFilesOpen(true)}
-              />
-            )}
+            <LogsFilesButton
+              logsCount={timelineEventCount}
+              filesCount={conversationFiles.length}
+              onOpenTimeline={() => setTimelineOpen(true)}
+              onOpenFiles={() => setFilesOpen(true)}
+            />
           </div>
           <div className="flex min-w-0 flex-1 items-end gap-1">
             <button
@@ -2687,7 +2714,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                   {t('chat.timeline.eventCount', { count: timelineEventCount })}
                 </span>
               </div>
-              <TimelineList entries={timelineEntries} locale={locale} />
+              <TimelineList entries={displayTimeline} locale={locale} />
             </div>
           </div>,
           document.body
@@ -3106,19 +3133,17 @@ function WorkingFolderButton({
 
 // Composer button replacing the old floating logs/files badge. A bordered
 // card (like the meter) that on hover/click reveals "View Logs" and "View
-// Files" rows with counts; clicking a row opens its dialog. Only rendered
-// when there is at least one log or file.
+// Files" rows with counts; clicking an enabled row opens its dialog. Always
+// rendered: rows with no events / files still show, displaying a 0 badge and
+// disabled (not clickable) so the control keeps a stable shape everywhere —
+// including channel-owned conversations that may have one without the other.
 function LogsFilesButton({
-  hasLogs,
   logsCount,
-  hasFiles,
   filesCount,
   onOpenTimeline,
   onOpenFiles
 }: {
-  hasLogs: boolean
   logsCount: number
-  hasFiles: boolean
   filesCount: number
   onOpenTimeline: () => void
   onOpenFiles: () => void
@@ -3159,11 +3184,45 @@ function LogsFilesButton({
     hoverTimer.current = setTimeout(() => setOpen(false), 200)
   }
 
-  const badge = (n: number): React.JSX.Element => (
-    <span className="bg-bg border-border text-fg inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full border px-1 text-[10px] font-semibold tabular-nums">
+  const badge = (n: number, muted: boolean): React.JSX.Element => (
+    <span
+      className={cn(
+        'inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full border px-1 text-[10px] font-semibold tabular-nums',
+        muted ? 'bg-bg border-border/60 text-muted/40' : 'bg-bg border-border text-fg'
+      )}
+    >
       {n}
     </span>
   )
+
+  const row = (
+    disabled: boolean,
+    onOpen: () => void,
+    icon: React.JSX.Element,
+    label: string,
+    count: number
+  ): React.JSX.Element => (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={() => {
+        if (disabled) return
+        onOpen()
+        setOpen(false)
+      }}
+      className={cn(
+        'flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs',
+        disabled ? 'text-muted/40 cursor-not-allowed' : 'text-fg hover:bg-border/40 cursor-pointer'
+      )}
+    >
+      {icon}
+      <span className="flex-1 text-start">{label}</span>
+      {badge(count, disabled)}
+    </button>
+  )
+
+  const logsDisabled = logsCount === 0
+  const filesDisabled = filesCount === 0
 
   return (
     <span
@@ -3186,33 +3245,25 @@ function LogsFilesButton({
       </button>
       {open && (
         <div className="border-border bg-surface absolute bottom-full inset-s-0 z-50 mb-2 w-44 rounded-xl border p-1 shadow-xl">
-          {hasLogs && (
-            <button
-              type="button"
-              onClick={() => {
-                onOpenTimeline()
-                setOpen(false)
-              }}
-              className="text-fg hover:bg-border/40 flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-xs"
-            >
-              <ComputerTerminal01Icon size={15} className="text-muted shrink-0" />
-              <span className="flex-1 text-start">{t('chat.timeline.viewLogs')}</span>
-              {badge(logsCount)}
-            </button>
+          {row(
+            logsDisabled,
+            onOpenTimeline,
+            <ComputerTerminal01Icon
+              size={15}
+              className={cn('shrink-0', logsDisabled ? 'text-muted/40' : 'text-muted')}
+            />,
+            t('chat.timeline.viewLogs'),
+            logsCount
           )}
-          {hasFiles && (
-            <button
-              type="button"
-              onClick={() => {
-                onOpenFiles()
-                setOpen(false)
-              }}
-              className="text-fg hover:bg-border/40 flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-xs"
-            >
-              <Files01Icon size={15} className="text-muted shrink-0" />
-              <span className="flex-1 text-start">{t('chat.files.viewFiles')}</span>
-              {badge(filesCount)}
-            </button>
+          {row(
+            filesDisabled,
+            onOpenFiles,
+            <Files01Icon
+              size={15}
+              className={cn('shrink-0', filesDisabled ? 'text-muted/40' : 'text-muted')}
+            />,
+            t('chat.files.viewFiles'),
+            filesCount
           )}
         </div>
       )}
@@ -3413,6 +3464,42 @@ function buildSegmentTimelineEntry(segment: Segment): TimelineEntry | null {
     }
   }
   return null
+}
+
+// Reconstruct a conversation's event log from its persisted messages. Channel-
+// owned conversations (WhatsApp / Telegram) run their turns in the main
+// process, which never writes a `timeline`, so the live-built one is empty on
+// load. Walking the messages recovers the same shape the live path builds: one
+// `turn.started` divider per user prompt, then a row per tool call / result
+// (plus any workflow / compaction segments) via buildSegmentTimelineEntry.
+// Timestamps come from the owning message so rows read the right times instead
+// of "just now", and ids fall back to a positional key when a persisted
+// segment carries none. Used only when there is no stored/live timeline, so
+// in-app conversations keep their richer, event-sourced log.
+function deriveTimelineFromMessages(messages: ChatMessage[]): TimelineEntry[] {
+  const out: TimelineEntry[] = []
+  messages.forEach((message, mi) => {
+    if (message.role === 'user') {
+      const clean = (message.content ?? '').trim().replace(/\s+/g, ' ')
+      out.push({
+        id: `derived_turn_${mi}`,
+        timestamp: message.timestamp ?? 0,
+        kind: 'turn.started',
+        ...(clean ? { summary: clean.length > 140 ? `${clean.slice(0, 140)}…` : clean } : {})
+      })
+      return
+    }
+    message.segments.forEach((segment, si) => {
+      const entry = buildSegmentTimelineEntry(segment)
+      if (!entry) return
+      out.push({
+        ...entry,
+        id: entry.id || `derived_${mi}_${si}`,
+        timestamp: message.timestamp ?? entry.timestamp
+      })
+    })
+  })
+  return out
 }
 
 function timelineEventSummary(
@@ -4538,20 +4625,175 @@ function extractToolResultGenericFiles(result?: ToolResultSegment): string[] {
 
 type DeliveredBucket = 'image' | 'audio' | 'video' | 'document' | 'file'
 
+// Extension → media bucket, so a file path found anywhere (a tool arg, a
+// marker) gets the right viewer. Kept intentionally broad — View Files is a
+// "log of files", so anything with a real extension is fair game; unknown
+// extensions fall through to the generic file card.
+const IMAGE_EXTS = new Set([
+  'png',
+  'jpg',
+  'jpeg',
+  'gif',
+  'webp',
+  'svg',
+  'bmp',
+  'heic',
+  'heif',
+  'avif',
+  'tiff',
+  'ico'
+])
+const AUDIO_EXTS = new Set(['mp3', 'wav', 'ogg', 'oga', 'm4a', 'aac', 'flac', 'opus', 'wma'])
+const VIDEO_EXTS = new Set(['mp4', 'mov', 'webm', 'mkv', 'avi', 'm4v', 'wmv', 'flv'])
+const DOC_EXTS = new Set([
+  'pdf',
+  'doc',
+  'docx',
+  'ppt',
+  'pptx',
+  'xls',
+  'xlsx',
+  'csv',
+  'tsv',
+  'txt',
+  'md',
+  'markdown',
+  'html',
+  'htm',
+  'rtf',
+  'odt',
+  'ods',
+  'odp',
+  'json',
+  'xml',
+  'yaml',
+  'yml'
+])
+
+function extToBucket(filePath: string): DeliveredBucket {
+  // wolffish-media:// refs carry no extension and are almost always images.
+  if (filePath.startsWith('wolffish-media://')) return 'image'
+  const base = filePath.split(/[\\/]/).pop() ?? ''
+  const ext = (base.match(/\.[^.]+$/)?.[0].slice(1) ?? '').toLowerCase()
+  if (IMAGE_EXTS.has(ext)) return 'image'
+  if (AUDIO_EXTS.has(ext)) return 'audio'
+  if (VIDEO_EXTS.has(ext)) return 'video'
+  if (DOC_EXTS.has(ext)) return 'document'
+  return 'file'
+}
+
+// Arg KEYS whose value names a file path. An allowlist (not a value-only
+// heuristic) is what keeps out the look-alikes that share the "ends in .ext"
+// shape: gmail `account` (foo@gmail.com → ".com"), WhatsApp `jid` (…@g.us),
+// CSS `selector` (div.a.b), `command`/`args` shell strings, memory `ref`. Only
+// genuine path fields are read. Case-insensitive.
+const FILE_PATH_ARG_KEYS = new Set([
+  'path',
+  'filepath',
+  'file_path',
+  'file',
+  'output_path',
+  'outputpath',
+  'input_path',
+  'inputpath',
+  'dest',
+  'destination',
+  'dest_path',
+  'save_path',
+  'paths',
+  'url'
+])
+
+// Decide whether a file-path arg value names a WORKSPACE file worth listing,
+// and if so normalize it to the relative form AttachmentList resolves. Guards
+// reject anything that can't render: prose / commands (metacharacters), URLs
+// (any non-file scheme), out-of-workspace paths (a leading /, ~ or drive — only
+// files under the workspace resolve), and values with no real (letter-led)
+// extension. Absolute paths INSIDE the workspace are stripped to relative;
+// file:// URLs are unwrapped + percent-decoded; wolffish-media:// is kept.
+function normalizeFilePathArg(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null
+  let s = raw.trim()
+  if (s.length === 0 || s.length > 512 || /[\n\r\t]/.test(s)) return null
+  if (s.startsWith('wolffish-media://')) return s
+  let wasFileUrl = false
+  if (s.startsWith('file://')) {
+    s = s.slice('file://'.length)
+    wasFileUrl = true
+  }
+  // Any remaining scheme (http, https, data, ftp…) is not a local file.
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) return null
+  if (wasFileUrl) {
+    try {
+      s = decodeURIComponent(s)
+    } catch {
+      /* keep raw on malformed escapes */
+    }
+  }
+  // Shell / query / email metacharacters never appear in a real file path but
+  // are all over command strings, search queries, JIDs and emails.
+  if (/["'`|<>;*?@]|&&/.test(s)) return null
+  s = s.replace(/^.*?\.wolffish\/workspace\//, '')
+  // After stripping the workspace prefix, anything still absolute (/, ~, C:\)
+  // lives outside the workspace and can't be resolved/rendered — drop it.
+  if (/^([/~]|[A-Za-z]:\\)/.test(s)) return null
+  const base = s.split(/[\\/]/).pop() ?? ''
+  // Letter-led extension so version-ish tokens ("v2.0", "1.5") don't qualify.
+  if (!/\.[A-Za-z][A-Za-z0-9]{0,7}$/.test(base)) return null
+  return s
+}
+
+// Pull the file paths out of a tool call's args — only from allowlisted path
+// keys, and only string / string-array values (nested objects are skipped to
+// bound surprises). This is what turns View Files into a complete log:
+// producers (browser_pdf output_path, document_convert), channel send tools
+// (telegram_send_document path) and file readers/writers all name their file in
+// the args, and none leave a [wolffish-output:] marker.
+function argFilePaths(args: Record<string, unknown> | undefined): string[] {
+  if (!args) return []
+  const out: string[] = []
+  const visit = (v: unknown): void => {
+    if (typeof v === 'string') {
+      const p = normalizeFilePathArg(v)
+      if (p) out.push(p)
+    } else if (Array.isArray(v)) {
+      for (const item of v) visit(item)
+    }
+  }
+  for (const [key, value] of Object.entries(args)) {
+    if (FILE_PATH_ARG_KEYS.has(key.toLowerCase())) visit(value)
+  }
+  return out
+}
+
+// Fold an absolute path that lives inside the workspace down to the relative
+// form user uploads and arg-scanned files use, so the SAME file collapses in
+// dedup no matter which source named it: a marker delivery gives an absolute
+// path (send_file emits `/…/.wolffish/workspace/files/x.pdf`) while the arg
+// scan gives `files/x.pdf`. Without this the file appears twice. Non-workspace,
+// already-relative, and wolffish-media:// values pass through unchanged.
+function toWorkspaceRelative(p: string): string {
+  if (p.startsWith('wolffish-media://')) return p
+  return p.replace(/^.*?\.wolffish\/workspace\//, '')
+}
+
 /**
  * Build the flat, ordered, de-duplicated list of files that appear across the
- * whole conversation: user uploads (already MessageAttachment[]) plus files
- * delivered by tools. Delivered files are pulled with the SAME extractors the
- * feed uses and adapted into MessageAttachment so AttachmentList can render
- * them with its existing per-type dispatch, existence checks and viewers.
- * Order follows appearance; dedup is on the canonical path so a file surfaced
- * in more than one place collapses to a single entry.
+ * whole conversation — a "log of files". Three sources: user uploads (already
+ * MessageAttachment[]); files a tool NAMED in its call args (produced,
+ * converted, read, written, or sent to a channel — see argFilePaths); and
+ * files a tool DELIVERED via a [wolffish-output:] marker in its result (pulled
+ * with the SAME extractors the feed uses). All adapt into MessageAttachment so
+ * AttachmentList renders them with its existing per-type dispatch, existence
+ * checks and viewers. Order follows appearance; dedup is on the canonical,
+ * workspace-relative path so a file surfaced in more than one place (e.g.
+ * produced then sent, or arg + marker) collapses to a single entry.
  */
 function collectConversationFiles(messages: ChatMessage[]): MessageAttachment[] {
   const out: MessageAttachment[] = []
   const seen = new Set<string>()
   const push = (att: MessageAttachment): void => {
-    const key = canonicalPath(att.filePath)
+    const key = canonicalPath(toWorkspaceRelative(att.filePath))
     if (seen.has(key)) return
     seen.add(key)
     out.push(att)
@@ -4562,12 +4804,19 @@ function collectConversationFiles(messages: ChatMessage[]): MessageAttachment[] 
       for (const att of message.attachments ?? []) push(att)
       continue
     }
-    // Index this message's tool_calls so each result can be paired with its
-    // call — the file-content/page short-circuit below needs the call's
-    // args/name.
+    // First pass over tool_calls: index them for result pairing AND surface
+    // every file named in their args. This is what makes View Files a complete
+    // "log of files" — producers (browser_pdf, document_convert), channel send
+    // tools and readers/writers all put their file path in the args and leave
+    // no [wolffish-output:] marker, so the result-marker pass below never sees
+    // them. Order follows call order, so the dialog reads like a timeline.
+    // AttachmentList's existence check hides anything no longer on disk, so an
+    // arg that named a since-deleted or out-of-workspace path self-heals.
     const callById = new Map<string, ToolCallSegment>()
     for (const seg of message.segments) {
-      if (seg.kind === 'tool_call') callById.set(seg.toolCallId, seg)
+      if (seg.kind !== 'tool_call') continue
+      callById.set(seg.toolCallId, seg)
+      for (const p of argFilePaths(seg.args)) push(fileToAttachment(p, extToBucket(p)))
     }
     for (const seg of message.segments) {
       if (seg.kind !== 'tool_result' || seg.status !== 'success' || !seg.output) continue
@@ -4576,7 +4825,8 @@ function collectConversationFiles(messages: ChatMessage[]): MessageAttachment[] 
       // (file_read/file_write/file_patch) or a fetched-page result never
       // yields a *delivered* file there, so it must not here either —
       // otherwise a delivery marker quoted inside file content or page text
-      // would surface as a phantom file the feed never shows.
+      // would surface as a phantom file the feed never shows. (The file itself,
+      // if any, is already surfaced from the call args above.)
       if (call && (isFileContentResult(call, seg) || extractToolResultPage(call, seg))) {
         continue
       }
@@ -4598,24 +4848,23 @@ function collectConversationFiles(messages: ChatMessage[]): MessageAttachment[] 
 function deliveredFilesToAttachments(result: ToolResultSegment): MessageAttachment[] {
   const atts: MessageAttachment[] = []
 
+  // Every branch normalizes to the workspace-relative form so a marker delivery
+  // and an arg-scanned path for the same file share a dedup key (documents /
+  // generic files used to keep the marker's absolute path, which slipped past
+  // dedup and showed the file twice).
   const imagePath = extractToolResultImage(result)
-  if (imagePath) {
-    const relPath = imagePath.startsWith('wolffish-media://')
-      ? imagePath
-      : imagePath.replace(/^.*?\.wolffish\/workspace\//, '')
-    atts.push(fileToAttachment(relPath, 'image'))
-  }
+  if (imagePath) atts.push(fileToAttachment(toWorkspaceRelative(imagePath), 'image'))
 
   const docs = extractToolResultDocuments(result)
-  if (docs) for (const d of docs) atts.push(fileToAttachment(d.path, 'document', d.size))
+  if (docs)
+    for (const d of docs)
+      atts.push(fileToAttachment(toWorkspaceRelative(d.path), 'document', d.size))
 
   const media = extractToolResultMedia(result)
-  if (media) {
-    const relPath = media.path.replace(/^.*?\.wolffish\/workspace\//, '')
-    atts.push(fileToAttachment(relPath, media.type))
-  }
+  if (media) atts.push(fileToAttachment(toWorkspaceRelative(media.path), media.type))
 
-  for (const p of extractToolResultGenericFiles(result)) atts.push(fileToAttachment(p, 'file'))
+  for (const p of extractToolResultGenericFiles(result))
+    atts.push(fileToAttachment(toWorkspaceRelative(p), 'file'))
 
   return atts
 }

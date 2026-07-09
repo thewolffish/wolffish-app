@@ -1,4 +1,14 @@
-## v1.0.210 — 2026-07-09 `Latest`
+## v1.0.211 — 2026-07-10 `Latest`
+
+### Logs and Files for Every Run
+
+The **Logs and Files** button now sits in the composer at all times. It shows a live count, and when a chat has nothing yet it simply goes quiet — disabled and reading **0** — instead of vanishing. The bigger change is where it works: heartbeats, WhatsApp, Telegram, and saved procedures now surface their **event log** and their **files** exactly like an in-app chat. Until now those runs showed neither — their timeline was never recorded, so there was nothing to open — which meant the work an automation did while you weren't watching left no trace you could inspect. Open one now and you can read every step it took.
+
+### View Files, Now a Full File Log
+
+**View Files** used to list only the files Wolffish handed you with an explicit delivery marker. Now it's a complete log of every file a run touched — the ones it **produced, converted, and sent to a channel** too. So a heartbeat that builds a report and mails the PDF to Telegram shows both the report *and* the PDF, listed in the order they appeared so the drawer reads like a timeline of the run's files. Paths that live outside the workspace or never reached disk are quietly skipped, and a file that showed up twice — once as it was made, once as it was sent — now collapses to a single entry instead of appearing doubled.
+
+## v1.0.210 — 2026-07-09
 
 ### GIFs That Actually Send — and Play as GIFs
 

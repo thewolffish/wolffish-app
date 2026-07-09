@@ -25,7 +25,8 @@ import {
 } from '@main/runtime/broca'
 import { Cerebellum, type WorkflowHost } from '@main/runtime/cerebellum'
 import { compactOverflow } from '@main/runtime/compactor'
-import { Corpus, turnScope } from '@main/runtime/corpus'
+import { Corpus, turnScope, type CorpusEvent } from '@main/runtime/corpus'
+import { TurnStatsCollector } from '@main/channels/turn-stats'
 import { Cortex } from '@main/runtime/cortex'
 import { Device } from '@main/runtime/device'
 import { Hippocampus, type TurnToolCall } from '@main/runtime/hippocampus'
@@ -1676,6 +1677,26 @@ export class Agent {
     }
     const localBroca = new Broca({ corpus: this.corpus, shouldSilenceToolCall: isInternalToolCall })
 
+    // Accumulate this run's tokenomics into the same persisted `stats` shape
+    // the channels and the in-app renderer write, so a heartbeat / procedure
+    // conversation shows real context-meter numbers when opened in-app instead
+    // of a blank gauge. This run's corpus events are sealed (never relayed), so
+    // subscribe directly and filter to THIS turn's id — a concurrent foreground
+    // turn's events carry a different id and must not bleed in.
+    const statsCollector = new TurnStatsCollector(Date.now())
+    const statsEvents: CorpusEvent[] = [
+      'context.built',
+      'llm.response',
+      'turn.usage',
+      'tool.called'
+    ]
+    const statsOffs = statsEvents.map((eventName) =>
+      this.corpus.on(eventName, (payload) => {
+        if (turnScope.getStore()?.turnId !== turnId) return
+        statsCollector.note(eventName, payload)
+      })
+    )
+
     // Run inside a sealed autonomous turn scope so this background run's
     // corpus events (context/tokens/tools/tasks) are NOT relayed into a live
     // chat that may still be streaming — they'd otherwise corrupt that
@@ -1683,20 +1704,25 @@ export class Agent {
     // still carries the run's identity for daily-log attribution. See
     // turnScope in corpus.ts. publishConversation:false keeps a scheduled run
     // from flipping the app-wide visible-conversation pointer mid-chat.
-    const result = await turnScope.run({ turnId, conversationId: conv.id, autonomous: true }, () =>
-      this.respond({
-        history: [{ role: 'user', content: opts.instruction }],
-        turnId,
-        onSegment: sink,
-        signal: opts.signal,
-        conversationId: conv.id,
-        conversationTitle: conv.title,
-        broca: localBroca,
-        bypassApproval: true,
-        publishConversation: false,
-        modeOverride: opts.mode
-      })
-    )
+    let result: AgentTurnResult
+    try {
+      result = await turnScope.run({ turnId, conversationId: conv.id, autonomous: true }, () =>
+        this.respond({
+          history: [{ role: 'user', content: opts.instruction }],
+          turnId,
+          onSegment: sink,
+          signal: opts.signal,
+          conversationId: conv.id,
+          conversationTitle: conv.title,
+          broca: localBroca,
+          bypassApproval: true,
+          publishConversation: false,
+          modeOverride: opts.mode
+        })
+      )
+    } finally {
+      for (const off of statsOffs) off()
+    }
     flushText()
 
     const responseText = segments
@@ -1719,6 +1745,10 @@ export class Agent {
     }
     conv.messages = [userMsg, assistantMsg]
     conv.updatedAt = now
+    // Persist the context-meter stats so opening this heartbeat / procedure
+    // conversation in-app shows real numbers. Skipped when the run never
+    // reached the model (nothing consumed → a blank gauge is correct).
+    if (statsCollector.hasData()) conv.stats = statsCollector.foldInto(null, now)
 
     await saveConversation(conv).catch(() => undefined)
 

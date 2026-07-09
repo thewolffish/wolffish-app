@@ -19,6 +19,7 @@ import {
   takeMessageIdsForChat
 } from '@main/channels/telegram/messages'
 import { buildTelegramCapability, TELEGRAM_CAPABILITY_NAME } from '@main/channels/telegram/tools'
+import { TurnStatsCollector } from '@main/channels/turn-stats'
 import type { TurnRunner } from '@main/channels/turn-runner'
 import {
   createConversation,
@@ -330,6 +331,13 @@ type ActiveTurn = {
    * the duplicate is suppressed. voice_generate assets are unaffected.
    */
   voiceReplySent: boolean
+  /**
+   * Per-turn tokenomics accumulator. Fed every relayed turn event and folded
+   * into the conversation's persisted `stats` at end-of-turn so the in-app
+   * context-meter card restores real numbers for this Telegram conversation
+   * instead of a blank gauge. See {@link TurnStatsCollector}.
+   */
+  stats: TurnStatsCollector
 }
 
 /**
@@ -1734,7 +1742,8 @@ export class TelegramChannel {
             sentFiles: new Set(),
             renderChain: Promise.resolve(),
             verbose,
-            voiceReplySent: false
+            voiceReplySent: false,
+            stats: new TurnStatsCollector(Date.now())
           }
           dispatchedTurn = active
           this.activeByChat.set(chatId, active)
@@ -1791,12 +1800,9 @@ export class TelegramChannel {
               // segments) so tool-only turns aren't dropped.
               const content = finished.assistantContent.trim()
               const hasSegments = finished.segments.length > 0
+              let assistant: ConversationMessage | null = null
               if (content.length > 0 || hasSegments) {
-                const assistant: ConversationMessage = {
-                  role: 'assistant',
-                  content,
-                  timestamp: Date.now()
-                }
+                assistant = { role: 'assistant', content, timestamp: Date.now() }
                 if (hasSegments) assistant.segments = finished.segments
                 if (finished.approvals.size > 0) {
                   // Re-key by toolCallId so the in-app renderer can look up
@@ -1811,6 +1817,15 @@ export class TelegramChannel {
                 if (finished.stopReason) assistant.stopReason = finished.stopReason
                 finished.conversation.messages.push(assistant)
                 finished.conversation.updatedAt = assistant.timestamp
+              }
+              // Fold this turn's tokenomics into the persisted stats so the
+              // in-app context-meter card restores real numbers for this
+              // Telegram conversation (it was blank before — channel turns
+              // never wrote stats). Persist even without an assistant message
+              // so an errored/empty turn still records its all-time roll-up.
+              const foldStats = finished.stats.hasData()
+              const endedAt = Date.now()
+              if (assistant || foldStats) {
                 // Append-RMW: the copy held since dispatch may be stale
                 // w.r.t. the summarizer — append onto the freshest disk
                 // state instead of whole-saving the held copy over it. A
@@ -1818,11 +1833,16 @@ export class TelegramChannel {
                 // skip rather than resurrect it.
                 void updateConversation(finished.conversation.id, (disk) => {
                   if (!disk) return null
-                  disk.messages.push(assistant)
-                  disk.updatedAt = assistant.timestamp
+                  if (assistant) {
+                    disk.messages.push(assistant)
+                    disk.updatedAt = assistant.timestamp
+                  }
+                  if (foldStats) disk.stats = finished.stats.foldInto(disk.stats, endedAt)
                   return disk
                 })
-                  .then(() => queueConversationSummarization(finished.conversation.id))
+                  .then(() => {
+                    if (assistant) queueConversationSummarization(finished.conversation.id)
+                  })
                   .catch(() => undefined)
               }
               if (finished.typingTimer) {
@@ -1909,6 +1929,8 @@ export class TelegramChannel {
       onTurnEvent: <E extends keyof CorpusEvents>(type: E, payload: CorpusEvents[E]): void => {
         const active = this.activeByChat.get(chatId)
         if (!active || active.turnId !== turnId) return
+        // Accumulate tokenomics for the persisted context-meter stats.
+        active.stats.note(type, payload)
         if (type === 'task.created') {
           const task = payload as CorpusEvents['task.created']
           if (task.taskId) active.taskId = task.taskId

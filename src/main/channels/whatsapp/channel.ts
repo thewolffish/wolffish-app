@@ -62,6 +62,7 @@ import {
   type WorkflowSnapshot
 } from '@main/runtime/broca'
 import { turnScope, type CorpusEvents } from '@main/runtime/corpus'
+import { TurnStatsCollector } from '@main/channels/turn-stats'
 import type { LocalProvider } from '@main/runtime/providers/local'
 import { composeAttachmentContext } from '@main/uploads/compose-attachments'
 import { saveUploadFromBuffer } from '@main/uploads/uploads'
@@ -195,6 +196,13 @@ type ActiveTurn = {
   toolCallNames: Map<string, string>
   pendingActiveModel: string | null
   lastFlushedModel: string | null
+  /**
+   * Per-turn tokenomics accumulator. Fed every relayed turn event and folded
+   * into the conversation's persisted `stats` at end-of-turn so the in-app
+   * context-meter card restores real numbers for this WhatsApp conversation
+   * instead of a blank gauge. See {@link TurnStatsCollector}.
+   */
+  stats: TurnStatsCollector
   /**
    * Resolved absolute paths of every file already sent this turn. Prevents the
    * same file being transmitted twice when it's reachable from more than one
@@ -1652,6 +1660,7 @@ export class WhatsAppChannel {
           toolCallNames: new Map(),
           pendingActiveModel: null,
           lastFlushedModel: null,
+          stats: new TurnStatsCollector(Date.now()),
           sentFiles: new Set(),
           verbose,
           voiceReplySent: false
@@ -1680,12 +1689,9 @@ export class WhatsAppChannel {
 
             const content = finished.assistantContent.trim()
             const hasSegments = finished.segments.length > 0
+            let assistant: ConversationMessage | null = null
             if (content.length > 0 || hasSegments) {
-              const assistant: ConversationMessage = {
-                role: 'assistant',
-                content,
-                timestamp: Date.now()
-              }
+              assistant = { role: 'assistant', content, timestamp: Date.now() }
               if (hasSegments) assistant.segments = finished.segments
               if (finished.approvals.size > 0) {
                 assistant.approvals = Object.fromEntries(
@@ -1698,18 +1704,32 @@ export class WhatsAppChannel {
               if (finished.stopReason) assistant.stopReason = finished.stopReason
               finished.conversation.messages.push(assistant)
               finished.conversation.updatedAt = assistant.timestamp
+            }
+            // Fold this turn's tokenomics into the persisted stats so the
+            // in-app context-meter card restores real numbers for this WhatsApp
+            // conversation (it was blank before — channel turns never wrote
+            // stats). Persist even without an assistant message so an
+            // errored/empty turn still records its all-time roll-up.
+            const foldStats = finished.stats.hasData()
+            const endedAt = Date.now()
+            if (assistant || foldStats) {
               // Append-RMW: the copy held since dispatch may be stale w.r.t.
-              // the summarizer (summary fields) — append the assistant
-              // message onto the freshest disk state instead of whole-saving
-              // the held copy over it. A null disk means the conversation was
-              // deleted mid-drain — skip rather than resurrect it.
+              // the summarizer (summary fields) — append onto the freshest disk
+              // state instead of whole-saving the held copy over it. A null disk
+              // means the conversation was deleted mid-drain — skip rather than
+              // resurrect it.
               void updateConversation(finished.conversation.id, (disk) => {
                 if (!disk) return null
-                disk.messages.push(assistant)
-                disk.updatedAt = assistant.timestamp
+                if (assistant) {
+                  disk.messages.push(assistant)
+                  disk.updatedAt = assistant.timestamp
+                }
+                if (foldStats) disk.stats = finished.stats.foldInto(disk.stats, endedAt)
                 return disk
               })
-                .then(() => queueConversationSummarization(finished.conversation.id))
+                .then(() => {
+                  if (assistant) queueConversationSummarization(finished.conversation.id)
+                })
                 .catch(() => undefined)
             }
 
@@ -1786,6 +1806,8 @@ export class WhatsAppChannel {
       onTurnEvent: <E extends keyof CorpusEvents>(type: E, payload: CorpusEvents[E]): void => {
         const active = this.activeByJid.get(jid)
         if (!active || active.turnId !== turnId) return
+        // Accumulate tokenomics for the persisted context-meter stats.
+        active.stats.note(type, payload)
         if (type === 'task.created') {
           const task = payload as CorpusEvents['task.created']
           if (task.taskId) active.taskId = task.taskId
