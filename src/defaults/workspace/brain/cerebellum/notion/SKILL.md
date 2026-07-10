@@ -145,7 +145,7 @@ tools:
         required: false
         description: Cursor for pagination (from a previous response)
   - name: notion_create_page
-    description: Create a new page. Specify a parent (database or page) and properties. Optionally include block children for the page body.
+    description: Create a new page. You MUST specify a parent (a database or a page) — there is no default location, so every call needs one. Provide properties, and optionally block children for the body. To create several pages, call this once per page, each with its own parent.
     parameters:
       connection:
         type: string
@@ -153,10 +153,12 @@ tools:
         description: 'Which linked Notion connection to use, by its label (e.g. "Personal", "Wolffish"). Optional when only one connection is configured; required to disambiguate when several exist. Call notion_connections to list the labels.'
       parent:
         type: object
-        description: '{ "database_id": "..." } or { "page_id": "..." }'
+        required: true
+        description: 'REQUIRED — where the new page goes. Either { "database_id": "<id>" } to add a row to a database, or { "page_id": "<id>" } to create a subpage under an existing page. There is no default or "current" page; every create must include this. Get the id from notion_search, notion_get_database, or the Notion URL. When creating several pages in the same place, pass the same parent on every call.'
       properties:
         type: object
-        description: 'Page properties as Notion property-value objects. For a database parent, match the database schema. For a page parent, use { "title": { "title": [{ "text": { "content": "Page Title" } }] } }.'
+        required: true
+        description: 'REQUIRED. Page properties as Notion property-value objects. For a database parent, the keys must match the database columns (read them with notion_get_database first); at minimum set the title column. For a page parent, use { "title": { "title": [{ "text": { "content": "Page Title" } }] } }.'
       children:
         type: array
         required: false
@@ -236,6 +238,16 @@ tools:
         type: string
         required: false
         description: Cursor for pagination
+  - name: notion_get_database
+    description: "Retrieve a database's metadata and property SCHEMA (column names/types), title, description, icon/cover, and parent. Use this — NOT notion_read_database, which queries rows — to learn a database's columns before creating or updating a row, and to inspect an empty database. Notion page and database IDs look identical; if notion_read_page reports that an ID is a database, read it here. Returns raw Notion JSON."
+    parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked Notion connection to use, by its label (e.g. "Personal", "Wolffish"). Optional when only one connection is configured; required to disambiguate when several exist. Call notion_connections to list the labels.'
+      database_id:
+        type: string
+        description: The database ID (UUID, with or without dashes)
   - name: notion_update_block
     description: Update an existing block's content or archive it. Only the block type's own content field can be updated.
     parameters:
@@ -375,16 +387,48 @@ tools:
         type: string
         required: false
         description: Cursor for pagination
+  - name: notion_api
+    description: 'Escape hatch: make a raw authenticated request to ANY Notion REST endpoint (https://api.notion.com/v1). Use ONLY when no dedicated notion_* tool covers the need — e.g. retrieve a single block (GET "blocks/{id}"), read a paginated page property (GET "pages/{id}/properties/{prop_id}"), or reach newer-API surfaces like data sources (pass notion_version). Prefer the dedicated tools when they exist — they are simpler and safer. Method defaults to GET; writes (POST create / PATCH / DELETE) require approval. Returns the raw Notion JSON response.'
+    parameters:
+      connection:
+        type: string
+        required: false
+        description: 'Which linked Notion connection to use, by its label (e.g. "Personal", "Wolffish"). Optional when only one connection is configured; required to disambiguate when several exist. Call notion_connections to list the labels.'
+      method:
+        type: string
+        required: false
+        description: 'HTTP method: GET, POST, PATCH, or DELETE. Defaults to GET. Reads that use POST: "databases/{id}/query", "data_sources/{id}/query", "search".'
+      path:
+        type: string
+        description: 'Endpoint path relative to the API root, e.g. "databases/{id}" (DB metadata/schema), "blocks/{id}", "pages/{id}/properties/{prop_id}", "comments", "data_sources/{id}". A leading "/v1/" or a full https://api.notion.com/... URL is also accepted and normalized. IDs may include or omit dashes.'
+      query:
+        type: object
+        required: false
+        description: 'Optional query-string params (mainly GET), e.g. { "page_size": 50, "start_cursor": "..." }. Array values are repeated.'
+      body:
+        type: object
+        required: false
+        description: Optional JSON body for POST/PATCH (the endpoint payload). Ignored for GET and DELETE.
+      notion_version:
+        type: string
+        required: false
+        description: 'Optional Notion-Version header override (default "2022-06-28"). Set a newer date only when an endpoint requires it, e.g. "2025-09-03" for data sources.'
 danger_patterns:
   - pattern: '"archived"\s*:\s*true'
     level: destructive
     reason: Archiving (soft-deleting) a page or block
+  - pattern: '"in_trash"\s*:\s*true'
+    level: destructive
+    reason: Moving a Notion page or block to trash
   - pattern: 'notion_delete_block'
     level: destructive
     reason: Deleting a block from a page
   - pattern: 'notion_update_database.*"properties".*:\s*null'
     level: destructive
     reason: Removing a database property (column) and its data
+  - pattern: 'notion_api[\s\S]*"method"\s*:\s*"delete"'
+    level: destructive
+    reason: Raw Notion DELETE request
 confirm_patterns:
   - pattern: 'notion_create_page'
     reason: Creating a new page in Notion
@@ -400,6 +444,8 @@ confirm_patterns:
     reason: Modifying database schema
   - pattern: 'notion_add_comment'
     reason: Adding a comment
+  - pattern: 'notion_api[\s\S]*"method"\s*:\s*"(post|patch)"'
+    reason: Raw Notion write (POST/PATCH)
 ---
 
 # Notion
@@ -552,15 +598,27 @@ List and query endpoints return `has_more` and `next_cursor`. When `has_more` is
 2. `notion_read_blocks` — get the page body (content blocks)
 3. For deeply nested content, call `notion_read_blocks` again with child block IDs
 
+### Reading an ID that turns out to be a database
+Notion page IDs and database IDs are indistinguishable UUIDs, so you often can't tell which kind an ID is up front.
+- To read a **database's schema/columns** (or an empty database), use `notion_get_database`.
+- To **query a database's rows**, use `notion_read_database`.
+- If you call `notion_read_page` on an ID that is actually a database, it self-heals: it detects the case and returns the database object instead (look at the `object` field — `"page"` vs `"database"`). `notion_get_database` self-heals symmetrically for a page ID.
+
+### Escape hatch — `notion_api`
+`notion_api` makes a raw request to any Notion REST endpoint. Reach for it only when no dedicated `notion_*` tool covers what you need — for example a single block (`GET "blocks/{id}"`), a paginated page property with more than 25 relation/rollup values (`GET "pages/{id}/properties/{prop_id}"`), or a newer-API surface such as data sources (pass `notion_version: "2025-09-03"`). Prefer the dedicated tools when they exist — they are simpler, cheaper, and safer. Errors come back in the same `Notion API error (<code>): <message>` form as the other tools, so you can self-correct the same way.
+
 ### Add content to a page
 1. Build block objects for the content
 2. `notion_append_blocks`, passing the destination page (or block) ID as `block_id` and the block objects as `children`. `block_id` is required on every call — omitting it fails the append; there is no implicit "current page."
 3. Building a large page in several appends? Keep each append well under the 2000-block limit, and after the final append read the page back with `notion_read_blocks` to confirm every planned section actually landed before telling the user it's done.
 
 ### Create a database entry
-1. Use `notion_read_database` to understand the schema
+1. Use `notion_get_database` to read the schema (the columns and their types). `notion_read_database` returns rows, not the column schema — and returns nothing for an empty database.
 2. Build properties matching the database columns
 3. `notion_create_page` with `parent: { "database_id": "..." }`
+
+### Creating several pages at once
+Every `notion_create_page` needs its own `parent` — there is no implicit "current page," so omitting `parent` fails with `parent is required`. To create N pages in the same database (or under the same page), first obtain the destination id **once** (via `notion_search` or `notion_get_database`), then make N calls that each pass that same `parent: { "database_id": "<id>" }`. Don't fire off creates before you have a real parent id; resolve it first, then fan out.
 
 ### Update a database entry
 1. `notion_update_page` with the page ID and updated properties

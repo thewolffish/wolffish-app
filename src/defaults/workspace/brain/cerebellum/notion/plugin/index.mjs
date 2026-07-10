@@ -7,6 +7,12 @@ let cachedClient = null
 let cachedToken = null
 
 const NOTION_VERSION = '2022-06-28'
+// Raw escape-hatch config. notion_api talks to Notion over native fetch (not
+// the SDK client) so it can reach endpoints the pinned SDK/Notion-Version
+// doesn't know about and set a per-call Notion-Version.
+const NOTION_API_BASE = 'https://api.notion.com/v1/'
+const RAW_TIMEOUT_MS = 30_000
+const RAW_ALLOWED_METHODS = ['GET', 'POST', 'PATCH', 'DELETE']
 
 // Read every labeled Notion connection from config.json. The user can link
 // several Notion workspaces (each with a user-assigned label like "Personal"
@@ -114,14 +120,72 @@ function normalizeId(id) {
   return id.replace(/-/g, '')
 }
 
+// Resolve the parent object for a page/database create, tolerating the common
+// shape mistakes models make. Canonical form is { database_id } or { page_id };
+// we also accept a top-level database_id/page_id (the shape sibling tools like
+// notion_read_database and notion_update_page use, which is the most frequent
+// slip) and pass through any other non-empty object verbatim so Notion can
+// validate exotic/newer parent types (e.g. { workspace: true }). Returns the
+// parent object or null when there's nothing usable to build one from.
+function resolveParent(args) {
+  const p = args?.parent
+  if (p && typeof p === 'object' && !Array.isArray(p)) {
+    if (typeof p.database_id === 'string' && p.database_id.trim()) {
+      return { database_id: normalizeId(p.database_id) }
+    }
+    if (typeof p.page_id === 'string' && p.page_id.trim()) {
+      return { page_id: normalizeId(p.page_id) }
+    }
+    if (Object.keys(p).length > 0) return p
+  }
+  if (typeof args?.database_id === 'string' && args.database_id.trim()) {
+    return { database_id: normalizeId(args.database_id) }
+  }
+  if (typeof args?.page_id === 'string' && args.page_id.trim()) {
+    return { page_id: normalizeId(args.page_id) }
+  }
+  return null
+}
+
 function ok(data) {
   return { success: true, output: JSON.stringify(data) }
 }
 
+// Pull a human-readable message out of a thrown error's body. @notionhq/client's
+// APIResponseError leaves err.body as a raw JSON string (and already mirrors the
+// hint onto err.message); the notion_api raw tool reshapes a non-2xx response
+// into { body: { message } }. Handle both shapes.
+function bodyMessageOf(err) {
+  if (typeof err?.body === 'string') {
+    try {
+      return JSON.parse(err.body)?.message
+    } catch {
+      return undefined
+    }
+  }
+  return err?.body?.message
+}
+
 function fail(err) {
-  const message = err?.body?.message ?? err?.message ?? String(err)
+  // err.message FIRST: for SDK errors this is exactly the original behavior
+  // (err.body was a string, so the old err?.body?.message term was always
+  // undefined and it fell through to err.message). bodyMessageOf is the
+  // fallback that lets notion_api's { body: { message } } object surface its
+  // message — it has no err.message. So existing tools are byte-for-byte
+  // unchanged and the raw tool still gets Notion's guidance.
+  const message = err?.message ?? bodyMessageOf(err) ?? String(err)
   const code = err?.code ?? err?.status
   return { success: false, error: code ? `Notion API error (${code}): ${message}` : message }
+}
+
+// Combined message + body text, used to detect Notion's page-vs-database hints
+// so a read of the "wrong" id kind can self-heal to the right endpoint.
+function errorDetail(err) {
+  const parts = []
+  if (err?.message) parts.push(String(err.message))
+  const bm = bodyMessageOf(err)
+  if (bm) parts.push(String(bm))
+  return parts.join(' ')
 }
 
 // --- Tool implementations ---
@@ -132,10 +196,19 @@ async function executeSearch(args) {
 
   try {
     const params = { query: args?.query ?? '' }
-    if (args?.filter === 'page' || args?.filter === 'database') {
+    if (args?.filter != null && args.filter !== '') {
+      if (args.filter !== 'page' && args.filter !== 'database') {
+        return {
+          success: false,
+          error: 'filter must be "page" or "database" (or omit it to search both).'
+        }
+      }
       params.filter = { value: args.filter, property: 'object' }
     }
-    if (args?.page_size) params.page_size = Math.min(Number(args.page_size) || 10, 100)
+    // Apply the documented default of 10 even when page_size is omitted —
+    // otherwise Notion's own default returns up to 100 results, ~10x the
+    // intended payload (and the context this app tries to keep lean).
+    params.page_size = Math.min(Number(args?.page_size) || 10, 100)
     if (args?.sort_direction) {
       params.sort = { direction: args.sort_direction, timestamp: 'last_edited_time' }
     }
@@ -157,6 +230,20 @@ async function executeReadPage(args) {
     const response = await client.pages.retrieve({ page_id: pageId })
     return ok(response)
   } catch (e) {
+    // Self-heal the classic page-vs-database mixup. Notion page and database
+    // IDs are indistinguishable UUIDs, so a database id lands here and Notion
+    // responds "…is a database, not a page. Use the retrieve database API
+    // instead." Do exactly that transparently — "read this id" should just
+    // work whether it turns out to be a page or a database. The returned
+    // object carries `"object": "database"`, so the caller can still tell.
+    if (/is a database/i.test(errorDetail(e))) {
+      try {
+        const db = await client.databases.retrieve({ database_id: pageId })
+        return ok(db)
+      } catch {
+        // fall through to the original page error below
+      }
+    }
     return fail(e)
   }
 }
@@ -183,14 +270,24 @@ async function executeCreatePage(args) {
   const { client, error } = await getClientFor(args)
   if (error) return error
 
-  if (!args?.parent) return { success: false, error: 'parent is required' }
-  if (!args?.properties) return { success: false, error: 'properties is required' }
+  const parent = resolveParent(args)
+  if (!parent) {
+    return {
+      success: false,
+      error:
+        'parent is required — say where the page goes. Pass parent: { "database_id": "<id>" } to add a row to a database, or parent: { "page_id": "<id>" } to create a subpage under a page. There is no default or "current" page; every create needs its own parent. Don\'t have the id? Find it first with notion_search, or read a database with notion_get_database. (A top-level database_id/page_id is also accepted.)'
+    }
+  }
+  if (!args?.properties) {
+    return {
+      success: false,
+      error:
+        'properties is required. For a database parent, the keys must match the database columns — at minimum set the title column; read the schema with notion_get_database if unsure. For a page parent, use { "title": { "title": [{ "text": { "content": "Page Title" } }] } }.'
+    }
+  }
 
   try {
-    const params = {
-      parent: args.parent,
-      properties: args.properties
-    }
+    const params = { parent, properties: args.properties }
     if (args?.children) params.children = args.children
     if (args?.icon) params.icon = args.icon
     if (args?.cover) params.cover = args.cover
@@ -269,15 +366,60 @@ async function executeUpdateBlock(args) {
   const blockId = normalizeId(args?.block_id)
   if (!blockId) return { success: false, error: 'block_id is required' }
 
+  // Guard the silent no-op: blocks.update({ block_id }) with nothing else
+  // returns 200 with the UNCHANGED block, which would falsely report success.
+  // Content edits need BOTH type and content; archiving needs the boolean.
+  const hasType = typeof args?.type === 'string' && args.type.trim().length > 0
+  const hasContent = args?.content != null && typeof args.content === 'object'
+  const hasArchived = typeof args?.archived === 'boolean'
+  if (hasType !== hasContent) {
+    return {
+      success: false,
+      error:
+        'notion_update_block needs BOTH `type` and `content` to change block content (got only one).'
+    }
+  }
+  if (!hasType && !hasArchived) {
+    return {
+      success: false,
+      error: 'Nothing to update: pass `type` + `content` to change content, or `archived: true` to delete.'
+    }
+  }
+
   try {
     const params = { block_id: blockId }
-    if (args?.type && args?.content) {
+    if (hasType && hasContent) {
       params[args.type] = args.content
     }
-    if (typeof args?.archived === 'boolean') params.archived = args.archived
+    if (hasArchived) params.archived = args.archived
     const response = await client.blocks.update(params)
     return ok(response)
   } catch (e) {
+    return fail(e)
+  }
+}
+
+async function executeGetDatabase(args) {
+  const { client, error } = await getClientFor(args)
+  if (error) return error
+
+  const databaseId = normalizeId(args?.database_id)
+  if (!databaseId) return { success: false, error: 'database_id is required' }
+
+  try {
+    const response = await client.databases.retrieve({ database_id: databaseId })
+    return ok(response)
+  } catch (e) {
+    // Symmetric self-heal: a page id handed to the schema tool still resolves
+    // in one hop instead of dead-ending on "…is a page, not a database."
+    if (/is a page/i.test(errorDetail(e))) {
+      try {
+        const page = await client.pages.retrieve({ page_id: databaseId })
+        return ok(page)
+      } catch {
+        // fall through to the original database error below
+      }
+    }
     return fail(e)
   }
 }
@@ -421,6 +563,140 @@ async function executeConnections() {
   return ok(payload)
 }
 
+// Normalize a caller-supplied path into a path relative to the /v1 API root,
+// pinning the host. Accepts "databases/{id}", "/v1/databases/{id}", a bare
+// "v1/…", or a full https://api.notion.com/… URL. Returns { path } or { error }.
+function normalizeApiPath(rawPath) {
+  let p = String(rawPath ?? '').trim()
+  if (!p) {
+    return { error: 'path is required (e.g. "databases/{id}", "blocks/{id}", "users/me").' }
+  }
+  if (/^https?:\/\//i.test(p)) {
+    let url
+    try {
+      url = new URL(p)
+    } catch {
+      return { error: `Invalid URL in path: ${p}` }
+    }
+    if (url.host !== 'api.notion.com') {
+      return { error: `notion_api only calls api.notion.com — refusing host "${url.host}".` }
+    }
+    // Keep url.search — a full URL may carry its own query (e.g. ?start_cursor=…);
+    // dropping it would silently page the first page instead of the cursor page.
+    p = url.pathname + url.search
+  }
+  p = p.replace(/^\/+/, '').replace(/^v1\//i, '').replace(/^\/+/, '')
+  if (!p) return { error: 'path resolved to empty after normalization.' }
+  if (p.split('/').some((seg) => seg === '..')) {
+    return { error: 'path may not contain ".." segments.' }
+  }
+  return { path: p }
+}
+
+function buildQueryString(query) {
+  if (!query || typeof query !== 'object' || Array.isArray(query)) return ''
+  const usp = new URLSearchParams()
+  for (const [key, value] of Object.entries(query)) {
+    if (value === undefined || value === null) continue
+    if (Array.isArray(value)) {
+      for (const v of value) usp.append(key, String(v))
+    } else {
+      usp.append(key, String(value))
+    }
+  }
+  const s = usp.toString()
+  return s ? `?${s}` : ''
+}
+
+// Generic raw request to any Notion REST endpoint. Reuses only the token
+// resolution (readConnections/resolveConnection), not the cached SDK client,
+// so the Notion-Version header can be overridden per call. Response shaping is
+// byte-for-byte identical to ok()/fail() so the model can't tell a raw call
+// from a dedicated one and error hints (e.g. object_not_found) still surface.
+async function executeApi(args) {
+  const connections = await readConnections()
+  const resolved = resolveConnection(connections, args)
+  if (resolved.error) return resolved.error
+  const token = resolved.connection.token
+
+  // Canonicalize by case ONLY — deliberately do NOT trim surrounding
+  // whitespace. The approval gate (amygdala) matches the RAW, un-normalized
+  // args via a regex anchored to "delete"/"post"/"patch"; if the executor
+  // silently repaired " DELETE " into a valid verb, a padded method would
+  // execute a raw write while slipping past that gate. Rejecting non-canonical
+  // methods here keeps the value that reaches Notion identical to the value the
+  // gate inspected, so writes/deletes can never run unprompted.
+  const method = String(args?.method ?? '').toUpperCase() || 'GET'
+  if (!RAW_ALLOWED_METHODS.includes(method)) {
+    return {
+      success: false,
+      error: `method must be exactly one of ${RAW_ALLOWED_METHODS.join(', ')} (no surrounding spaces); got ${JSON.stringify(args?.method ?? '')}.`
+    }
+  }
+
+  const normalized = normalizeApiPath(args?.path)
+  if (normalized.error) return { success: false, error: normalized.error }
+
+  let version = NOTION_VERSION
+  const rawVersion = args?.notion_version != null ? String(args.notion_version).trim() : ''
+  if (rawVersion) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(rawVersion)) {
+      return { success: false, error: 'notion_version must be a date like "2022-06-28".' }
+    }
+    version = rawVersion
+  }
+
+  // Join the explicit `query` object onto the path. If the path already carries
+  // an inline query (from a full-URL input), switch the separator to '&' so we
+  // never emit a malformed "path?a=1?b=2".
+  const qs = buildQueryString(args?.query)
+  const joinedQs = qs && normalized.path.includes('?') ? '&' + qs.slice(1) : qs
+  const url = NOTION_API_BASE + normalized.path + joinedQs
+  const headers = {
+    Authorization: `Bearer ${token}`,
+    'Notion-Version': version
+  }
+  const init = { method, headers }
+  const sendsBody =
+    (method === 'POST' || method === 'PATCH') &&
+    args?.body != null &&
+    typeof args.body === 'object'
+  if (sendsBody) {
+    headers['Content-Type'] = 'application/json'
+    init.body = JSON.stringify(args.body)
+  }
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), RAW_TIMEOUT_MS)
+  init.signal = controller.signal
+  let response
+  try {
+    response = await fetch(url, init)
+  } catch (err) {
+    const aborted = err?.name === 'AbortError'
+    return { success: false, error: aborted ? 'Request timed out' : (err?.message ?? String(err)) }
+  } finally {
+    clearTimeout(timer)
+  }
+
+  const text = await response.text().catch(() => '')
+  let json = {}
+  if (text) {
+    try {
+      json = JSON.parse(text)
+    } catch {
+      json = { raw: text }
+    }
+  }
+
+  if (!response.ok) {
+    const code = json?.code ?? `http_${response.status}`
+    const message = json?.message ?? response.statusText ?? 'Request failed'
+    return fail({ code, status: response.status, body: { message } })
+  }
+  return ok(json)
+}
+
 // --- Tool descriptors ---
 
 const CONNECTION_PARAM = {
@@ -488,18 +764,20 @@ const toolDefinitions = [
   {
     name: 'notion_create_page',
     description:
-      'Create a new page. Specify parent (database or page), properties, and optional body blocks.',
+      'Create a new page. You MUST specify a parent (a database or a page) — there is no default location. Provide properties, plus optional body blocks. To create several pages, call this once per page, each with its own parent.',
     parameters: {
       type: 'object',
       properties: {
         connection: CONNECTION_PARAM,
         parent: {
           type: 'object',
-          description: '{ "database_id": "..." } or { "page_id": "..." }'
+          description:
+            'REQUIRED — where the page goes: { "database_id": "<id>" } to add a row to a database, or { "page_id": "<id>" } to create a subpage. No default/"current" page. Get the id from notion_search, notion_get_database, or the Notion URL.'
         },
         properties: {
           type: 'object',
-          description: 'Page properties as Notion property-value objects'
+          description:
+            'REQUIRED. Notion property-value objects. For a database parent, keys must match the columns (read them with notion_get_database); at minimum set the title column. For a page parent: { "title": { "title": [{ "text": { "content": "Page Title" } }] } }.'
         },
         children: { type: 'array', description: 'Array of block objects for the page body' },
         icon: { type: 'object', description: 'Icon object' },
@@ -550,6 +828,19 @@ const toolDefinitions = [
         sorts: { type: 'array', description: 'Array of sort objects' },
         page_size: { type: 'number', description: 'Max results (default 100)' },
         start_cursor: { type: 'string', description: 'Cursor for pagination' }
+      },
+      required: ['database_id']
+    }
+  },
+  {
+    name: 'notion_get_database',
+    description:
+      "Retrieve a database's metadata and property SCHEMA (column names/types), title, description, icon/cover, and parent. Use this — NOT notion_read_database, which queries rows — to learn a database's columns before creating or updating a row, and to inspect empty databases. Returns raw Notion JSON.",
+    parameters: {
+      type: 'object',
+      properties: {
+        connection: CONNECTION_PARAM,
+        database_id: { type: 'string', description: 'The database ID (UUID, with or without dashes)' }
       },
       required: ['database_id']
     }
@@ -667,6 +958,42 @@ const toolDefinitions = [
       },
       required: ['block_id']
     }
+  },
+  {
+    name: 'notion_api',
+    description:
+      'Escape hatch: make a raw authenticated request to ANY Notion REST endpoint (https://api.notion.com/v1). Use ONLY when no dedicated notion_* tool covers the need — e.g. retrieve a single block (GET "blocks/{id}"), read a paginated page property (GET "pages/{id}/properties/{prop_id}"), or reach newer-API surfaces like data sources (pass notion_version). Prefer the dedicated tools when they exist — they are simpler and safer. Method defaults to GET; writes (POST create / PATCH / DELETE) require approval. Returns the raw Notion JSON response.',
+    parameters: {
+      type: 'object',
+      properties: {
+        connection: CONNECTION_PARAM,
+        method: {
+          type: 'string',
+          description:
+            'HTTP method: GET, POST, PATCH, or DELETE. Defaults to GET. Reads that use POST: "databases/{id}/query", "data_sources/{id}/query", "search".'
+        },
+        path: {
+          type: 'string',
+          description:
+            'Endpoint path relative to the API root, e.g. "databases/{id}" (DB metadata/schema), "blocks/{id}", "pages/{id}/properties/{prop_id}", "comments", "data_sources/{id}". A leading "/v1/" or a full https://api.notion.com/... URL is also accepted and normalized. IDs may include or omit dashes.'
+        },
+        query: {
+          type: 'object',
+          description:
+            'Optional query-string params (mainly GET), e.g. { "page_size": 50, "start_cursor": "..." }. Array values are repeated.'
+        },
+        body: {
+          type: 'object',
+          description: 'Optional JSON body for POST/PATCH (the endpoint payload). Ignored for GET and DELETE.'
+        },
+        notion_version: {
+          type: 'string',
+          description:
+            'Optional Notion-Version header override (default "2022-06-28"). Set a newer date only when an endpoint requires it, e.g. "2025-09-03" for data sources.'
+        }
+      },
+      required: ['path']
+    }
   }
 ]
 
@@ -679,6 +1006,7 @@ const TOOL_MAP = {
   notion_update_page: executeUpdatePage,
   notion_append_blocks: executeAppendBlocks,
   notion_read_database: executeReadDatabase,
+  notion_get_database: executeGetDatabase,
   notion_update_block: executeUpdateBlock,
   notion_delete_block: executeDeleteBlock,
   notion_create_database: executeCreateDatabase,
@@ -686,7 +1014,8 @@ const TOOL_MAP = {
   notion_list_users: executeListUsers,
   notion_get_user: executeGetUser,
   notion_add_comment: executeAddComment,
-  notion_list_comments: executeListComments
+  notion_list_comments: executeListComments,
+  notion_api: executeApi
 }
 
 function describeActionBase(toolName, args) {
@@ -735,6 +1064,12 @@ function describeActionBase(toolName, args) {
         description: `Database: ${args?.database_id ?? '?'}`,
         risk: 'low'
       }
+    case 'notion_get_database':
+      return {
+        title: 'Read Notion database schema',
+        description: `Database: ${args?.database_id ?? '?'}`,
+        risk: 'low'
+      }
     case 'notion_update_block':
       return {
         title: 'Update Notion block',
@@ -771,6 +1106,21 @@ function describeActionBase(toolName, args) {
         description: `Comments on: ${args?.block_id ?? '?'}`,
         risk: 'low'
       }
+    case 'notion_api': {
+      const method = String(args?.method ?? '').trim().toUpperCase() || 'GET'
+      const path = String(args?.path ?? '?')
+      let risk = 'low'
+      if (method === 'DELETE') {
+        risk = 'high'
+      } else if (method === 'PATCH') {
+        const bodyStr = args?.body ? JSON.stringify(args.body) : ''
+        risk = /"(?:archived|in_trash)"\s*:\s*true/i.test(bodyStr) ? 'high' : 'medium'
+      } else if (method === 'POST') {
+        const lower = path.toLowerCase().replace(/\/+$/, '')
+        risk = lower.endsWith('/query') || lower === 'search' ? 'low' : 'medium'
+      }
+      return { title: 'Notion API request', description: `${method} ${path}`, risk }
+    }
     default:
       return null
   }

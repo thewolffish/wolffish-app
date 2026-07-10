@@ -1,4 +1,18 @@
-## v1.0.212 — 2026-07-10 `Latest`
+## v1.0.213 — 2026-07-10 `Latest`
+
+### Notion Reads Whatever You Point At
+
+Point Wolffish at a Notion **database** and it used to dead-end — it tried to open it as a page, hit Notion's own "that's a database, not a page," and had no way to recover. Now reading any Notion link **just works whether it's a page or a database**: Wolffish notices which one it's holding and returns the right thing — no retry, no error handed back to you. And there's a dedicated way to read a database's **schema, its columns and their types** — exactly what Wolffish needs before it can add a row, and the only way to see the shape of a database that's still empty (querying an empty one returns nothing).
+
+### A Direct Line to the Rest of Notion
+
+For the corners Wolffish's built-in Notion tools don't reach — a single block, an over-long relation list, newer parts of the API like data sources — there's now a **raw line straight to Notion**. It's pinned to Notion's own servers, it can't be pointed anywhere else, and every write or delete still asks before it runs. Newer API surfaces the built-in tools predate are reachable through it too. You won't usually see it — Wolffish reaches for the purpose-built tools first — but when something niche comes up, it's no longer a wall.
+
+### Notion Actions That Stop Failing Quietly
+
+A cluster of Notion actions that used to fail without saying why now either work or tell you exactly what's missing. Creating a page **no longer stalls on "parent is required"**: Wolffish takes the destination however it's phrased, and when it genuinely doesn't have one it says precisely what to pass and where to find it — instead of firing the same broken call again and again. Editing a block that was missing a piece used to claim success while **changing nothing**; now it says what it needs. And a Notion search with no size set comes back with a **tidy handful** instead of a hundred results you didn't ask for.
+
+## v1.0.212 — 2026-07-10
 
 ### PDFs That Come Out Designed, Not Dumped
 
