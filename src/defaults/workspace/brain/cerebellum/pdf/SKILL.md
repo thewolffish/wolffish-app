@@ -225,6 +225,158 @@ confirm_patterns:
 
 # PDF
 
+## Choosing how to make a PDF — read this first
+
+There are two ways to produce a PDF. Pick deliberately:
+
+- **HTML → PDF — the default for anything a person will read.** Build a self-contained,
+  styled HTML document (colored header bands, chips/badges, cards, tables) and render it to
+  PDF through the browser capability: write the `.html` file → `browser_launch` (headless is
+  fine) → `browser_navigate` to its `file://` path → `browser_pdf`. This is the only way to get
+  clean, modern, **colored** documents. Use it for reports, summaries, invoices, proposals,
+  briefs, dashboards — the vast majority of requests.
+- **`pdf_create` — plain fallback.** The native builder emits plain black-on-white text and
+  tables with no design. Reach for it **only** when the user explicitly wants a plain / no-frills
+  document, for a quick throwaway data dump, or when speed clearly matters more than looks.
+
+Do **not** default to `pdf_create` just because the word "PDF" appears — that yields the boring
+black-and-white output most requests do NOT want. **When in doubt, go HTML → PDF.**
+
+## HTML → PDF: the rules that make it come out right
+
+The browser renders with **zero page margin** (full bleed). That is what makes crisp
+edge-to-edge color possible, but it means you — not the page margins — control every bit of
+spacing. Follow these three rules; they eliminate the failure modes that ruin generated PDFs.
+
+### 1. Never put a gradient on text — solid text colors only
+
+Gradient-text tricks (`background-clip: text` / `-webkit-background-clip: text` with
+`-webkit-text-fill-color: transparent` or `color: transparent`) are **unreliable** in PDF
+rendering: they frequently print as a solid colored rectangle covering the words — the
+"purple block where the title should be" failure. The outcome is unpredictable across Chromium
+versions, so never use them. So:
+
+- **Every piece of text uses one solid `color`** — titles, headings, body, labels, all of it.
+- **Gradients belong on surfaces, never on text**: element `background`s, header/hero bands,
+  cards, chips, badges, buttons, dividers. Put the gradient on `background`; keep the element's
+  `color` a solid value (e.g. white text on a gradient band).
+- Never use `background-clip: text`, `-webkit-background-clip: text`,
+  `-webkit-text-fill-color: transparent`, or `color: transparent` anywhere.
+
+### 2. Full-bleed color, no white borders or bars
+
+- **Paint the page background yourself.** Put the base color (solid or a gradient) on
+  `html, body` and set `@page { margin: 0 }`. With `print_background: true` (the default) that
+  color reaches every edge on every page — no white border, no white bar.
+- **Add breathing room with padding on an inner wrapper, never page margins.** A `.page` wrapper
+  with `padding: 56px 64px` keeps content off the edges while the background still bleeds out.
+- Include `-webkit-print-color-adjust: exact; print-color-adjust: exact;` on `body` so colors
+  are never dropped.
+
+### 3. Top spacing on every page, and no clipped content
+
+Because there is no page margin, a plain continuous flow gets sliced at the page edge — content
+jammed against the top and lines cut in half. Structure the document so breaks land in the gaps:
+
+- **Wrap every logical block** (card, section, figure, table) in a container with
+  `break-inside: avoid;`. Chromium then moves the whole block to the next page instead of cutting
+  it. Give each block vertical margin (e.g. `margin: 22px 0;`) — that margin becomes the top
+  spacing when the block happens to start a page.
+- **Start each major part on a fresh page** with `break-before: page;`, and give that part's top
+  element generous `padding-top` so it opens with air instead of hugging the edge.
+- **Keep headings with their content:** `h1, h2, h3 { break-after: avoid; }`.
+- Breaks can't be pixel-perfect everywhere, but break-avoid blocks + per-part page breaks remove
+  essentially all of the jammed-against-the-top and clipped-line cases.
+
+### Reusable skeleton
+
+Start from this and adapt — it already encodes all three rules:
+
+```html
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  :root {
+    --ink:#e5e7eb; --muted:#94a3b8; --card:#1e293b; --accent:#6366f1;
+  }
+  @page { margin: 0; size: A4; }             /* full bleed — no white margin */
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: var(--ink);                       /* solid text color */
+    background: linear-gradient(160deg,#0f172a,#111827);  /* gradient OK on a background */
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  .page { padding: 56px 64px; }
+  h1, h2, h3 { break-after: avoid; }
+  .hero {
+    background: linear-gradient(135deg,#6366f1,#8b5cf6); /* gradient on a surface, not text */
+    color: #ffffff;                                      /* solid text over the gradient */
+    border-radius: 20px; padding: 40px 44px; margin-bottom: 30px;
+    break-inside: avoid;
+  }
+  .hero h1 { margin: 0; font-size: 38px; font-weight: 800; color: #ffffff; }
+  .hero p  { margin: 10px 0 0; color: rgba(255,255,255,.85); }
+  .chip {
+    display: inline-block; padding: 6px 14px; border-radius: 999px;
+    background: rgba(255,255,255,.16); color: #ffffff; font-size: 13px; font-weight: 600;
+    margin: 12px 8px 0 0;
+  }
+  .card {
+    background: var(--card); border: 1px solid rgba(255,255,255,.07);
+    border-radius: 16px; padding: 24px 28px; margin: 22px 0;
+    break-inside: avoid;                     /* never split a card across pages */
+  }
+  .card h2 { margin: 0 0 8px; font-size: 20px; color: #ffffff; }
+  .card p  { margin: 0; color: var(--muted); }
+  .badge {
+    display: inline-block; padding: 4px 10px; border-radius: 8px;
+    font-size: 12px; font-weight: 700; background: #dcfce7; color: #166534;
+  }
+  .part { break-before: page; padding-top: 8px; } /* start a major part on a new page */
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid rgba(255,255,255,.08); }
+  th { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+</style>
+</head>
+<body>
+  <div class="page">
+    <div class="hero">
+      <h1>Report title</h1>
+      <p>One-line subtitle in a solid color.</p>
+      <span class="chip">Chip one</span><span class="chip">Chip two</span>
+    </div>
+
+    <div class="card">
+      <h2>A section card <span class="badge">Ready</span></h2>
+      <p>Body copy in a single solid color. The whole card stays on one page.</p>
+    </div>
+
+    <div class="part">
+      <div class="card">
+        <h2>This part opens on a fresh page</h2>
+        <table>
+          <tr><th>Item</th><th>Value</th></tr>
+          <tr><td>Alpha</td><td>1</td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
+```
+
+### Rendering and delivering it
+
+1. Save the HTML to the workspace (e.g. `files/report.html`).
+2. `browser_launch` (headless is fine) → `browser_navigate` to the absolute `file:///…/report.html`
+   → `browser_pdf` with `output_path`, `print_background: true` (default), and `format: "A4"`
+   (or `"Letter"`).
+3. `send_file` the resulting `.pdf` — `browser_pdf` does **not** auto-deliver its output.
+
 ## Interface
 
 - Tools: `pdf_read`, `pdf_create`, `pdf_merge`, `pdf_split`, `pdf_modify`, `pdf_form`, `pdf_secure`, `pdf_extract_images`, `pdf_compress`

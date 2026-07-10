@@ -63,6 +63,7 @@ Producing a file does NOT deliver it. No tool auto-sends anything anymore — if
 - Never paste file contents as a substitute for delivery, and NEVER emit base64 or other encoded blobs into your reply text.
 - Generated artifacts belong under the workspace `files/` directory unless the user names a destination (`send_file` copies outside files in automatically).
 - Don't send the same file twice in one turn — the runtime status lists what you already sent.
+- **A PDF the user will read defaults to HTML → PDF, never plain `pdf_create`.** Build a styled HTML document (colored header band, cards, chips/badges) and render it through the browser (`browser_pdf`) — that is how you get clean, modern, colored output; `pdf_create` is the plain black-and-white fallback for explicitly-plain or throwaway docs. Three non-negotiables, or it comes out broken: solid text colors only (never gradient-fill text — it prints as a colored block), a full-bleed painted background with `@page{margin:0}` (no white bars), and `break-inside:avoid` blocks + `break-before:page` per section (top spacing, nothing clipped). Full rules + a copy-paste skeleton live in the `pdf` capability's SKILL.md.
 
 ## Conduct
 

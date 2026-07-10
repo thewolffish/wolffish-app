@@ -1,4 +1,10 @@
-## v1.0.211 — 2026-07-10 `Latest`
+## v1.0.212 — 2026-07-10 `Latest`
+
+### PDFs That Come Out Designed, Not Dumped
+
+When you ask Wolffish for a PDF, it now builds a **designed document** by default — a colored header band, cards, chips, and badges laid out in HTML and rendered to PDF — instead of reaching for the plain black-and-white builder that made everything look like a data dump. That plain path is still there for when you genuinely want plain, but it's no longer the default. Three things that used to wreck a generated PDF are fixed at the source: a **gradient-colored title** that printed as a solid purple block now stays a clean solid color (gradients belong on backgrounds, never on text); the page **bleeds its color edge to edge** with no white bars framing it; and content is laid out in whole blocks that **break onto a new page cleanly** — with real breathing room at the top — instead of starting jammed against the edge or getting sliced in half. The full recipe now lives in Wolffish's own instructions, so it holds whether the PDF comes from an in-app chat, a heartbeat, or a channel.
+
+## v1.0.211 — 2026-07-10
 
 ### Logs and Files for Every Run
 
