@@ -1114,6 +1114,37 @@ function createWindow(): BrowserWindow {
     return { action: 'deny' }
   })
 
+  // Spellcheck. Chromium underlines misspellings for free (webPreferences.spellcheck
+  // defaults to true). The engine is per-OS: macOS uses the native OS spellchecker
+  // (auto language, offline, and the setters below are no-ops), while Windows/Linux
+  // use Hunspell — which needs a language set and downloads its dictionaries from a
+  // CDN on first use — so only configure it off macOS.
+  if (process.platform !== 'darwin') {
+    try {
+      const ses = mainWindow.webContents.session
+      const available = ses.availableSpellCheckerLanguages
+      const wanted = [app.getLocale(), 'en-US'].filter((l, i, a) => !!l && a.indexOf(l) === i)
+      const langs = wanted.filter((l) => available.includes(l))
+      if (langs.length) ses.setSpellCheckerLanguages(langs)
+    } catch (err) {
+      console.error('[spellcheck] language setup failed:', err)
+    }
+  }
+
+  // The misspelled word and its suggestions live ONLY in this main-process event —
+  // the DOM 'contextmenu' event the renderer sees carries none of it. Relay the
+  // spellcheck fields so the renderer's own styled menu can offer corrections and
+  // call back into webContents.replaceMisspelling(). Fires for every right-click the
+  // page doesn't preventDefault; the renderer decides whether to surface a menu.
+  mainWindow.webContents.on('context-menu', (_event, params) => {
+    if (mainWindow.isDestroyed()) return
+    mainWindow.webContents.send('spellcheck:contextMenu', {
+      isEditable: params.isEditable,
+      misspelledWord: params.misspelledWord,
+      dictionarySuggestions: params.dictionarySuggestions
+    })
+  })
+
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
   } else {
@@ -1332,6 +1363,19 @@ app.whenReady().then(async () => {
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
+  })
+
+  // Spellcheck corrections — the renderer's context menu calls these after the
+  // main-process 'context-menu' event handed it the misspelled word + suggestions.
+  // replaceMisspelling swaps the word currently selected by the right-click; it's a
+  // native edit command, so undo works and controlled React inputs re-sync via input.
+  ipcMain.handle('spellcheck:replace', (e, word: string) => {
+    e.sender.replaceMisspelling(word)
+  })
+  ipcMain.handle('spellcheck:addToDictionary', (e, word: string) => {
+    // Persists to the app's custom dictionary (and the OS dictionary on macOS/
+    // Windows). The default session is persistent, so this is never a no-op here.
+    e.sender.session.addWordToSpellCheckerDictionary(word)
   })
 
   // Theme

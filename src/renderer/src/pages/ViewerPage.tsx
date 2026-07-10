@@ -532,6 +532,8 @@ export function ViewerPage(): React.JSX.Element {
                     readOnly={readOnly}
                     onChange={setEditorContent}
                     className="h-full w-full"
+                    // Prose only: squiggles on code/JSON would be noise.
+                    spellcheck={!readOnly && language === 'markdown'}
                   />
                 )}
               </div>

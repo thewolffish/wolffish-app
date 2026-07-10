@@ -1457,6 +1457,25 @@ export type UploadApi = {
   getPathForFile: (file: File) => string
 }
 
+/** Spellcheck fields relayed from the main-process `context-menu` event — the
+ *  only place Chromium exposes the misspelled word + its suggestions. `misspelledWord`
+ *  is empty when nothing under the cursor is misspelled. */
+export type SpellcheckContextMenu = {
+  isEditable: boolean
+  misspelledWord: string
+  dictionarySuggestions: string[]
+}
+
+export type SpellcheckApi = {
+  /** Fires on every right-click that the page doesn't preventDefault. Carries the
+   *  spellcheck payload so the renderer's own styled menu can offer corrections. */
+  onContextMenu: (listener: (event: SpellcheckContextMenu) => void) => () => void
+  /** Replace the currently-selected misspelled word in the focused field. */
+  replace: (word: string) => Promise<void>
+  /** Add a word to the spellchecker's custom dictionary so it stops being flagged. */
+  addToDictionary: (word: string) => Promise<void>
+}
+
 export type WolffishApi = {
   theme: ThemeApi
   locale: LocaleApi
@@ -1494,6 +1513,7 @@ export type WolffishApi = {
   computerUse: ComputerUseApi
   browserExtension: BrowserExtensionApi
   updater: UpdaterApi
+  spellcheck: SpellcheckApi
 }
 
 function subscribe<T>(channel: string, listener: (payload: T) => void): () => void {
@@ -1799,6 +1819,11 @@ const api: WolffishApi = {
     onProgress: (listener) => subscribe('updater:progress', listener),
     onReady: (listener) => subscribe('updater:ready', listener),
     onState: (listener) => subscribe('updater:state', listener)
+  },
+  spellcheck: {
+    onContextMenu: (listener) => subscribe('spellcheck:contextMenu', listener),
+    replace: (word) => ipcRenderer.invoke('spellcheck:replace', word),
+    addToDictionary: (word) => ipcRenderer.invoke('spellcheck:addToDictionary', word)
   }
 }
 

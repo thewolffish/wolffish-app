@@ -1,5 +1,6 @@
 import { ContextMenuPopup, type ContextMenuEntry } from '@components/core/ContextMenu'
-import { useCallback, useEffect, useState } from 'react'
+import type { SpellcheckContextMenu } from '@preload/index'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 type Position = { x: number; y: number }
@@ -172,32 +173,72 @@ function contentEditableItems(
 }
 
 /**
- * App-wide right-click menu (Select all / Copy / Paste / Clear) for every text
- * input, textarea and contenteditable surface. Mounted once at the root: a single
- * delegated listener covers fields anywhere in the tree without per-field wiring.
+ * Spelling correction rows, built from the payload the main process relayed off
+ * Chromium's `context-menu` event. Empty when the word under the cursor isn't
+ * misspelled. Each suggestion calls the native `replaceMisspelling` command (which
+ * targets the word the right-click selected), then an "Add to dictionary" entry and
+ * a separator above the standard Copy/Paste items.
+ */
+function spellingItems(params: SpellcheckContextMenu, t: Translate): ContextMenuEntry[] {
+  const word = params.misspelledWord
+  if (!word) return []
+  const suggestions = params.dictionarySuggestions.slice(0, 6)
+  const rows: ContextMenuEntry[] = suggestions.length
+    ? suggestions.map((s) => ({ label: s, action: () => void window.api.spellcheck.replace(s) }))
+    : [{ label: t('common.contextMenu.noSuggestions'), action: () => {}, disabled: true }]
+  rows.push({
+    label: t('common.contextMenu.addToDictionary'),
+    action: () => void window.api.spellcheck.addToDictionary(word)
+  })
+  rows.push({ separator: true as const })
+  return rows
+}
+
+/**
+ * App-wide right-click menu (spelling corrections + Select all / Copy / Paste /
+ * Clear) for every text input, textarea and contenteditable surface. Mounted once
+ * at the root: a single delegated listener covers fields anywhere in the tree.
  *
- * Components that render their own context menu call preventDefault first (e.g.
- * the chat composer), so this defers to them via the defaultPrevented guard.
+ * Spelling suggestions exist only in the main-process `context-menu` event, and the
+ * page calling preventDefault on the DOM event would suppress it — so this is
+ * main-driven: the DOM 'contextmenu' event (which fires first) records WHICH field
+ * and where, then the relayed spellcheck payload triggers the menu. We deliberately
+ * do NOT preventDefault, so Chromium still fires its event and selects the misspelled
+ * word for replaceMisspelling to act on. Surfaces that render their own menu (e.g.
+ * MarkdownContent) preventDefault, which suppresses the payload, so ours never opens
+ * there — and their targets aren't editable fields anyway.
  */
 export function InputContextMenu(): React.JSX.Element | null {
   const { t } = useTranslation()
   const [state, setState] = useState<{ position: Position; items: ContextMenuEntry[] } | null>(null)
   const close = useCallback(() => setState(null), [])
+  const pending = useRef<{ field: Field; position: Position } | null>(null)
 
+  // Record the target on the DOM event (capture phase, before any bubble-phase
+  // preventDefault). No preventDefault here — the main event must still fire.
   useEffect(() => {
     const onContextMenu = (e: MouseEvent): void => {
-      if (e.defaultPrevented) return
       const field = resolveField(e.target)
-      if (!field) return
-      const items =
+      pending.current = field ? { field, position: { x: e.clientX, y: e.clientY } } : null
+    }
+    document.addEventListener('contextmenu', onContextMenu, true)
+    return () => document.removeEventListener('contextmenu', onContextMenu, true)
+  }, [])
+
+  // The relayed payload always follows its own right-click, so `pending` is fresh.
+  useEffect(() => {
+    return window.api.spellcheck.onContextMenu((params) => {
+      const target = pending.current
+      pending.current = null
+      if (!target) return
+      const { field, position } = target
+      const base =
         field.kind === 'value'
           ? valueItems(field.el, field.editable, t)
           : contentEditableItems(field.el, field.editable, t)
-      e.preventDefault()
-      setState({ position: { x: e.clientX, y: e.clientY }, items })
-    }
-    document.addEventListener('contextmenu', onContextMenu)
-    return () => document.removeEventListener('contextmenu', onContextMenu)
+      const items = field.editable ? [...spellingItems(params, t), ...base] : base
+      setState({ position, items })
+    })
   }, [t])
 
   if (!state) return null

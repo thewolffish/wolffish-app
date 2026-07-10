@@ -156,6 +156,7 @@ export function MarkdownEditorPage({
             readOnly={false}
             onChange={setContent}
             className="min-h-0 w-full flex-1"
+            spellcheck
           />
         )}
       </section>

@@ -7,8 +7,8 @@ import { cn } from '@lib/utils/cn'
 import { pageTopPadding } from '@lib/utils/platform'
 import type { Procedure } from '@preload/index'
 import { useFlow } from '@providers/flow/useFlow'
-import { useSessions } from '@providers/sessions/useSessions'
 import { useLocale } from '@providers/locale/useLocale'
+import { useSessions } from '@providers/sessions/useSessions'
 import { useTheme } from '@providers/theme/useTheme'
 import {
   Add01Icon,
@@ -261,37 +261,6 @@ export function Procedures(): React.JSX.Element {
                         </span>
                       </div>
                       <div className="flex shrink-0 items-center gap-1">
-                        <div
-                          role="tablist"
-                          aria-label={t('procedures.modeAria')}
-                          className="border-border bg-bg/40 me-1 inline-flex items-center gap-0.5 rounded-lg border p-0.5"
-                        >
-                          {(['single', 'workflow'] as const).map((m) => {
-                            const active = (procedure.mode ?? globalMode) === m
-                            return (
-                              <button
-                                key={m}
-                                role="tab"
-                                type="button"
-                                aria-selected={active}
-                                onClick={() => void handleSetMode(procedure, m)}
-                                className={cn(
-                                  'cursor-pointer rounded-md px-2 py-1 text-[10px] font-medium',
-                                  'focus-visible:ring-2 focus-visible:ring-accent',
-                                  active
-                                    ? 'bg-primary text-primary-fg shadow-sm'
-                                    : 'text-muted hover:text-fg'
-                                )}
-                              >
-                                {t(
-                                  m === 'workflow'
-                                    ? 'chat.modePicker.workflow'
-                                    : 'chat.modePicker.single'
-                                )}
-                              </button>
-                            )
-                          })}
-                        </div>
                         <button
                           type="button"
                           onClick={() => handlePlay(procedure)}
@@ -323,12 +292,43 @@ export function Procedures(): React.JSX.Element {
                         >
                           <Delete02Icon size={16} />
                         </button>
+                        <div
+                          role="tablist"
+                          aria-label={t('procedures.modeAria')}
+                          className="border-border bg-bg/40 ms-1 inline-flex items-center gap-0.5 rounded-lg border p-0.5"
+                        >
+                          {(['single', 'workflow'] as const).map((m) => {
+                            const active = (procedure.mode ?? globalMode) === m
+                            return (
+                              <button
+                                key={m}
+                                role="tab"
+                                type="button"
+                                aria-selected={active}
+                                onClick={() => void handleSetMode(procedure, m)}
+                                className={cn(
+                                  'cursor-pointer rounded-md px-2 py-1 text-[10px] font-medium',
+                                  'focus-visible:ring-2 focus-visible:ring-accent',
+                                  active
+                                    ? 'bg-primary text-primary-fg shadow-sm'
+                                    : 'text-muted hover:text-fg'
+                                )}
+                              >
+                                {t(
+                                  m === 'workflow'
+                                    ? 'chat.modePicker.workflow'
+                                    : 'chat.modePicker.single'
+                                )}
+                              </button>
+                            )
+                          })}
+                        </div>
                       </div>
                     </div>
                     {runnable ? (
                       <pre
                         dir="auto"
-                        className="bg-bg border-border text-muted max-h-40 overflow-auto rounded-lg border px-3 py-2 font-mono text-xs leading-relaxed break-words whitespace-pre-wrap"
+                        className="bg-bg border-border text-muted max-h-40 overflow-auto rounded-lg border px-3 py-2 font-mono text-xs leading-relaxed wrap-break-word whitespace-pre-wrap"
                       >
                         {procedure.prompt}
                       </pre>
@@ -382,6 +382,7 @@ export function Procedures(): React.JSX.Element {
               onChange={setDraftPrompt}
               placeholder={t('procedures.promptPlaceholder')}
               className="h-full"
+              spellcheck
             />
           </div>
           <p className="text-muted text-xs">{t('procedures.autosaveHint')}</p>

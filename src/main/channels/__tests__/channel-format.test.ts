@@ -84,9 +84,17 @@ eq('digits-only gets no mark', bidiMark('42'), '')
 
 // The exact heartbeat failure: a stray </message> wrapper tag.
 ok('stray wrapper tag is invalid', validateTelegramHtml('<b>Total</b> 😄</message>').ok, false)
-ok('valid subset passes', validateTelegramHtml('<b>Digest</b>\n<i>2 unread</i> cost &lt;5').ok, true)
+ok(
+  'valid subset passes',
+  validateTelegramHtml('<b>Digest</b>\n<i>2 unread</i> cost &lt;5').ok,
+  true
+)
 ok('plain text passes', validateTelegramHtml('just plain text, nothing to parse').ok, true)
-ok('link with href passes', validateTelegramHtml('see <a href="https://x.example">docs</a>').ok, true)
+ok(
+  'link with href passes',
+  validateTelegramHtml('see <a href="https://x.example">docs</a>').ok,
+  true
+)
 ok('spoiler span passes', validateTelegramHtml('<span class="tg-spoiler">boo</span>').ok, true)
 ok('unclosed tag is invalid', validateTelegramHtml('<b>bold with no close').ok, false)
 ok('orphan closing tag is invalid', validateTelegramHtml('text </i> more').ok, false)
@@ -97,13 +105,19 @@ ok('bare greater-than is fine', validateTelegramHtml('5 > 3 rule').ok, true)
 // Leaked Markdown parses as HTML but renders raw on Telegram — also flagged.
 ok('markdown bold flagged on telegram', validateTelegramHtml('**Digest**').ok, false)
 ok('markdown heading flagged on telegram', validateTelegramHtml('# Digest\nbody').ok, false)
-ok('markdown link flagged on telegram', validateTelegramHtml('see [docs](https://x.example)').ok, false)
+ok(
+  'markdown link flagged on telegram',
+  validateTelegramHtml('see [docs](https://x.example)').ok,
+  false
+)
 ok('media marker fine on telegram', validateTelegramHtml('![m](wolffish-media://a.png)').ok, true)
 ok('self-closing br is invalid', validateTelegramHtml('a<br/>b').ok, false)
 // The reported problem is named in the issues so the model can self-correct.
 eq(
   'stray tag issue names it',
-  validateTelegramHtml('x</message>').issues.some((s) => s.includes('<message>')) ? 'named' : 'missing',
+  validateTelegramHtml('x</message>').issues.some((s) => s.includes('<message>'))
+    ? 'named'
+    : 'missing',
   'named'
 )
 

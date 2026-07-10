@@ -1,4 +1,14 @@
-## v1.0.213 — 2026-07-10 `Latest`
+## v1.0.214 — 2026-07-11 `Latest`
+
+### Right-Click a Typo, Get the Fix
+
+Wolffish has always underlined misspelled words with the familiar red squiggle — but that was where it stopped; there was no way to actually correct one. Now **right-click any misspelled word and Wolffish offers the fixes** — the same suggestions the underline was implying — and picking one **swaps the word in place**, undo and all. There's an **Add to dictionary** entry too, for the names and terms you'd rather it stopped flagging. It reaches **every place you type prose**: the chat composer, the expanded editor, the prompt editors in Heartbeat and Procedures, the full-screen markdown editor, and markdown files opened in the viewer. Credential and URL fields are left untouched — you don't want a spellchecker second-guessing an API key. And it behaves the same on **macOS, Windows, and Linux**: macOS leans on the system speller and works offline out of the box, while Windows and Linux fetch their dictionary once on first launch and then run identically — everything Wolffish stores stays inside `~/.wolffish`.
+
+### The Mode Toggle, Where You Expect It
+
+On a saved procedure's card, the single/workflow mode toggle sat on the opposite side from where the very same control lives on a heartbeat's card. It now matches — the run, edit, and delete icons first, then the mode toggle at the end — so the two lists finally read the same way.
+
+## v1.0.213 — 2026-07-10
 
 ### Notion Reads Whatever You Point At
 

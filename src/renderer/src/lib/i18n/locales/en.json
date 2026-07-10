@@ -15,7 +15,9 @@
       "selectAll": "Select all",
       "copy": "Copy",
       "paste": "Paste",
-      "clear": "Clear"
+      "clear": "Clear",
+      "addToDictionary": "Add to dictionary",
+      "noSuggestions": "No suggestions"
     }
   },
   "closing": {

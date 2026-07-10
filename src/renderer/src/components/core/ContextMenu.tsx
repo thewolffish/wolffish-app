@@ -70,6 +70,9 @@ export function ContextMenuPopup({
             key={i}
             type="button"
             disabled={entry.disabled}
+            // Keep focus (and the right-click-selected misspelling) in the field so
+            // the native replaceMisspelling command has a word to act on.
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => {
               entry.action()
               onClose()

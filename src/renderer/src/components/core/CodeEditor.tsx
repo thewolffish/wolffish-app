@@ -45,6 +45,9 @@ export type CodeEditorProps = {
   onChange?: (value: string) => void
   className?: string
   placeholder?: string
+  /** Turn on Chromium's spellcheck (red squiggles) for the editor content. Off by
+   *  default — code shouldn't be spellchecked; the prose composer opts in. */
+  spellcheck?: boolean
 }
 
 const baseTheme = EditorView.theme({
@@ -138,7 +141,8 @@ export function CodeEditor({
   readOnly = false,
   onChange,
   className,
-  placeholder
+  placeholder,
+  spellcheck = false
 }: CodeEditorProps): React.JSX.Element {
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -153,7 +157,8 @@ export function CodeEditor({
     () => ({
       language: new Compartment(),
       readOnly: new Compartment(),
-      theme: new Compartment()
+      theme: new Compartment(),
+      spellcheck: new Compartment()
     }),
     []
   )
@@ -180,6 +185,12 @@ export function CodeEditor({
           EditorView.editable.of(!readOnly)
         ]),
         keymap.of([...defaultKeymap, ...historyKeymap]),
+        // CodeMirror's contenteditable defaults to spellcheck off; opt prose in so
+        // Chromium underlines typos and populates the right-click suggestions. In a
+        // compartment so a dynamic-language host (the file viewer) can toggle it.
+        compartments.spellcheck.of(
+          spellcheck ? EditorView.contentAttributes.of({ spellcheck: 'true' }) : []
+        ),
         baseTheme,
         ...(placeholder ? [cmPlaceholder(placeholder)] : []),
         EditorView.theme({}, { dark: isDark }),
@@ -233,6 +244,16 @@ export function CodeEditor({
       ])
     })
   }, [readOnly, compartments])
+
+  useEffect(() => {
+    const view = viewRef.current
+    if (!view) return
+    view.dispatch({
+      effects: compartments.spellcheck.reconfigure(
+        spellcheck ? EditorView.contentAttributes.of({ spellcheck: 'true' }) : []
+      )
+    })
+  }, [spellcheck, compartments])
 
   return <div ref={hostRef} className={className} />
 }

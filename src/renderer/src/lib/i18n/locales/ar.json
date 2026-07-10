@@ -15,7 +15,9 @@
       "selectAll": "تحديد الكل",
       "copy": "نسخ",
       "paste": "لصق",
-      "clear": "مسح"
+      "clear": "مسح",
+      "addToDictionary": "إضافة إلى القاموس",
+      "noSuggestions": "لا توجد اقتراحات"
     }
   },
   "closing": {

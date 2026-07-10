@@ -27,7 +27,6 @@ import { TurnFooter } from '@components/common/turn-footer/TurnFooter'
 import { UpdateCard } from '@components/common/update-card/UpdateCard'
 import { VideoPlayer } from '@components/common/video-player/VideoPlayer'
 import { CodeEditor } from '@components/core/CodeEditor'
-import { useContextMenu } from '@components/core/ContextMenu'
 import { CopyButton } from '@components/core/CopyButton'
 import { Markdown } from '@components/core/Markdown'
 import { TelegramLogo, WhatsAppLogo } from '@components/core/ProviderLogos'
@@ -347,80 +346,9 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     el.focus()
   }, [streaming, visible])
 
-  const { onContextMenu: onTextareaContextMenu, menu: textareaMenu } = useContextMenu(
-    useCallback(() => {
-      const el = textareaRef.current
-      const hasSelection = el ? el.selectionStart !== el.selectionEnd : false
-      return [
-        {
-          label: t('chat.contextMenu.selectAll'),
-          action: () => el?.select(),
-          disabled: !draft
-        },
-        {
-          label: t('chat.contextMenu.copy'),
-          action: () => {
-            if (el)
-              void navigator.clipboard.writeText(
-                el.value.substring(el.selectionStart, el.selectionEnd)
-              )
-          },
-          disabled: !hasSelection
-        },
-        {
-          label: t('chat.contextMenu.paste'),
-          action: async () => {
-            const text = await navigator.clipboard.readText()
-            if (!el) return
-            const start = el.selectionStart
-            const end = el.selectionEnd
-            const before = draft.substring(0, start)
-            const after = draft.substring(end)
-            setDraft(before + text + after)
-          }
-        },
-        { separator: true as const },
-        {
-          label: t('chat.contextMenu.clear'),
-          action: () => setDraft(''),
-          disabled: !draft
-        }
-      ]
-    }, [draft, t])
-  )
-
-  const { onContextMenu: onEditorContextMenu, menu: editorMenu } = useContextMenu(
-    useCallback(() => {
-      return [
-        {
-          label: t('chat.contextMenu.selectAll'),
-          action: () => document.execCommand('selectAll'),
-          disabled: !draft
-        },
-        {
-          label: t('chat.contextMenu.copy'),
-          action: () => {
-            const sel = window.getSelection()
-            if (sel && sel.toString()) void navigator.clipboard.writeText(sel.toString())
-          },
-          disabled: !window.getSelection()?.toString()
-        },
-        {
-          label: t('chat.contextMenu.paste'),
-          action: async () => {
-            const text = await navigator.clipboard.readText()
-            document.execCommand('insertText', false, text)
-          }
-        },
-        { separator: true as const },
-        {
-          label: t('chat.contextMenu.clear'),
-          action: () => setDraft(''),
-          disabled: !draft
-        }
-      ]
-    }, [draft, t])
-  )
+  // The composer textarea and the expanded CodeMirror editor both use the app-wide
+  // <InputContextMenu> (Select all / Copy / Paste / Clear + spelling corrections);
+  // no per-surface menu here. See InputContextMenu.tsx for the main-driven flow.
   const [storedFolders, setStoredFolders] = useState<string[]>([])
   const workingFolders = useMemo(
     () => (activeConversationId ? storedFolders : []),
@@ -2562,7 +2490,6 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                   ref={textareaRef}
                   value={draft}
                   onChange={(e) => setDraft(e.target.value)}
-                  onContextMenu={onTextareaContextMenu}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && !e.shiftKey) {
                       e.preventDefault()
@@ -2647,8 +2574,6 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
           </div>
         </div>
       </form>
-      {textareaMenu}
-      {editorMenu}
       {visible &&
         draftExpanded &&
         createPortal(
@@ -2659,7 +2584,6 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
           >
             <div
               onClick={(e) => e.stopPropagation()}
-              onContextMenu={onEditorContextMenu}
               className="border-border bg-surface flex h-[80vh] w-[80vw] flex-col overflow-hidden rounded-2xl border shadow-xl"
             >
               <CodeEditor
@@ -2669,6 +2593,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                 onChange={setDraft}
                 className="flex-1 overflow-auto"
                 placeholder={t('chat.placeholder')}
+                spellcheck
               />
             </div>
           </div>,
