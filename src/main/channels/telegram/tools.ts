@@ -1,4 +1,5 @@
 import { validateTelegramHtml } from '@main/channels/telegram/format'
+import { MAX_CONSECUTIVE_REJECTS, RejectBudget } from '@main/channels/send-policy'
 import type {
   Capability,
   SkillToolDescriptor,
@@ -27,6 +28,28 @@ export const TELEGRAM_CAPABILITY_NAME = 'telegram'
  */
 const PHOTO_LIMIT = 10 * 1024 * 1024
 const DOCUMENT_LIMIT = 50 * 1024 * 1024
+
+/**
+ * Formatting contract shared by every media-caption parameter description —
+ * one string so the four captions can never drift apart. Mirrors the
+ * telegram_send message rules (captions are parsed identically).
+ */
+const CAPTION_HTML_RULES =
+  'Delivered with Telegram parse_mode HTML — Telegram HTML subset ONLY (<b> <i> <u> <s> <code> <pre> <a href> <blockquote> <span class="tg-spoiler">), never Markdown (**, #, tables, [text](url) show raw), never a wrapper/<br> tag, close every tag. Tags are RAW < > characters — entity-escape only a literal & < > in prose as &amp; &lt; &gt;, never the tags themselves (&lt;b&gt; arrives as literal text, not bold). A broken caption is rejected without sending; if it has any tag, run telegram_check_format on it first.'
+
+/**
+ * The model's override for the pre-send format gate: information, not
+ * force. A formatting reject names the problems; if the flagged markup is
+ * the CONTENT (code being shown, not formatting), the model asserts that
+ * and the text goes out exactly as written — the API plain fallback still
+ * catches anything Telegram itself cannot parse.
+ */
+const SEND_AS_IS_PARAM = {
+  type: 'boolean',
+  description:
+    'Set true ONLY when this exact text was just rejected by the formatting check and the flagged markup is INTENTIONAL content (you are showing code/markup as literal text, not formatting). Skips the format check: the text goes out exactly as written — the user may see raw tags, and HTML Telegram cannot parse falls back to plain text. NEVER use it to avoid fixing a real formatting mistake.',
+  required: false
+}
 
 type ToolDeps = {
   getBot: () => Bot | null
@@ -59,12 +82,12 @@ export function buildTelegramCapability(deps: ToolDeps): {
     {
       name: 'telegram_check_format',
       description:
-        'Validate text against Telegram\'s HTML rules WITHOUT sending it. Returns "valid" or the exact problems (unsupported tag, unclosed tag, orphan closing tag, bare < or &). It changes nothing — you fix your own text and re-check. ALWAYS call this right before you send any text OR MEDIA CAPTION that contains ANY HTML tag or literal < & characters — via telegram_send, telegram_edit_message, or the caption of telegram_send_photo / telegram_send_document / telegram_send_video / telegram_send_audio: one bad tag makes Telegram reject that message/caption and it arrives as raw tag soup. Plain text with no tags never needs checking.',
+        'Validate text against Telegram\'s HTML rules WITHOUT sending it. Returns "valid" or the exact problems (unsupported tag, unclosed tag, orphan closing tag, bare < or &, formatting tags written as &lt;b&gt; entities instead of raw <b> characters, leaked Markdown). It changes nothing — you fix your own text and re-check. ALWAYS call this right before you send any text OR MEDIA CAPTION that contains ANY HTML tag or literal < & characters — via telegram_send, telegram_edit_message, or the caption of telegram_send_photo / telegram_send_document / telegram_send_video / telegram_send_audio: one bad tag makes Telegram reject that message/caption and it arrives as raw tag soup. Plain text with no tags never needs checking.',
       parameters: {
         message: {
           type: 'string',
           description:
-            'The exact message body you intend to send, checked as-is (do not pre-escape for this call).',
+            'The exact message body you intend to send — byte-for-byte the same string you will pass to the send tool, raw <b>-style tags and all.',
           required: true
         }
       }
@@ -77,9 +100,10 @@ export function buildTelegramCapability(deps: ToolDeps): {
         message: {
           type: 'string',
           description:
-            'The message body. 1–4096 characters, delivered with Telegram parse_mode HTML. Telegram does NOT render Markdown (no **, no # headings, no | tables |, no [text](url) — they show as raw syntax). Formatting, if any, is Telegram HTML ONLY: <b>, <i>, <u>, <s>, <code>, <pre>, <a href="…">, <blockquote>, <span class="tg-spoiler">. NO other tags exist — never wrap the body in a container like <message>/<html>/<p>, never use <br> (use a real newline), and close every tag you open. Escape literal & < > as &amp; &lt; &gt;. One unknown or unclosed tag makes Telegram reject the WHOLE message and it arrives as literal tag soup, so if the text has ANY tag, call telegram_check_format first and only send once it returns valid. GOOD: "📬 <b>Digest</b>\\n<i>2 unread</i>\\nTotal &lt;5 items&gt;". BAD: "📬 <b>Digest</b> …😄</message>" (stray wrapper tag), "**Digest**" (Markdown), "line<br>line" (no <br>), "cost < 5 & rising" (unescaped < &). Plain text with no markup is always safe.',
+            'The message body. 1–4096 characters, delivered with Telegram parse_mode HTML. Telegram does NOT render Markdown (no **, no # headings, no | tables |, no [text](url) — they show as raw syntax). Formatting, if any, is Telegram HTML ONLY: <b>, <i>, <u>, <s>, <code>, <pre>, <a href="…">, <blockquote>, <span class="tg-spoiler">. NO other tags exist — never wrap the body in a container like <message>/<html>/<p>, never use <br> (use a real newline), and close every tag you open. Write the tags as RAW < > characters: entity-escape ONLY a literal & < > in prose (as &amp; &lt; &gt;), NEVER the tags themselves — "&lt;b&gt;Digest&lt;/b&gt;" reaches the user as literal "<b>Digest</b>" text, not bold. One unknown or unclosed tag makes Telegram reject the WHOLE message and it arrives as literal tag soup, so if the text has ANY tag, call telegram_check_format first and only send once it returns valid; broken HTML is rejected by this tool without sending (fix it and resend). GOOD: "📬 <b>Digest</b>\\n<i>2 unread</i>\\nTotal &lt;5 items&gt;". BAD: "📬 <b>Digest</b> …😄</message>" (stray wrapper tag), "&lt;b&gt;Digest&lt;/b&gt;" (escaped tags — arrive as literal text), "**Digest**" (Markdown), "line<br>line" (no <br>), "cost < 5 & rising" (unescaped < &). Plain text with no markup is always safe.',
           required: true
         },
+        sendAsIs: SEND_AS_IS_PARAM,
         userId: {
           type: 'number',
           description:
@@ -101,10 +125,10 @@ export function buildTelegramCapability(deps: ToolDeps): {
         },
         caption: {
           type: 'string',
-          description:
-            'Optional caption shown beneath the image, up to 1024 characters. Delivered with Telegram parse_mode HTML — Telegram HTML subset ONLY (<b> <i> <u> <s> <code> <pre> <a href> <blockquote> <span class="tg-spoiler">), never Markdown (**, #, tables, [text](url) show raw), never a wrapper/<br> tag, close every tag, escape literal & < > as &amp; &lt; &gt;. If the caption has any tag, run telegram_check_format on it first.',
+          description: `Optional caption shown beneath the image, up to 1024 characters. ${CAPTION_HTML_RULES}`,
           required: false
         },
+        sendAsIs: SEND_AS_IS_PARAM,
         userId: {
           type: 'number',
           description: 'Optional Telegram user ID. Defaults to the first allowed user.',
@@ -124,10 +148,10 @@ export function buildTelegramCapability(deps: ToolDeps): {
         },
         caption: {
           type: 'string',
-          description:
-            'Optional caption shown beneath the document, up to 1024 characters. Delivered with Telegram parse_mode HTML — Telegram HTML subset ONLY (<b> <i> <u> <s> <code> <pre> <a href> <blockquote> <span class="tg-spoiler">), never Markdown, never a wrapper/<br> tag, close every tag, escape literal & < > as &amp; &lt; &gt;. If the caption has any tag, run telegram_check_format on it first.',
+          description: `Optional caption shown beneath the document, up to 1024 characters. ${CAPTION_HTML_RULES}`,
           required: false
         },
+        sendAsIs: SEND_AS_IS_PARAM,
         userId: {
           type: 'number',
           description: 'Optional Telegram user ID. Defaults to the first allowed user.',
@@ -147,10 +171,10 @@ export function buildTelegramCapability(deps: ToolDeps): {
         },
         caption: {
           type: 'string',
-          description:
-            'Optional caption shown beneath the video, up to 1024 characters. Delivered with Telegram parse_mode HTML — Telegram HTML subset ONLY (<b> <i> <u> <s> <code> <pre> <a href> <blockquote> <span class="tg-spoiler">), never Markdown, never a wrapper/<br> tag, close every tag, escape literal & < > as &amp; &lt; &gt;. If the caption has any tag, run telegram_check_format on it first.',
+          description: `Optional caption shown beneath the video, up to 1024 characters. ${CAPTION_HTML_RULES}`,
           required: false
         },
+        sendAsIs: SEND_AS_IS_PARAM,
         userId: {
           type: 'number',
           description: 'Optional Telegram user ID. Defaults to the first allowed user.',
@@ -170,10 +194,10 @@ export function buildTelegramCapability(deps: ToolDeps): {
         },
         caption: {
           type: 'string',
-          description:
-            'Optional caption shown beneath the audio, up to 1024 characters. Delivered with Telegram parse_mode HTML — Telegram HTML subset ONLY (<b> <i> <u> <s> <code> <pre> <a href> <blockquote> <span class="tg-spoiler">), never Markdown, never a wrapper/<br> tag, close every tag, escape literal & < > as &amp; &lt; &gt;. If the caption has any tag, run telegram_check_format on it first.',
+          description: `Optional caption shown beneath the audio, up to 1024 characters. ${CAPTION_HTML_RULES}`,
           required: false
         },
+        sendAsIs: SEND_AS_IS_PARAM,
         userId: {
           type: 'number',
           description: 'Optional Telegram user ID. Defaults to the first allowed user.',
@@ -197,6 +221,7 @@ export function buildTelegramCapability(deps: ToolDeps): {
             'New text body. 1–4096 characters, delivered with Telegram parse_mode HTML — same formatting rules as telegram_send (Telegram HTML subset only, never Markdown, never a wrapper/<br> tag, close every tag, escape literal & < > as entities). If the new text has ANY tag, run telegram_check_format on it first — a rejected edit leaves the old message unchanged.',
           required: true
         },
+        sendAsIs: SEND_AS_IS_PARAM,
         userId: {
           type: 'number',
           description:
@@ -267,9 +292,50 @@ function checkFormat(args: Record<string, unknown>): ToolExecutionResult {
     return success('Valid Telegram HTML — safe to send with telegram_send / telegram_edit_message.')
   }
   return success(
-    `NOT CLEAN — fix these so the message renders right (an unsupported/unclosed tag or bare < & is REJECTED and arrives as raw tag soup; leaked Markdown is delivered but shows raw symbols). Fix, then re-check before sending:\n- ${issues.join('\n- ')}`
+    `NOT CLEAN — fix these so the message renders right (an unsupported/unclosed tag or bare < & is REJECTED and arrives as raw tag soup; entity-escaped tags like &lt;b&gt; are delivered but show as literal "<b>" text; leaked Markdown is delivered but shows raw symbols). Fix, then re-check before sending:\n- ${issues.join('\n- ')}`
   )
 }
+
+/**
+ * Pre-send gate shared by telegram_send / captions / telegram_edit_message:
+ * the same engine as telegram_check_format, run unconditionally because the
+ * model can (and does) skip the check tool. Hard issues refuse the send —
+ * a rejected call is a one-round-trip fix, while delivering one means tag
+ * soup or literal "&lt;b&gt;" text reaching the user. Soft issues (Markdown
+ * heuristics) never block: text that legitimately QUOTES ** or # content
+ * must still deliver — they come back as a note for the model instead.
+ * The "invalid argument" prefix is load-bearing: motor's classifyError maps
+ * it to validation/non-retryable, so the model sees the reject immediately
+ * instead of motor retrying identical args three times.
+ */
+function formatGate(
+  text: string,
+  what: 'message' | 'caption' | 'edit'
+): { reject: ToolExecutionResult | null; note: string } {
+  const report = validateTelegramHtml(text)
+  if (report.hard.length > 0) {
+    const consequence =
+      what === 'edit' ? 'edit NOT applied (the existing message is unchanged)' : 'NOT sent'
+    return {
+      reject: failure(
+        `invalid argument — ${consequence}, the ${what === 'caption' ? 'caption' : 'message'} HTML would reach the user broken:\n- ${report.hard.join(
+          '\n- '
+        )}\nFix the markup and resend (telegram_check_format verifies without sending). If the flagged markup is INTENTIONAL content — you are showing code/markup as text, not formatting — resend the exact same text with sendAsIs: true and it goes out exactly as written.`
+      ),
+      note: ''
+    }
+  }
+  const note =
+    report.soft.length > 0
+      ? `\nFormatting note (${what === 'edit' ? 'edit already applied — do NOT redo it' : 'already delivered — do NOT resend'}): ${report.soft.join(' ')}`
+      : ''
+  return { reject: null, note }
+}
+
+// Module-level so the budget survives bot restarts / capability rebuilds.
+const rejectBudget = new RejectBudget()
+
+const DELIVERED_DESPITE_NOTE = `\nDelivered DESPITE unresolved formatting problems (the format gate yields after ${MAX_CONSECUTIVE_REJECTS} rejected attempts so a message is never lost) — the user may see raw markup; fix the pattern next time.`
 
 async function sendText(
   bot: Bot,
@@ -279,28 +345,51 @@ async function sendText(
   const message = stringArg(args.message)
   if (!message) return failure('message is required and must be a non-empty string')
   if (message.length > 4096) {
-    return failure(`message too long: ${message.length} > 4096 characters`)
+    return failure(
+      `invalid argument: message too long (${message.length} > 4096 characters) — split it into multiple telegram_send calls`
+    )
   }
+  const gate = boolArg(args.sendAsIs)
+    ? { reject: null, note: '\nFormat check skipped (sendAsIs) — delivered exactly as written.' }
+    : formatGate(message, 'message')
   const target = resolveTarget(deps, args.userId)
   if (!target.ok) return failure(target.error)
+  // The gate may bounce a broken message so the model can fix it, but it
+  // can never LOSE one: once this chat's budget is exhausted the message
+  // is delivered as composed (a would-400 lands via the plain fallback
+  // below), so the worst case is raw markup, never silence.
+  let despite = ''
+  if (gate.reject) {
+    if (!rejectBudget.exhausted(target.id)) {
+      rejectBudget.reject(target.id)
+      return gate.reject
+    }
+    despite = DELIVERED_DESPITE_NOTE
+  }
   // parse_mode HTML matches what the channel overlay teaches the model.
   // ONLY an entity-parse reject falls through to the plain retry —
-  // delivery beats formatting there, and the result tells the model so
-  // it can fix its markup next time. Any other error (network, rate
-  // limit, bad chat) surfaces as a failure with the HTML intact, so the
-  // model never gets steered into stripping valid formatting.
+  // delivery beats formatting there (it means the message passed the gate,
+  // so this is the safety net for whatever the validator missed), and the
+  // result carries Telegram's own parse error so the model can fix its
+  // markup next time. Any other error (network, rate limit, bad chat)
+  // surfaces as a failure with the HTML intact, so the model never gets
+  // steered into stripping valid formatting.
+  let parseError = ''
   try {
     const result = await bot.api.sendMessage(target.id, message, { parse_mode: 'HTML' })
     deps.trackOutgoing?.(target.id, result.message_id)
-    return success(`Sent. message_id=${result.message_id} to=${target.id}`)
+    rejectBudget.delivered(target.id)
+    return success(`Sent. message_id=${result.message_id} to=${target.id}${despite || gate.note}`)
   } catch (err) {
     if (!isHtmlParseError(err)) return failure(`send failed: ${errMessage(err)}`)
+    parseError = errMessage(err)
   }
   try {
     const result = await bot.api.sendMessage(target.id, message)
     deps.trackOutgoing?.(target.id, result.message_id)
+    rejectBudget.delivered(target.id)
     return success(
-      `Sent as PLAIN text (Telegram rejected the HTML entities — any tags were shown literally). message_id=${result.message_id} to=${target.id}`
+      `Sent as PLAIN text — Telegram rejected the HTML ("${parseError}"), so any tags were shown literally. Already delivered, do NOT resend; fix the markup next time. message_id=${result.message_id} to=${target.id}`
     )
   } catch (err) {
     return failure(`send failed: ${errMessage(err)}`)
@@ -350,7 +439,26 @@ async function sendMedia(
 
   const caption = stringArg(args.caption) ?? undefined
   if (caption && caption.length > 1024) {
-    return failure(`caption too long: ${caption.length} > 1024 characters`)
+    return failure(
+      `invalid argument: caption too long (${caption.length} > 1024 characters) — shorten it or send the details as a separate telegram_send message`
+    )
+  }
+  const gate =
+    caption && !boolArg(args.sendAsIs)
+      ? formatGate(caption, 'caption')
+      : {
+          reject: null,
+          note: caption ? '\nFormat check skipped (sendAsIs) — caption delivered as written.' : ''
+        }
+  // Same never-lose-a-message budget as sendText — the file (and its
+  // caption) always deliver once the chat's bounce budget is spent.
+  let despite = ''
+  if (gate.reject) {
+    if (!rejectBudget.exhausted(target.id)) {
+      rejectBudget.reject(target.id)
+      return gate.reject
+    }
+    despite = DELIVERED_DESPITE_NOTE
   }
 
   let buffer: Buffer
@@ -376,22 +484,28 @@ async function sendMedia(
     return bot.api.sendDocument(target.id, file, opts)
   }
 
+  let parseError = ''
   try {
     const result = await send(caption ? { caption, parse_mode: 'HTML' } : undefined)
     deps.trackOutgoing?.(target.id, result.message_id)
-    return success(`Sent. message_id=${result.message_id} to=${target.id} kind=${kind}`)
+    rejectBudget.delivered(target.id)
+    return success(
+      `Sent. message_id=${result.message_id} to=${target.id} kind=${kind}${despite || gate.note}`
+    )
   } catch (err) {
     // Only a caption HTML-parse reject falls through, and only when a caption
     // exists — the FILE still deserves delivery, so resend it with the caption
     // as plain text (tags literal) and tell the model to fix its markup next
     // time. Any other error surfaces with the caption HTML intact.
     if (!caption || !isHtmlParseError(err)) return failure(`send failed: ${errMessage(err)}`)
+    parseError = errMessage(err)
   }
   try {
     const result = await send({ caption })
     deps.trackOutgoing?.(target.id, result.message_id)
+    rejectBudget.delivered(target.id)
     return success(
-      `Sent, but the caption went as PLAIN text (Telegram rejected its HTML — tags shown literally; run telegram_check_format on the caption to fix). message_id=${result.message_id} to=${target.id} kind=${kind}`
+      `Sent, but the caption went as PLAIN text — Telegram rejected its HTML ("${parseError}"), so tags were shown literally. Already delivered, do NOT resend; fix the markup next time. message_id=${result.message_id} to=${target.id} kind=${kind}`
     )
   } catch (err) {
     return failure(`send failed: ${errMessage(err)}`)
@@ -408,8 +522,14 @@ async function editText(
   const message = stringArg(args.message)
   if (!message) return failure('message is required and must be a non-empty string')
   if (message.length > 4096) {
-    return failure(`message too long: ${message.length} > 4096 characters`)
+    return failure(
+      `invalid argument: message too long (${message.length} > 4096 characters) — shorten the edit text`
+    )
   }
+  const gate = boolArg(args.sendAsIs)
+    ? { reject: null, note: '\nFormat check skipped (sendAsIs) — edit applied exactly as written.' }
+    : formatGate(message, 'edit')
+  if (gate.reject) return gate.reject
   const target = resolveTarget(deps, args.userId)
   if (!target.ok) return failure(target.error)
   // No plain retry here, unlike sendText: the edit target already shows
@@ -420,7 +540,7 @@ async function editText(
   // reason to rewrite the message.
   try {
     await bot.api.editMessageText(target.id, messageId, message, { parse_mode: 'HTML' })
-    return success(`Edited. message_id=${messageId} to=${target.id}`)
+    return success(`Edited. message_id=${messageId} to=${target.id}${gate.note}`)
   } catch (err) {
     if (isNotModifiedError(err)) {
       return success(
@@ -501,6 +621,11 @@ function numberArg(value: unknown): number | null {
   if (typeof value === 'number' && Number.isFinite(value)) return value
   if (typeof value === 'string' && /^-?\d+$/.test(value)) return Number(value)
   return null
+}
+
+// Models sometimes serialize booleans as strings — accept both spellings.
+function boolArg(value: unknown): boolean {
+  return value === true || value === 'true'
 }
 
 function errMessage(err: unknown): string {

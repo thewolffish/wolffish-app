@@ -18,6 +18,7 @@
 
 import { markdownToPlain } from '../format'
 import { bidiMark, escapeHtml, validateTelegramHtml } from '../telegram/format'
+import { MAX_CONSECUTIVE_REJECTS, RejectBudget } from '../send-policy'
 import { stripInlineMarkup, validateWhatsAppFormat } from '../whatsapp/format'
 
 let passed = 0
@@ -121,10 +122,125 @@ eq(
   'named'
 )
 
+// Entity-escaped formatting tags: Telegram delivers them as literal "<b>"
+// text (no API error), so only this semantic check can catch them. The
+// 16:15 email-digest heartbeat shipped exactly this and telegram_check_format
+// said "valid".
+ok(
+  'escaped formatting tags invalid (the digest failure)',
+  validateTelegramHtml(
+    '📬 &lt;b&gt;alturkeyy@gmail.com&lt;/b&gt; — 1 unread thread\n&lt;i&gt;From: someone&lt;/i&gt;\n&lt;b&gt;No action required.&lt;/b&gt;'
+  ).ok,
+  false
+)
+ok('escaped bold pair invalid', validateTelegramHtml('&lt;b&gt;Digest&lt;/b&gt;').ok, false)
+ok('escaped closing tag alone invalid', validateTelegramHtml('x &lt;/i&gt; y').ok, false)
+ok('escaped br invalid', validateTelegramHtml('line&lt;br&gt;line').ok, false)
+ok(
+  'escaped a-href invalid',
+  validateTelegramHtml('&lt;a href="https://x.example"&gt;docs&lt;/a&gt;').ok,
+  false
+)
+// Inside a real <code>/<pre> span, escaped tags are the CORRECT way to
+// display a tag on purpose — exempt.
+ok(
+  'escaped tag inside <code> passes',
+  validateTelegramHtml('use <code>&lt;b&gt;</code> for bold').ok,
+  true
+)
+ok(
+  'escaped tags inside <pre> pass',
+  validateTelegramHtml('<pre>&lt;b&gt;bold&lt;/b&gt;</pre>').ok,
+  true
+)
+// Escaped NON-formatting tag names render literally too, but that is the
+// plausible intent — only formatting-tag names are flagged. Sharing HTML
+// code as content must never be blocked.
+ok('escaped unknown tag passes', validateTelegramHtml('the &lt;message&gt; wrapper').ok, true)
+ok(
+  'escaped html snippet in prose passes',
+  validateTelegramHtml('try &lt;div class="x"&gt;hi&lt;/div&gt; instead').ok,
+  true
+)
+ok(
+  'escaped html document inside <pre> passes',
+  validateTelegramHtml(
+    '<pre>&lt;html&gt;&lt;body&gt;&lt;b&gt;hi&lt;/b&gt;&lt;/body&gt;&lt;/html&gt;</pre>'
+  ).ok,
+  true
+)
+ok('plain prose entities pass', validateTelegramHtml('cost &lt;5 &amp; rising').ok, true)
+eq(
+  'escaped tag issue teaches raw tags',
+  validateTelegramHtml('&lt;b&gt;x&lt;/b&gt;').issues.some((s) => s.includes('raw characters'))
+    ? 'taught'
+    : 'missing',
+  'taught'
+)
+// hard/soft split: send tools refuse hard, deliver-and-note soft.
+ok('escaped tags are hard', validateTelegramHtml('&lt;b&gt;x&lt;/b&gt;').hard.length > 0, true)
+ok('unclosed tag is hard', validateTelegramHtml('<b>x').hard.length > 0, true)
+ok('markdown bold is soft not hard', validateTelegramHtml('**x** ok').hard.length === 0, true)
+ok('markdown bold lands in soft', validateTelegramHtml('**x** ok').soft.length === 1, true)
+
+// --- RejectBudget (the send tools' never-lose-a-message guarantee) ---
+
+{
+  let t = 1_000_000
+  const budget = new RejectBudget(() => t)
+  ok('fresh chat has budget', budget.exhausted(1), false)
+  budget.reject(1)
+  ok('one bounce leaves budget', budget.exhausted(1), false)
+  budget.reject(1)
+  ok(`${MAX_CONSECUTIVE_REJECTS} bounces exhaust it — gate must yield`, budget.exhausted(1), true)
+  ok('other chats unaffected', budget.exhausted(2), false)
+  budget.delivered(1)
+  ok('a successful send resets it', budget.exhausted(1), false)
+  budget.reject(1)
+  budget.reject(1)
+  t += 16 * 60 * 1000
+  ok('stale bounces expire after the window', budget.exhausted(1), false)
+}
+
 // --- validateWhatsAppFormat (the whatsapp_check_format engine) ---
 
 ok('markdown bold flagged', validateWhatsAppFormat('**Order arrived**').ok, false)
 ok('whatsapp bold passes', validateWhatsAppFormat('*Order arrived* _53 SAR_').ok, true)
+
+// WhatsApp renders NO HTML — tags and entities arrive as literal text.
+// The cross-channel confusion class (Telegram HTML or a serializer quirk
+// escaping angle brackets) is hard; the send tools refuse it.
+ok('html tags flagged on whatsapp', validateWhatsAppFormat('<b>Order arrived</b>').ok, false)
+ok('html tags are hard', validateWhatsAppFormat('<b>x</b>').hard.length > 0, true)
+ok(
+  'html entities flagged on whatsapp',
+  validateWhatsAppFormat('save 20% &amp; more &lt;3').ok,
+  false
+)
+ok('html entities are hard', validateWhatsAppFormat('Tom &amp; Jerry').hard.length > 0, true)
+ok(
+  'escaped-tag soup flagged on whatsapp too',
+  validateWhatsAppFormat('&lt;b&gt;Digest&lt;/b&gt;').ok,
+  false
+)
+// Everyday angle-bracket text is NOT html — never block real prose.
+ok('email in angle brackets passes', validateWhatsAppFormat('From: Foo <foo@bar.com>').ok, true)
+ok('heart and comparisons pass', validateWhatsAppFormat('i <3 u, and 2 < 3 & 5 > 4').ok, true)
+ok('unknown tag-like token passes', validateWhatsAppFormat('the <thing> placeholder').ok, true)
+// Inside `backticks` or ``` fences, showing markup is the point.
+ok('html inside inline code passes', validateWhatsAppFormat('use `<b>` on telegram').ok, true)
+ok(
+  'html inside fence passes',
+  validateWhatsAppFormat('```\n<div class="x">&amp;</div>\n```').ok,
+  true
+)
+ok(
+  'markdown inside fence passes',
+  validateWhatsAppFormat('```\n**not markdown, just code**\n```').ok,
+  true
+)
+ok('markdown bold is soft not hard', validateWhatsAppFormat('**x** ok').hard.length === 0, true)
+ok('markdown bold lands in soft', validateWhatsAppFormat('**x** ok').soft.length === 1, true)
 ok('heading flagged', validateWhatsAppFormat('# Digest\nbody').ok, false)
 ok('markdown link flagged', validateWhatsAppFormat('see [docs](https://x.example)').ok, false)
 ok('bare url passes', validateWhatsAppFormat('see https://x.example').ok, true)

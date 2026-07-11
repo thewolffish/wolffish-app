@@ -313,11 +313,11 @@ so hidden — `ls -a` to see them). Drop a folder in, and the agent learns a ski
 
 **Two kinds:**
 - **Pure skill** — just a `SKILL.md` (instructions for the LLM using existing
-  tools). Examples here: `.git`, `.planning`.
+  tools). Example here: `.git`.
 - **Plugin capability** — `SKILL.md` **+** `plugin/index.mjs` exporting executable
   tools. Most capabilities are plugins.
 
-### The full catalog (29 capabilities)
+### The full catalog (28 capabilities)
 
 | Category | Capability | What it gives the agent (representative tools) |
 |---|---|---|
@@ -349,7 +349,6 @@ so hidden — `ls -a` to see them). Drop a folder in, and the agent learns a ski
 | | `.secrets` | Save/list the user's variables & secrets — `add_secret`, `list_secrets` |
 | | `.ask` | Ask the user a multiple-choice question via an in-app card — `ask_user` |
 | | `.utilities` | Small built-ins — `send_file` (deliver a file to the user as an attachment) |
-| | `.planning` | Plan-before-acting discipline (pure skill) |
 
 > `.browser` vs `.browser-extension`: the **extension** acts inside the user's
 > existing, authenticated browser session (great for sites the user is logged into);

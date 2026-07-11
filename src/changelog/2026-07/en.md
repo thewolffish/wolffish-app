@@ -1,4 +1,14 @@
-## v1.0.214 — 2026-07-11 `Latest`
+## v1.0.215 — 2026-07-11 `Latest`
+
+### Channel Messages That Can't Leave Broken
+
+Wolffish is the only thing standing between its own markup and what lands on your phone — and until now it could still send a message it *knew* was malformed, because the format check was Wolffish's to run and Wolffish could skip it. That check now runs **automatically on every WhatsApp and Telegram send, reply, caption, and edit**, and a message that would reach you visibly broken is **held back before it goes out**. On Telegram that stops the markup that makes the Bot API reject the whole message and deliver it as raw tag soup — and it now catches a subtler failure that slipped past every earlier check: **formatting tags written as `&lt;b&gt;` entities**, which Telegram delivers as the literal text `<b>` instead of bold (the exact slip that once turned an email digest into a wall of visible tags). On WhatsApp — which renders **no HTML at all** — a stray `<b>` or `&amp;` that used to arrive as literal characters is caught the same way. And the gate **can never lose a message**: if Wolffish can't get the markup right after a couple of tries it sends the message anyway rather than going silent, so the worst case is raw markup, never nothing at all. When the "markup" is really the content — a code snippet or a tag you're showing on purpose — Wolffish can wave it straight through untouched.
+
+### Wolffish Reads the Manual First
+
+Before taking on anything with real substance, Wolffish now opens its own **working manual as its first move** — a discipline for reading what you actually asked rather than the literal words, breaking a problem into pieces it can check one by one, verifying its own claims a second way before stating them, and leading with the answer instead of burying it. On multi-step work it also **lays out a short plan in its reply first** — the phases, and how it'll know each one landed — before it starts changing anything. The result is steadier, less confidently-wrong work on exactly the hard, ambiguous, high-stakes tasks where a plausible-but-wrong answer costs the most, while quick asks — a hello, a one-line lookup — stay quick and skip the ceremony.
+
+## v1.0.214 — 2026-07-11
 
 ### Right-Click a Typo, Get the Fix
 

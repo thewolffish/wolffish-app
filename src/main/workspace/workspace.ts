@@ -914,6 +914,18 @@ async function cleanupWorkspace(): Promise<void> {
     await fs.rm(staleWhisperVenv, { recursive: true, force: true }).catch(() => undefined)
   }
 
+  // Planning skill (removed; its plan-format discipline now lives always-on in
+  // agents.core.md's Loop discipline, not as a load-on-demand pure skill).
+  // ensureBundledCapabilities only ever copies, never prunes a skill whose
+  // bundled source was deleted, so the dead `.planning` would keep showing in
+  // the capability index — sweep it from already-installed workspaces.
+  for (const dir of ['.planning', 'planning']) {
+    const target = path.join(WORKSPACE_ROOT, 'brain', 'cerebellum', dir)
+    if (existsSync(target)) {
+      await fs.rm(target, { recursive: true, force: true }).catch(() => undefined)
+    }
+  }
+
   // Orchestrator mode (replaced by workflow mode): its deployed capability —
   // ensureBundledCapabilities only ever copies, never prunes a skill whose
   // bundled source was deleted, so the dead `.orchestrator` would keep

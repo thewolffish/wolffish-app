@@ -1,3 +1,4 @@
+import { MAX_CONSECUTIVE_REJECTS, RejectBudget } from '@main/channels/send-policy'
 import { validateWhatsAppFormat } from '@main/channels/whatsapp/format'
 import { GIF_PLAYBACK_MAX_SECONDS, isGifMime, transcodeGifToMp4 } from '@main/channels/whatsapp/gif'
 import type {
@@ -102,6 +103,19 @@ const DOCUMENT_MIME: Record<string, string> = {
   '.zip': 'application/zip'
 }
 
+/**
+ * The model's override for the pre-send format gate: information, not
+ * force. A formatting reject names the problems; if the flagged markup is
+ * the CONTENT (code being shown, not formatting), the model asserts that
+ * and the text goes out exactly as written.
+ */
+const SEND_AS_IS_PARAM = {
+  type: 'boolean',
+  description:
+    'Set true ONLY when this exact text was just rejected by the formatting check and the flagged markup is INTENTIONAL content (you are showing code/markup as literal text, not formatting). Skips the format check: the text goes out exactly as written — the recipient may see raw tags/entities. NEVER use it to avoid fixing a real formatting mistake.',
+  required: false
+}
+
 export function buildWhatsAppCapability(deps: ToolDeps): {
   capability: Capability
   plugin: WolffishPlugin
@@ -110,7 +124,7 @@ export function buildWhatsAppCapability(deps: ToolDeps): {
     {
       name: 'whatsapp_check_format',
       description:
-        'Check a message for leaked Markdown that WhatsApp would show as raw, ugly syntax WITHOUT sending it. Returns "clean" or the exact problems (**double asterisks**, # headings, [text](url) links, | tables |, --- rules, ```lang fences). It changes nothing — you fix your own text and re-check. Call this before whatsapp_send / whatsapp_reply whenever your message has any formatting, so the recipient never sees Markdown symbols. WhatsApp\'s real syntax is single-char: *bold* _italic_ ~strike~ `code`.',
+        'Check a message for markup WhatsApp would show as raw, ugly text WITHOUT sending it. Returns "clean" or the exact problems: HTML tags/entities (<b>, &amp;, &lt; — WhatsApp renders NO HTML, they arrive as literal text) and leaked Markdown (**double asterisks**, # headings, [text](url) links, | tables |, --- rules, ```lang fences). Content inside `backticks` or ``` fences is exempt — that is how you show markup on purpose. It changes nothing — you fix your own text and re-check. Call this before whatsapp_send / whatsapp_reply whenever your message has any formatting. WhatsApp\'s real syntax is single-char: *bold* _italic_ ~strike~ `code`.',
       parameters: {
         message: {
           type: 'string',
@@ -146,9 +160,10 @@ export function buildWhatsAppCapability(deps: ToolDeps): {
         message: {
           type: 'string',
           description:
-            'The message body, delivered VERBATIM — nothing converts it. WhatsApp formatting only: *bold* (single asterisks), _italic_, ~strikethrough~, `inline code`, ```monospace```, "- " bullets, "1. " numbered items, "> " quotes. NEVER Markdown (no **double asterisks**, no # headings, no | tables |, no [text](url), no --- rules) — leaked Markdown reaches the recipient as raw syntax. Instead of a table write one "*Label:* value" line per fact; paste links as bare URLs. If the message has ANY formatting, run whatsapp_check_format on it first. GOOD: "*Order arrived* 🍽\\nTotal: _53 SAR_". BAD: "**Order arrived**\\n| item | price |" (Markdown bold + table).',
+            'The message body, delivered VERBATIM — nothing converts it. WhatsApp formatting only: *bold* (single asterisks), _italic_, ~strikethrough~, `inline code`, ```monospace```, "- " bullets, "1. " numbered items, "> " quotes. NEVER Markdown (no **double asterisks**, no # headings, no | tables |, no [text](url), no --- rules) — leaked Markdown reaches the recipient as raw syntax. NEVER HTML: WhatsApp renders no tags and no entities, so "<b>hi</b>" and "&amp;" arrive as literal text — write plain & < > characters and WhatsApp markup, never Telegram-style HTML. A message with HTML is rejected without sending (fix it and resend). Instead of a table write one "*Label:* value" line per fact; paste links as bare URLs. If the message has ANY formatting, run whatsapp_check_format on it first. GOOD: "*Order arrived* 🍽\\nTotal: _53 SAR_". BAD: "**Order arrived**\\n| item | price |" (Markdown bold + table), "<b>Order arrived</b>" (HTML — arrives as literal text).',
           required: true
-        }
+        },
+        sendAsIs: SEND_AS_IS_PARAM
       }
     },
     {
@@ -176,9 +191,10 @@ export function buildWhatsAppCapability(deps: ToolDeps): {
         caption: {
           type: 'string',
           description:
-            'Optional caption shown beneath the image, delivered VERBATIM. WhatsApp formatting only (*bold*, _italic_) — never Markdown (no **double asterisks**, no [text](url)). If the caption has any formatting, run whatsapp_check_format on it first.',
+            'Optional caption shown beneath the image, delivered VERBATIM. WhatsApp formatting only (*bold*, _italic_) — never Markdown (no **double asterisks**, no [text](url)) and never HTML tags/entities (they arrive as literal text; a caption with HTML is rejected without sending). If the caption has any formatting, run whatsapp_check_format on it first.',
           required: false
         },
+        sendAsIs: SEND_AS_IS_PARAM,
         mimetype: {
           type: 'string',
           description:
@@ -218,9 +234,10 @@ export function buildWhatsAppCapability(deps: ToolDeps): {
         caption: {
           type: 'string',
           description:
-            'Optional caption, delivered VERBATIM. WhatsApp formatting only (*bold*, _italic_) — never Markdown (no **double asterisks**, no [text](url)). If the caption has any formatting, run whatsapp_check_format on it first.',
+            'Optional caption, delivered VERBATIM. WhatsApp formatting only (*bold*, _italic_) — never Markdown (no **double asterisks**, no [text](url)) and never HTML tags/entities (they arrive as literal text; a caption with HTML is rejected without sending). If the caption has any formatting, run whatsapp_check_format on it first.',
           required: false
         },
+        sendAsIs: SEND_AS_IS_PARAM,
         mimetype: {
           type: 'string',
           description:
@@ -277,9 +294,10 @@ export function buildWhatsAppCapability(deps: ToolDeps): {
         message: {
           type: 'string',
           description:
-            'The reply text, delivered VERBATIM — nothing converts it. WhatsApp formatting only (*bold*, _italic_, `inline code`, "- " bullets) — never Markdown (no **double asterisks**, no [text](url)); leaked Markdown reaches the recipient as raw syntax. Run whatsapp_check_format first if the text has any formatting.',
+            'The reply text, delivered VERBATIM — nothing converts it. WhatsApp formatting only (*bold*, _italic_, `inline code`, "- " bullets) — never Markdown (no **double asterisks**, no [text](url)) and never HTML tags/entities (WhatsApp renders no HTML; they arrive as literal text and the reply is rejected without sending). Run whatsapp_check_format first if the text has any formatting.',
           required: true
-        }
+        },
+        sendAsIs: SEND_AS_IS_PARAM
       }
     },
     {
@@ -460,11 +478,55 @@ function checkFormat(args: Record<string, unknown>): ToolExecutionResult {
   if (!message) return failure('message is required')
   const { ok, issues } = validateWhatsAppFormat(message)
   if (ok) {
-    return success('Clean — no leaked Markdown. Safe to send with whatsapp_send / whatsapp_reply.')
+    return success('Clean — safe to send with whatsapp_send / whatsapp_reply.')
   }
   return success(
-    `LEAKED MARKDOWN — WhatsApp would show these as raw symbols. Fix, then re-check before sending:\n- ${issues.join('\n- ')}`
+    `NOT CLEAN — fix these so the message reads right (WhatsApp renders NO HTML, so tags/entities arrive as literal "<b>" / "&amp;" text; leaked Markdown shows raw symbols). Fix, then re-check before sending:\n- ${issues.join('\n- ')}`
   )
+}
+
+/**
+ * Pre-send gate shared by whatsapp_send / whatsapp_reply / captions: the
+ * same engine as whatsapp_check_format, run unconditionally because the
+ * model can (and does) skip the check tool. Hard issues (HTML tags or
+ * entities — WhatsApp parses no HTML, so they arrive as literal text)
+ * refuse the send with a teaching error; soft issues (Markdown-leak
+ * heuristics) never block — quoting ** or # content must still deliver —
+ * and come back as a note. The "invalid argument" prefix is load-bearing:
+ * motor's classifyError maps it to validation/non-retryable, so the model
+ * sees the reject immediately instead of motor retrying identical args.
+ */
+function formatGate(
+  text: string,
+  what: 'message' | 'caption'
+): { reject: ToolExecutionResult | null; note: string } {
+  const report = validateWhatsAppFormat(text)
+  if (report.hard.length > 0) {
+    return {
+      reject: failure(
+        `invalid argument — NOT sent, the ${what} would reach the recipient as broken-looking text:\n- ${report.hard.join(
+          '\n- '
+        )}\nFix it and resend (whatsapp_check_format verifies without sending). If the flagged markup is INTENTIONAL content — you are showing code/markup as text — resend the exact same text with sendAsIs: true and it goes out exactly as written.`
+      ),
+      note: ''
+    }
+  }
+  const note =
+    report.soft.length > 0
+      ? `\nFormatting note (already delivered — do NOT resend): ${report.soft.join(' ')}`
+      : ''
+  return { reject: null, note }
+}
+
+// Module-level so the budget survives socket reconnects / capability rebuilds.
+const rejectBudget = new RejectBudget()
+
+const DELIVERED_DESPITE_NOTE = `\nDelivered DESPITE unresolved formatting problems (the format gate yields after ${MAX_CONSECUTIVE_REJECTS} rejected attempts so a message is never lost) — the recipient may see raw markup; fix the pattern next time.`
+
+/** Append a formatting note to a successful result; failures pass through. */
+function withNote(result: ToolExecutionResult, note: string): ToolExecutionResult {
+  if (!result.success || !note) return result
+  return { ...result, output: `${result.output ?? ''}${note}` }
 }
 
 async function checkNumbers(
@@ -550,11 +612,30 @@ async function sendText(
   if (!jid) return failure('jid is required')
   const message = stringArg(args.message)
   if (!message) return failure('message is required')
+  const gate = boolArg(args.sendAsIs)
+    ? { reject: null, note: '\nFormat check skipped (sendAsIs) — delivered exactly as written.' }
+    : formatGate(message, 'message')
+  // The gate may bounce a broken message so the model can fix it, but it
+  // can never LOSE one: once this chat's budget is exhausted the message
+  // is delivered as composed.
+  let despite = ''
+  if (gate.reject) {
+    if (!rejectBudget.exhausted(jid)) {
+      rejectBudget.reject(jid)
+      return gate.reject
+    }
+    despite = DELIVERED_DESPITE_NOTE
+  }
   try {
     // Sent VERBATIM — the tool description carries the formatting
     // contract; nothing rewrites the model's text on the way out.
     const result = await sock.sendMessage(jid, { text: message })
-    return finalizeSend('message', jid, result, track, confirm)
+    const final = withNote(
+      await finalizeSend('message', jid, result, track, confirm),
+      despite || gate.note
+    )
+    if (final.success) rejectBudget.delivered(jid)
+    return final
   } catch (err) {
     return failure(`send failed: ${errMessage(err)}`)
   }
@@ -572,11 +653,31 @@ async function sendImage(
   const media = await loadMedia(args, 'imageBase64', 'image')
   if ('error' in media) return failure(media.error)
   const caption = stringArg(args.caption) ?? undefined
+  const gate =
+    caption && !boolArg(args.sendAsIs)
+      ? formatGate(caption, 'caption')
+      : {
+          reject: null,
+          note: caption ? '\nFormat check skipped (sendAsIs) — caption delivered as written.' : ''
+        }
+  let despite = ''
+  if (gate.reject) {
+    if (!rejectBudget.exhausted(jid)) {
+      rejectBudget.reject(jid)
+      return gate.reject
+    }
+    despite = DELIVERED_DESPITE_NOTE
+  }
   // An animated GIF cannot ride as an imageMessage — WhatsApp silently drops
   // it. Route it through the video/gifPlayback path so it actually delivers
   // and loops as a GIF on the recipient's phone.
   if (isGifMime(media.mimetype)) {
-    return sendGif(sock, jid, media, caption, track, confirm, ensureFfmpeg)
+    const final = withNote(
+      await sendGif(sock, jid, media, caption, track, confirm, ensureFfmpeg),
+      despite || gate.note
+    )
+    if (final.success) rejectBudget.delivered(jid)
+    return final
   }
   try {
     const result = await sock.sendMessage(jid, {
@@ -584,7 +685,12 @@ async function sendImage(
       caption,
       mimetype: media.mimetype
     })
-    return finalizeSend('image', jid, result, track, confirm)
+    const final = withNote(
+      await finalizeSend('image', jid, result, track, confirm),
+      despite || gate.note
+    )
+    if (final.success) rejectBudget.delivered(jid)
+    return final
   } catch (err) {
     return failure(`send image failed: ${errMessage(err)}`)
   }
@@ -658,6 +764,21 @@ async function sendDocument(
   if ('error' in media) return failure(media.error)
   const fileName = stringArg(args.fileName) ?? media.basename ?? 'file'
   const caption = stringArg(args.caption) ?? undefined
+  const gate =
+    caption && !boolArg(args.sendAsIs)
+      ? formatGate(caption, 'caption')
+      : {
+          reject: null,
+          note: caption ? '\nFormat check skipped (sendAsIs) — caption delivered as written.' : ''
+        }
+  let despite = ''
+  if (gate.reject) {
+    if (!rejectBudget.exhausted(jid)) {
+      rejectBudget.reject(jid)
+      return gate.reject
+    }
+    despite = DELIVERED_DESPITE_NOTE
+  }
   try {
     const result = await sock.sendMessage(jid, {
       document: media.buffer,
@@ -665,7 +786,12 @@ async function sendDocument(
       caption,
       mimetype: media.mimetype
     })
-    return finalizeSend('document', jid, result, track, confirm)
+    const final = withNote(
+      await finalizeSend('document', jid, result, track, confirm),
+      despite || gate.note
+    )
+    if (final.success) rejectBudget.delivered(jid)
+    return final
   } catch (err) {
     return failure(`send document failed: ${errMessage(err)}`)
   }
@@ -705,6 +831,17 @@ async function replyTo(
   if (!quotedId) return failure('quotedMessageId is required')
   const message = stringArg(args.message)
   if (!message) return failure('message is required')
+  const gate = boolArg(args.sendAsIs)
+    ? { reject: null, note: '\nFormat check skipped (sendAsIs) — delivered exactly as written.' }
+    : formatGate(message, 'message')
+  let despite = ''
+  if (gate.reject) {
+    if (!rejectBudget.exhausted(jid)) {
+      rejectBudget.reject(jid)
+      return gate.reject
+    }
+    despite = DELIVERED_DESPITE_NOTE
+  }
   try {
     const result = await sock.sendMessage(
       jid,
@@ -716,7 +853,12 @@ async function replyTo(
         }
       }
     )
-    return finalizeSend('reply', jid, result, track, confirm)
+    const final = withNote(
+      await finalizeSend('reply', jid, result, track, confirm),
+      despite || gate.note
+    )
+    if (final.success) rejectBudget.delivered(jid)
+    return final
   } catch (err) {
     return failure(`reply failed: ${errMessage(err)}`)
   }
@@ -973,6 +1115,11 @@ function mimeFor(kind: MediaKind, ext: string): string {
 
 function mb(bytes: number): number {
   return Math.round((bytes / 1024 / 1024) * 10) / 10
+}
+
+// Models sometimes serialize booleans as strings — accept both spellings.
+function boolArg(value: unknown): boolean {
+  return value === true || value === 'true'
 }
 
 function stringArg(value: unknown): string | null {

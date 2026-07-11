@@ -649,7 +649,14 @@ export const CORE_CAPABILITIES: ReadonlySet<string> = new Set([
   'system',
   'telegram',
   'whatsapp',
-  'electron'
+  'electron',
+  // The working-discipline loader: one tool (operating_manual) returning the
+  // full manual. Core so its schema always ships — the agent must be able to
+  // load its discipline as a single first call on any real task, with no
+  // discovery hop (a 2-hop skill_read_source path halved the trigger rate in
+  // testing). The manual BODY loads only when the tool is CALLED, so trivial
+  // turns pay just this ~1 tool schema, never the manual text.
+  'operating-manual'
 ])
 
 /** Max non-core capabilities exposed per conversation before LRU eviction. */

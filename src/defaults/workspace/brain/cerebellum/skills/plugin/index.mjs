@@ -579,7 +579,7 @@ async function createSkill(args) {
     const toolNote =
       result.hasPlugin && result.toolCount
         ? `${result.toolCount} tool${result.toolCount === 1 ? '' : 's'} now available on your next turn`
-        : 'a procedure-only skill (no tools) — its body will be injected when its triggers match'
+        : 'a procedure-only skill (no tools) — read its body on demand with skill_read_source; to keep it standing, point to it from agents.md'
     const derivedNote =
       autoDerivedTools > 0
         ? ` (auto-added a frontmatter tools: block from your plugin — next time you can declare it yourself for full control)`

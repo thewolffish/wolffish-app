@@ -172,11 +172,12 @@ the kind:
 ```
 
 Pick the smallest kind that does the job. A **pure skill** is just knowledge —
-a checklist or procedure that gets injected into your prompt when its triggers
-match; reach for it when the "ability" is really *knowing how*, and the doing
-is plain shell/filesystem work you already have tools for. A **plugin skill**
-is for a real new tool you can call. Add a **package.json** only when the
-plugin needs an npm library.
+a checklist or procedure you load on demand with `skill_read_source` (and can
+point to from `agents.md` so it's read for the tasks it applies to); reach for
+it when the "ability" is really *knowing how*, and the doing is plain
+shell/filesystem work you already have tools for. A **plugin skill** is for a
+real new tool you can call. Add a **package.json** only when the plugin needs
+an npm library.
 
 ## SKILL.md format
 
@@ -186,10 +187,10 @@ The file is a YAML frontmatter block delimited by `---`, then a markdown body.
 ---
 name: weather              # REQUIRED. Unique. Becomes the folder slug.
 description: Look up current weather for a city   # REQUIRED. One line; ships to the model.
-triggers:                  # Optional. Keywords; when a user message contains one,
-  - weather                # this skill's body is injected into your prompt. Use "*"
-  - forecast               # as a trigger to ALWAYS inject (use sparingly).
-  - temperature
+triggers:                  # Optional. Search keywords — they help tool_search and the
+  - weather                # capability index surface this skill. They do NOT inject its
+  - forecast               # body; load a pure skill's body on demand with skill_read_source
+  - temperature            # (or point to it from agents.md so it's read at the right time).
 tools:                     # Optional. Declare each callable tool here. THIS is what
   - name: weather_get      # the model sees, and how calls are routed — every tool the
     description: Get the current weather for a city.   # plugin handles MUST be listed.
