@@ -83,6 +83,27 @@ Only if **all** of these are true: step 2 was clean, changelog entries exist in 
    This bumps the version, makes the `1.0.215` commit, tags it, and pushes `main` + tags to `origin`.
 4. Report the released version and confirm the push succeeded.
 
+### 6. Deliver Discord release notes
+
+After the release is pushed, hand the user a ready-to-post **Discord announcement** for this version, condensed from the English changelog you just wrote.
+
+- **Deliver it as raw text inside a fenced code block** (```` ``` ````) so the Discord formatting characters (`**`, `#`, `-`, …) are shown **literally, not rendered** — the user copies the block straight into Discord.
+- **One single message, under Discord's 2000-character free-tier limit.** Aim for ~1500 or less to leave headroom, and **count the characters** — if it won't fit, trim to the most important changes rather than splitting into multiple messages.
+- **Use only Discord-flavored formatting** (a subset of Markdown): `# ` / `## ` headers, `**bold**`, `*italic*`, `-` bullets, `> ` quotes, `` `inline code` ``. **Do not use masked links `[text](url)`** — they don't render in a normal Discord message; paste a **bare URL** if a link is needed. An emoji or two in the title is fine.
+- **Condense, don't copy.** One **bold headline** per notable change plus a single short sentence — drop the long changelog prose. English only.
+
+Shape to follow:
+
+```text
+# 🐟 Wolffish v1.0.215
+
+**Headline of change one**
+One short sentence on what it does for the user.
+
+**Headline of change two**
+One short sentence on what it does for the user.
+```
+
 ---
 
 ## If issues are found — STOP
@@ -114,6 +135,7 @@ npm run typecheck && npm run lint      # 2. mechanical guards (+ one independent
 # 4. bump README badge to the same next version
 git add -A && git commit -m "<summary>"  # 5. commit everything first (tree must be clean)
 npm run release                          #    then bump + tag + push
+# 6. deliver Discord notes: raw code block, Discord formatting, one message < 2000 chars
 ```
 
-**One-line summary:** analyze → quick third-party check → if clean, write EN+AR changelog + bump README badge → commit everything → `npm run release`. If anything is wrong, stop, report it minimally, let the user decide, then start over.
+**One-line summary:** analyze → quick third-party check → if clean, write EN+AR changelog + bump README badge → commit everything → `npm run release` → hand over Discord release notes (raw code block, Discord formatting, one message under 2000 chars). If anything is wrong, stop, report it minimally, let the user decide, then start over.
