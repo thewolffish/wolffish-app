@@ -11,6 +11,8 @@
  * clients.
  */
 
+import { findDividerBars } from '../format'
+
 /** Escape `&`, `<`, `>` for HTML text content. */
 export function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -56,8 +58,10 @@ export type TelegramHtmlReport = {
   issues: string[]
   /**
    * The message would reach the user broken: Telegram rejects the HTML
-   * (400 → plain fallback shows tag soup) or entity-escaped tags render
-   * as literal "<b>" text. Send tools refuse to send while any exist.
+   * (400 → plain fallback shows tag soup), entity-escaped tags render
+   * as literal "<b>" text, or a decorative divider-bar line wraps into
+   * several broken lines of bar characters on a phone. Send tools
+   * refuse to send while any exist.
    */
   hard: string[]
   /**
@@ -83,9 +87,32 @@ export type TelegramHtmlReport = {
  *      happily delivers these as LITERAL "<b>text</b>" text, so neither the
  *      API nor a tag-syntax check ever objects; only this rule can. Escaped
  *      tags inside a real `<code>`/`<pre>` span are exempt — that is the
- *      correct way to display a tag on purpose.
+ *      correct way to display a tag on purpose,
+ *   6. decorative divider-bar lines (━━━━━, ═════, -----) — perfectly valid
+ *      text, but a phone's narrow bubble wraps them into several broken
+ *      lines of bar characters. Bars inside `<code>`/`<pre>` are exempt —
+ *      quoted CLI output legitimately contains long box-drawing runs.
  * `>` is left unchecked — Telegram accepts a bare `>` in text.
  */
+/**
+ * Blank the CONTENT of `<pre>…</pre>` and `<code>…</code>` spans (tags
+ * stay, length preserved) so the divider-bar check never fires on quoted
+ * code — showing a box-drawn CLI table inside a code span is intentional
+ * content, not decoration. `<pre>` first: its body may contain `<code>`.
+ */
+function maskCodeSpans(message: string): string {
+  const blank = (s: string): string => s.replace(/[^\n]/g, ' ')
+  return message
+    .replace(
+      /(<pre(?:\s[^<>]*)?>)([\s\S]*?)(<\/pre>)/gi,
+      (_, open, body, close) => open + blank(body) + close
+    )
+    .replace(
+      /(<code(?:\s[^<>]*)?>)([\s\S]*?)(<\/code>)/gi,
+      (_, open, body, close) => open + blank(body) + close
+    )
+}
+
 export function validateTelegramHtml(message: string): TelegramHtmlReport {
   const unsupported = new Set<string>()
   const orphanClose = new Set<string>()
@@ -183,6 +210,12 @@ export function validateTelegramHtml(message: string): TelegramHtmlReport {
   }
   if (bareAmp > 0) {
     hard.push(`${bareAmp} bare "&" not part of an entity — write a literal ampersand as &amp;.`)
+  }
+  const bars = findDividerBars(maskCodeSpans(message))
+  if (bars.length > 0) {
+    hard.push(
+      `Decorative divider line(s) ${bars.join(' ')} — a phone's narrow bubble wraps these into several broken lines of bar characters. Delete them: a blank line separates sections, and an emoji + <b>bold</b> line is the header.`
+    )
   }
 
   // Leaked Markdown parses fine as HTML but Telegram renders NO Markdown, so

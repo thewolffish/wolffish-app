@@ -61,9 +61,17 @@ function planPhases(args) {
   } catch (err) {
     return { success: false, error: `workflow_plan: ${err instanceof Error ? err.message : String(err)}` }
   }
+  // A first plan (no agents yet) reads back the contract in-band: the card
+  // this call just drew is an empty agent table until agent_spawn fills it.
+  if (workflow.listAgents().length === 0) {
+    return {
+      success: true,
+      output: `Plan recorded (${phases.join(' → ')}). The user's card now shows these phases over an EMPTY agent table ("No agents spawned yet.") and stays that way until you spawn — agent_spawn the phase work now, passing \`phase\`. If you meant to do this work yourself, planning was the wrong call: the card cannot be removed, so run the substantive phases through agents.`
+    }
+  }
   return {
     success: true,
-    output: `Plan recorded (${phases.join(' → ')}). Assign agents to phases via agent_spawn's \`phase\`.`
+    output: `Plan updated (${phases.join(' → ')}). Assign agents to phases via agent_spawn's \`phase\`.`
   }
 }
 

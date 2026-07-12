@@ -8,6 +8,8 @@
  * channel's CODE-composed surfaces.
  */
 
+import { findDividerBars } from '../format'
+
 /**
  * Strip inline markup markers, keep the text. Used for model-authored
  * strings the channel embeds inside its own WhatsApp `*bold*` wrapper
@@ -37,7 +39,9 @@ export type WhatsAppFormatReport = {
   /**
    * The message would reach the recipient visibly broken: HTML tags or
    * entities, which WhatsApp NEVER parses — they arrive as literal
-   * "<b>" / "&amp;" text. Send tools refuse to send while any exist.
+   * "<b>" / "&amp;" text — or a decorative divider-bar line that wraps
+   * into several broken lines of bar characters on a phone. Send tools
+   * refuse to send while any exist.
    */
   hard: string[]
   /**
@@ -80,8 +84,10 @@ const HTML_ENTITY = /&(?:amp|lt|gt|quot|apos|nbsp|#\d+|#x[0-9a-fA-F]+);/g
  * about the API; it's about what the recipient SEES. This does NOT rewrite
  * anything (the model is the formatter). Hard: HTML tags/entities —
  * WhatsApp parses no HTML, so `<b>` and `&amp;` arrive as literal text
- * (the cross-channel confusion class). Soft: leaked Markdown, shown as
- * raw symbols. Both classes are exempt inside ``` fences and `inline
+ * (the cross-channel confusion class) — and decorative divider-bar lines
+ * (━━━━━, ═════, -----), which a phone's narrow bubble wraps into several
+ * broken lines of bar characters. Soft: leaked Markdown, shown as
+ * raw symbols. All classes are exempt inside ``` fences and `inline
  * code` spans, where showing markup is the point. WhatsApp's real syntax
  * is single-char: *bold* _italic_ ~strike~ `code` ```block``` ,
  * "- "/"1. " lists, "> " quotes — those are fine.
@@ -104,6 +110,12 @@ export function validateWhatsAppFormat(message: string): WhatsAppFormatReport {
   if (entities && entities.length > 0) {
     hard.push(
       `HTML entities ${sample(entities)}: WhatsApp shows them literally — the recipient sees "&amp;", not "&". Write the plain & < > characters themselves.`
+    )
+  }
+  const bars = findDividerBars(masked)
+  if (bars.length > 0) {
+    hard.push(
+      `Decorative divider line(s) ${bars.join(' ')} — a phone's narrow bubble wraps these into several broken lines of bar characters. Delete them: a blank line separates sections, and an emoji + *bold* line is the header.`
     )
   }
 

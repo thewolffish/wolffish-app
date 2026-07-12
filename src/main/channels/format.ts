@@ -11,6 +11,40 @@
  */
 
 /**
+ * A "divider bar" line: nothing but repeated bar/dash characters — the
+ * decorative section separators models love to draw (━━━━━, ═════, ─────,
+ * -----, _____, ▬▬▬▬▬, • • • • •, Arabic ـــــ tatweel runs). Chat
+ * bubbles are narrow: on a phone these wrap into several broken lines of
+ * bar characters, so the channel overlays forbid them and both pre-send
+ * gates reject them (code spans are exempt at the call sites — quoted CLI
+ * output legitimately contains long box-drawing runs). Six or more bar
+ * characters counts as a bar; short expressive runs ("---", "——") stay
+ * below the threshold.
+ */
+// Bar characters: ASCII rule chars, middle dot U+00B7, Arabic tatweel
+// U+0640, en/em/horizontal-bar dashes U+2013–U+2015, bullet U+2022,
+// minus U+2212, horizontal line extension U+23AF, box drawing + block
+// elements U+2500–U+259F, geometric shapes U+25A0–U+25FF, wavy dashes
+// U+3030/U+FE4F.
+const DIVIDER_BAR_LINE = /^[ \t]*(?:[-=_~*#+·ـ–-―•−⎯─-▟■-◿〰﹏][ \t]*){6,}$/
+
+/**
+ * Return up to three distinct divider-bar lines found in `text`, quoted
+ * and truncated for use in a gate's issue message. Empty array = clean.
+ */
+export function findDividerBars(text: string): string[] {
+  const bars: string[] = []
+  for (const line of text.split(/\r?\n/)) {
+    if (!DIVIDER_BAR_LINE.test(line)) continue
+    const bar = line.trim()
+    const sample = `"${bar.length > 12 ? bar.slice(0, 12) + '…' : bar}"`
+    if (!bars.includes(sample)) bars.push(sample)
+    if (bars.length >= 3) break
+  }
+  return bars
+}
+
+/**
  * Strip Markdown markup, keep the underlying text. Used for tool
  * results and system reports (e.g. insula /status) whose output is
  * itself Markdown — leaving `**bold**` and `## heading` intact would

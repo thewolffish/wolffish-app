@@ -3,7 +3,7 @@ name: workflow
 description: Design and drive a model-led workflow — declare phases, spawn live parallel agents on models you choose, collect each result as it lands, and steer or cancel agents. Available only to the workflow master; agents never get these tools.
 tools:
   - name: workflow_plan
-    description: Declare (or revise) the phases of this run — e.g. ["analysis", "build", "critique", "verify"]. The plan renders on the user's workflow card and phases light up as their agents run and complete. Call it again anytime the plan changes; assign agents to phases via agent_spawn's phase argument. Skip it entirely for work that needs no agents.
+    description: Declare (or revise) the phases of this run — e.g. ["analysis", "build", "critique", "verify"]. Calling this commits you to spawning agents into these phases — the card it draws renders agent telemetry only, so a plan whose phases no agent ever runs shows the user a broken, empty card ("No agents spawned yet."). Doing the work yourself? Skip the plan entirely — no plan, no card. Call it again anytime the plan changes; assign agents to phases via agent_spawn's phase argument.
     parameters:
       phases:
         type: array
@@ -83,7 +83,9 @@ job is the work, not the reporting.
 
 ## The loop
 
-1. `workflow_plan` the phases when the task is big enough to phase.
+1. `workflow_plan` the phases when the task is big enough to phase — it
+   commits you to spawning agents into them; solo work takes no plan and
+   no card.
 2. `agent_spawn` the independent slices — several at once for parallelism,
    each with a complete, self-contained task and a model matched to its
    difficulty.

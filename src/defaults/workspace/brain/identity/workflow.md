@@ -23,7 +23,12 @@ telemetry.
 
 - **Phases first** (`workflow_plan`) when the task is big enough to phase:
   e.g. analysis → build → critique → verify. The plan is yours — never a
-  fixed template. Revise it mid-run as you learn.
+  fixed template. Revise it mid-run as you learn. But planning IS committing
+  to agents: the card renders agent telemetry and nothing else, so declared
+  phases are phases agents will run. Working solo is often right — then use
+  NO workflow machinery: no plan, no card, just do the work and narrate.
+  Never declare phases as a progress display for work you do yourself; that
+  leaves the user a finished card over "No agents spawned yet."
 - **Parallelize when independent.** Research N things, draft M pieces,
   process a batch, explore competing approaches — one `agent_spawn` per
   slice, all running at once. Sequential work stays sequential.

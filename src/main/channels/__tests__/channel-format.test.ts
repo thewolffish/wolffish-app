@@ -183,6 +183,32 @@ ok('unclosed tag is hard', validateTelegramHtml('<b>x').hard.length > 0, true)
 ok('markdown bold is soft not hard', validateTelegramHtml('**x** ok').hard.length === 0, true)
 ok('markdown bold lands in soft', validateTelegramHtml('**x** ok').soft.length === 1, true)
 
+// Decorative divider-bar lines are perfectly valid HTML but a phone's
+// narrow bubble wraps them into several broken lines of bar characters —
+// hard. The 19:34 security-audit report shipped exactly this and
+// telegram_check_format said "valid".
+ok(
+  'divider bar lines invalid (the audit failure)',
+  validateTelegramHtml('━━━━━━━━━━━━━━━━━━━━━━\n🟢 <b>LOW</b>\n━━━━━━━━━━━━━━━━━━━━━━').ok,
+  false
+)
+ok('divider bar is hard', validateTelegramHtml('══════════\n<b>SUMMARY</b>').hard.length > 0, true)
+ok('em-dash bar is hard', validateTelegramHtml('——————————').hard.length > 0, true)
+ok('tatweel bar is hard', validateTelegramHtml('ــــــــــ\nمرحبا').hard.length > 0, true)
+ok('short dash run in prose passes', validateTelegramHtml('scores: —— pending').ok, true)
+ok(
+  'box-drawn table inside <pre> passes',
+  validateTelegramHtml('<pre>┌────────────┐\n│ a          │\n└────────────┘</pre>').ok,
+  true
+)
+eq(
+  'divider issue teaches the blank line',
+  validateTelegramHtml('━━━━━━━━━━').issues.some((s) => s.includes('blank line'))
+    ? 'taught'
+    : 'missing',
+  'taught'
+)
+
 // --- RejectBudget (the send tools' never-lose-a-message guarantee) ---
 
 {
@@ -249,6 +275,24 @@ ok('table flagged', validateWhatsAppFormat('| item | price |\n| a | 5 |').ok, fa
 ok('hr flagged', validateWhatsAppFormat('above\n---\nbelow').ok, false)
 ok('lang fence flagged', validateWhatsAppFormat('```python\nprint(1)\n```').ok, false)
 ok('bare fence passes', validateWhatsAppFormat('```\nprint(1)\n```').ok, true)
+
+// Divider bars: plain text, but they wrap into broken bar lines on a
+// phone — hard, same as on Telegram.
+ok('divider bar flagged on whatsapp', validateWhatsAppFormat('━━━━━━━━━━\n*HIGH*').ok, false)
+ok('divider bar is hard on whatsapp', validateWhatsAppFormat('━━━━━━━━━━\nx').hard.length > 0, true)
+ok(
+  'long dash rule is hard on whatsapp',
+  validateWhatsAppFormat('------------------------\nfindings').hard.length > 0,
+  true
+)
+ok(
+  'short md hr stays soft-only',
+  validateWhatsAppFormat('above\n---\nbelow').hard.length === 0,
+  true
+)
+ok('spaced bullet bar is hard', validateWhatsAppFormat('• • • • • •').hard.length > 0, true)
+ok('bars inside a fence pass', validateWhatsAppFormat('```\n━━━━━━━━━━\n```').ok, true)
+ok('progress bar with label passes', validateWhatsAppFormat('▓▓▓▓▓▓░░░░ 60%').ok, true)
 
 const total = passed + failed
 console.log(`${passed}/${total} passed`)

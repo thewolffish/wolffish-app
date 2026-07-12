@@ -1,4 +1,14 @@
-## v1.0.216 — 2026-07-12 `Latest`
+## v1.0.217 — 2026-07-12 `Latest`
+
+### The Drawn Divider Line, Banished From Your Phone
+
+Wolffish loved decorating channel reports with horizontal rules — a ━━━━━ over the summary, a ═════ under the verdict. On a phone those lines are a trap: the narrow chat bubble **wraps every long bar into several broken lines of stray characters**, turning a tidy report into rubble — and because a divider is perfectly valid text, every format check so far stamped it "valid" and let it through (a security-audit report reached Telegram exactly this way). Both channels now treat a drawn divider as what it really is — **a message that will arrive broken** — and hold it back before it goes out, on WhatsApp and Telegram alike. Wolffish is taught the right habit up front, too: **a blank line separates sections; an emoji plus a bold line makes a header**. Quoted code keeps its box-drawing — a CLI table inside a code block is content, not decoration — and short dashes in prose stay untouched.
+
+### A Workflow Card Only When Agents Run
+
+In workflow mode, declaring a plan draws a **live card** in the chat — phases across the top, agents lighting up beneath them as they work. But that card renders **agent telemetry and nothing else**, so when Wolffish declared phases and then quietly did the work itself, you were left with a finished task sitting over a card frozen on **"No agents spawned yet."** Planning now means committing: the moment a plan exists with no agents behind it, the tool itself answers back that the card it just drew is empty and that the phase work belongs in agents — and when doing the work solo is the right call, Wolffish now skips the machinery entirely: **no plan, no card, just the work and a running narration**.
+
+## v1.0.216 — 2026-07-12
 
 ### New Chats Appear the Instant They Start
 
