@@ -208,6 +208,7 @@ eq(
     : 'missing',
   'taught'
 )
+ok('bare progress bar passes on telegram', validateTelegramHtml('▓▓▓▓▓▓░░░░').ok, true)
 
 // --- RejectBudget (the send tools' never-lose-a-message guarantee) ---
 
@@ -293,6 +294,10 @@ ok(
 ok('spaced bullet bar is hard', validateWhatsAppFormat('• • • • • •').hard.length > 0, true)
 ok('bars inside a fence pass', validateWhatsAppFormat('```\n━━━━━━━━━━\n```').ok, true)
 ok('progress bar with label passes', validateWhatsAppFormat('▓▓▓▓▓▓░░░░ 60%').ok, true)
+// Block Elements are the progress-bar alphabet, not divider decoration —
+// a bare bar passes too (the label is style, not a gate requirement).
+ok('bare progress bar passes', validateWhatsAppFormat('▓▓▓▓▓▓░░░░').ok, true)
+ok('full-block bar passes', validateWhatsAppFormat('██████████').ok, true)
 
 const total = passed + failed
 console.log(`${passed}/${total} passed`)

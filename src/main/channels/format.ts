@@ -19,14 +19,17 @@
  * gates reject them (code spans are exempt at the call sites — quoted CLI
  * output legitimately contains long box-drawing runs). Six or more bar
  * characters counts as a bar; short expressive runs ("---", "——") stay
- * below the threshold.
+ * below the threshold. Block Elements (▓ ░ █ and friends) are NOT bar
+ * characters: a run of them is a progress bar — content, not decoration —
+ * and passes even without a label.
  */
 // Bar characters: ASCII rule chars, middle dot U+00B7, Arabic tatweel
 // U+0640, en/em/horizontal-bar dashes U+2013–U+2015, bullet U+2022,
-// minus U+2212, horizontal line extension U+23AF, box drawing + block
-// elements U+2500–U+259F, geometric shapes U+25A0–U+25FF, wavy dashes
-// U+3030/U+FE4F.
-const DIVIDER_BAR_LINE = /^[ \t]*(?:[-=_~*#+·ـ–-―•−⎯─-▟■-◿〰﹏][ \t]*){6,}$/
+// minus U+2212, horizontal line extension U+23AF, box drawing
+// U+2500–U+257F, geometric shapes U+25A0–U+25FF, wavy dashes
+// U+3030/U+FE4F. Block Elements U+2580–U+259F (▓ ░ █) are deliberately
+// excluded — that's the progress-bar alphabet.
+const DIVIDER_BAR_LINE = /^[ \t]*(?:[-=_~*#+·ـ–-―•−⎯─-╿■-◿〰﹏][ \t]*){6,}$/
 
 /**
  * Return up to three distinct divider-bar lines found in `text`, quoted
