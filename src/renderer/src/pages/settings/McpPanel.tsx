@@ -3,8 +3,16 @@ import { CopyButton } from '@components/core/CopyButton'
 import { Input } from '@components/core/Input'
 import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn'
-import type { McpServerSnapshot, McpServerState } from '@preload/index'
-import { Alert02Icon, Delete02Icon, RefreshIcon } from 'hugeicons-react'
+import type { McpHeader, McpServerSnapshot, McpServerState } from '@preload/index'
+import {
+  Add01Icon,
+  Alert02Icon,
+  Delete02Icon,
+  RefreshIcon,
+  SquareLock02Icon,
+  ViewIcon,
+  ViewOffIcon
+} from 'hugeicons-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -87,6 +95,147 @@ function parseEnvLines(text: string): Record<string, string> {
 const ICON_BUTTON =
   'flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-md focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg disabled:pointer-events-none disabled:opacity-40'
 
+// Same icon-button and small-button idioms as the Variables panel.
+const ROW_ICON_BUTTON =
+  'shrink-0 cursor-pointer rounded-lg p-1.5 focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg disabled:pointer-events-none disabled:opacity-40'
+
+const SMALL_CANCEL_BUTTON =
+  'border-border text-fg hover:bg-border/40 cursor-pointer rounded-lg border px-3 py-1.5 text-xs font-medium focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg disabled:cursor-not-allowed disabled:opacity-60'
+
+const SMALL_SAVE_BUTTON =
+  'bg-primary text-primary-fg cursor-pointer rounded-lg px-3 py-1.5 text-xs font-medium shadow-sm focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg disabled:cursor-not-allowed disabled:opacity-60'
+
+const HEADER_ROW_INPUT =
+  'border-border bg-bg text-fg placeholder:text-muted/60 min-w-0 rounded-lg border px-3 py-1.5 font-mono text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
+
+const TEXT_TOGGLE_BUTTON =
+  'text-muted hover:text-fg self-start text-xs font-medium focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
+
+/**
+ * One editable header row. `rid` is a local, monotonic React key —
+ * header keys are user-editable mid-list, so they can't key the rows.
+ * `revealed` is per-row UI state for peeking at a sensitive value.
+ */
+type HeaderRow = { rid: number; key: string; value: string; sensitive: boolean; revealed: boolean }
+
+let nextHeaderRid = 1
+
+function makeHeaderRow(header?: McpHeader): HeaderRow {
+  return {
+    rid: nextHeaderRid++,
+    key: header?.key ?? '',
+    value: header?.value ?? '',
+    sensitive: header?.sensitive === true,
+    revealed: false
+  }
+}
+
+/** Rows → the wire shape, dropping rows the user left entirely blank. */
+function rowsToHeaders(rows: HeaderRow[]): McpHeader[] {
+  return rows
+    .map((row) => ({ key: row.key.trim(), value: row.value.trim(), sensitive: row.sensitive }))
+    .filter((header) => header.key !== '' || header.value !== '')
+}
+
+/**
+ * The header rows editor shared by the add form and each remote server
+ * card. Follows the Variables panel's sensitive idiom: a sensitive row's
+ * value renders as a password field with an eye toggle to peek — purely
+ * a display courtesy; values are stored in plaintext either way.
+ */
+function HeadersEditor(props: {
+  rows: HeaderRow[]
+  onChange: (rows: HeaderRow[]) => void
+  disabled?: boolean
+}): React.JSX.Element {
+  const { t } = useTranslation()
+  const { rows, onChange, disabled } = props
+
+  const patchRow = (rid: number, patch: Partial<HeaderRow>): void => {
+    onChange(rows.map((row) => (row.rid === rid ? { ...row, ...patch } : row)))
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      {rows.map((row) => (
+        <div key={row.rid} className="flex items-center gap-2" dir="ltr">
+          <input
+            type="text"
+            value={row.key}
+            disabled={disabled}
+            placeholder={t('settings.mcp.headers.keyPlaceholder')}
+            spellCheck={false}
+            onChange={(e) => patchRow(row.rid, { key: e.target.value })}
+            className={cn(HEADER_ROW_INPUT, 'w-2/5')}
+          />
+          <input
+            type={row.sensitive && !row.revealed ? 'password' : 'text'}
+            value={row.value}
+            disabled={disabled}
+            placeholder={t('settings.mcp.headers.valuePlaceholder')}
+            spellCheck={false}
+            autoComplete="off"
+            onChange={(e) => patchRow(row.rid, { value: e.target.value })}
+            className={cn(HEADER_ROW_INPUT, 'flex-1')}
+          />
+          {row.sensitive && (
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() => patchRow(row.rid, { revealed: !row.revealed })}
+              aria-label={
+                row.revealed ? t('settings.mcp.headers.hide') : t('settings.mcp.headers.reveal')
+              }
+              title={
+                row.revealed ? t('settings.mcp.headers.hide') : t('settings.mcp.headers.reveal')
+              }
+              className={cn(ROW_ICON_BUTTON, 'text-muted hover:text-fg')}
+            >
+              {row.revealed ? <ViewOffIcon size={14} /> : <ViewIcon size={14} />}
+            </button>
+          )}
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => patchRow(row.rid, { sensitive: !row.sensitive, revealed: false })}
+            aria-pressed={row.sensitive}
+            aria-label={t('settings.mcp.headers.markSensitive')}
+            title={t('settings.mcp.headers.markSensitive')}
+            className={cn(
+              ROW_ICON_BUTTON,
+              row.sensitive ? 'text-accent' : 'text-muted hover:text-fg'
+            )}
+          >
+            <SquareLock02Icon size={14} />
+          </button>
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => onChange(rows.filter((r) => r.rid !== row.rid))}
+            aria-label={t('settings.mcp.headers.removeRow')}
+            title={t('settings.mcp.headers.removeRow')}
+            className={cn(ROW_ICON_BUTTON, 'text-muted hover:text-rose-500')}
+          >
+            <Delete02Icon size={14} />
+          </button>
+        </div>
+      ))}
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => onChange([...rows, makeHeaderRow()])}
+        className={cn(
+          TEXT_TOGGLE_BUTTON,
+          'hover:bg-border/30 flex items-center gap-1.5 rounded-lg px-2 py-1.5'
+        )}
+      >
+        <Add01Icon size={14} />
+        <span>{t('settings.mcp.headers.addRow')}</span>
+      </button>
+    </div>
+  )
+}
+
 // No ms-5 here: the inset lives on a wrapper div that inherits the page
 // direction. These pres are dir="ltr", and logical margins resolve against
 // the ELEMENT's own direction — an ms-5 on the pre itself would flip to the
@@ -105,9 +254,16 @@ export function McpPanel(): React.JSX.Element {
   const [name, setName] = useState('')
   const [envText, setEnvText] = useState('')
   const [showEnv, setShowEnv] = useState(false)
+  const [addHeaderRows, setAddHeaderRows] = useState<HeaderRow[]>([])
+  const [showAddHeaders, setShowAddHeaders] = useState(false)
+  // Per-server headers editor — at most one open at a time, draft rows
+  // held here until Save persists them (or Cancel throws them away).
+  const [headerEdit, setHeaderEdit] = useState<{ id: string; rows: HeaderRow[] } | null>(null)
   const [adding, setAdding] = useState(false)
   const [addError, setAddError] = useState<string | null>(null)
-  const [busy, setBusy] = useState<Record<string, 'test' | 'auth' | 'remove' | 'toggle'>>({})
+  const [busy, setBusy] = useState<
+    Record<string, 'test' | 'auth' | 'remove' | 'toggle' | 'headers'>
+  >({})
   // Action errors (a failed Test / Sign-in) shown in the card's issue code
   // block, keyed by server id. A successful test is a toast, not an entry
   // here. Cleared when the server reconnects (see commit), on another
@@ -154,6 +310,7 @@ export function McpPanel(): React.JSX.Element {
   }, [commit])
 
   const isStdio = useMemo(() => target.trim() !== '' && !looksLikeUrl(target), [target])
+  const isHttp = useMemo(() => target.trim() !== '' && looksLikeUrl(target), [target])
 
   // Off/On, matching the segmented toggle used across the settings panels.
   const enabledOptions = useMemo(
@@ -171,16 +328,20 @@ export function McpPanel(): React.JSX.Element {
     setAddError(null)
     try {
       const env = isStdio ? parseEnvLines(envText) : undefined
+      const headers = isHttp ? rowsToHeaders(addHeaderRows) : []
       const result = await window.api.mcp.add({
         target: trimmed,
         name: name.trim() || undefined,
-        env: env && Object.keys(env).length > 0 ? env : undefined
+        env: env && Object.keys(env).length > 0 ? env : undefined,
+        headers: headers.length > 0 ? headers : undefined
       })
       if (result.ok) {
         setTarget('')
         setName('')
         setEnvText('')
         setShowEnv(false)
+        setAddHeaderRows([])
+        setShowAddHeaders(false)
         commit(await window.api.mcp.list())
       } else {
         setAddError(result.error)
@@ -188,7 +349,7 @@ export function McpPanel(): React.JSX.Element {
     } finally {
       setAdding(false)
     }
-  }, [target, name, envText, isStdio, adding, commit])
+  }, [target, name, envText, addHeaderRows, isStdio, isHttp, adding, commit])
 
   const handleTest = useCallback(
     async (id: string) => {
@@ -237,6 +398,43 @@ export function McpPanel(): React.JSX.Element {
       }
     },
     [clearIssue]
+  )
+
+  const openHeaderEditor = useCallback((server: McpServerSnapshot) => {
+    const rows = (server.headers ?? []).map((header) => makeHeaderRow(header))
+    setHeaderEdit({ id: server.id, rows: rows.length > 0 ? rows : [makeHeaderRow()] })
+  }, [])
+
+  const handleSaveHeaders = useCallback(
+    async (id: string) => {
+      if (!headerEdit || headerEdit.id !== id) return
+      setBusy((prev) => ({ ...prev, [id]: 'headers' }))
+      try {
+        const result = await window.api.mcp.setHeaders(id, rowsToHeaders(headerEdit.rows))
+        if (result.ok) {
+          clearIssue(id)
+          // Close only if the open editor still belongs to this server —
+          // never discard a draft the user opened on another card since.
+          setHeaderEdit((prev) => (prev?.id === id ? null : prev))
+          commit(await window.api.mcp.list())
+          toast.show({ tone: 'success', message: t('settings.mcp.headers.saved') })
+        } else {
+          setIssues((prev) => ({
+            ...prev,
+            [id]: result.error ?? t('settings.mcp.headers.failed')
+          }))
+        }
+      } catch {
+        setIssues((prev) => ({ ...prev, [id]: t('settings.mcp.headers.failed') }))
+      } finally {
+        setBusy((prev) => {
+          const next = { ...prev }
+          delete next[id]
+          return next
+        })
+      }
+    },
+    [headerEdit, clearIssue, commit, toast, t]
   )
 
   const handleRemove = useCallback(
@@ -410,14 +608,70 @@ export function McpPanel(): React.JSX.Element {
                         className="absolute inset-e-1.5 top-1/2 -translate-y-1/2 opacity-0 group-hover/url:opacity-100 focus-visible:opacity-100"
                       />
                     </div>
+                    {/* Custom headers (remote servers) — a quiet text
+                        affordance under the URL that expands into the rows
+                        editor. Draft rows live in headerEdit until Save. */}
+                    {server.transport === 'http' && headerEdit?.id !== server.id && (
+                      <button
+                        type="button"
+                        disabled={rowBusy != null}
+                        onClick={() => openHeaderEditor(server)}
+                        className={cn(TEXT_TOGGLE_BUTTON, 'ms-5 rounded-md py-0.5')}
+                      >
+                        {server.headers?.length
+                          ? t('settings.mcp.headers.editWithCount', {
+                              count: server.headers.length
+                            })
+                          : t('settings.mcp.headers.toggle')}
+                      </button>
+                    )}
+                    {server.transport === 'http' && headerEdit?.id === server.id && (
+                      <div className="ms-5 flex flex-col gap-2">
+                        <span className="text-muted text-xs font-medium">
+                          {t('settings.mcp.headers.label')}
+                        </span>
+                        <HeadersEditor
+                          rows={headerEdit.rows}
+                          onChange={(rows) => setHeaderEdit({ id: server.id, rows })}
+                          disabled={rowBusy === 'headers'}
+                        />
+                        <p className="text-muted/80 text-xs">{t('settings.mcp.headers.hint')}</p>
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            type="button"
+                            disabled={rowBusy === 'headers'}
+                            onClick={() => setHeaderEdit(null)}
+                            className={SMALL_CANCEL_BUTTON}
+                          >
+                            {t('settings.mcp.headers.cancel')}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={rowBusy != null}
+                            onClick={() => void handleSaveHeaders(server.id)}
+                            className={SMALL_SAVE_BUTTON}
+                          >
+                            {t('settings.mcp.headers.save')}
+                          </button>
+                        </div>
+                      </div>
+                    )}
                     {/* Sign-in alert — a filled warning card under the URL
                         (the app's amber idiom, like the warning Badge), away
-                        from the row actions: a short prompt + the one button. */}
+                        from the row actions: a short prompt + the one button.
+                        With headers configured the wording points at them
+                        too — an expired header value is the likelier fix. */}
                     {server.state === 'needs-auth' && (
                       <div className="ms-5 flex items-center justify-between gap-3 rounded-md bg-amber-500/15 px-3 py-2 ring-1 ring-amber-500/30">
                         <span className="flex min-w-0 items-center gap-2 text-xs text-amber-700 dark:text-amber-300">
                           <Alert02Icon size={16} className="shrink-0" />
-                          <span className="truncate">{t('settings.mcp.auth.prompt')}</span>
+                          <span className="truncate">
+                            {t(
+                              server.headers?.length
+                                ? 'settings.mcp.auth.promptHeaders'
+                                : 'settings.mcp.auth.prompt'
+                            )}
+                          </span>
                         </span>
                         <Button
                           size="sm"
@@ -496,6 +750,27 @@ export function McpPanel(): React.JSX.Element {
             >
               {t('settings.mcp.add.envToggle')}
             </button>
+          )}
+          {isHttp && !showAddHeaders && (
+            <button
+              type="button"
+              onClick={() => {
+                setShowAddHeaders(true)
+                setAddHeaderRows((rows) => (rows.length > 0 ? rows : [makeHeaderRow()]))
+              }}
+              className={TEXT_TOGGLE_BUTTON}
+            >
+              {t('settings.mcp.headers.toggle')}
+            </button>
+          )}
+          {isHttp && showAddHeaders && (
+            <div className="flex flex-col gap-1.5">
+              <span className="text-muted text-sm font-medium">
+                {t('settings.mcp.headers.label')}
+              </span>
+              <HeadersEditor rows={addHeaderRows} onChange={setAddHeaderRows} disabled={adding} />
+              <p className="text-muted/80 text-xs">{t('settings.mcp.headers.hint')}</p>
+            </div>
           )}
           {isStdio && showEnv && (
             <div className="flex flex-col gap-1.5">

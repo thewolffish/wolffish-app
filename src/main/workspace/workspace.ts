@@ -1725,7 +1725,7 @@ export async function addMcpServer(server: McpServerConfig): Promise<WorkspaceCo
  */
 export async function updateMcpServer(
   id: string,
-  patch: Partial<Pick<McpServerConfig, 'name' | 'enabled' | 'command' | 'url' | 'env'>>
+  patch: Partial<Pick<McpServerConfig, 'name' | 'enabled' | 'command' | 'url' | 'env' | 'headers'>>
 ): Promise<WorkspaceConfig> {
   return patchConfig((c) => {
     const servers = (c.mcp ?? EMPTY_MCP_CONFIG).servers

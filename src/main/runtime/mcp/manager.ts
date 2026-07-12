@@ -20,6 +20,7 @@ import type {
   McpAddInput,
   McpAddResult,
   McpConfig,
+  McpHeader,
   McpServerConfig,
   McpServerSnapshot,
   McpTestResult
@@ -34,6 +35,52 @@ import {
 
 /** How long mcp:add waits for the first connect before returning "connecting". */
 const ADD_SETTLE_CAP_MS = 8_000
+
+/** RFC 7230 token — what fetch's Headers accepts as a header name. */
+const HEADER_NAME_RE = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/
+/**
+ * ByteString-safe values: tab + printable ASCII + Latin-1. Anything a
+ * fetch Headers object rejects (NUL, other controls, any code point
+ * above U+00FF — including invisible zero-width characters riding along
+ * with a pasted token) must be caught HERE, or it only surfaces as a
+ * Headers constructor throw deep inside the silent reconnect loop.
+ */
+const HEADER_VALUE_RE = /^[\t\x20-\x7E\x80-\xFF]*$/
+
+type HeaderCheck = { ok: true; headers?: McpHeader[] } | { ok: false; error: string }
+
+/**
+ * Trim and validate user-entered headers BEFORE they are persisted.
+ * Blank rows are dropped; `ok` with `headers: undefined` means "nothing
+ * left to store". Duplicate names (case-insensitive, matching how HTTP
+ * treats them) are rejected rather than silently last-one-wins.
+ */
+function sanitizeHeaders(headers: McpHeader[] | undefined): HeaderCheck {
+  if (!headers || headers.length === 0) return { ok: true, headers: undefined }
+  const clean: McpHeader[] = []
+  const seen = new Set<string>()
+  for (const header of headers) {
+    const key = (header.key ?? '').trim()
+    const value = (header.value ?? '').trim()
+    if (!key && !value) continue
+    if (!HEADER_NAME_RE.test(key)) {
+      return { ok: false, error: `invalid header name: "${key || '(empty)'}"` }
+    }
+    if (!HEADER_VALUE_RE.test(value)) {
+      return {
+        ok: false,
+        error: `header "${key}" value contains line breaks, control characters, or non-Latin-1 text (check for invisible characters if it was pasted)`
+      }
+    }
+    const lower = key.toLowerCase()
+    if (seen.has(lower)) {
+      return { ok: false, error: `duplicate header: "${key}"` }
+    }
+    seen.add(lower)
+    clean.push({ key, value, sensitive: header.sensitive === true })
+  }
+  return { ok: true, headers: clean.length > 0 ? clean : undefined }
+}
 
 export type McpManagerDeps = {
   register: (capability: Capability, plugin: WolffishPlugin) => void
@@ -125,6 +172,8 @@ export class McpManager {
     } else if (parseCommandLine(target).length === 0) {
       return { ok: false, error: 'enter a command or URL' }
     }
+    const headerCheck = sanitizeHeaders(kind === 'http' ? input.headers : undefined)
+    if (!headerCheck.ok) return { ok: false, error: headerCheck.error }
     const name = input.name?.trim() || deriveDisplayName(target, kind)
     const existing = await getMcpConfig()
     const taken = new Set<string>([
@@ -141,6 +190,7 @@ export class McpManager {
       env:
         kind === 'stdio' && input.env && Object.keys(input.env).length > 0 ? input.env : undefined,
       url: kind === 'http' ? target : undefined,
+      headers: headerCheck.headers,
       enabled: true
     }
     await addMcpServer(server)
@@ -184,6 +234,33 @@ export class McpManager {
     await updateMcpServer(id, { enabled })
     connection.updateEnabled(enabled)
     await connection.setEnabled(enabled)
+    this.notifySoon()
+    return { ok: true }
+  }
+
+  /**
+   * Replace a remote server's custom headers: persist, then reconnect
+   * with the new set. Sending the full list every time (never a merge)
+   * keeps removal trivial — an empty list clears the field entirely.
+   */
+  async setHeaders(id: string, headers: McpHeader[]): Promise<{ ok: boolean; error?: string }> {
+    if (!this.owns) return { ok: false, error: McpManager.NOT_OWNER }
+    const connection = this.connections.get(id)
+    if (!connection) return { ok: false, error: 'unknown connection' }
+    const record = (await getMcpConfig()).servers.find((s) => s.id === id)
+    if (record?.transport !== 'http') {
+      return { ok: false, error: 'headers apply to remote (URL) servers only' }
+    }
+    const check = sanitizeHeaders(headers)
+    if (!check.ok) return { ok: false, error: check.error }
+    await updateMcpServer(id, { headers: check.headers })
+    // Re-check after the config I/O awaits: a remove() that fully landed
+    // in that window already stopped this connection, and reviving it
+    // here would resurrect a deleted server as an untracked zombie.
+    if (this.connections.get(id) !== connection) {
+      return { ok: false, error: 'unknown connection' }
+    }
+    await connection.setHeaders(check.headers)
     this.notifySoon()
     return { ok: true }
   }

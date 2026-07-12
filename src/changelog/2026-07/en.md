@@ -1,4 +1,14 @@
-## v1.0.217 — 2026-07-12 `Latest`
+## v1.0.218 — 2026-07-13 `Latest`
+
+### Remote Connections That Take an API Key
+
+Many remote MCP servers don't want a sign-in — they want a key: an `x-api-key`, a pre-issued token, an `Authorization` value copied from a dashboard. Until now Wolffish only spoke OAuth, so those servers sat forever on "requires sign-in" with nothing to click that could help. Now every remote connection has **Headers** — add them while creating the connection or any time after, right on its card — and they **ride every request**, so a server satisfied by its key **connects outright: no sign-in, no browser, nothing to approve**. Supply your own `Authorization` header and it owns the connection's auth completely — Wolffish steps its whole sign-in machinery aside so a stored token can never fight your key. And a connection stuck on "requires sign-in" doesn't need tearing down: **paste the fresh value, hit Save, and it reconnects on the spot**.
+
+### Keys That Stay Off-Screen and On-Origin
+
+Mark a header value **sensitive** and it renders masked in settings, with an eye to peek — a display courtesy for shared screens; the value itself is stored in plain text like the rest of Wolffish's credentials. Two quieter guards work underneath. Validation catches the junk that breaks connections mysteriously — **the invisible characters that ride along with a pasted token**, line breaks, duplicate names — before anything is saved, instead of letting it fail deep inside the connection with no visible reason. And headers are **pinned to the server's own address**: whatever other hosts the sign-in machinery may consult along the way, your key is never sent anywhere but the server it belongs to.
+
+## v1.0.217 — 2026-07-12
 
 ### The Drawn Divider Line, Banished From Your Phone
 

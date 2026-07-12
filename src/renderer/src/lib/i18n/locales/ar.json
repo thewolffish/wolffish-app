@@ -1175,7 +1175,30 @@
         "generic": "جارٍ إنشاء الاتصال…"
       },
       "auth": {
-        "prompt": "يتطلّب هذا الخادم تسجيل الدخول."
+        "prompt": "يتطلّب هذا الخادم تسجيل الدخول.",
+        "promptHeaders": "يتطلّب هذا الخادم تسجيل الدخول — أو تحديث قيمة ترويسة أدناه."
+      },
+      "headers": {
+        "toggle": "+ ترويسات",
+        "label": "الترويسات",
+        "editWithCount_zero": "الترويسات",
+        "editWithCount_one": "الترويسات (ترويسة واحدة)",
+        "editWithCount_two": "الترويسات (ترويستان)",
+        "editWithCount_few": "الترويسات ({{count}})",
+        "editWithCount_many": "الترويسات ({{count}})",
+        "editWithCount_other": "الترويسات ({{count}})",
+        "keyPlaceholder": "الترويسة",
+        "valuePlaceholder": "القيمة",
+        "markSensitive": "حسّاسة — إخفاء القيمة في هذه القائمة",
+        "reveal": "إظهار القيمة",
+        "hide": "إخفاء القيمة",
+        "addRow": "إضافة ترويسة",
+        "removeRow": "إزالة الترويسة",
+        "save": "حفظ",
+        "cancel": "إلغاء",
+        "saved": "حُفظت الترويسات — تجري إعادة الاتصال",
+        "failed": "تعذّر حفظ الترويسات",
+        "hint": "تُرسَل مع كل طلب — ترويسة Authorization تُغني عن تسجيل الدخول. تُحفَظ نصاً صِرفاً."
       },
       "add": {
         "title": "إضافة اتصال",

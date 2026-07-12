@@ -69,7 +69,7 @@ import { COMPACTION_THRESHOLD } from '@main/runtime/compactor'
 import type { AskUserResponse } from '@main/runtime/cerebellum'
 import { deleteCapabilityFolder, importCapability } from '@main/runtime/capabilityImport'
 import { McpManager } from '@main/runtime/mcp/manager'
-import type { McpAddInput } from '@main/runtime/mcp/types'
+import type { McpAddInput, McpHeader } from '@main/runtime/mcp/types'
 import { MODEL_CATALOG } from '@main/runtime/models'
 import { localProvider } from '@main/runtime/providers/local'
 import { sudoSession } from '@main/runtime/sudoSession'
@@ -1633,6 +1633,10 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('mcp:setEnabled', (_e, id: string, enabled: boolean) =>
     mcpManager.setEnabled(id, enabled)
+  )
+
+  ipcMain.handle('mcp:setHeaders', (_e, id: string, headers: McpHeader[]) =>
+    mcpManager.setHeaders(id, headers)
   )
 
   ipcMain.handle('mcp:test', (_e, id: string) => mcpManager.test(id))

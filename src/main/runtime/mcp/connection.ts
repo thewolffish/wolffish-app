@@ -50,7 +50,12 @@ import {
   WolffishOAuthProvider,
   type OauthPersistence
 } from '@main/runtime/mcp/auth'
-import type { McpServerConfig, McpServerSnapshot, McpTestResult } from '@main/runtime/mcp/types'
+import type {
+  McpHeader,
+  McpServerConfig,
+  McpServerSnapshot,
+  McpTestResult
+} from '@main/runtime/mcp/types'
 
 const BACKOFF_INITIAL_MS = 1_000
 const BACKOFF_FACTOR = 2
@@ -163,6 +168,25 @@ export class McpConnection {
     this.deps.config.enabled = enabled
   }
 
+  /**
+   * Apply a new custom-header set (the manager has already persisted
+   * it). Headers ride the transport, so an enabled connection tears
+   * down and reconnects with fresh failure accounting — a needs-auth
+   * server whose new headers work comes straight up as connected,
+   * without ever entering the OAuth sign-in flow. The reconnect is
+   * deliberately NOT awaited: a stalled server would otherwise hold the
+   * IPC reply (and the settings Save button) for the full connect
+   * timeout; status flows through notify as usual.
+   */
+  async setHeaders(headers: McpHeader[] | undefined): Promise<void> {
+    this.deps.config.headers = headers
+    if (!this.deps.config.enabled) return
+    await this.stop()
+    this.consecutiveFailures = 0
+    this.attempt = 0
+    void this.connect()
+  }
+
   async setEnabled(enabled: boolean): Promise<void> {
     if (enabled) {
       this.consecutiveFailures = 0
@@ -218,6 +242,7 @@ export class McpConnection {
       state,
       toolCount: this.registered ? this.nameMap.size : 0,
       toolNames: this.registered ? [...this.nameMap.keys()] : [],
+      headers: cfg.transport === 'http' ? cfg.headers : undefined,
       serverName: this.serverName ?? undefined,
       serverVersion: this.serverVersion ?? undefined,
       error: this.lastError ?? undefined,
@@ -288,8 +313,18 @@ export class McpConnection {
     if (cfg.transport !== 'http' || !cfg.url) {
       return { ok: false, error: 'only remote servers use OAuth sign-in' }
     }
+    if (this.hasCustomAuthorization()) {
+      // The custom header would override any token a sign-in obtains, so
+      // the flow can never help — point the user at the actual fix.
+      return {
+        ok: false,
+        error:
+          'this connection authenticates with a custom Authorization header — update it under Headers instead of signing in'
+      }
+    }
     // Silence all background activity for the duration of the flow.
     this.epoch++
+    const flowEpoch = this.epoch
     this.clearTimers()
     const oldClient = this.client
     this.client = null
@@ -312,7 +347,10 @@ export class McpConnection {
         }
       })
       const transport = new StreamableHTTPClientTransport(new URL(cfg.url), {
-        authProvider: provider
+        authProvider: provider,
+        // Same headers as regular connects: if they satisfy the server,
+        // this probe succeeds and sign-in ends without a browser trip.
+        fetch: this.scopedHeaderFetch()
       })
       const client = this.buildClient()
       let needsCode = false
@@ -332,10 +370,14 @@ export class McpConnection {
         const result = await callback
         this.cancelAuthCallback = null
         if (!result.ok) {
-          this.state = 'needs-auth'
-          this.connectPhase = null
-          this.lastError = result.error
-          this.deps.notify()
+          // Epoch guard: a setHeaders/stop that superseded this flow owns
+          // the state now — report the failure without stamping over it.
+          if (this.epoch === flowEpoch) {
+            this.state = 'needs-auth'
+            this.connectPhase = null
+            this.lastError = result.error
+            this.deps.notify()
+          }
           return { ok: false, error: result.error }
         }
         // finishAuth must run on the SAME transport that saw the 401 —
@@ -354,10 +396,12 @@ export class McpConnection {
       return { ok: false, error: this.lastError ?? 'connection failed after sign-in' }
     } catch (err) {
       const message = errorMessage(err)
-      this.state = 'needs-auth'
-      this.connectPhase = null
-      this.lastError = message
-      this.deps.notify()
+      if (this.epoch === flowEpoch) {
+        this.state = 'needs-auth'
+        this.connectPhase = null
+        this.lastError = message
+        this.deps.notify()
+      }
       return { ok: false, error: message }
     } finally {
       this.interactiveAuth = false
@@ -454,11 +498,60 @@ export class McpConnection {
     }
     if (!cfg.url) throw new Error('no URL configured')
     const url = new URL(cfg.url)
-    const provider = await this.ensureAuthProvider()
+    // A user-supplied Authorization header means the user owns auth for
+    // this server: leave the whole OAuth machinery detached so stored
+    // tokens can never fight the header (the SDK would otherwise refresh
+    // + retry on 401 and trip its circuit breaker instead of parking in
+    // needs-auth). A plain 401 is classified in handleConnectFailure.
+    const provider = this.hasCustomAuthorization() ? undefined : await this.ensureAuthProvider()
+    const fetchFn = this.scopedHeaderFetch()
     if (this.preferSse) {
-      return new SSEClientTransport(url, { authProvider: provider })
+      return new SSEClientTransport(url, { authProvider: provider, fetch: fetchFn })
     }
-    return new StreamableHTTPClientTransport(url, { authProvider: provider })
+    return new StreamableHTTPClientTransport(url, { authProvider: provider, fetch: fetchFn })
+  }
+
+  private customHeaderRecord(): Record<string, string> | undefined {
+    const headers = this.deps.config.headers
+    if (!headers || headers.length === 0) return undefined
+    const record: Record<string, string> = {}
+    for (const header of headers) {
+      const key = header.key.trim()
+      if (!key) continue
+      record[key] = header.value
+    }
+    return Object.keys(record).length > 0 ? record : undefined
+  }
+
+  private hasCustomAuthorization(): boolean {
+    const record = this.customHeaderRecord()
+    if (!record) return false
+    return Object.keys(record).some((key) => key.toLowerCase() === 'authorization')
+  }
+
+  /**
+   * The user's custom headers as a transport `fetch` override, NOT a
+   * requestInit: requestInit would also ride the SDK's auth flows to
+   * whatever third-party authorization-server host discovery finds,
+   * leaking sensitive values off the server's origin. This injects
+   * strictly same-origin, and Headers.set() replaces case-insensitively,
+   * so a user auth header beats a stored OAuth token no matter how the
+   * user capitalized it.
+   */
+  private scopedHeaderFetch():
+    | ((url: string | URL, init?: RequestInit) => Promise<Response>)
+    | undefined {
+    const record = this.customHeaderRecord()
+    const base = this.deps.config.url
+    if (!record || !base) return undefined
+    const origin = new URL(base).origin
+    return (url, init) => {
+      const target = new URL(String(url))
+      if (target.origin !== origin) return fetch(url, init)
+      const headers = new Headers(init?.headers)
+      for (const [key, value] of Object.entries(record)) headers.set(key, value)
+      return fetch(url, { ...init, headers })
+    }
   }
 
   private buildClient(): Client {
@@ -495,9 +588,13 @@ export class McpConnection {
   private async handleConnectFailure(err: unknown): Promise<void> {
     const cfg = this.deps.config
     this.connectPhase = null
-    if (isUnauthorizedError(err)) {
-      // Only a user sign-in (or a future token refresh during it) can
-      // fix auth — retrying silently would just spam the server.
+    // Beyond the SDK's UnauthorizedError (OAuth redirect needed), a raw
+    // HTTP 401 is also terminal: it reaches here when no authProvider is
+    // attached (custom Authorization header) or when the SDK's circuit
+    // breaker fires after a token refresh that a custom header keeps
+    // overriding. Retrying silently would just spam the server — park in
+    // needs-auth, whose card also points at the configured headers.
+    if (isUnauthorizedError(err) || isHttp401Error(err)) {
       this.state = 'needs-auth'
       this.lastError = 'authorization required'
       this.unregisterCapability()
@@ -819,6 +916,20 @@ function isUnauthorizedError(err: unknown): boolean {
 function isStreamableHttpError(err: unknown): err is Error & { code?: number } {
   if (err instanceof StreamableHTTPError) return true
   return err instanceof Error && err.constructor.name.startsWith('StreamableHTTPError')
+}
+
+/**
+ * A transport error that carries HTTP status 401. StreamableHTTPError
+ * covers the POST path and the SDK's 401-after-auth circuit breaker;
+ * SseError (same dual-module-identity caveat as above) covers the
+ * legacy SSE GET.
+ */
+function isHttp401Error(err: unknown): boolean {
+  if (isStreamableHttpError(err)) return err.code === 401
+  if (err instanceof Error && err.constructor.name.startsWith('SseError')) {
+    return (err as Error & { code?: number }).code === 401
+  }
+  return false
 }
 
 function lastLines(text: string, count: number): string {

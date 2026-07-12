@@ -28,6 +28,20 @@ export type McpOauthState = {
   redirectPort?: number
 }
 
+/**
+ * One custom HTTP header sent with every request to a remote server.
+ * Stored in the same plaintext config.json as every other credential in
+ * Wolffish — `sensitive` only masks the value in the settings UI, it
+ * does not change how the value is persisted or transmitted.
+ */
+export type McpHeader = {
+  /** Header name, e.g. "Authorization" or "X-API-Key". */
+  key: string
+  value: string
+  /** UI-only: render the value masked in settings. */
+  sensitive?: boolean
+}
+
 export type McpServerConfig = {
   /** Stable random id — the IPC handle for this connection. */
   id: string
@@ -45,6 +59,13 @@ export type McpServerConfig = {
   env?: Record<string, string>
   /** http: the remote server URL. */
   url?: string
+  /**
+   * http: custom headers sent with every request (e.g. a pre-issued
+   * Authorization token). When these satisfy the server, connects
+   * succeed outright and the OAuth sign-in flow is never entered —
+   * OAuth remains the fallback if a request still comes back 401.
+   */
+  headers?: McpHeader[]
   enabled: boolean
   oauth?: McpOauthState
 }
@@ -72,6 +93,8 @@ export type McpServerSnapshot = {
   toolCount: number
   /** Namespaced tool names as the model sees them. */
   toolNames: string[]
+  /** http: the configured custom headers (values raw; UI masks sensitive ones). */
+  headers?: McpHeader[]
   /** Name/version the server reported during initialize. */
   serverName?: string
   serverVersion?: string
@@ -100,6 +123,8 @@ export type McpAddInput = {
   target: string
   /** stdio env vars. */
   env?: Record<string, string>
+  /** http custom headers. Ignored for stdio targets. */
+  headers?: McpHeader[]
 }
 
 export type McpAddResult = { ok: true; server: McpServerSnapshot } | { ok: false; error: string }

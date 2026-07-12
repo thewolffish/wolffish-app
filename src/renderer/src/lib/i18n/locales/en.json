@@ -1175,7 +1175,26 @@
         "generic": "establishing the connection…"
       },
       "auth": {
-        "prompt": "This server requires sign-in."
+        "prompt": "This server requires sign-in.",
+        "promptHeaders": "This server requires sign-in — or an updated header value below."
+      },
+      "headers": {
+        "toggle": "+ Headers",
+        "label": "Headers",
+        "editWithCount_one": "Headers ({{count}})",
+        "editWithCount_other": "Headers ({{count}})",
+        "keyPlaceholder": "Header",
+        "valuePlaceholder": "Value",
+        "markSensitive": "Sensitive — mask the value in this list",
+        "reveal": "Reveal value",
+        "hide": "Hide value",
+        "addRow": "Add header",
+        "removeRow": "Remove header",
+        "save": "Save",
+        "cancel": "Cancel",
+        "saved": "Headers saved — reconnecting",
+        "failed": "Couldn't save headers",
+        "hint": "Sent with every request — an Authorization header skips sign-in. Stored as plain text."
       },
       "add": {
         "title": "Add a connection",

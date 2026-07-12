@@ -146,6 +146,16 @@ export type McpTransportKind = 'stdio' | 'http'
 
 export type McpServerState = 'connected' | 'connecting' | 'needs-auth' | 'offline' | 'disabled'
 
+/**
+ * One custom HTTP header for a remote server. Persisted plaintext;
+ * `sensitive` only masks the value in the settings UI.
+ */
+export type McpHeader = {
+  key: string
+  value: string
+  sensitive?: boolean
+}
+
 export type McpServerSnapshot = {
   id: string
   name: string
@@ -156,6 +166,8 @@ export type McpServerSnapshot = {
   state: McpServerState
   toolCount: number
   toolNames: string[]
+  /** http: the configured custom headers (values raw; UI masks sensitive ones). */
+  headers?: McpHeader[]
   serverName?: string
   serverVersion?: string
   error?: string
@@ -175,6 +187,8 @@ export type McpAddInput = {
   name?: string
   target: string
   env?: Record<string, string>
+  /** http custom headers. Ignored for stdio targets. */
+  headers?: McpHeader[]
 }
 
 export type McpAddResult = { ok: true; server: McpServerSnapshot } | { ok: false; error: string }
@@ -184,6 +198,7 @@ export type McpApi = {
   add: (input: McpAddInput) => Promise<McpAddResult>
   remove: (id: string) => Promise<{ ok: boolean; error?: string }>
   setEnabled: (id: string, enabled: boolean) => Promise<{ ok: boolean; error?: string }>
+  setHeaders: (id: string, headers: McpHeader[]) => Promise<{ ok: boolean; error?: string }>
   test: (id: string) => Promise<McpTestResult>
   authorize: (id: string) => Promise<{ ok: boolean; error?: string }>
   onStatusChange: (callback: (servers: McpServerSnapshot[]) => void) => () => void
@@ -1729,6 +1744,7 @@ const api: WolffishApi = {
     add: (input) => ipcRenderer.invoke('mcp:add', input),
     remove: (id) => ipcRenderer.invoke('mcp:remove', id),
     setEnabled: (id, enabled) => ipcRenderer.invoke('mcp:setEnabled', id, enabled),
+    setHeaders: (id, headers) => ipcRenderer.invoke('mcp:setHeaders', id, headers),
     test: (id) => ipcRenderer.invoke('mcp:test', id),
     authorize: (id) => ipcRenderer.invoke('mcp:authorize', id),
     onStatusChange: (callback) => subscribe('mcp:statusChange', callback)
