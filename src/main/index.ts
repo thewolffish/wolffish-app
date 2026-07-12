@@ -749,6 +749,15 @@ turnRunner.setLifecycleListener((ev) => broadcast('chat:turnState', ev))
 // Relay conversation deletions to the renderer so the sidebar prunes its live
 // run-status — a channel-side /delete never touches the renderer otherwise.
 agent.corpus.on('conversation.deleted', ({ id }) => broadcast('conversation:deleted', { id }))
+// Relay conversation (re)index/remove so the rail + History refresh for every
+// create/rename/delete path — including autonomous heartbeat/procedure runs
+// that never emit a turn lifecycle. Fires after the cortex row is committed.
+agent.corpus.on('conversation.indexed', () => broadcast('conversation:changed', {}))
+// Full rebuilds + the startup catch-up index via indexWalkedSync directly, so
+// no conversation.indexed fires while they run — a list fetched mid-rebuild
+// can be partial (see the getReindexStatus guard in conversation:list). Push
+// one list-changed when the pass ends so every surface reconciles.
+agent.corpus.on('index.reindexed', () => broadcast('conversation:changed', {}))
 const electronChannel = new ElectronChannel(agent, turnRunner)
 const telegramChannel = new TelegramChannel(agent, turnRunner, localProvider)
 const whatsappChannel = new WhatsAppChannel(agent, turnRunner, localProvider)
@@ -3074,6 +3083,12 @@ app.whenReady().then(async () => {
     // Fall back to the scan when the index is cold/empty (first boot,
     // rebuild in flight) so History is never blank.
     try {
+      // A full rebuild DELETEs the conversations table then re-inserts in
+      // event-loop-yielded batches — mid-rebuild the table is non-empty but
+      // INCOMPLETE, and the >0-rows check below would happily return the
+      // partial list. Prefer the disk scan for the rebuild's duration
+      // (~140ms per call, rare: schema bumps + explicit rebuilds only).
+      if (agent.cortex.getReindexStatus()) return listConversations()
       const rows = agent.cortex.listConversations({ limit: 500 })
       if (rows.length > 0) {
         return rows.map((r) => ({

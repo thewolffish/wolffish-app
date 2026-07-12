@@ -266,6 +266,15 @@ export type CorpusEvents = {
    * leaves a ghost row synthesized from the lingering status.
    */
   'conversation.deleted': { id: string }
+  /**
+   * A conversation file was (re)indexed or removed by the incremental cortex
+   * watcher — i.e. the list-visible set may have changed. Fires AFTER the row
+   * is written, so a refetch is always fresh. Relayed to the renderer so the
+   * conversations rail and History refresh for EVERY create/rename/delete path,
+   * including ones that emit no turn lifecycle (autonomous heartbeat/procedure
+   * runs, create-without-turn, the sensitive-data gate).
+   */
+  'conversation.indexed': { rel: string }
 }
 
 export type CorpusEvent = keyof CorpusEvents

@@ -741,6 +741,14 @@ export type ConversationApi = {
    * channel-side delete doesn't leave a ghost row.
    */
   onDeleted: (listener: (event: { id: string }) => void) => () => void
+  /**
+   * Fired when the conversation list-visible set may have changed on disk (a
+   * conversation was created, renamed, appended, or removed and re-indexed).
+   * Covers paths that emit no turn lifecycle — autonomous heartbeat/procedure
+   * runs, create-without-turn, the sensitive-data gate — so the rail and
+   * History refetch. Payload-free: the listener just re-lists.
+   */
+  onChanged: (listener: () => void) => () => void
 }
 
 export type ViewerTreeNode =
@@ -1593,7 +1601,8 @@ const api: WolffishApi = {
     delete: (id) => ipcRenderer.invoke('conversation:delete', id),
     create: (model) => ipcRenderer.invoke('conversation:create', model),
     onSummaryUpdated: (listener) => subscribe('conversation:summaryUpdated', listener),
-    onDeleted: (listener) => subscribe('conversation:deleted', listener)
+    onDeleted: (listener) => subscribe('conversation:deleted', listener),
+    onChanged: (listener) => subscribe('conversation:changed', listener)
   },
   viewer: {
     readTree: () => ipcRenderer.invoke('viewer:readTree'),

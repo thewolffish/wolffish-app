@@ -392,12 +392,23 @@ export class Cortex {
       size: stat.size,
       artifact: isArtifactPath(rel)
     })
+    // Push a list-changed signal for conversation writes ONLY. This is the
+    // incremental watcher path (catchUp/reindex call indexWalkedSync directly,
+    // so they never fire this) — one event per live conversation write, after
+    // the row is committed, so the renderer's refetch is guaranteed fresh.
+    if (rel.startsWith('brain/conversations/')) {
+      this.corpus?.emit('conversation.indexed', { rel })
+    }
   }
 
   /** Drop every row associated with a file (file deleted from workspace). */
   async removeFile(absPath: string): Promise<void> {
     this.requireDb()
-    this.removeRelSync(this.toRelative(absPath))
+    const rel = this.toRelative(absPath)
+    this.removeRelSync(rel)
+    if (rel.startsWith('brain/conversations/')) {
+      this.corpus?.emit('conversation.indexed', { rel })
+    }
   }
 
   /**

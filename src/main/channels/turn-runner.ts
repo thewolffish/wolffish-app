@@ -261,15 +261,37 @@ export class TurnRunner {
 
       turnRouter.register(turnId, sink)
 
-      // Title FIRST, before any processing. For a new conversation this is a
-      // pure LLM call to the chosen model; it also persists the title (writing
-      // a titled shell for an in-app chat whose file doesn't exist yet), so
-      // the conversation is saved with its title before agent.respond runs.
-      // Idempotent + session-cached: a conversation already titled skips the
-      // LLM (and the disk check) entirely, so follow-up turns pay nothing.
+      // Resolve what's already known synchronously (caller-provided or
+      // session-cached) so follow-up turns carry their real title from the
+      // first event.
       let title =
         opts.conversationTitle ??
         (conversationId ? this.titledCache.get(conversationId) : undefined)
+
+      // Emit 'started' BEFORE titling — titling is a blocking LLM call
+      // (1–4s typical, titleTimeoutMs cap), and gating the emit on it left
+      // a window where a brand-new conversation existed on disk but had no
+      // live status: the rail showed a dead untitled row (or, pre-index,
+      // nothing). Early, the row appears instantly with a pulsing chip; the
+      // resolved title reaches the renderer via the titled-shell disk write
+      // (watcher → conversation:changed) and the terminal emit below.
+      // Exactly ONE 'started' per turn — the lifecycle contract (see the
+      // concurrent-edge roll-up test) — so this is a move, not a re-emit.
+      this.emitLifecycle({
+        phase: 'started',
+        turnId,
+        conversationId,
+        channel: sink.channelId,
+        title: title ?? null
+      })
+
+      // Title next, still before any processing. For a new conversation this
+      // is a pure LLM call to the chosen model; it also persists the title
+      // (writing a titled shell for an in-app chat whose file doesn't exist
+      // yet), so the conversation is saved with its title before
+      // agent.respond runs. Idempotent + session-cached: a conversation
+      // already titled skips the LLM (and the disk check) entirely, so
+      // follow-up turns pay nothing.
       if (!title) {
         // Bound the title-first call with a PRIVATE deadline that aborts ONLY
         // titling — never the turn's own controller (that would kill the turn).
@@ -299,14 +321,6 @@ export class TurnRunner {
           this.titledCache.set(conversationId, title)
         }
       }
-
-      this.emitLifecycle({
-        phase: 'started',
-        turnId,
-        conversationId,
-        channel: sink.channelId,
-        title
-      })
 
       try {
         // The turnScope entry is what keys everything per-turn downstream:

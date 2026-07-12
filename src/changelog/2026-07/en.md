@@ -1,4 +1,18 @@
-## v1.0.215 — 2026-07-11 `Latest`
+## v1.0.216 — 2026-07-12 `Latest`
+
+### New Chats Appear the Instant They Start
+
+The moment a conversation begins — you hit send in the app, or a message lands on WhatsApp or Telegram — its row now **shows up in the sidebar instantly**, activity chip already pulsing. Until now Wolffish named the conversation first (a short model call), and for those one to four seconds a brand-new chat lived nowhere you could see it: a dead untitled row, or nothing at all. Now the row lands first and **the title catches up in place** a moment later — and once a real title is showing, it never flips back to "Untitled."
+
+### A Conversation List That's Never Stale
+
+The conversations rail and the History page now **refresh themselves the moment a conversation changes on disk** — created, renamed, grown, or deleted — wherever the change came from. History used to take **one snapshot when you opened it** and never update; the rail only redrew when chat activity nudged it. So a conversation born where no window was watching — a **heartbeat run on its schedule, a saved procedure firing overnight** — could sit invisible until something else happened to shake the list. Now every path reports through the same door, and both lists simply follow along, live.
+
+### History, Painted Before You Blink
+
+Opening History now **paints your conversations instantly** from the last visit and refreshes silently in the background — the loading skeleton only ever appears on the first open after launch. Deleting a conversation **removes the row on the spot**, too: no more deleted row flashing back for half a beat while the index caught up.
+
+## v1.0.215 — 2026-07-11
 
 ### Channel Messages That Can't Leave Broken
 

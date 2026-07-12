@@ -75,14 +75,39 @@ export function ConversationsSidebar(): React.JSX.Element {
     }
   }, [statusKey])
 
+  // A conversation can change with NO turn lifecycle event — autonomous
+  // heartbeat/procedure runs, a create-without-turn, the sensitive-data gate —
+  // none of which touch runStatuses/statusKey, so the effect above never fires
+  // for them. The main process pushes conversation:changed after the cortex row
+  // is (re)indexed/removed, so re-listing here is always fresh. Debounced to
+  // coalesce the write bursts of an active turn into a single refetch.
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const off = window.api.conversation.onChanged(() => {
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(() => void window.api.conversation.list().then(setMetas), 250)
+    })
+    return () => {
+      if (timer) clearTimeout(timer)
+      off()
+    }
+  }, [])
+
   const rows = useMemo<Row[]>(() => {
     const byId = new Map<string, Row>()
     for (const meta of metas) {
+      const live = runStatuses[meta.id]
+      // A just-created conversation reaches the index BEFORE its LLM title
+      // resolves (the shell persists as 'Untitled'; the titled write re-indexes
+      // 1–4s later). While the indexed title is still the sentinel, prefer the
+      // live-status title when one exists — the row only ever transitions
+      // Untitled → real, never regresses.
+      const indexedTitle = meta.title && meta.title !== 'Untitled' ? meta.title : null
       byId.set(meta.id, {
         conversationId: meta.id,
-        title: meta.title,
-        phase: runStatuses[meta.id]?.phase ?? null,
-        at: Math.max(meta.updatedAt, runStatuses[meta.id]?.at ?? 0)
+        title: indexedTitle ?? live?.title ?? t('chat.conversationsUntitled'),
+        phase: live?.phase ?? null,
+        at: Math.max(meta.updatedAt, live?.at ?? 0)
       })
     }
     // A conversation not yet in the cortex-backed list (an in-app chat is

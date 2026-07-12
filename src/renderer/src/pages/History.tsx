@@ -24,6 +24,13 @@ import { useTranslation } from 'react-i18next'
 // Varied title-bar widths so the loading skeleton looks like real conversation rows.
 const skeletonTitleWidths = [62, 45, 78, 38, 55, 70, 48, 84, 41, 66]
 
+// Last-fetched list, kept across remounts (this page remounts on every visit).
+// Seeds the next mount for an instant paint, then refreshes silently in the
+// background — so the skeleton shows ONLY on the first-ever cold load, never on
+// return visits. Module-scoped: lives for the app session. (Same cold-start
+// pattern the channel settings panels use.)
+let cachedConversations: ConversationMeta[] | null = null
+
 export function History(): React.JSX.Element {
   const { t } = useTranslation()
   const { locale } = useLocale()
@@ -39,26 +46,44 @@ export function History(): React.JSX.Element {
     closeConversation
   } = useSessions()
 
-  const [conversations, setConversations] = useState<ConversationMeta[]>([])
-  const [loading, setLoading] = useState(true)
+  const [conversations, setConversations] = useState<ConversationMeta[]>(
+    () => cachedConversations ?? []
+  )
+  // Skeleton ONLY on the first-ever load (cold cache). Return visits seed from
+  // the cache above and refresh silently — no skeleton flash.
+  const [loading, setLoading] = useState(() => cachedConversations === null)
   const [deleteTarget, setDeleteTarget] = useState<ConversationMeta | null>(null)
 
+  // The SINGLE fetch path (mount + live refresh). Writes the module cache so
+  // the next remount paints instantly. Delete mutates state/cache locally
+  // instead of refetching (see handleDelete).
   const refresh = useCallback(async () => {
     const list = await window.api.conversation.list()
+    cachedConversations = list
     setConversations(list)
+    setLoading(false)
   }, [])
 
+  // One effect owns every list update, so there is never a double fetch: a
+  // silent background refresh on mount (the cache-seeded list is already on
+  // screen) PLUS a live refresh whenever main pushes conversation:changed (it
+  // fires after the cortex row is (re)indexed/removed, so this page stays fresh
+  // for conversations arriving on any channel or from an autonomous run).
+  // Debounced to coalesce a turn's write bursts.
   useEffect(() => {
-    let cancelled = false
-    void window.api.conversation.list().then((list) => {
-      if (cancelled) return
-      setConversations(list)
-      setLoading(false)
+    // The mount refresh rides the same timer as the live pushes: scheduled,
+    // never called synchronously in the effect body (setState-in-effect
+    // cascades), and coalesced with any push that lands immediately after.
+    let timer: ReturnType<typeof setTimeout> | null = setTimeout(() => void refresh(), 0)
+    const off = window.api.conversation.onChanged(() => {
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(() => void refresh(), 250)
     })
     return () => {
-      cancelled = true
+      if (timer) clearTimeout(timer)
+      off()
     }
-  }, [])
+  }, [refresh])
 
   const handleResume = useCallback(
     async (id: string) => {
@@ -81,13 +106,21 @@ export function History(): React.JSX.Element {
 
   const handleDelete = useCallback(async () => {
     if (!deleteTarget) return
+    const target = deleteTarget
     // Main refuses while the conversation has a turn in flight (ok:false) —
     // the row's disabled state should prevent it, this is the backstop.
-    const result = await window.api.conversation.delete(deleteTarget.id)
-    if (result.ok) closeConversation(deleteTarget.id)
+    const result = await window.api.conversation.delete(target.id)
+    if (result.ok) {
+      closeConversation(target.id)
+      // Drop the row optimistically. deleteConversation removes the FILE, but
+      // the cortex row lingers until the watcher's removeFile (~500ms) — so a
+      // refresh() here would re-fetch the still-indexed row and flash it back.
+      // The conversation:changed push reconciles the list silently right after.
+      cachedConversations = cachedConversations?.filter((c) => c.id !== target.id) ?? null
+      setConversations((prev) => prev.filter((c) => c.id !== target.id))
+    }
     setDeleteTarget(null)
-    void refresh()
-  }, [deleteTarget, closeConversation, refresh])
+  }, [deleteTarget, closeConversation])
 
   const handleNewChat = useCallback(() => {
     newSession()
@@ -150,8 +183,14 @@ export function History(): React.JSX.Element {
             <div className="grid grid-cols-1 gap-x-3 gap-y-1 md:grid-cols-2">
               {conversations.map((conv, index) => {
                 const isActive = activeConversationId === conv.id
-                const phase = runStatuses[conv.id]?.phase ?? null
+                const live = runStatuses[conv.id]
+                const phase = live?.phase ?? null
                 const processing = phase === 'processing'
+                // Same title preference as the rail: while the indexed title
+                // is still the pre-titling 'Untitled' sentinel, show the
+                // live-status title if one exists — never regress real → Untitled.
+                const title =
+                  conv.title && conv.title !== 'Untitled' ? conv.title : (live?.title ?? conv.title)
                 return (
                   <div
                     key={conv.id}
@@ -178,7 +217,7 @@ export function History(): React.JSX.Element {
                     </span>
                     <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                       <div className="flex min-w-0 items-center gap-1.5">
-                        <span className="text-fg truncate text-sm font-medium">{conv.title}</span>
+                        <span className="text-fg truncate text-sm font-medium">{title}</span>
                         {conv.channel === 'heartbeat' && (
                           <Activity04Icon
                             size={12}
