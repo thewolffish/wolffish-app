@@ -1294,10 +1294,13 @@ export class TelegramChannel {
   }
 
   /**
-   * Swap this chat's active conversation to the selected one. The
-   * old conversation file stays on disk; only the chat-id mapping
-   * changes, which is what /resume effectively means: "make this
-   * conversation the one I'm continuing."
+   * Swap this chat's active conversation to the selected one, which is
+   * what /resume effectively means: "make this conversation the one I'm
+   * continuing." Also restarts the idle clock: loadOrCreateConversation's
+   * stale check keys off updatedAt, and a resumed conversation is by
+   * definition old — left untouched, the very next message would trip
+   * that check and bounce the user straight back to a fresh conversation,
+   * undoing the resume.
    */
   private async handleResumeSelection(chatId: number, conversationId: string): Promise<void> {
     const conv = await loadConversation(conversationId)
@@ -1305,6 +1308,12 @@ export class TelegramChannel {
       await this.safeSend(chatId, '⚠️ That conversation is no longer available.')
       return
     }
+    // Bump before remapping so a failed write leaves the old mapping intact.
+    await updateConversation(conversationId, (disk) => {
+      if (!disk) return null
+      disk.updatedAt = Date.now()
+      return disk
+    })
     await setConversationIdForChat(chatId, conversationId)
     await this.sendHtml(chatId, `▶️ Resumed: <b>${escapeHtml(conv.title)}</b>`)
   }

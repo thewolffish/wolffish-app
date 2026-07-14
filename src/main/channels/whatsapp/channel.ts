@@ -1332,6 +1332,16 @@ export class WhatsAppChannel {
       await this.safeSend(jid, 'That conversation is no longer available.')
       return
     }
+    // Restart the idle clock. loadOrCreateConversation's stale check keys
+    // off updatedAt, and a resumed conversation is by definition old — left
+    // untouched, the very next message would trip that check and bounce the
+    // user straight back to a fresh conversation, undoing the resume. Bump
+    // before remapping so a failed write leaves the old mapping intact.
+    await updateConversation(conversationId, (disk) => {
+      if (!disk) return null
+      disk.updatedAt = Date.now()
+      return disk
+    })
     await setConversationIdForJid(jid, conversationId)
     await this.safeSend(jid, `Resumed: *${conv.title}*`)
   }

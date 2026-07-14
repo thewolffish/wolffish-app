@@ -1,4 +1,10 @@
-## v1.0.218 — 2026-07-13 `Latest`
+## v1.0.219 — 2026-07-14 `Latest`
+
+### A Resume That Actually Sticks
+
+On WhatsApp and Telegram, `/resume` swaps you back into an older conversation — but the idle-refresh guard didn't get the memo. That guard watches how long a conversation has sat untouched and, past the threshold, quietly starts you a fresh one; and a resumed conversation is, by definition, an old one. So the very next message you sent would trip the guard and **bounce you straight back out of the conversation you had just resumed** — a resume that undid itself, with a polite note suggesting you try `/resume`. Now picking a conversation to resume **restarts its idle clock on the spot**, so the guard sees it for what it is — a conversation you're actively continuing — and your next message lands exactly where you meant it to, on both channels alike.
+
+## v1.0.218 — 2026-07-13
 
 ### Remote Connections That Take an API Key
 
