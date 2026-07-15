@@ -1,3 +1,4 @@
+import { CopyButton } from '@components/core/CopyButton'
 import { cn } from '@lib/utils/cn'
 import type { HeartbeatLogEntry, HeartbeatRunningJob } from '@preload/index'
 import { PlayIcon } from 'hugeicons-react'
@@ -111,9 +112,14 @@ export function ProcedureActiveOverlay(): React.JSX.Element | null {
         </div>
 
         {runningJob.body ? (
-          <pre className="text-muted bg-surface border-border w-full rounded-lg border px-3 py-2 text-[11px] leading-relaxed whitespace-pre-wrap max-h-16 overflow-hidden">
-            {runningJob.body}
-          </pre>
+          <div className="relative w-full">
+            <div className="absolute top-2 inset-e-2 z-10">
+              <CopyButton text={runningJob.body} variant="overlay" />
+            </div>
+            <pre className="text-muted bg-surface border-border max-h-40 w-full overflow-auto rounded-lg border px-3 py-2 text-[11px] leading-relaxed whitespace-pre-wrap">
+              {runningJob.body}
+            </pre>
+          </div>
         ) : null}
 
         <div className="border-border bg-surface/50 w-full rounded-lg border">
