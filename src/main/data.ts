@@ -47,8 +47,11 @@ async function dirSize(dir: string): Promise<number> {
 /**
  * Sample CPU usage of the main process over a short interval. Returns a
  * percentage of one core; >100% means the process is using more than one
- * core's worth of CPU. Sampling synchronously over 250ms keeps the IPC
- * call snappy while still giving a representative reading.
+ * core's worth of CPU (process.cpuUsage sums every thread in the process).
+ *
+ * Nothing else may run in this process during the window — the sample
+ * measures whatever the process is doing, so any concurrent work becomes
+ * the reading. Callers must await their own work before sampling.
  */
 async function sampleCpuPercent(intervalMs = 250): Promise<number> {
   const start = process.cpuUsage()
@@ -64,14 +67,17 @@ export async function getDataAnalytics(): Promise<DataAnalytics> {
   const root = workspaceRoot()
   const brainDir = path.join(root, 'brain')
 
-  const [workspaceBytes, hippocampusBytes, corpusBytes, prefrontalBytes, cpuPercent] =
-    await Promise.all([
-      dirSize(root),
-      dirSize(path.join(brainDir, 'hippocampus')),
-      dirSize(path.join(brainDir, 'corpus')),
-      dirSize(path.join(brainDir, 'prefrontal')),
-      sampleCpuPercent()
-    ])
+  const [workspaceBytes, hippocampusBytes, corpusBytes, prefrontalBytes] = await Promise.all([
+    dirSize(root),
+    dirSize(path.join(brainDir, 'hippocampus')),
+    dirSize(path.join(brainDir, 'corpus')),
+    dirSize(path.join(brainDir, 'prefrontal'))
+  ])
+
+  // Sample only once the walks above have finished. Sampling alongside them
+  // measured this function's own readdir/stat storm rather than the app: an
+  // otherwise-idle process read ~0.3% standalone but ~93% inside the walk.
+  const cpuPercent = await sampleCpuPercent()
 
   return {
     workspaceBytes,

@@ -250,6 +250,32 @@ async function run(): Promise<void> {
   const byChannel = cortex.listConversations({ channel: 'whatsapp' })
   check('channel filter empty', byChannel.length, 0)
 
+  // ── Conversation count (usage:getStats fast path) ───────────────────
+  // The fixture's createdAt is 1751360400000 and its updatedAt is an hour
+  // later, which is what separates these from listConversations({ after }):
+  // that filters on updated_at, so a cutoff between the two would wrongly
+  // count this conversation as created in the window.
+  check('count since epoch', cortex.countConversationsSince(0), 1)
+  check('count at exact createdAt', cortex.countConversationsSince(1751360400000), 1)
+  check('count after createdAt', cortex.countConversationsSince(1751360400001), 0)
+  check(
+    'count keyed on created_at not updated_at',
+    cortex.countConversationsSince(1751364000000),
+    0
+  )
+  // An empty table means "nothing indexed yet", not "zero conversations" — it
+  // must return null so usage:getStats falls back to the disk scan instead of
+  // reporting a confident 0. A never-init'd cortex must do the same, not throw.
+  const emptyRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'cortex-empty-'))
+  const emptyCortex = new Cortex({
+    workspaceRoot: emptyRoot,
+    dbPath: path.join(emptyRoot, 'empty.db')
+  })
+  check('cold cortex counts null before init', emptyCortex.countConversationsSince(0), null)
+  await emptyCortex.init()
+  check('empty table counts null, not 0', emptyCortex.countConversationsSince(0), null)
+  fs.rmSync(emptyRoot, { recursive: true, force: true })
+
   // ── Usage ledger ────────────────────────────────────────────────────
   const usage = cortex.usageSummary({})
   check('usage request count', usage.requests, 2)

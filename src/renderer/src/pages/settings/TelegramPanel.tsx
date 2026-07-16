@@ -94,6 +94,9 @@ export function TelegramPanel(): React.JSX.Element {
   const [verbose, setVerbose] = useState<boolean | null>(
     cachedSnapshot ? (cachedSnapshot.config.verbose ?? false) : null
   )
+  const [hideAutomations, setHideAutomations] = useState<boolean | null>(
+    cachedSnapshot ? (cachedSnapshot.config.hideAutomationsFromResume ?? true) : null
+  )
   // Remembered bot identity so the connected-bot card stays visible when the
   // channel is toggled off (a stopped bot reports a null username). Cleared
   // only on disconnect, when the token — and thus the bot — is actually gone.
@@ -128,6 +131,7 @@ export function TelegramPanel(): React.JSX.Element {
       setAutoRefresh(snap.config.autoRefresh ?? true)
       setStaleHours(snap.config.staleHours ?? 3)
       setVerbose(snap.config.verbose ?? false)
+      setHideAutomations(snap.config.hideAutomationsFromResume ?? true)
       setStatus(snap.status)
       if (snap.status.botUsername) {
         setLastBot({ username: snap.status.botUsername, name: snap.status.botName })
@@ -188,7 +192,8 @@ export function TelegramPanel(): React.JSX.Element {
         allowedUserIds: parsed.ok ? parsed.ids : [],
         autoRefresh: autoRefresh ?? true,
         staleHours,
-        verbose: verbose ?? false
+        verbose: verbose ?? false,
+        hideAutomationsFromResume: hideAutomations ?? true
       },
       status
     }
@@ -199,6 +204,7 @@ export function TelegramPanel(): React.JSX.Element {
     autoRefresh,
     staleHours,
     verbose,
+    hideAutomations,
     status,
     parseUserIds
   ])
@@ -215,6 +221,14 @@ export function TelegramPanel(): React.JSX.Element {
   const handleVerbose = useCallback(async (value: boolean) => {
     setVerbose(value)
     const response = await window.api.telegram.setConfig({ verbose: value })
+    setStatus(response.status)
+  }, [])
+
+  // Also prefs-only — the picker reads it fresh each time /resume runs, so
+  // there's nothing to restart.
+  const handleHideAutomations = useCallback(async (value: boolean) => {
+    setHideAutomations(value)
+    const response = await window.api.telegram.setConfig({ hideAutomationsFromResume: value })
     setStatus(response.status)
   }, [])
 
@@ -682,6 +696,60 @@ export function TelegramPanel(): React.JSX.Element {
                       disabled={busy !== 'idle' || !loaded || verboseLocked}
                       onClick={() => {
                         if (opt.value !== verbose) void handleVerbose(opt.value)
+                      }}
+                      className={cn(
+                        'rounded-md px-3 py-1 text-xs font-medium',
+                        'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+                        active
+                          ? 'bg-primary text-primary-fg shadow-sm'
+                          : 'text-muted hover:text-fg cursor-pointer'
+                      )}
+                    >
+                      {opt.label}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+
+          <div className="border-border/60 border-t" />
+
+          {/* Hide automations from /resume — on by default. Automation runs
+              outnumber real chats several-to-one, so a newest-first /resume
+              buries the conversation you actually want. Prefs-only and read
+              per /resume, so it needs no bot session: unlike verbose there's
+              nothing being relayed, hence no `verboseLocked` gate. */}
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex flex-col gap-1">
+              <span className="text-fg text-sm font-medium">
+                {t('settings.services.telegram.hideAutomations.label')}
+              </span>
+              <p className="text-muted text-xs">
+                {t('settings.services.telegram.hideAutomations.description')}
+              </p>
+            </div>
+            {hideAutomations === null ? (
+              <div
+                aria-hidden="true"
+                className="bg-border/30 h-7 w-[78px] shrink-0 animate-pulse rounded-lg"
+              />
+            ) : (
+              <div
+                role="tablist"
+                className="border-border bg-bg/40 inline-flex shrink-0 items-center rounded-lg border p-0.5"
+              >
+                {toggleOptions.map((opt) => {
+                  const active = opt.value === hideAutomations
+                  return (
+                    <button
+                      key={String(opt.value)}
+                      role="tab"
+                      type="button"
+                      aria-selected={active}
+                      disabled={busy !== 'idle' || !loaded}
+                      onClick={() => {
+                        if (opt.value !== hideAutomations) void handleHideAutomations(opt.value)
                       }}
                       className={cn(
                         'rounded-md px-3 py-1 text-xs font-medium',

@@ -647,6 +647,32 @@ export class Cortex {
     }))
   }
 
+  /**
+   * Count conversations created at or after `sinceMs`.
+   *
+   * Deliberately not `listConversations({ after }).length`: that filter is on
+   * updated_at (an old conversation replied to today would count as created
+   * today) and its result is clamped to 500 rows, so a large corpus would
+   * silently report 500.
+   *
+   * Returns null when the index can't answer — no db, or a table that is empty
+   * because nothing has been indexed yet — so the caller falls back to reading
+   * the files rather than reporting a confident zero. The emptiness check is on
+   * the whole table, not on the filtered count: a genuine zero for a narrow
+   * range (nothing created today yet) is a real answer, not a cold index.
+   */
+  countConversationsSince(sinceMs: number): number | null {
+    const db = this.db
+    if (!db) return null
+    const total = (db.prepare('SELECT COUNT(*) AS n FROM conversations').get() as { n: number }).n
+    if (total === 0) return null
+    return (
+      db.prepare('SELECT COUNT(*) AS n FROM conversations WHERE created_at >= ?').get(sinceMs) as {
+        n: number
+      }
+    ).n
+  }
+
   /** Aggregate spend over an ISO-timestamp range from the usage ledger. */
   usageSummary(opts: { after?: string; before?: string } = {}): UsageSummary {
     const db = this.requireDb()

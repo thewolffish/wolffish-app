@@ -6,25 +6,10 @@ import { useTranslation } from 'react-i18next'
 import { EngineInstallCard } from './EngineInstallCard'
 import { useEngineInstall } from './useEngineInstall'
 
-type WhisperModel = {
-  id: string
-  size: string
-  speed: string
-  description: string
-}
-
-const MODELS: WhisperModel[] = [
-  { id: 'tiny', size: '~75 MB', speed: 'Fastest', description: 'Quick previews of long audio' },
-  { id: 'base', size: '~150 MB', speed: 'Fast', description: 'Default for most transcription' },
-  {
-    id: 'small',
-    size: '~500 MB',
-    speed: 'Moderate',
-    description: 'Better accuracy when it matters'
-  },
-  { id: 'medium', size: '~1.5 GB', speed: 'Slow', description: 'High-stakes transcription' },
-  { id: 'large', size: '~3 GB', speed: 'Very slow', description: 'Research-grade accuracy' }
-]
+// Size, speed and blurb per model all live in the locale files under
+// `settings.services.stt.models.<id>` — the sizes carry a unit word that has
+// to read natively (e.g. "≈150 ميجا بايت"), so they cannot be literals here.
+const MODEL_IDS = ['tiny', 'base', 'small', 'medium', 'large'] as const
 
 const FORMATS = ['MP3', 'WAV', 'M4A', 'OGG', 'FLAC', 'WEBM', 'AAC']
 const DEFAULT_MODEL = 'base'
@@ -57,14 +42,18 @@ export function SpeechToTextPanel(): React.JSX.Element {
 
   const modelOptions: SelectOption<string>[] = useMemo(
     () =>
-      MODELS.map((m) => ({
-        value: m.id,
-        label: `${m.id} — ${m.size} (${m.speed.toLowerCase()})`
+      MODEL_IDS.map((id) => ({
+        value: id,
+        label: t('settings.services.stt.modelOption', {
+          id,
+          size: t(`settings.services.stt.models.${id}.size`),
+          speed: t(`settings.services.stt.models.${id}.speed`).toLocaleLowerCase()
+        })
       })),
-    []
+    [t]
   )
 
-  const selectedModel = MODELS.find((m) => m.id === model) ?? MODELS[1]
+  const selectedId = MODEL_IDS.find((id) => id === model) ?? DEFAULT_MODEL
 
   return (
     <div className="flex min-h-full w-full items-start justify-center px-6 py-10">
@@ -115,7 +104,9 @@ export function SpeechToTextPanel(): React.JSX.Element {
                 options={modelOptions}
                 onChange={onModelChange}
               />
-              <p className="text-muted text-xs">{selectedModel.description}</p>
+              <p className="text-muted text-xs">
+                {t(`settings.services.stt.models.${selectedId}.description`)}
+              </p>
             </div>
 
             <div className="border-border/60 border-t" />
@@ -132,18 +123,21 @@ export function SpeechToTextPanel(): React.JSX.Element {
         <section className="bg-surface border-border flex flex-col gap-3 rounded-2xl border p-6">
           <h2 className="text-fg text-sm font-medium">{t('settings.services.stt.modelsTitle')}</h2>
           <div className="divide-border/40 divide-y">
-            {MODELS.map((m) => (
-              <div
-                key={m.id}
-                className="flex items-center justify-between py-2 first:pt-0 last:pb-0"
-              >
+            {MODEL_IDS.map((id) => (
+              <div key={id} className="flex items-center justify-between py-2 first:pt-0 last:pb-0">
                 <div className="flex flex-col">
-                  <span className="text-fg text-sm font-medium capitalize">{m.id}</span>
-                  <span className="text-muted text-xs">{m.description}</span>
+                  <span className="text-fg text-sm font-medium capitalize">{id}</span>
+                  <span className="text-muted text-xs">
+                    {t(`settings.services.stt.models.${id}.description`)}
+                  </span>
                 </div>
                 <div className="flex flex-col items-end">
-                  <span className="text-fg text-xs">{m.size}</span>
-                  <span className="text-muted text-xs">{m.speed}</span>
+                  <span className="text-fg text-xs">
+                    {t(`settings.services.stt.models.${id}.size`)}
+                  </span>
+                  <span className="text-muted text-xs">
+                    {t(`settings.services.stt.models.${id}.speed`)}
+                  </span>
                 </div>
               </div>
             ))}

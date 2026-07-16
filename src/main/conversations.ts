@@ -339,6 +339,7 @@ export async function updateConversation(
 /**
  * Merge a full in-memory copy over the on-disk state, preserving the fields
  * that OTHER writers own when the incoming copy is staler than the disk:
+ *  - the conversation's channel — its provenance — is never cleared,
  *  - the rolling prefix summary (written by the post-turn summarizer) wins
  *    when the disk's mark is ahead of the incoming copy's,
  *  - a real on-disk title beats an incoming 'Untitled'.
@@ -350,6 +351,12 @@ export function mergeConversationOnto(
 ): ConversationFile {
   if (!disk) return incoming
   const merged: ConversationFile = { ...incoming }
+  // `channel` belongs to whichever writer created the conversation; a caller
+  // that simply doesn't carry it must not erase it. The renderer's load-failure
+  // fallback (ensureConversationId) builds a copy with no channel at all, and
+  // letting that through would silently reclassify a Telegram conversation as
+  // in-app: gone from /resume, wrong icon in the rail, mapping left dangling.
+  if (disk.channel && !incoming.channel) merged.channel = disk.channel
   const diskMark = disk.summarizedThroughMessage ?? 0
   const incomingMark = incoming.summarizedThroughMessage ?? 0
   if (disk.summary && diskMark > incomingMark) {

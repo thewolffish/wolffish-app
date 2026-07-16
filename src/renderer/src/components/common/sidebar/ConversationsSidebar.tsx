@@ -1,9 +1,11 @@
+import { ChannelIcon } from '@components/common/channel-icon/ChannelIcon'
+import { hasChannelIcon } from '@components/common/channel-icon/hasChannelIcon'
 import { CONVERSATION_CHIP_BASE, conversationChipClasses } from '@lib/conversation-chip'
 import { mapConversationMessages, warmPathCards } from '@lib/conversation-open'
 import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
 import { pageTopPadding } from '@lib/utils/platform'
-import type { ConversationMeta } from '@preload/index'
+import type { ConversationChannel, ConversationMeta } from '@preload/index'
 import { useFlow } from '@providers/flow/useFlow'
 import { useLocale } from '@providers/locale/useLocale'
 import { useSessions, type ConversationRunPhase } from '@providers/sessions/useSessions'
@@ -15,6 +17,8 @@ type Row = {
   conversationId: string
   title: string
   phase: ConversationRunPhase | null
+  /** Origin — drives the small badge on the number chip. */
+  channel: ConversationChannel | string | null
   /** Recency key — live phase changes beat file mtimes. */
   at: number
 }
@@ -107,6 +111,7 @@ export function ConversationsSidebar(): React.JSX.Element {
         conversationId: meta.id,
         title: indexedTitle ?? live?.title ?? t('chat.conversationsUntitled'),
         phase: live?.phase ?? null,
+        channel: meta.channel ?? live?.channel ?? null,
         at: Math.max(meta.updatedAt, live?.at ?? 0)
       })
     }
@@ -126,6 +131,7 @@ export function ConversationsSidebar(): React.JSX.Element {
         conversationId: id,
         title: s.title ?? t('chat.conversationsUntitled'),
         phase: s.phase,
+        channel: s.channel ?? null,
         at: s.at
       })
     }
@@ -221,14 +227,30 @@ export function ConversationsSidebar(): React.JSX.Element {
                   collapsed && 'justify-center px-1'
                 )}
               >
-                <span
-                  aria-hidden
-                  className={cn(
-                    CONVERSATION_CHIP_BASE,
-                    conversationChipClasses(row.phase, isActive)
+                <span className="relative inline-flex shrink-0">
+                  <span
+                    aria-hidden
+                    className={cn(
+                      CONVERSATION_CHIP_BASE,
+                      conversationChipClasses(row.phase, isActive)
+                    )}
+                  >
+                    {index + 1}
+                  </span>
+                  {/* Origin badge: where this conversation came from (channel /
+                      automation / procedure), floated off the chip's bottom-end
+                      corner so it clears the number. Both offsets are negative
+                      — it sits OUTSIDE the chip — and the horizontal one is
+                      direction-logical, so it hangs to the right in LTR and
+                      mirrors to the left in RTL. It overhangs into the row's own
+                      padding and the gap before the title, never the next row.
+                      bg-bg punches through the row's hover fill so the glyph
+                      stays readable. */}
+                  {hasChannelIcon(row.channel) && (
+                    <span className="border-border bg-bg absolute -inset-e-1 -bottom-1.5 flex h-3.5 w-3.5 items-center justify-center rounded-full border">
+                      <ChannelIcon channel={row.channel} size={9} className="text-muted" />
+                    </span>
                   )}
-                >
-                  {index + 1}
                 </span>
                 {!collapsed && (
                   <span

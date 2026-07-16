@@ -388,7 +388,7 @@ Start from this and adapt — it already encodes all three rules:
 - Always verify the source file exists before operating on it.
 - For `pdf_create`, content blocks support types: heading, paragraph, image, table, page_break, header, footer.
 - For large PDFs, do NOT generate the whole document in one `pdf_create` call — a massive content array fails generation. Split the content into chunks of roughly 30–50 pages each, run a separate `pdf_create` per chunk to its own part file (e.g. `part-1.pdf`, `part-2.pdf`), then `pdf_merge` the parts into the final PDF and delete the intermediate parts. Keep page numbering and headers/footers consistent across chunks.
-- For RTL/Arabic text in `pdf_create`, provide a font_path to a TTF font that supports Arabic glyphs (e.g. Noto Sans Arabic).
+- For RTL/Arabic text in `pdf_create`, provide a font_path to a TTF font that supports Arabic glyphs (e.g. Noto Sans Arabic). Look for a font you already downloaded before fetching a fresh one — `wolffish_list_files` with `dir: "files"`, `depth: 5`, `pattern: ".ttf"` (depth 2 is the default and hides nested files). Keep new font downloads in `files/assets/fonts/` so the next PDF reuses them.
 - When merging or splitting, always validate page ranges don't exceed the actual page count.
 - Return structured JSON results with metadata (page count, file size, etc).
 - On error, return a clear message the user can act on (file not found, locked, corrupt, etc).

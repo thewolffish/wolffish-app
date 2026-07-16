@@ -2,7 +2,7 @@ import { MarkdownContent } from '@components/common/markdown-content/MarkdownCon
 import { CopyButton } from '@components/core/CopyButton'
 import { ExpandedSheet } from '@components/core/ExpandedSheet'
 import { cn } from '@lib/utils/cn'
-import { formatBytes } from '@lib/utils/format'
+import { formatBytesL } from '@lib/utils/format'
 import hljs from 'highlight.js/lib/common'
 import {
   ArrowExpandIcon,
@@ -305,7 +305,7 @@ export function CodeFileViewer({
       <div className="border-border flex items-center gap-2 border-t px-3 py-1.5">
         <span className="text-muted min-w-0 flex-1 truncate text-[10px]">
           {lang ?? ext}
-          {sizeBytes != null ? ` · ${formatBytes(sizeBytes)}` : ''}
+          {sizeBytes != null ? ` · ${formatBytesL(sizeBytes, t)}` : ''}
         </span>
         {previewToggleButton}
         {revealButton}

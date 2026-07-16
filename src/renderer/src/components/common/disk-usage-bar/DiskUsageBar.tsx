@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { cn } from '@lib/utils/cn'
-import { formatBytes } from '@lib/utils/format'
+import { formatBytesL } from '@lib/utils/format'
 
 type Props = {
   freeBytes: number | null
@@ -27,8 +27,8 @@ export function DiskUsageBar({ freeBytes, totalBytes }: Props): React.JSX.Elemen
       : usedPercent >= 50
         ? 'bg-amber-500 dark:bg-amber-400'
         : 'bg-emerald-500 dark:bg-emerald-400'
-  const freeLabel = freeBytes != null ? formatBytes(freeBytes) : '—'
-  const totalLabel = totalBytes != null ? formatBytes(totalBytes) : '—'
+  const freeLabel = formatBytesL(freeBytes, t)
+  const totalLabel = formatBytesL(totalBytes, t)
   const percent = Math.round(usedPercent)
 
   return (

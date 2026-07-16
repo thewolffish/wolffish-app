@@ -78,6 +78,8 @@ export type TelegramConfig = {
    * Affects sending only; history persistence is unchanged.
    */
   verbose?: boolean
+  /** Keep automation runs out of the /resume picker (on by default). */
+  hideAutomationsFromResume?: boolean
 }
 
 export type WhatsAppConfig = {
@@ -92,6 +94,8 @@ export type WhatsAppConfig = {
    * Affects sending only; history persistence is unchanged.
    */
   verbose?: boolean
+  /** Keep automation runs out of the /resume picker (on by default). */
+  hideAutomationsFromResume?: boolean
 }
 
 /**
@@ -327,8 +331,10 @@ export type ConversationMessage = {
   stopReason?: SegmentTurnEndReason
   error?: string
   attachments?: MessageAttachment[]
-  /** Set when this user message is a Telegram voice transcript — the audio attachment must not be exposed to the LLM. */
+  /** Set when this user message is a voice transcript — the audio attachment must not be exposed to the LLM. */
   voicePrompt?: boolean
+  /** Whisper's detected language for a voicePrompt message (ISO 639-1). */
+  voiceLang?: string
 }
 
 export type ConversationChannel = 'electron' | 'telegram' | 'whatsapp' | 'heartbeat' | 'procedure'

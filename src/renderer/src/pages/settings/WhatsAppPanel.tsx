@@ -89,6 +89,9 @@ export function WhatsAppPanel(): React.JSX.Element {
   const [verbose, setVerbose] = useState<boolean | null>(
     cachedSnapshot ? (cachedSnapshot.config.verbose ?? false) : null
   )
+  const [hideAutomations, setHideAutomations] = useState<boolean | null>(
+    cachedSnapshot ? (cachedSnapshot.config.hideAutomationsFromResume ?? true) : null
+  )
   const loggingOut = useRef(false)
   // Whether the first render was seeded from the warm cache — if so the mount
   // hydrate is skipped (there's nothing left to fill in). Captured once.
@@ -109,6 +112,7 @@ export function WhatsAppPanel(): React.JSX.Element {
       setAutoRefresh(snap.config.autoRefresh ?? true)
       setStaleHours(snap.config.staleHours ?? 3)
       setVerbose(snap.config.verbose ?? false)
+      setHideAutomations(snap.config.hideAutomationsFromResume ?? true)
       setEnabled(snap.config.enabled)
     })()
     return () => {
@@ -152,11 +156,12 @@ export function WhatsAppPanel(): React.JSX.Element {
         allowedPhoneNumbers: parsePhones(savedPhones),
         autoRefresh: autoRefresh ?? true,
         staleHours,
-        verbose: verbose ?? false
+        verbose: verbose ?? false,
+        hideAutomationsFromResume: hideAutomations ?? true
       },
       status
     }
-  }, [enabled, savedPhones, autoRefresh, staleHours, verbose, status, parsePhones])
+  }, [enabled, savedPhones, autoRefresh, staleHours, verbose, hideAutomations, status, parsePhones])
 
   // Toggle immediately starts/stops WhatsApp
   const handleToggle = useCallback(async (next: boolean) => {
@@ -266,6 +271,13 @@ export function WhatsAppPanel(): React.JSX.Element {
   const handleVerbose = useCallback(async (value: boolean) => {
     setVerbose(value)
     await window.api.whatsapp.setConfig({ verbose: value })
+  }, [])
+
+  // Also prefs-only — the picker reads it fresh each time /resume runs, so
+  // there's nothing to restart.
+  const handleHideAutomations = useCallback(async (value: boolean) => {
+    setHideAutomations(value)
+    await window.api.whatsapp.setConfig({ hideAutomationsFromResume: value })
   }, [])
 
   const staleHoursOptions: readonly SelectOption<string>[] = useMemo(
@@ -606,6 +618,60 @@ export function WhatsAppPanel(): React.JSX.Element {
                 </div>
               )}
             </div>
+          </div>
+
+          <div className="border-border/60 border-t" />
+
+          {/* Hide automations from /resume — on by default. Automation runs
+              outnumber real chats several-to-one, so a newest-first /resume
+              buries the conversation you actually want. Sits OUTSIDE the
+              session-gated group above: it only filters a list, so unlike
+              verbose it stays usable with no linked session. */}
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex flex-col gap-1">
+              <span className="text-fg text-sm font-medium">
+                {t('settings.services.whatsapp.hideAutomations.label')}
+              </span>
+              <p className="text-muted text-xs">
+                {t('settings.services.whatsapp.hideAutomations.description')}
+              </p>
+            </div>
+            {hideAutomations === null ? (
+              <div
+                aria-hidden="true"
+                className="bg-border/30 h-7 w-[78px] shrink-0 animate-pulse rounded-lg"
+              />
+            ) : (
+              <div
+                role="tablist"
+                className="border-border bg-bg/40 inline-flex shrink-0 items-center rounded-lg border p-0.5"
+              >
+                {toggleOptions.map((opt) => {
+                  const active = opt.value === hideAutomations
+                  return (
+                    <button
+                      key={String(opt.value)}
+                      role="tab"
+                      type="button"
+                      aria-selected={active}
+                      disabled={busy || !loaded}
+                      onClick={() => {
+                        if (opt.value !== hideAutomations) void handleHideAutomations(opt.value)
+                      }}
+                      className={cn(
+                        'rounded-md px-3 py-1 text-xs font-medium',
+                        'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+                        active
+                          ? 'bg-primary text-primary-fg shadow-sm'
+                          : 'text-muted hover:text-fg cursor-pointer'
+                      )}
+                    >
+                      {opt.label}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
           </div>
 
           <div className="border-border/60 border-t" />

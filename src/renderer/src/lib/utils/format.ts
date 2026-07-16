@@ -1,16 +1,3 @@
-export function formatBytes(bytes: number | null | undefined, digits = 1): string {
-  if (bytes == null || !Number.isFinite(bytes) || bytes < 0) return '—'
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  let value = bytes
-  let unit = 0
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024
-    unit++
-  }
-  const precision = unit === 0 ? 0 : digits
-  return `${value.toFixed(precision)} ${units[unit]}`
-}
-
 export function formatDuration(seconds: number | null | undefined): string {
   if (seconds == null || !Number.isFinite(seconds) || seconds < 0) return '—'
   if (seconds < 60) return `${Math.ceil(seconds)}s`
@@ -46,8 +33,43 @@ export function formatDurationL(seconds: number | null | undefined, t: TFn): str
   return `${t('units.hours', { value: ltrIsolate(h) })} ${t('units.minutes', { value: ltrIsolate(m) })}`
 }
 
-export function formatGB(bytes: number): string {
-  return `${Math.round(bytes / 1024 ** 3)}`
+const BYTE_UNIT_KEYS = [
+  'units.bytes',
+  'units.kilobytes',
+  'units.megabytes',
+  'units.gigabytes',
+  'units.terabytes'
+]
+
+/**
+ * Localized byte-size formatter. Uses the `units.*` i18n keys so the unit word
+ * reads natively (e.g. "ميجا بايت" in Arabic, "MB" in English). The numeric
+ * portion is bidi-isolated so the digits stay together inside RTL flow.
+ */
+export function formatBytesL(bytes: number | null | undefined, t: TFn, digits = 1): string {
+  if (bytes == null || !Number.isFinite(bytes) || bytes < 0) return '—'
+  let value = bytes
+  let unit = 0
+  while (value >= 1024 && unit < BYTE_UNIT_KEYS.length - 1) {
+    value /= 1024
+    unit++
+  }
+  const precision = unit === 0 ? 0 : digits
+  return t(BYTE_UNIT_KEYS[unit], { value: ltrIsolate(value.toFixed(precision)) })
+}
+
+/**
+ * Localized whole-gigabyte formatter, for hardware specs where a fractional
+ * figure reads as false precision ("16 GB", not "16.0 GB").
+ *
+ * Below 1 GB, rounding to whole gigabytes collapses to a meaningless "0 GB"
+ * (the catalog's smallest model wants 246 MB), so sub-GB figures step down to
+ * their natural unit instead — a whole number either way, never "0.2 GB".
+ */
+export function formatGBL(bytes: number | null | undefined, t: TFn): string {
+  if (bytes == null || !Number.isFinite(bytes) || bytes < 0) return '—'
+  if (bytes < 1024 ** 3) return formatBytesL(bytes, t, 0)
+  return t('units.gigabytes', { value: ltrIsolate(Math.round(bytes / 1024 ** 3)) })
 }
 
 /**

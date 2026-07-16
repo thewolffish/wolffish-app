@@ -1,6 +1,6 @@
+import { ChannelIcon } from '@components/common/channel-icon/ChannelIcon'
 import { Button } from '@components/core/Button'
 import { Modal } from '@components/core/Modal'
-import { TelegramLogo, WhatsAppLogo } from '@components/core/ProviderLogos'
 import { CONVERSATION_CHIP_BASE, conversationChipClasses } from '@lib/conversation-chip'
 import { RTL_LOCALES } from '@lib/i18n'
 import { mapConversationMessages, warmPathCards } from '@lib/conversation-open'
@@ -10,14 +10,7 @@ import type { ConversationMeta } from '@preload/index'
 import { useFlow } from '@providers/flow/useFlow'
 import { useSessions } from '@providers/sessions/useSessions'
 import { useLocale } from '@providers/locale/useLocale'
-import {
-  Activity04Icon,
-  ArrowLeft02Icon,
-  ArrowRight02Icon,
-  BubbleChatIcon,
-  Delete01Icon,
-  PlayIcon
-} from 'hugeicons-react'
+import { ArrowLeft02Icon, ArrowRight02Icon, BubbleChatIcon, Delete01Icon } from 'hugeicons-react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -218,34 +211,11 @@ export function History(): React.JSX.Element {
                     <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                       <div className="flex min-w-0 items-center gap-1.5">
                         <span className="text-fg truncate text-sm font-medium">{title}</span>
-                        {conv.channel === 'heartbeat' && (
-                          <Activity04Icon
-                            size={12}
-                            className="text-muted shrink-0"
-                            aria-label="Heartbeat"
-                          />
-                        )}
-                        {conv.channel === 'procedure' && (
-                          <PlayIcon
-                            size={12}
-                            className="text-muted shrink-0"
-                            aria-label="Procedure"
-                          />
-                        )}
-                        {conv.channel === 'telegram' && (
-                          <TelegramLogo
-                            size={12}
-                            className="text-muted shrink-0"
-                            aria-label="Telegram"
-                          />
-                        )}
-                        {conv.channel === 'whatsapp' && (
-                          <WhatsAppLogo
-                            size={12}
-                            className="text-muted shrink-0"
-                            aria-label="WhatsApp"
-                          />
-                        )}
+                        <ChannelIcon
+                          channel={conv.channel}
+                          size={12}
+                          className="text-muted shrink-0"
+                        />
                       </div>
                       <span className="text-muted text-xs">
                         {relativeTime(conv.updatedAt, locale)}

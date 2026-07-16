@@ -545,6 +545,23 @@ export class Thalamus {
   }
 
   /**
+   * The reasoning modes THIS entry's model actually honours — the same source
+   * of truth the Brain button reads. Providers assume `thinkingMode` arrives
+   * already clamped to this list (see xai.ts's grok-4.5 branch), so every
+   * caller that synthesizes a mode rather than passing the user's own must
+   * run it through here first.
+   */
+  private reasoningModesForEntry(entry: CascadeEntry): ThinkingMode[] {
+    const openrouterReasoning =
+      entry.id === 'openrouter'
+        ? (this.cloudProviders
+            .find((p) => p.id === 'openrouter')
+            ?.reasoningModels?.includes(entry.model) ?? false)
+        : false
+    return reasoningModesFor(entry.id, entry.model, { openrouterReasoning })
+  }
+
+  /**
    * Single non-streaming completion with 5 retries and escalating backoff
    * (1s, 2s, 4s, 8s, 16s). `system` may be '' (plain summarize during
    * compaction) or a task prompt (titling). `role` tags the emitted spend so
@@ -561,27 +578,38 @@ export class Thalamus {
     const msgs: ChatMessage[] = [{ role: 'user', content: prompt }]
     const delays = [1000, 2000, 4000, 8000, 16000]
 
+    // Naming a conversation in 5 words is a labelling task; reasoning buys
+    // nothing and costs everything. This path never went through stream()'s
+    // normalization, so thinkingMode arrived undefined and effortFromMode()
+    // defaulted it to 'high' — every title was a high-effort reasoning call
+    // (measured: p50 11.4s, p90 22.2s, ~30% over the caller's 15s deadline,
+    // which then expired and left the conversation permanently 'Untitled').
+    // Clamped through the same registry stream() uses, because providers
+    // assume a normalized mode: an always-on reasoner (grok-4.5, qwq, k2-code)
+    // rejects a raw 'off' and gets its lowest valid mode instead.
+    // Summaries keep their reasoning — compaction is a judgement call.
+    const stream: ProviderStreamOptions = { system, messages: msgs, signal }
+    if (role === 'title') {
+      stream.thinkingMode = normalizeReasoningMode('off', this.reasoningModesForEntry(entry))
+    }
+
     for (let attempt = 0; attempt < 5; attempt++) {
       if (signal?.aborted) return null
       const startedAt = Date.now()
       try {
         let text = ''
         let usage: StreamUsage | null = null
-        for await (const chunk of entry.provider.stream({
-          system,
-          messages: msgs,
-          signal
-        })) {
+        for await (const chunk of entry.provider.stream(stream)) {
           if (chunk.type === 'text') text += chunk.text
           else if (chunk.type === 'turn_meta' && chunk.usage) usage = chunk.usage
         }
         if (text.length > 0) {
-          // Summarization spend is real billed tokens. Emit it with
-          // role 'summary' so the ledger listener records it and the
-          // renderer can itemize it as overhead — without it feeding
-          // the context meter (a summary call is not conversation
-          // context). Cost rides along so the renderer's all-time
-          // totals stay cost-complete for summary spend too.
+          // Side-call spend is real billed tokens. Emit it tagged with this
+          // call's own `role` ('summary' or 'title') so the ledger listener
+          // records it and the renderer can itemize it as overhead — without
+          // it feeding the context meter (naming or compressing a conversation
+          // is not conversation context). Cost rides along so the renderer's
+          // all-time totals stay cost-complete for this spend too.
           if (usage) {
             this.emit('llm.response', {
               provider: entry.id,
@@ -604,7 +632,43 @@ export class Thalamus {
           }
           return { text, provider: entry.id, model: entry.model }
         }
-      } catch {
+        // Completed, but said nothing. Nothing threw, so the catch below never
+        // runs and the emit above is inside the truthy branch — this attempt
+        // would otherwise leave no trace at all, which is the same blind spot
+        // the catch exists to close. It is also the expected shape of
+        // "reasoning crowded out the answer", the failure thinkingMode:'off'
+        // targets, so it is exactly what we want to be able to see.
+        this.emit('llm.error', {
+          provider: entry.id,
+          error: `${role} ${entry.model} (attempt ${attempt + 1}/5): empty completion`
+        })
+      } catch (err) {
+        // Titling/summarizing calls entry.provider.stream() directly, so it
+        // bypasses streamOnce() where the llm.error emits live — and the usage
+        // emit above only fires on SUCCESS. A failed or timed-out title was
+        // therefore invisible everywhere: no corpus event, no ledger row, and
+        // titleFromMessage swallows the throw. The literal 'Untitled' on disk
+        // was the only tell, which is how this bug survived nine days — and now
+        // that a deadline degrades to a readable slice, there'd be no tell at
+        // all. Emit so a silently-degrading title stays measurable.
+        //
+        // Safe to emit: llm.error has no UI consumer and is NOT in
+        // TURN_RELAYED_EVENTS, so it lands in the corpus log and nowhere else —
+        // a titling hiccup must never surface as an error in the user's chat.
+        // Deliberately does NOT markFailed(): one slow title is not evidence
+        // the provider is unhealthy for the turn that's about to run.
+        // The abort REASON rides along so the log separates a titling deadline
+        // (a degradation worth counting) from a user pressing stop (expected
+        // noise) — they unwind identically otherwise. Read off the signal
+        // rather than importing the titler's constant, which would point this
+        // module at the app layer.
+        const why = signal?.aborted ? `, aborted: ${String(signal.reason)}` : ''
+        this.emit('llm.error', {
+          provider: entry.id,
+          error: `${role} ${entry.model} (attempt ${attempt + 1}/5${why}): ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        })
         if (attempt >= 4) return null
         await sleep(delays[attempt], signal)
       }
@@ -653,13 +717,7 @@ export class Thalamus {
     // non-reasoning model → off) instead of being sent verbatim and erroring.
     let opts = options
     if (options.role === 'agent') {
-      const openrouterReasoning =
-        entry.id === 'openrouter'
-          ? (this.cloudProviders
-              .find((p) => p.id === 'openrouter')
-              ?.reasoningModels?.includes(entry.model) ?? false)
-          : false
-      const modes = reasoningModesFor(entry.id, entry.model, { openrouterReasoning })
+      const modes = this.reasoningModesForEntry(entry)
       opts = { ...options, thinkingMode: normalizeReasoningMode(options.thinkingMode, modes) }
     }
 

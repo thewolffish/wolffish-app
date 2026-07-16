@@ -444,7 +444,7 @@
         "local": "محلي",
         "engineName": "كوكورو",
         "engineDescription": "تحويل نص إلى كلام عصبي محلي. يعمل بالكامل على جهازك — بدون سحابة أو مفتاح واجهة.",
-        "installRequirement": "يُنزّل محرّك كوكورو ونموذج الأصوات (≈340 ميغابايت) مرّة واحدة، ثم يعمل دون اتصال بالكامل.",
+        "installRequirement": "يُنزّل محرّك كوكورو ونموذج الأصوات (≈340 م.ب) مرّة واحدة، ثم يعمل دون اتصال بالكامل.",
         "voice": "الصوت الافتراضي",
         "speed": "سرعة الكلام",
         "previewHint": "المعاينة تشغّل صوت كوكورو المُختار",
@@ -462,7 +462,35 @@
         "language": "اللغة",
         "languageDescription": "يُكتشف تلقائياً بشكل افتراضي. يمكنك تحديد لغة لكل عملية تحويل لتحسين الدقة.",
         "modelsTitle": "النماذج المتاحة",
-        "formatsTitle": "الصيغ المدعومة"
+        "formatsTitle": "الصيغ المدعومة",
+        "modelOption": "{{id}} — {{size}} ({{speed}})",
+        "models": {
+          "tiny": {
+            "size": "≈75 م.ب",
+            "speed": "الأسرع",
+            "description": "معاينات سريعة للتسجيلات الطويلة"
+          },
+          "base": {
+            "size": "≈150 م.ب",
+            "speed": "سريع",
+            "description": "الافتراضي لمعظم عمليات التحويل"
+          },
+          "small": {
+            "size": "≈500 م.ب",
+            "speed": "متوسط",
+            "description": "دقة أفضل حين يهمّ الأمر"
+          },
+          "medium": {
+            "size": "≈1.5 غ.ب",
+            "speed": "بطيء",
+            "description": "التحويلات عالية الأهمية"
+          },
+          "large": {
+            "size": "≈3 غ.ب",
+            "speed": "بطيء جداً",
+            "description": "دقة بحثية"
+          }
+        }
       },
       "inapp": {
         "title": "الدردشة داخل التطبيق",
@@ -538,6 +566,10 @@
           "label": "نتائج المهام المفصّلة",
           "description": "إرسال كل استدعاء أداة وكل خطوة إلى المحادثة. عند الإيقاف (الافتراضي) تُرسَل تغذية نظيفة — ردود الوكيل والملفات والأخطاء فقط."
         },
+        "hideAutomations": {
+          "label": "إخفاء المهام التلقائية من /resume",
+          "description": "استبعاد تشغيلات المهام المجدولة من قائمة /resume لتعرض المحادثات الحقيقية فقط. مفعّل افتراضياً. تبقى متاحة في /delete وداخل التطبيق."
+        },
         "commandsTitle": "الأوامر المتاحة",
         "commandsSubtitle": "أوامر يرسلها المستخدمون من تيليجرام. اكتب كلّاً منها تماماً.",
         "commands": {
@@ -557,7 +589,7 @@
         "limitations": {
           "singleConversation": "تُعالَج محادثة واحدة فقط في كل مرة.",
           "busyNotQueued": "الرسائل أثناء الانشغال لا تُجدوَل — أعد الإرسال لاحقاً.",
-          "fileSize": "تنزيل الملفات محدود بـ 20 ميجابايت.",
+          "fileSize": "تنزيل الملفات محدود بـ 20 م.ب.",
           "allowList": "يُردّ فقط على المعرّفات المسموح بها.",
           "silentIgnore": "تُتجاهَل بقية الرسائل بصمت."
         }
@@ -961,6 +993,10 @@
           "label": "نتائج المهام المفصّلة",
           "description": "إرسال كل استدعاء أداة وكل خطوة إلى المحادثة. عند الإيقاف (الافتراضي) تُرسَل تغذية نظيفة — ردود الوكيل والملفات والأخطاء فقط."
         },
+        "hideAutomations": {
+          "label": "إخفاء المهام التلقائية من /resume",
+          "description": "استبعاد تشغيلات المهام المجدولة من قائمة /resume لتعرض المحادثات الحقيقية فقط. مفعّل افتراضياً. تبقى متاحة في /delete وداخل التطبيق."
+        },
         "commandsTitle": "الأوامر المتاحة",
         "commandsSubtitle": "أرسل هذه الأوامر في محادثة واتساب.",
         "commands": {
@@ -1302,7 +1338,9 @@
         "corpus": "الجسم الثفني",
         "prefrontal": "الفص الجبهي",
         "ram": "الذاكرة",
-        "cpu": "المعالج"
+        "cpu": "المعالج",
+        "cpuValue": "{{percent}}٪",
+        "cpuValueLow": "أقل من 0.1٪"
       },
       "factoryReset": {
         "label": "إعادة ضبط المصنع",
@@ -1354,10 +1392,6 @@
     "placeholder": "اكتب لوولف‌ فيش",
     "send": "إرسال",
     "stop": "إيقاف",
-    "telegramReadOnly": "تابع هذه المحادثة على تيليجرام.",
-    "whatsappReadOnly": "تابع هذه المحادثة على واتساب.",
-    "heartbeatReadOnly": "مهمة تلقائية — للقراءة فقط.",
-    "procedureReadOnly": "تشغيل إجراء — للقراءة فقط.",
     "empty": {
       "title": "وولف‌ فيش جاهز",
       "subtitle": "اسأل أي شيء. أنا أقضم كل شئ."
@@ -1919,7 +1953,7 @@
         "Permanently deletes a task": "يحذف المهمة نهائيًا",
         "Sends an email from your Google account": "يُرسل بريدًا إلكترونيًا من حساب Google الخاص بك",
         "Uploads a file to your Google Drive": "يرفع ملفًا إلى Google Drive الخاص بك",
-        "Video/audio processing tool, typically 50-80MB download": "أداة لمعالجة الفيديو/الصوت، حجم التنزيل عادةً 50-80 ميجابايت",
+        "Video/audio processing tool, typically 50-80MB download": "أداة لمعالجة الفيديو/الصوت، حجم التنزيل عادةً 50-80 م.ب",
         "Writes data to your Google Sheets spreadsheet": "يكتب بيانات إلى جدول بيانات Google Sheets الخاص بك",
         "Permanently deletes files. This cannot be undone.": "يحذف الملفات نهائيًا. لا يمكن التراجع عن ذلك.",
         "Runs with elevated privileges (will prompt for your password via system dialog).": "يعمل بصلاحيات مرتفعة (سيُطلب منك إدخال كلمة المرور عبر نافذة النظام).",
@@ -2089,6 +2123,11 @@
     "processing": "قيد المعالجة…"
   },
   "units": {
+    "bytes": "{{value}} بايت",
+    "kilobytes": "{{value}} ك.ب",
+    "megabytes": "{{value}} م.ب",
+    "gigabytes": "{{value}} غ.ب",
+    "terabytes": "{{value}} ت.ب",
     "seconds": "{{value}} ثانية",
     "minutes": "{{value}} دقيقة",
     "hours": "{{value}} ساعة"

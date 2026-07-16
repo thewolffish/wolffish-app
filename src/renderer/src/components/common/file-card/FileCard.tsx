@@ -1,5 +1,5 @@
 import { cn } from '@lib/utils/cn'
-import { formatBytes } from '@lib/utils/format'
+import { formatBytesL } from '@lib/utils/format'
 import { Download01Icon, File01Icon, FolderOpenIcon } from 'hugeicons-react'
 import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -112,7 +112,7 @@ function ActiveFile({
         </span>
         <span className="text-muted text-xs">
           {fileTypeLabel(fileName, mimeType)}
-          {sizeBytes > 0 ? ` · ${formatBytes(sizeBytes)}` : ''}
+          {sizeBytes > 0 ? ` · ${formatBytesL(sizeBytes, t)}` : ''}
         </span>
       </div>
       <button

@@ -88,6 +88,17 @@ export type UserMessage = {
   role: 'user'
   content: string
   attachments?: MessageAttachment[]
+  /**
+   * Carried through from the persisted message (see ConversationMessage in
+   * src/main/conversations.ts). The transcript IS the prompt, so the audio
+   * attachment must never be re-exposed to the LLM — textHistory reads this
+   * to emit a `<voice_note>` entry instead of composing the attachment back
+   * in. Round-tripping it matters now that a channel conversation full of
+   * voice notes can be continued from the app.
+   */
+  voicePrompt?: boolean
+  /** Whisper's detected language for a voicePrompt message (ISO 639-1). */
+  voiceLang?: string
   /** Set while a voice recording is being transcribed, so the bubble
    * can render an animated placeholder until the transcript arrives. */
   transcribing?: boolean

@@ -3545,14 +3545,34 @@ app.whenReady().then(async () => {
   // the usage tab. Does not block window creation.
   void agent.usage.load().catch(() => undefined)
 
+  /**
+   * Same fast-path/fallback split as conversation:list above, for the same
+   * reason: the cortex conversations table answers a COUNT in microseconds,
+   * where the legacy scan reads and JSON.parses every conversation file
+   * (~300ms over the current corpus, linear in history) to look at one number
+   * in each. Falls back to the scan whenever the index can't be trusted —
+   * mid-rebuild the table is DELETEd and refilled in yielded batches, and
+   * unlike a partial list a wrong COUNT looks perfectly plausible.
+   */
+  const countConversations = async (cutoffMs: number): Promise<number> => {
+    try {
+      if (!agent.cortex.getReindexStatus()) {
+        const n = agent.cortex.countConversationsSince(cutoffMs)
+        if (n !== null) return n
+      }
+    } catch {
+      // Index unusable — fall through to the scan.
+    }
+    return countConversationsSince(cutoffMs)
+  }
+
   ipcMain.handle('usage:getSummary', async (_e, range: UsageTimeRange) => {
     return agent.usage.getSummary(range)
   })
   ipcMain.handle('usage:getStats', async (_e, range: UsageTimeRange) => {
     const stats = await agent.usage.getStats(range)
     const cutoffMs = rangeCutoffMs(range)
-    const conversations = await countConversationsSince(cutoffMs)
-    return { ...stats, conversations }
+    return { ...stats, conversations: await countConversations(cutoffMs) }
   })
   ipcMain.handle('usage:getDaily', async (_e, year: number) => {
     return agent.usage.getDaily(year)

@@ -63,6 +63,26 @@ The `<capabilities>` index lists every installed capability (including MCP serve
 - Don't declare done on trust: verify the artifact exists as intended (read it back, confirm every planned part landed). A plan is not a result.
 - End every multi-step task with a written wrap-up plainly stating what got done and what didn't — a silent tool call as the last action is a failure even when the work succeeded. If the task produced a file, `send_file` comes immediately before that wrap-up, every time.
 
+<!--
+  Reuse-before-download. Verified by running the introspect plugin's listFiles
+  against a fixture workspace: `depth` defaults to 2, and `pattern` matches FILE
+  names only — directories are always listed and always descended. So a bare
+  `pattern` search from the workspace root does NOT surface a font at
+  files/fonts/x.ttf; it prints only directory lines, which reads as "not here"
+  and triggers exactly the re-download this section exists to stop. That's why
+  `dir: "files"` + `depth: 5` are spelled out as the literal call rather than
+  left to inference. The 400-entry cap is not a hazard here: with a `pattern`
+  set only matching files count toward it (~92 dirs in a stock workspace).
+-->
+
+## Reuse before you download
+
+Generic assets are fetched once and kept. Before pulling a font, icon set, logo, template, wheel/binary, or sample dataset off the web, look for the copy you already have: `wolffish_list_files` with `dir: "files"`, `depth: 5`, and a `pattern` — then reuse the path it returns (straight into `font_path`, or wherever it's needed).
+
+- **A miss on the defaults is not absence.** `depth` defaults to 2 and `pattern` matches file names only, so a nested asset comes back as bare directory lines. Pass `depth: 5` and try 2 phrasings (`noto`, `arabic`, `.ttf`) before concluding you don't have it.
+- Keep new downloads under `files/assets/` (fonts in `files/assets/fonts/`), upstream name intact, so the next search finds them.
+- **Generic and version-stable ONLY** — a document, a web page, an API response, today's data is fetched fresh every time. Never serve stale content to save a download.
+
 ## Files & output — YOU are the courier
 
 Producing a file does NOT deliver it. No tool auto-sends anything anymore — if you don't send it, the user never receives it, on any channel.

@@ -46,6 +46,7 @@ import {
   type MessageAttachment
 } from '@main/conversations'
 import { interpretAskReply } from '@main/channels/ask-reply'
+import { bindChatToConversation } from '@main/channels/chat-binding'
 import type { Agent } from '@main/runtime/agent'
 import type { ApprovalDecision, ApprovalRequest } from '@main/runtime/amygdala'
 import {
@@ -75,6 +76,16 @@ import {
   workspaceRoot
 } from '@main/workspace/workspace'
 import {
+  isNextPageReply,
+  keycapNumber,
+  originLabel,
+  pageExists,
+  parseSelectionNumber,
+  pickerPage,
+  selectableCount,
+  truncateTitle
+} from '@main/channels/conversation-picker'
+import {
   collectModelOptions,
   filterModelOptions,
   MODEL_LIST_CAP,
@@ -90,6 +101,11 @@ import {
   DisconnectReason,
   downloadMediaMessage,
   fetchLatestBaileysVersion,
+  isHostedLidUser,
+  isHostedPnUser,
+  isLidUser,
+  isPnUser,
+  jidNormalizedUser,
   makeCacheableSignalKeyStore,
   makeWASocket,
   useMultiFileAuthState,
@@ -141,8 +157,6 @@ const BUSY_SYSTEM_PROMPT =
 const BUSY_REPLY_TIMEOUT_MS = 8000
 const FALLBACK_BUSY_REPLY = "Hold on — I'm working on something. I'll get back to you in a moment."
 
-const SELECTION_LIMIT = 10
-
 const COMMANDS_HELP =
   '/stop — cancel the current task\n' +
   '/new — start a fresh conversation\n' +
@@ -154,8 +168,6 @@ const COMMANDS_HELP =
   '/model — pick the cloud model\n' +
   '/local — switch to local model\n' +
   '/cloud — switch to cloud model'
-
-const KEYCAP_DIGITS = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟']
 
 type ActiveTurn = {
   jid: string
@@ -226,8 +238,13 @@ type ActiveTurn = {
   voiceReplySent: boolean
 }
 
+/**
+ * In-flight conversation picker raised by /resume or /delete. The whole
+ * candidate list is snapshotted here when the picker opens — `page` just
+ * windows it — and the next number-only reply selects from it.
+ */
 type PendingSelection =
-  | { command: 'resume' | 'delete'; conversationIds: string[] }
+  | { command: 'resume' | 'delete'; items: ConversationMeta[]; page: number }
   | { command: 'model'; models: ModelOption[] }
 
 export class WhatsAppChannel {
@@ -338,7 +355,8 @@ export class WhatsAppChannel {
       trackSentId: (id) => this.sentIds.add(id),
       readMessages: (jid, count) => this.readMessages(jid, count),
       ensureFfmpeg: () => this.agent.cerebellum.ensureSystemTool('ffmpeg'),
-      confirmDelivery: (id) => this.confirmDelivery(id)
+      confirmDelivery: (id) => this.confirmDelivery(id),
+      bindChatToSendingConversation: (jid) => this.bindChatToSendingConversation(jid)
     })
     this.agent.cerebellum.registerInProcessCapability(capability, plugin)
 
@@ -1096,17 +1114,34 @@ export class WhatsAppChannel {
     // Number reply for an outstanding /resume, /delete, or /model picker
     const pending = this.pendingSelections.get(jid)
     if (pending) {
+      // `next` pages the conversation picker. This has to sit ahead of the
+      // number parse and the cancel fall-through below — otherwise the word
+      // reads as "not a selection", silently drops the picker, and gets sent
+      // to the model as an ordinary chat turn.
+      if (pending.command !== 'model' && isNextPageReply(lower)) {
+        const page = pending.page + 1
+        if (pageExists(pending.items, page)) {
+          this.pendingSelections.set(jid, { ...pending, page })
+          await this.sendPickerPage(jid, pending.command, pending.items, page)
+        } else {
+          await this.safeSend(jid, 'That was the last page — reply with a number to pick one.')
+        }
+        return
+      }
       const num = parseSelectionNumber(trimmed)
+      // Only what the user has actually SEEN is selectable — see selectableCount.
       const count =
-        pending.command === 'model' ? pending.models.length : pending.conversationIds.length
+        pending.command === 'model'
+          ? pending.models.length
+          : selectableCount(pending.items, pending.page)
       if (num !== null && num >= 1 && num <= count) {
         this.pendingSelections.delete(jid)
         if (pending.command === 'model') {
           await this.applyModelSelection(jid, pending.models[num - 1], trimmed)
         } else if (pending.command === 'resume') {
-          await this.handleResumeSelection(jid, pending.conversationIds[num - 1])
+          await this.handleResumeSelection(jid, pending.items[num - 1].id)
         } else {
-          await this.handleDeleteSelection(jid, pending.conversationIds[num - 1])
+          await this.handleDeleteSelection(jid, pending.items[num - 1].id)
         }
         return
       }
@@ -1301,29 +1336,70 @@ export class WhatsAppChannel {
     await this.safeSend(jid, `New conversation started.\n\n${COMMANDS_HELP}`)
   }
 
+  /**
+   * Open the numbered picker that drives /resume and /delete. Lists every
+   * conversation of every origin, newest first, a page at a time.
+   *
+   * The full list is snapshotted into pendingSelections here and every page is
+   * served from that snapshot rather than re-listing. Two reasons: /resume
+   * rewrites updatedAt, which IS the sort key, so a second listing would
+   * reshuffle rows under the numbers the user is still reading; and listing
+   * parses every conversation file on disk, which shouldn't be paid per page.
+   */
   private async renderConversationPicker(jid: string, command: 'resume' | 'delete'): Promise<void> {
+    // Both /resume and /delete reach ANY conversation — a chat is no longer
+    // pinned to its origin channel, so you manage the whole history from
+    // anywhere, exactly like the in-app Conversations page. Each row carries an
+    // origin tag so a mixed list stays legible. (listConversations is already
+    // newest-first.)
     const all = await listConversations()
-    const whatsapp = all.filter((c) => c.channel === 'whatsapp').slice(0, SELECTION_LIMIT)
+    // Automation runs outnumber real chats several-to-one and would bury them
+    // in a newest-first list, so /resume hides them by default. /delete keeps
+    // them — cleaning them up from a phone is a thing you'd actually want.
+    const cfg = await getWhatsAppConfig()
+    const items =
+      command === 'resume' && (cfg.hideAutomationsFromResume ?? true)
+        ? all.filter((c) => c.channel !== 'heartbeat')
+        : all
 
-    if (whatsapp.length === 0) {
+    if (items.length === 0) {
       this.pendingSelections.delete(jid)
       await this.safeSend(jid, 'No saved conversations yet.')
       return
     }
 
+    this.pendingSelections.set(jid, { command, items, page: 0 })
+    await this.sendPickerPage(jid, command, items, 0)
+  }
+
+  /**
+   * Render one page of an open picker. Numbering is continuous across the
+   * whole list rather than restarting per page — page 2 opens at 26 — so a
+   * number identifies the same conversation for as long as the picker is open,
+   * and a number from a page already scrolled past still selects.
+   */
+  private async sendPickerPage(
+    jid: string,
+    command: 'resume' | 'delete',
+    items: ConversationMeta[],
+    page: number
+  ): Promise<void> {
+    const { shown, start, last, total, hasMore } = pickerPage(items, page)
     const header =
       command === 'resume'
         ? '*Resume a conversation* — reply with the number:'
         : '*Delete a conversation* — reply with the number:'
 
-    const items = whatsapp.map((conv, idx) => formatPickerItem(conv, idx)).join('\n\n')
+    const body = shown.map((conv, idx) => formatPickerItem(conv, start + idx)).join('\n\n')
 
-    this.pendingSelections.set(jid, {
-      command,
-      conversationIds: whatsapp.map((c) => c.id)
-    })
+    let footer = ''
+    if (hasMore) {
+      footer = `\n\n_${start + 1}–${last} of ${total} — reply *next* for more._`
+    } else if (start > 0) {
+      footer = `\n\n_${start + 1}–${last} of ${total} — end of list._`
+    }
 
-    await this.safeSend(jid, `${header}\n\n${items}`)
+    await this.safeSend(jid, `${header}\n\n${body}${footer}`)
   }
 
   private async handleResumeSelection(jid: string, conversationId: string): Promise<void> {
@@ -1347,6 +1423,18 @@ export class WhatsAppChannel {
   }
 
   private async handleDeleteSelection(jid: string, conversationId: string): Promise<void> {
+    // The same backstop the in-app delete uses (conversation:delete in
+    // index.ts): deleting a conversation mid-turn races its end-of-turn
+    // persist, which resurrects the file — or strands a live stream with no
+    // home. This chat's own busy-check can't cover it, because /delete now
+    // reaches every conversation: the turn may belong to the app or another
+    // chat entirely. deleteConversation is called directly here, so the IPC
+    // handler's guard is not in the path and this has to be its own.
+    if (this.runner.isConversationActive(conversationId)) {
+      await this.safeSend(jid, 'That conversation is busy right now — try again once it finishes.')
+      return
+    }
+
     const currentId = await getConversationIdForJid(jid)
     const wasActive = currentId === conversationId
 
@@ -1735,6 +1823,13 @@ export class WhatsAppChannel {
                   disk.updatedAt = assistant.timestamp
                 }
                 if (foldStats) disk.stats = finished.stats.foldInto(disk.stats, endedAt)
+                // A heartbeat/procedure run seals its conversation as a finished
+                // record, and the summarizer below skips sealed files. A user
+                // turn in it — reachable since a background run can hand this
+                // chat its conversation — makes it live again; left sealed it
+                // would replay the whole verbatim transcript on every reply
+                // forever. Mirrors the in-app unseal in persistConversation.
+                if (disk.sealed) disk.sealed = false
                 return disk
               })
                 .then(() => {
@@ -1767,6 +1862,60 @@ export class WhatsAppChannel {
     })
 
     await handle.done
+  }
+
+  /**
+   * The conversation-map key the INBOUND path would use for a chat we are
+   * sending to. Returns null when this chat can never hold a conversation.
+   *
+   * Sends address a contact by phone (`<phone>@s.whatsapp.net` — what
+   * whatsapp_check hands the model), but the map is keyed by whatever
+   * `msg.key.remoteJid` arrives as, and on a LID-addressed account that is an
+   * `@lid`. Binding the phone form would write a key the inbound path never
+   * reads: a silent no-op plus a junk entry. Baileys' own PN→LID store answers
+   * this exactly — it is persisted in the auth state (so it survives restarts,
+   * unlike the session-scoped lidToPhone map, which is keyed the other way
+   * round anyway) and falls back to a USYNC fetch on first contact.
+   *
+   * Groups are excluded on purpose: the inbound allow-list matches the sender
+   * phone taken from remoteJid/remoteJidAlt, which for a group is the group id,
+   * so no group message ever reaches loadOrCreateConversation and a group key
+   * would be unreachable by construction.
+   */
+  private async inboundKeyForJid(jid: string): Promise<string | null> {
+    // Already a LID: that IS the inbound form (both spellings, as phoneFromJid).
+    if (isLidUser(jid) || isHostedLidUser(jid)) return jidNormalizedUser(jid)
+    // Anything that isn't a phone-addressed contact — group, broadcast,
+    // newsletter, bot — can't hold a conversation. Never invent a key for it.
+    if (!isPnUser(jid) && !isHostedPnUser(jid)) return null
+    const sock = this.sock
+    if (!sock) return null
+    const pn = jidNormalizedUser(jid)
+    try {
+      // No mapping ⇒ this account isn't LID-addressed, so inbound arrives under
+      // the phone JID and that IS the key.
+      return (await sock.signalRepository.lidMapping.getLIDForPN(pn)) ?? pn
+    } catch {
+      return null // never guess a key — a wrong one is worse than no bind
+    }
+  }
+
+  /**
+   * Point this chat at the conversation that just sent to it (see
+   * bindChatToConversation for what that means and why). Everything
+   * WhatsApp-specific is the key: the outbound JID has to be resolved to the
+   * form the inbound path maps by, and the equality test has to run on THAT —
+   * the map is exact-key, so comparing the phone JID would never match and
+   * every send would rewrite.
+   */
+  private async bindChatToSendingConversation(jid: string): Promise<void> {
+    const key = await this.inboundKeyForJid(jid)
+    if (!key) return
+    await bindChatToConversation(turnScope.getStore()?.conversationId, {
+      getBoundConversationId: () => getConversationIdForJid(key),
+      setBoundConversationId: (id) => setConversationIdForJid(key, id),
+      updateConversation
+    })
   }
 
   private async loadOrCreateConversation(jid: string): Promise<ConversationFile> {
@@ -2548,11 +2697,11 @@ function formatArgs(args: Record<string, unknown>): string {
 }
 
 function formatPickerItem(conv: ConversationMeta, idx: number): string {
-  const keycap = KEYCAP_DIGITS[idx] ?? `${idx + 1}.`
-  const title = conv.title || 'Untitled'
+  const keycap = keycapNumber(idx + 1)
+  const title = truncateTitle(conv.title)
   const msgs = conv.messageCount ?? 0
   const ago = relativeTime(conv.updatedAt)
-  return `${keycap} *${title}*\n    ${msgs} messages · ${ago}`
+  return `${keycap} *${title}*\n    ${msgs} messages · ${ago} · ${originLabel(conv.channel)}`
 }
 
 function relativeTime(ts: number): string {
@@ -2561,13 +2710,6 @@ function relativeTime(ts: number): string {
   if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`
   if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`
   return `${Math.floor(diff / 86_400_000)}d ago`
-}
-
-function parseSelectionNumber(text: string): number | null {
-  const cleaned = text.replace(/[^\d]/g, '')
-  if (cleaned.length === 0) return null
-  const n = parseInt(cleaned, 10)
-  return Number.isFinite(n) && n > 0 ? n : null
 }
 
 /**

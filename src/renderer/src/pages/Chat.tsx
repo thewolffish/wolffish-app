@@ -29,18 +29,17 @@ import { VideoPlayer } from '@components/common/video-player/VideoPlayer'
 import { CodeEditor } from '@components/core/CodeEditor'
 import { CopyButton } from '@components/core/CopyButton'
 import { Markdown } from '@components/core/Markdown'
-import { TelegramLogo, WhatsAppLogo } from '@components/core/ProviderLogos'
 import { useToast } from '@components/core/toast/useToast'
 import { buildChatPdfHtml, hasExportableContent } from '@lib/chat-export/buildChatPdfHtml'
+import { mapConversationMessages } from '@lib/conversation-open'
 import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
-import { formatBytes } from '@lib/utils/format'
+import { formatBytesL } from '@lib/utils/format'
 import { pageTopPadding } from '@lib/utils/platform'
 import { preselectSettingsTab } from '@pages/settings/settingsNav'
 import type {
   AskUserResponse,
   ChatHistoryMessage,
-  ConversationChannel,
   ConversationFile,
   ConversationStats,
   ConversationTurnStats,
@@ -70,7 +69,6 @@ import { useLocale } from '@providers/locale/useLocale'
 import { useTheme } from '@providers/theme/useTheme'
 import iconTransparent from '@resources/images/icon_transparent.png'
 import {
-  Activity04Icon,
   AngelIcon,
   ArrowExpandIcon,
   BubbleChatIcon,
@@ -569,15 +567,6 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
   // The onTurnEvent closure is created once, so reading the token state
   // directly there would see stale (turn-start) values — the ref does not.
   const turnStatsRef = useRef<TurnStats>(emptyTurnStats())
-  // Tracks the last working-folder value we communicated to the model
-  // per conversation. Lets us emit a one-shot "cleared" notice on the
-  // transition from set→null so the model stops referring to the old
-  // folder it saw in earlier turns.
-  // Track the channel of the currently-loaded conversation. Null
-  // when there's no active conversation (fresh chat). Telegram
-  // conversations are read-only from the in-app chat — we hide the
-  // input form and show a notice instead.
-  const [activeChannel, setActiveChannel] = useState<ConversationChannel | null>(null)
 
   // ── Voice recording ───────────────────────────────────────────
   type RecorderPhase = 'idle' | 'recording' | 'review'
@@ -747,34 +736,8 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
   }, [visible, recPhase, stopRecording])
   // ── End voice recording ───────────────────────────────────────
 
-  useEffect(() => {
-    if (!activeConversationId) return
-    let cancelled = false
-    void window.api.conversation.load(activeConversationId).then((conv) => {
-      if (cancelled) return
-      setActiveChannel(conv?.channel ?? null)
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [activeConversationId])
-
-  // Treat the loaded channel as null whenever no conversation is
-  // active. Computing this at render time (instead of clearing
-  // activeChannel from inside the effect) avoids the cascading-render
-  // pattern react-hooks lint flags.
-  const isTelegramConversation = activeConversationId !== null && activeChannel === 'telegram'
-  const isWhatsAppConversation = activeConversationId !== null && activeChannel === 'whatsapp'
-  const isHeartbeatConversation = activeConversationId !== null && activeChannel === 'heartbeat'
-  const isProcedureConversation = activeConversationId !== null && activeChannel === 'procedure'
-  const isExternalChannel =
-    isTelegramConversation ||
-    isWhatsAppConversation ||
-    isHeartbeatConversation ||
-    isProcedureConversation
-
-  // Publish the live action-bar (composer / read-only banner) height as a CSS
-  // variable so the app-level conversations rail can end exactly at its top
+  // Publish the live action-bar (composer) height as a CSS variable so the
+  // app-level conversations rail can end exactly at its top
   // instead of running full-height behind it. The action bar is the scroller's
   // next sibling; a ResizeObserver tracks it as the textarea grows / the
   // recorder swaps in. Only the VISIBLE session writes the var.
@@ -788,7 +751,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     const ro = new ResizeObserver(apply)
     ro.observe(el)
     return () => ro.disconnect()
-  }, [visible, isExternalChannel, recPhase])
+  }, [visible, recPhase])
 
   // Re-sync model-dependent UI whenever the active model changes — the local
   // model, the local-only toggle, OR the cloud Brain (activeCloudModel). Two
@@ -841,49 +804,49 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
 
   const persistConversation = useCallback(
     async (msgs: ChatMessage[]) => {
-      const convMessages = msgs
-        .filter((m) => {
-          if (isUser(m)) return true
-          if (isAssistant(m) && m.status === 'error') return true
-          if (isAssistant(m) && m.status === 'complete') return m.segments.length > 0
-          return false
-        })
-        .map((m) => {
-          // Preserve each message's own send time — stamping Date.now() here
-          // rewrote every timestamp on every save, destroying real history.
-          if (isUser(m)) {
-            return {
-              role: 'user' as const,
-              content: m.content,
-              timestamp: m.timestamp ?? Date.now(),
-              ...(m.attachments && m.attachments.length > 0 ? { attachments: m.attachments } : {})
-            }
-          }
-          const am = m as AssistantMessage
+      const convMessages = msgs.filter(isPersistedMessage).map((m) => {
+        // Preserve each message's own send time — stamping Date.now() here
+        // rewrote every timestamp on every save, destroying real history.
+        if (isUser(m)) {
           return {
-            role: 'assistant' as const,
-            content: collectText(am.segments),
-            // Coalesce streaming text deltas at persistence time: one text
-            // segment per run instead of thousands of one-word deltas (a
-            // single conversation was 28k delta segments / 4MB on disk).
-            segments: coalesceTextSegments(am.segments),
-            approvals: am.approvals,
-            toolTimings: am.toolTimings,
-            stopReason: am.stopReason,
-            ...(am.status === 'error' && am.error ? { error: am.error } : {}),
-            timestamp: am.timestamp ?? Date.now()
+            role: 'user' as const,
+            content: m.content,
+            timestamp: m.timestamp ?? Date.now(),
+            ...(m.attachments && m.attachments.length > 0 ? { attachments: m.attachments } : {}),
+            // Written by the channels, replayed by us: a save from the app
+            // must hand these back untouched or continuing a voice-note
+            // conversation in-app would strip the flag off disk.
+            ...(m.voicePrompt ? { voicePrompt: true } : {}),
+            ...(m.voiceLang ? { voiceLang: m.voiceLang } : {})
           }
-        })
+        }
+        const am = m as AssistantMessage
+        return {
+          role: 'assistant' as const,
+          content: collectText(am.segments),
+          // Coalesce streaming text deltas at persistence time: one text
+          // segment per run instead of thousands of one-word deltas (a
+          // single conversation was 28k delta segments / 4MB on disk).
+          segments: coalesceTextSegments(am.segments),
+          approvals: am.approvals,
+          toolTimings: am.toolTimings,
+          stopReason: am.stopReason,
+          ...(am.status === 'error' && am.error ? { error: am.error } : {}),
+          timestamp: am.timestamp ?? Date.now()
+        }
+      })
 
       if (convMessages.length === 0) return
 
-      // Never persist a channel-owned conversation from the renderer: those
-      // files belong to the WhatsApp/Telegram/heartbeat writers, and a
-      // whole-file save from this (possibly stale) copy would clobber
-      // messages their turns appended. In-app they are read-only anyway;
-      // this guard also covers the async window before activeChannel loads.
-      const ownedChannel = conversationRef.current?.channel
-      if (ownedChannel && ownedChannel !== 'electron') return
+      // Channel-owned conversations (WhatsApp / Telegram / heartbeat /
+      // procedure) are saved from here too — they are continued in-app like any
+      // other chat, and blocking the write would stream a reply and then lose it
+      // on reopen. This is a whole-file save of a copy loaded when the
+      // conversation was opened, so it does still assume nothing else appended
+      // to the file in the meantime: if a message arrives on the channel while
+      // that same conversation is open here, this save overwrites it. Only the
+      // two live channels can do that (each automation run gets its own fresh
+      // conversation), and it needs the phone and the app going at once.
 
       if (!conversationRef.current) {
         const conv = await window.api.conversation.create(
@@ -895,6 +858,11 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
 
       conversationRef.current.messages = convMessages
       conversationRef.current.updatedAt = Date.now()
+      // A heartbeat/procedure run seals its conversation as a finished record,
+      // and the rolling summarizer skips sealed files. Once the user carries on
+      // in it, it is a live conversation again — leaving it sealed would replay
+      // the full verbatim transcript forever instead of a prefix summary.
+      if (conversationRef.current.sealed) conversationRef.current.sealed = false
       // Persist the full tokenomics snapshot: lifetime totals, the last
       // turn's roll-up, and the meter reading stamped with the model it was
       // measured under. Supersedes the legacy `contextMeter` field (still
@@ -1013,7 +981,15 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
         const raw = conv.workingFolder
         const folders = Array.isArray(raw) ? raw : typeof raw === 'string' ? [raw] : []
         setStoredFolders(folders)
-        setTimelineEntries(conv.timeline ?? [])
+        // Channel-owned and legacy conversations never stored a timeline — the
+        // log is derived from their messages for display. Seed the live
+        // timeline from that derivation so continuing one in-app EXTENDS the
+        // log instead of restarting it: the live timeline wins over the derived
+        // one once non-empty, and persistConversation writes it back, so
+        // seeding empty would drop every earlier turn from View Logs for good.
+        setTimelineEntries(
+          conv.timeline ?? deriveTimelineFromMessages(mapConversationMessages(conv))
+        )
         setFilesOpen(false)
       })
     } else {
@@ -1042,6 +1018,63 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
       })
     }
   }, [activeConversationId, resetTurnStats])
+
+  // Pull in messages another surface appended to the conversation we have open
+  // — you answer on your phone while this chat sits on screen. Nothing else
+  // fetches them: the feed would sit stale until reopened, and our next save
+  // (a whole-file write of this stale copy) would drop them entirely.
+  //
+  // Appends the new tail ONLY, leaving every message object we already hold
+  // untouched, so React re-renders nothing but the arriving bubbles — no
+  // remount, no reflow. Re-mapping the whole conversation would remint every
+  // message id and remount every item (images reloading, path cards
+  // re-statting, the scroll jumping), which is exactly the flash to avoid. The
+  // tail is safe to take by index because messages are append-only on disk
+  // (see conversations.ts): anything past what we already hold IS new. No
+  // warmPathCards — a tail arriving live stats its cards on mount, same as a
+  // streamed message; warming is for the bulk paint of an open.
+  useEffect(() => {
+    if (!activeConversationId) return
+    const targetId = activeConversationId
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+
+    const sync = async (): Promise<void> => {
+      // Our own turn owns the transcript while it runs, and its end-of-turn
+      // save is the writer — syncing under it would race that save. A message
+      // that lands mid-turn is still lost to it; closing that needs stable
+      // message ids, not this.
+      if (pendingTurnIdRef.current !== null) return
+      const conv = await window.api.conversation.load(targetId)
+      if (cancelled || !conv || conversationIdRef.current !== targetId) return
+      setMessages((prev) => {
+        // Count what we hold the way the WRITER counts it, or the slice below
+        // takes the wrong messages.
+        const have = prev.filter(isPersistedMessage).length
+        // Nothing new — return prev so React bails out and nothing re-renders.
+        // This is the overwhelmingly common case: the broadcast fires for every
+        // conversation, most of which aren't ours.
+        if (conv.messages.length <= have) return prev
+        return [
+          ...prev,
+          ...mapConversationMessages({ ...conv, messages: conv.messages.slice(have) })
+        ]
+      })
+    }
+
+    // The broadcast carries no id, so it fires for EVERY conversation's writes
+    // (including every automation run). Debounced, and the whole cost of a miss
+    // is one file read that ends in a no-op setState.
+    const off = window.api.conversation.onChanged(() => {
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(() => void sync().catch(() => undefined), 250)
+    })
+    return () => {
+      cancelled = true
+      if (timer) clearTimeout(timer)
+      off()
+    }
+  }, [activeConversationId])
 
   const shouldPersistRef = useRef(false)
 
@@ -2008,13 +2041,13 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
 
   const handleDragEnter = useCallback(
     (e: React.DragEvent<HTMLDivElement>) => {
-      if (streaming || isExternalChannel) return
+      if (streaming) return
       if (!hasFiles(e)) return
       e.preventDefault()
       e.stopPropagation()
       setDragActive(true)
     },
-    [streaming, isExternalChannel]
+    [streaming]
   )
 
   const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
@@ -2029,13 +2062,13 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
 
   const handleDragOver = useCallback(
     (e: React.DragEvent<HTMLDivElement>) => {
-      if (streaming || isExternalChannel) return
+      if (streaming) return
       if (!hasFiles(e)) return
       e.preventDefault()
       e.stopPropagation()
       e.dataTransfer.dropEffect = 'copy'
     },
-    [streaming, isExternalChannel]
+    [streaming]
   )
 
   const handleDrop = useCallback(
@@ -2043,17 +2076,17 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
       e.preventDefault()
       e.stopPropagation()
       setDragActive(false)
-      if (streaming || isExternalChannel) return
+      if (streaming) return
       const files = Array.from(e.dataTransfer.files ?? [])
       if (files.length === 0) return
       await stageFiles(files)
     },
-    [streaming, isExternalChannel, stageFiles]
+    [streaming, stageFiles]
   )
 
   const handlePaste = useCallback(
     async (e: React.ClipboardEvent<HTMLElement>) => {
-      if (streaming || isExternalChannel) return
+      if (streaming) return
       const files = Array.from(e.clipboardData?.files ?? [])
       if (files.length === 0) return
       // Intercept clipboard files so they don't end up as binary noise
@@ -2061,7 +2094,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
       e.preventDefault()
       await stageFiles(files)
     },
-    [streaming, isExternalChannel, stageFiles]
+    [streaming, stageFiles]
   )
 
   const hasMessages = messages.length > 0
@@ -2248,15 +2281,14 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
         </div>
       </div>
 
-      {/* Composer: always rendered, including for channel-owned conversations
-          (WhatsApp / Telegram / heartbeat / procedure). For those, every action
-          button is disabled and the textarea slot shows the read-only channel
-          notice instead — the bar keeps its familiar shape, but the
-          conversation can only be continued from its own channel. */}
+      {/* Composer: identical for every conversation, whatever channel it came
+          from. A WhatsApp / Telegram / heartbeat / procedure conversation is
+          continued from here exactly like an in-app one — same file, same
+          agent, same turn path; only the reply's delivery differs (it renders
+          here rather than being pushed back to the channel). */}
       <form
         onSubmit={(e) => {
           e.preventDefault()
-          if (isExternalChannel) return
           if (streaming) stop()
           else void send()
         }}
@@ -2314,7 +2346,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
               localModel={currentModel}
               providers={cloudProviders}
               brain={brain}
-              disabled={savingMode || streaming || isExternalChannel}
+              disabled={savingMode || streaming}
               onModeChange={onModeChange}
               onSelectModel={async (sel) => {
                 await window.api.provider.setBrain(sel)
@@ -2326,13 +2358,13 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                 modes={reasoningModes}
                 value={thinkingMode}
                 onSelect={setThinkingMode}
-                disabled={savingMode || streaming || isExternalChannel}
+                disabled={savingMode || streaming}
               />
             )}
             {recPhase === 'idle' && (
               <ChatModeButton
                 mode={chatMode}
-                disabled={savingMode || streaming || isExternalChannel}
+                disabled={savingMode || streaming}
                 onSelect={async (mode) => {
                   if (mode === chatMode) return
                   await window.api.provider.setMode(mode)
@@ -2377,7 +2409,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
             <button
               type="button"
               onClick={() => void exportChatPdf()}
-              disabled={streaming || exportingPdf || !canExportPdf || isExternalChannel}
+              disabled={streaming || exportingPdf || !canExportPdf}
               title={t('chat.downloadPdf')}
               aria-label={t('chat.downloadPdf')}
               className={cn(
@@ -2385,11 +2417,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                 'border-border bg-surface text-muted enabled:hover:text-fg enabled:hover:border-muted',
                 'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
                 'disabled:cursor-not-allowed disabled:opacity-50',
-                !streaming &&
-                  !exportingPdf &&
-                  canExportPdf &&
-                  !isExternalChannel &&
-                  'cursor-pointer'
+                !streaming && !exportingPdf && canExportPdf && 'cursor-pointer'
               )}
             >
               <Download01Icon size={18} />
@@ -2397,7 +2425,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
             <button
               type="button"
               onClick={pickUploads}
-              disabled={streaming || isExternalChannel}
+              disabled={streaming}
               title={t('chat.attachFile')}
               aria-label={t('chat.attachFile')}
               className={cn(
@@ -2405,7 +2433,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                 'border-border bg-surface text-muted enabled:hover:text-fg enabled:hover:border-muted',
                 'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
                 'disabled:cursor-not-allowed disabled:opacity-50',
-                !streaming && !isExternalChannel && 'cursor-pointer'
+                !streaming && 'cursor-pointer'
               )}
             >
               <Image02Icon size={18} />
@@ -2415,12 +2443,12 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
               folders={workingFolders}
               onAdd={() => void addWorkingFolder()}
               onRemove={(folder) => void removeWorkingFolder(folder)}
-              disabled={streaming || isExternalChannel}
+              disabled={streaming}
             />
             <button
               type="button"
               onClick={recPhase === 'idle' ? () => void startRecording() : undefined}
-              disabled={streaming || !micAvailable || recPhase !== 'idle' || isExternalChannel}
+              disabled={streaming || !micAvailable || recPhase !== 'idle'}
               title={!micAvailable ? t('chat.voice.noMic') : t('chat.voice.record')}
               aria-label={t('chat.voice.record')}
               className={cn(
@@ -2428,11 +2456,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                 'border-border bg-surface text-muted enabled:hover:text-fg enabled:hover:border-muted',
                 'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
                 'disabled:cursor-not-allowed disabled:opacity-50',
-                !streaming &&
-                  micAvailable &&
-                  recPhase === 'idle' &&
-                  !isExternalChannel &&
-                  'cursor-pointer'
+                !streaming && micAvailable && recPhase === 'idle' && 'cursor-pointer'
               )}
             >
               <Mic01Icon size={18} />
@@ -2441,7 +2465,6 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
               <button
                 type="submit"
                 disabled={
-                  isExternalChannel ||
                   !hasAnyModel ||
                   (!streaming && draft.trim().length === 0 && pendingAttachments.length === 0)
                 }
@@ -2458,33 +2481,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                 {streaming ? <StopCircleIcon size={18} /> : <ArrowUp02Icon size={18} />}
               </button>
             )}
-            {isExternalChannel ? (
-              /* Channel-owned conversation: the textarea slot carries the
-                   read-only notice instead of an input, same height as the
-                   textarea so the composer doesn't shift between chats. */
-              <div className="bg-surface border-border order-first flex min-h-[42.5px] min-w-0 flex-1 items-center gap-2.5 rounded-lg border px-3">
-                {isHeartbeatConversation ? (
-                  <Activity04Icon size={16} className="text-muted shrink-0" aria-hidden />
-                ) : isProcedureConversation ? (
-                  <PlayIcon size={16} className="text-muted shrink-0" aria-hidden />
-                ) : isTelegramConversation ? (
-                  <TelegramLogo size={16} className="text-muted shrink-0" aria-hidden />
-                ) : (
-                  <WhatsAppLogo size={16} className="text-muted shrink-0" aria-hidden />
-                )}
-                <span className="text-muted flex-1 truncate text-sm cursor-default">
-                  {t(
-                    isHeartbeatConversation
-                      ? 'chat.heartbeatReadOnly'
-                      : isProcedureConversation
-                        ? 'chat.procedureReadOnly'
-                        : isTelegramConversation
-                          ? 'chat.telegramReadOnly'
-                          : 'chat.whatsappReadOnly'
-                  )}
-                </span>
-              </div>
-            ) : recPhase === 'idle' ? (
+            {recPhase === 'idle' ? (
               <div className="relative order-first flex min-w-0 flex-1 flex-col">
                 <textarea
                   ref={textareaRef}
@@ -4351,6 +4348,7 @@ function PendingAttachmentChip({
   attachment: MessageAttachment
   onRemove: () => void
 }): React.JSX.Element {
+  const { t } = useTranslation()
   return (
     <div
       className={cn(
@@ -4365,7 +4363,7 @@ function PendingAttachmentChip({
         {attachment.originalName}
       </span>
       <span className="text-muted shrink-0 tabular-nums text-[10px]">
-        {formatBytes(attachment.sizeBytes)}
+        {formatBytesL(attachment.sizeBytes, t)}
       </span>
       <button
         type="button"
@@ -4957,6 +4955,22 @@ function stubStaleToolResults(
   })
 }
 
+/**
+ * Whether a feed message reaches disk — persistConversation writes exactly
+ * these and nothing else.
+ *
+ * The single definition matters: it is the projection from feed to file, so
+ * anything that counts or indexes persisted messages (the rolling-summary
+ * mark, the disk-tail sync) must agree with the writer exactly. A second copy
+ * that drifted would silently mis-index the transcript.
+ */
+function isPersistedMessage(m: ChatMessage): boolean {
+  if (isUser(m)) return true
+  if (isAssistant(m) && m.status === 'error') return true
+  if (isAssistant(m) && m.status === 'complete') return m.segments.length > 0
+  return false
+}
+
 type ReplayWindowInfo = {
   summary?: string | null
   summarizedThroughMessage?: number | null
@@ -4979,12 +4993,7 @@ function textHistory(
   // Mirror of channel.ts replayWindow's defensive guard: a stale/corrupt mark
   // at/beyond the persisted count degrades to full replay — never to an
   // everything-skipped send.
-  const persistedTotal = messages.filter(
-    (m) =>
-      isUser(m) ||
-      (isAssistant(m) &&
-        (m.status === 'error' || (m.status === 'complete' && m.segments.length > 0)))
-  ).length
+  const persistedTotal = messages.filter(isPersistedMessage).length
   const useSummary = Boolean(summary) && mark > 0 && mark < persistedTotal
   if (useSummary) {
     out.push({
@@ -4999,16 +5008,21 @@ function textHistory(
 
   for (const m of messages) {
     if (useSummary) {
-      const persisted =
-        isUser(m) ||
-        (isAssistant(m) &&
-          (m.status === 'error' || (m.status === 'complete' && m.segments.length > 0)))
-      if (persisted) {
+      if (isPersistedMessage(m)) {
         persistIdx++
         if (persistIdx < mark) continue
       }
     }
     if (isUser(m)) {
+      // A voice note's transcript IS the prompt; the audio is kept on disk for
+      // replay only and must not reach the LLM as an attachment. Same rule the
+      // Telegram/WhatsApp history builders apply — it has to live here too now
+      // that those conversations can be continued from the app.
+      if (m.voicePrompt) {
+        const langAttr = m.voiceLang ? ` lang="${m.voiceLang}"` : ''
+        out.push({ role: 'user', content: `<voice_note${langAttr}>\n${m.content}` })
+        continue
+      }
       const content = composeHistoryContent(m.content, m.attachments ?? [], workspaceRoot)
       const entry: ChatHistoryMessage = { role: 'user', content }
       if (m.attachments && m.attachments.length > 0) entry.attachments = m.attachments
@@ -5257,11 +5271,11 @@ function validationErrorMessage(
 ): string {
   switch (error.code) {
     case 'file_too_large':
-      return t('chat.upload.fileTooLarge', { limit: formatBytes(error.maxBytes, 0) })
+      return t('chat.upload.fileTooLarge', { limit: formatBytesL(error.maxBytes, t, 0) })
     case 'max_files_reached':
       return t('chat.upload.maxFiles', { count: error.max })
     case 'total_size_exceeded':
-      return t('chat.upload.totalExceeded', { limit: formatBytes(error.maxBytes, 0) })
+      return t('chat.upload.totalExceeded', { limit: formatBytesL(error.maxBytes, t, 0) })
     case 'type_not_supported':
       return t('chat.upload.typeNotSupported')
   }

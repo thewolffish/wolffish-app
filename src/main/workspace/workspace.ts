@@ -1,4 +1,8 @@
 import { is } from '@electron-toolkit/utils'
+// Type-only: erased at compile time, so it adds no runtime edge to the
+// conversations module (which imports workspaceRoot() from here). The value
+// imports it needs are deferred — see backfillUntitledConversations.
+import type { ConversationFile } from '@main/conversations'
 import { diskWriter } from '@main/io/diskWriter'
 import { mcpCapabilityName } from '@main/runtime/mcp/naming'
 import type { McpConfig, McpOauthState, McpServerConfig } from '@main/runtime/mcp/types'
@@ -9,6 +13,7 @@ import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import fs from 'node:fs/promises'
+import type { FileHandle } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import semver from 'semver'
@@ -65,6 +70,13 @@ export type TelegramConfig = {
    * and errors are sent. Gates sending only; history is unaffected.
    */
   verbose?: boolean
+  /**
+   * Keep scheduled automation runs out of the /resume picker. On by default:
+   * automations vastly outnumber real chats, and /resume exists to pick a
+   * conversation back up, not to reopen an automation log. They stay listed
+   * in /delete (so they can still be cleaned up from a phone) and in the app.
+   */
+  hideAutomationsFromResume?: boolean
 }
 
 /**
@@ -84,6 +96,13 @@ export type WhatsAppConfig = {
    * and errors are sent. Gates sending only; history is unaffected.
    */
   verbose?: boolean
+  /**
+   * Keep scheduled automation runs out of the /resume picker. On by default:
+   * automations vastly outnumber real chats, and /resume exists to pick a
+   * conversation back up, not to reopen an automation log. They stay listed
+   * in /delete (so they can still be cleaned up from a phone) and in the app.
+   */
+  hideAutomationsFromResume?: boolean
 }
 
 /**
@@ -941,6 +960,23 @@ async function cleanupWorkspace(): Promise<void> {
     const target = path.join(WORKSPACE_ROOT, 'brain', 'identity', stale)
     if (existsSync(target)) await fs.rm(target, { force: true }).catch(() => undefined)
   }
+  // Conversations stranded as 'Untitled' by the titling deadline bug. Telegram
+  // and WhatsApp write an 'Untitled' file BEFORE the turn, and a titling call
+  // that blew its 15s deadline used to return '' and write nothing over it — so
+  // ~20% of them kept the placeholder even though the turn delivered fine. The
+  // deadline now degrades to this same slice (conversation-titler's
+  // fallbackTitle), so this only has to heal what the old build left behind.
+  //
+  // Deterministic on purpose: no LLM call. This runs on every launch, before a
+  // brain is necessarily resolvable, and 6 blocking title calls on the startup
+  // path is a bad trade for prettier names on old chats. A slice of the user's
+  // own first message is what the live fallback produces anyway.
+  //
+  // Idempotent: a healed conversation no longer reads 'Untitled' and is skipped
+  // forever after. Conversations with no user message (empty shells) have
+  // nothing to name and are left alone rather than invented.
+  await backfillUntitledConversations()
+
   // …and its config keys (plus the retired greedy/autonomous toggles),
   // seeding `mode`. A user who ran Orchestrator mode was running
   // multi-agent — carry that intent into the replacement rather than
@@ -963,6 +999,118 @@ async function cleanupWorkspace(): Promise<void> {
     delete llm.greedy
     delete llm.autonomous
     await writeConfig({ ...config, llm: { ...llm, mode } })
+  }
+}
+
+/** Bytes of each conversation file the Untitled scan reads. See findUntitled. */
+const TITLE_PROBE_BYTES = 512
+
+/**
+ * Conversation files whose title MIGHT still be the 'Untitled' placeholder.
+ *
+ * Reads only the head of each file rather than parsing it. This runs on the
+ * awaited launch path on every boot, forever, to heal a handful of files once:
+ * listConversations() would JSON.parse the whole corpus for that (measured:
+ * 290ms over 672 files / 81MB), where probing 512 bytes costs 13ms. Cheap
+ * enough to stay honest — it re-checks the real condition every launch instead
+ * of trusting a "migration done" flag, so anything stranded later still heals.
+ *
+ * The title is written near the head by construction (createConversation seeds
+ * `id` then `title`, and messages come last), so it lands inside the probe. A
+ * file whose head shows no title at all is returned anyway and let the full
+ * parse decide — a false POSITIVE just costs one read, while a false negative
+ * would silently leave a conversation nameless.
+ */
+async function findUntitled(dir: string): Promise<string[]> {
+  const entries = await fs.readdir(dir).catch(() => [] as string[])
+  const hits: string[] = []
+  await Promise.all(
+    entries.map(async (entry) => {
+      if (!entry.endsWith('.json')) return
+      let handle: FileHandle | undefined
+      try {
+        handle = await fs.open(path.join(dir, entry), 'r')
+        const buf = Buffer.alloc(TITLE_PROBE_BYTES)
+        const { bytesRead } = await handle.read(buf, 0, TITLE_PROBE_BYTES, 0)
+        const head = buf.subarray(0, bytesRead).toString('utf8')
+        if (/"title"\s*:\s*"Untitled"/.test(head) || !/"title"\s*:/.test(head)) hits.push(entry)
+      } catch {
+        // Unreadable: leave it alone rather than guess.
+      } finally {
+        await handle?.close().catch(() => undefined)
+      }
+    })
+  )
+  return hits
+}
+
+/**
+ * Heal conversations the titling-deadline bug stranded as 'Untitled' (see the
+ * call site in cleanupWorkspace for why they exist). Names each from a plain
+ * slice of its own first user message — the same degradation the live titler
+ * now applies — so a chat that ran fine stops presenting as nameless.
+ *
+ * Imported lazily on purpose: conversations.ts and conversation-titler.ts both
+ * import workspaceRoot() from THIS module, so a static import here would close
+ * an initialisation cycle. Deferring to call time — long after both modules are
+ * evaluated — keeps the graph acyclic.
+ *
+ * Reads are direct (the probe above + one parse per candidate), but the WRITE
+ * goes through updateConversation so it rides the diskWriter queue and can't
+ * clobber a concurrent writer.
+ */
+async function backfillUntitledConversations(): Promise<void> {
+  try {
+    const dir = path.join(WORKSPACE_ROOT, 'brain', 'conversations')
+    if (!existsSync(dir)) return
+    const candidates = await findUntitled(dir)
+    if (candidates.length === 0) return
+
+    const { updateConversation } = await import('@main/conversations')
+    const { offlineTitle } = await import('@main/conversation-titler')
+    const { composeAttachmentContext } = await import('@main/uploads/compose-attachments')
+
+    for (const entry of candidates) {
+      let conv: ConversationFile
+      try {
+        conv = JSON.parse(await fs.readFile(path.join(dir, entry), 'utf8')) as ConversationFile
+      } catch {
+        continue
+      }
+      if (!conv.id || conv.title !== 'Untitled') continue
+      // ONLY the channels that can be stranded forever. An in-app conversation
+      // is 'Untitled' for a reason that heals itself: a cancelled first turn
+      // leaves it deliberately unwritten so the NEXT turn writes the real
+      // title. Naming it here would be that title's last word — the exact
+      // suppression the titler's cancel contract exists to avoid. Matches the
+      // runtime: only telegram/whatsapp ever stranded (21% / 11%); in-app,
+      // heartbeat and procedure stranded zero of 627.
+      if (conv.channel !== 'telegram' && conv.channel !== 'whatsapp') continue
+      // An empty shell has nothing to name — leave it rather than invent one.
+      const first = conv.messages?.find((m) => m.role === 'user')
+      if (!first) continue
+      // Compose exactly as the live turn does before titling. A caption-less
+      // media message is STORED as content:'' with the files in a separate
+      // `attachments` field — the <attachments> block only ever exists in the
+      // composed history. Reading `content` alone would see an empty string and
+      // skip the very conversations this is here to heal (a real WhatsApp one
+      // on disk looks precisely like that), so compose first and let
+      // offlineTitle name it from the filenames.
+      const composed = composeAttachmentContext(first.content ?? '', first.attachments ?? [])
+      const title = offlineTitle(composed, conv.channel)
+      if (!title || title === 'Untitled') continue
+      await updateConversation(conv.id, (disk) => {
+        if (!disk) return null
+        // Re-check under the write lock: a live turn may have titled it
+        // properly since the probe. A real title always beats this slice.
+        if (disk.title && disk.title !== 'Untitled') return null
+        disk.title = title
+        return disk
+      }).catch(() => undefined)
+    }
+  } catch {
+    // Best-effort, like every block in cleanupWorkspace: a cosmetic backfill
+    // must never keep the app from starting.
   }
 }
 
@@ -1360,7 +1508,9 @@ export async function setTelegramConfig(patch: Partial<TelegramConfig>): Promise
       allowedUserIds: patch.allowedUserIds ?? current.allowedUserIds,
       autoRefresh: patch.autoRefresh ?? current.autoRefresh,
       staleHours: patch.staleHours ?? current.staleHours,
-      verbose: patch.verbose ?? current.verbose
+      verbose: patch.verbose ?? current.verbose,
+      hideAutomationsFromResume:
+        patch.hideAutomationsFromResume ?? current.hideAutomationsFromResume
     }
     return { ...c, telegram: next }
   })
@@ -1387,7 +1537,9 @@ export async function setWhatsAppConfig(patch: Partial<WhatsAppConfig>): Promise
       allowedPhoneNumbers: patch.allowedPhoneNumbers ?? current.allowedPhoneNumbers,
       autoRefresh: patch.autoRefresh ?? current.autoRefresh,
       staleHours: patch.staleHours ?? current.staleHours,
-      verbose: patch.verbose ?? current.verbose
+      verbose: patch.verbose ?? current.verbose,
+      hideAutomationsFromResume:
+        patch.hideAutomationsFromResume ?? current.hideAutomationsFromResume
     }
     return { ...c, whatsapp: next }
   })

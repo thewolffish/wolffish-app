@@ -57,7 +57,28 @@ type ToolDeps = {
    * trusting the locally-minted id sendMessage() resolves with.
    */
   confirmDelivery?: (id: string) => Promise<'acked' | 'error' | 'timeout'>
+  /**
+   * Point `jid`'s chat at the conversation this turn belongs to, so the user's
+   * reply lands in the conversation that messaged them. The channel owns it —
+   * resolving the outbound JID to the key the inbound path uses needs the
+   * socket. A no-op when the chat is already bound there.
+   */
+  bindChatToSendingConversation?: (jid: string) => Promise<void>
 }
+
+/**
+ * Tools whose delivery invites a reply, so the recipient's chat should be
+ * pointed at the conversation that sent it. Excludes the read-only lookups,
+ * and two deliberate omissions: `whatsapp_react` (an emoji is not a message
+ * anyone replies to) and `whatsapp_check_format` (sends nothing).
+ */
+const BINDS_CHAT = new Set([
+  'whatsapp_send',
+  'whatsapp_send_image',
+  'whatsapp_send_document',
+  'whatsapp_send_audio',
+  'whatsapp_reply'
+])
 
 // WhatsApp practical upload ceilings. Images/audio are sent inline; documents
 // can be much larger. These are guards so we fail fast with a clear message
@@ -439,34 +460,51 @@ export function buildWhatsAppCapability(deps: ToolDeps): {
 
       const track = deps.trackSentId
       const confirm = deps.confirmDelivery
-      switch (toolName) {
-        case 'whatsapp_check':
-          return checkNumbers(sock, args)
-        case 'whatsapp_send':
-          return sendText(sock, args, track, confirm)
-        case 'whatsapp_send_image':
-          return sendImage(sock, args, track, confirm, deps.ensureFfmpeg)
-        case 'whatsapp_send_document':
-          return sendDocument(sock, args, track, confirm)
-        case 'whatsapp_send_audio':
-          return sendAudio(sock, args, track, confirm)
-        case 'whatsapp_reply':
-          return replyTo(sock, args, track, confirm)
-        case 'whatsapp_react':
-          return reactTo(sock, args)
-        case 'whatsapp_list_groups':
-          return listGroups(sock, args)
-        case 'whatsapp_group_info':
-          return groupInfo(sock, args)
-        case 'whatsapp_group_invite':
-          return groupInvite(sock, args)
-        case 'whatsapp_profile':
-          return getProfile(sock, args)
-        case 'whatsapp_read':
-          return readChat(args, deps.readMessages)
-        default:
-          return failure(`unknown whatsapp tool: ${toolName}`)
+      const dispatch = async (): Promise<ToolExecutionResult> => {
+        switch (toolName) {
+          case 'whatsapp_check':
+            return checkNumbers(sock, args)
+          case 'whatsapp_send':
+            return sendText(sock, args, track, confirm)
+          case 'whatsapp_send_image':
+            return sendImage(sock, args, track, confirm, deps.ensureFfmpeg)
+          case 'whatsapp_send_document':
+            return sendDocument(sock, args, track, confirm)
+          case 'whatsapp_send_audio':
+            return sendAudio(sock, args, track, confirm)
+          case 'whatsapp_reply':
+            return replyTo(sock, args, track, confirm)
+          case 'whatsapp_react':
+            return reactTo(sock, args)
+          case 'whatsapp_list_groups':
+            return listGroups(sock, args)
+          case 'whatsapp_group_info':
+            return groupInfo(sock, args)
+          case 'whatsapp_group_invite':
+            return groupInvite(sock, args)
+          case 'whatsapp_profile':
+            return getProfile(sock, args)
+          case 'whatsapp_read':
+            return readChat(args, deps.readMessages)
+          default:
+            return failure(`unknown whatsapp tool: ${toolName}`)
+        }
       }
+
+      const result = await dispatch()
+
+      // A delivered message is an invitation to reply, so hand the chat to the
+      // conversation that sent it — the user answering on their phone should
+      // continue THIS conversation, not whatever the chat was last left on.
+      // Only after a real delivery: binding on a failed send would silently
+      // reroute the user's next (unrelated) message for a note they never got.
+      if (result.success && BINDS_CHAT.has(toolName)) {
+        const jid = stringArg(args.jid)
+        // Best-effort — a message already reached the user; a bookkeeping
+        // failure must not turn a delivered send into a reported failure.
+        if (jid) await deps.bindChatToSendingConversation?.(jid).catch(() => undefined)
+      }
+      return result
     }
   }
 

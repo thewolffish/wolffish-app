@@ -65,16 +65,21 @@ export function FlowProvider({ children }: { children: ReactNode }): React.JSX.E
     let cancelled = false
     void Promise.all([
       decideInitialScreen(),
-      window.api.data.getAnalytics(),
       window.api.system.getInfo(),
       window.api.updater.consumePostUpdate().catch(() => false)
-    ]).then(([r, analytics, sys, justUpdated]) => {
+    ]).then(([r, sys, justUpdated]) => {
       if (cancelled) return
       setStatus(r.status)
       setScreen(justUpdated && r.screen === 'chat' ? 'changelog' : r.screen)
-      setDataAnalytics(analytics)
       setSystemInfo(sys)
       setReady(true)
+    })
+    // Analytics feed only the Data panel, but getAnalytics() walks the whole
+    // workspace and then sits out a 250ms CPU sample — first paint must not
+    // wait on that. Land it whenever it lands; DataPanel renders a skeleton
+    // until it does.
+    void window.api.data.getAnalytics().then((analytics) => {
+      if (!cancelled) setDataAnalytics(analytics)
     })
     return () => {
       cancelled = true

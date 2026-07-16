@@ -462,7 +462,35 @@
         "language": "Language",
         "languageDescription": "Auto-detected by default. You can specify a language per transcription to improve accuracy.",
         "modelsTitle": "Available models",
-        "formatsTitle": "Supported formats"
+        "formatsTitle": "Supported formats",
+        "modelOption": "{{id}} — {{size}} ({{speed}})",
+        "models": {
+          "tiny": {
+            "size": "~75 MB",
+            "speed": "Fastest",
+            "description": "Quick previews of long audio"
+          },
+          "base": {
+            "size": "~150 MB",
+            "speed": "Fast",
+            "description": "Default for most transcription"
+          },
+          "small": {
+            "size": "~500 MB",
+            "speed": "Moderate",
+            "description": "Better accuracy when it matters"
+          },
+          "medium": {
+            "size": "~1.5 GB",
+            "speed": "Slow",
+            "description": "High-stakes transcription"
+          },
+          "large": {
+            "size": "~3 GB",
+            "speed": "Very slow",
+            "description": "Research-grade accuracy"
+          }
+        }
       },
       "inapp": {
         "title": "In-App Chat",
@@ -534,6 +562,10 @@
         "verbose": {
           "label": "Verbose task results",
           "description": "Relay every tool call and step to the chat. Off (the default) sends a clean feed — agent replies, files, and errors only."
+        },
+        "hideAutomations": {
+          "label": "Hide automations from /resume",
+          "description": "Keep scheduled automation runs out of the /resume list so it only offers real conversations. On by default. They stay in /delete and in the app."
         },
         "commandsTitle": "Available commands",
         "commandsSubtitle": "Slash commands users send from Telegram. Type each one exactly.",
@@ -955,6 +987,10 @@
           "label": "Verbose task results",
           "description": "Relay every tool call and step to the chat. Off (the default) sends a clean feed — agent replies, files, and errors only."
         },
+        "hideAutomations": {
+          "label": "Hide automations from /resume",
+          "description": "Keep scheduled automation runs out of the /resume list so it only offers real conversations. On by default. They stay in /delete and in the app."
+        },
         "commandsTitle": "Available commands",
         "commandsSubtitle": "Send these commands in your WhatsApp chat.",
         "commands": {
@@ -1298,7 +1334,9 @@
         "corpus": "Corpus",
         "prefrontal": "Prefrontal",
         "ram": "RAM",
-        "cpu": "CPU"
+        "cpu": "CPU",
+        "cpuValue": "{{percent}}%",
+        "cpuValueLow": "Less than 0.1%"
       },
       "factoryReset": {
         "label": "Factory reset",
@@ -1358,10 +1396,6 @@
     "placeholder": "Message Wolffish",
     "send": "Send",
     "stop": "Stop",
-    "telegramReadOnly": "Continue this conversation on Telegram.",
-    "whatsappReadOnly": "Continue this conversation on WhatsApp.",
-    "heartbeatReadOnly": "Automated task — read only.",
-    "procedureReadOnly": "Procedure run — read only.",
     "empty": {
       "title": "Wolffish is ready",
       "subtitle": "Ask anything. I bite through anything."
@@ -1836,6 +1870,11 @@
     "processing": "Processing…"
   },
   "units": {
+    "bytes": "{{value}} B",
+    "kilobytes": "{{value}} KB",
+    "megabytes": "{{value}} MB",
+    "gigabytes": "{{value}} GB",
+    "terabytes": "{{value}} TB",
     "seconds": "{{value}}s",
     "minutes": "{{value}}m",
     "hours": "{{value}}h"

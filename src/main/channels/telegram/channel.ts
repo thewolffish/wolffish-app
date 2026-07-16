@@ -1,4 +1,5 @@
 import { interpretAskReply } from '@main/channels/ask-reply'
+import { bindChatToConversation } from '@main/channels/chat-binding'
 import {
   assistantSegmentsToHistory,
   replayWindow,
@@ -61,6 +62,16 @@ import {
   workspaceRoot
 } from '@main/workspace/workspace'
 import {
+  isNextPageReply,
+  keycapNumber,
+  originLabel,
+  pageExists,
+  parseSelectionNumber,
+  pickerPage,
+  selectableCount,
+  truncateTitle
+} from '@main/channels/conversation-picker'
+import {
   collectModelOptions,
   filterModelOptions,
   MODEL_LIST_CAP,
@@ -116,15 +127,6 @@ const COMMANDS_HELP_HTML = [
   '/clear — clear messages from this chat',
   '/ — show more commands'
 ].join('\n')
-
-/**
- * Keycap-emoji digits for visually numbering picker items. /resume
- * and /delete only show up to 10 conversations at a time, so this
- * array covers the full range.
- */
-const KEYCAP_NUMBERS = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'] as const
-
-const SELECTION_LIMIT = KEYCAP_NUMBERS.length
 
 /**
  * Static reply used when the local model is unavailable or fails.
@@ -208,12 +210,12 @@ export type TelegramChannelStatus = {
  * the conversation file on disk is the source of truth for history.
  */
 /**
- * In-flight conversation picker raised by /resume or /delete. The
- * channel renders a numbered list of conversation ids and stores
- * them here; the next number-only reply selects one.
+ * In-flight conversation picker raised by /resume or /delete. The whole
+ * candidate list is snapshotted here when the picker opens — `page` just
+ * windows it — and the next number-only reply selects from it.
  */
 type PendingSelection =
-  | { command: 'resume' | 'delete'; conversationIds: string[] }
+  | { command: 'resume' | 'delete'; items: ConversationMeta[]; page: number }
   | { command: 'model'; models: ModelOption[] }
 
 type ActiveTurn = {
@@ -539,7 +541,8 @@ export class TelegramChannel {
     const { capability, plugin } = buildTelegramCapability({
       getBot: () => this.bot,
       getAllowedUserIds: () => this.allowedUserIds,
-      trackOutgoing: (cid, mid) => this.trackMessageId(cid, mid)
+      trackOutgoing: (cid, mid) => this.trackMessageId(cid, mid),
+      bindChatToSendingConversation: (cid) => this.bindChatToSendingConversation(cid)
     })
     this.agent.cerebellum.registerInProcessCapability(capability, plugin)
 
@@ -964,17 +967,37 @@ export class TelegramChannel {
     // falls through to normal handling.
     const pending = this.pendingSelections.get(chatId)
     if (pending) {
+      // `next` pages the conversation picker. This has to sit ahead of the
+      // number parse and the cancel fall-through below — otherwise the word
+      // reads as "not a selection", silently drops the picker, and gets sent
+      // to the model as an ordinary chat turn.
+      // `command` rather than `lower` so the group-chat form `/next@botname`
+      // works — parseSlashCommand strips the @suffix; it is null for bare text,
+      // where `lower` is already the whole word.
+      if (pending.command !== 'model' && isNextPageReply(command ?? lower)) {
+        const page = pending.page + 1
+        if (pageExists(pending.items, page)) {
+          this.pendingSelections.set(chatId, { ...pending, page })
+          await this.sendPickerPage(chatId, pending.command, pending.items, page)
+        } else {
+          await this.sendPlain(chatId, 'That was the last page — reply with a number to pick one.')
+        }
+        return
+      }
       const num = parseSelectionNumber(trimmed)
+      // Only what the user has actually SEEN is selectable — see selectableCount.
       const count =
-        pending.command === 'model' ? pending.models.length : pending.conversationIds.length
+        pending.command === 'model'
+          ? pending.models.length
+          : selectableCount(pending.items, pending.page)
       if (num !== null && num >= 1 && num <= count) {
         this.pendingSelections.delete(chatId)
         if (pending.command === 'model') {
           await this.applyModelSelection(chatId, pending.models[num - 1], trimmed)
         } else if (pending.command === 'resume') {
-          await this.handleResumeSelection(chatId, pending.conversationIds[num - 1])
+          await this.handleResumeSelection(chatId, pending.items[num - 1].id)
         } else {
-          await this.handleDeleteSelection(chatId, pending.conversationIds[num - 1])
+          await this.handleDeleteSelection(chatId, pending.items[num - 1].id)
         }
         return
       }
@@ -1258,39 +1281,73 @@ export class TelegramChannel {
   }
 
   /**
-   * Render the numbered picker that drives /resume and /delete. Lists
-   * up to 10 most-recent Telegram-channel conversations (Electron
-   * conversations are excluded — they live in the in-app history and
-   * are read-only from Telegram). Stores the resolved conversation
-   * ids in pendingSelections so the next number reply selects one.
-   * Caller has already verified no turn is running.
+   * Open the numbered picker that drives /resume and /delete. Lists every
+   * conversation of every origin, newest first, a page at a time. Caller has
+   * already verified no turn is running on THIS chat.
+   *
+   * The full list is snapshotted into pendingSelections here and every page is
+   * served from that snapshot rather than re-listing. Two reasons: /resume
+   * rewrites updatedAt, which IS the sort key, so a second listing would
+   * reshuffle rows under the numbers the user is still reading; and listing
+   * parses every conversation file on disk, which shouldn't be paid per page.
    */
   private async renderConversationPicker(
     chatId: number,
     command: 'resume' | 'delete'
   ): Promise<void> {
+    // Both /resume and /delete reach ANY conversation — a chat is no longer
+    // pinned to its origin channel, so you manage the whole history from
+    // anywhere, exactly like the in-app Conversations page. Each row carries an
+    // origin tag so a mixed list stays legible. (listConversations is already
+    // newest-first.)
     const all = await listConversations()
-    const telegram = all.filter((c) => c.channel === 'telegram').slice(0, SELECTION_LIMIT)
+    // Automation runs outnumber real chats several-to-one and would bury them
+    // in a newest-first list, so /resume hides them by default. /delete keeps
+    // them — cleaning them up from a phone is a thing you'd actually want.
+    const cfg = await getTelegramConfig()
+    const items =
+      command === 'resume' && (cfg.hideAutomationsFromResume ?? true)
+        ? all.filter((c) => c.channel !== 'heartbeat')
+        : all
 
-    if (telegram.length === 0) {
+    if (items.length === 0) {
       this.pendingSelections.delete(chatId)
       await this.safeSend(chatId, 'No saved conversations yet.')
       return
     }
 
+    this.pendingSelections.set(chatId, { command, items, page: 0 })
+    await this.sendPickerPage(chatId, command, items, 0)
+  }
+
+  /**
+   * Render one page of an open picker. Numbering is continuous across the
+   * whole list rather than restarting per page — page 2 opens at 26 — so a
+   * number identifies the same conversation for as long as the picker is open,
+   * and a number from a page already scrolled past still selects.
+   */
+  private async sendPickerPage(
+    chatId: number,
+    command: 'resume' | 'delete',
+    items: ConversationMeta[],
+    page: number
+  ): Promise<void> {
+    const { shown, start, last, total, hasMore } = pickerPage(items, page)
     const headerHtml =
       command === 'resume'
         ? '<b>Resume a conversation</b> — reply with the number:'
         : '<b>Delete a conversation</b> — reply with the number:'
 
-    const itemsHtml = telegram.map((conv, idx) => formatPickerItem(conv, idx)).join('\n\n')
+    const itemsHtml = shown.map((conv, idx) => formatPickerItem(conv, start + idx)).join('\n\n')
 
-    this.pendingSelections.set(chatId, {
-      command,
-      conversationIds: telegram.map((c) => c.id)
-    })
+    let footerHtml = ''
+    if (hasMore) {
+      footerHtml = `\n\n<i>${start + 1}–${last} of ${total} — reply <b>next</b> for more.</i>`
+    } else if (start > 0) {
+      footerHtml = `\n\n<i>${start + 1}–${last} of ${total} — end of list.</i>`
+    }
 
-    await this.sendHtml(chatId, `${headerHtml}\n\n${itemsHtml}`)
+    await this.sendHtml(chatId, `${headerHtml}\n\n${itemsHtml}${footerHtml}`)
   }
 
   /**
@@ -1326,6 +1383,21 @@ export class TelegramChannel {
    * the chat keeps its current active.
    */
   private async handleDeleteSelection(chatId: number, conversationId: string): Promise<void> {
+    // The same backstop the in-app delete uses (conversation:delete in
+    // index.ts): deleting a conversation mid-turn races its end-of-turn
+    // persist, which resurrects the file — or strands a live stream with no
+    // home. This chat's own busy-check can't cover it, because /delete now
+    // reaches every conversation: the turn may belong to the app or another
+    // chat entirely. deleteConversation is called directly here, so the IPC
+    // handler's guard is not in the path and this has to be its own.
+    if (this.runner.isConversationActive(conversationId)) {
+      await this.safeSend(
+        chatId,
+        '⚠️ That conversation is busy right now — try again once it finishes.'
+      )
+      return
+    }
+
     const currentId = await getConversationIdForChat(chatId)
     const wasActive = currentId === conversationId
 
@@ -1847,6 +1919,13 @@ export class TelegramChannel {
                     disk.updatedAt = assistant.timestamp
                   }
                   if (foldStats) disk.stats = finished.stats.foldInto(disk.stats, endedAt)
+                  // A heartbeat/procedure run seals its conversation as a
+                  // finished record, and the summarizer below skips sealed
+                  // files. A user turn in it — reachable since a background run
+                  // can hand this chat its conversation — makes it live again;
+                  // left sealed it would replay the whole verbatim transcript on
+                  // every reply forever. Mirrors the in-app unseal.
+                  if (disk.sealed) disk.sealed = false
                   return disk
                 })
                   .then(() => {
@@ -1887,6 +1966,20 @@ export class TelegramChannel {
       // handle.done rejects before onTurnStarted ever fires.
       this.stopPreTyping(chatId)
     }
+  }
+
+  /**
+   * Point this chat at the conversation that just sent to it (see
+   * bindChatToConversation for what that means and why). Nothing to resolve
+   * here, unlike WhatsApp: the id the send tools address is the same numeric
+   * chat id the inbound path keys the map by.
+   */
+  private async bindChatToSendingConversation(chatId: number): Promise<void> {
+    await bindChatToConversation(turnScope.getStore()?.conversationId, {
+      getBoundConversationId: () => getConversationIdForChat(chatId),
+      setBoundConversationId: (id) => setConversationIdForChat(chatId, id),
+      updateConversation
+    })
   }
 
   private async loadOrCreateConversation(chatId: number): Promise<ConversationFile> {
@@ -2709,19 +2802,6 @@ function extractVoiceLanguage(rawOutput: string): string {
 }
 
 /**
- * Parse a number-only reply for picker selection. Accepts a 1-2
- * digit number, optionally surrounded by whitespace. Returns null
- * if the message is anything else, including text that contains a
- * number ("send 1 message" doesn't select item 1).
- */
-function parseSelectionNumber(text: string): number | null {
-  const m = /^\s*(\d{1,2})\s*$/.exec(text)
-  if (!m) return null
-  const n = parseInt(m[1], 10)
-  return Number.isFinite(n) ? n : null
-}
-
-/**
  * Render an ask_user question as a Telegram HTML message: bold question,
  * optional details, a numbered list (label + description), and a hint on how
  * to answer. The free-text "something else" option isn't numbered — the hint
@@ -2753,11 +2833,11 @@ function formatAskRequestHtml(req: AskUserRequest): string {
  * goes through sendHtml without further conversion.
  */
 function formatPickerItem(conv: ConversationMeta, index: number): string {
-  const numEmoji = KEYCAP_NUMBERS[index] ?? `${index + 1}.`
-  const title = escapeHtml(conv.title || 'Untitled')
+  const numEmoji = keycapNumber(index + 1)
+  const title = escapeHtml(truncateTitle(conv.title))
   const when = formatRelativeTime(conv.updatedAt)
   const count = conv.messageCount === 1 ? '1 message' : `${conv.messageCount ?? 0} messages`
-  return `${numEmoji} <b>${title}</b>\n${when}\n${count}`
+  return `${numEmoji} <b>${title}</b>\n${when}\n${count} · ${originLabel(conv.channel)}`
 }
 
 /**

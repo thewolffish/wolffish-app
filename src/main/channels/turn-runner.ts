@@ -1,6 +1,6 @@
 import { turnRouter, type TurnSink } from '@main/channels/channel'
 import type { ConversationChannel } from '@main/conversations'
-import { ensureConversationTitle } from '@main/conversation-titler'
+import { ensureConversationTitle, TITLE_DEADLINE_REASON } from '@main/conversation-titler'
 import type { Agent } from '@main/runtime/agent'
 import { turnScope, type CorpusEvent } from '@main/runtime/corpus'
 import { CREDENTIAL_BLOCKED_REPLY, detectSensitiveData } from '@main/runtime/sensitiveDataFilter'
@@ -131,13 +131,30 @@ export class TurnRunner {
   private lifecycleListener: ((ev: TurnLifecycleEvent) => void) | null = null
   /**
    * Deadline (ms) for the title-first LLM call. Titling is awaited BEFORE
-   * agent.respond, and the underlying summarize() retries with backoff — a hung
-   * or very slow provider must never wedge the turn. On expiry titling is
-   * aborted and the turn proceeds untitled (self-healing on a later turn).
-   * Generous enough that a normal cloud title (1–4s) never trips it; only a
-   * pathological hang or a chronically slow local model degrades to Untitled.
+   * agent.respond, so this is dead air on the front of a new conversation — a
+   * hung or very slow provider must never wedge the turn. On expiry titling
+   * degrades to a plain slice of the user's message (a deadline is not a
+   * cancel — see TITLE_DEADLINE_REASON), so the turn always proceeds named.
+   *
+   * 30s, not 15s. Titling normally runs with reasoning OFF now
+   * (thalamus.completeSingle), which puts a title at ~1.2s and never comes near
+   * either number — so for most brains this value is inert and costs nothing.
+   * It exists for the brains the reasoning-off fix CANNOT reach: an always-on
+   * reasoner (grok-4/4.5, qwq, kimi-k2.7-code, minimax-m2.x) has no 'off' in
+   * its registry, keeps the old p50 11.4s / p90 22.2s, and 15s clipped that
+   * distribution at roughly its p70 — a coin-flip on every title.
+   *
+   * The ceiling is bounded by what it buys: 22.2s covers the p90, 30s leaves
+   * headroom, and past ~30s a real title stops being worth the wait when a
+   * readable slice is already guaranteed. It also un-breaks the retry ladder —
+   * thalamus's backoff needs 1+2+4+8 = exactly 15,000ms before its 5th attempt,
+   * so under the old 15s the deadline ALWAYS won that tie and the last retries
+   * were unreachable (measured: a failing provider unwound at 15,009ms).
+   *
+   * Do NOT treat the raise as headroom to let titling get slow again: it is
+   * only affordable because the common path is ~1.2s.
    */
-  private titleTimeoutMs = 15_000
+  private titleTimeoutMs = 30_000
 
   constructor(private readonly agent: Agent) {}
 
@@ -263,13 +280,19 @@ export class TurnRunner {
 
       // Resolve what's already known synchronously (caller-provided or
       // session-cached) so follow-up turns carry their real title from the
-      // first event.
-      let title =
-        opts.conversationTitle ??
-        (conversationId ? this.titledCache.get(conversationId) : undefined)
+      // first event. 'Untitled' is a placeholder, not a title, and it is
+      // TRUTHY — passing it through would satisfy the `if (!title)` below and
+      // skip titling for good. Channels persist exactly that placeholder to
+      // disk before the turn (telegram/channel.ts loadOrCreateConversation),
+      // so a caller wiring `conversationTitle: conv.title` is a live hazard.
+      const provided =
+        opts.conversationTitle && opts.conversationTitle !== 'Untitled'
+          ? opts.conversationTitle
+          : undefined
+      let title = provided ?? (conversationId ? this.titledCache.get(conversationId) : undefined)
 
       // Emit 'started' BEFORE titling — titling is a blocking LLM call
-      // (1–4s typical, titleTimeoutMs cap), and gating the emit on it left
+      // (~1.2s typical, titleTimeoutMs cap), and gating the emit on it left
       // a window where a brand-new conversation existed on disk but had no
       // live status: the rail showed a dead untitled row (or, pre-index,
       // nothing). Early, the row appears instantly with a pulsing chip; the
@@ -295,16 +318,22 @@ export class TurnRunner {
       if (!title) {
         // Bound the title-first call with a PRIVATE deadline that aborts ONLY
         // titling — never the turn's own controller (that would kill the turn).
-        // On timeout the titler unwinds to '' (its abort contract), leaving the
-        // conversation Untitled to be re-titled later, and agent.respond still
-        // runs. A genuine turn cancel is chained in so it also unwinds titling
-        // promptly. thalamus retries the model call internally; this only caps
-        // a hung/slow provider so it can't wedge the turn.
+        // On timeout the titler degrades to a plain slice of the user's message
+        // and agent.respond still runs. The abort REASON is what distinguishes
+        // the two abort sources: a deadline wants that slice (this conversation
+        // may never get a second turn to be re-titled on), while a genuine turn
+        // cancel — chained in below so titling unwinds promptly — must stay ''
+        // so it doesn't bury the real title a later turn would write.
+        // thalamus retries the model call internally; this only caps a
+        // hung/slow provider so it can't wedge the turn.
         const titleController = new AbortController()
         const abortTitling = (): void => titleController.abort()
         if (controller.signal.aborted) abortTitling()
         else controller.signal.addEventListener('abort', abortTitling, { once: true })
-        const titleTimer = setTimeout(abortTitling, this.titleTimeoutMs)
+        const titleTimer = setTimeout(
+          () => titleController.abort(TITLE_DEADLINE_REASON),
+          this.titleTimeoutMs
+        )
         try {
           title = await ensureConversationTitle(
             conversationId,

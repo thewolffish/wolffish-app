@@ -4,7 +4,7 @@ import { Input } from '@components/core/Input'
 import { Modal } from '@components/core/Modal'
 import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn'
-import { formatBytes } from '@lib/utils/format'
+import { formatBytesL } from '@lib/utils/format'
 import type { DataAnalytics, SystemInfo } from '@preload/index'
 import { useFlow } from '@providers/flow/useFlow'
 import {
@@ -117,31 +117,42 @@ function DiskUsageBarSkeleton(): React.JSX.Element {
 function AnalyticsGrid({ analytics }: { analytics: DataAnalytics }): React.JSX.Element {
   const { t } = useTranslation()
 
-  // CPU is "% of one core". Cap the displayed value so a brief spike on
-  // a multi-core machine doesn't read as a nonsense >100% on a single
-  // core. Show one decimal so "0.4%" doesn't round to 0.
-  const cpuValue = `${analytics.cpuPercent.toFixed(1)}%`
-  const ramValue = `${formatBytes(analytics.ramBytes)} / ${formatBytes(analytics.totalRamBytes)}`
+  // cpuPercent is a share of ONE core (process.cpuUsage sums every thread in
+  // the process), so on a multi-core machine it runs past 100% — 1.41 cores
+  // reads as 141%. Divide by the core count so the card shows utilization of
+  // the whole CPU. Dividing by ~12 pushes a normal idle load below one
+  // decimal, so anything non-zero that would render as "0.0%" gets a
+  // less-than-0.1% floor instead: a small real load should read as a small
+  // real load, not as a dead gauge. If os.cpus() ever yields 0, fall back to
+  // the raw per-core figure rather than dividing by zero.
+  const cpuShare = analytics.cpuCount > 0 ? analytics.cpuPercent / analytics.cpuCount : null
+  const cpuValue =
+    cpuShare === null
+      ? t('settings.data.metrics.cpuValue', { percent: analytics.cpuPercent.toFixed(1) })
+      : cpuShare > 0 && cpuShare < 0.05
+        ? t('settings.data.metrics.cpuValueLow')
+        : t('settings.data.metrics.cpuValue', { percent: cpuShare.toFixed(1) })
+  const ramValue = `${formatBytesL(analytics.ramBytes, t)} / ${formatBytesL(analytics.totalRamBytes, t)}`
 
   const items: Array<{ label: string; value: string; icon: IconComp }> = [
     {
       label: t('settings.data.metrics.workspace'),
-      value: formatBytes(analytics.workspaceBytes),
+      value: formatBytesL(analytics.workspaceBytes, t),
       icon: HardDriveIcon
     },
     {
       label: t('settings.data.metrics.hippocampus'),
-      value: formatBytes(analytics.hippocampusBytes),
+      value: formatBytesL(analytics.hippocampusBytes, t),
       icon: AiBrain01Icon
     },
     {
       label: t('settings.data.metrics.corpus'),
-      value: formatBytes(analytics.corpusBytes),
+      value: formatBytesL(analytics.corpusBytes, t),
       icon: Database02Icon
     },
     {
       label: t('settings.data.metrics.prefrontal'),
-      value: formatBytes(analytics.prefrontalBytes),
+      value: formatBytesL(analytics.prefrontalBytes, t),
       icon: Pulse01Icon
     },
     {

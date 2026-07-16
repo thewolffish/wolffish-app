@@ -11,14 +11,41 @@ import { runDetached } from '@main/runtime/corpus'
  * The minimal LLM surface the titler needs: a dedicated TITLING call — a
  * titling system prompt plus the user's message as the user turn (NOT a
  * summarize). `Thalamus.title` satisfies this: it calls the active model with
- * the system prompt and emits its spend as role:'summary', so titling cost
- * lands on the ledger but never feeds a conversation's context meter.
+ * the system prompt and emits its spend as role:'title', so titling cost lands
+ * on the ledger itemized as titling (not as summarization) and never feeds a
+ * conversation's context meter.
  */
 export interface TitlerLLM {
   title(userMessage: string, systemPrompt: string, signal?: AbortSignal): Promise<{ text: string }>
 }
 
 const TITLE_MAX_CHARS = 80
+
+/**
+ * Abort reason a caller passes to `AbortController.abort()` when its own
+ * titling DEADLINE expired, as opposed to the turn being cancelled. The two
+ * unwind through the identical throw, and they want opposite outcomes (see
+ * `abortOutcome`), so the reason is the only thing that tells them apart.
+ */
+export const TITLE_DEADLINE_REASON = 'wolffish:title-deadline'
+
+/**
+ * What an aborted titling call yields.
+ *
+ * A DEADLINE is not a cancellation. The user still wants this conversation
+ * named — the provider was merely too slow — so it degrades to the same plain
+ * slice an unreachable provider gets. Returning '' here instead is what made
+ * a slow title permanent: the caller writes nothing, and the 'Untitled' the
+ * channel already persisted before the turn stays on disk forever, because a
+ * one-shot conversation never gets the later turn that would re-title it.
+ *
+ * A genuine turn CANCEL still yields '': nobody is waiting on a title for a
+ * turn that was abandoned, and writing a degraded one would permanently
+ * suppress the real title the next turn produces.
+ */
+function abortOutcome(signal: AbortSignal, trimmed: string): string {
+  return signal.reason === TITLE_DEADLINE_REASON ? fallbackTitle(trimmed) : ''
+}
 
 /** How many chars of the opening message the model sees — enough to grasp the topic. */
 const TITLE_INPUT_MAX_CHARS = 2000
@@ -47,9 +74,10 @@ const TITLE_SYSTEM =
  * `<voice_note …>` opener (carries the reply-language hint). Those are stripped
  * from the TITLE's copy ONLY — never from the history/wire content the model
  * sees, so file tools and reply-language behaviour are untouched. A caption-less
- * attachment strips to '' → titles as 'Untitled', which a later captioned turn
- * re-titles (the same self-healing path an aborted title takes). Anchored to the
- * exact sentinels so ordinary prose containing `<` or `>` is left intact.
+ * attachment strips to '' — on the channels that would otherwise strand it,
+ * `mediaTitleSource` then names it from the filenames ALONE, never from the
+ * mime/size/path this strips. Anchored to the exact sentinels so ordinary prose
+ * containing `<` or `>` is left intact.
  */
 function titleSource(message: string): string {
   return message
@@ -61,6 +89,87 @@ function titleSource(message: string): string {
 }
 
 /**
+ * The attached filenames, in order, parsed out of the `<attachments>` block.
+ * TWO producers must stay in step with this regex — main's
+ * composeAttachmentContext() (uploads/compose-attachments.ts) and the
+ * renderer's composeHistoryContent() (pages/Chat.tsx), byte-identical today.
+ * If either changes shape, a caption-less turn quietly falls back to 'Untitled'
+ * rather than misfiring. Matched against the line shape they emit —
+ * `  - name.ext (type=…, mime=…, size=…b, path=…)` — and keyed on the ` (type=`
+ * delimiter rather than the parens, so a filename that itself contains
+ * parentheses ("report (final).pdf") survives intact.
+ */
+function attachmentNames(message: string): string[] {
+  const block = /<attachments>([\s\S]*?)<\/attachments>/i.exec(message)
+  if (!block) return []
+  const names: string[] = []
+  for (const line of block[1].split('\n')) {
+    const m = /^\s*-\s+(.+?)\s+\(type=/.exec(line)
+    if (m) names.push(m[1].trim())
+  }
+  return names
+}
+
+/**
+ * A stand-in "message" for a caption-less media turn, so the model can still
+ * NAME the conversation off what it was actually given — the filenames.
+ *
+ * Send someone a photo with no caption and the conversation is still about
+ * something; titling it 'Untitled' threw away the one piece of signal present.
+ * The filename is genuine user intent (`q3-budget-final.xlsx` says plenty), so
+ * it goes to the model as ordinary prose and gets titled like any other
+ * message. Deliberately excludes the mime/size/path from the block: those are
+ * plumbing, they'd steer the title toward the metadata, and the sanitizer
+ * exists precisely to keep them out.
+ *
+ * Doubles as a decent fallback string — if the provider is unreachable this is
+ * what fallbackTitle() slices, and "Shared a file: photo.jpg" reads fine.
+ */
+function mediaTitleSource(message: string): string {
+  const names = attachmentNames(message)
+  if (names.length === 0) return ''
+  if (names.length === 1) return `Shared a file: ${names[0]}`
+  return `Shared ${names.length} files: ${names.join(', ')}`
+}
+
+/**
+ * Whether a conversation on this channel can be stranded 'Untitled' FOREVER —
+ * the only place naming a turn after its filenames is the right trade.
+ *
+ * These two channels write an 'Untitled' file to disk before the turn and are
+ * typically one-shot: the chat rotates to a fresh conversation after
+ * staleHours, so the later turn that would re-title never comes. Naming such a
+ * conversation "Shared a file: invoice.pdf" beats leaving it nameless.
+ *
+ * Everywhere else the trade inverts, because the FIRST real title a
+ * conversation gets is its last (ensureConversationTitle short-circuits on any
+ * non-'Untitled' title). In-app, a caption-less paste is normally followed by
+ * the actual question, and its filename is synthetic anyway
+ * (`pasted-1752641234567.png`, `recording-…webm`) — so titling from it would
+ * bury the real title under a machine name. Leaving those 'Untitled' for one
+ * turn is strictly better, and they self-heal.
+ *
+ * Matches what the runtime shows: telegram and whatsapp stranded 21% and 11% of
+ * their conversations; in-app, heartbeat and procedure stranded zero of 627.
+ */
+function canStrandUntitled(channel: ConversationChannel | undefined): boolean {
+  return channel === 'telegram' || channel === 'whatsapp'
+}
+
+/**
+ * What the model (or the offline slice) actually names the chat from: the
+ * user's own words, or — only where 'Untitled' would otherwise be permanent —
+ * the media they sent. Empty means nothing nameable was in the message.
+ * The single source of truth for both titleFromMessage and offlineTitle, so
+ * a live title and a backfilled one can't drift apart.
+ */
+function titleInput(userMessage: string, channel: ConversationChannel | undefined): string {
+  return (
+    titleSource(userMessage) || (canStrandUntitled(channel) ? mediaTitleSource(userMessage) : '')
+  )
+}
+
+/**
  * Title a conversation from its first user message with a PURE LLM call to the
  * chosen model — no heuristics. The message is first reduced to the user's own
  * words via titleSource() (delivery markup is stripped so a caption-less media
@@ -69,22 +178,25 @@ function titleSource(message: string): string {
  * turn. The single title() call is itself resilient — Thalamus retries it 5×
  * with escalating backoff (abort-aware) before it throws — so the titler adds no
  * retry loop of its own; a second layer would only compound latency on the
- * title-first critical path. Returns '' when the call was ABORTED (a
- * same-conversation resend, or the caller's titling deadline) — abort is NOT
- * unreachability, so we must NOT persist a degraded fallback that would
- * permanently suppress the real title; the caller leaves the conversation
- * 'Untitled' and a later turn re-titles it. The call runs in a sealed background
- * scope so its usage event isn't relayed into any live turn's meter (the ledger
- * still records it).
+ * title-first critical path. Returns '' when the call was CANCELLED (a
+ * same-conversation resend, a stopped turn) — a cancel is NOT unreachability,
+ * so we must NOT persist a degraded fallback that would permanently suppress
+ * the real title; the caller leaves the conversation 'Untitled' and a later
+ * turn re-titles it. A caller's titling DEADLINE is the other way round — it
+ * degrades to the slice, because the conversation it names may never get a
+ * later turn (see abortOutcome). The call runs in a sealed background scope so
+ * its usage event isn't relayed into any live turn's meter (the ledger still
+ * records it).
  */
 export async function titleFromMessage(
   userMessage: string,
   llm: TitlerLLM,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  channel?: ConversationChannel
 ): Promise<string> {
-  const trimmed = titleSource(userMessage)
+  const trimmed = titleInput(userMessage, channel)
   if (!trimmed) return 'Untitled'
-  if (signal?.aborted) return ''
+  if (signal?.aborted) return abortOutcome(signal, trimmed)
   try {
     const { text } = await runDetached(() =>
       llm.title(trimmed.slice(0, TITLE_INPUT_MAX_CHARS), TITLE_SYSTEM, signal)
@@ -92,10 +204,26 @@ export async function titleFromMessage(
     return cleanTitle(text) || fallbackTitle(trimmed)
   } catch {
     // Abort takes the same throw path as a provider failure — tell them apart
-    // so an aborted titling never lands a raw-slice fallback on disk/in cache.
-    if (signal?.aborted) return ''
+    // so a CANCELLED titling never lands a raw-slice fallback on disk/in cache.
+    // A deadline is not a cancel and does degrade to the slice: see abortOutcome.
+    if (signal?.aborted) return abortOutcome(signal, trimmed)
     return fallbackTitle(trimmed)
   }
+}
+
+/**
+ * The title a message degrades to with NO model involved — exactly what the
+ * unreachable-provider and deadline paths produce, via the same sanitizer and
+ * the same slice. 'Untitled' only for a message that carries neither words nor
+ * media.
+ *
+ * Exists for the workspace backfill, which heals conversations the old build
+ * stranded as 'Untitled' and cannot afford blocking LLM calls on the startup
+ * path. Kept here, beside the rules it mirrors, so the two can't drift.
+ */
+export function offlineTitle(userMessage: string, channel?: ConversationChannel): string {
+  const trimmed = titleInput(userMessage, channel)
+  return trimmed ? fallbackTitle(trimmed) : 'Untitled'
 }
 
 /**
@@ -124,14 +252,14 @@ export async function ensureConversationTitle(
   if (!conversationId) {
     // No persisted conversation (a null-id / subagent turn) — a display title
     // only, no save.
-    return trimmed ? titleFromMessage(trimmed, llm, signal) : undefined
+    return trimmed ? titleFromMessage(trimmed, llm, signal, channel) : undefined
   }
 
   const existing = await loadConversation(conversationId).catch(() => null)
   if (existing?.title && existing.title !== 'Untitled') return existing.title
   if (!trimmed) return existing?.title ?? undefined
 
-  const title = await titleFromMessage(trimmed, llm, signal)
+  const title = await titleFromMessage(trimmed, llm, signal, channel)
   // Aborted (empty) — leave the conversation Untitled and UNwritten so the
   // titledCache isn't poisoned; the next turn on this conversation re-titles.
   if (!title) return existing?.title ?? undefined

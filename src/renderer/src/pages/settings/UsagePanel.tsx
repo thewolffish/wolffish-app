@@ -1,4 +1,7 @@
-import { ActivityHeatmap } from '@components/charts/activity-heatmap/ActivityHeatmap'
+import {
+  ActivityHeatmap,
+  type ActivityHeatmapEntry
+} from '@components/charts/activity-heatmap/ActivityHeatmap'
 import {
   AnthropicLogo,
   BraveLogo,
@@ -22,7 +25,8 @@ import type {
   UsageProviderSummary,
   UsageStats,
   UsageSummary,
-  UsageTimeRange
+  UsageTimeRange,
+  WeekStartsOn
 } from '@preload/index'
 import { useFlow } from '@providers/flow/useFlow'
 import {
@@ -77,39 +81,145 @@ const PROVIDER_ICONS: Record<ProviderId, React.ComponentType<{ size: number }>> 
   zai: ZaiLogo
 }
 
+type RangeData = { summary: UsageSummary; stats: UsageStats }
+
+/**
+ * Module-level caches of the last-known usage numbers, warmed once at app
+ * start (Settings.tsx eagerly imports this panel, so the prefill below runs
+ * during startup). Settings unmounts every inactive tab, so without these the
+ * panel re-fetched from null on every open and the user watched the skeleton
+ * every single time. Now the numbers are already in memory and paint on the
+ * first frame; each mount still re-fetches in the background and overwrites
+ * the cache, so a warm paint is never stale for long. A missing key means
+ * "not loaded yet".
+ *
+ * Mirrors McpPanel / GitHubPanel, with one difference those panels don't have:
+ * this data is parameterized, so the caches are KEYED. One shared slot would
+ * hit on "today" numbers while the "All time" pill is lit and never correct
+ * itself, because a hit is a hit. Keyed, every range converges on its own
+ * figures; `lastShown` below can bridge a miss with another range's numbers,
+ * but only until that range's own fetch lands.
+ */
+const rangeCache = new Map<UsageTimeRange, RangeData>()
+const dailyCache = new Map<number, UsageDailyEntry[]>()
+
+/**
+ * The last figures actually painted, kept so a range whose fetch hasn't landed
+ * yet shows the numbers already on screen instead of a skeleton. Every range is
+ * prefetched at startup, so this is a fallback for the narrow window before the
+ * warm completes — not the normal path.
+ */
+let lastShown: RangeData | null = null
+
+/** In-flight loads, so the startup warm and a fast tab open share one fetch. */
+const inflight = new Map<string, Promise<void>>()
+
+/**
+ * Sequence number of the newest fetch whose result reached the cache, per key.
+ * Sync force-starts a second fetch for a key that may already have one in
+ * flight; without this the older, pre-sync response could land last and
+ * silently overwrite the fresh numbers.
+ */
+const committed = new Map<string, number>()
+let fetchSeq = 0
+
+function claim(key: string, seq: number): boolean {
+  if ((committed.get(key) ?? -1) > seq) return false
+  committed.set(key, seq)
+  return true
+}
+
+function load(key: string, force: boolean, run: (seq: number) => Promise<void>): Promise<void> {
+  const existing = inflight.get(key)
+  if (existing && !force) return existing
+  const seq = fetchSeq++
+  const pending = run(seq)
+  inflight.set(key, pending)
+  void pending.finally(() => {
+    if (inflight.get(key) === pending) inflight.delete(key)
+  })
+  return pending
+}
+
+function loadRange(range: UsageTimeRange, force = false): Promise<void> {
+  return load(`range:${range}`, force, async (seq) => {
+    const api = window.api?.usage
+    if (!api) return // preload not ready yet; retry on mount
+    try {
+      const [summary, stats] = await Promise.all([api.getSummary(range), api.getStats(range)])
+      if (claim(`range:${range}`, seq)) rangeCache.set(range, { summary, stats })
+    } catch {
+      // Leave the key cold so the next mount retries rather than pinning a
+      // failed startup fetch as real data.
+    }
+  })
+}
+
+function loadDaily(year: number, force = false): Promise<void> {
+  return load(`daily:${year}`, force, async (seq) => {
+    const api = window.api?.usage
+    if (!api) return // preload not ready yet; retry on mount
+    try {
+      const daily = await api.getDaily(year)
+      if (claim(`daily:${year}`, seq)) dailyCache.set(year, daily)
+    } catch {
+      // Leave the key cold so the next mount retries.
+    }
+  })
+}
+
+// Prefill the cache at app start — every range, not just the one the panel
+// opens on, so picking a different range is instant instead of stale-then-
+// correct. All six are affordable because main answers each from memory plus a
+// COUNT on the cortex index; they'd be six full conversation-directory scans if
+// this ran against the old usage:getStats.
+void Promise.all(TIME_RANGES.map((r) => loadRange(r)))
+void loadDaily(new Date().getFullYear())
+
 export function UsagePanel(): React.JSX.Element {
   const { t } = useTranslation()
   const toast = useToast()
   const { status } = useFlow()
-  const weekStartsOn = status?.config?.weekStartsOn ?? 1
+  const weekStartsOn: WeekStartsOn = status?.config?.weekStartsOn ?? 1
   const [range, setRange] = useState<UsageTimeRange>('all_time')
-  const [summary, setSummary] = useState<UsageSummary | null>(null)
-  const [stats, setStats] = useState<UsageStats | null>(null)
-  const [daily, setDaily] = useState<UsageDailyEntry[] | null>(null)
+  const [, setTick] = useState(0)
   const year = new Date().getFullYear()
   const [syncing, setSyncing] = useState(false)
+  const repaint = (): void => setTick((n) => n + 1)
+
+  // The caches are the source of truth and are read during render, keyed by
+  // what is on screen — not seeded into state once at mount, which would go
+  // stale the moment the user picked a different range.
+  //
+  // On the rare miss (a range not warmed yet) we keep the figures already on
+  // screen and let them update silently a moment later, rather than blanking
+  // the panel back to a skeleton. The skeleton is only for a genuinely cold
+  // start, when there is nothing to keep.
+  const cached = rangeCache.get(range)
+  const data = cached ?? lastShown
+  const daily = dailyCache.get(year)
 
   useEffect(() => {
-    let stale = false
-    Promise.all([window.api.usage.getSummary(range), window.api.usage.getStats(range)]).then(
-      ([s, st]) => {
-        if (stale) return
-        setSummary(s)
-        setStats(st)
-      }
-    )
+    if (cached) lastShown = cached
+  }, [cached])
+
+  useEffect(() => {
+    let mounted = true
+    void loadRange(range).then(() => {
+      if (mounted) repaint()
+    })
     return () => {
-      stale = true
+      mounted = false
     }
   }, [range])
 
   useEffect(() => {
-    let stale = false
-    window.api.usage.getDaily(year).then((data) => {
-      if (!stale) setDaily(data)
+    let mounted = true
+    void loadDaily(year).then(() => {
+      if (mounted) repaint()
     })
     return () => {
-      stale = true
+      mounted = false
     }
   }, [year])
 
@@ -118,14 +228,14 @@ export function UsagePanel(): React.JSX.Element {
     setSyncing(true)
     try {
       await window.api.usage.sync()
-      const [s, st, d] = await Promise.all([
-        window.api.usage.getSummary(range),
-        window.api.usage.getStats(range),
-        window.api.usage.getDaily(year)
-      ])
-      setSummary(s)
-      setStats(st)
-      setDaily(d)
+      // Sync rebuilds main's whole ledger, so every cached range is now stale.
+      // Force-refresh all of them rather than dropping the off-screen keys:
+      // overwriting in place means neither the visible range nor the next one
+      // the user picks ever blanks back to a skeleton. These land in the cache
+      // even if the user walks away mid-sync, so a sync is never silently lost
+      // to an unmount.
+      await Promise.all([...TIME_RANGES.map((r) => loadRange(r, true)), loadDaily(year, true)])
+      repaint()
       toast.show({ tone: 'success', message: t('settings.usage.syncSuccessToast') })
     } catch {
       toast.show({ tone: 'error', message: t('settings.usage.syncErrorToast') })
@@ -168,8 +278,8 @@ export function UsagePanel(): React.JSX.Element {
             <h2 className="text-fg text-sm font-semibold">{t('settings.usage.activity')}</h2>
             <span className="text-muted text-xs font-medium tabular-nums">{year}</span>
           </div>
-          {daily === null ? (
-            <ActivityMapSkeleton />
+          {daily === undefined ? (
+            <ActivityMapSkeleton year={year} weekStartsOn={weekStartsOn} />
           ) : (
             <ActivityHeatmap
               entries={toEntries(daily)}
@@ -187,16 +297,16 @@ export function UsagePanel(): React.JSX.Element {
           )}
         </section>
 
-        {stats === null ? <StatsGridSkeleton /> : <StatsGrid stats={stats} />}
+        {data === null ? <StatsGridSkeleton /> : <StatsGrid stats={data.stats} />}
 
-        {summary === null ? (
+        {data === null ? (
           <ProviderCardsSkeleton />
         ) : (
           <div className="flex flex-col gap-3">
-            {summary.providers.map((p) => (
+            {data.summary.providers.map((p) => (
               <ProviderCard key={p.provider} provider={p} />
             ))}
-            <BraveSearchCard brave={summary.brave} />
+            <BraveSearchCard brave={data.summary.brave} />
           </div>
         )}
       </div>
@@ -382,13 +492,37 @@ function StatCard({
   )
 }
 
+/**
+ * A pulse bar that is a real — if transparent — text node, so its height is
+ * the exact line box of the text it stands in for and tracks it for free if
+ * that text is ever restyled. Hand-picked bar heights are what left the old
+ * skeleton short of every row it replaced: `text-[11px]` sets no line-height
+ * of its own and resolves to 16.5px, not the 12px a `h-3` bar guessed.
+ */
+function SkeletonBar({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <span
+      className={cn('bg-border/60 animate-pulse rounded text-transparent select-none', className)}
+    >
+      &nbsp;
+    </span>
+  )
+}
+
+// Every skeleton below mirrors the element structure, classes and font sizes of
+// the component it stands in for, so the two are the same height by
+// construction and the panel doesn't jump when the numbers land.
+
 function StatsGridSkeleton(): React.JSX.Element {
   return (
     <div className="grid grid-cols-3 gap-3">
       {[0, 1, 2, 3, 4, 5].map((i) => (
-        <div key={i} className="bg-surface border-border flex flex-col gap-2 rounded-xl border p-3">
-          <div className="bg-border/60 h-3 w-16 animate-pulse rounded" />
-          <div className="bg-border/60 h-4 w-12 animate-pulse rounded" />
+        <div key={i} className="bg-surface border-border flex flex-col gap-1 rounded-xl border p-3">
+          <div className="text-muted flex items-center gap-1.5 text-[11px]">
+            <span className="bg-border/60 size-3 shrink-0 animate-pulse rounded-sm" />
+            <SkeletonBar className="w-16" />
+          </div>
+          <SkeletonBar className="w-12 text-sm" />
         </div>
       ))}
     </div>
@@ -396,13 +530,20 @@ function StatsGridSkeleton(): React.JSX.Element {
 }
 
 function ProviderCardsSkeleton(): React.JSX.Element {
+  // getSummary zero-fills every provider it knows about, so the real list is
+  // always the full roster plus the Brave card — never a short list. Counting
+  // the icon map keeps this honest when a provider is added.
+  const count = Object.keys(PROVIDER_ICONS).length + 1
   return (
     <div className="flex flex-col gap-3">
-      {[0, 1, 2].map((i) => (
+      {Array.from({ length: count }, (_, i) => (
         <div key={i} className="bg-surface border-border rounded-xl border p-4">
           <div className="flex items-center justify-between">
-            <div className="bg-border/60 h-4 w-24 animate-pulse rounded" />
-            <div className="bg-border/60 h-4 w-20 animate-pulse rounded" />
+            <div className="flex items-center gap-2">
+              <span className="bg-border/60 size-4 shrink-0 animate-pulse rounded-sm" />
+              <SkeletonBar className="w-24 text-sm" />
+            </div>
+            <SkeletonBar className="w-16 text-xs" />
           </div>
         </div>
       ))}
@@ -410,10 +551,27 @@ function ProviderCardsSkeleton(): React.JSX.Element {
   )
 }
 
-function ActivityMapSkeleton(): React.JSX.Element {
+// The heatmap derives its cell size from its own measured width, so the
+// skeleton is the real component fed an empty year: identical geometry at every
+// window width, which a fixed height could only match at the panel's max-width.
+const NO_ENTRIES: ActivityHeatmapEntry[] = []
+
+function ActivityMapSkeleton({
+  year,
+  weekStartsOn
+}: {
+  year: number
+  weekStartsOn: WeekStartsOn
+}): React.JSX.Element {
   return (
-    <div className="bg-surface border-border rounded-xl border p-4">
-      <div className="bg-border/60 h-[100px] w-full animate-pulse rounded" />
+    <div className="pointer-events-none animate-pulse">
+      <ActivityHeatmap
+        entries={NO_ENTRIES}
+        year={year}
+        weekStartsOn={weekStartsOn}
+        showMonthLabels={false}
+        showWeekdayLabels={false}
+      />
     </div>
   )
 }

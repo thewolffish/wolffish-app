@@ -61,7 +61,29 @@ type ToolDeps = {
    * just won't be cleared by /clear.
    */
   trackOutgoing?: (chatId: number, messageId: number) => void
+  /**
+   * Point `chatId`'s chat at the conversation this turn belongs to, so the
+   * user's reply lands in the conversation that messaged them. Owned by the
+   * channel (it holds the map + the stale-clock rules). A no-op when the chat
+   * is already bound there.
+   */
+  bindChatToSendingConversation?: (chatId: number) => Promise<void>
 }
+
+/**
+ * Tools whose delivery invites a reply, so the recipient's chat should be
+ * pointed at the conversation that sent it. `telegram_edit_message` is left
+ * out on purpose: rewording a message already delivered isn't a fresh outreach
+ * — the send that created it did the binding, and re-binding on an edit would
+ * grab a chat the user may have moved on from.
+ */
+const BINDS_CHAT = new Set([
+  'telegram_send',
+  'telegram_send_photo',
+  'telegram_send_document',
+  'telegram_send_video',
+  'telegram_send_audio'
+])
 
 /**
  * Build the Telegram capability + plugin pair to register with the
@@ -262,22 +284,41 @@ export function buildTelegramCapability(deps: ToolDeps): {
       const bot = deps.getBot()
       if (!bot) return failure('Telegram bot is not running')
 
-      switch (toolName) {
-        case 'telegram_send':
-          return sendText(bot, deps, args)
-        case 'telegram_send_photo':
-          return sendMedia(bot, deps, args, 'photo')
-        case 'telegram_send_document':
-          return sendMedia(bot, deps, args, 'document')
-        case 'telegram_send_video':
-          return sendMedia(bot, deps, args, 'video')
-        case 'telegram_send_audio':
-          return sendMedia(bot, deps, args, 'audio')
-        case 'telegram_edit_message':
-          return editText(bot, deps, args)
-        default:
-          return failure(`unknown telegram tool: ${toolName}`)
+      const dispatch = async (): Promise<ToolExecutionResult> => {
+        switch (toolName) {
+          case 'telegram_send':
+            return sendText(bot, deps, args)
+          case 'telegram_send_photo':
+            return sendMedia(bot, deps, args, 'photo')
+          case 'telegram_send_document':
+            return sendMedia(bot, deps, args, 'document')
+          case 'telegram_send_video':
+            return sendMedia(bot, deps, args, 'video')
+          case 'telegram_send_audio':
+            return sendMedia(bot, deps, args, 'audio')
+          case 'telegram_edit_message':
+            return editText(bot, deps, args)
+          default:
+            return failure(`unknown telegram tool: ${toolName}`)
+        }
       }
+
+      const result = await dispatch()
+
+      // A delivered message is an invitation to reply, so hand the chat to the
+      // conversation that sent it — the user answering on their phone should
+      // continue THIS conversation, not whatever the chat was last left on.
+      // Only after a real delivery: binding on a failed send would silently
+      // reroute the user's next (unrelated) message for a note they never got.
+      if (result.success && BINDS_CHAT.has(toolName)) {
+        const target = resolveTarget(deps, args.userId)
+        // Best-effort — a message already reached the user; a bookkeeping
+        // failure must not turn a delivered send into a reported failure.
+        if (target.ok) {
+          await deps.bindChatToSendingConversation?.(target.id).catch(() => undefined)
+        }
+      }
+      return result
     }
   }
 

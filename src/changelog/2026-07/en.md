@@ -1,4 +1,34 @@
-## v1.0.219 — 2026-07-14 `Latest`
+## v1.0.220 — 2026-07-16 `Latest`
+
+### Your Phone Conversations, Continued at Your Desk
+
+A conversation that started on WhatsApp or Telegram — or one an automation ran overnight — used to open in the app as a **museum piece**: you could read it, and that was all, the composer replaced by a note telling you to go back to your phone. That restriction is gone. **Every conversation is a conversation now**, wherever it began: open a Telegram thread on your desktop and keep typing, pick up an automation's run and ask it the follow-up question, carry on a procedure's output with a real keyboard. A finished automation run **stops being a sealed record the moment you continue it**, so it summarizes and grows like any other chat instead of replaying its whole transcript forever. Voice notes survive the trip intact — a conversation continued in the app **hands its audio back untouched** rather than stripping what made it a voice note. And if a message lands on your phone while that same conversation sits open on your desk, **the new tail simply appears**.
+
+### A `/resume` That Reaches Every Conversation
+
+`/resume` used to offer ten conversations from the channel you typed it on, and nothing else. It now lists **every conversation Wolffish has** — Telegram, WhatsApp, in-app, automations, procedure runs — **newest first, twenty-five to a page**, with `next` for the page after that. Each row **says where it came from**, because a title alone can't tell you whether you're about to resume a phone chat or last night's automation. The numbering **runs continuously across pages** — item 26 opens page two, and a number you saw on page one still picks it after you've moved on — while a number you have **never actually been shown selects nothing at all**, which matters most for `/delete`, where the wrong pick is unrecoverable. Automations, which vastly outnumber real chats, are **kept out of `/resume` by default** — a new toggle in both channels' settings — while staying in `/delete` and in the app.
+
+### Reply to Wolffish, Land Where You Meant To
+
+When Wolffish messages you out of the blue — a heartbeat reporting a finished job, a conversation in the app dropping you a note — your reply used to land in **whatever conversation that chat happened to be sitting on**, arriving with no idea what it was answering. Now **sending to a channel points that chat at the conversation doing the sending**, so you reply and you're already in the right place. The idle clock restarts as part of it, too, so the very next thing you send **can't be bounced straight back out** by the staleness guard.
+
+### The End of "Untitled"
+
+Roughly **one in five Telegram conversations — and one in ten on WhatsApp — was stranded permanently as "Untitled."** The cause was a small, expensive accident: the naming call never had its reasoning mode set, so it silently defaulted to **high effort — every title was a full reasoning call**, thinking hard about five words. That ran long enough to blow the fifteen-second deadline, and a title that missed its deadline wrote **nothing at all** — leaving the placeholder on a chat that would never get another turn to fix it. Naming is **labelling, not reasoning**: the call now runs with thinking off, lands in about a second, and has thirty seconds it no longer needs. A title that somehow still runs late **degrades to a readable slice of your own message** instead of to nothing. The ones already stranded are **healed on launch**, deterministically, without a single model call. And a photo sent with no caption gets named too — from **the filename you sent**, which usually says plenty — on the two channels where "Untitled" would otherwise be forever.
+
+### Every Conversation Wears Its Origin
+
+The conversations rail and the History page now mark each conversation with **a small badge showing where it came from** — Telegram, WhatsApp, an automation, a procedure run. In-app chats stay unmarked: the app is the default, not a badge worth calling out.
+
+### Arabic That Reads Like Arabic
+
+Every size Wolffish shows you — a model's download, your workspace on disk, free space, transfer speed, the Whisper model sizes — was hardcoded English: **"1.5 GB" sitting there in the middle of an Arabic sentence**. All of it now reads natively. The bidirectional-text bug underneath is fixed as well: forcing left-to-right onto an Arabic size **tore each numeral away from its unit**, stranding "4.0" at the far end of the line from the words it belonged to. Hardware specs lost their false precision too — **"16 GB", not "16.0 GB"** — and a small model no longer rounds down to a meaningless "0 GB".
+
+### Settings Numbers That Tell the Truth
+
+The CPU figure in Data was **measuring its own homework**: it sampled while walking every file in your workspace to total the sizes, so an idle Wolffish reported **93% CPU when the truth was 0.3%**. It now samples once that walk is done. It was also reporting a share of **one** core, so a busy moment on a twelve-core machine read as a nonsense **141%** — it's now a share of your whole CPU, with a **"Less than 0.1%"** floor so a small real load reads as a small real load instead of a dead gauge. Usage, meanwhile, **paints the instant you open it** — every range warmed at launch — so the loading skeleton is gone from the panel you check most.
+
+## v1.0.219 — 2026-07-14
 
 ### A Resume That Actually Sticks
 

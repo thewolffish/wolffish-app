@@ -14,7 +14,7 @@ import { MIN_FREE_DISK_BYTES } from '@providers/flow/FlowProvider'
 import { useFlow } from '@providers/flow/useFlow'
 import { useLocale } from '@providers/locale/useLocale'
 import { RTL_LOCALES } from '@lib/i18n'
-import { formatBytes } from '@lib/utils/format'
+import { formatBytesL } from '@lib/utils/format'
 import { cn } from '@lib/utils/cn'
 
 export function LowDiskSpace(): React.JSX.Element {
@@ -81,8 +81,8 @@ export function LowDiskSpace(): React.JSX.Element {
   // doesn't flash a wrong assumption.
   const knowState = freeBytes !== undefined
   const sufficient = freeBytes != null && freeBytes >= MIN_FREE_DISK_BYTES
-  const minLabel = formatBytes(MIN_FREE_DISK_BYTES)
-  const freeLabel = freeBytes != null ? formatBytes(freeBytes) : '—'
+  const minLabel = formatBytesL(MIN_FREE_DISK_BYTES, t)
+  const freeLabel = formatBytesL(freeBytes, t)
 
   return (
     <main className="bg-bg flex min-h-full w-full items-center justify-center px-6 py-12">

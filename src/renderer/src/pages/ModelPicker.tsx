@@ -3,7 +3,7 @@ import { Num } from '@components/core/Num'
 import { useOnline } from '@hooks/use-online/useOnline'
 import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
-import { formatBytes, formatDurationL, formatGB, ltrIsolate } from '@lib/utils/format'
+import { formatBytesL, formatDurationL, formatGBL, ltrIsolate } from '@lib/utils/format'
 import type {
   ModelEntry,
   ModelFamily,
@@ -375,8 +375,8 @@ export function ModelPicker(): React.JSX.Element {
       ? defaultModelForFamily(catalog, family, system.totalRamBytes, restrictModels)
       : null
 
-  const ramGB = formatGB(system.totalRamBytes)
-  const diskGB = system.freeDiskBytes != null ? formatGB(system.freeDiskBytes) : null
+  const ramLabel = formatGBL(system.totalRamBytes, t)
+  const diskLabel = system.freeDiskBytes != null ? formatGBL(system.freeDiskBytes, t) : null
   const isInstalled = (name: string): boolean =>
     installed.some((t) => t.name === name) || availableModels.some((m) => m.fullName === name)
   // 50-60% of total RAM is the safe ceiling per the rule of thumb in the
@@ -464,8 +464,8 @@ export function ModelPicker(): React.JSX.Element {
             os={platformLabel(system.platform)}
             cpuModel={system.cpuModel}
             cpuCount={system.cpuCount}
-            ramGB={ramGB}
-            diskGB={diskGB}
+            ramLabel={ramLabel}
+            diskLabel={diskLabel}
             t={t}
           />
 
@@ -592,7 +592,7 @@ export function ModelPicker(): React.JSX.Element {
                         )}
                       >
                         {t('modelPicker.approxRam', {
-                          ram: ltrIsolate(`${formatGB(entry.ramBytes)} GB`)
+                          ram: formatGBL(entry.ramBytes, t)
                         })}
                         {entry.paramsBillions != null &&
                           ` · ${ltrIsolate(t('modelPicker.params', { value: formatParamsValue(entry.paramsBillions) }))}`}
@@ -633,9 +633,13 @@ export function ModelPicker(): React.JSX.Element {
                 {statusKind === 'downloading' &&
                   progress.completed != null &&
                   progress.total != null && (
-                    <Num className="text-muted text-xs">
-                      {formatBytes(progress.total)} / {formatBytes(progress.completed)}
-                    </Num>
+                    // No <Num> here: it forces dir="ltr", which under Arabic tears
+                    // each numeral away from its unit word ("4.0" strands to the far
+                    // left of "جيجا بايت / 1.2 جيجا بايت"). formatBytesL already
+                    // isolates the numeral, so the string is safe in ambient flow.
+                    <span className="text-muted text-xs tabular-nums">
+                      {formatBytesL(progress.completed, t)} / {formatBytesL(progress.total, t)}
+                    </span>
                   )}
               </div>
 
@@ -660,11 +664,11 @@ export function ModelPicker(): React.JSX.Element {
                 {statusKind === 'downloading' && speedBps != null
                   ? etaSeconds != null && Number.isFinite(etaSeconds)
                     ? t('modelPicker.speedLine', {
-                        speed: ltrIsolate(formatBytes(speedBps)),
+                        speed: formatBytesL(speedBps, t),
                         eta: formatDurationL(etaSeconds, t)
                       })
                     : t('modelPicker.speedLineNoEta', {
-                        speed: ltrIsolate(formatBytes(speedBps))
+                        speed: formatBytesL(speedBps, t)
                       })
                   : t(`modelPicker.pullHints.${statusKind}`)}
               </p>
@@ -724,15 +728,15 @@ export function ModelPicker(): React.JSX.Element {
 function DeviceSpecsCard({
   os,
   cpuCount,
-  ramGB,
-  diskGB,
+  ramLabel,
+  diskLabel,
   t
 }: {
   os: string
   cpuModel: string
   cpuCount: number
-  ramGB: string
-  diskGB: string | null
+  ramLabel: string
+  diskLabel: string | null
   t: (k: string, v?: Record<string, unknown>) => string
 }): React.JSX.Element {
   return (
@@ -750,12 +754,12 @@ function DeviceSpecsCard({
       <Spec
         icon={<RamMemoryIcon size={18} />}
         label={t('modelPicker.specs.ram')}
-        value={<Num>{ramGB} GB</Num>}
+        value={<span className="tabular-nums">{ramLabel}</span>}
       />
       <Spec
         icon={<HardDriveIcon size={18} />}
         label={t('modelPicker.specs.disk')}
-        value={diskGB ? <Num>{diskGB} GB</Num> : <span>—</span>}
+        value={diskLabel ? <span className="tabular-nums">{diskLabel}</span> : <span>—</span>}
       />
     </section>
   )
@@ -891,7 +895,7 @@ function AvailableModelCard({
       <div className="flex min-w-0 flex-1 flex-col gap-1">
         <div className="flex items-baseline justify-between gap-3">
           <span className="text-fg text-base font-semibold">{model.fullName}</span>
-          <span className="text-muted shrink-0 text-xs">{formatBytes(model.sizeBytes)}</span>
+          <span className="text-muted shrink-0 text-xs">{formatBytesL(model.sizeBytes, t)}</span>
         </div>
         <div className="text-muted flex flex-wrap gap-x-4 gap-y-1 text-xs">
           {model.family && (
