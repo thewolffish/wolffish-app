@@ -2,7 +2,11 @@ import type { ApprovalDecision, ApprovalRequest } from '@main/runtime/amygdala'
 import type { AskUserRequest, AskUserResponse } from '@main/runtime/cerebellum'
 import type { Segment } from '@main/runtime/broca'
 import { turnScope, type CorpusEvent, type CorpusEvents } from '@main/runtime/corpus'
-import type { ConversationFile, ConversationMessage } from '@main/conversations'
+import {
+  resolveSummaryMarkIndex,
+  type ConversationFile,
+  type ConversationMessage
+} from '@main/conversations'
 import type { ChatHistoryMessage } from '@preload/index'
 
 /**
@@ -125,9 +129,19 @@ export const turnRouter = new TurnRouter()
  * conversation_read retrieves them verbatim, and the preamble says so.
  */
 export function replayWindow(
-  conversation: Pick<ConversationFile, 'id' | 'messages' | 'summary' | 'summarizedThroughMessage'>
+  conversation: Pick<
+    ConversationFile,
+    'id' | 'messages' | 'summary' | 'summarizedThroughMessage' | 'summarizedThroughMessageId'
+  >
 ): { messages: ConversationMessage[]; preamble: ChatHistoryMessage[] } {
-  const mark = conversation.summarizedThroughMessage ?? 0
+  // Id form first — it survives merges that insert before the boundary —
+  // numeric mark as the fallback; the range guard below is unchanged (a
+  // stale/corrupt mark degrades to full replay, never everything-skipped).
+  const mark = resolveSummaryMarkIndex(
+    conversation.messages,
+    conversation.summarizedThroughMessage,
+    conversation.summarizedThroughMessageId
+  )
   const summary = conversation.summary?.trim()
   if (!summary || mark <= 0 || mark >= conversation.messages.length) {
     return { messages: conversation.messages, preamble: [] }

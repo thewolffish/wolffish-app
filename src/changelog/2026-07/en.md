@@ -1,4 +1,30 @@
-## v1.0.220 — 2026-07-16 `Latest`
+## v1.0.221 — 2026-07-17 `Latest`
+
+### Kimi K3, a Million Tokens Wide
+
+Moonshot's new flagship **Kimi K3** is supported in full from day one: a **million-token context window**, room for **131K tokens of output**, **vision**, and its new three-step reasoning dial — **off, high, or max** — on the same brain button every other model uses. Turning it off genuinely turns it off, something Moonshot's own docs say K3 can't do — Wolffish verified it against the live API rather than take the manual's word. K3 is now the Kimi provider's **default model**, priced correctly in Usage down to the cached-token discount, and reachable through OpenRouter as well. Sight, it turns out, doesn't begin at K3 either: **everything from k2.5 onward is natively multimodal** with nothing in the name to say so, so images now flow to k2.5, k2.6, and the k2.7 code models instead of being quietly stripped as text-only. And the model picker stopped burying the flagship — Moonshot stamps its whole catalog with one shared release date, which left the list in arbitrary API order; it now reads **newest first**.
+
+### One Conversation, Two Writers, Nothing Lost
+
+Last release made every conversation continuable anywhere — which means a conversation can now be **written from two places at once**: a Telegram message landing while the same thread runs a turn in the app. The persistence underneath has been rebuilt for exactly that. **Every message now carries a permanent identity**, and when two copies of a transcript meet on disk they **merge message by message** — both sides' additions survive, in order — instead of whoever saves last winning wholesale. The rolling summary is pinned to the precise message where its coverage ends, so a message merged in ahead of it can no longer silently shift what the summary claims to cover. A window holding a stale copy of a conversation **can no longer save it back over a finished turn**, either — that exact loss happened once, and both the window and the disk now refuse any save that would shrink history. Existing conversations pick up their identities **on first launch, invisibly**.
+
+### "Try Again" Picks Up Where It Broke
+
+When a provider dies mid-turn — overloaded, timing out, erroring — the red card in the chat now carries a **Try again** button. One click **continues the conversation from the break**: Wolffish is told what failed, checks what already completed — files written, tool results in hand, plans made — and **carries on without redoing finished work**, instead of you retyping the request and watching the whole task start over from nothing.
+
+### The Meter Knows What Each Agent Spent
+
+In workflow mode, the context meter's card used to fold every agent's spend into a single line. It now carries a **Workflow section — one row per agent**, each with its live status dot, its token count and cost, and a bar scaled against the run's biggest spender — with the run's totals underneath: tool calls, tokens, cost. Close the conversation and come back, and the section **restores with the rest of the meter** whenever the last turn was a workflow run.
+
+### The Memory Index, Minding Its Manners
+
+The one-time memory-index rebuild after an update takes over the chat screen — but the conversations rail kept **floating on top of the takeover**, and every open conversation drew **its own duplicate copy** of the overlay. It now renders once, at app level, and the rail steps aside exactly as it does for a running automation. The index's health warning calmed down too: "database growing large" used to trip at a size any established install sails past in normal use — the bar now sits **twenty times higher**, where crossing it actually means something.
+
+### Settings That Say What They Mean
+
+In the Arabic settings, `/resume` and `/delete` sat as raw left-to-right fragments in the middle of right-to-left sentences, breaking the line around them. They're now **proper command chips that hold their shape** inside Arabic text. And the verbose-toggle description on all three channels caught up with what the clean feed actually delivers — **replies and the files Wolffish sends, nothing else** — instead of still claiming errors ride along too.
+
+## v1.0.220 — 2026-07-16
 
 ### Your Phone Conversations, Continued at Your Desk
 

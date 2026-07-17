@@ -13,7 +13,7 @@ import {
   ZaiLogo
 } from '@components/core/ProviderLogos'
 import { cn } from '@lib/utils/cn'
-import { CloudIcon, Copy01Icon, Tick02Icon } from 'hugeicons-react'
+import { CloudIcon, Copy01Icon, RefreshIcon, Tick02Icon } from 'hugeicons-react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { IconType } from 'react-icons'
@@ -174,7 +174,24 @@ function buildDetailText(payload: NoProviderAvailablePayload): string {
   return lines.join('\n')
 }
 
-function SingleErrorCard({ payload }: { payload: NoProviderAvailablePayload }): React.JSX.Element {
+/** Compact one-line failure summary handed to the retry continuation message. */
+function reasonLineFor(payload: NoProviderAvailablePayload): string {
+  return [
+    payload.provider !== 'unknown' ? payload.provider : null,
+    payload.statusCode ? `HTTP ${payload.statusCode}` : null,
+    payload.errorReason
+  ]
+    .filter(Boolean)
+    .join(' · ')
+}
+
+function SingleErrorCard({
+  payload,
+  onTryAgain
+}: {
+  payload: NoProviderAvailablePayload
+  onTryAgain?: (reason: string) => void
+}): React.JSX.Element {
   const { t } = useTranslation()
   const [showDetail, setShowDetail] = useState(false)
   const Logo = LOGO[payload.providerLogo as Logo] ?? CloudIcon
@@ -207,6 +224,21 @@ function SingleErrorCard({ payload }: { payload: NoProviderAvailablePayload }): 
             {t('errors.provider.viewDetails')}
           </button>
         </div>
+        {onTryAgain && (
+          <button
+            type="button"
+            onClick={() => onTryAgain(reasonLineFor(payload))}
+            className={cn(
+              'flex shrink-0 items-center gap-1.5 self-center rounded-lg px-2.5 py-1.5',
+              'text-[11px] font-medium cursor-pointer',
+              'bg-red-600 text-white hover:bg-red-700',
+              'dark:bg-red-700 dark:hover:bg-red-600'
+            )}
+          >
+            <RefreshIcon size={12} aria-hidden />
+            {t('errors.provider.tryAgain')}
+          </button>
+        )}
       </div>
       {showDetail && <ErrorDetailBlock text={buildDetailText(payload)} />}
     </div>
@@ -214,14 +246,21 @@ function SingleErrorCard({ payload }: { payload: NoProviderAvailablePayload }): 
 }
 
 export function ProviderErrorCards({
-  failures
+  failures,
+  onTryAgain
 }: {
   failures: NoProviderAvailablePayload[]
+  onTryAgain?: (reason: string) => void
 }): React.JSX.Element {
   return (
     <div className="flex w-full max-w-[85%] flex-col gap-2 self-start">
       {failures.map((f, i) => (
-        <SingleErrorCard key={`${f.provider}-${i}`} payload={f} />
+        // One retry action per turn: the button rides the first card only.
+        <SingleErrorCard
+          key={`${f.provider}-${i}`}
+          payload={f}
+          onTryAgain={i === 0 ? onTryAgain : undefined}
+        />
       ))}
     </div>
   )

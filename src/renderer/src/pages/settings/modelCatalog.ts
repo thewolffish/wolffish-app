@@ -66,7 +66,7 @@ export const DEFAULT_MODEL: Partial<Record<ProviderId, string>> = {
   deepseek: 'deepseek-v4-pro',
   zai: 'glm-5.2',
   qwen: 'qwen3.7-max',
-  kimi: 'kimi-k2.6',
+  kimi: 'kimi-k3',
   minimax: 'MiniMax-M3',
   mimo: 'mimo-v2.5-pro',
   stepfun: 'step-3.7-flash',
@@ -485,12 +485,21 @@ export const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
   ],
   kimi: [
     {
+      name: 'kimi-k3',
+      context: '1M',
+      input: '$3.00',
+      output: '$15.00',
+      cached: '$0.30',
+      badges: ['frontier', 'vision', 'reasoning'],
+      modes: ['none', 'high', 'max']
+    },
+    {
       name: 'kimi-k2.6',
       context: '256K',
       input: '$0.95',
       output: '$4.00',
       cached: '$0.16',
-      badges: ['frontier', 'vision', 'reasoning'],
+      badges: ['vision', 'reasoning'],
       modes: ['none', 'on']
     },
     {
@@ -971,11 +980,13 @@ export const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       badges: ['fast']
     },
     {
-      name: 'moonshotai/kimi-k2',
-      context: '131K',
-      input: '$0.57',
-      output: '$2.30',
-      cached: null
+      name: 'moonshotai/kimi-k3',
+      context: '1M',
+      input: '$3.00',
+      output: '$15.00',
+      cached: null,
+      badges: ['reasoning'],
+      modes: ['none', 'high']
     }
   ]
 }

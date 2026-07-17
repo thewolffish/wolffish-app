@@ -53,6 +53,8 @@ export class ElectronChannel {
     payload: {
       history: ChatHistoryMessage[]
       conversationId?: string | null
+      /** Feed id of this turn's user message — the titler shell stamps it (see TurnSendOptions). */
+      userMessageId?: string
       workingFolders?: string[]
       thinkingMode?: string
       modeOverride?: 'single' | 'workflow'
@@ -69,6 +71,7 @@ export class ElectronChannel {
     const handle = this.runner.send({
       history: payload.history,
       conversationId,
+      userMessageId: payload.userMessageId,
       workingFolders: payload.workingFolders,
       thinkingMode: (payload.thinkingMode as TurnSendOptions['thinkingMode']) ?? undefined,
       modeOverride: payload.modeOverride,

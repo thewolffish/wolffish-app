@@ -1143,6 +1143,7 @@ export function contextWindowForModel(model: string): number {
   if (m.includes('mimo-v2')) return 256_000
   if (m.includes('mimo')) return 256_000
   // Kimi / Moonshot
+  if (m.includes('kimi-k3')) return 1_048_576
   if (m.includes('kimi-k2')) return 262_144
   if (m.includes('moonshot-v1-128k')) return 131_072
   if (m.includes('moonshot-v1-32k')) return 32_768
@@ -1223,6 +1224,7 @@ function maxOutputForModel(model: string): number {
   if (m.includes('mimo-v2.5-pro')) return 65_536
   if (m.includes('mimo')) return 32_768
   // Kimi / Moonshot
+  if (m.includes('kimi-k3')) return 131_072
   if (m.includes('kimi-k2')) return 65_536
   if (m.includes('moonshot-v1-128k')) return 16_384
   if (m.includes('moonshot-v1-32k')) return 8_192

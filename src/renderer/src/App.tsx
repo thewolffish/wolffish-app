@@ -14,6 +14,7 @@ import { useNetworkToasts } from '@hooks/use-network-toasts/useNetworkToasts'
 import { ClosingOverlay } from '@components/common/closing-overlay/ClosingOverlay'
 import { HeartbeatActiveOverlay } from '@components/common/heartbeat-active-overlay/HeartbeatActiveOverlay'
 import { ProcedureActiveOverlay } from '@components/common/procedure-active-overlay/ProcedureActiveOverlay'
+import { ReindexActiveOverlay } from '@components/common/reindex-active-overlay/ReindexActiveOverlay'
 import { Onboarding } from '@pages/Onboarding'
 import { LowDiskSpace } from '@pages/LowDiskSpace'
 import { OllamaSetup } from '@pages/OllamaSetup'
@@ -105,6 +106,34 @@ function useActiveRun(): ActiveRun {
   return active
 }
 
+// The one-time cortex reindex (after an app update) blocks every turn, so
+// while it runs the chat screen is swapped for its own overlay. Tracked here —
+// not inside Chat — so the overlay renders once at app level and the
+// conversations rail hides behind the same chatVisible gate as the
+// heartbeat/procedure overlays. When Chat owned this state the rail (a fixed
+// z-30 element gated only at app level) kept floating over the overlay, and
+// every mounted session rendered its own duplicate copy.
+function useReindexActive(): boolean {
+  const [active, setActive] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    window.api.reindex
+      .getStatus()
+      .then((s) => {
+        if (!cancelled) setActive(!!s)
+      })
+      .catch(() => {})
+    const offStarted = window.api.reindex.onStarted(() => setActive(true))
+    const offEnded = window.api.reindex.onEnded(() => setActive(false))
+    return () => {
+      cancelled = true
+      offStarted()
+      offEnded()
+    }
+  }, [])
+  return active
+}
+
 // Screens the user can reach WHILE holding live conversations. Chat sessions
 // stay mounted for the whole set so navigating anywhere and back never tears
 // live state down — with concurrent sessions, an unmount would silently
@@ -176,6 +205,7 @@ function Screens(): React.JSX.Element {
   const { screen } = useFlow()
   const { sessions, activeSessionKey } = useSessions()
   const activeRun = useActiveRun()
+  const reindexActive = useReindexActive()
   // Keep every chat SESSION mounted (just hidden) across main-app navigation
   // AND during a background run. One <Chat> instance per open session: each
   // owns its own feed, composer, meter and in-flight turn, so conversations
@@ -190,13 +220,18 @@ function Screens(): React.JSX.Element {
   // before it saves. Mounted-but-hidden, each Chat still receives its own
   // turn's events (demuxed by conversationId/turnId) and persists them.
   const chatMounted = CHAT_KEEPALIVE_SCREENS.has(screen)
-  const chatVisible = chatMounted && screen === 'chat' && activeRun === null
+  // !reindexActive: while the reindex overlay is up, the chat (and with it the
+  // conversations rail below) hides exactly as it does for the run overlays —
+  // display:none, never unmounted, so live state survives the rebuild.
+  const chatVisible = chatMounted && screen === 'chat' && activeRun === null && !reindexActive
   return (
     <>
       {activeRun === 'procedure' ? (
         <ProcedureActiveOverlay />
       ) : activeRun === 'heartbeat' ? (
         <HeartbeatActiveOverlay />
+      ) : reindexActive && screen === 'chat' ? (
+        <ReindexActiveOverlay />
       ) : (
         <NonChatScreen screen={screen} />
       )}

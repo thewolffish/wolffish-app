@@ -1,7 +1,7 @@
 import { diskWriter } from '@main/io/diskWriter'
 import type { Segment, SegmentTurnEndReason } from '@main/runtime/broca'
 import type { NoProviderAvailableInfo } from '@main/runtime/thalamus'
-import { workspaceRoot } from '@main/workspace/workspace'
+import { workspaceRoot } from '@main/workspace/root'
 import type { PersistedApproval, PersistedToolTiming } from '@preload/index'
 import { randomBytes } from 'node:crypto'
 import fs from 'node:fs/promises'
@@ -22,6 +22,21 @@ export type MessageAttachment = {
 }
 
 export type ConversationMessage = {
+  /**
+   * Stable per-message identity, unique within one conversation (shape
+   * `m_<ts>_<rand>` — the renderer's cryptoId and mintMessageId below both
+   * produce it). THE reconciliation key: mergeConversationOnto unions two
+   * copies of a transcript by id, which is what lets two writers append
+   * different messages at the same index (a Telegram message landing while
+   * an in-app turn runs) without one clobbering the other — counts and
+   * content can't tell divergence from agreement, ids can. Optional only
+   * for files written before the field shipped; cleanupWorkspace mints ids
+   * for those at launch, and every writer stamps one at creation. When one
+   * logical message has several pre-persist writers (the renderer's send,
+   * the titler shell), they must all stamp the SAME id — see userMessageId
+   * threading in turn-runner.ts.
+   */
+  id?: string
   role: 'user' | 'assistant'
   content: string
   timestamp: number
@@ -147,8 +162,23 @@ export type ConversationFile = {
    * conversation_read retrieves them verbatim.
    */
   summary?: string | null
-  /** First message index NOT covered by `summary` (always a user message). */
+  /**
+   * First message index NOT covered by `summary` (always a user message).
+   * Legacy positional form — superseded by `summarizedThroughMessageId` but
+   * still written alongside it (and still read as the fallback when the id
+   * is absent or doesn't resolve). See resolveSummaryMarkIndex.
+   */
   summarizedThroughMessage?: number | null
+  /**
+   * Id of the first message NOT covered by `summary`. The id form survives
+   * what the index form can't: an id-keyed merge may insert messages BEFORE
+   * the mark (a diverged writer reconciled in), which silently shifts a
+   * positional mark and corrupts what the rolling summary claims to cover.
+   * Written by the summarizer with every new mark; consumers resolve it via
+   * resolveSummaryMarkIndex and fall back to the numeric mark for files the
+   * summarizer hasn't touched since the field shipped.
+   */
+  summarizedThroughMessageId?: string | null
 }
 
 export type ConversationMeta = {
@@ -215,6 +245,35 @@ function generateId(): string {
   // conversation). Append milliseconds + a random suffix so collisions can't
   // happen; the readable timestamp prefix is kept for human-legible filenames.
   return `${stamp}_${pad(now.getMilliseconds(), 3)}-${randomBytes(3).toString('hex')}`
+}
+
+/**
+ * Mint a message id — same `m_<ts>_<rand>` shape the renderer's cryptoId
+ * produces, so ids look identical no matter which writer stamped them.
+ * Uniqueness scope is one conversation: the random suffix keeps two
+ * messages minted in the same millisecond distinct.
+ */
+export function mintMessageId(timestamp?: number): string {
+  return `m_${timestamp ?? Date.now()}_${randomBytes(3).toString('hex')}`
+}
+
+/**
+ * Resolve a conversation's rolling-summary mark to an index into `messages`:
+ * the id form wins when it resolves (it survives id-keyed merges that insert
+ * messages before the boundary), the legacy numeric form is the fallback.
+ * Callers keep their existing out-of-range guards — a mark at/beyond the
+ * array degrades to full replay, never to everything-skipped.
+ */
+export function resolveSummaryMarkIndex(
+  messages: ConversationMessage[],
+  mark: number | null | undefined,
+  markId: string | null | undefined
+): number {
+  if (markId) {
+    const idx = messages.findIndex((m) => m.id === markId)
+    if (idx >= 0) return idx
+  }
+  return mark ?? 0
 }
 
 export async function countConversationsSince(sinceMs: number): Promise<number> {
@@ -304,7 +363,12 @@ function migrateSegments(conv: ConversationFile): void {
 }
 
 export async function saveConversation(conv: ConversationFile): Promise<void> {
-  await diskWriter.writeFileAtomic(filePathForId(conv.id), JSON.stringify(conv, null, 2))
+  // Whole-file saves from EVERY writer (channels' end-of-turn copies,
+  // autonomous runs) ride the same merge policy as the renderer's
+  // conversation:save — inside the file's write queue, so a stale full copy
+  // can never shrink the transcript or clobber the fields other writers own
+  // (title, summary, channel — see mergeConversationOnto).
+  await updateConversation(conv.id, (disk) => mergeConversationOnto(disk, conv))
 }
 
 /**
@@ -337,13 +401,159 @@ export async function updateConversation(
 }
 
 /**
+ * Merge two copies of one transcript by MESSAGE ID — the union that lets two
+ * writers append different messages at the same index (a Telegram message
+ * landing while an in-app turn runs) without either clobbering the other.
+ * Counts can't tell that divergence from agreement; ids can.
+ *
+ * Invariants (property-tested in channels/__tests__/message-id-merge.test.ts):
+ *  - no message present on either side is ever dropped,
+ *  - no duplicate ids in the output (corrupt duplicate inputs are deduped,
+ *    first occurrence wins),
+ *  - a message on BOTH sides (same id) keeps the INCOMING copy — content
+ *    rewrites stay caller-owned, exactly today's titler-shell-vs-renderer
+ *    semantics,
+ *  - disk order is the spine; an incoming-only message is placed right after
+ *    its anchor — the nearest incoming message before it that the disk also
+ *    holds (the paired-prefix boundary when there is none) — and BEFORE any
+ *    disk-only messages that follow the same anchor. Tail rule: with no
+ *    shared anchor in the tails, incoming-only messages precede disk-only
+ *    ones, so a renderer save that raced a channel append yields
+ *    `common prefix + renderer turn + channel message` — the feed the
+ *    renderer already shows stays a positional prefix of the file, which is
+ *    what keeps its disk-tail sync an append.
+ *
+ * Id-less messages (written before ids shipped) are NEVER matched by content
+ * or timestamp — both were tried and both shipped corruption (one
+ * permanently duplicated the opening message of 17 real conversations).
+ * Positional pairing is allowed only along the common prefix while both
+ * sides agree on (role, id-absence) — or carry the same id; at the first
+ * mismatch every remaining id-less message is treated as distinct.
+ */
+function mergeMessages(
+  disk: ConversationMessage[],
+  incoming: ConversationMessage[]
+): ConversationMessage[] {
+  // Fully id-less on both sides (pre-id file + pre-id caller copy): keep the
+  // legacy semantics verbatim — the caller's array wins wholesale, except a
+  // SHRINK, which marks a stale copy (a remounted Chat re-seeded from an old
+  // session descriptor; 2026-07-17: a completed retry turn was erased exactly
+  // that way). Turns append and deletes remove whole files, so no legitimate
+  // writer ever shrinks a transcript.
+  const anyId = disk.some((m) => m.id) || incoming.some((m) => m.id)
+  if (!anyId) return incoming.length < disk.length ? disk : incoming
+
+  // Corrupt-input guard: a duplicate id WITHIN one side keeps its first
+  // occurrence only, so the union below can treat ids as keys.
+  const dedupe = (arr: ConversationMessage[]): ConversationMessage[] => {
+    const seen = new Set<string>()
+    const out: ConversationMessage[] = []
+    for (const m of arr) {
+      if (m.id) {
+        if (seen.has(m.id)) continue
+        seen.add(m.id)
+      }
+      out.push(m)
+    }
+    return out
+  }
+  const d = dedupe(disk)
+  const inc = dedupe(incoming)
+
+  // Paired prefix: same id, or same role with ids absent on BOTH sides.
+  let p = 0
+  while (p < d.length && p < inc.length) {
+    const a = d[p]
+    const b = inc[p]
+    if (a.role !== b.role) break
+    if (a.id && b.id && a.id === b.id) {
+      p++
+      continue
+    }
+    if (!a.id && !b.id) {
+      p++
+      continue
+    }
+    break
+  }
+  const out: ConversationMessage[] = inc.slice(0, p)
+
+  // Id-union of the tails: disk order as spine, incoming-only messages
+  // grouped under the nearest preceding shared anchor ('' = the prefix
+  // boundary) and emitted right after it.
+  const dTail = d.slice(p)
+  const iTail = inc.slice(p)
+  const dTailIds = new Set<string>()
+  for (const m of dTail) if (m.id) dTailIds.add(m.id)
+  const incomingById = new Map<string, ConversationMessage>()
+  for (const m of iTail) if (m.id) incomingById.set(m.id, m)
+
+  const groups = new Map<string, ConversationMessage[]>()
+  let anchor = ''
+  for (const m of iTail) {
+    if (m.id && dTailIds.has(m.id)) {
+      anchor = m.id
+      continue
+    }
+    const group = groups.get(anchor)
+    if (group) group.push(m)
+    else groups.set(anchor, [m])
+  }
+
+  const headGroup = groups.get('')
+  if (headGroup) out.push(...headGroup)
+  for (const dm of dTail) {
+    if (dm.id && incomingById.has(dm.id)) {
+      out.push(incomingById.get(dm.id)!)
+      const followers = groups.get(dm.id)
+      if (followers) out.push(...followers)
+    } else {
+      out.push(dm)
+    }
+  }
+  return out
+}
+
+/**
+ * Where one side's rolling summary reaches in the MERGED transcript, plus
+ * the id that pins that boundary. Resolution order: the side's mark id, then
+ * the id of the message its numeric mark pointed at in its OWN array, then
+ * the raw numeric mark (id-less transition files). Null when the side has no
+ * summary coverage at all.
+ */
+function summaryCoverage(
+  side: ConversationFile,
+  mergedMessages: ConversationMessage[]
+): { idx: number; id: string | null } | null {
+  if (!side.summary) return null
+  if (side.summarizedThroughMessageId) {
+    const idx = mergedMessages.findIndex((m) => m.id === side.summarizedThroughMessageId)
+    if (idx >= 0) return { idx, id: side.summarizedThroughMessageId }
+  }
+  const mark = side.summarizedThroughMessage ?? 0
+  if (mark <= 0) return null
+  const uncovered = side.messages[mark]
+  if (uncovered?.id) {
+    const idx = mergedMessages.findIndex((m) => m.id === uncovered.id)
+    if (idx >= 0) return { idx, id: uncovered.id! }
+  }
+  return { idx: mark, id: null }
+}
+
+/**
  * Merge a full in-memory copy over the on-disk state, preserving the fields
  * that OTHER writers own when the incoming copy is staler than the disk:
+ *  - `messages` is an id-keyed union (see mergeMessages): appends from both
+ *    sides survive, same-id content rewrites stay caller-owned, and fully
+ *    id-less inputs keep the legacy caller-wins-except-shrink rule,
  *  - the conversation's channel — its provenance — is never cleared,
  *  - the rolling prefix summary (written by the post-turn summarizer) wins
- *    when the disk's mark is ahead of the incoming copy's,
+ *    by whichever side's mark covers MORE of the merged transcript, and the
+ *    kept mark is re-anchored onto the merged array (both the id and the
+ *    numeric index) so an insertion before the boundary can't silently
+ *    shift what the summary claims to cover,
  *  - a real on-disk title beats an incoming 'Untitled'.
- * Everything else — messages, stats, timeline — belongs to the caller's copy.
+ * Everything else — stats, timeline — belongs to the caller's copy.
  */
 export function mergeConversationOnto(
   disk: ConversationFile | null,
@@ -351,17 +561,25 @@ export function mergeConversationOnto(
 ): ConversationFile {
   if (!disk) return incoming
   const merged: ConversationFile = { ...incoming }
+  merged.messages = mergeMessages(disk.messages, incoming.messages)
   // `channel` belongs to whichever writer created the conversation; a caller
   // that simply doesn't carry it must not erase it. The renderer's load-failure
   // fallback (ensureConversationId) builds a copy with no channel at all, and
   // letting that through would silently reclassify a Telegram conversation as
   // in-app: gone from /resume, wrong icon in the rail, mapping left dangling.
   if (disk.channel && !incoming.channel) merged.channel = disk.channel
-  const diskMark = disk.summarizedThroughMessage ?? 0
-  const incomingMark = incoming.summarizedThroughMessage ?? 0
-  if (disk.summary && diskMark > incomingMark) {
-    merged.summary = disk.summary
-    merged.summarizedThroughMessage = disk.summarizedThroughMessage
+  const diskCov = summaryCoverage(disk, merged.messages)
+  const incomingCov = summaryCoverage(incoming, merged.messages)
+  const winner =
+    diskCov && (!incomingCov || diskCov.idx > incomingCov.idx)
+      ? { side: disk, cov: diskCov }
+      : incomingCov
+        ? { side: incoming, cov: incomingCov }
+        : null
+  if (winner) {
+    merged.summary = winner.side.summary
+    merged.summarizedThroughMessage = winner.cov.idx
+    merged.summarizedThroughMessageId = winner.cov.id ?? merged.messages[winner.cov.idx]?.id ?? null
   }
   if (incoming.title === 'Untitled' && disk.title && disk.title !== 'Untitled') {
     merged.title = disk.title

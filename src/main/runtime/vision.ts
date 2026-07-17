@@ -53,10 +53,17 @@ export function cloudModelSupportsVision(provider: string, model: string): boole
       // variants; the bare glm-* chat models are text-only — confirmed
       // live, glm-5.2 rejects image parts as "no multi-modal input".
       return /glm-[\d.]+v($|[^a-z0-9])/.test(m)
+    case 'kimi':
+      // kimi-k2.5 onward and kimi-k3 are natively multimodal without a
+      // name marker — image_url content parts verified live (k3, k2.6,
+      // k2.5 — 2026-07-17), and /models reports supports_image_in for the
+      // whole k2.5+/k3 line. Bare moonshot-v1 models are text-only (their
+      // -vision-preview variants carry the name marker above).
+      return /^kimi-k(2\.[5-9]|[3-9])/.test(m)
     case 'openrouter':
       return openrouterSupportsVision(m)
     default:
-      // kimi, qwen, minimax, mimo, and any provider added later: their
+      // qwen, minimax, mimo, and any provider added later: their
       // multimodal models carry a name marker; bare chat models are
       // text-only.
       return false
@@ -78,6 +85,8 @@ function openrouterSupportsVision(m: string): boolean {
   // Gemini 1.5 onward is multimodal across the lineup.
   if (m.includes('gemini')) return true
   if (m.includes('grok')) return /grok-[4-9]/.test(m)
+  // Same rule as the direct kimi provider: k2.5+/k3 are multimodal.
+  if (m.includes('kimi')) return /kimi-k(2\.[5-9]|[3-9])/.test(m)
   if (m.includes('gpt') || /(^|\/)o\d/.test(m)) {
     return openaiSupportsVision(m.split('/').pop() ?? m)
   }

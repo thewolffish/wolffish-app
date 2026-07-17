@@ -322,6 +322,13 @@ export type MessageAttachment = {
 }
 
 export type ConversationMessage = {
+  /**
+   * Stable per-message identity, unique within one conversation — the
+   * reconciliation key mergeConversationOnto unions transcripts by (dual
+   * decl — see src/main/conversations.ts for the full contract). Optional
+   * only for files written before the field shipped.
+   */
+  id?: string
   role: 'user' | 'assistant'
   content: string
   timestamp: number
@@ -412,8 +419,13 @@ export type ConversationFile = {
   timeline?: TimelineEntry[]
   /** Rolling prefix summary — see src/main/conversations.ts (dual decl). */
   summary?: string | null
-  /** First message index NOT covered by `summary` (always a user message). */
+  /**
+   * First message index NOT covered by `summary` (always a user message).
+   * Legacy positional form — the id form below wins when it resolves.
+   */
   summarizedThroughMessage?: number | null
+  /** Id of the first message NOT covered by `summary` — survives id-keyed merges that insert before the mark (dual decl — see src/main/conversations.ts). */
+  summarizedThroughMessageId?: string | null
 }
 
 export type ConversationMeta = {
@@ -709,6 +721,13 @@ export type ChatApi = {
   send: (payload: {
     history: ChatHistoryMessage[]
     conversationId?: string | null
+    /**
+     * The feed id of the user message this turn sends. The titler may
+     * pre-persist that same logical message (the titled shell for a first
+     * in-app turn) — stamping it with THIS id is what lets the renderer's
+     * end-of-turn save reconcile with the shell instead of duplicating it.
+     */
+    userMessageId?: string
     /** Active working-folder paths — the agent injects fresh listings into the outbound volatile tail. */
     workingFolders?: string[]
     thinkingMode?: ThinkingMode
@@ -741,6 +760,8 @@ export type ConversationSummaryUpdate = {
   conversationId: string
   summary: string
   summarizedThroughMessage: number
+  /** Id of the first uncovered message — null while a transition file still lacks message ids. */
+  summarizedThroughMessageId: string | null
 }
 
 export type ConversationApi = {

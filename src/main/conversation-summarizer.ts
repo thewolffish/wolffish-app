@@ -1,5 +1,6 @@
 import {
   loadConversation,
+  resolveSummaryMarkIndex,
   updateConversation,
   type ConversationFile,
   type ConversationMessage
@@ -37,6 +38,8 @@ export type SummaryUpdate = {
   conversationId: string
   summary: string
   summarizedThroughMessage: number
+  /** Id of the first uncovered message — null while a transition file still lacks message ids. */
+  summarizedThroughMessageId: string | null
 }
 
 let configured: {
@@ -90,7 +93,11 @@ export async function maybeSummarizeConversation(
     const conv = await loadConversation(conversationId)
     if (!conv || conv.sealed) return null
 
-    const mark = conv.summarizedThroughMessage ?? 0
+    const mark = resolveSummaryMarkIndex(
+      conv.messages,
+      conv.summarizedThroughMessage,
+      conv.summarizedThroughMessageId
+    )
     const newMark = pickNewMark(conv, mark)
     if (newMark === null) return null
 
@@ -118,16 +125,30 @@ export async function maybeSummarizeConversation(
     if (!text) return null
     if (text.length > SUMMARY_MAX_CHARS) text = text.slice(0, SUMMARY_MAX_CHARS) + '…'
 
+    // The summary covered messages [mark, newMark) of the copy we loaded —
+    // pin the boundary to that exact logical message by ID, not position:
+    // a merge may have inserted messages before newMark by the time the
+    // write below runs, and a positional mark would silently shift what the
+    // summary claims to cover. Null for a transition file whose messages
+    // still lack ids — the numeric mark carries it alone, as before.
+    const markId = conv.messages[newMark]?.id ?? null
+
     // RMW inside the file's write queue: the renderer (or a channel) may
     // append a newer turn while the LLM call runs — the summary lands on the
     // freshest copy atomically, so concurrent writers can't clobber messages
     // and a racing whole-file save can't drop this summary.
     let wrote = false
+    let finalMark = newMark
     await updateConversation(conversationId, (fresh) => {
       if (!fresh) return null
       wrote = true
       fresh.summary = text
-      fresh.summarizedThroughMessage = newMark
+      // Re-anchor the numeric mark onto the FRESH transcript so the two
+      // forms agree on disk; the id keeps it honest wherever it resolves.
+      const freshIdx = markId ? fresh.messages.findIndex((m) => m.id === markId) : -1
+      finalMark = freshIdx >= 0 ? freshIdx : newMark
+      fresh.summarizedThroughMessage = finalMark
+      fresh.summarizedThroughMessageId = markId
       return fresh
     })
     if (!wrote) return null
@@ -135,7 +156,8 @@ export async function maybeSummarizeConversation(
     const update: SummaryUpdate = {
       conversationId,
       summary: text,
-      summarizedThroughMessage: newMark
+      summarizedThroughMessage: finalMark,
+      summarizedThroughMessageId: markId
     }
     onUpdated?.(update)
     return update

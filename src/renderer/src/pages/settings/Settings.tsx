@@ -322,7 +322,7 @@ export function Settings(): React.JSX.Element {
                     )}
                   >
                     <div className="overflow-hidden">
-                      <div className="flex flex-col gap-0.5 ps-7">
+                      <div className="flex flex-col gap-0.5 ps-7 pe-1 py-1">
                         {PROVIDERS.map((p) => {
                           const subActive = isActive && provider === p
                           const Logo = PROVIDER_ICONS[p]
@@ -366,7 +366,7 @@ export function Settings(): React.JSX.Element {
                     )}
                   >
                     <div className="overflow-hidden">
-                      <div className="flex flex-col gap-0.5 ps-7">
+                      <div className="flex flex-col gap-0.5 ps-7 pe-1 py-1">
                         {CHANNELS.map((ch) => {
                           const subActive = isActive && channel === ch
                           const Icon = CHANNEL_ICONS[ch]
@@ -402,7 +402,7 @@ export function Settings(): React.JSX.Element {
                     )}
                   >
                     <div className="overflow-hidden">
-                      <div className="flex flex-col gap-0.5 ps-7">
+                      <div className="flex flex-col gap-0.5 ps-7 pe-1 py-1">
                         {visibleServices.map((s) => {
                           const subActive = isActive && effectiveService === s
                           const Icon = SERVICE_ICONS[s]
@@ -438,7 +438,7 @@ export function Settings(): React.JSX.Element {
                     )}
                   >
                     <div className="overflow-hidden">
-                      <div className="flex flex-col gap-0.5 ps-7">
+                      <div className="flex flex-col gap-0.5 ps-7 pe-1 py-1">
                         {HIPPOCAMPUS_TABS.map((ht) => {
                           const subActive = isActive && hippocampusTab === ht
                           return (

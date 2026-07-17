@@ -6,12 +6,13 @@ import type {
   ToolDefinition,
   UserContentBlock
 } from '@main/runtime/thalamus'
-import { thinkingEnabled } from '@main/runtime/reasoning'
+import { effortFromMode, thinkingEnabled } from '@main/runtime/reasoning'
 
 const KIMI_ENDPOINT = 'https://api.moonshot.ai/v1/chat/completions'
 
 function maxCompletionTokens(model: string): number {
   const m = model.toLowerCase()
+  if (m.includes('kimi-k3')) return 131072
   if (m.includes('k2')) return 65536
   if (m.includes('128k')) return 16384
   if (m.includes('32k')) return 8192
@@ -40,12 +41,22 @@ export class KimiProvider {
       stream_options: { include_usage: true }
     }
 
-    // Kimi thinking is binary. k2.x-code variants reason always-on (never
-    // disabled); moonshot-v1 ignores the field.
+    // Kimi k2.x thinking is binary via thinking{type}; k2.x-code variants
+    // reason always-on (never disabled); moonshot-v1 ignores the field.
+    // K3 deprecates thinking{type} in favour of top-level reasoning_effort
+    // none|high|max — 'none' disables (verified live 2026-07-17 despite
+    // docs claiming K3 can't be disabled: served_model stays kimi-k3,
+    // 0 reasoning tokens); 'high' is accepted but behaves like 'max' until
+    // Moonshot ships the announced lower effort levels.
     const ml = this.model.toLowerCase()
     const alwaysOn = ml.includes('k2.7') && ml.includes('code')
     const on = alwaysOn || thinkingEnabled(options.thinkingMode)
-    body.thinking = { type: on ? 'enabled' : 'disabled' }
+    if (ml.includes('kimi-k3')) {
+      const effort = effortFromMode(options.thinkingMode)
+      body.reasoning_effort = effort === 'off' ? 'none' : effort
+    } else {
+      body.thinking = { type: on ? 'enabled' : 'disabled' }
+    }
 
     if (options.tools && options.tools.length > 0) {
       body.tools = options.tools.map(toTool)

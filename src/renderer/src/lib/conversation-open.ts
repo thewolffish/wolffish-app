@@ -10,7 +10,13 @@ import type { ApprovalCardState, AssistantStatus, ChatMessage } from '@providers
  */
 export function mapConversationMessages(conv: ConversationFile): ChatMessage[] {
   return conv.messages.map((m) => {
-    const msgId = `m_${m.timestamp}_${Math.random().toString(36).slice(2, 6)}`
+    // The persisted id IS the feed id: persistConversation writes it back, so
+    // the message keeps one identity across load → feed → save → merge (the
+    // id-keyed reconcile in mergeConversationOnto depends on that round-trip).
+    // Minting is the fallback for a pre-id file only — the launch migration
+    // ids those before the renderer can load one, so it should never fire —
+    // and the first save then adopts the minted ids onto disk.
+    const msgId = m.id ?? `m_${m.timestamp}_${Math.random().toString(36).slice(2, 6)}`
     if (m.role === 'user') {
       return {
         id: msgId,

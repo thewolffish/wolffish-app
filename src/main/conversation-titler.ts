@@ -240,13 +240,20 @@ export function offlineTitle(userMessage: string, channel?: ConversationChannel)
  *
  * Returns the resolved title, or undefined when there's nothing to title (no
  * conversation id / empty message) so the caller passes no title downstream.
+ *
+ * `userMessageId` is the sender's own id for the user message this turn
+ * carries. The shell written below persists that SAME logical message, so it
+ * must stamp that SAME id — the renderer's end-of-turn save then reconciles
+ * with the shell by id (its bare-text copy wins) instead of the two copies
+ * surviving as duplicates in the id-keyed merge.
  */
 export async function ensureConversationTitle(
   conversationId: string | null,
   userMessage: string,
   channel: ConversationChannel | undefined,
   llm: TitlerLLM,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  userMessageId?: string
 ): Promise<string | undefined> {
   const trimmed = userMessage.trim()
   if (!conversationId) {
@@ -273,12 +280,26 @@ export async function ensureConversationTitle(
     }
     // In-app first turn: no file yet. Write a titled shell carrying the user's
     // message so the conversation appears (correctly titled) immediately and
-    // survives even if the turn is abandoned before the renderer's save.
+    // survives even if the turn is abandoned before the renderer's save. The
+    // message carries the sender's id (see the doc above) so the sender's own
+    // save reconciles with it by id. A caller that threads NO id gets a shell
+    // with none — deliberately: an id the caller doesn't know can never match
+    // its later save (a guaranteed duplicate under the id-keyed merge), while
+    // an id-LESS shell pairs positionally, the exact pre-id semantics. A
+    // shell stranded id-less (turn abandoned, never saved over) is minted an
+    // id by the next launch's migration.
     const shell: ConversationFile = {
       ...createConversation(null),
       id: conversationId,
       title,
-      messages: [{ role: 'user', content: trimmed, timestamp: Date.now() }]
+      messages: [
+        {
+          ...(userMessageId ? { id: userMessageId } : {}),
+          role: 'user',
+          content: trimmed,
+          timestamp: Date.now()
+        }
+      ]
     }
     if (channel) shell.channel = channel
     return shell

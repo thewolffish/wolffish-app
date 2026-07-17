@@ -1,5 +1,6 @@
 import {
   createConversation,
+  mintMessageId,
   saveConversation,
   type ConversationChannel,
   type ConversationFile,
@@ -1732,11 +1733,13 @@ export class Agent {
 
     const now = Date.now()
     const userMsg: ConversationMessage = {
+      id: mintMessageId(conv.createdAt),
       role: 'user',
       content: opts.instruction,
       timestamp: conv.createdAt
     }
     const assistantMsg: ConversationMessage = {
+      id: mintMessageId(now),
       role: 'assistant',
       content: responseText,
       timestamp: now,

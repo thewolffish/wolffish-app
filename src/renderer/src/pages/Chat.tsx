@@ -10,7 +10,6 @@ import { PathCard } from '@components/common/path-card/PathCard'
 import { extractPathCandidates } from '@components/common/path-card/extractPaths'
 import { canonicalPath } from '@components/common/path-card/pathStat'
 import { HtmlFileViewer } from '@components/common/html-file-viewer/HtmlFileViewer'
-import { ReindexActiveOverlay } from '@components/common/reindex-active-overlay/ReindexActiveOverlay'
 import { ImageViewer } from '@components/common/image-viewer/ImageViewer'
 import { MarkdownFileViewer } from '@components/common/markdown-file-viewer/MarkdownFileViewer'
 import { PageViewer } from '@components/common/page-viewer/PageViewer'
@@ -54,7 +53,11 @@ import {
   reasoningModesFor,
   type ReasoningMode
 } from '@main/runtime/reasoning'
-import { upsertWorkflowSegment, WORKFLOW_TOOL_NAMES } from '@main/runtime/broca'
+import {
+  upsertWorkflowSegment,
+  WORKFLOW_TOOL_NAMES,
+  type WorkflowSnapshot
+} from '@main/runtime/broca'
 import {
   useFlow,
   type PendingProcedure,
@@ -233,21 +236,6 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     if (persisted !== normalized) void setThinkingMode(normalized)
   }, [reasoningModes, activeCloudModel, persistedThinkingModes, setThinkingMode])
 
-  const [reindexActive, setReindexActive] = useState(false)
-  useEffect(() => {
-    let cancelled = false
-    window.api.reindex.getStatus().then((s) => {
-      if (!cancelled) setReindexActive(!!s)
-    })
-    const offStarted = window.api.reindex.onStarted(() => setReindexActive(true))
-    const offEnded = window.api.reindex.onEnded(() => setReindexActive(false))
-    return () => {
-      cancelled = true
-      offStarted()
-      offEnded()
-    }
-  }, [])
-
   useEffect(() => {
     void refreshStatus()
   }, [refreshStatus])
@@ -404,6 +392,10 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
   // Workflow-agent + summarization spend observed during the live turn,
   // itemized separately so it never pollutes the brain's meter or counters.
   const [sideSpend, setSideSpend] = useState<SideSpend | null>(null)
+  // The live/last turn's workflow run, mirrored from the same snapshot
+  // segments that drive the feed's WorkflowCard — the meter card itemizes
+  // its agents and their consumption.
+  const [workflowSpend, setWorkflowSpend] = useState<WorkflowSnapshot | null>(null)
   // Model the current meter reading was measured under. Guards restores and
   // model switches from dividing an old model's numerator by a different
   // model's window.
@@ -497,6 +489,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     setUsageUnavailable(false)
     setLastCall(null)
     setSideSpend(null)
+    setWorkflowSpend(null)
     setMeterModel(null)
     // State-only on purpose: the ref twins (meterModelRef, turnStartedAtRef,
     // pendingTurnUsageRef, lastCallRef, turnStatsRef) reset inline at the
@@ -799,6 +792,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
       if (!conv || conv.id !== update.conversationId) return
       conv.summary = update.summary
       conv.summarizedThroughMessage = update.summarizedThroughMessage
+      conv.summarizedThroughMessageId = update.summarizedThroughMessageId
     })
   }, [])
 
@@ -807,8 +801,14 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
       const convMessages = msgs.filter(isPersistedMessage).map((m) => {
         // Preserve each message's own send time — stamping Date.now() here
         // rewrote every timestamp on every save, destroying real history.
+        // The feed id persists too (`id` FIRST — the launch probe keys on a
+        // leading id): it's the identity the main-side merge reconciles
+        // concurrent writers by, and it round-trips through load
+        // (mapConversationMessages) so one logical message keeps one id for
+        // the life of the conversation.
         if (isUser(m)) {
           return {
+            id: m.id,
             role: 'user' as const,
             content: m.content,
             timestamp: m.timestamp ?? Date.now(),
@@ -822,6 +822,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
         }
         const am = m as AssistantMessage
         return {
+          id: am.id,
           role: 'assistant' as const,
           content: collectText(am.segments),
           // Coalesce streaming text deltas at persistence time: one text
@@ -837,6 +838,20 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
       })
 
       if (convMessages.length === 0) return
+
+      // Never let a whole-file save DROP persisted messages: the feed is
+      // append-only relative to disk in every legitimate flow, so coming up
+      // short here means this component's state is stale (a remount
+      // re-seeded from an old session descriptor). The main-side merge
+      // refuses the shrink too — this skip just avoids the pointless write
+      // and the updatedAt churn.
+      const diskCount = conversationRef.current?.messages.length ?? 0
+      if (convMessages.length < diskCount) {
+        console.warn(
+          `[chat] skipped stale conversation save (${convMessages.length} < ${diskCount} messages on disk)`
+        )
+        return
+      }
 
       // Channel-owned conversations (WhatsApp / Telegram / heartbeat /
       // procedure) are saved from here too — they are continued in-app like any
@@ -931,6 +946,20 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
           setStreaming(false)
           if (previousId) void window.api.chat.cancel({ conversationId: previousId })
         }
+        // A remount re-seeds `messages` from the session descriptor — a
+        // snapshot minted when the session was OPENED. Turns persisted since
+        // then exist only on disk, and leaving the feed on the stale seed
+        // hands the next whole-file save a shorter transcript (the
+        // 2026-07-17 data loss: a completed retry turn erased by exactly
+        // this). With no turn in flight, a disk copy holding MORE persisted
+        // messages than the feed is the truth — adopt it.
+        if (pendingTurnIdRef.current === null) {
+          setMessages((prev) => {
+            const have = prev.filter(isPersistedMessage).length
+            if (conv.messages.length <= have) return prev
+            return mapConversationMessages(conv)
+          })
+        }
         // Wipe the previous conversation's live counters FIRST — a direct
         // A→B switch used to leak A's frozen elapsed and token counts into
         // B's composer — then restore B's persisted state on top.
@@ -941,6 +970,15 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
         meterModelRef.current = null
         turnStatsRef.current = emptyTurnStats()
         setConvStats(conv.stats ?? null)
+        // The meter's workflow section survives reopen the way lastTurn does:
+        // restore the persisted snapshot only when the FINAL assistant message
+        // carries one (i.e. the last turn was a workflow run) — an older run's
+        // snapshot next to a newer turn's stats would misattribute the spend.
+        const lastAssistant = conv.messages.filter((m) => m.role === 'assistant').at(-1)
+        const wfSeg = (lastAssistant?.segments ?? []).findLast(
+          (s): s is Extract<Segment, { kind: 'workflow' }> => s.kind === 'workflow'
+        )
+        setWorkflowSpend(wfSeg?.snapshot ?? null)
         const meter =
           conv.stats?.meter ??
           (conv.contextMeter
@@ -1048,12 +1086,30 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
       const conv = await window.api.conversation.load(targetId)
       if (cancelled || !conv || conversationIdRef.current !== targetId) return
       setMessages((prev) => {
-        // Count what we hold the way the WRITER counts it, or the slice below
-        // takes the wrong messages.
-        const have = prev.filter(isPersistedMessage).length
-        // Nothing new — return prev so React bails out and nothing re-renders.
-        // This is the overwhelmingly common case: the broadcast fires for every
-        // conversation, most of which aren't ours.
+        const persistedPrev = prev.filter(isPersistedMessage)
+        // Id-keyed diff when both sides are fully id'd (every post-migration
+        // file and every live feed): the tail is exactly the disk messages
+        // the feed doesn't hold. Positions can't fool it — a diverged writer
+        // reconciled by the merge may land its message BEFORE ours in the
+        // file, where a count-based slice would grab our own messages back
+        // as "new" and duplicate them in the feed. Appended at the end even
+        // if the file holds it mid-array: feed order self-corrects on the
+        // next full load, and an append is what keeps React from remounting
+        // the bubbles we already show.
+        if (conv.messages.every((m) => m.id) && persistedPrev.every((m) => m.id)) {
+          const known = new Set(persistedPrev.map((m) => m.id))
+          const tail = conv.messages.filter((m) => !known.has(m.id!))
+          // Nothing new — return prev so React bails out and nothing
+          // re-renders. This is the overwhelmingly common case: the broadcast
+          // fires for every conversation, most of which aren't ours.
+          if (tail.length === 0) return prev
+          return [...prev, ...mapConversationMessages({ ...conv, messages: tail })]
+        }
+        // Transition fallback (an id-less message on either side): count what
+        // we hold the way the WRITER counts it, or the slice below takes the
+        // wrong messages. Safe here because id-less files also merge
+        // positionally — disk stays append-only relative to this feed.
+        const have = persistedPrev.length
         if (conv.messages.length <= have) return prev
         return [
           ...prev,
@@ -1132,6 +1188,9 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     const offSegment = window.api.chat.onSegment((segment) => {
       if (!matchesTurn(segment.turnId, segment.conversationId)) return
       setMessages((prev) => appendSegment(prev, segment))
+      // Every snapshot (including throttled token ticks) refreshes the meter's
+      // workflow section — the timeline entry below is gated, this must not be.
+      if (segment.kind === 'workflow') setWorkflowSpend(segment.snapshot)
       const segKind = segment.kind
       if (
         segKind === 'tool_call' ||
@@ -1600,6 +1659,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
         const history = textHistory(messages, workspaceRoot, {
           summary: conversationRef.current?.summary,
           summarizedThroughMessage: conversationRef.current?.summarizedThroughMessage,
+          summarizedThroughMessageId: conversationRef.current?.summarizedThroughMessageId,
           conversationId: conversationRef.current?.id ?? null
         }).concat(currentEntry)
 
@@ -1615,6 +1675,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
         setCacheReadTokens(0)
         setCacheWriteTokens(0)
         setSideSpend(null)
+        setWorkflowSpend(null)
         setUsageUnavailable(false)
         pendingTurnUsageRef.current = null
         turnStatsRef.current = emptyTurnStats()
@@ -1631,6 +1692,10 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
         const response = await window.api.chat.send({
           history,
           conversationId,
+          // The titler shell pre-persists this same user message — under the
+          // SAME id, so our end-of-turn save reconciles with the shell
+          // instead of duplicating it.
+          userMessageId: userMessage.id,
           workingFolders,
           thinkingMode: thinkingMode as import('@preload/index').ThinkingMode,
           // Per-call only (procedure Play): a lingering state-based override
@@ -1687,6 +1752,16 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     setPendingAttachments([])
     await sendContent(trimmed, atts)
   }, [draft, pendingAttachments, sendContent])
+
+  // "Try again" on a failed turn's error card: continue the conversation with
+  // a message that names what went wrong, so the model resumes from where it
+  // stopped instead of restarting the task blind.
+  const handleTryAgain = useCallback(
+    (reason: string) => {
+      void sendContent(t('errors.provider.tryAgainMessage', { reason }))
+    },
+    [sendContent, t]
+  )
 
   // A procedure's Play button spawns a fresh SESSION carrying the procedure
   // on its descriptor, then switches to Chat — this instance auto-sends it
@@ -1799,6 +1874,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
       const history = textHistory(messages, workspaceRoot, {
         summary: conversationRef.current?.summary,
         summarizedThroughMessage: conversationRef.current?.summarizedThroughMessage,
+        summarizedThroughMessageId: conversationRef.current?.summarizedThroughMessageId,
         conversationId: conversationRef.current?.id ?? null
       }).concat(currentEntry)
 
@@ -1821,6 +1897,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
       setCacheReadTokens(0)
       setCacheWriteTokens(0)
       setSideSpend(null)
+      setWorkflowSpend(null)
       setUsageUnavailable(false)
       pendingTurnUsageRef.current = null
       turnStatsRef.current = emptyTurnStats()
@@ -1834,6 +1911,9 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
       const response = await window.api.chat.send({
         history,
         conversationId,
+        // Same contract as sendContent: the titler shell persists this very
+        // message, and it must carry the feed's id to reconcile later.
+        userMessageId: userMsgId,
         workingFolders,
         thinkingMode: thinkingMode as import('@preload/index').ThinkingMode
       })
@@ -2100,8 +2180,6 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
   const hasMessages = messages.length > 0
   const placeholderAlign = useMemo(() => (isRtl ? 'text-right' : 'text-left'), [isRtl])
 
-  if (reindexActive) return <ReindexActiveOverlay />
-
   return (
     <main
       className={cn('bg-bg relative flex h-full w-full flex-col', pageTopPadding)}
@@ -2242,7 +2320,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
             </div>
           )}
           <InAppVerboseContext.Provider value={inAppVerbose}>
-            {messages.map((m) => (
+            {messages.map((m, i) => (
               <ChatItem
                 key={m.id}
                 message={m}
@@ -2251,6 +2329,14 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                 awaitingAsk={awaitingAsk}
                 onApprovalDecision={respondApproval}
                 onAskRespond={respondAsk}
+                onTryAgain={
+                  i === messages.length - 1 &&
+                  !streaming &&
+                  m.role === 'assistant' &&
+                  m.status === 'error'
+                    ? handleTryAgain
+                    : undefined
+                }
               />
             ))}
           </InAppVerboseContext.Provider>
@@ -2387,6 +2473,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                 lastTurn={convStats?.lastTurn ?? null}
                 allTime={convStats?.allTime ?? null}
                 sideSpend={sideSpend}
+                workflow={workflowSpend}
                 lastCall={lastCall}
                 usageUnavailable={usageUnavailable}
                 meterModel={meterModel}
@@ -3570,6 +3657,8 @@ type ChatItemProps = {
   awaitingAsk: boolean
   onApprovalDecision: (id: string, decision: 'approved' | 'denied') => void
   onAskRespond: (askId: string, response: AskUserResponse) => void
+  /** Present only on the last message when it's a failed turn and no turn is running. */
+  onTryAgain?: (reason: string) => void
 }
 
 // Memoized so a streaming turn (or any parent state tick — token counters,
@@ -3583,7 +3672,8 @@ const ChatItem = memo(
     awaitingApproval,
     awaitingAsk,
     onApprovalDecision,
-    onAskRespond
+    onAskRespond,
+    onTryAgain
   }: ChatItemProps): React.JSX.Element {
     if (message.role === 'user') {
       return (
@@ -3603,6 +3693,7 @@ const ChatItem = memo(
         awaitingAsk={awaitingAsk}
         onApprovalDecision={onApprovalDecision}
         onAskRespond={onAskRespond}
+        onTryAgain={onTryAgain}
       />
     )
   },
@@ -3614,6 +3705,9 @@ const ChatItem = memo(
     if (prev.t !== next.t) return false
     if (prev.onApprovalDecision !== next.onApprovalDecision) return false
     if (prev.onAskRespond !== next.onAskRespond) return false
+    // Flips between undefined and a stable callback as the row gains/loses
+    // "last failed message while idle" status — must invalidate the memo.
+    if (prev.onTryAgain !== next.onTryAgain) return false
     // awaitingApproval/awaitingAsk are GLOBAL booleans passed to every row but
     // only drive the streaming bubble's "Awaiting…" placeholder. Ignoring them
     // for non-streaming rows is what stops a mid-turn permission prompt from
@@ -3687,13 +3781,15 @@ function AssistantBubble({
   awaitingApproval,
   awaitingAsk,
   onApprovalDecision,
-  onAskRespond
+  onAskRespond,
+  onTryAgain
 }: {
   message: AssistantMessage
   awaitingApproval: boolean
   awaitingAsk: boolean
   onApprovalDecision: (id: string, decision: 'approved' | 'denied') => void
   onAskRespond: (askId: string, response: AskUserResponse) => void
+  onTryAgain?: (reason: string) => void
 }): React.JSX.Element {
   const { t } = useTranslation()
   const verbose = useContext(InAppVerboseContext)
@@ -3764,7 +3860,7 @@ function AssistantBubble({
     if (providerSeg?.providerErrors?.length) {
       return (
         <div className="flex flex-col gap-1 items-start">
-          <ProviderErrorCards failures={providerSeg.providerErrors} />
+          <ProviderErrorCards failures={providerSeg.providerErrors} onTryAgain={onTryAgain} />
         </div>
       )
     }
@@ -3782,6 +3878,7 @@ function AssistantBubble({
               totalDurationMs: 0
             }
           ]}
+          onTryAgain={onTryAgain}
         />
       </div>
     )
@@ -4974,6 +5071,8 @@ function isPersistedMessage(m: ChatMessage): boolean {
 type ReplayWindowInfo = {
   summary?: string | null
   summarizedThroughMessage?: number | null
+  /** Id form of the mark — wins over the numeric index when it resolves. */
+  summarizedThroughMessageId?: string | null
   conversationId?: string | null
 }
 
@@ -4987,8 +5086,22 @@ function textHistory(
   // Rolling prefix summary: skip the persisted messages the summarizer
   // already folded in and replay the summary preamble instead. The mark is
   // an index into the PERSISTED message list, so count renderer messages
-  // with the same filter persistConversation uses.
-  const mark = replay?.summarizedThroughMessage ?? 0
+  // with the same filter persistConversation uses. The id form wins when it
+  // resolves — feed ids ARE the persisted ids since the round-trip shipped,
+  // and the id survives merges that insert messages before the boundary —
+  // with the numeric mark as the transition fallback.
+  let mark = replay?.summarizedThroughMessage ?? 0
+  if (replay?.summarizedThroughMessageId) {
+    let persistIdx = 0
+    for (const m of messages) {
+      if (!isPersistedMessage(m)) continue
+      if (m.id === replay.summarizedThroughMessageId) {
+        mark = persistIdx
+        break
+      }
+      persistIdx++
+    }
+  }
   const summary = replay?.summary?.trim()
   // Mirror of channel.ts replayWindow's defensive guard: a stale/corrupt mark
   // at/beyond the persisted count degrades to full replay — never to an

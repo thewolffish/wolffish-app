@@ -1,5 +1,5 @@
 import type { MessageAttachment } from '@main/conversations'
-import { workspaceRoot } from '@main/workspace/workspace'
+import { workspaceRoot } from '@main/workspace/root'
 
 /**
  * Build the LLM-facing user-message content with an `<attachments>`

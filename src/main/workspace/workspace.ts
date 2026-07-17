@@ -1,8 +1,5 @@
 import { is } from '@electron-toolkit/utils'
-// Type-only: erased at compile time, so it adds no runtime edge to the
-// conversations module (which imports workspaceRoot() from here). The value
-// imports it needs are deferred — see backfillUntitledConversations.
-import type { ConversationFile } from '@main/conversations'
+import { mintMessageId, updateConversation } from '@main/conversations'
 import { diskWriter } from '@main/io/diskWriter'
 import { mcpCapabilityName } from '@main/runtime/mcp/naming'
 import type { McpConfig, McpOauthState, McpServerConfig } from '@main/runtime/mcp/types'
@@ -17,6 +14,7 @@ import type { FileHandle } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import semver from 'semver'
+import { WORKSPACE_ROOT } from './root'
 
 export type LocalModelConfig = {
   enabled: boolean
@@ -382,15 +380,16 @@ export type WorkspaceStatus = {
   config: WorkspaceConfig | null
 }
 
-const WORKSPACE_ROOT = path.join(os.homedir(), '.wolffish', 'workspace')
 const CONFIG_FILENAME = 'config.json'
 const CONFIG_BACKUP_FILENAME = 'config.json.bak'
 const LOCK_FILENAME = '.lock'
 const DEFAULT_OLLAMA_ENDPOINT = 'http://localhost:11434'
 
-export function workspaceRoot(): string {
-  return WORKSPACE_ROOT
-}
+// Defined in ./root (a leaf module) so conversations.ts and
+// compose-attachments.ts can import it without closing a cycle back into this
+// module, which imports them statically. Re-exported because the rest of the
+// app imports it from here.
+export { workspaceRoot } from './root'
 
 function expandHome(p: string): string {
   if (p === '~') return os.homedir()
@@ -635,14 +634,10 @@ export async function ensureWorkspace(): Promise<void> {
     }
   }
 
-  // Post-update migration: merge new config keys, overwrite agents.core.md,
-  // version-check official capabilities, and nuke cortex.db so it rebuilds.
-  // Must run before ensureBundledCapabilities so capability version checks
-  // see the current bundled versions.
+  // Post-update migration: merge new config keys and refresh the app-managed
+  // prompt files. Must run before ensureBundledCapabilities so capability
+  // version checks see the current bundled versions.
   await migrateConfig()
-  await migrateBrain()
-  await migrateConnections()
-  await migrateTtsConfig()
   await migrateAgentsCore()
   await migrateAgentsGuide()
   await migrateIdentityRoleFiles()
@@ -808,309 +803,108 @@ async function migrateConfig(): Promise<void> {
 }
 
 /**
- * One-time migration of the legacy single-token Notion/GitHub shape
- * (`{ token, name, email }` / `{ token, login, name }`) into the labeled
- * connections array (`{ connections: [...] }`). Idempotent: once the
- * value is already a `{ connections }` object it does nothing. The old
- * token is preserved as a single connection labeled "Default" so linked
- * accounts keep working across the update.
- */
-async function migrateConnections(): Promise<void> {
-  const config = await readConfig()
-  if (!config) return
-  const cfg = config as unknown as Record<string, unknown>
-  let changed = false
-
-  const notion = cfg.notion
-  if (isPlainObject(notion) && !Array.isArray(notion.connections)) {
-    cfg.notion = normalizeNotionConfig(notion)
-    changed = true
-  }
-
-  const github = cfg.github
-  if (isPlainObject(github) && !Array.isArray(github.connections)) {
-    cfg.github = normalizeGitHubConfig(github)
-    changed = true
-  }
-
-  if (changed) await writeConfig(config)
-}
-
-/**
- * Derive the single-Brain selection from the legacy cascade config and strip
- * the dead cascade keys (`cloudPriority`, `allowLocalFallback`). Idempotent:
- * once `llm.brain` exists and the dead keys are gone it does nothing. The
- * Brain is seeded from the old primary (cloudPriority[0], or the first
- * configured provider) so existing users keep running on the same model.
- * Runs AFTER migrateConfig so the additive merge can't re-introduce the
- * removed keys.
- */
-async function migrateBrain(): Promise<void> {
-  const config = await readConfig()
-  if (!config) return
-  const llm = config.llm as typeof config.llm & {
-    cloudPriority?: CloudProviderConfig['id'][]
-    allowLocalFallback?: boolean
-    statelessLocalModels?: boolean
-    restrictLocalModels?: boolean
-  }
-  const hasDeadKeys =
-    'cloudPriority' in llm ||
-    'allowLocalFallback' in llm ||
-    // The two local-model context lobotomies died with the lean-context
-    // unification — strip them so stale config can't imply they still work.
-    'statelessLocalModels' in llm ||
-    'restrictLocalModels' in llm
-  const alreadyMigrated = 'brain' in llm
-  if (alreadyMigrated && !hasDeadKeys) return
-
-  // Seed the Brain from the old primary provider when not already set.
-  let brain = config.llm.brain ?? null
-  if (!alreadyMigrated) {
-    const firstId =
-      llm.cloudPriority?.find((id) => config.llm.providers.some((p) => p.id === id)) ??
-      config.llm.providers[0]?.id
-    const provider = firstId ? config.llm.providers.find((p) => p.id === firstId) : undefined
-    brain = provider ? { providerId: provider.id, model: provider.model } : null
-  }
-  delete llm.cloudPriority
-  delete llm.allowLocalFallback
-  delete llm.statelessLocalModels
-  delete llm.restrictLocalModels
-  await writeConfig({ ...config, llm: { ...llm, brain } })
-}
-
-/**
- * One-time migration off the old Microsoft edge-tts engine. Its voice ids
- * ("en-US-AriaNeural") use hyphens and its speeds ("+0%") use percent signs —
- * neither of which the Kokoro engine understands. Clear stale-format values so
- * the TTS plugin and Settings fall back to their Kokoro defaults (af_bella, 1.0).
- */
-async function migrateTtsConfig(): Promise<void> {
-  const config = await readConfig()
-  if (!config?.tts) return
-  const tts = { ...config.tts }
-  let changed = false
-  if (tts.defaultVoice && tts.defaultVoice.includes('-')) {
-    tts.defaultVoice = ''
-    changed = true
-  }
-  if (tts.defaultSpeed && tts.defaultSpeed.includes('%')) {
-    tts.defaultSpeed = ''
-    changed = true
-  }
-  if (changed) await writeConfig({ ...config, tts })
-}
-
-/**
- * Reclaim disk left behind by engine migrations. The old speech-to-text engine
- * (openai-whisper) pulled a ~2 GB PyTorch into a managed venv at
- * bin/python/venvs/whisper; faster-whisper now lives in venvs/faster-whisper, so
- * the old one is dead weight. Remove it proactively on launch so the space is
- * freed even if the user never invokes speech-to-text again. Strictly scoped to
- * our own ~/.wolffish footprint; idempotent and best-effort.
- *
- * (Not touched, because they live outside our footprint / in the user's own
- * environment: openai-whisper's `~/.cache/whisper` model cache and the system
- * `edge-tts` package the old text-to-speech engine installed.)
- */
-/**
  * THE one permanent home for sweeping out what removed features left behind
  * in deployed footprints — retired capabilities, replaced prompt files, dead
  * config keys, stale caches. Runs every launch; every block is idempotent
  * (no-ops once clean) and strictly scoped to our own ~/.wolffish footprint.
  * When a feature is removed from the app, append its cleanup HERE — never
  * mint a new one-off function for it.
+ *
+ * The accumulated legacy sweeps (openai-whisper venv, planning/orchestrator
+ * capabilities and prompts, dead cascade + orchestrator config keys, edge-tts
+ * values, legacy Notion/GitHub connection shapes, the Untitled-title
+ * backfill) were retired once every deployed footprint had converged — fresh
+ * installs never had any of it. Only the message-id mint below remains,
+ * because it has not yet run against a pre-id conversation corpus.
  */
 async function cleanupWorkspace(): Promise<void> {
-  // Old speech-to-text engine (openai-whisper): its managed venv pulled a
-  // ~2 GB PyTorch; faster-whisper lives in venvs/faster-whisper now. (Left
-  // alone, because outside our footprint: ~/.cache/whisper and the system
-  // edge-tts package.)
-  const binRoot = path.join(path.dirname(WORKSPACE_ROOT), 'bin')
-  const staleWhisperVenv = path.join(binRoot, 'python', 'venvs', 'whisper')
-  if (existsSync(staleWhisperVenv)) {
-    await fs.rm(staleWhisperVenv, { recursive: true, force: true }).catch(() => undefined)
-  }
+  // Stable message ids for conversations written before the field shipped.
+  // mergeConversationOnto reconciles transcripts BY id now — full coverage is
+  // what makes its positional-pairing fallback unreachable for real files —
+  // so every message must carry one before any writer runs. This is awaited
+  // on the same pre-window, pre-channel launch path as the rest of this
+  // function, which is the ordering that guarantees it. Idempotent via a
+  // probe-then-parse pattern: a compliant file is skipped off a 4KB head
+  // read (every current writer serializes `id` as the first key of each
+  // message), and a fully-id'd file that still fails the probe just pays one
+  // parse and writes nothing.
+  await ensureMessageIds()
+}
 
-  // Planning skill (removed; its plan-format discipline now lives always-on in
-  // agents.core.md's Loop discipline, not as a load-on-demand pure skill).
-  // ensureBundledCapabilities only ever copies, never prunes a skill whose
-  // bundled source was deleted, so the dead `.planning` would keep showing in
-  // the capability index — sweep it from already-installed workspaces.
-  for (const dir of ['.planning', 'planning']) {
-    const target = path.join(WORKSPACE_ROOT, 'brain', 'cerebellum', dir)
-    if (existsSync(target)) {
-      await fs.rm(target, { recursive: true, force: true }).catch(() => undefined)
-    }
-  }
+/** Bytes of each conversation file the message-id probe reads. See ensureMessageIds. */
+const MESSAGE_ID_PROBE_BYTES = 4096
 
-  // Orchestrator mode (replaced by workflow mode): its deployed capability —
-  // ensureBundledCapabilities only ever copies, never prunes a skill whose
-  // bundled source was deleted, so the dead `.orchestrator` would keep
-  // loading with tools whose host bridge is gone…
-  for (const dir of ['.orchestrator', 'orchestrator']) {
-    const target = path.join(WORKSPACE_ROOT, 'brain', 'cerebellum', dir)
-    if (existsSync(target)) {
-      await fs.rm(target, { recursive: true, force: true }).catch(() => undefined)
-    }
-  }
-  // …its role prompt files (the identity copy loop only ever adds)…
-  for (const stale of ['orchestrator.md', 'worker.md']) {
-    const target = path.join(WORKSPACE_ROOT, 'brain', 'identity', stale)
-    if (existsSync(target)) await fs.rm(target, { force: true }).catch(() => undefined)
-  }
-  // Conversations stranded as 'Untitled' by the titling deadline bug. Telegram
-  // and WhatsApp write an 'Untitled' file BEFORE the turn, and a titling call
-  // that blew its 15s deadline used to return '' and write nothing over it — so
-  // ~20% of them kept the placeholder even though the turn delivered fine. The
-  // deadline now degrades to this same slice (conversation-titler's
-  // fallbackTitle), so this only has to heal what the old build left behind.
-  //
-  // Deterministic on purpose: no LLM call. This runs on every launch, before a
-  // brain is necessarily resolvable, and 6 blocking title calls on the startup
-  // path is a bad trade for prettier names on old chats. A slice of the user's
-  // own first message is what the live fallback produces anyway.
-  //
-  // Idempotent: a healed conversation no longer reads 'Untitled' and is skipped
-  // forever after. Conversations with no user message (empty shells) have
-  // nothing to name and are left alone rather than invented.
-  await backfillUntitledConversations()
-
-  // …and its config keys (plus the retired greedy/autonomous toggles),
-  // seeding `mode`. A user who ran Orchestrator mode was running
-  // multi-agent — carry that intent into the replacement rather than
-  // silently downgrading to single.
-  const config = await readConfig()
-  if (!config) return
-  const llm = config.llm as typeof config.llm & {
-    orchestratorMode?: string
-    workerModel?: unknown
-    greedy?: boolean
-    autonomous?: boolean
-  }
-  const hasDeadKeys =
-    'orchestratorMode' in llm || 'workerModel' in llm || 'greedy' in llm || 'autonomous' in llm
-  if (hasDeadKeys || !('mode' in llm)) {
-    const mode =
-      config.llm.mode ?? (llm.orchestratorMode === 'orchestrator' ? 'workflow' : 'single')
-    delete llm.orchestratorMode
-    delete llm.workerModel
-    delete llm.greedy
-    delete llm.autonomous
-    await writeConfig({ ...config, llm: { ...llm, mode } })
+/**
+ * Whether this file's head PROVES its messages carry ids, so the full parse
+ * can be skipped. Every current writer serializes `id` as the FIRST key of
+ * each message object (literal key order in the writers; the migration below
+ * rebuilds legacy messages the same way), and `messages` sits near the head
+ * of the file by construction (createConversation seeds it fourth; later
+ * fields append after). So a compliant head shows `"messages": [` followed
+ * by `]` (empty) or `{ "id"` — matched against RAW bytes, which is sound
+ * because the pattern can't occur unescaped inside a JSON string, and any
+ * escaped look-alike fails the match and merely costs one parse. Every
+ * failure mode (pattern beyond the window, truncation mid-pattern, odd
+ * whitespace) degrades the same direction: parse and let it decide.
+ */
+async function provedIdsFromHead(fullPath: string): Promise<boolean> {
+  let handle: FileHandle | undefined
+  try {
+    handle = await fs.open(fullPath, 'r')
+    const buf = Buffer.alloc(MESSAGE_ID_PROBE_BYTES)
+    const { bytesRead } = await handle.read(buf, 0, MESSAGE_ID_PROBE_BYTES, 0)
+    const head = buf.subarray(0, bytesRead).toString('utf8')
+    return /"messages"\s*:\s*\[\s*(\]|\{\s*"id")/.test(head)
+  } catch {
+    return false
+  } finally {
+    await handle?.close().catch(() => undefined)
   }
 }
 
-/** Bytes of each conversation file the Untitled scan reads. See findUntitled. */
-const TITLE_PROBE_BYTES = 512
-
 /**
- * Conversation files whose title MIGHT still be the 'Untitled' placeholder.
+ * Mint ids for messages persisted before the id field shipped. The id-keyed
+ * transcript merge is only fully sound when every on-disk message carries
+ * one, so this runs to completion before any writer can (see the call site
+ * in cleanupWorkspace). Each message keeps its own timestamp in the minted
+ * id — same `m_<ts>_<rand>` shape every live writer stamps — and the write
+ * deliberately does NOT bump updatedAt: minting ids is bookkeeping, not
+ * activity, and reshuffling the conversation list by it would be a lie. The
+ * one-time rewrite does churn the cortex re-index on first launch; accepted.
  *
- * Reads only the head of each file rather than parsing it. This runs on the
- * awaited launch path on every boot, forever, to heal a handful of files once:
- * listConversations() would JSON.parse the whole corpus for that (measured:
- * 290ms over 672 files / 81MB), where probing 512 bytes costs 13ms. Cheap
- * enough to stay honest — it re-checks the real condition every launch instead
- * of trusting a "migration done" flag, so anything stranded later still heals.
+ * Probe-first for the steady state: after the corpus is converged this is a
+ * readdir + one 4KB read per file, not a whole-corpus JSON parse on every
+ * launch.
  *
- * The title is written near the head by construction (createConversation seeds
- * `id` then `title`, and messages come last), so it lands inside the probe. A
- * file whose head shows no title at all is returned anyway and let the full
- * parse decide — a false POSITIVE just costs one read, while a false negative
- * would silently leave a conversation nameless.
+ * Exported so the corpus validation can run the REAL migration against a
+ * temp copy of the conversation corpus rather than a re-implementation.
  */
-async function findUntitled(dir: string): Promise<string[]> {
-  const entries = await fs.readdir(dir).catch(() => [] as string[])
-  const hits: string[] = []
-  await Promise.all(
-    entries.map(async (entry) => {
-      if (!entry.endsWith('.json')) return
-      let handle: FileHandle | undefined
-      try {
-        handle = await fs.open(path.join(dir, entry), 'r')
-        const buf = Buffer.alloc(TITLE_PROBE_BYTES)
-        const { bytesRead } = await handle.read(buf, 0, TITLE_PROBE_BYTES, 0)
-        const head = buf.subarray(0, bytesRead).toString('utf8')
-        if (/"title"\s*:\s*"Untitled"/.test(head) || !/"title"\s*:/.test(head)) hits.push(entry)
-      } catch {
-        // Unreadable: leave it alone rather than guess.
-      } finally {
-        await handle?.close().catch(() => undefined)
-      }
-    })
-  )
-  return hits
-}
-
-/**
- * Heal conversations the titling-deadline bug stranded as 'Untitled' (see the
- * call site in cleanupWorkspace for why they exist). Names each from a plain
- * slice of its own first user message — the same degradation the live titler
- * now applies — so a chat that ran fine stops presenting as nameless.
- *
- * Imported lazily on purpose: conversations.ts and conversation-titler.ts both
- * import workspaceRoot() from THIS module, so a static import here would close
- * an initialisation cycle. Deferring to call time — long after both modules are
- * evaluated — keeps the graph acyclic.
- *
- * Reads are direct (the probe above + one parse per candidate), but the WRITE
- * goes through updateConversation so it rides the diskWriter queue and can't
- * clobber a concurrent writer.
- */
-async function backfillUntitledConversations(): Promise<void> {
+export async function ensureMessageIds(): Promise<void> {
   try {
     const dir = path.join(WORKSPACE_ROOT, 'brain', 'conversations')
     if (!existsSync(dir)) return
-    const candidates = await findUntitled(dir)
-    if (candidates.length === 0) return
-
-    const { updateConversation } = await import('@main/conversations')
-    const { offlineTitle } = await import('@main/conversation-titler')
-    const { composeAttachmentContext } = await import('@main/uploads/compose-attachments')
-
-    for (const entry of candidates) {
-      let conv: ConversationFile
-      try {
-        conv = JSON.parse(await fs.readFile(path.join(dir, entry), 'utf8')) as ConversationFile
-      } catch {
-        continue
-      }
-      if (!conv.id || conv.title !== 'Untitled') continue
-      // ONLY the channels that can be stranded forever. An in-app conversation
-      // is 'Untitled' for a reason that heals itself: a cancelled first turn
-      // leaves it deliberately unwritten so the NEXT turn writes the real
-      // title. Naming it here would be that title's last word — the exact
-      // suppression the titler's cancel contract exists to avoid. Matches the
-      // runtime: only telegram/whatsapp ever stranded (21% / 11%); in-app,
-      // heartbeat and procedure stranded zero of 627.
-      if (conv.channel !== 'telegram' && conv.channel !== 'whatsapp') continue
-      // An empty shell has nothing to name — leave it rather than invent one.
-      const first = conv.messages?.find((m) => m.role === 'user')
-      if (!first) continue
-      // Compose exactly as the live turn does before titling. A caption-less
-      // media message is STORED as content:'' with the files in a separate
-      // `attachments` field — the <attachments> block only ever exists in the
-      // composed history. Reading `content` alone would see an empty string and
-      // skip the very conversations this is here to heal (a real WhatsApp one
-      // on disk looks precisely like that), so compose first and let
-      // offlineTitle name it from the filenames.
-      const composed = composeAttachmentContext(first.content ?? '', first.attachments ?? [])
-      const title = offlineTitle(composed, conv.channel)
-      if (!title || title === 'Untitled') continue
-      await updateConversation(conv.id, (disk) => {
-        if (!disk) return null
-        // Re-check under the write lock: a live turn may have titled it
-        // properly since the probe. A real title always beats this slice.
-        if (disk.title && disk.title !== 'Untitled') return null
-        disk.title = title
+    const entries = (await fs.readdir(dir).catch(() => [] as string[])).filter(
+      (e) => e.startsWith('conv-') && e.endsWith('.json')
+    )
+    for (const entry of entries) {
+      if (await provedIdsFromHead(path.join(dir, entry))) continue
+      const id = entry.slice('conv-'.length, -'.json'.length)
+      await updateConversation(id, (disk) => {
+        if (!disk?.messages?.length) return null
+        if (disk.messages.every((msg) => msg.id)) return null
+        disk.messages = disk.messages.map((msg) =>
+          // Rebuild with `id` FIRST so the head probe recognizes the file
+          // next launch — spreading after the key keeps every other field
+          // (and their order) intact.
+          msg.id ? msg : { id: mintMessageId(msg.timestamp), ...msg }
+        )
         return disk
       }).catch(() => undefined)
     }
   } catch {
-    // Best-effort, like every block in cleanupWorkspace: a cosmetic backfill
-    // must never keep the app from starting.
+    // Best-effort, like every block in cleanupWorkspace — and a file skipped
+    // here stays merge-safe anyway: the merge treats id-less messages
+    // positionally, exactly the pre-id rules.
   }
 }
 
@@ -1633,8 +1427,8 @@ function connectionKeyFromToken(token: string): string {
 /**
  * Coerce whatever is stored under `notion` into the connections shape.
  * Handles the legacy single-token shape (`{ token, name, email }`) by
- * folding it into a single "Default"-labeled connection so nothing is
- * lost before migrateConnections() rewrites config.json on disk.
+ * folding it into a single "Default"-labeled connection so a hand-edited
+ * config in the old shape still reads cleanly.
  */
 function normalizeNotionConfig(stored: unknown): NotionConfig {
   if (!isPlainObject(stored)) return { connections: [] }

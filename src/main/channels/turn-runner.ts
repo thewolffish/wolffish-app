@@ -36,6 +36,14 @@ export type TurnSendOptions = {
   conversationId?: string | null
   conversationTitle?: string | null
   /**
+   * The caller's own message id for the user message this turn carries
+   * (the renderer's feed id, a channel's dispatch-persisted id). Threaded
+   * to the titler so the shell it may pre-persist for that SAME logical
+   * message carries the SAME id — the caller's later save then reconciles
+   * with the shell by id instead of duplicating it.
+   */
+  userMessageId?: string
+  /**
    * Delivery channel for this turn's prose. Threaded into the system
    * prompt so the model writes in the channel's native text formatting
    * (WhatsApp renders no Markdown). Omitted → no formatting overlay.
@@ -340,7 +348,8 @@ export class TurnRunner {
             userContent,
             opts.channel,
             agent.thalamus,
-            titleController.signal
+            titleController.signal,
+            opts.userMessageId
           )
         } finally {
           clearTimeout(titleTimer)

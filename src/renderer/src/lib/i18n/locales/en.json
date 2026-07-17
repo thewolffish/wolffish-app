@@ -501,7 +501,7 @@
         },
         "verbose": {
           "label": "Verbose task results",
-          "description": "Show every tool call and step in the chat, plus the model/provider chip. Off (the default) keeps a clean feed — agent replies, files, and errors only."
+          "description": "Show every tool call and step in the chat, plus the model/provider chip. Off (the default) keeps a clean feed — only agent replies and the files it sends."
         }
       },
       "telegram": {
@@ -561,11 +561,11 @@
         },
         "verbose": {
           "label": "Verbose task results",
-          "description": "Relay every tool call and step to the chat. Off (the default) sends a clean feed — agent replies, files, and errors only."
+          "description": "Relay every tool call and step to the chat. Off (the default) sends a clean feed — only agent replies and the files it sends."
         },
         "hideAutomations": {
-          "label": "Hide automations from /resume",
-          "description": "Keep scheduled automation runs out of the /resume list so it only offers real conversations. On by default. They stay in /delete and in the app."
+          "label": "Hide automations from <cmd>/resume</cmd>",
+          "description": "Keep scheduled automation runs out of the <cmd>/resume</cmd> list so it only offers real conversations. On by default. They stay in <cmd>/delete</cmd> and in the app."
         },
         "commandsTitle": "Available commands",
         "commandsSubtitle": "Slash commands users send from Telegram. Type each one exactly.",
@@ -985,11 +985,11 @@
         },
         "verbose": {
           "label": "Verbose task results",
-          "description": "Relay every tool call and step to the chat. Off (the default) sends a clean feed — agent replies, files, and errors only."
+          "description": "Relay every tool call and step to the chat. Off (the default) sends a clean feed — only agent replies and the files it sends."
         },
         "hideAutomations": {
-          "label": "Hide automations from /resume",
-          "description": "Keep scheduled automation runs out of the /resume list so it only offers real conversations. On by default. They stay in /delete and in the app."
+          "label": "Hide automations from <cmd>/resume</cmd>",
+          "description": "Keep scheduled automation runs out of the <cmd>/resume</cmd> list so it only offers real conversations. On by default. They stay in <cmd>/delete</cmd> and in the app."
         },
         "commandsTitle": "Available commands",
         "commandsSubtitle": "Send these commands in your WhatsApp chat.",
@@ -1608,6 +1608,8 @@
       "cost": "Cost",
       "workers": "agents: {{turns}} turns · {{tokens}} tokens",
       "summaries": "summaries: {{calls}} calls · {{tokens}} tokens",
+      "workflow": "Workflow",
+      "workflowTotals": "{{tools}} tool calls · {{tokens}} tokens",
       "allTime": "All time",
       "turns": "Turns",
       "apiCalls": "API calls",
@@ -1893,7 +1895,9 @@
       "timeoutTitle": "Provider not responding",
       "timeout": "The provider didn't respond in time — it may be overloaded. Try again or switch providers.",
       "serverError": "Provider temporarily unavailable — retry shortly.",
-      "viewDetails": "View details"
+      "viewDetails": "View details",
+      "tryAgain": "Try again",
+      "tryAgainMessage": "The previous response was cut off by a provider failure ({{reason}}). Pick up where you left off — check what already completed (files written, tool results, plans made) and continue without redoing finished work."
     },
     "runFailedReason": {
       "offline": "no internet connection",

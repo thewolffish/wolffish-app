@@ -58,8 +58,15 @@ const CASES: Array<[provider: string, model: string, vision: boolean]> = [
   ['xai', 'grok-4-fast-non-reasoning', true],
   ['xai', 'grok-2-vision-1212', true],
   ['xai', 'grok-3-mini', false],
-  // kimi / moonshot
+  // kimi / moonshot — k2.5+/k3 natively multimodal (verified live);
+  // pre-k2.5 and bare moonshot-v1 are text-only
+  ['kimi', 'kimi-k3', true],
+  ['kimi', 'kimi-k2.7-code', true],
+  ['kimi', 'kimi-k2.7-code-highspeed', true],
+  ['kimi', 'kimi-k2.6', true],
+  ['kimi', 'kimi-k2.5', true],
   ['kimi', 'kimi-k2-0905-preview', false],
+  ['kimi', 'moonshot-v1-auto', false],
   ['kimi', 'moonshot-v1-8k-vision-preview', true],
   ['kimi', 'kimi-vl-a3b-thinking', true],
   // qwen
@@ -99,6 +106,8 @@ const CASES: Array<[provider: string, model: string, vision: boolean]> = [
   ['openrouter', 'mistralai/pixtral-large-2411', true],
   ['openrouter', 'deepseek/deepseek-chat-v3.1', false],
   ['openrouter', 'moonshotai/kimi-k2', false],
+  ['openrouter', 'moonshotai/kimi-k3', true],
+  ['openrouter', 'moonshotai/kimi-k2.6', true],
   // unknown providers default to text-only unless the name says otherwise
   ['someprovider', 'shiny-new-model', false],
   ['someprovider', 'shiny-vl-9000', true],

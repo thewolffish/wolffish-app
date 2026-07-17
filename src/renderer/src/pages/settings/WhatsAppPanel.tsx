@@ -6,7 +6,15 @@ import { cn } from '@lib/utils/cn'
 import type { WhatsAppChannelStatus, WhatsAppConfig } from '@preload/index'
 import { WhatsappIcon } from 'hugeicons-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useTranslation } from 'react-i18next'
+import { Trans, useTranslation } from 'react-i18next'
+
+// <cmd> tags in locale strings render as LTR code chips (matches the
+// CommandsSection chip) so slash commands read correctly inside Arabic text.
+const TRANS_COMPONENTS = {
+  cmd: (
+    <code dir="ltr" className="text-fg bg-border/40 rounded-md px-1.5 py-0.5 font-mono text-xs" />
+  )
+}
 
 const STATUS_DOT: Record<WhatsAppChannelStatus['status'], string> = {
   connected: 'bg-emerald-500',
@@ -630,10 +638,16 @@ export function WhatsAppPanel(): React.JSX.Element {
           <div className="flex items-center justify-between gap-4">
             <div className="flex flex-col gap-1">
               <span className="text-fg text-sm font-medium">
-                {t('settings.services.whatsapp.hideAutomations.label')}
+                <Trans
+                  i18nKey="settings.services.whatsapp.hideAutomations.label"
+                  components={TRANS_COMPONENTS}
+                />
               </span>
               <p className="text-muted text-xs">
-                {t('settings.services.whatsapp.hideAutomations.description')}
+                <Trans
+                  i18nKey="settings.services.whatsapp.hideAutomations.description"
+                  components={TRANS_COMPONENTS}
+                />
               </p>
             </div>
             {hideAutomations === null ? (

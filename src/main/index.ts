@@ -435,7 +435,15 @@ async function fetchProviderModels(
       const models = (body.data ?? [])
         .filter((m) => isKimiChatModel(m.id))
         .slice()
-        .sort((a, b) => (b.created ?? 0) - (a.created ?? 0))
+        // Moonshot stamps every model with one shared `created` (catalog
+        // refresh), which would leave the picker in raw API order with the
+        // flagship last — tie-break by family+version, kimi-k* newest-first,
+        // the sunsetting moonshot-v1 line after.
+        .sort(
+          (a, b) =>
+            (b.created ?? 0) - (a.created ?? 0) ||
+            kimiRank(b.id).localeCompare(kimiRank(a.id), undefined, { numeric: true })
+        )
         .map((m) => m.id)
       return { ok: true, models }
     }
@@ -680,6 +688,11 @@ function isMiMoChatModel(id: string): boolean {
   if (!id.startsWith('mimo-')) return false
   if (/-(tts|voiceclone|voicedesign|asr|embed)/.test(id)) return false
   return true
+}
+
+// Sort key for the kimi picker tie-break: kimi-k* family above moonshot-v1.
+function kimiRank(id: string): string {
+  return id.startsWith('kimi-') ? `1-${id}` : `0-${id}`
 }
 
 function isKimiChatModel(id: string): boolean {
@@ -3463,6 +3476,7 @@ app.whenReady().then(async () => {
       payload: {
         history: ChatHistoryMessage[]
         conversationId?: string | null
+        userMessageId?: string
         workingFolders?: string[]
         thinkingMode?: string
         modeOverride?: 'single' | 'workflow'

@@ -83,7 +83,7 @@ const RAM_CRITICAL_RATIO = 0.95
 const DISK_WARNING_BYTES = 1_000_000_000 // 1 GB
 const DISK_CRITICAL_BYTES = 200_000_000 // 200 MB
 const CONTEXT_WARNING_RATIO = 0.8
-const CORTEX_DB_WARNING_BYTES = 50_000_000 // 50 MB
+const CORTEX_DB_WARNING_BYTES = 1_000_000_000 // 1 GB
 
 const KNOWLEDGE_FILES = ['projects', 'people', 'preferences', 'technical', 'decisions'] as const
 

@@ -140,6 +140,7 @@ const MIMO_PRICING: Record<string, ModelPricing> = {
 // https://platform.kimi.ai/docs/pricing
 // Cache read multiplier = cache_hit_rate / cache_miss_rate (auto-caching, no write premium).
 const KIMI_PRICING: Record<string, ModelPricing> = {
+  'kimi-k3': { input: 3.0 / 1e6, output: 15.0 / 1e6, cacheWrite: 1.0, cacheRead: 0.3 / 3.0 },
   'kimi-k2.6': { input: 0.95 / 1e6, output: 4.0 / 1e6, cacheWrite: 1.0, cacheRead: 0.16 / 0.95 },
   'kimi-k2.5': { input: 0.6 / 1e6, output: 3.0 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 / 0.6 },
   'moonshot-v1-128k': { input: 2.0 / 1e6, output: 5.0 / 1e6, cacheWrite: 0, cacheRead: 0 },
@@ -335,6 +336,7 @@ const OPENROUTER_PRICING: Record<string, ModelPricing> = {
   'mistralai/codestral': { input: 0.3 / 1e6, output: 0.9 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
   'qwen/qwq-32b': { input: 0.12 / 1e6, output: 0.18 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
   'qwen/qwen-2.5-72b': { input: 0.18 / 1e6, output: 0.18 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
+  'moonshotai/kimi-k3': { input: 3 / 1e6, output: 15 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 },
   'x-ai/grok-4.5': { input: 2 / 1e6, output: 6 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
   'x-ai/grok-4.3': { input: 1.25 / 1e6, output: 2.5 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },
   'x-ai/grok-3-beta': { input: 3 / 1e6, output: 15 / 1e6, cacheWrite: 1.0, cacheRead: 1.0 },

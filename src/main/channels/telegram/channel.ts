@@ -27,6 +27,7 @@ import {
   deleteConversation,
   listConversations,
   loadConversation,
+  mintMessageId,
   saveConversation,
   updateConversation,
   type ConversationFile,
@@ -1730,6 +1731,7 @@ export class TelegramChannel {
       const verbose = (await getTelegramConfig()).verbose ?? false
 
       const userMessage: ConversationMessage = {
+        id: mintMessageId(),
         role: 'user',
         content: userText,
         timestamp: Date.now(),
@@ -1795,6 +1797,7 @@ export class TelegramChannel {
       const handle = this.runner.send({
         history,
         conversationId: conversation.id,
+        userMessageId: userMessage.id,
         channel: 'telegram',
         makeSink: ({ turnId, conversationId }) => this.createSink(turnId, conversationId, chatId),
         onTurnStarted: ({ turnId, controller }) => {
@@ -1883,7 +1886,12 @@ export class TelegramChannel {
               const hasSegments = finished.segments.length > 0
               let assistant: ConversationMessage | null = null
               if (content.length > 0 || hasSegments) {
-                assistant = { role: 'assistant', content, timestamp: Date.now() }
+                assistant = {
+                  id: mintMessageId(),
+                  role: 'assistant',
+                  content,
+                  timestamp: Date.now()
+                }
                 if (hasSegments) assistant.segments = finished.segments
                 if (finished.approvals.size > 0) {
                   // Re-key by toolCallId so the in-app renderer can look up

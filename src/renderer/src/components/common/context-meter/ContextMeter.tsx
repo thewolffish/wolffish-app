@@ -12,6 +12,7 @@ import {
   XAILogo,
   ZaiLogo
 } from '@components/core/ProviderLogos'
+import type { WorkflowAgentView, WorkflowSnapshot } from '@main/runtime/broca'
 import type { ConversationStats, ConversationTurnStats } from '@preload/index'
 import {
   Activity04Icon,
@@ -24,7 +25,8 @@ import {
   Database02Icon,
   DollarCircleIcon,
   HourglassIcon,
-  RepeatIcon
+  RepeatIcon,
+  WorkflowSquare03Icon
 } from 'hugeicons-react'
 import type { ComponentType } from 'react'
 import { useEffect, useRef, useState } from 'react'
@@ -82,6 +84,8 @@ type ContextMeterProps = {
   lastTurn: ConversationTurnStats | null
   allTime: ConversationStats['allTime'] | null
   sideSpend: SideSpend | null
+  /** The live/last turn's workflow run — same snapshot that drives the feed card. */
+  workflow: WorkflowSnapshot | null
   lastCall: MeterLastCall | null
   /** Latest call reported no usage — the reading shown is the last known one. */
   usageUnavailable: boolean
@@ -97,6 +101,23 @@ type ContextMeterProps = {
 const COLOR_FRESH = '#22c55e'
 const COLOR_CACHE_READ = '#60a5fa'
 const COLOR_CACHE_WRITE = '#a78bfa'
+// Neutral magnitude bar for the per-agent workflow rows — agent status is
+// carried by the dot, so the bar stays status-free.
+const COLOR_AGENT_BAR = '#94a3b8'
+
+// Agent status → dot class, mirroring the WorkflowCard's row heartbeat.
+const AGENT_DOT: Record<WorkflowAgentView['status'], string> = {
+  queued: 'bg-amber-500/50',
+  running: 'bg-primary animate-pulse',
+  completed: 'bg-emerald-500',
+  failed: 'bg-rose-500',
+  cancelled: 'bg-amber-500'
+}
+
+/** Everything an agent consumed: prompt ingest (fresh + cache) plus output. */
+function agentSpend(a: WorkflowAgentView): number {
+  return a.inputTokens + a.cacheReadTokens + a.cacheWriteTokens + a.outputTokens
+}
 
 /** Locale-aware compact token count: 967232 → "967.2k". One format everywhere. */
 function formatTokens(n: number, locale: string): string {
@@ -287,6 +308,7 @@ export function ContextMeter({
   lastTurn,
   allTime,
   sideSpend,
+  workflow,
   lastCall,
   usageUnavailable,
   meterModel,
@@ -417,7 +439,20 @@ export function ContextMeter({
   const modelMismatch =
     meterModel !== null && activeModel !== null && meterModel !== activeModel && hasReading
 
-  const hasAnything = hasReading || hasTurnData || allTime !== null
+  // Workflow section data — one row per agent from the deterministic
+  // snapshot. A run that only planned (no spawns yet) has nothing to itemize.
+  const wfAgents = workflow?.agents ?? []
+  const workflowVisible = wfAgents.length > 0
+  const wfDone = wfAgents.filter((a) => a.status === 'completed').length
+  const wfMaxSpend = wfAgents.reduce((m, a) => Math.max(m, agentSpend(a)), 1)
+  const wfTokens = workflow
+    ? workflow.totals.inputTokens +
+      workflow.totals.outputTokens +
+      workflow.totals.cacheReadTokens +
+      workflow.totals.cacheWriteTokens
+    : 0
+
+  const hasAnything = hasReading || hasTurnData || allTime !== null || workflowVisible
   const HeaderLogo = provider ? PROVIDER_LOGOS[provider] : undefined
 
   return (
@@ -627,15 +662,21 @@ export function ContextMeter({
                   </div>
                   {sideSpend && (
                     <div className="text-muted mt-1.5 flex flex-col gap-0.5 text-[10px]">
-                      {(sideSpend.workerCalls > 0 || sideSpend.workerTurns > 0) && (
-                        <span dir="ltr" className="font-mono tabular-nums">
-                          {t('chat.contextCard.workers', {
-                            turns: sideSpend.workerTurns,
-                            tokens: formatTokens(sideSpend.workerTokens, locale)
-                          })}
-                          {sideSpend.workerCost > 0 ? ` · ${formatCost(sideSpend.workerCost)}` : ''}
-                        </span>
-                      )}
+                      {/* The aggregate agents one-liner is the fallback for
+                          worker spend with no snapshot; the Workflow section
+                          below itemizes the same spend when one exists. */}
+                      {!workflowVisible &&
+                        (sideSpend.workerCalls > 0 || sideSpend.workerTurns > 0) && (
+                          <span dir="ltr" className="font-mono tabular-nums">
+                            {t('chat.contextCard.workers', {
+                              turns: sideSpend.workerTurns,
+                              tokens: formatTokens(sideSpend.workerTokens, locale)
+                            })}
+                            {sideSpend.workerCost > 0
+                              ? ` · ${formatCost(sideSpend.workerCost)}`
+                              : ''}
+                          </span>
+                        )}
                       {sideSpend.summaryCalls > 0 && (
                         <span dir="ltr" className="font-mono tabular-nums">
                           {t('chat.contextCard.summaries', {
@@ -649,6 +690,49 @@ export function ContextMeter({
                       )}
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* Workflow (this/last turn's run) — one row per agent, from the
+                  same deterministic snapshot that drives the feed's card. */}
+              {workflowVisible && workflow && (
+                <div>
+                  <SectionTitle
+                    icon={<WorkflowSquare03Icon size={12} />}
+                    label={t('chat.contextCard.workflow')}
+                    trailing={
+                      <span className="text-fg font-mono text-[10px] tabular-nums" dir="ltr">
+                        {wfDone}/{wfAgents.length}
+                      </span>
+                    }
+                  />
+                  <div className="mt-1.5 flex max-h-40 flex-col gap-1 overflow-y-auto">
+                    {wfAgents.map((a) => (
+                      <StatRow
+                        key={a.id}
+                        icon={
+                          <span
+                            className={`inline-block h-1.5 w-1.5 rounded-full ${AGENT_DOT[a.status]}`}
+                          />
+                        }
+                        label={a.name}
+                        value={`${formatTokens(agentSpend(a), locale)}${
+                          a.cost > 0 ? ` · ${formatCost(a.cost)}` : ''
+                        }`}
+                        frac={agentSpend(a) / wfMaxSpend}
+                        color={COLOR_AGENT_BAR}
+                      />
+                    ))}
+                  </div>
+                  <p className="text-muted mt-1.5 text-[10px]">
+                    <span dir="ltr" className="font-mono tabular-nums">
+                      {t('chat.contextCard.workflowTotals', {
+                        tools: workflow.totals.toolCalls,
+                        tokens: formatTokens(wfTokens, locale)
+                      })}
+                      {workflow.totals.cost > 0 ? ` · ${formatCost(workflow.totals.cost)}` : ''}
+                    </span>
+                  </p>
                 </div>
               )}
 

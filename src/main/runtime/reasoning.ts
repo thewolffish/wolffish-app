@@ -102,8 +102,15 @@ export function reasoningModesFor(
 
     // ── Kimi / Moonshot ────────────────────────────────────────────────
     // Binary via thinking{type}; k2.x-code variants reason always-on.
+    // K3 takes reasoning_effort none|high|max. 'none' genuinely disables
+    // (verified live 2026-07-17 despite docs saying K3 can't be); 'high'
+    // is accepted but currently indistinct from 'max' — Moonshot ships
+    // only max today with "more levels coming soon", so high is exposed
+    // for forward-compat (DeepSeek precedent) and starts differentiating
+    // the day real lower levels land.
     case 'kimi':
       if (m.includes('k2.7') && m.includes('code')) return ['on']
+      if (m.startsWith('kimi-k3')) return ['off', 'high', 'max']
       if (m.startsWith('kimi-k2')) return ['off', 'on']
       return []
 
