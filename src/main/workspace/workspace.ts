@@ -1,5 +1,4 @@
 import { is } from '@electron-toolkit/utils'
-import { mintMessageId, updateConversation } from '@main/conversations'
 import { diskWriter } from '@main/io/diskWriter'
 import { mcpCapabilityName } from '@main/runtime/mcp/naming'
 import type { McpConfig, McpOauthState, McpServerConfig } from '@main/runtime/mcp/types'
@@ -10,7 +9,6 @@ import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import fs from 'node:fs/promises'
-import type { FileHandle } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import semver from 'semver'
@@ -810,102 +808,17 @@ async function migrateConfig(): Promise<void> {
  * When a feature is removed from the app, append its cleanup HERE — never
  * mint a new one-off function for it.
  *
- * The accumulated legacy sweeps (openai-whisper venv, planning/orchestrator
- * capabilities and prompts, dead cascade + orchestrator config keys, edge-tts
- * values, legacy Notion/GitHub connection shapes, the Untitled-title
- * backfill) were retired once every deployed footprint had converged — fresh
- * installs never had any of it. Only the message-id mint below remains,
- * because it has not yet run against a pre-id conversation corpus.
+ * Currently empty: the accumulated sweeps (openai-whisper venv,
+ * planning/orchestrator capabilities and prompts, dead cascade +
+ * orchestrator config keys, edge-tts values, legacy Notion/GitHub
+ * connection shapes, the Untitled-title backfill, the message-id mint) were
+ * all retired once every deployed footprint had converged — fresh installs
+ * never had any of it, and a pre-id conversation file that ever resurfaces
+ * degrades to mergeConversationOnto's positional pairing, the pre-id rules.
  */
 async function cleanupWorkspace(): Promise<void> {
-  // Stable message ids for conversations written before the field shipped.
-  // mergeConversationOnto reconciles transcripts BY id now — full coverage is
-  // what makes its positional-pairing fallback unreachable for real files —
-  // so every message must carry one before any writer runs. This is awaited
-  // on the same pre-window, pre-channel launch path as the rest of this
-  // function, which is the ordering that guarantees it. Idempotent via a
-  // probe-then-parse pattern: a compliant file is skipped off a 4KB head
-  // read (every current writer serializes `id` as the first key of each
-  // message), and a fully-id'd file that still fails the probe just pays one
-  // parse and writes nothing.
-  await ensureMessageIds()
-}
-
-/** Bytes of each conversation file the message-id probe reads. See ensureMessageIds. */
-const MESSAGE_ID_PROBE_BYTES = 4096
-
-/**
- * Whether this file's head PROVES its messages carry ids, so the full parse
- * can be skipped. Every current writer serializes `id` as the FIRST key of
- * each message object (literal key order in the writers; the migration below
- * rebuilds legacy messages the same way), and `messages` sits near the head
- * of the file by construction (createConversation seeds it fourth; later
- * fields append after). So a compliant head shows `"messages": [` followed
- * by `]` (empty) or `{ "id"` — matched against RAW bytes, which is sound
- * because the pattern can't occur unescaped inside a JSON string, and any
- * escaped look-alike fails the match and merely costs one parse. Every
- * failure mode (pattern beyond the window, truncation mid-pattern, odd
- * whitespace) degrades the same direction: parse and let it decide.
- */
-async function provedIdsFromHead(fullPath: string): Promise<boolean> {
-  let handle: FileHandle | undefined
-  try {
-    handle = await fs.open(fullPath, 'r')
-    const buf = Buffer.alloc(MESSAGE_ID_PROBE_BYTES)
-    const { bytesRead } = await handle.read(buf, 0, MESSAGE_ID_PROBE_BYTES, 0)
-    const head = buf.subarray(0, bytesRead).toString('utf8')
-    return /"messages"\s*:\s*\[\s*(\]|\{\s*"id")/.test(head)
-  } catch {
-    return false
-  } finally {
-    await handle?.close().catch(() => undefined)
-  }
-}
-
-/**
- * Mint ids for messages persisted before the id field shipped. The id-keyed
- * transcript merge is only fully sound when every on-disk message carries
- * one, so this runs to completion before any writer can (see the call site
- * in cleanupWorkspace). Each message keeps its own timestamp in the minted
- * id — same `m_<ts>_<rand>` shape every live writer stamps — and the write
- * deliberately does NOT bump updatedAt: minting ids is bookkeeping, not
- * activity, and reshuffling the conversation list by it would be a lie. The
- * one-time rewrite does churn the cortex re-index on first launch; accepted.
- *
- * Probe-first for the steady state: after the corpus is converged this is a
- * readdir + one 4KB read per file, not a whole-corpus JSON parse on every
- * launch.
- *
- * Exported so the corpus validation can run the REAL migration against a
- * temp copy of the conversation corpus rather than a re-implementation.
- */
-export async function ensureMessageIds(): Promise<void> {
-  try {
-    const dir = path.join(WORKSPACE_ROOT, 'brain', 'conversations')
-    if (!existsSync(dir)) return
-    const entries = (await fs.readdir(dir).catch(() => [] as string[])).filter(
-      (e) => e.startsWith('conv-') && e.endsWith('.json')
-    )
-    for (const entry of entries) {
-      if (await provedIdsFromHead(path.join(dir, entry))) continue
-      const id = entry.slice('conv-'.length, -'.json'.length)
-      await updateConversation(id, (disk) => {
-        if (!disk?.messages?.length) return null
-        if (disk.messages.every((msg) => msg.id)) return null
-        disk.messages = disk.messages.map((msg) =>
-          // Rebuild with `id` FIRST so the head probe recognizes the file
-          // next launch — spreading after the key keeps every other field
-          // (and their order) intact.
-          msg.id ? msg : { id: mintMessageId(msg.timestamp), ...msg }
-        )
-        return disk
-      }).catch(() => undefined)
-    }
-  } catch {
-    // Best-effort, like every block in cleanupWorkspace — and a file skipped
-    // here stays merge-safe anyway: the merge treats id-less messages
-    // positionally, exactly the pre-id rules.
-  }
+  // No standing sweeps right now — see the docstring for what lived here
+  // and why it left.
 }
 
 async function migrateAgentsCore(): Promise<void> {

@@ -30,8 +30,9 @@ export type ConversationMessage = {
    * different messages at the same index (a Telegram message landing while
    * an in-app turn runs) without one clobbering the other — counts and
    * content can't tell divergence from agreement, ids can. Optional only
-   * for files written before the field shipped; cleanupWorkspace mints ids
-   * for those at launch, and every writer stamps one at creation. When one
+   * for files written before the field shipped — a straggler (e.g. a
+   * restored backup) degrades to the merge's positional pairing, the
+   * pre-id rules — and every writer stamps one at creation. When one
    * logical message has several pre-persist writers (the renderer's send,
    * the titler shell), they must all stamp the SAME id — see userMessageId
    * threading in turn-runner.ts.
