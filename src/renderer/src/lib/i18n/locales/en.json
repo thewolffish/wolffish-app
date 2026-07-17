@@ -1862,7 +1862,7 @@
   },
   "history": {
     "loading": "Loading conversations…",
-    "empty": "No conversations yet. Start chatting to see them here.",
+    "empty": "No conversations yet.",
     "delete": "Delete",
     "deleteTitle": "Delete this conversation?",
     "deleteWarning": "This conversation will be permanently deleted. This cannot be undone.",
