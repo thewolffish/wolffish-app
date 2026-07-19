@@ -1445,6 +1445,12 @@
     "errorPrefix": "حدث خطأ",
     "newChat": "محادثة جديدة",
     "attachFile": "إرفاق ملف",
+    "queue": {
+      "placeholder": "اكتب رسالة تُرسل بعد انتهاء المهمة الحالية",
+      "add": "إضافة إلى قائمة الانتظار",
+      "remove": "إزالة من قائمة الانتظار",
+      "attachmentCount": "{{count}} مرفقات"
+    },
     "downloadPdf": "تنزيل المحادثة كملف PDF",
     "pdfExport": {
       "you": "أنت",

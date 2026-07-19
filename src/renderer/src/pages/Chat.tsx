@@ -116,6 +116,13 @@ import { useTranslation } from 'react-i18next'
 
 type ToolResultSegment = Extract<Segment, { kind: 'tool_result' }>
 
+/**
+ * A prompt submitted while a turn was still streaming. It waits in a
+ * cancelable row above the composer (never in the feed) and is sent
+ * through the normal send path when the running turn ends.
+ */
+type QueuedPrompt = { id: string; text: string; attachments: MessageAttachment[] }
+
 // In-app verbose display preference, mirroring the Telegram / WhatsApp
 // channel toggle but for what the renderer DISPLAYS (history is untouched).
 // false (default) = clean feed: agent replies, file-bearing tool results,
@@ -306,13 +313,13 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   // On turn end (done, error, cancel, failed send), return focus to the
-  // composer so the user can keep typing without reaching for the mouse. The
-  // textarea is disabled while streaming, so this must run AFTER the commit
-  // that re-enables it — an effect on `streaming` guarantees that; the old
-  // rAF-after-onDone version raced the re-render and silently lost. Don't
-  // steal focus if the user is deliberately typing in another field, and it's
-  // a no-op when Chat is hidden (display:none can't hold focus) or while the
-  // voice recorder has replaced the textarea (ref is null).
+  // composer so the user can keep typing without reaching for the mouse.
+  // Running as an effect on `streaming` (instead of the old rAF-after-onDone,
+  // which raced the re-render and silently lost) guarantees it fires after
+  // the end-of-turn commit. Don't steal focus if the user is deliberately
+  // typing in another field, and it's a no-op when Chat is hidden
+  // (display:none can't hold focus) or while the voice recorder has replaced
+  // the textarea (ref is null).
   const prevStreamingRef = useRef(false)
   useEffect(() => {
     const wasStreaming = prevStreamingRef.current
@@ -349,6 +356,14 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
    * them up if it ever becomes a problem.
    */
   const [pendingAttachments, setPendingAttachments] = useState<MessageAttachment[]>([])
+  /**
+   * Prompts queued while a turn streams. Each streaming→idle transition
+   * flushes exactly one — and because a user Stop also resolves the turn
+   * through chat:done, stopping a run advances the queue the same way a
+   * natural finish does. In-memory only: the queue does not survive an
+   * app restart.
+   */
+  const [queuedPrompts, setQueuedPrompts] = useState<QueuedPrompt[]>([])
   // Active model's name, fed to the context meter. Refreshed when the
   // active model changes. Uploads are never gated on model capability —
   // a non-vision model receives a text note about the file instead of
@@ -576,12 +591,13 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
 
   // Keep the provider's picture of this session current — the sidebar chips,
   // session reuse/eviction, and open-conversation routing all read it.
-  // `dirty` marks unsent composer state (draft text, staged attachments, a
-  // voice take, or a message still transcribing) so eviction never silently
-  // destroys work the user hasn't sent.
+  // `dirty` marks unsent composer state (draft text, staged attachments,
+  // queued prompts, a voice take, or a message still transcribing) so
+  // eviction never silently destroys work the user hasn't sent.
   const sessionDirty =
     draft.trim().length > 0 ||
     pendingAttachments.length > 0 ||
+    queuedPrompts.length > 0 ||
     recPhase !== 'idle' ||
     messages.some((m) => m.role === 'user' && 'transcribing' in m && m.transcribing === true)
   useEffect(() => {
@@ -944,6 +960,9 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
         if (pendingTurnIdRef.current !== null && previousId !== targetId) {
           pendingTurnIdRef.current = null
           setStreaming(false)
+          // Prompts queued during the outgoing conversation's turn belong to
+          // it — the forced streaming flip above must not flush them here.
+          setQueuedPrompts([])
           if (previousId) void window.api.chat.cancel({ conversationId: previousId })
         }
         // A remount re-seeds `messages` from the session descriptor — a
@@ -1043,6 +1062,9 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
         if (pendingTurnIdRef.current !== null) {
           pendingTurnIdRef.current = null
           setStreaming(false)
+          // Same reason as the load branch: the stray turn's queue must not
+          // flush into the fresh chat.
+          setQueuedPrompts([])
           if (previousId) void window.api.chat.cancel({ conversationId: previousId })
         }
         resetTurnStats()
@@ -1748,10 +1770,46 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     const trimmed = draft.trim()
     if (!trimmed && pendingAttachments.length === 0) return
     const atts = pendingAttachments
+    // Mid-turn submits QUEUE instead of sending: the prompt waits in a row
+    // above the composer and flushes when the turn ends. sendingRef counts
+    // as mid-turn too — a send is already in flight, and clearing the
+    // composer into sendContent's re-entry guard would silently eat the
+    // message.
+    if (streaming || sendingRef.current) {
+      setQueuedPrompts((prev) => [...prev, { id: cryptoId(), text: trimmed, attachments: atts }])
+      setDraft('')
+      setPendingAttachments([])
+      return
+    }
     setDraft('')
     setPendingAttachments([])
     await sendContent(trimmed, atts)
-  }, [draft, pendingAttachments, sendContent])
+  }, [draft, pendingAttachments, streaming, sendContent])
+
+  // Discarding a queued prompt drops only the metadata — like discarded
+  // staged files, the already-uploaded bytes stay on disk (cheap; see the
+  // pendingAttachments doc comment).
+  const cancelQueued = useCallback((id: string) => {
+    setQueuedPrompts((prev) => prev.filter((q) => q.id !== id))
+  }, [])
+
+  // Queue flush: each streaming→idle transition sends the next queued
+  // prompt. Every end path lands here — chat:done covers natural completion
+  // AND user Stop (cancel resolves the turn as done), chat:error covers
+  // failures — so a stopped run still advances the queue by design. The
+  // sendingRef guard covers the one race: if a manual send grabbed this gap
+  // first, the queue holds and flushes when THAT turn ends instead of
+  // vanishing into sendContent's re-entry guard.
+  const prevStreamingQueueRef = useRef(false)
+  useEffect(() => {
+    const wasStreaming = prevStreamingQueueRef.current
+    prevStreamingQueueRef.current = streaming
+    if (!wasStreaming || streaming) return
+    if (queuedPrompts.length === 0 || sendingRef.current) return
+    const [next, ...rest] = queuedPrompts
+    setQueuedPrompts(rest)
+    void sendContent(next.text, next.attachments)
+  }, [streaming, queuedPrompts, sendContent])
 
   // "Try again" on a failed turn's error card: continue the conversation with
   // a message that names what went wrong, so the model resumes from where it
@@ -2032,10 +2090,9 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
   )
 
   const pickUploads = useCallback(async () => {
-    if (streaming) return
     const paths = await window.api.upload.pickFile()
     await stageSources(paths.map((path) => ({ kind: 'path', path }) as const))
-  }, [streaming, stageSources])
+  }, [stageSources])
 
   const removePending = useCallback((filePath: string) => {
     setPendingAttachments((prev) => prev.filter((a) => a.filePath !== filePath))
@@ -2119,16 +2176,12 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     [storedFolders]
   )
 
-  const handleDragEnter = useCallback(
-    (e: React.DragEvent<HTMLDivElement>) => {
-      if (streaming) return
-      if (!hasFiles(e)) return
-      e.preventDefault()
-      e.stopPropagation()
-      setDragActive(true)
-    },
-    [streaming]
-  )
+  const handleDragEnter = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    if (!hasFiles(e)) return
+    e.preventDefault()
+    e.stopPropagation()
+    setDragActive(true)
+  }, [])
 
   const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault()
@@ -2140,33 +2193,27 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     setDragActive(false)
   }, [])
 
-  const handleDragOver = useCallback(
-    (e: React.DragEvent<HTMLDivElement>) => {
-      if (streaming) return
-      if (!hasFiles(e)) return
-      e.preventDefault()
-      e.stopPropagation()
-      e.dataTransfer.dropEffect = 'copy'
-    },
-    [streaming]
-  )
+  const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    if (!hasFiles(e)) return
+    e.preventDefault()
+    e.stopPropagation()
+    e.dataTransfer.dropEffect = 'copy'
+  }, [])
 
   const handleDrop = useCallback(
     async (e: React.DragEvent<HTMLDivElement>) => {
       e.preventDefault()
       e.stopPropagation()
       setDragActive(false)
-      if (streaming) return
       const files = Array.from(e.dataTransfer.files ?? [])
       if (files.length === 0) return
       await stageFiles(files)
     },
-    [streaming, stageFiles]
+    [stageFiles]
   )
 
   const handlePaste = useCallback(
     async (e: React.ClipboardEvent<HTMLElement>) => {
-      if (streaming) return
       const files = Array.from(e.clipboardData?.files ?? [])
       if (files.length === 0) return
       // Intercept clipboard files so they don't end up as binary noise
@@ -2174,7 +2221,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
       e.preventDefault()
       await stageFiles(files)
     },
-    [streaming, stageFiles]
+    [stageFiles]
   )
 
   const hasMessages = messages.length > 0
@@ -2384,17 +2431,28 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
         )}
       >
         {streaming && <div className="rainbow-border" />}
-        {pendingAttachments.length > 0 && (
-          <div className="pointer-events-none absolute inset-x-0 bottom-full px-4 pb-2">
-            <div className="pointer-events-auto mx-auto flex max-w-xl flex-wrap gap-2">
-              {pendingAttachments.map((att) => (
-                <PendingAttachmentChip
-                  key={att.filePath}
-                  attachment={att}
-                  onRemove={() => removePending(att.filePath)}
-                />
-              ))}
-            </div>
+        {(queuedPrompts.length > 0 || pendingAttachments.length > 0) && (
+          <div className="pointer-events-none absolute inset-x-0 bottom-full flex flex-col gap-2 px-4 pb-2">
+            {/* Queued prompts live HERE, above the composer — never in the
+                feed. A message only enters the feed once its turn is sent. */}
+            {queuedPrompts.length > 0 && (
+              <div className="pointer-events-auto mx-auto flex max-h-40 w-full max-w-xl flex-col gap-1.5 overflow-y-auto">
+                {queuedPrompts.map((q) => (
+                  <QueuedPromptRow key={q.id} prompt={q} onCancel={() => cancelQueued(q.id)} />
+                ))}
+              </div>
+            )}
+            {pendingAttachments.length > 0 && (
+              <div className="pointer-events-auto mx-auto flex max-w-xl flex-wrap gap-2">
+                {pendingAttachments.map((att) => (
+                  <PendingAttachmentChip
+                    key={att.filePath}
+                    attachment={att}
+                    onRemove={() => removePending(att.filePath)}
+                  />
+                ))}
+              </div>
+            )}
           </div>
         )}
         <div className="relative flex w-full items-end gap-1">
@@ -2509,18 +2567,18 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
             >
               <Download01Icon size={18} />
             </button>
+            {/* Attaching stays live mid-turn — staged files ride the next
+                queued prompt instead of the running one. */}
             <button
               type="button"
               onClick={pickUploads}
-              disabled={streaming}
               title={t('chat.attachFile')}
               aria-label={t('chat.attachFile')}
               className={cn(
                 'flex h-[42.5px] w-10 shrink-0 items-center justify-center rounded-lg border',
                 'border-border bg-surface text-muted enabled:hover:text-fg enabled:hover:border-muted',
                 'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-                'disabled:cursor-not-allowed disabled:opacity-50',
-                !streaming && 'cursor-pointer'
+                'cursor-pointer'
               )}
             >
               <Image02Icon size={18} />
@@ -2548,6 +2606,28 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
             >
               <Mic01Icon size={18} />
             </button>
+            {/* Mid-turn the composer keeps a primary send: it QUEUES the
+                draft (send() branches on `streaming`) while the red submit
+                button next to it stays the Stop. Enter matches the arrow. */}
+            {recPhase === 'idle' && streaming && (
+              <button
+                type="button"
+                onClick={() => void send()}
+                disabled={
+                  !hasAnyModel || (draft.trim().length === 0 && pendingAttachments.length === 0)
+                }
+                title={t('chat.queue.add')}
+                aria-label={t('chat.queue.add')}
+                className={cn(
+                  'flex h-[42.5px] w-10 shrink-0 cursor-pointer items-center justify-center rounded-lg',
+                  'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+                  'disabled:cursor-not-allowed disabled:opacity-50',
+                  'bg-primary text-primary-fg enabled:hover:brightness-110'
+                )}
+              >
+                <ArrowUp02Icon size={18} />
+              </button>
+            )}
             {recPhase === 'idle' && (
               <button
                 type="submit"
@@ -2577,30 +2657,25 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && !e.shiftKey) {
                       e.preventDefault()
-                      if (!streaming) void send()
+                      // Mid-turn this queues instead of sending — send()
+                      // branches on `streaming`.
+                      void send()
                     }
                   }}
                   rows={1}
-                  placeholder={t('chat.placeholder')}
+                  placeholder={streaming ? t('chat.queue.placeholder') : t('chat.placeholder')}
                   dir={isRtl ? 'rtl' : 'ltr'}
-                  disabled={streaming}
                   className={cn(
                     'bg-surface text-fg border-border placeholder:text-muted enabled:hover:border-muted',
                     'min-h-[42.5px] max-h-40 w-full resize-none rounded-lg border px-3 py-2 text-sm',
                     'focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-                    'disabled:cursor-not-allowed disabled:opacity-50',
                     placeholderAlign
                   )}
                 />
                 <button
                   type="button"
-                  disabled={streaming}
                   onClick={() => setDraftExpanded(true)}
-                  className={cn(
-                    'text-muted hover:text-fg absolute inset-e-2.5 top-1/2 z-10 -translate-y-1/2 opacity-50 hover:opacity-100',
-                    'disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:text-muted',
-                    !streaming && 'cursor-pointer'
-                  )}
+                  className="text-muted hover:text-fg absolute inset-e-2.5 top-1/2 z-10 -translate-y-1/2 cursor-pointer opacity-50 hover:opacity-100"
                 >
                   <ArrowExpandIcon size={14} />
                 </button>
@@ -4467,6 +4542,46 @@ function PendingAttachmentChip({
         onClick={onRemove}
         title="Remove"
         aria-label="Remove attachment"
+        className="text-muted hover:text-fg focus-visible:ring-2 focus-visible:ring-accent shrink-0 cursor-pointer rounded"
+      >
+        <CancelCircleIcon size={14} />
+      </button>
+    </div>
+  )
+}
+
+/**
+ * One prompt waiting above the composer for the running turn to end. An
+ * attachment-only prompt (no caption) labels itself with its file names.
+ */
+function QueuedPromptRow({
+  prompt,
+  onCancel
+}: {
+  prompt: QueuedPrompt
+  onCancel: () => void
+}): React.JSX.Element {
+  const { t } = useTranslation()
+  return (
+    <div className="border-border bg-surface text-fg flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs">
+      <Clock01Icon size={12} className="text-muted shrink-0" aria-hidden />
+      <span className="min-w-0 flex-1 truncate" dir="auto" title={prompt.text}>
+        {prompt.text || prompt.attachments.map((a) => a.originalName).join(', ')}
+      </span>
+      {prompt.attachments.length > 0 && (
+        <span
+          className="text-muted flex shrink-0 items-center gap-1 text-[10px] tabular-nums"
+          title={t('chat.queue.attachmentCount', { count: prompt.attachments.length })}
+        >
+          <Image02Icon size={11} aria-hidden />
+          {prompt.attachments.length}
+        </span>
+      )}
+      <button
+        type="button"
+        onClick={onCancel}
+        title={t('chat.queue.remove')}
+        aria-label={t('chat.queue.remove')}
         className="text-muted hover:text-fg focus-visible:ring-2 focus-visible:ring-accent shrink-0 cursor-pointer rounded"
       >
         <CancelCircleIcon size={14} />

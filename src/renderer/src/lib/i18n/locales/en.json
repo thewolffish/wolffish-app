@@ -1449,6 +1449,12 @@
     "errorPrefix": "Something went wrong",
     "newChat": "New chat",
     "attachFile": "Attach file",
+    "queue": {
+      "placeholder": "Queue a message for when this turn ends",
+      "add": "Queue message",
+      "remove": "Remove from queue",
+      "attachmentCount": "{{count}} attachments"
+    },
     "downloadPdf": "Download chat as PDF",
     "pdfExport": {
       "you": "You",

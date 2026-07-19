@@ -1,8 +1,8 @@
-import { Modal } from '@components/core/Modal'
 import { useUploadBlob } from '@hooks/use-upload-blob/useUploadBlob'
 import { cn } from '@lib/utils/cn'
 import { Download01Icon, FolderOpenIcon, Image02Icon, LinkSquare02Icon } from 'hugeicons-react'
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 
 export type ImageViewerProps = {
@@ -75,6 +75,9 @@ function ActiveImage({
 }): React.JSX.Element {
   const { url, error } = useUploadBlob(filePath, mimeType)
   const [open, setOpen] = useState(false)
+  // Seeded from attachment metadata when present; the thumbnail's onLoad
+  // overwrites it with the decoded image's real ratio, which wins on mismatch.
+  const [ratio, setRatio] = useState<number | null>(width && height ? width / height : null)
 
   const openExternal = useCallback(async () => {
     try {
@@ -119,7 +122,16 @@ function ActiveImage({
             className="block cursor-zoom-in"
             aria-label="Open image at full size"
           >
-            <img src={url} alt={fileName} className="block max-w-full" draggable={false} />
+            <img
+              src={url}
+              alt={fileName}
+              className="block max-w-full"
+              draggable={false}
+              onLoad={(e) => {
+                const { naturalWidth, naturalHeight } = e.currentTarget
+                if (naturalWidth && naturalHeight) setRatio(naturalWidth / naturalHeight)
+              }}
+            />
           </button>
         ) : (
           <div
@@ -177,17 +189,79 @@ function ActiveImage({
       </div>
 
       {url && (
-        <Modal open={open} onClose={() => setOpen(false)} title={fileName}>
-          <div className="flex max-h-[80vh] items-center justify-center overflow-auto">
-            <img
-              src={url}
-              alt={fileName}
-              className="max-h-[75vh] w-auto object-contain"
-              draggable={false}
-            />
-          </div>
-        </Modal>
+        <ImageLightbox
+          open={open}
+          onClose={() => setOpen(false)}
+          url={url}
+          fileName={fileName}
+          ratio={ratio}
+        />
       )}
     </>
+  )
+}
+
+export type ImageLightboxProps = {
+  open: boolean
+  onClose: () => void
+  url: string
+  fileName: string
+  /** Natural width/height ratio; null until the image has decoded once. */
+  ratio: number | null
+}
+
+/**
+ * Click-to-zoom overlay. The card grows to the same limit as the expanded
+ * prompt editor (80vw × 80vh) but keeps the image's aspect ratio: width is
+ * min(80vw, 80vh · ratio), so whichever axis hits its limit first wins and
+ * the card hugs the image with no letterbox bars. Until the ratio is known
+ * the image shows at natural size capped to the same limits. Dismissed by
+ * backdrop click or Escape, like the core Modal it replaced.
+ */
+export function ImageLightbox({
+  open,
+  onClose,
+  url,
+  fileName,
+  ratio
+}: ImageLightboxProps): React.JSX.Element | null {
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [open, onClose])
+
+  if (!open || typeof document === 'undefined') return null
+
+  return createPortal(
+    <div
+      role="presentation"
+      onClick={onClose}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={fileName}
+        onClick={(e) => e.stopPropagation()}
+        className="border-border bg-surface overflow-hidden rounded-2xl border shadow-xl"
+      >
+        <img
+          src={url}
+          alt={fileName}
+          draggable={false}
+          className="block object-contain"
+          style={
+            ratio
+              ? { aspectRatio: `${ratio}`, width: `min(80vw, calc(80vh * ${ratio}))` }
+              : { maxWidth: '80vw', maxHeight: '80vh' }
+          }
+        />
+      </div>
+    </div>,
+    document.body
   )
 }

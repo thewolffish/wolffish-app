@@ -2,7 +2,7 @@ import { Badge } from '@components/core/Badge'
 import { CodeEditor, type CodeLanguage } from '@components/core/CodeEditor'
 import { CopyButton } from '@components/core/CopyButton'
 import { Markdown } from '@components/core/Markdown'
-import { Modal } from '@components/core/Modal'
+import { ImageLightbox } from '@components/common/image-viewer/ImageViewer'
 import { useToast } from '@components/core/toast/useToast'
 import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
@@ -599,6 +599,7 @@ function WorkspaceImage({
 }): React.JSX.Element {
   const { url, error } = useViewerBlob(relativePath, mime)
   const [modalOpen, setModalOpen] = useState(false)
+  const [ratio, setRatio] = useState<number | null>(null)
 
   if (error) {
     return (
@@ -624,6 +625,10 @@ function WorkspaceImage({
                 alt={fileName}
                 className="max-h-[75vh] w-full object-contain"
                 draggable={false}
+                onLoad={(e) => {
+                  const { naturalWidth, naturalHeight } = e.currentTarget
+                  if (naturalWidth && naturalHeight) setRatio(naturalWidth / naturalHeight)
+                }}
               />
             </button>
           </div>
@@ -632,16 +637,13 @@ function WorkspaceImage({
         )}
       </div>
       {url && (
-        <Modal open={modalOpen} onClose={() => setModalOpen(false)} title={fileName}>
-          <div className="flex max-h-[80vh] items-center justify-center overflow-auto">
-            <img
-              src={url}
-              alt={fileName}
-              className="max-h-[75vh] w-auto object-contain"
-              draggable={false}
-            />
-          </div>
-        </Modal>
+        <ImageLightbox
+          open={modalOpen}
+          onClose={() => setModalOpen(false)}
+          url={url}
+          fileName={fileName}
+          ratio={ratio}
+        />
       )}
     </>
   )

@@ -1,4 +1,14 @@
-## v1.0.222 — 2026-07-19 `Latest`
+## v1.0.223 — 2026-07-19 `Latest`
+
+### Keep Typing While Wolffish Works
+
+The composer used to lock the moment a turn started — grayed out, nothing to do but watch. Now it stays open the whole time: type your next message mid-run and Enter **queues it in a tidy row above the composer**, where it waits its turn and **sends itself the moment the current run ends**. Queue several and they go out one by one, in order — and one click removes a waiting message you've thought better of before it ever sends. Attachments keep pace: **the attach button, drag-and-drop, and paste all stay live during a run**, and staged files ride out with the queued message instead of interrupting the running one. Stopping a run counts as ending it, so **Stop advances the queue too** — your queued follow-up steps straight into the room the stop just made.
+
+### A Zoom That Fits the Picture
+
+Clicking an image to see it big used to open a general-purpose dialog — the picture floating in a titled box, with **empty bars** wherever its shape and the box's disagreed. The zoom is now a proper lightbox: a clean overlay whose **frame hugs the image's exact proportions**, growing it until it reaches 80% of the window on whichever edge gets there first — no title bar, no letterboxing, just the picture. A click anywhere outside it — or Escape — dismisses it. The same lightbox serves **both the chat and the workspace file viewer**, so an image reads the same wherever you meet it.
+
+## v1.0.222 — 2026-07-19
 
 ### Your Spending, Added Up For You
 
