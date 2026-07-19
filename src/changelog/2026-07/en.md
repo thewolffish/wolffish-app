@@ -1,4 +1,10 @@
-## v1.0.221 — 2026-07-17 `Latest`
+## v1.0.222 — 2026-07-19 `Latest`
+
+### Your Spending, Added Up For You
+
+The Usage panel always knew what every call cost — it just left the adding to you, one provider card at a time. A new **Costs** section now does the arithmetic for the range you're viewing: **Total Spend**, **Top Day Spend** with the date it happened, and your **Daily Average** across the days you actually used Wolffish. The total **counts Brave search fees too**, so it genuinely equals the sum of the cards below it instead of quietly dropping the one paid service that isn't a model. The stats above got a proper **Overview** heading to sit under, and the new cards **load under the same skeletons** as everything else, so the panel doesn't jump when the figures land.
+
+## v1.0.221 — 2026-07-17
 
 ### Kimi K3, a Million Tokens Wide
 

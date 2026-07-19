@@ -836,6 +836,8 @@ export type UsageStats = {
   longestStreak: number
   totalTokens: number
   favouriteModel: string | null
+  totalCost: number
+  topSpendDay: { date: string; cost: number } | null
 }
 
 export type UsageDailyEntry = {

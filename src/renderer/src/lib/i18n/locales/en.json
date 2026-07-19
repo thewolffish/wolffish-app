@@ -1291,6 +1291,13 @@
         "streakDay": "{{count}} day",
         "noModel": "Unknown"
       },
+      "overview": "Overview",
+      "costs": {
+        "title": "Costs",
+        "totalSpend": "Total Spend",
+        "topDaySpend": "Top Day Spend",
+        "dailyAverage": "Daily Average"
+      },
       "providers": {
         "local": "Ollama",
         "anthropic": "Anthropic",

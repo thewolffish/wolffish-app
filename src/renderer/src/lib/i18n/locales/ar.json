@@ -1295,6 +1295,13 @@
         "streakDay": "{{count}} يوم",
         "noModel": "غير معروف"
       },
+      "overview": "نظرة عامة",
+      "costs": {
+        "title": "التكاليف",
+        "totalSpend": "إجمالي الإنفاق",
+        "topDaySpend": "أعلى إنفاق يومي",
+        "dailyAverage": "المتوسط اليومي"
+      },
       "providers": {
         "local": "أولاما",
         "anthropic": "أنثروبيك",

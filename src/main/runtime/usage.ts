@@ -24,6 +24,9 @@ export type UsageStatsTotals = {
   longestStreak: number
   totalTokens: number
   favouriteModel: string | null
+  /** LLM spend plus Brave query fees, so it matches the sum of the provider cards. */
+  totalCost: number
+  topSpendDay: { date: string; cost: number } | null
 }
 
 export type ProviderUsageSummary = {
@@ -533,13 +536,33 @@ export class Usage {
     const filtered = this.cache.filter((e) => e.timestamp >= cutoff)
 
     let totalTokens = 0
+    let totalCost = 0
     const days = new Set<string>()
+    const costByDay = new Map<string, number>()
     const modelCounts = new Map<string, number>()
 
     for (const e of filtered) {
       totalTokens += e.inputTokens + e.outputTokens
-      days.add(e.timestamp.slice(0, 10))
+      totalCost += e.cost
+      const day = e.timestamp.slice(0, 10)
+      days.add(day)
+      costByDay.set(day, (costByDay.get(day) ?? 0) + e.cost)
       modelCounts.set(e.model, (modelCounts.get(e.model) ?? 0) + 1)
+    }
+
+    // Brave queries are paid too; counting them keeps totalCost equal to the
+    // sum of the per-provider cards plus the Brave card. They stay out of
+    // `days` so activeDays keeps meaning "days with LLM turns".
+    for (const b of this.braveCache) {
+      if (b.timestamp < cutoff) continue
+      totalCost += BRAVE_COST_PER_QUERY
+      const day = b.timestamp.slice(0, 10)
+      costByDay.set(day, (costByDay.get(day) ?? 0) + BRAVE_COST_PER_QUERY)
+    }
+
+    let topSpendDay: { date: string; cost: number } | null = null
+    for (const [date, cost] of costByDay) {
+      if (!topSpendDay || cost > topSpendDay.cost) topSpendDay = { date, cost }
     }
 
     let favouriteModel: string | null = null
@@ -556,7 +579,9 @@ export class Usage {
       activeDays: days.size,
       longestStreak: longestConsecutiveStreak([...days]),
       totalTokens,
-      favouriteModel
+      favouriteModel,
+      totalCost,
+      topSpendDay
     }
   }
 

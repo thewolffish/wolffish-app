@@ -29,14 +29,18 @@ import type {
   WeekStartsOn
 } from '@preload/index'
 import { useFlow } from '@providers/flow/useFlow'
+import { useLocale } from '@providers/locale/useLocale'
 import {
   BubbleChatIcon,
   CalendarCheckOut02Icon,
+  ChartAverageIcon,
+  ChartUpIcon,
   Database02Icon,
   Fire03Icon,
   MessageMultiple01Icon,
   Refresh01Icon,
-  StarIcon
+  StarIcon,
+  Wallet01Icon
 } from 'hugeicons-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -297,7 +301,15 @@ export function UsagePanel(): React.JSX.Element {
           )}
         </section>
 
-        {data === null ? <StatsGridSkeleton /> : <StatsGrid stats={data.stats} />}
+        <section className="flex flex-col gap-3">
+          <h2 className="text-fg text-sm font-semibold">{t('settings.usage.overview')}</h2>
+          {data === null ? <StatsGridSkeleton /> : <StatsGrid stats={data.stats} />}
+        </section>
+
+        <section className="flex flex-col gap-3">
+          <h2 className="text-fg text-sm font-semibold">{t('settings.usage.costs.title')}</h2>
+          {data === null ? <CostCardsSkeleton /> : <CostCards stats={data.stats} />}
+        </section>
 
         {data === null ? (
           <ProviderCardsSkeleton />
@@ -310,6 +322,38 @@ export function UsagePanel(): React.JSX.Element {
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+function CostCards({ stats }: { stats: UsageStats }): React.JSX.Element {
+  const { t } = useTranslation()
+  const { locale } = useLocale()
+  const topDay = stats.topSpendDay
+  const dailyAverage = stats.activeDays > 0 ? stats.totalCost / stats.activeDays : 0
+  const items: Array<{ label: string; value: string; icon: IconComp; hint?: string }> = [
+    {
+      label: t('settings.usage.costs.totalSpend'),
+      value: formatCost(stats.totalCost),
+      icon: Wallet01Icon
+    },
+    {
+      label: t('settings.usage.costs.topDaySpend'),
+      value: formatCost(topDay?.cost ?? 0),
+      hint: topDay ? formatDay(topDay.date, locale) : undefined,
+      icon: ChartUpIcon
+    },
+    {
+      label: t('settings.usage.costs.dailyAverage'),
+      value: formatCost(dailyAverage),
+      icon: ChartAverageIcon
+    }
+  ]
+  return (
+    <div className="grid grid-cols-3 gap-3">
+      {items.map((it) => (
+        <StatCard key={it.label} label={it.label} value={it.value} Icon={it.icon} hint={it.hint} />
+      ))}
     </div>
   )
 }
@@ -475,11 +519,13 @@ function StatsGrid({ stats }: { stats: UsageStats }): React.JSX.Element {
 function StatCard({
   label,
   value,
-  Icon
+  Icon,
+  hint
 }: {
   label: string
   value: string
   Icon: IconComp
+  hint?: string
 }): React.JSX.Element {
   return (
     <div className="bg-surface border-border flex flex-col gap-1 rounded-xl border p-3">
@@ -487,7 +533,12 @@ function StatCard({
         <Icon size={12} />
         <span className="truncate">{label}</span>
       </div>
-      <span className="text-fg truncate text-sm font-semibold tabular-nums">{value}</span>
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-fg truncate text-sm font-semibold tabular-nums">{value}</span>
+        {hint !== undefined && (
+          <span className="text-muted shrink-0 text-[11px] tabular-nums">{hint}</span>
+        )}
+      </div>
     </div>
   )
 }
@@ -513,17 +564,33 @@ function SkeletonBar({ className }: { className?: string }): React.JSX.Element {
 // the component it stands in for, so the two are the same height by
 // construction and the panel doesn't jump when the numbers land.
 
+function StatCardSkeleton(): React.JSX.Element {
+  return (
+    <div className="bg-surface border-border flex flex-col gap-1 rounded-xl border p-3">
+      <div className="text-muted flex items-center gap-1.5 text-[11px]">
+        <span className="bg-border/60 size-3 shrink-0 animate-pulse rounded-sm" />
+        <SkeletonBar className="w-16" />
+      </div>
+      <SkeletonBar className="w-12 text-sm" />
+    </div>
+  )
+}
+
 function StatsGridSkeleton(): React.JSX.Element {
   return (
     <div className="grid grid-cols-3 gap-3">
       {[0, 1, 2, 3, 4, 5].map((i) => (
-        <div key={i} className="bg-surface border-border flex flex-col gap-1 rounded-xl border p-3">
-          <div className="text-muted flex items-center gap-1.5 text-[11px]">
-            <span className="bg-border/60 size-3 shrink-0 animate-pulse rounded-sm" />
-            <SkeletonBar className="w-16" />
-          </div>
-          <SkeletonBar className="w-12 text-sm" />
-        </div>
+        <StatCardSkeleton key={i} />
+      ))}
+    </div>
+  )
+}
+
+function CostCardsSkeleton(): React.JSX.Element {
+  return (
+    <div className="grid grid-cols-3 gap-3">
+      {[0, 1, 2].map((i) => (
+        <StatCardSkeleton key={i} />
       ))}
     </div>
   )
@@ -580,4 +647,23 @@ function formatNumber(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
   return String(n)
+}
+
+function formatCost(v: number): string {
+  return `$${v.toFixed(2)}`
+}
+
+/**
+ * Ledger dates are local-naive `YYYY-MM-DD`; the local-midnight suffix keeps
+ * the displayed calendar day from shifting for timezones west of UTC, which
+ * a bare `new Date(date)` (parsed as UTC midnight) would do.
+ */
+function formatDay(date: string, locale: string): string {
+  const d = new Date(`${date}T00:00:00`)
+  if (Number.isNaN(d.getTime())) return date
+  return new Intl.DateTimeFormat(locale, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric'
+  }).format(d)
 }
