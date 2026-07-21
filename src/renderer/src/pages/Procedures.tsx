@@ -1,11 +1,14 @@
+import { EmojiPicker } from '@components/common/emoji-picker/EmojiPicker'
+import { Badge } from '@components/core/Badge'
 import { Button } from '@components/core/Button'
 import { CodeEditor } from '@components/core/CodeEditor'
 import { Modal } from '@components/core/Modal'
+import { Select } from '@components/core/Select'
 import { useToast } from '@components/core/toast/useToast'
 import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
 import { pageTopPadding } from '@lib/utils/platform'
-import type { Procedure } from '@preload/index'
+import type { Procedure, Project } from '@preload/index'
 import { useFlow } from '@providers/flow/useFlow'
 import { useLocale } from '@providers/locale/useLocale'
 import { useSessions } from '@providers/sessions/useSessions'
@@ -18,7 +21,7 @@ import {
   Edit02Icon,
   PlayIcon
 } from 'hugeicons-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 const FROM_NOW_RANGES: ReadonlyArray<readonly [Intl.RelativeTimeFormatUnit, number]> = [
@@ -47,6 +50,9 @@ const iconButtonClass = cn(
   'disabled:cursor-not-allowed disabled:opacity-40'
 )
 
+/** Card emoji fallback for procedures that never picked one. */
+const DEFAULT_PROCEDURE_ICON = '📋'
+
 export function Procedures(): React.JSX.Element {
   const { t } = useTranslation()
   const { locale } = useLocale()
@@ -61,10 +67,19 @@ export function Procedures(): React.JSX.Element {
   const toast = useToast()
 
   const [procedures, setProcedures] = useState<Procedure[]>([])
+  const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState<Procedure | null>(null)
   const [draftTitle, setDraftTitle] = useState('')
   const [draftPrompt, setDraftPrompt] = useState('')
+  const [draftIcon, setDraftIcon] = useState('')
+  const [draftProjectId, setDraftProjectId] = useState('')
+  const [emojiOpen, setEmojiOpen] = useState(false)
+  // Same contract as ProjectDialog: the required-title error arms on the
+  // first edit to any field, never on open — a fresh procedure starts
+  // untitled, and with an empty title autosave suspends + the stub is
+  // discarded on close, so edits elsewhere are what the warning protects.
+  const [touched, setTouched] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<Procedure | null>(null)
 
   // Tick a clock so the "edited …" labels stay fresh without reloading the list.
@@ -86,29 +101,63 @@ export function Procedures(): React.JSX.Element {
       .finally(() => {
         if (!cancelled) setLoading(false)
       })
+    void window.api.projects
+      .list()
+      .then((list) => {
+        if (!cancelled) setProjects(list)
+      })
+      .catch(() => {})
     return () => {
       cancelled = true
     }
   }, [])
 
+  const projectsById = useMemo(() => new Map(projects.map((p) => [p.id, p])), [projects])
+
+  // Card emoji: a project-bound procedure wears its PROJECT's emoji; an
+  // unbound one wears its own, else the page default.
+  const procedureCardIcon = useCallback(
+    (procedure: Procedure): string =>
+      (procedure.projectId ? projectsById.get(procedure.projectId)?.icon : undefined) ||
+      procedure.icon ||
+      DEFAULT_PROCEDURE_ICON,
+    [projectsById]
+  )
+
+  const draftProject = draftProjectId ? projectsById.get(draftProjectId) : undefined
+
   // The last values dispatched to disk for the open procedure. Used as the
   // auto-save baseline: comparing the draft against this (updated synchronously
   // at dispatch) stops an idle dialog from re-saving in a loop AND stops a close
   // from re-writing an edit the debounce already sent.
-  const savedRef = useRef<{ title: string; prompt: string }>({ title: '', prompt: '' })
+  const savedRef = useRef<{ title: string; prompt: string; icon: string; projectId: string }>({
+    title: '',
+    prompt: '',
+    icon: '',
+    projectId: ''
+  })
 
   const openEditor = useCallback((procedure: Procedure) => {
     setEditing(procedure)
     setDraftTitle(procedure.title)
     setDraftPrompt(procedure.prompt)
-    savedRef.current = { title: procedure.title, prompt: procedure.prompt }
+    setDraftIcon(procedure.icon ?? '')
+    setDraftProjectId(procedure.projectId ?? '')
+    setEmojiOpen(false)
+    setTouched(false)
+    savedRef.current = {
+      title: procedure.title,
+      prompt: procedure.prompt,
+      icon: procedure.icon ?? '',
+      projectId: procedure.projectId ?? ''
+    }
   }, [])
 
   const persist = useCallback(
-    (id: string, title: string, prompt: string) => {
-      savedRef.current = { title, prompt }
+    (id: string, title: string, prompt: string, icon: string, projectId: string) => {
+      savedRef.current = { title, prompt, icon, projectId }
       return window.api.procedures
-        .update({ id, title, prompt })
+        .update({ id, title, prompt, icon, projectId })
         .then((updated) => {
           setProcedures((prev) => prev.map((p) => (p.id === updated.id ? updated : p)))
         })
@@ -123,14 +172,25 @@ export function Procedures(): React.JSX.Element {
   useEffect(() => {
     if (!editing) return
     if (draftTitle.trim() === '') return
-    if (draftTitle === savedRef.current.title && draftPrompt === savedRef.current.prompt) return
-    const handle = setTimeout(() => void persist(editing.id, draftTitle, draftPrompt), 600)
+    if (
+      draftTitle === savedRef.current.title &&
+      draftPrompt === savedRef.current.prompt &&
+      draftIcon === savedRef.current.icon &&
+      draftProjectId === savedRef.current.projectId
+    ) {
+      return
+    }
+    const handle = setTimeout(
+      () => void persist(editing.id, draftTitle, draftPrompt, draftIcon, draftProjectId),
+      600
+    )
     return () => clearTimeout(handle)
-  }, [editing, draftTitle, draftPrompt, persist])
+  }, [editing, draftTitle, draftPrompt, draftIcon, draftProjectId, persist])
 
   const closeEditor = useCallback(() => {
     const current = editing
     setEditing(null)
+    setEmojiOpen(false)
     if (!current) return
     // Title is required. With a blank title, nothing is persisted: a never-named
     // procedure (fresh stub) is discarded entirely; one that already had a title
@@ -143,10 +203,15 @@ export function Procedures(): React.JSX.Element {
       return
     }
     // Flush any edit the debounce hasn't dispatched yet.
-    if (draftTitle !== savedRef.current.title || draftPrompt !== savedRef.current.prompt) {
-      void persist(current.id, draftTitle, draftPrompt)
+    if (
+      draftTitle !== savedRef.current.title ||
+      draftPrompt !== savedRef.current.prompt ||
+      draftIcon !== savedRef.current.icon ||
+      draftProjectId !== savedRef.current.projectId
+    ) {
+      void persist(current.id, draftTitle, draftPrompt, draftIcon, draftProjectId)
     }
-  }, [editing, draftTitle, draftPrompt, persist])
+  }, [editing, draftTitle, draftPrompt, draftIcon, draftProjectId, persist])
 
   // Create with a blank title (the card shows an "Untitled" fallback) and open
   // the editor. If the user closes without writing anything, closeEditor drops
@@ -194,8 +259,17 @@ export function Procedures(): React.JSX.Element {
     (procedure: Procedure) => {
       // A fresh SESSION per run: the procedure auto-sends into its own new
       // conversation while every other session (including a streaming one)
-      // keeps running untouched.
-      newSession({ procedure: { prompt: procedure.prompt, mode: procedure.mode } })
+      // keeps running untouched. The icon rides along so the conversation's
+      // rail badge shows this procedure's emoji, and a project binding runs
+      // the turn inside that project (overlay + conversation registration).
+      newSession({
+        procedure: {
+          prompt: procedure.prompt,
+          mode: procedure.mode,
+          icon: procedure.icon || DEFAULT_PROCEDURE_ICON
+        },
+        projectId: procedure.projectId ?? null
+      })
       goTo('chat')
     },
     [goTo, newSession]
@@ -222,9 +296,16 @@ export function Procedures(): React.JSX.Element {
         <div className="mx-auto flex w-full max-w-2xl flex-col gap-6 px-6 py-10">
           <header className="flex items-start justify-between gap-3">
             <div className="flex flex-col gap-1">
-              <h1 className="text-fg text-2xl font-semibold tracking-tight">
-                {t('procedures.title')}
-              </h1>
+              <div className="flex items-center gap-2">
+                <h1 className="text-fg text-2xl font-semibold tracking-tight">
+                  {t('procedures.title')}
+                </h1>
+                {!loading && (
+                  <Badge variant="default" size="sm">
+                    {procedures.length}
+                  </Badge>
+                )}
+              </div>
               <p className="text-muted text-sm leading-relaxed">{t('procedures.subtitle')}</p>
             </div>
             <Button size="sm" onClick={handleCreate} className="shrink-0">
@@ -250,15 +331,26 @@ export function Procedures(): React.JSX.Element {
                     className="bg-surface border-border flex flex-col gap-2.5 rounded-2xl border px-4 py-3"
                   >
                     <div className="flex items-start justify-between gap-3">
-                      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                        <span title={name} className="text-fg truncate text-sm font-medium">
-                          {name}
+                      <div className="flex min-w-0 flex-1 items-center gap-2.5">
+                        <span aria-hidden className="text-2xl leading-none">
+                          {procedureCardIcon(procedure)}
                         </span>
-                        <span className="text-muted text-xs">
-                          {t('procedures.editedAt', {
-                            time: formatFromNow(procedure.updatedAt, now, locale)
-                          })}
-                        </span>
+                        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                          <span title={name} className="text-fg truncate text-sm font-medium">
+                            {name}
+                          </span>
+                          <span className="text-muted text-xs">
+                            {t('procedures.editedAt', {
+                              time: formatFromNow(procedure.updatedAt, now, locale)
+                            })}
+                            {procedure.projectId &&
+                              projectsById.get(procedure.projectId) &&
+                              ` · ${
+                                projectsById.get(procedure.projectId)!.title.trim() ||
+                                t('projects.untitled')
+                              }`}
+                          </span>
+                        </div>
                       </div>
                       <div className="flex shrink-0 items-center gap-1">
                         <button
@@ -357,19 +449,79 @@ export function Procedures(): React.JSX.Element {
         }
       >
         <div className="flex flex-col gap-3">
-          <div className="flex flex-col gap-1">
-            <input
-              value={draftTitle}
-              onChange={(e) => setDraftTitle(e.target.value)}
-              placeholder={t('procedures.titlePlaceholder')}
-              aria-required
-              aria-invalid={draftTitle.trim() === ''}
-              className={cn(fieldClass, draftTitle.trim() === '' && 'border-rose-500/70')}
-            />
-            {draftTitle.trim() === '' && (
-              <p className="text-xs text-rose-500">{t('procedures.titleRequired')}</p>
-            )}
+          <div className="flex items-start gap-2">
+            <div className="relative">
+              {/* A project-bound procedure wears the project's emoji — the
+                  button shows it and disables (the procedure's own icon
+                  returns when the binding is removed). */}
+              <button
+                type="button"
+                disabled={draftProject !== undefined}
+                onClick={() => setEmojiOpen((v) => !v)}
+                aria-label={draftProject ? t('procedures.projectIcon') : t('procedures.pickIcon')}
+                title={draftProject ? t('procedures.projectIcon') : t('procedures.pickIcon')}
+                className={cn(
+                  'bg-bg border-border flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-lg border text-lg',
+                  'focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none',
+                  'disabled:cursor-default'
+                )}
+              >
+                {draftProject ? draftProject.icon || '📁' : draftIcon || DEFAULT_PROCEDURE_ICON}
+              </button>
+              {emojiOpen && (
+                <EmojiPicker
+                  onPick={(emoji) => {
+                    setTouched(true)
+                    setDraftIcon(emoji)
+                    setEmojiOpen(false)
+                  }}
+                  onClose={() => setEmojiOpen(false)}
+                />
+              )}
+            </div>
+            <div className="flex min-w-0 flex-1 flex-col gap-1">
+              <input
+                value={draftTitle}
+                onChange={(e) => {
+                  setTouched(true)
+                  setDraftTitle(e.target.value)
+                }}
+                placeholder={t('procedures.titlePlaceholder')}
+                aria-required
+                aria-invalid={touched && draftTitle.trim() === ''}
+                className={cn(
+                  fieldClass,
+                  touched && draftTitle.trim() === '' && 'border-rose-500/70'
+                )}
+              />
+              {touched && draftTitle.trim() === '' && (
+                <p className="text-xs text-rose-500">{t('procedures.titleRequired')}</p>
+              )}
+            </div>
           </div>
+          <span className="text-muted text-xs font-medium">{t('procedures.project')}</span>
+          {/* Bind/unbind a project: the run gets the project's context and its
+              conversation registers under the project. */}
+          <Select
+            value={draftProjectId}
+            onChange={(v) => {
+              setTouched(true)
+              setDraftProjectId(v)
+              setEmojiOpen(false)
+            }}
+            options={[
+              { value: '', label: t('procedures.projectNone') },
+              ...projects.map((p) => ({
+                value: p.id,
+                label: p.title.trim() || t('projects.untitled'),
+                icon: (
+                  <span aria-hidden className="text-base leading-none">
+                    {p.icon || '📁'}
+                  </span>
+                )
+              }))
+            ]}
+          />
           {/* Scoped to this dialog only: override the CodeEditor's built-in
               surface background to --color-bg so the prompt field matches the
               card code block. Important + layered (Tailwind utilities) beats
@@ -379,7 +531,10 @@ export function Procedures(): React.JSX.Element {
               value={draftPrompt}
               language="markdown"
               isDark={isDark}
-              onChange={setDraftPrompt}
+              onChange={(value) => {
+                setTouched(true)
+                setDraftPrompt(value)
+              }}
               placeholder={t('procedures.promptPlaceholder')}
               className="h-full"
               spellcheck

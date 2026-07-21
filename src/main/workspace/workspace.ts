@@ -1,5 +1,6 @@
 import { is } from '@electron-toolkit/utils'
 import { diskWriter } from '@main/io/diskWriter'
+import { importOutsideProjectFiles } from '@main/projects'
 import { mcpCapabilityName } from '@main/runtime/mcp/naming'
 import type { McpConfig, McpOauthState, McpServerConfig } from '@main/runtime/mcp/types'
 import { isKnownModelName } from '@main/runtime/models'
@@ -808,7 +809,7 @@ async function migrateConfig(): Promise<void> {
  * When a feature is removed from the app, append its cleanup HERE — never
  * mint a new one-off function for it.
  *
- * Currently empty: the accumulated sweeps (openai-whisper venv,
+ * The accumulated legacy sweeps (openai-whisper venv,
  * planning/orchestrator capabilities and prompts, dead cascade +
  * orchestrator config keys, edge-tts values, legacy Notion/GitHub
  * connection shapes, the Untitled-title backfill, the message-id mint) were
@@ -817,8 +818,11 @@ async function migrateConfig(): Promise<void> {
  * degrades to mergeConversationOnto's positional pairing, the pre-id rules.
  */
 async function cleanupWorkspace(): Promise<void> {
-  // No standing sweeps right now — see the docstring for what lived here
-  // and why it left.
+  // Projects own their files: copy-on-attach shipped after the first
+  // projects, so legacy refs pointing outside the workspace (e.g. a PDF on
+  // the Desktop) are imported into uploads/project-<id>/ here. Idempotent —
+  // inside-workspace refs are untouched, missing sources left as-is.
+  await importOutsideProjectFiles().catch(() => undefined)
 }
 
 async function migrateAgentsCore(): Promise<void> {

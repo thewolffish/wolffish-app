@@ -55,6 +55,8 @@ export type TurnSendOptions = {
    * never into persisted/user content, so history stays byte-stable.
    */
   workingFolders?: string[]
+  /** Project this turn's conversation runs inside — its context overlays the system prompt. */
+  projectId?: string | null
   thinkingMode?: 'off' | 'on' | 'high' | 'max'
   /**
    * Per-turn chat-mode override — the Procedures Play button threads the
@@ -372,6 +374,7 @@ export class TurnRunner {
             conversationTitle: title,
             channel: opts.channel,
             workingFolders: opts.workingFolders,
+            projectId: opts.projectId,
             signal: controller.signal,
             onSegment: (segment) => sink.onSegment(segment),
             thinkingMode: opts.thinkingMode,

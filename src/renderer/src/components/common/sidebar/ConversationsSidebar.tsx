@@ -1,11 +1,11 @@
 import { ChannelIcon } from '@components/common/channel-icon/ChannelIcon'
 import { hasChannelIcon } from '@components/common/channel-icon/hasChannelIcon'
 import { CONVERSATION_CHIP_BASE, conversationChipClasses } from '@lib/conversation-chip'
-import { mapConversationMessages, warmPathCards } from '@lib/conversation-open'
+import { mapConversationMessages } from '@lib/conversation-open'
 import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
 import { pageTopPadding } from '@lib/utils/platform'
-import type { ConversationChannel, ConversationMeta } from '@preload/index'
+import type { ConversationChannel, ConversationMeta, Project } from '@preload/index'
 import { useFlow } from '@providers/flow/useFlow'
 import { useLocale } from '@providers/locale/useLocale'
 import { useSessions, type ConversationRunPhase } from '@providers/sessions/useSessions'
@@ -19,6 +19,12 @@ type Row = {
   phase: ConversationRunPhase | null
   /** Origin — drives the small badge on the number chip. */
   channel: ConversationChannel | string | null
+  /**
+   * Source emoji for the number-chip badge: the conversation's project icon
+   * (resolved live) or its stamped automation/procedure icon. Null falls
+   * back to the channel-glyph badge.
+   */
+  icon: string | null
   /** Recency key — live phase changes beat file mtimes. */
   at: number
 }
@@ -40,9 +46,17 @@ export function ConversationsSidebar(): React.JSX.Element {
   const { locale } = useLocale()
   const isRtl = RTL_LOCALES.has(locale)
   const { status } = useFlow()
-  const { runStatuses, openConversation, activateConversation, activeConversationId } =
-    useSessions()
+  const {
+    runStatuses,
+    openConversation,
+    activateConversation,
+    activeConversationId,
+    activeProject
+  } = useSessions()
   const [metas, setMetas] = useState<ConversationMeta[]>([])
+  // Projects, for resolving a bound conversation's badge emoji LIVE (an icon
+  // change on the Projects page propagates; a stamp would go stale).
+  const [projects, setProjects] = useState<Project[]>([])
 
   const saved = status?.config?.lastSettingsState?.rightSidebarCollapsed
   const [collapsed, setCollapsed] = useState(() => {
@@ -74,6 +88,12 @@ export function ConversationsSidebar(): React.JSX.Element {
     void window.api.conversation.list().then((list) => {
       if (!cancelled) setMetas(list)
     })
+    void window.api.projects
+      .list()
+      .then((list) => {
+        if (!cancelled) setProjects(list)
+      })
+      .catch(() => {})
     return () => {
       cancelled = true
     }
@@ -98,6 +118,7 @@ export function ConversationsSidebar(): React.JSX.Element {
   }, [])
 
   const rows = useMemo<Row[]>(() => {
+    const projectIcons = new Map(projects.map((p) => [p.id, p.icon]))
     const byId = new Map<string, Row>()
     for (const meta of metas) {
       const live = runStatuses[meta.id]
@@ -112,6 +133,9 @@ export function ConversationsSidebar(): React.JSX.Element {
         title: indexedTitle ?? live?.title ?? t('chat.conversationsUntitled'),
         phase: live?.phase ?? null,
         channel: meta.channel ?? live?.channel ?? null,
+        // Project emoji wins (a project conversation reads as its project);
+        // otherwise the stamped automation/procedure emoji.
+        icon: (meta.projectId ? projectIcons.get(meta.projectId) : undefined) ?? meta.icon ?? null,
         at: Math.max(meta.updatedAt, live?.at ?? 0)
       })
     }
@@ -132,11 +156,23 @@ export function ConversationsSidebar(): React.JSX.Element {
         title: s.title ?? t('chat.conversationsUntitled'),
         phase: s.phase,
         channel: s.channel ?? null,
+        icon: null,
         at: s.at
       })
     }
-    return [...byId.values()].sort((a, b) => b.at - a.at)
-  }, [metas, runStatuses, t])
+    const all = [...byId.values()].sort((a, b) => b.at - a.at)
+    if (!activeProject) return all
+    // Project mode: only this project's conversations. A brand-new one has no
+    // indexed projectId until its first end-of-turn save, so the active
+    // conversation bridges through on its id — it is by construction the one
+    // being created inside the project right now.
+    const projectIds = new Set(
+      metas.filter((m) => m.projectId === activeProject.id).map((m) => m.id)
+    )
+    return all.filter(
+      (r) => projectIds.has(r.conversationId) || r.conversationId === activeConversationId
+    )
+  }, [metas, projects, runStatuses, t, activeProject, activeConversationId])
 
   const open = useCallback(
     async (conversationId: string) => {
@@ -147,7 +183,6 @@ export function ConversationsSidebar(): React.JSX.Element {
       const conv = await window.api.conversation.load(conversationId)
       if (!conv) return
       const mapped = mapConversationMessages(conv)
-      await warmPathCards(mapped)
       openConversation(conv, mapped)
     },
     [activateConversation, openConversation]
@@ -188,9 +223,19 @@ export function ConversationsSidebar(): React.JSX.Element {
         <SidebarRightIcon size={16} />
       </button>
       {!collapsed && (
-        <div className="pointer-events-none flex w-full items-center px-1.5 pt-1">
-          <span className="text-muted text-[11px] font-medium tracking-wide uppercase">
-            {t('chat.conversations')}
+        <div className="pointer-events-none flex w-full items-center gap-1 px-1.5 pt-1">
+          {activeProject && (
+            <span aria-hidden className="shrink-0 text-xs leading-none">
+              {activeProject.icon || '📁'}
+            </span>
+          )}
+          <span
+            title={activeProject ? activeProject.title : undefined}
+            className="text-muted min-w-0 truncate text-[11px] font-medium tracking-wide uppercase"
+          >
+            {activeProject
+              ? activeProject.title.trim() || t('projects.untitled')
+              : t('chat.conversations')}
           </span>
         </div>
       )}
@@ -244,12 +289,21 @@ export function ConversationsSidebar(): React.JSX.Element {
                       direction-logical, so it hangs to the right in LTR and
                       mirrors to the left in RTL. It overhangs into the row's own
                       padding and the gap before the title, never the next row.
-                      bg-bg punches through the row's hover fill so the glyph
-                      stays readable. */}
-                  {hasChannelIcon(row.channel) && (
-                    <span className="border-border bg-bg absolute -inset-e-1 -bottom-1.5 flex h-3.5 w-3.5 items-center justify-center rounded-full border">
-                      <ChannelIcon channel={row.channel} size={9} className="text-muted" />
+                      Bare glyph, no bordered circle — the emoji/icon alone at
+                      the same footprint. */}
+                  {row.icon ? (
+                    <span
+                      aria-hidden
+                      className="absolute -inset-e-1 -bottom-1.5 flex h-3.5 w-3.5 items-center justify-center text-[9px] leading-none"
+                    >
+                      {row.icon}
                     </span>
+                  ) : (
+                    hasChannelIcon(row.channel) && (
+                      <span className="absolute -inset-e-1 -bottom-1.5 flex h-3.5 w-3.5 items-center justify-center">
+                        <ChannelIcon channel={row.channel} size={9} className="text-muted" />
+                      </span>
+                    )
                   )}
                 </span>
                 {!collapsed && (

@@ -146,6 +146,10 @@ export type ConversationFile = {
   createdAt: number
   updatedAt: number
   channel?: ConversationChannel
+  /** Binds this conversation to a project — its turns get the project overlay. */
+  projectId?: string
+  /** Source emoji (automation/procedure icon) for the rail's number-chip badge. */
+  icon?: string
   sealed?: boolean
   workingFolder?: string[] | null
   /** Legacy meter snapshot — superseded by `stats.meter`, still read as a fallback. */
@@ -187,6 +191,9 @@ export type ConversationMeta = {
   title: string
   updatedAt: number
   channel?: ConversationChannel
+  projectId?: string
+  /** Source emoji (automation/procedure icon) for the rail's number-chip badge. */
+  icon?: string
   /**
    * Number of saved messages on the conversation. Surfaced so list
    * views (Telegram /resume, /delete picker) can show it without
@@ -321,6 +328,8 @@ export async function listConversations(): Promise<ConversationMeta[]> {
         title: conv.title,
         updatedAt: conv.updatedAt,
         channel: conv.channel,
+        projectId: conv.projectId,
+        icon: conv.icon,
         messageCount: conv.messages?.length ?? 0
       })
     } catch {
@@ -569,6 +578,11 @@ export function mergeConversationOnto(
   // letting that through would silently reclassify a Telegram conversation as
   // in-app: gone from /resume, wrong icon in the rail, mapping left dangling.
   if (disk.channel && !incoming.channel) merged.channel = disk.channel
+  // Same provenance rule for the project binding: a writer that doesn't carry
+  // it (titler shell, channel end-of-turn copies) must not strip it.
+  if (disk.projectId && !incoming.projectId) merged.projectId = disk.projectId
+  // And for the source-emoji stamp (automation/procedure icon on the rail badge).
+  if (disk.icon && !incoming.icon) merged.icon = disk.icon
   const diskCov = summaryCoverage(disk, merged.messages)
   const incomingCov = summaryCoverage(incoming, merged.messages)
   const winner =

@@ -347,7 +347,7 @@ so hidden — `ls -a` to see them). Drop a folder in, and the agent learns a ski
 | | `.automations` | The agent manages its scheduled heartbeat jobs — `automation_list`, `automation_create`, `automation_edit`, `automation_delete`, `automation_check`, `automation_run` |
 | | `.introspect` | The agent inspects itself — `wolffish_status`, `channel_status`, `wolffish_performance`, `wolffish_memory`, `wolffish_recall`, `wolffish_list_files` |
 | | `.secrets` | Save/list the user's variables & secrets — `add_secret`, `list_secrets` |
-| | `.ask` | Ask the user a multiple-choice question via an in-app card — `ask_user` |
+| | `.ask` | Ask the user one or more multiple-choice questions via an in-app card — `ask_user` |
 | | `.utilities` | Small built-ins — `send_file` (deliver a file to the user as an attachment) |
 
 > `.browser` vs `.browser-extension`: the **extension** acts inside the user's

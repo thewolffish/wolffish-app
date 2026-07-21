@@ -20,6 +20,10 @@ export type Procedure = {
    * Optional: rows saved before the field shipped follow the global mode.
    */
   mode?: 'single' | 'workflow'
+  /** Emoji shown on the card; absent (legacy rows) ⇒ the page's default. */
+  icon?: string
+  /** Project binding — runs get the project overlay and register under it. */
+  projectId?: string
   createdAt: number
   updatedAt: number
 }
@@ -69,6 +73,8 @@ export function createProcedure(payload: {
   title: string
   prompt: string
   mode?: 'single' | 'workflow'
+  icon?: string
+  projectId?: string
 }): Promise<Procedure> {
   return serialize(async () => {
     const procedures = await loadProcedures()
@@ -82,6 +88,10 @@ export function createProcedure(payload: {
       title: payload.title,
       prompt: payload.prompt,
       mode: payload.mode ?? (globalMode === 'workflow' ? 'workflow' : 'single'),
+      // Every procedure carries an emoji from birth (cards + the rail badge);
+      // the picker can change it but never remove it.
+      icon: payload.icon || '📋',
+      ...(payload.projectId ? { projectId: payload.projectId } : {}),
       createdAt: now,
       updatedAt: now
     }
@@ -96,6 +106,8 @@ export function updateProcedure(payload: {
   title?: string
   prompt?: string
   mode?: 'single' | 'workflow'
+  icon?: string
+  projectId?: string
 }): Promise<Procedure> {
   return serialize(async () => {
     const procedures = await loadProcedures()
@@ -104,6 +116,9 @@ export function updateProcedure(payload: {
     if (payload.title !== undefined) procedure.title = payload.title
     if (payload.prompt !== undefined) procedure.prompt = payload.prompt
     if (payload.mode !== undefined) procedure.mode = payload.mode
+    if (payload.icon !== undefined) procedure.icon = payload.icon
+    // '' unbinds — the field disappears from the JSON rather than storing ''.
+    if (payload.projectId !== undefined) procedure.projectId = payload.projectId || undefined
     procedure.updatedAt = Date.now()
     await saveProcedures(procedures)
     return procedure

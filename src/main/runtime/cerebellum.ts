@@ -175,13 +175,8 @@ export type AskUserOption = {
   description?: string
 }
 
-/**
- * What a plugin hands `context.askUser` to pose a question to the user.
- * Built by the `ask` capability from the model's tool args; the toolCallId
- * is injected by Cerebellum so the renderer can anchor the question card to
- * the right tool_call segment.
- */
-export type AskUserRequestInput = {
+/** One question on an ask-the-user card. A card carries 1..N of these. */
+export type AskUserQuestion = {
   question: string
   details?: string
   options: AskUserOption[]
@@ -192,17 +187,35 @@ export type AskUserRequestInput = {
   otherDescription?: string
 }
 
+/**
+ * What a plugin hands `context.askUser` to pose questions to the user.
+ * Built by the `ask` capability from the model's tool args; the toolCallId
+ * is injected by Cerebellum so the renderer can anchor the question card to
+ * the right tool_call segment. A single-question ask is a one-item list —
+ * the renderer shows numbered tabs only when there's more than one.
+ */
+export type AskUserRequestInput = {
+  questions: AskUserQuestion[]
+}
+
 export type AskUserRequest = AskUserRequestInput & { toolCallId: string }
 
 /**
- * The user's answer to an ask-the-user question. `option` = they picked
- * listed choice N; `custom` = they wrote their own instructions in the
- * free-text field; `canceled` = the question was dismissed (run stopped /
- * window closed); `unsupported` = the active channel can't render the card.
+ * The user's answer to ONE question: `option` = they picked listed choice N
+ * (0-based); `custom` = they wrote their own instructions in the free-text
+ * field.
+ */
+export type AskUserAnswer = { kind: 'option'; index: number } | { kind: 'custom'; text: string }
+
+/**
+ * The user's response to a whole ask-the-user request. `answered` carries
+ * one answer per question, same order (`answers[i]` answers `questions[i]`
+ * — the card only submits once every question is answered); `canceled` =
+ * the request was dismissed (run stopped / window closed); `unsupported` =
+ * the active channel can't pose questions.
  */
 export type AskUserResponse =
-  | { kind: 'option'; index: number }
-  | { kind: 'custom'; text: string }
+  | { kind: 'answered'; answers: AskUserAnswer[] }
   | { kind: 'canceled' }
   | { kind: 'unsupported' }
 
@@ -383,6 +396,63 @@ export type ProceduresHost = {
   run: (id: string) => Promise<{ ok: boolean; started: boolean; error?: string }>
 }
 
+export type ProjectInfo = {
+  id: string
+  title: string
+  icon: string
+  instructions: string
+  files: Array<{ path: string; name: string }>
+  createdAt: number
+  updatedAt: number
+}
+
+export type ProjectConversationInfo = {
+  id: string
+  title: string
+  updatedAt: number
+  messageCount: number
+}
+
+/**
+ * Project-management surface injected into the `projects` capability's plugin
+ * via its init context (PluginContext.projects). Implemented in the main
+ * process over the same store the Projects page uses (src/main/projects.ts),
+ * plus a project-scoped conversation listing for visibility.
+ */
+export type ProjectsHost = {
+  /** Every project, most-recently-edited first. */
+  list: () => Promise<ProjectInfo[]>
+  /** Create a project; returns the created row. */
+  create: (payload: { title: string; icon?: string; instructions?: string }) => Promise<ProjectInfo>
+  /** Edit title/icon/instructions/files (omitted fields kept); returns the updated row. */
+  update: (
+    id: string,
+    patch: {
+      title?: string
+      icon?: string
+      instructions?: string
+      files?: Array<{ path: string; name: string }>
+    }
+  ) => Promise<ProjectInfo>
+  /** Permanently delete a project by id. */
+  delete: (id: string) => Promise<{ ok: boolean; error?: string }>
+  /**
+   * Copy sources into the project's uploads dir and attach them — real
+   * copies (uniform with conversation uploads), never references.
+   */
+  attachFiles: (
+    projectId: string,
+    paths: string[]
+  ) => Promise<{
+    project: ProjectInfo
+    added: Array<{ path: string; name: string }>
+    skipped: string[]
+    missing: string[]
+  }>
+  /** Conversations bound to a project, newest first. */
+  conversationsFor: (projectId: string) => Promise<ProjectConversationInfo[]>
+}
+
 /**
  * Agent-management surface injected into the `workflow` capability's plugin
  * via its init context (PluginContext.workflow). Implemented by the Agent
@@ -547,6 +617,11 @@ export type PluginContext = {
    */
   procedures?: ProceduresHost
   /**
+   * setProjectsHost — used by the `projects` capability to list, view,
+   * create, edit, and delete projects and see their conversations.
+   */
+  projects?: ProjectsHost
+  /**
    * Agent-management surface. Present only when the host wired one in via
    * setWorkflowHost — used by the `workflow` capability to plan, spawn, drive,
    * await, and cancel live subagent sessions. Undefined for every other plugin
@@ -707,6 +782,7 @@ export class Cerebellum {
   private pluginHost?: CerebellumPluginHost
   private automationsHost?: AutomationsHost
   private proceduresHost?: ProceduresHost
+  private projectsHost?: ProjectsHost
   private workflowHost?: WorkflowHost
   private mcpHost?: McpHost
   private cortexHost?: CortexHost
@@ -815,6 +891,15 @@ export class Cerebellum {
    */
   setProceduresHost(host: ProceduresHost): void {
     this.proceduresHost = host
+  }
+
+  /**
+   * Wire the project-management host (implemented in main over the same
+   * store the Projects page uses) that the `projects` capability's plugin
+   * receives in its init context. Set once at startup; survives reload().
+   */
+  setProjectsHost(host: ProjectsHost): void {
+    this.projectsHost = host
   }
 
   /**
@@ -1801,6 +1886,7 @@ export class Cerebellum {
         host: this.pluginHost,
         automations: this.automationsHost,
         procedures: this.proceduresHost,
+        projects: this.projectsHost,
         workflow: this.workflowHost,
         mcp: this.mcpHost,
         cortex: this.cortexHost,

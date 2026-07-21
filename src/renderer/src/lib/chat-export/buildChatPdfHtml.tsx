@@ -1,8 +1,11 @@
 import type { Segment } from '@preload/index'
 import { WORKFLOW_TOOL_NAMES, type WorkflowSnapshot } from '@main/runtime/broca'
+import { MARKDOWN_SANITIZE_SCHEMA } from '@lib/markdown/sanitize'
 import type { ChatMessage } from '@providers/flow/useFlow'
 import { renderToStaticMarkup } from 'react-dom/server'
-import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
+import ReactMarkdown, { defaultUrlTransform, type Options } from 'react-markdown'
+import rehypeRaw from 'rehype-raw'
+import rehypeSanitize from 'rehype-sanitize'
 import remarkGfm from 'remark-gfm'
 
 /**
@@ -72,9 +75,22 @@ function clamp(s: string, max: number): string {
   return s.length <= max ? s : `${s.slice(0, max)}…`
 }
 
+// Same raw-HTML handling as the feed's Markdown component (rehype-raw +
+// the shared sanitize schema) so the print mirrors what the feed rendered —
+// details/summary print as bordered blocks (closed ones show the summary
+// line only, matching their on-screen state).
+const rehypePlugins: Options['rehypePlugins'] = [
+  rehypeRaw,
+  [rehypeSanitize, MARKDOWN_SANITIZE_SCHEMA]
+]
+
 function markdownHtml(content: string): string {
   return renderToStaticMarkup(
-    <ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={urlTransform}>
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      rehypePlugins={rehypePlugins}
+      urlTransform={urlTransform}
+    >
       {content}
     </ReactMarkdown>
   )
@@ -128,12 +144,12 @@ function toolBlock(
   return `<div class="tool">${parts.join('')}</div>`
 }
 
-/** Answered ask_user question — always visible, like the feed's QuestionCard. */
-function askBlock(call: ToolCallSegment, result: ToolResultSegment): string {
-  const question = typeof call.args.question === 'string' ? call.args.question : call.name
-  const details = typeof call.args.details === 'string' ? call.args.details : ''
-  const options = Array.isArray(call.args.options)
-    ? call.args.options
+/** One ask_user question (text + details + numbered options) as print HTML. */
+function askQuestionParts(raw: Record<string, unknown>, fallbackTitle: string): string[] {
+  const question = typeof raw.question === 'string' ? raw.question : fallbackTitle
+  const details = typeof raw.details === 'string' ? raw.details : ''
+  const options = Array.isArray(raw.options)
+    ? raw.options
         .map((o) =>
           typeof o === 'string'
             ? o
@@ -152,6 +168,22 @@ function askBlock(call: ToolCallSegment, result: ToolResultSegment): string {
         .join('')}</ol>`
     )
   }
+  return parts
+}
+
+/** Answered ask_user question(s) — always visible, like the feed's QuestionCard. */
+function askBlock(call: ToolCallSegment, result: ToolResultSegment): string {
+  // Multi-question form (`questions: [...]`) prints every question in order;
+  // the legacy single-question args print exactly as before. The answer
+  // section is the tool output, which for multi-question asks is already the
+  // per-question summary the user's answers produced.
+  const items = Array.isArray(call.args.questions)
+    ? call.args.questions.filter((q): q is Record<string, unknown> => !!q && typeof q === 'object')
+    : []
+  const parts: string[] =
+    items.length > 0
+      ? items.flatMap((q) => askQuestionParts(q, call.name))
+      : askQuestionParts(call.args, call.name)
   if (result.output) {
     parts.push(
       `<div class="ask-answer" dir="auto">${escapeHtml(clamp(result.output, OUTPUT_CLAMP))}</div>`
@@ -303,6 +335,8 @@ const STYLE = `
 
   /* Answered ask_user questions. */
   .ask-q { font-weight: 600; }
+  /* Breathing room between stacked questions of one multi-question ask. */
+  .ask-details + .ask-q, .ask-options + .ask-q { margin-top: 8px; }
   .ask-details { margin-top: 3px; color: #5b6270; font-size: 12px; }
   .ask-options { margin: 5px 0 0; padding-inline-start: 22px; font-size: 12px; }
   .ask-answer { margin-top: 6px; padding-top: 6px; border-top: 1px solid #eceef2; color: #5b6270; font-size: 11px; }
@@ -334,6 +368,11 @@ const STYLE = `
   ul, ol { margin: 7px 0; padding-inline-start: 22px; }
   li { margin: 2px 0; }
   a { color: #2757c4; text-decoration: underline; }
+  details {
+    border: 1px solid #e2e5ea; border-radius: 8px; padding: 6px 10px; margin: 7px 0;
+    box-decoration-break: clone; -webkit-box-decoration-break: clone;
+  }
+  summary { font-weight: 600; }
   blockquote {
     margin: 7px 0; padding-inline-start: 10px;
     border-inline-start: 2px solid #d3d7de; color: #5b6270;

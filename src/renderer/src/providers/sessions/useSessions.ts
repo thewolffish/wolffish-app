@@ -19,6 +19,14 @@ export type SessionDescriptor = {
   initialMessages: ChatMessage[] | null
   /** A procedure queued to auto-send into this (fresh) session. */
   procedure: PendingProcedure | null
+  /** Project this session's conversation runs inside (null = plain chat). */
+  projectId: string | null
+  /**
+   * Source emoji stamped on conversations this session creates (a played
+   * procedure's icon). Durable — survives the one-shot procedure consumption,
+   * so the end-of-turn save still carries it.
+   */
+  icon: string | null
 }
 
 /** What a Chat instance reports back about itself. */
@@ -56,7 +64,14 @@ export type ChatSessionsValue = {
   /** Per-conversation run status for this app session, keyed by conversation id. */
   runStatuses: Record<string, ConversationRunStatus>
   /** Open a brand-new chat session (or refocus an existing empty idle one). */
-  newSession: (opts?: { procedure?: PendingProcedure }) => void
+  newSession: (opts?: { procedure?: PendingProcedure; projectId?: string | null }) => void
+  /**
+   * The active project — chat runs in "project mode" while set: fresh
+   * sessions bind to it, the rail filters to its conversations, and the
+   * composer/new-button/hero swap to project chrome. Cleared on exit.
+   */
+  activeProject: import('@preload/index').Project | null
+  setActiveProject: (project: import('@preload/index').Project | null) => void
   /**
    * Open a conversation: activates the live session already holding it (its
    * in-flight stream and state intact), or spawns a session seeded with the

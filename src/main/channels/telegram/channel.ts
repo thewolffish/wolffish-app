@@ -12,6 +12,7 @@ import {
   setConversationIdForChat
 } from '@main/channels/telegram/conversations'
 import { markdownToPlain } from '@main/channels/format'
+import { listProjects, projectLabel, type Project } from '@main/projects'
 import { bidiMark, escapeHtml } from '@main/channels/telegram/format'
 import {
   flushMessageIds,
@@ -39,7 +40,8 @@ import type { Agent } from '@main/runtime/agent'
 import type { ApprovalDecision, ApprovalRequest } from '@main/runtime/amygdala'
 import {
   ASK_USER_TOOL,
-  type AskUserOption,
+  type AskUserAnswer,
+  type AskUserQuestion,
   type AskUserRequest,
   type AskUserResponse
 } from '@main/runtime/cerebellum'
@@ -116,6 +118,7 @@ const LOCAL_COMMAND = '/local'
 const CLOUD_COMMAND = '/cloud'
 const MODE_COMMAND = '/mode'
 const MODEL_COMMAND = '/model'
+const PROJECT_COMMAND = '/project'
 const STOP_COMMANDS = new Set(['/stop', '/cancel'])
 const NEW_COMMANDS = new Set(['/new', '/start'])
 
@@ -123,6 +126,7 @@ const COMMANDS_HELP_HTML = [
   '<b>Commands:</b>',
   '/mode — single or workflow mode',
   '/model — pick the cloud model',
+  '/project — pick or exit a project',
   '/resume — continue a previous chat',
   '/delete — delete a saved conversation',
   '/clear — clear messages from this chat',
@@ -218,6 +222,7 @@ export type TelegramChannelStatus = {
 type PendingSelection =
   | { command: 'resume' | 'delete'; items: ConversationMeta[]; page: number }
   | { command: 'model'; models: ModelOption[] }
+  | { command: 'project'; projects: Project[] }
 
 type ActiveTurn = {
   chatId: number
@@ -276,12 +281,20 @@ type ActiveTurn = {
   /** Resolves the approval Promise once the user replies. */
   pendingApprovalResolve: ((decision: ApprovalDecision) => void) | null
   /**
-   * Outstanding ask_user question, if the agent is paused waiting for the
-   * user to answer. The next inbound message is interpreted as the answer:
-   * a number in 1–options.length picks that option; any other text becomes
-   * "something else" (custom instructions) when allowOther is set.
+   * Outstanding ask_user request, if the agent is paused waiting for the
+   * user to answer. Questions are posed one message at a time, in order;
+   * each inbound message is interpreted against the CURRENT question: a
+   * number in 1–options.length picks that option; any other text becomes
+   * "something else" (custom instructions) when allowOther is set. Answers
+   * accumulate until every question is answered, then the request resolves
+   * with all of them at once.
    */
-  pendingAsk: { id: string; options: AskUserOption[]; allowOther: boolean } | null
+  pendingAsk: {
+    id: string
+    questions: AskUserQuestion[]
+    current: number
+    answers: AskUserAnswer[]
+  } | null
   /** Resolves the ask_user Promise once the user answers. */
   pendingAskResolve: ((response: AskUserResponse) => void) | null
   /** Cleared once the assistant message has been pushed to disk. */
@@ -856,6 +869,16 @@ export class TelegramChannel {
       return
     }
 
+    // /project — show the active project and a numbered picker; "/project
+    // close" leaves it. Listing is read-only and allowed mid-turn (like
+    // /model); selecting and exiting rotate the chat to a FRESH conversation
+    // (the project binding lives on the conversation itself), so those paths
+    // are busy-blocked inside the handler exactly like /new.
+    if (command === PROJECT_COMMAND) {
+      await this.handleProjectCommand(chatId, commandArg(trimmed), trimmed)
+      return
+    }
+
     // /clear — wipe the visible chat in Telegram. Touches nothing
     // Wolffish-side: the conversation file, mapping, and history
     // all stay intact. Busy-blocked because deleting messages
@@ -975,7 +998,10 @@ export class TelegramChannel {
       // `command` rather than `lower` so the group-chat form `/next@botname`
       // works — parseSlashCommand strips the @suffix; it is null for bare text,
       // where `lower` is already the whole word.
-      if (pending.command !== 'model' && isNextPageReply(command ?? lower)) {
+      if (
+        (pending.command === 'resume' || pending.command === 'delete') &&
+        isNextPageReply(command ?? lower)
+      ) {
         const page = pending.page + 1
         if (pageExists(pending.items, page)) {
           this.pendingSelections.set(chatId, { ...pending, page })
@@ -990,11 +1016,15 @@ export class TelegramChannel {
       const count =
         pending.command === 'model'
           ? pending.models.length
-          : selectableCount(pending.items, pending.page)
+          : pending.command === 'project'
+            ? pending.projects.length
+            : selectableCount(pending.items, pending.page)
       if (num !== null && num >= 1 && num <= count) {
         this.pendingSelections.delete(chatId)
         if (pending.command === 'model') {
           await this.applyModelSelection(chatId, pending.models[num - 1], trimmed)
+        } else if (pending.command === 'project') {
+          await this.applyProjectSelection(chatId, pending.projects[num - 1], trimmed)
         } else if (pending.command === 'resume') {
           await this.handleResumeSelection(chatId, pending.items[num - 1].id)
         } else {
@@ -1097,12 +1127,112 @@ export class TelegramChannel {
    */
   private async handleNewCommand(chatId: number): Promise<void> {
     this.pendingSelections.delete(chatId)
+    // /new inside a project STAYS in the project — the fresh conversation
+    // inherits the current one's binding; /project close is the way out.
+    const project = await this.activeProjectForChat(chatId)
     const fresh = createConversation(null)
     fresh.channel = 'telegram'
+    if (project) fresh.projectId = project.id
     await saveConversation(fresh)
     await setConversationIdForChat(chatId, fresh.id)
 
+    if (project) {
+      await this.sendPlain(
+        chatId,
+        `✨ New conversation started in ${projectLabel(project)}. To leave the project, use /project close.`
+      )
+      return
+    }
     await this.sendHtml(chatId, `✨ New conversation started.\n\n${COMMANDS_HELP_HTML}`)
+  }
+
+  /**
+   * The project this chat is currently "in" — derived from the bound
+   * conversation's own projectId, never from separate channel state, so it
+   * survives restarts and can't drift from what turns actually run with.
+   * A dangling binding (project deleted in the app) reads as no project.
+   */
+  private async activeProjectForChat(chatId: number): Promise<Project | null> {
+    const currentId = await getConversationIdForChat(chatId)
+    if (!currentId) return null
+    const current = await loadConversation(currentId)
+    if (!current?.projectId) return null
+    const projects = await listProjects().catch(() => [] as Project[])
+    return projects.find((p) => p.id === current.projectId) ?? null
+  }
+
+  private async handleProjectCommand(
+    chatId: number,
+    arg: string | null,
+    raw: string
+  ): Promise<void> {
+    const active = await this.activeProjectForChat(chatId)
+
+    if (arg && arg.trim().toLowerCase() === 'close') {
+      if (this.activeByChat.has(chatId)) {
+        await this.sendBusyReply(chatId, raw)
+        return
+      }
+      if (!active) {
+        await this.sendPlain(chatId, 'No active project to close.')
+        return
+      }
+      this.pendingSelections.delete(chatId)
+      const fresh = createConversation(null)
+      fresh.channel = 'telegram'
+      await saveConversation(fresh)
+      await setConversationIdForChat(chatId, fresh.id)
+      await this.sendPlain(
+        chatId,
+        `Left ${projectLabel(active)}. ✨ Fresh conversation started outside it.`
+      )
+      return
+    }
+
+    const projects = await listProjects().catch(() => [] as Project[])
+    if (projects.length === 0) {
+      await this.sendPlain(
+        chatId,
+        'No projects yet — create one from the Projects page in the app.'
+      )
+      return
+    }
+    const lines: string[] = []
+    lines.push(active ? `Active project: ${projectLabel(active)}` : 'No active project.')
+    lines.push('')
+    projects.forEach((p, i) => {
+      lines.push(`${i + 1}. ${projectLabel(p)}`)
+    })
+    lines.push('')
+    lines.push(
+      active
+        ? 'Reply with a number to switch (starts a fresh conversation there) — or /project close to leave.'
+        : 'Reply with a number to start a conversation in that project.'
+    )
+    this.pendingSelections.set(chatId, { command: 'project', projects })
+    await this.sendPlain(chatId, lines.join('\n'))
+  }
+
+  private async applyProjectSelection(
+    chatId: number,
+    project: Project,
+    raw: string
+  ): Promise<void> {
+    // Selecting rotates the chat to a fresh bound conversation — same
+    // mapping mutation as /new, so the same busy gate applies.
+    if (this.activeByChat.has(chatId)) {
+      await this.sendBusyReply(chatId, raw)
+      return
+    }
+    const fresh = createConversation(null)
+    fresh.channel = 'telegram'
+    fresh.projectId = project.id
+    await saveConversation(fresh)
+    await setConversationIdForChat(chatId, fresh.id)
+    await this.sendPlain(
+      chatId,
+      `${project.icon || '📁'} Now in project “${project.title.trim() || 'Untitled'}”. Conversations here start from its instructions and files — /project close to leave.`
+    )
   }
 
   /**
@@ -1798,6 +1928,9 @@ export class TelegramChannel {
         history,
         conversationId: conversation.id,
         userMessageId: userMessage.id,
+        // Project binding rides the conversation file, so continued
+        // project conversations get the overlay on every channel turn.
+        projectId: conversation.projectId ?? null,
         channel: 'telegram',
         makeSink: ({ turnId, conversationId }) => this.createSink(turnId, conversationId, chatId),
         onTurnStarted: ({ turnId, controller }) => {
@@ -2001,14 +2134,26 @@ export class TelegramChannel {
         if (autoRefresh && loaded.messages.length > 0) {
           const elapsed = Date.now() - loaded.updatedAt
           if (elapsed >= staleMs) {
+            // Idle rotation deliberately does NOT inherit the old
+            // conversation's projectId (unlike /new): hitting the idle
+            // limit closes the project — the fresh conversation is plain.
             const fresh = createConversation(null)
             fresh.channel = 'telegram'
             await saveConversation(fresh)
             await setConversationIdForChat(chatId, fresh.id)
             const oldTitle = loaded.title || 'Untitled'
+            let projectNote = ''
+            if (loaded.projectId) {
+              const project = (await listProjects().catch(() => [] as Project[])).find(
+                (p) => p.id === loaded.projectId
+              )
+              projectNote = project
+                ? ` Left ${escapeHtml(projectLabel(project))} — use /project to re-enter it.`
+                : ' Left its project — use /project to pick one.'
+            }
             await this.sendHtml(
               chatId,
-              `🔄 Conversation "<b>${escapeHtml(oldTitle)}</b>" was idle for ${Math.floor(elapsed / 3_600_000)}h — started a fresh one.\n\nUse /resume to go back. Your past conversations are preserved.`
+              `🔄 Conversation "<b>${escapeHtml(oldTitle)}</b>" was idle for ${Math.floor(elapsed / 3_600_000)}h — started a fresh one.${projectNote}\n\nUse /resume to go back. Your past conversations are preserved.`
             )
             return fresh
           }
@@ -2549,9 +2694,11 @@ export class TelegramChannel {
   }
 
   /**
-   * Ask the user a multiple-choice question and resolve once they reply.
-   * Posts a numbered list; the user's next message answers it (a number
-   * picks an option, other text becomes custom instructions). Mirrors
+   * Ask the user multiple-choice question(s) and resolve once they've
+   * answered them all. Questions are posted one at a time as numbered
+   * lists; each next message answers the current one (a number picks an
+   * option, other text becomes custom instructions), and the request
+   * resolves with every answer once the last question is done. Mirrors
    * handleApprovalRequest — the resolver lives on the active turn and is
    * fired by resolvePendingAsk / drained canceled at turn end.
    */
@@ -2562,52 +2709,76 @@ export class TelegramChannel {
   ): Promise<AskUserResponse> {
     return new Promise<AskUserResponse>((resolve) => {
       const active = this.activeByChat.get(chatId)
-      if (!active || active.turnId !== turnId) {
+      if (!active || active.turnId !== turnId || req.questions.length === 0) {
         resolve({ kind: 'canceled' })
         return
       }
-      // A new question supersedes any prior unanswered one.
+      // A new request supersedes any prior unanswered one.
       if (active.pendingAskResolve) active.pendingAskResolve({ kind: 'canceled' })
-      active.pendingAsk = { id: req.id, options: req.options, allowOther: req.allowOther }
+      active.pendingAsk = { id: req.id, questions: req.questions, current: 0, answers: [] }
       active.pendingAskResolve = resolve
-      void this.sendHtml(chatId, formatAskRequestHtml(req))
+      void this.sendHtml(chatId, formatAskQuestionHtml(req.questions[0], 0, req.questions.length))
     })
   }
 
-  /** Interpret the user's reply to an outstanding ask_user question. */
+  /** Interpret the user's reply to the current outstanding ask_user question. */
   private async resolvePendingAsk(chatId: number, active: ActiveTurn, text: string): Promise<void> {
     const pending = active.pendingAsk
     const resolve = active.pendingAskResolve
     if (!pending || !resolve) return
-    const n = pending.options.length
-    const outcome = interpretAskReply(text, n, pending.allowOther)
+    const question = pending.questions[pending.current]
+    const n = question.options.length
+    const outcome = interpretAskReply(text, n, question.allowOther)
 
-    if (outcome.kind === 'option') {
+    if (outcome.kind === 'reprompt') {
+      // Keep the question pending and tell the user how to answer.
+      await this.safeSend(
+        chatId,
+        outcome.reason === 'out-of-range'
+          ? `⚠️ That isn't one of the options (1–${n}). Reply with a valid number${question.allowOther ? ', or type your own instructions' : ''}.`
+          : `Please reply with a number between 1 and ${n}.`
+      )
+      return
+    }
+
+    pending.answers.push(
+      outcome.kind === 'option'
+        ? { kind: 'option', index: outcome.index }
+        : { kind: 'custom', text: outcome.text }
+    )
+
+    // Last answer in: resolve BEFORE the ack so the agent loop resumes
+    // without waiting on a Telegram roundtrip (same ordering as before).
+    const finished = pending.current + 1 >= pending.questions.length
+    if (finished) {
       active.pendingAsk = null
       active.pendingAskResolve = null
-      resolve({ kind: 'option', index: outcome.index })
+      resolve({ kind: 'answered', answers: pending.answers })
+    }
+
+    if (outcome.kind === 'option') {
       // Escaped like the question card itself — a label whose plain text
       // mentions something tag-shaped must render identically in both.
       await this.sendHtml(
         chatId,
-        `✅ Option ${outcome.index + 1}: ${escapeHtml(pending.options[outcome.index].label)}`
+        `✅ Option ${outcome.index + 1}: ${escapeHtml(question.options[outcome.index].label)}`
       )
-      return
-    }
-    if (outcome.kind === 'custom') {
-      active.pendingAsk = null
-      active.pendingAskResolve = null
-      resolve({ kind: 'custom', text: outcome.text })
+    } else {
       await this.safeSend(chatId, '✅ Got it — using your instructions.')
-      return
     }
-    // reprompt — keep the question pending and tell the user how to answer.
-    await this.safeSend(
-      chatId,
-      outcome.reason === 'out-of-range'
-        ? `⚠️ That isn't one of the options (1–${n}). Reply with a valid number${pending.allowOther ? ', or type your own instructions' : ''}.`
-        : `Please reply with a number between 1 and ${n}.`
-    )
+
+    // More questions? Post the next one and keep the request pending.
+    if (!finished) {
+      pending.current++
+      await this.sendHtml(
+        chatId,
+        formatAskQuestionHtml(
+          pending.questions[pending.current],
+          pending.current,
+          pending.questions.length
+        )
+      )
+    }
   }
 
   /**
@@ -2810,24 +2981,26 @@ function extractVoiceLanguage(rawOutput: string): string {
 }
 
 /**
- * Render an ask_user question as a Telegram HTML message: bold question,
- * optional details, a numbered list (label + description), and a hint on how
- * to answer. The free-text "something else" option isn't numbered — the hint
+ * Render ONE ask_user question as a Telegram HTML message: bold question
+ * (with a "Question i of n" line when the request carries several), optional
+ * details, a numbered list (label + description), and a hint on how to
+ * answer. The free-text "something else" option isn't numbered — the hint
  * tells the user they can just type their own instructions instead.
  */
-function formatAskRequestHtml(req: AskUserRequest): string {
-  const parts: string[] = [`❓ <b>${escapeHtml(req.question)}</b>`]
-  if (req.details) parts.push(escapeHtml(req.details))
-  const list = req.options
+function formatAskQuestionHtml(q: AskUserQuestion, index: number, total: number): string {
+  const parts: string[] = [`❓ <b>${escapeHtml(q.question)}</b>`]
+  if (total > 1) parts.push(`<i>Question ${index + 1} of ${total}</i>`)
+  if (q.details) parts.push(escapeHtml(q.details))
+  const list = q.options
     .map((opt, i) => {
       const head = `<b>${i + 1}.</b> ${escapeHtml(opt.label)}`
       return opt.description ? `${head}\n${escapeHtml(opt.description)}` : head
     })
     .join('\n\n')
   parts.push(list)
-  const n = req.options.length
+  const n = q.options.length
   parts.push(
-    req.allowOther
+    q.allowOther
       ? `<i>Reply with a number (1–${n}) to choose — or just type what you'd rather do.</i>`
       : `<i>Reply with a number (1–${n}) to choose.</i>`
   )

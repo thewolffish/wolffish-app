@@ -1,25 +1,31 @@
 import { cn } from '@lib/utils/cn'
 import { RTL_LOCALES } from '@lib/i18n'
-import type { AskUserOption, AskUserResponse, Segment } from '@preload/index'
+import type { AskUserAnswer, AskUserOption, AskUserResponse, Segment } from '@preload/index'
 import type { AskCardState } from '@providers/flow/useFlow'
 import { useLocale } from '@providers/locale/useLocale'
 import { CheckmarkCircle02Icon, MessageQuestionIcon, SentIcon } from 'hugeicons-react'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 type ToolResultSegment = Extract<Segment, { kind: 'tool_result' }>
 
 /**
- * The agent asks the user a multiple-choice question (the `ask_user` tool).
- * Renders an interactive card in the chat: numbered options each with a
- * title + description, plus an optional free-text "something else" escape
- * hatch. Clicking an option (or sending free-text instructions) answers the
- * question, which resumes the paused agent loop with the user's choice.
+ * The agent asks the user one or more multiple-choice questions (the
+ * `ask_user` tool). Renders one interactive card in the chat: with a single
+ * question it's the classic card — numbered options each with a title +
+ * description, plus an optional free-text "something else" escape hatch;
+ * with several questions a horizontally scrollable row of numbered chip
+ * tabs sits on top, answering a question auto-advances to the next
+ * unanswered one, and the whole card submits once (all answers together)
+ * when the last one is answered. The card keeps its full look after
+ * answering — the chips still flip between questions, each showing its
+ * chosen option highlighted — with a compact summary of every question and
+ * answer appended at the bottom.
  *
  * Two sources feed the card:
- *  - the live `ask` state (the chat:askRequest event) while the question is
- *    open, carrying the agent's optional custom labels for the free-text
- *    option and the user's optimistic selection;
+ *  - the live `ask` state (the chat:askRequest event) while the questions
+ *    are open, carrying the agent's optional custom labels for the free-text
+ *    option and, after submit, the user's optimistic answers;
  *  - the persisted tool_call `args` + `result` segments, used to rebuild the
  *    answered card when a conversation is resumed from history (no live
  *    state). Either is enough to render — the card never depends on both.
@@ -33,13 +39,17 @@ type QuestionData = {
   otherDescription: string
 }
 
+/** One question's answer for display. `text` may be missing when a custom
+ * answer couldn't be recovered from persisted output. */
+type AnswerView = { kind: 'option'; index: number } | { kind: 'custom'; text?: string }
+
 function asString(value: unknown): string {
   return typeof value === 'string' ? value : ''
 }
 
-// Coerce the model's `options` arg into a clean list. Tolerant of an array of
-// {label, description} objects OR bare strings (the schema can't express the
-// nested item shape, so the model occasionally sends either).
+// Coerce a question's `options` into a clean list. Tolerant of an array of
+// {label, description} objects OR bare strings (the model occasionally sends
+// either).
 function parseOptions(raw: unknown): AskUserOption[] {
   if (!Array.isArray(raw)) return []
   const out: AskUserOption[] = []
@@ -56,16 +66,92 @@ function parseOptions(raw: unknown): AskUserOption[] {
   return out
 }
 
-// Recover what the user picked from the persisted tool_result output, so the
-// answered card highlights the right option even after the turn ends or a
-// conversation is resumed from history (the live `ask` selection isn't saved).
-// Mirrors the stable output format the `ask` plugin emits.
-function parseAnswer(output: string | undefined): { index?: number; custom?: boolean } | null {
+type OtherFallbacks = { label: string; description: string }
+
+function parseQuestionItem(raw: unknown, fallbacks: OtherFallbacks): QuestionData | null {
+  if (!raw || typeof raw !== 'object') return null
+  const r = raw as Record<string, unknown>
+  const question = asString(r.question).trim()
+  const options = parseOptions(r.options)
+  if (!question && options.length === 0) return null
+  return {
+    question,
+    details: asString(r.details).trim() || undefined,
+    options,
+    allowOther: r.allow_other !== false,
+    otherLabel: asString(r.other_label).trim() || fallbacks.label,
+    otherDescription: asString(r.other_description).trim() || fallbacks.description
+  }
+}
+
+/**
+ * Recover the question list from the persisted tool_call args: the current
+ * `questions` array, or the legacy single-question shape (top-level
+ * question/options) that older conversations carry.
+ */
+function parseQuestionsFromArgs(
+  args: Record<string, unknown>,
+  fallbacks: OtherFallbacks
+): QuestionData[] {
+  if (Array.isArray(args.questions)) {
+    const out: QuestionData[] = []
+    for (const raw of args.questions) {
+      const q = parseQuestionItem(raw, fallbacks)
+      if (q) out.push(q)
+    }
+    if (out.length > 0) return out
+  }
+  const legacy = parseQuestionItem(args, fallbacks)
+  return legacy ? [legacy] : []
+}
+
+/**
+ * Recover what the user picked from the persisted tool_result output, so an
+ * answered card highlights the right options even after the turn ends or a
+ * conversation is resumed from history (the live `ask` answers aren't
+ * saved). Mirrors the stable output formats the `ask` plugin emits: the
+ * legacy single-question sentence, and the numbered multi-question summary
+ * (whose custom answers are indented three spaces so they can't fake a
+ * question boundary). Returns null when the output doesn't parse — the card
+ * then falls back to showing the raw output.
+ */
+function parseAnswers(output: string | undefined, questionCount: number): AnswerView[] | null {
   if (!output) return null
-  const opt = output.match(/selected option (\d+) of \d+/i)
-  if (opt) return { index: Number(opt[1]) - 1 }
-  if (/instead instructed/i.test(output)) return { custom: true }
-  return null
+
+  if (questionCount === 1) {
+    const opt = output.match(/selected option (\d+) of \d+/i)
+    if (opt) return [{ kind: 'option', index: Number(opt[1]) - 1 }]
+    const custom = output.match(/instead instructed:\n([\s\S]*)$/i)
+    if (custom) return [{ kind: 'custom', text: custom[1] }]
+    return null
+  }
+
+  if (!/^The user answered all \d+ questions:/.test(output)) return null
+  const body = output.replace(/^The user answered all \d+ questions:\s*/, '')
+  // Question blocks start at column 0 as "N. " — indented custom lines can't
+  // match, so the split is safe against numbered lists in the user's text.
+  const blocks = body.split(/\n\n(?=\d+\. )/)
+  if (blocks.length !== questionCount) return null
+
+  const answers: AnswerView[] = []
+  for (const block of blocks) {
+    const opt = block.match(/→ Selected option (\d+) of \d+/)
+    if (opt) {
+      answers.push({ kind: 'option', index: Number(opt[1]) - 1 })
+      continue
+    }
+    const custom = block.match(/→ Answered in their own words:\n([\s\S]*)$/)
+    if (custom) {
+      const text = custom[1]
+        .split('\n')
+        .map((line) => line.replace(/^ {3}/, ''))
+        .join('\n')
+      answers.push({ kind: 'custom', text })
+      continue
+    }
+    return null
+  }
+  return answers
 }
 
 export function QuestionCard({
@@ -82,84 +168,165 @@ export function QuestionCard({
   const { t } = useTranslation()
   const { locale } = useLocale()
   const isRtl = RTL_LOCALES.has(locale)
-  const [otherText, setOtherText] = useState('')
+  const [activeIdx, setActiveIdx] = useState(0)
+  // Answers picked so far, before the single submit (multi-question only —
+  // a one-question card submits on the first pick, like it always has).
+  const [draft, setDraft] = useState<(AskUserAnswer | undefined)[]>([])
+  // Per-question free-text drafts, keyed by question index.
+  const [otherTexts, setOtherTexts] = useState<Record<number, string>>({})
+  // The chip row scrolls horizontally (it never wraps) — keep the active
+  // question's chip in view as answering auto-advances past the edge.
+  const chipsRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    const row = chipsRef.current
+    if (!row || row.children.length === 0) return
+    const chip = row.children[Math.min(activeIdx, row.children.length - 1)] as
+      | HTMLElement
+      | undefined
+    chip?.scrollIntoView({ behavior: 'smooth', inline: 'nearest', block: 'nearest' })
+  }, [activeIdx])
 
-  const otherLabelFallback = t('chat.questionCard.otherLabel')
-  const otherDescriptionFallback = t('chat.questionCard.otherDescription')
+  const fallbacks: OtherFallbacks = {
+    label: t('chat.questionCard.otherLabel'),
+    description: t('chat.questionCard.otherDescription')
+  }
 
-  const data: QuestionData = ask
-    ? {
-        question: ask.question,
-        details: ask.details,
-        options: ask.options,
-        allowOther: ask.allowOther,
-        otherLabel: ask.otherLabel || otherLabelFallback,
-        otherDescription: ask.otherDescription || otherDescriptionFallback
-      }
-    : {
-        question: asString(args.question),
-        details: asString(args.details) || undefined,
-        options: parseOptions(args.options),
-        allowOther: args.allow_other !== false,
-        otherLabel: asString(args.other_label) || otherLabelFallback,
-        otherDescription: asString(args.other_description) || otherDescriptionFallback
-      }
+  const questions: QuestionData[] = ask
+    ? ask.questions.map((q) => ({
+        question: q.question,
+        details: q.details,
+        options: q.options,
+        allowOther: q.allowOther,
+        otherLabel: q.otherLabel || fallbacks.label,
+        otherDescription: q.otherDescription || fallbacks.description
+      }))
+    : parseQuestionsFromArgs(args, fallbacks)
 
-  // Nothing to render if the agent gave us neither a question nor options —
-  // don't surface an empty shell.
-  if (!data.question && data.options.length === 0) return null
+  // Nothing to render if the agent gave us no usable questions — don't
+  // surface an empty shell.
+  if (questions.length === 0) return null
 
+  const total = questions.length
+  const multi = total > 1
   const answered = !!result || !!ask?.answered
-  // Prefer the live selection (instant feedback on click); fall back to parsing
-  // the persisted result so the highlight survives turn-end and history-resume.
-  const parsed = result?.status === 'success' ? parseAnswer(result.output) : null
-  const selectedIndex = ask?.selectedIndex ?? parsed?.index
-  const customAnswer = ask?.customText
-  const answeredByCustom =
-    answered &&
-    selectedIndex === undefined &&
-    (customAnswer !== undefined || parsed?.custom === true)
+  // Prefer the live answers (instant feedback on submit); fall back to
+  // parsing the persisted result so the summary survives turn-end and
+  // history-resume.
+  const answers: AnswerView[] | null =
+    ask?.answers ?? (result?.status === 'success' ? parseAnswers(result.output, total) : null)
 
-  const choose = (index: number): void => {
+  const current = Math.min(activeIdx, total - 1)
+  const active = questions[current]
+  const activeDraft = draft[current]
+  const otherText = otherTexts[current] ?? ''
+
+  /** Record one question's answer, then advance — or submit when done. */
+  const record = (index: number, answer: AskUserAnswer): void => {
     if (answered || !ask) return
-    onRespond(ask.askId, { kind: 'option', index })
+    const next = [...draft]
+    next[index] = answer
+    setDraft(next)
+    for (let step = 1; step <= total; step++) {
+      const i = (index + step) % total
+      if (!next[i]) {
+        setActiveIdx(i)
+        return
+      }
+    }
+    onRespond(ask.askId, { kind: 'answered', answers: next as AskUserAnswer[] })
   }
 
   const submitOther = (): void => {
-    if (answered || !ask) return
     const text = otherText.trim()
     if (!text) return
-    onRespond(ask.askId, { kind: 'custom', text })
+    record(current, { kind: 'custom', text })
   }
+
+  // The question shown in the body — before submit it follows the user's
+  // clicks; after, the chips still flip between questions, each rendering
+  // its chosen option highlighted exactly like the classic answered card.
+  const activeAnswer: AnswerView | undefined = answered ? answers?.[current] : activeDraft
+  const selectedIndex = activeAnswer?.kind === 'option' ? activeAnswer.index : undefined
+  const customAnswer = activeAnswer?.kind === 'custom' ? activeAnswer.text : undefined
+  const answeredByCustom = answered && activeAnswer?.kind === 'custom'
+  // The "something else" box highlights for the submitted custom answer AND
+  // for a pre-submit draft pick the user is revisiting via the tabs.
+  const otherChosen = answeredByCustom || (!answered && activeDraft?.kind === 'custom')
 
   return (
     <div
       dir={isRtl ? 'rtl' : 'ltr'}
       className="border-border bg-surface w-full max-w-[85%] self-start rounded-2xl border px-4 py-3 text-sm"
     >
+      {multi ? (
+        <div className="mb-3 flex items-start gap-2">
+          {/* One line, never wraps: the row grows to the chips' total width
+              and scrolls horizontally inside the available card width. The
+              scrollbar is hidden (still scrollable by wheel/drag + the
+              scrollIntoView effect) — the global stylesheet otherwise
+              reserves an 8px gutter inside the scroller. The count label is
+              pinned to its own chip-height (h-6) line box at the top of the
+              row, so its text centers on the CHIPS themselves — exact even
+              if a scrollbar gutter makes the scroller taller than a chip. */}
+          <div
+            ref={chipsRef}
+            className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          >
+            {questions.map((_, i) => {
+              const isActive = i === current
+              const isDone = answered ? !!answers?.[i] : !!draft[i]
+              return (
+                <button
+                  key={i}
+                  type="button"
+                  title={t('chat.questionCard.questionTab', { number: i + 1 })}
+                  onClick={() => setActiveIdx(i)}
+                  className={cn(
+                    'flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md border text-xs font-semibold',
+                    isActive
+                      ? 'border-accent bg-accent/10 text-accent'
+                      : isDone
+                        ? 'border-accent/40 bg-accent text-white'
+                        : 'border-border bg-bg/40 text-muted hover:bg-bg'
+                  )}
+                >
+                  {isDone && !isActive ? <CheckmarkCircle02Icon size={13} /> : i + 1}
+                </button>
+              )
+            })}
+          </div>
+          <span className="text-muted inline-flex h-6 shrink-0 items-center text-xs">
+            {t('chat.questionCard.questionCount', { current: current + 1, total })}
+          </span>
+        </div>
+      ) : null}
+
       <div className="mb-3 flex items-start gap-2">
         <MessageQuestionIcon size={18} className="text-accent mt-0.5 shrink-0" />
         <div className="min-w-0 flex-1">
-          <p className="text-fg text-base font-semibold leading-snug">{data.question}</p>
-          {data.details ? (
-            <p className="text-muted mt-1 text-xs leading-snug">{data.details}</p>
+          <p className="text-fg text-base font-semibold leading-snug">{active.question}</p>
+          {active.details ? (
+            <p className="text-muted mt-1 text-xs leading-snug">{active.details}</p>
           ) : null}
         </div>
       </div>
 
       <div className="flex flex-col gap-1.5">
-        {data.options.map((option, index) => {
-          const isChosen = answered && selectedIndex === index
+        {active.options.map((option, index) => {
+          const isChosen = selectedIndex === index
           const dimmed = answered && !isChosen
           return (
             <button
               key={index}
               type="button"
               disabled={answered}
-              onClick={() => choose(index)}
+              onClick={() => record(current, { kind: 'option', index })}
               className={cn(
                 'flex w-full items-start gap-3 rounded-xl border px-3 py-2.5 text-start',
-                isChosen ? 'border-accent bg-accent/10' : 'border-border bg-bg/40 hover:bg-bg',
+                isChosen ? 'border-accent bg-accent/10' : 'border-border bg-bg/40',
+                // Hover feedback only while the buttons are actually live —
+                // :hover still paints on disabled buttons otherwise.
+                !answered && !isChosen && 'hover:bg-bg',
                 dimmed && 'opacity-50',
                 !answered && 'cursor-pointer',
                 answered && 'cursor-default'
@@ -185,11 +352,11 @@ export function QuestionCard({
           )
         })}
 
-        {data.allowOther ? (
+        {active.allowOther ? (
           <div
             className={cn(
               'rounded-xl border px-3 py-2.5',
-              answeredByCustom ? 'border-accent bg-accent/10' : 'border-border bg-bg/40',
+              otherChosen ? 'border-accent bg-accent/10' : 'border-border bg-bg/40',
               answered && !answeredByCustom && 'opacity-50'
             )}
           >
@@ -197,15 +364,15 @@ export function QuestionCard({
               <span
                 className={cn(
                   'mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-xs font-semibold',
-                  answeredByCustom ? 'bg-accent text-white' : 'bg-primary/10 text-primary'
+                  otherChosen ? 'bg-accent text-white' : 'bg-primary/10 text-primary'
                 )}
               >
-                {answeredByCustom ? <CheckmarkCircle02Icon size={14} /> : data.options.length + 1}
+                {otherChosen ? <CheckmarkCircle02Icon size={14} /> : active.options.length + 1}
               </span>
               <span className="min-w-0 flex-1">
-                <span className="text-fg block font-medium leading-snug">{data.otherLabel}</span>
+                <span className="text-fg block font-medium leading-snug">{active.otherLabel}</span>
                 <span className="text-muted mt-0.5 block text-xs leading-snug">
-                  {data.otherDescription}
+                  {active.otherDescription}
                 </span>
               </span>
             </div>
@@ -221,7 +388,9 @@ export function QuestionCard({
                 <textarea
                   dir={isRtl ? 'rtl' : 'ltr'}
                   value={otherText}
-                  onChange={(e) => setOtherText(e.target.value)}
+                  onChange={(e) =>
+                    setOtherTexts((prev) => ({ ...prev, [current]: e.target.value }))
+                  }
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && !e.shiftKey) {
                       e.preventDefault()
@@ -242,7 +411,7 @@ export function QuestionCard({
                   title={t('chat.questionCard.submit')}
                   className={cn(
                     'bg-primary text-primary-fg flex h-9 w-9 shrink-0 items-center justify-center rounded-lg',
-                    'hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40'
+                    'enabled:hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40'
                   )}
                 >
                   <SentIcon size={16} />
@@ -253,9 +422,47 @@ export function QuestionCard({
         ) : null}
       </div>
 
-      {/* Always confirm the answer at the bottom once answered — useful even
-          when the chosen option is already highlighted above. */}
-      {answered && result?.output ? (
+      {/* Always confirm the answers at the bottom once answered — useful even
+          when the chosen options are highlighted above. Single question keeps
+          the classic one-line footer; several get a compact per-question
+          summary (falling back to the raw output when a persisted result
+          can't be parsed back into per-question answers). */}
+      {answered && multi ? (
+        answers ? (
+          <div className="border-border/60 mt-3 border-t pt-2.5">
+            <p className="text-muted mb-1.5 text-xs font-medium">
+              {t('chat.questionCard.yourAnswers')}
+            </p>
+            <div className="flex flex-col gap-1.5">
+              {questions.map((q, i) => {
+                const answer = answers[i]
+                const chosen = answer?.kind === 'option' ? q.options[answer.index] : undefined
+                return (
+                  <div key={i} className="flex items-start gap-2 text-xs leading-snug">
+                    <span className="bg-primary/10 text-primary mt-px flex h-4 w-4 shrink-0 items-center justify-center rounded text-[10px] font-semibold">
+                      {i + 1}
+                    </span>
+                    <span className="text-muted min-w-0">
+                      {q.question}
+                      <span className="text-fg ms-1.5 font-medium whitespace-pre-wrap">
+                        {chosen
+                          ? chosen.label
+                          : answer?.kind === 'custom'
+                            ? (answer.text ?? '')
+                            : ''}
+                      </span>
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        ) : result?.output ? (
+          <p className="text-muted mt-3 text-xs leading-snug whitespace-pre-wrap">
+            {result.output}
+          </p>
+        ) : null
+      ) : answered && result?.output ? (
         <p className="text-muted mt-3 text-xs leading-snug">
           <span className="font-medium">{t('chat.questionCard.yourAnswer')}: </span>
           {result.output}

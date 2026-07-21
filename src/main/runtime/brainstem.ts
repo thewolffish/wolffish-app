@@ -52,6 +52,10 @@ export type BrainstemJob = {
    * global mode for this job's runs; absent ⇒ follows the global mode.
    */
   mode?: 'single' | 'workflow' | null
+  /** Project binding (`project: <id>` marker) — runs get the project overlay. */
+  project?: string | null
+  /** Emoji (`icon: …` marker) stamped on the run's conversation for the rail badge. */
+  icon?: string | null
 }
 
 export type CompactionResult = {
@@ -145,6 +149,10 @@ export type ParsedSchedule = {
   runAt?: number | null
   /** Per-job chat mode from the `mode: …` marker line; absent ⇒ global. */
   mode?: 'single' | 'workflow' | null
+  /** Project id from the `project: …` marker line; absent ⇒ no binding. */
+  project?: string | null
+  /** Emoji from the `icon: …` marker line; absent ⇒ none. */
+  icon?: string | null
 }
 
 export type RunningJobInfo = {
@@ -366,7 +374,9 @@ export class Brainstem {
           label: schedule.label,
           body: schedule.body,
           task: null,
-          mode: schedule.mode ?? null
+          mode: schedule.mode ?? null,
+          project: schedule.project ?? null,
+          icon: schedule.icon ?? null
         })
         continue
       }
@@ -382,14 +392,16 @@ export class Brainstem {
           body: schedule.body,
           task: null,
           runAt: schedule.runAt ?? null,
-          mode: schedule.mode ?? null
+          mode: schedule.mode ?? null,
+          project: schedule.project ?? null,
+          icon: schedule.icon ?? null
         })
         this.scheduleOnce(schedule, runStartup)
         continue
       }
 
       if (!schedule.cron) continue
-      const handler = this.handlerFor(schedule.kind, schedule.body, schedule.label, schedule.mode)
+      const handler = this.handlerFor(schedule.kind, schedule)
       if (!handler) continue
 
       let task: ScheduledTask
@@ -407,7 +419,9 @@ export class Brainstem {
         label: schedule.label,
         body: schedule.body,
         task,
-        mode: schedule.mode ?? null
+        mode: schedule.mode ?? null,
+        project: schedule.project ?? null,
+        icon: schedule.icon ?? null
       })
     }
 
@@ -417,7 +431,7 @@ export class Brainstem {
     if (runStartup) {
       await this.runCatchUp(schedules)
       for (const startup of startupJobs) {
-        const handler = this.handlerFor(startup.kind, startup.body, startup.label, startup.mode)
+        const handler = this.handlerFor(startup.kind, startup)
         if (!handler) continue
         this.enqueue(startup, handler)
       }
@@ -699,7 +713,7 @@ export class Brainstem {
    */
   private scheduleOnce(schedule: ParsedSchedule, runStartup: boolean): void {
     if (this.firedOnce.has(schedule.label)) return
-    const handler = this.handlerFor('once', schedule.body, schedule.label, schedule.mode)
+    const handler = this.handlerFor('once', schedule)
     if (!handler) return
     const runAt = schedule.runAt ?? 0
     const delay = runAt - Date.now()
@@ -789,7 +803,7 @@ export class Brainstem {
       // Missed iff the most recent scheduled fire happened during the downtime
       // window (after we went down, within 24h).
       if (lastFire !== null && lastFire > windowStart) {
-        const handler = this.handlerFor(s.kind, s.body, s.label, s.mode)
+        const handler = this.handlerFor(s.kind, s)
         if (!handler) continue
         this.corpus?.emit('brainstem.jobCatchup', {
           job: s.id,
@@ -900,7 +914,7 @@ export class Brainstem {
         error: `Automation "${job.label}" has no instruction body.`
       }
     }
-    const handler = this.handlerFor(job.type, job.body, job.label, job.mode)
+    const handler = this.handlerFor(job.type, job)
     if (!handler)
       return {
         ok: false,
@@ -914,7 +928,9 @@ export class Brainstem {
       label: job.label,
       body: job.body,
       runAt: job.runAt ?? null,
-      mode: job.mode ?? null
+      mode: job.mode ?? null,
+      project: job.project ?? null,
+      icon: job.icon ?? null
     }
     const accepted = this.enqueue(schedule, handler)
     if (!accepted) {
@@ -939,7 +955,9 @@ export class Brainstem {
     instruction: string,
     label: string,
     key: string,
-    mode?: 'single' | 'workflow' | null
+    mode?: 'single' | 'workflow' | null,
+    icon?: string | null,
+    project?: string | null
   ): { ok: boolean; started: boolean; error?: string } {
     if (!this.agent) return { ok: false, started: false, error: 'The agent is not ready yet.' }
     if (instruction.trim().length === 0) {
@@ -960,7 +978,7 @@ export class Brainstem {
       mode: mode ?? null
     }
     const accepted = this.enqueue(schedule, () =>
-      this.runHeartbeatJob(instruction, label, 'procedure', mode)
+      this.runHeartbeatJob(instruction, label, 'procedure', mode, project, icon)
     )
     if (!accepted) {
       return {
@@ -986,31 +1004,49 @@ export class Brainstem {
 
   private handlerFor(
     _kind: ScheduleKind,
-    body: string,
-    label: string,
-    mode?: 'single' | 'workflow' | null
+    source: {
+      body: string
+      label: string
+      mode?: 'single' | 'workflow' | null
+      project?: string | null
+      icon?: string | null
+    }
   ): (() => Promise<void>) | null {
-    if (body.trim().length === 0) return null
-    return () => this.runHeartbeatJob(body, label, 'heartbeat', mode)
+    if (source.body.trim().length === 0) return null
+    return () =>
+      this.runHeartbeatJob(
+        source.body,
+        source.label,
+        'heartbeat',
+        source.mode,
+        source.project,
+        source.icon
+      )
   }
 
   private async runHeartbeatJob(
     instruction: string,
     label: string,
     channel: 'heartbeat' | 'procedure' = 'heartbeat',
-    mode?: 'single' | 'workflow' | null
+    mode?: 'single' | 'workflow' | null,
+    project?: string | null,
+    icon?: string | null
   ): Promise<void> {
     if (!this.agent) return
     // Serialization is handled by the drain loop, so this just runs the turn.
     // `channel` stamps the sealed conversation so a procedure run reads as a
-    // procedure (not an automation) in history.
+    // procedure (not an automation) in history; `project` binds the run to a
+    // project (overlay + conversation registration) and `icon` stamps the
+    // conversation's rail-badge emoji.
     const startedAt = Date.now()
     try {
       await this.agent.processAutonomous({
         instruction,
         jobLabel: label,
         channel,
-        mode: mode ?? undefined
+        mode: mode ?? undefined,
+        projectId: project ?? undefined,
+        icon: icon ?? undefined
       })
       await this.appendRunHistory(label, channel, 'ok', Date.now() - startedAt)
     } catch (err) {
@@ -1222,7 +1258,7 @@ export function parseHeartbeat(raw: string): ParsedSchedule[] {
     if (!heading) continue
 
     const headingText = heading[1]
-    const { body, mode } = splitModeMarker(collectBody(lines, i + 1))
+    const { body, mode, project, icon } = splitMarkers(collectBody(lines, i + 1))
     const parsed = matchSchedule(headingText)
 
     if (!parsed) continue
@@ -1238,7 +1274,9 @@ export function parseHeartbeat(raw: string): ParsedSchedule[] {
       label: headingText,
       body,
       runAt: parsed.runAt ?? null,
-      mode
+      mode,
+      project,
+      icon
     })
   }
 
@@ -1246,26 +1284,66 @@ export function parseHeartbeat(raw: string): ParsedSchedule[] {
 }
 
 /**
- * A job's optional per-job chat mode rides its FIRST body line as a plain
- * `mode: single` / `mode: workflow` marker (headings are the schedule+label
- * identity, and HTML comments are stripped wholesale before parsing — neither
- * can carry it). The marker is split OFF the body here so it never leaks into
- * the instruction the model receives. The renderer's sidebar parser and the
- * automations plugin's block parser mirror this rule — keep all three in sync.
+ * A job's optional per-job settings ride its LEADING body lines as plain
+ * markers — `mode: single|workflow`, `project: <id>`, `icon: <emoji>` — in
+ * any order, with blank lines allowed between them (headings are the
+ * schedule+label identity, and HTML comments are stripped wholesale before
+ * parsing — neither can carry them). The markers are split OFF the body here
+ * so they never leak into the instruction the model receives. The renderer's
+ * Automations-page parser and the automations plugin's block parser mirror
+ * this rule — keep all three in sync.
  */
 export const MODE_MARKER_RE = /^mode:\s*(single|workflow)\s*$/i
+export const PROJECT_MARKER_RE = /^project:\s*(\S+)\s*$/i
+export const ICON_MARKER_RE = /^icon:\s*(\S+)\s*$/i
 
+export function splitMarkers(body: string): {
+  body: string
+  mode: 'single' | 'workflow' | null
+  project: string | null
+  icon: string | null
+} {
+  const lines = body.split('\n')
+  let mode: 'single' | 'workflow' | null = null
+  let project: string | null = null
+  let icon: string | null = null
+  let i = 0
+  while (i < lines.length) {
+    const line = lines[i].trim()
+    if (line === '') {
+      i++
+      continue
+    }
+    const m = line.match(MODE_MARKER_RE)
+    if (m) {
+      mode = m[1].toLowerCase() as 'single' | 'workflow'
+      i++
+      continue
+    }
+    const p = line.match(PROJECT_MARKER_RE)
+    if (p) {
+      project = p[1]
+      i++
+      continue
+    }
+    const ic = line.match(ICON_MARKER_RE)
+    if (ic) {
+      icon = ic[1]
+      i++
+      continue
+    }
+    break
+  }
+  return { body: lines.slice(i).join('\n').trim(), mode, project, icon }
+}
+
+/** Back-compat shim over {@link splitMarkers} for mode-only callers. */
 export function splitModeMarker(body: string): {
   body: string
   mode: 'single' | 'workflow' | null
 } {
-  const lines = body.split('\n')
-  const first = lines[0]?.match(MODE_MARKER_RE)
-  if (!first) return { body, mode: null }
-  return {
-    body: lines.slice(1).join('\n').trim(),
-    mode: first[1].toLowerCase() as 'single' | 'workflow'
-  }
+  const { body: rest, mode } = splitMarkers(body)
+  return { body: rest, mode }
 }
 
 function collectBody(lines: string[], startIndex: number): string {

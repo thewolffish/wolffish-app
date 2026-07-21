@@ -48,6 +48,7 @@ export type ConversationRow = {
   messageCount: number
   sizeBytes: number
   sealed: number
+  projectId: string | null
 }
 
 export type UsageRow = {
@@ -294,6 +295,7 @@ type RawConversation = {
   createdAt?: number
   updatedAt?: number
   sealed?: boolean
+  projectId?: string
   messages?: RawMessage[]
 }
 
@@ -372,7 +374,8 @@ export function ingestConversation(rel: string, raw: string): IngestResult {
       updatedAt: parsed.updatedAt ?? 0,
       messageCount: messages.length,
       sizeBytes: raw.length,
-      sealed: parsed.sealed ? 1 : 0
+      sealed: parsed.sealed ? 1 : 0,
+      projectId: parsed.projectId ?? null
     }
   }
 }

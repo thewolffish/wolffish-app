@@ -76,7 +76,7 @@ triggers:
   - edit config
 tools:
   - name: file_read
-    description: Read a file's text contents, optionally restricted to a line range.
+    description: Read a text file. With startLine/endLine it streams exactly that range — any line depth in a file of any size is reachable. Without a range, large files return only a head preview plus size facts; page through them with explicit ranges, and search them with shell (rg -n) for authoritative match counts.
     parameters:
       path:
         type: string
@@ -102,6 +102,12 @@ tools:
         enum:
           - overwrite
           - append
+  - name: image_view
+    description: View an image file — returns the actual pixels in the tool result, downscaled to fit 1024px so any size is safe to open. Use it whenever you need to SEE image content; attached images are never auto-loaded into context. Requires a vision-capable model (on text-only models the pixels are stripped — use shell tools like exiftool/sips for metadata instead).
+    parameters:
+      path:
+        type: string
+        description: Absolute path or path starting with ~ to the image file
   - name: file_patch
     description: Find a literal string in a file and replace every occurrence.
     parameters:
@@ -114,6 +120,8 @@ tools:
       replace:
         type: string
         description: Replacement text
+requires:
+  - node
 danger_patterns:
   - pattern: '\.\./'
     level: destructive
@@ -131,7 +139,7 @@ confirm_patterns:
 
 ## Interface
 
-- Tools: `file_read`, `file_write`, `file_patch`
+- Tools: `file_read`, `file_write`, `file_patch`, `image_view`
 - Paths may use `~` for the user's home directory.
 - Writes always create parent directories as needed.
 

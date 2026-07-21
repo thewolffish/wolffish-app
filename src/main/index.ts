@@ -50,6 +50,14 @@ import { notionService, type NotionStatus, type NotionTestResult } from '@main/n
 import { configureSummarizer, queueConversationSummarization } from '@main/conversation-summarizer'
 import { createProcedure, deleteProcedure, listProcedures, updateProcedure } from '@main/procedures'
 import {
+  attachFilesToProject,
+  createProject,
+  deleteProject,
+  listProjects,
+  updateProject,
+  type ProjectFileRef
+} from '@main/projects'
+import {
   defaultModelsFolder,
   detect as detectOllama,
   enrichWithDetails,
@@ -2489,6 +2497,28 @@ app.whenReady().then(async () => {
   // Procedures — the same store the renderer/IPC use, plus a detached run that
   // fires a procedure's prompt through the Brainstem's single-flight queue so it
   // runs exactly like a triggered automation (sealed conversation, in history).
+  agent.cerebellum.setProjectsHost({
+    list: () => listProjects(),
+    create: (payload) => createProject(payload),
+    update: (id, patch) => updateProject({ id, ...patch }),
+    delete: async (id) => {
+      await deleteProject(id)
+      return { ok: true as const }
+    },
+    attachFiles: (projectId, paths) => attachFilesToProject(projectId, paths),
+    conversationsFor: async (projectId) => {
+      const metas = await listConversations()
+      return metas
+        .filter((m) => m.projectId === projectId)
+        .map((m) => ({
+          id: m.id,
+          title: m.title,
+          updatedAt: m.updatedAt,
+          messageCount: m.messageCount
+        }))
+    }
+  })
+
   agent.cerebellum.setProceduresHost({
     list: () => listProcedures(),
     create: (title, prompt) => createProcedure({ title, prompt }),
@@ -2511,7 +2541,9 @@ app.whenReady().then(async () => {
         proc.prompt,
         proc.title || 'Procedure',
         `procedure:${proc.id}`,
-        proc.mode ?? null
+        proc.mode ?? null,
+        proc.icon || '📋',
+        proc.projectId ?? null
       )
     }
   })
@@ -3070,19 +3102,73 @@ app.whenReady().then(async () => {
   ipcMain.handle('procedures:list', () => listProcedures())
   ipcMain.handle(
     'procedures:create',
-    (_event, payload: { title: string; prompt: string; mode?: 'single' | 'workflow' }) =>
-      createProcedure(payload)
+    (
+      _event,
+      payload: {
+        title: string
+        prompt: string
+        mode?: 'single' | 'workflow'
+        icon?: string
+        projectId?: string
+      }
+    ) => createProcedure(payload)
   )
   ipcMain.handle(
     'procedures:update',
     (
       _event,
-      payload: { id: string; title?: string; prompt?: string; mode?: 'single' | 'workflow' }
+      payload: {
+        id: string
+        title?: string
+        prompt?: string
+        mode?: 'single' | 'workflow'
+        icon?: string
+        projectId?: string
+      }
     ) => updateProcedure(payload)
   )
   ipcMain.handle('procedures:delete', async (_event, id: string) => {
     await deleteProcedure(id)
     return { ok: true as const }
+  })
+
+  // Projects — same inert-data shape as procedures (flat JSON list, no push
+  // events); the file picker runs main-side because only main has dialog.
+  ipcMain.handle('projects:list', () => listProjects())
+  ipcMain.handle(
+    'projects:create',
+    (_event, payload: { title: string; icon?: string; instructions?: string }) =>
+      createProject(payload)
+  )
+  ipcMain.handle(
+    'projects:update',
+    (
+      _event,
+      payload: {
+        id: string
+        title?: string
+        icon?: string
+        instructions?: string
+        files?: ProjectFileRef[]
+      }
+    ) => updateProject(payload)
+  )
+  ipcMain.handle('projects:delete', async (_event, id: string) => {
+    await deleteProject(id)
+    return { ok: true as const }
+  })
+  // Pick + COPY in one step: chosen files are copied into the project's
+  // uploads/project-<id>/ dir (uniform with conversation uploads) and
+  // attached; returns the updated project, or null on cancel.
+  ipcMain.handle('projects:pickFiles', async (_event, projectId: string) => {
+    const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+    if (!win) return null
+    const result = await dialog.showOpenDialog(win, {
+      properties: ['openFile', 'multiSelections']
+    })
+    if (result.canceled || result.filePaths.length === 0) return null
+    const attached = await attachFilesToProject(projectId, result.filePaths)
+    return attached.project
   })
 
   // Memory reindex — the cortex search index is rebuilt from scratch after an
@@ -3113,6 +3199,7 @@ app.whenReady().then(async () => {
           title: r.title,
           updatedAt: r.updatedAt,
           channel: r.channel as ConversationMeta['channel'],
+          projectId: r.projectId,
           messageCount: r.messageCount
         }))
       }
@@ -3480,6 +3567,7 @@ app.whenReady().then(async () => {
         workingFolders?: string[]
         thinkingMode?: string
         modeOverride?: 'single' | 'workflow'
+        projectId?: string | null
       }
     ) => electronChannel.send(e.sender, payload)
   )

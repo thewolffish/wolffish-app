@@ -1077,7 +1077,10 @@ function isAbortError(err: unknown): boolean {
 }
 
 const TRANSIENT_STATUSES = new Set([429, 500, 502, 503, 504, 529])
-const HARD_STATUSES = new Set([400, 401, 403, 404])
+// 413 (payload too large) is hard: retrying re-uploads the same oversized
+// body through the whole backoff ladder — minutes of silent hang for a
+// request that can never succeed. Same for 422 (unprocessable payload).
+const HARD_STATUSES = new Set([400, 401, 403, 404, 413, 422])
 
 function classifyError(err: unknown): { statusCode: number | null; errorClass: ErrorClass } {
   const message = err instanceof Error ? err.message : String(err)

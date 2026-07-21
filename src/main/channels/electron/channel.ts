@@ -58,6 +58,7 @@ export class ElectronChannel {
       workingFolders?: string[]
       thinkingMode?: string
       modeOverride?: 'single' | 'workflow'
+      projectId?: string | null
     }
   ): { turnId: string; ok: true } {
     const conversationId = payload.conversationId ?? null
@@ -73,6 +74,7 @@ export class ElectronChannel {
       conversationId,
       userMessageId: payload.userMessageId,
       workingFolders: payload.workingFolders,
+      projectId: payload.projectId,
       thinkingMode: (payload.thinkingMode as TurnSendOptions['thinkingMode']) ?? undefined,
       modeOverride: payload.modeOverride,
       makeSink: ({ turnId, conversationId: cid }) => this.createSink(turnId, cid, sender)
@@ -244,12 +246,7 @@ export class ElectronChannel {
             conversationId,
             id: req.id,
             toolCallId: req.toolCallId,
-            question: req.question,
-            details: req.details,
-            options: req.options,
-            allowOther: req.allowOther,
-            otherLabel: req.otherLabel,
-            otherDescription: req.otherDescription
+            questions: req.questions
           })
         })
       },

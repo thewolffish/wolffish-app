@@ -6,6 +6,8 @@
 // Tools:
 //   - send_file: deliver a file to the user as a native attachment on
 //     whatever channel they're on (in-app, WhatsApp, Telegram).
+//   - show_path: push an openable location card for a folder/file on disk
+//     into the in-app chat (folder → Open, file → Reveal in folder).
 
 import { existsSync } from 'node:fs'
 import { copyFile, mkdir, stat } from 'node:fs/promises'
@@ -113,6 +115,27 @@ async function sendFile(args) {
   return { success: true, output: `[wolffish-output: ${markerPath} (${type})]` }
 }
 
+async function showPath(args) {
+  const input = resolveInput(args?.path ?? args?.file)
+  if (!input) return { success: false, error: 'path is required (folder or file to show)' }
+  let st
+  try {
+    st = await stat(input)
+  } catch {
+    return { success: false, error: `path not found: ${input}` }
+  }
+  // The marker is what the in-app renderer parses into the openable location
+  // card (folder → Open, file → Reveal in folder). Emit it as the whole
+  // output so nothing leaks as stray text. The type is captured at call time
+  // so a card in a resumed conversation still knows what it pointed at after
+  // the path is deleted (it renders disabled with an "unavailable" note).
+  // Channels don't recognize it — nothing to open on WhatsApp/Telegram.
+  return {
+    success: true,
+    output: `[wolffish-path: ${input} (${st.isDirectory() ? 'folder' : 'file'})]`
+  }
+}
+
 function describeAction(toolName, args) {
   if (toolName === 'send_file') {
     const f = String(args?.file ?? args?.path ?? '').trim()
@@ -121,6 +144,16 @@ function describeAction(toolName, args) {
       description: f
         ? `Deliver ${path.basename(f)} to the conversation`
         : 'Deliver a file to the conversation',
+      risk: 'low'
+    }
+  }
+  if (toolName === 'show_path') {
+    const p = String(args?.path ?? args?.file ?? '').trim()
+    return {
+      title: 'Show location',
+      description: p
+        ? `Show ${path.basename(p.replace(/[/\\]+$/, '')) || p} as an openable card`
+        : 'Show a location as an openable card',
       risk: 'low'
     }
   }
@@ -143,6 +176,21 @@ const toolDefinitions = [
       },
       required: ['file']
     }
+  },
+  {
+    name: 'show_path',
+    description:
+      'Push an openable location card for a folder or file on disk into the in-app chat: a folder gets an Open button (opens in the OS file manager), a file gets a Reveal button (opens its folder with the file selected). The path must exist. In-app desktop chat only — on WhatsApp/Telegram nothing renders, so name the path in prose there instead.',
+    parameters: {
+      type: 'object',
+      properties: {
+        path: {
+          type: 'string',
+          description: 'Folder or file to show. Absolute, ~/-relative, or workspace-relative.'
+        }
+      },
+      required: ['path']
+    }
   }
 ]
 
@@ -154,6 +202,8 @@ const plugin = {
     switch (toolName) {
       case 'send_file':
         return sendFile(args)
+      case 'show_path':
+        return showPath(args)
       default:
         return { success: false, error: `utilities: unknown tool ${toolName}` }
     }

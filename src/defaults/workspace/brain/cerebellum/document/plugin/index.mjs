@@ -10,7 +10,6 @@ import mammoth from 'mammoth'
 import TurndownService from 'turndown'
 import AdmZip from 'adm-zip'
 
-const MAX_FILE_SIZE = 100 * 1024 * 1024
 
 const toolDefinitions = [
   {
@@ -165,11 +164,9 @@ function resolvePath(input) {
   return path.resolve(input)
 }
 
+/** Existence probe (throws ENOENT early with a clean message); never a size gate. */
 async function checkFileSize(filePath) {
   const stat = await fs.stat(filePath)
-  if (stat.size > MAX_FILE_SIZE) {
-    throw new Error(`File exceeds 100MB limit (${(stat.size / 1024 / 1024).toFixed(1)}MB)`)
-  }
   return stat.size
 }
 

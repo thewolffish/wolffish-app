@@ -411,6 +411,10 @@ export type ConversationFile = {
   createdAt: number
   updatedAt: number
   channel?: ConversationChannel
+  /** Binds this conversation to a project (dual decl — see src/main/conversations.ts). */
+  projectId?: string
+  /** Source emoji (automation/procedure icon) for the rail's number-chip badge. */
+  icon?: string
   sealed?: boolean
   workingFolder?: string[] | null
   /** Legacy meter snapshot — superseded by `stats.meter`, still read as a fallback. */
@@ -433,6 +437,9 @@ export type ConversationMeta = {
   title: string
   updatedAt: number
   channel?: ConversationChannel
+  projectId?: string
+  /** Source emoji (automation/procedure icon) for the rail's number-chip badge. */
+  icon?: string
   messageCount: number
 }
 
@@ -536,25 +543,36 @@ export type AskUserOption = {
   description?: string
 }
 
-/** The user's answer to a question card, sent back to the main process. */
-export type AskUserResponse =
-  | { kind: 'option'; index: number }
-  | { kind: 'custom'; text: string }
-  | { kind: 'canceled' }
-  | { kind: 'unsupported' }
-
-/** Emitted when the agent asks the user a multiple-choice question. */
-export type ChatAskRequestEvent = {
-  turnId: string
-  conversationId: string | null
-  id: string
-  toolCallId: string
+/** One question on an ask-the-user card. A card carries 1..N of these. */
+export type AskUserQuestion = {
   question: string
   details?: string
   options: AskUserOption[]
   allowOther: boolean
   otherLabel?: string
   otherDescription?: string
+}
+
+/** The user's answer to ONE question on the card. */
+export type AskUserAnswer = { kind: 'option'; index: number } | { kind: 'custom'; text: string }
+
+/**
+ * The user's response to a whole question card, sent back to the main
+ * process once — `answers[i]` answers `questions[i]`, and the card only
+ * submits when every question is answered.
+ */
+export type AskUserResponse =
+  | { kind: 'answered'; answers: AskUserAnswer[] }
+  | { kind: 'canceled' }
+  | { kind: 'unsupported' }
+
+/** Emitted when the agent asks the user multiple-choice question(s). */
+export type ChatAskRequestEvent = {
+  turnId: string
+  conversationId: string | null
+  id: string
+  toolCallId: string
+  questions: AskUserQuestion[]
 }
 
 export type ChatCredentialBlockedEvent = {
@@ -733,6 +751,8 @@ export type ChatApi = {
     thinkingMode?: ThinkingMode
     /** Per-turn chat-mode override (procedure Play honors the procedure's stamp). */
     modeOverride?: 'single' | 'workflow'
+    /** Project this conversation runs inside — overlays its context on the turn. */
+    projectId?: string | null
   }) => Promise<{ turnId: string; ok: boolean; error?: string }>
   /** Cancel one conversation's in-flight turn; omitted id cancels all. */
   cancel: (payload?: { conversationId?: string | null }) => Promise<{ canceled: boolean }>
@@ -910,6 +930,10 @@ export type Procedure = {
   prompt: string
   /** The procedure's own chat mode; absent (legacy rows) ⇒ follows global. */
   mode?: 'single' | 'workflow'
+  /** Emoji shown on the card; absent (legacy rows) ⇒ the page's default. */
+  icon?: string
+  /** Project binding — runs get the project overlay and register under it. */
+  projectId?: string
   createdAt: number
   updatedAt: number
 }
@@ -920,14 +944,54 @@ export type ProceduresApi = {
     title: string
     prompt: string
     mode?: 'single' | 'workflow'
+    icon?: string
+    projectId?: string
   }) => Promise<Procedure>
   update: (payload: {
     id: string
     title?: string
     prompt?: string
     mode?: 'single' | 'workflow'
+    icon?: string
+    projectId?: string
   }) => Promise<Procedure>
   delete: (id: string) => Promise<{ ok: true }>
+}
+
+export type ProjectFileRef = {
+  /** Absolute path inside the workspace — attaching COPIES the source into uploads/project-<id>/ (dual decl — see src/main/projects.ts). */
+  path: string
+  name: string
+}
+
+export type Project = {
+  id: string
+  title: string
+  /** Emoji icon (native emoji set — universal across OSes). */
+  icon: string
+  instructions: string
+  files: ProjectFileRef[]
+  createdAt: number
+  updatedAt: number
+}
+
+export type ProjectsApi = {
+  list: () => Promise<Project[]>
+  create: (payload: { title: string; icon?: string; instructions?: string }) => Promise<Project>
+  update: (payload: {
+    id: string
+    title?: string
+    icon?: string
+    instructions?: string
+    files?: ProjectFileRef[]
+  }) => Promise<Project>
+  delete: (id: string) => Promise<{ ok: true }>
+  /**
+   * Native multi-select picker that COPIES the chosen files into the
+   * project's uploads dir and attaches them. Returns the updated project,
+   * or null on cancel.
+   */
+  pickFiles: (projectId: string) => Promise<Project | null>
 }
 
 export type ReindexStatus = {
@@ -1541,6 +1605,7 @@ export type WolffishApi = {
   viewer: ViewerApi
   heartbeat: HeartbeatApi
   procedures: ProceduresApi
+  projects: ProjectsApi
   reindex: ReindexApi
   app: AppApi
   data: DataApi
@@ -1674,6 +1739,13 @@ const api: WolffishApi = {
     create: (payload) => ipcRenderer.invoke('procedures:create', payload),
     update: (payload) => ipcRenderer.invoke('procedures:update', payload),
     delete: (id) => ipcRenderer.invoke('procedures:delete', id)
+  },
+  projects: {
+    list: () => ipcRenderer.invoke('projects:list'),
+    create: (payload) => ipcRenderer.invoke('projects:create', payload),
+    update: (payload) => ipcRenderer.invoke('projects:update', payload),
+    delete: (id) => ipcRenderer.invoke('projects:delete', id),
+    pickFiles: (projectId) => ipcRenderer.invoke('projects:pickFiles', projectId)
   },
   reindex: {
     getStatus: () => ipcRenderer.invoke('reindex:getStatus'),

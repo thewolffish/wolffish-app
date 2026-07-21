@@ -1,6 +1,6 @@
 ---
 name: utilities
-description: Small built-in utility tools that don't belong to a bigger capability — currently delivering files to the user as attachments.
+description: Small built-in utility tools that don't belong to a bigger capability — delivering files to the user as attachments, and pushing openable folder/file location cards.
 triggers:
   - send file
   - send the file
@@ -11,6 +11,11 @@ triggers:
   - upload file
   - here is the file
   - here's the file
+  - open folder
+  - open the folder
+  - reveal in finder
+  - show in finder
+  - show the folder
 tools:
   - name: send_file
     description: "Deliver a file to the user as a downloadable attachment in the conversation they are talking to you in — it renders in the in-app chat and is uploaded/sent natively on WhatsApp and Telegram. Works for ANY file type (documents, images, audio, video, archives, code, text, etc.). THIS IS THE ONLY WAY A FILE REACHES THE USER: no tool auto-delivers its output, so every file you create, convert, edit, or download for the user MUST be sent with this call once the work is done. Never end a task by just naming a saved path. Up to 50 MB. Pass the file path — absolute, ~/-relative, or workspace-relative."
@@ -18,6 +23,13 @@ tools:
       file:
         type: string
         description: "Path to the file to deliver. Absolute (/Users/you/report.pdf), home-relative (~/Desktop/report.pdf), or workspace-relative (files/report.pdf)."
+        required: true
+  - name: show_path
+    description: "Push an openable location card for a folder or file on disk into the in-app chat: a folder gets an Open button (opens it in the OS file manager), a file gets a Reveal button (opens its folder with the file selected, like Reveal in Finder). Use it whenever the user would want to jump to a location — a folder you created or organized, a batch of outputs, a file deliberately left in place instead of sent. The path must exist. In-app desktop chat only — on WhatsApp/Telegram nothing renders, so name the path in prose there instead."
+    parameters:
+      path:
+        type: string
+        description: "Folder or file to show. Absolute (/Users/you/Projects), home-relative (~/Downloads), or workspace-relative (files/)."
         required: true
 ---
 
@@ -62,3 +74,21 @@ whether they want it sent rather than silently withholding it.
   workspace are copied into `files/` automatically so the in-app viewer can load them.
 - Limit is 50 MB (the WhatsApp/Telegram bot ceiling). Larger files stay on disk; tell the
   user where to find them.
+
+## `show_path` — push an openable location card
+
+`show_path` renders a card in the in-app chat with the folder/file name, its path, and a
+button: **Open** for a folder (opens it in the OS file manager) or **Reveal** for a file
+(opens its parent folder with the file selected). Nothing is parsed from your prose —
+this card exists ONLY when you call the tool, so call it whenever the user would want to
+jump to a location:
+
+- You created or organized a **folder** (a project scaffold, a sorted Downloads, a batch
+  of outputs) — folders can't be attached with `send_file`, so this card IS their delivery.
+- You placed a file at a user-named spot instead of sending it, or a file is too large for
+  `send_file` — show where it lives.
+
+The path must exist — the call fails on a typo or a not-yet-created path. **In-app desktop
+chat only**: on WhatsApp/Telegram the card doesn't render (there's no desktop to open), so
+name the path in prose there instead. `show_path` complements `send_file`, never replaces
+it — a deliverable FILE still gets `send_file`.

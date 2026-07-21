@@ -104,8 +104,16 @@ const PERMISSION_RE =
 // command line is malformed (typically unresolved %ENV% expansion or
 // quoting errors). Treat the same way as EINVAL — retrying the exact
 // same call will produce the exact same error.
+// PDF/filesystem plugin phrasings we deliberately add — all deterministic:
+//   * "beyond the …MB read limit" / "exceeds the …MB limit" — file-size caps;
+//     the file will be exactly as big on retry (observed live: a 248MB PDF
+//     burned 4 tool calls × 3 attempts × ~6s = ~24s of pure retry waste).
+//   * "invalid page selection" — malformed page range, same on retry.
+//   * "could not decode" — corrupt/undecodable image, same bytes on retry.
+// Kept as exact plugin wordings (never a bare "limit", which would collide
+// with retryable rate-limit errors).
 const VALIDATION_RE =
-  /invalid argument|missing required|EINVAL|bad request|HTTP 400\b|HTTP 422\b|syntax is incorrect|incorrect parameter|is not a valid selector/i
+  /invalid argument|missing required|EINVAL|bad request|HTTP 400\b|HTTP 422\b|syntax is incorrect|incorrect parameter|is not a valid selector|beyond the \d+MB read limit|exceeds the \d+MB limit|invalid page selection|could not decode/i
 // Windows phrasings we deliberately add:
 //   * "is not recognized as" — cmd.exe and PowerShell's CommandNotFoundException
 //   * "CommandNotFoundException" — PowerShell typed error name

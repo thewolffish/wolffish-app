@@ -1,6 +1,8 @@
 import { conversationDirName, type MessageAttachmentType } from '@main/conversations'
 import { diskWriter } from '@main/io/diskWriter'
-import { workspaceRoot } from '@main/workspace/workspace'
+// workspace/root, not workspace.ts (which reaches electron): file-processor
+// imports this module statically, and its policy tests run under plain node.
+import { workspaceRoot } from '@main/workspace/root'
 import { existsSync } from 'node:fs'
 import fs from 'node:fs/promises'
 import path from 'node:path'

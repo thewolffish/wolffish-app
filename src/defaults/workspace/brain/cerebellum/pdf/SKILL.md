@@ -74,15 +74,46 @@ triggers:
   - accessibility
   - tagged pdf
 tools:
+  - name: pdf_info
+    description: Inspect a PDF before reading it — page count, file size, metadata, outline/bookmarks with page numbers, and sampled text density (detects scanned/image PDFs). Fast on any size. Call this FIRST for documents longer than a few pages, then navigate with pdf_search and pdf_read.
+    parameters:
+      path:
+        type: string
+        description: Absolute path to the PDF file
   - name: pdf_read
-    description: Extract text, metadata, page count, and structure from a PDF file. Optionally restrict to specific pages.
+    description: Extract text from specific pages of a PDF. Reads ONLY the requested pages (lazy extraction with caching — a deep page in a 3,000-page PDF costs milliseconds). Without "pages" it returns just the first 5 pages and says how to continue; results are capped per call and the cap is always reported, never silently truncated. For whole-document questions, work through the document in ranges (e.g. "1-40", then "41-80") or locate content with pdf_search first.
     parameters:
       path:
         type: string
         description: Absolute path to the PDF file
       pages:
         type: string
-        description: 'Optional page range like "1-3,5,8-10". Omit to read all pages.'
+        description: 'Page selection like "12", "1-5", "80-" (to end), or "1-3,10,50-60".'
+        required: false
+  - name: pdf_search
+    description: Search the text of a PDF exhaustively — EVERY page in scope is extracted and scanned, so the reported total match count is authoritative (0 means the text genuinely does not occur). Returns matches with page numbers and snippets plus the distribution across pages. Works on any file size. Use this to locate content in large documents instead of paging through them; then pdf_read the matching pages. The FIRST search on a huge document does a one-time extraction that can take a while (tell the user before starting it); every search after is near-instant from cache.
+    parameters:
+      path:
+        type: string
+        description: Absolute path to the PDF file
+      query:
+        type: string
+        description: Text to find (literal by default)
+      regex:
+        type: boolean
+        description: Treat query as a regular expression
+        required: false
+      case_sensitive:
+        type: boolean
+        description: Match case exactly (default false)
+        required: false
+      pages:
+        type: string
+        description: 'Optional page scope like "1-500" (default: the whole document)'
+        required: false
+      max_results:
+        type: number
+        description: Max matches to display, 1-100 (default 40); the true total is always reported
         required: false
   - name: pdf_create
     description: Create a new PDF from scratch with text, headings, images, tables, page numbers, headers/footers. Supports RTL text for Arabic when a font path is provided.
@@ -224,6 +255,39 @@ confirm_patterns:
 ---
 
 # PDF
+
+## Reading and querying PDFs — especially huge ones
+
+Attached PDFs are NEVER auto-loaded into your context — every one arrives as a note with the
+path and page count, and even a 2-page PDF must be read with `pdf_read` before you can speak
+about its contents. That is deliberate (100% model-led file access): a 3,000-page PDF extracts
+to millions of tokens — no context window holds it — so YOU control what to load and when.
+The reading tools make the entire document reachable surgically, and you are expected to
+actually use them:
+
+1. **`pdf_info` first** for anything nontrivial: page count, outline with page numbers, and
+   text density. A density warning means a scanned/image PDF — say so plainly instead of
+   pretending to read it.
+2. **Targeted questions → `pdf_search`, not paging.** It scans every page in scope and reports
+   the authoritative total. Search several phrasings/synonyms before concluding something is
+   absent ("termination", "cancel", "wind-down" — not just one term). Then `pdf_read` the
+   matching pages with a few pages of surrounding context.
+3. **Whole-document tasks (summaries, audits, reviews) → systematic traversal.** Work through
+   the document in page ranges (`"1-40"`, `"41-80"`, …), keeping running notes with
+   `file_write` as you go for anything beyond a few hundred pages, then synthesize from your
+   notes. The per-call cap tells you exactly where to continue; nothing is ever silently
+   dropped.
+4. **Never claim coverage you did not do.** Do not say "the document states/doesn't mention X"
+   unless you read the relevant pages or searched exhaustively for X and its synonyms. If you
+   only sampled, say which pages you actually consulted.
+5. **Narrate while you dig — the user cannot see your tool calls.** Before the first search of
+   a big document, say so in one line (the one-time extraction can take a while: "Searching the
+   book — first pass extracts it once, may take a minute…"). Between search/read rounds, drop a
+   one-line finding ("dosing table on p. 497 — checking renal adjustment next"). Silent digging
+   looks like a hang, no matter how well it's going.
+
+The first `pdf_search` over a huge document extracts all pages once (a few seconds) and is
+cached after that — later searches and reads on the same file are near-instant.
 
 ## Choosing how to make a PDF — read this first
 
@@ -379,12 +443,23 @@ Start from this and adapt — it already encodes all three rules:
 
 ## Interface
 
-- Tools: `pdf_read`, `pdf_create`, `pdf_merge`, `pdf_split`, `pdf_modify`, `pdf_form`, `pdf_secure`, `pdf_extract_images`, `pdf_compress`
+- Tools: `pdf_info`, `pdf_read`, `pdf_search`, `pdf_create`, `pdf_merge`, `pdf_split`, `pdf_modify`, `pdf_form`, `pdf_secure`, `pdf_extract_images`, `pdf_compress`
 - All paths must be absolute. Use `~` prefix for home directory.
 - Complex parameters (arrays, objects) are passed as JSON strings.
 
 ## Rules
 
+- **Never split a PDF just to read or search it.** `pdf_info`/`pdf_read`/`pdf_search` handle
+  any file size directly (a 250MB, 3,000-page book is a normal input) — splitting first only
+  wastes minutes and disk. Split only when the user actually wants separate files. Ignore any
+  split-first workaround you may see in older conversation history; it predates the size-gate
+  removal.
+- If a WRITE op (`pdf_split`/`pdf_merge`/…) fails on a huge or unusual file, don't retry the
+  same call — fall back to python (pypdf) or shell, and tell the user what happened.
+- **Every `output_path`/`output_dir` defaults to the workspace `files/` directory** (e.g.
+  `files/pdf/…`) unless the user explicitly named a destination. Never write splits, merges,
+  or conversions next to the source file or onto the Desktop — the source's location is not
+  an output location. The same applies when you improvise via python/shell.
 - Always verify the source file exists before operating on it.
 - For `pdf_create`, content blocks support types: heading, paragraph, image, table, page_break, header, footer.
 - For large PDFs, do NOT generate the whole document in one `pdf_create` call — a massive content array fails generation. Split the content into chunks of roughly 30–50 pages each, run a separate `pdf_create` per chunk to its own part file (e.g. `part-1.pdf`, `part-2.pdf`), then `pdf_merge` the parts into the final PDF and delete the intermediate parts. Keep page numbering and headers/footers consistent across chunks.

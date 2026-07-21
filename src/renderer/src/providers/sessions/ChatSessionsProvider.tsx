@@ -1,4 +1,4 @@
-import type { ConversationFile } from '@preload/index'
+import type { ConversationFile, Project } from '@preload/index'
 import type { ChatMessage, PendingProcedure } from '@providers/flow/useFlow'
 import {
   ChatSessionsContext,
@@ -24,9 +24,54 @@ function nextKey(): string {
 
 export function ChatSessionsProvider({ children }: { children: ReactNode }): React.JSX.Element {
   const [sessions, setSessions] = useState<SessionDescriptor[]>(() => [
-    { key: nextKey(), initialConversationId: null, initialMessages: null, procedure: null }
+    {
+      key: nextKey(),
+      initialConversationId: null,
+      initialMessages: null,
+      procedure: null,
+      projectId: null,
+      icon: null
+    }
   ])
   const [activeSessionKey, setActiveSessionKey] = useState(() => sessions[0].key)
+  // Project mode: the loaded project the visible chat runs inside. Opening a
+  // conversation always re-derives it from that conversation's binding (a
+  // plain conversation exits project mode — the filtered rail must never hide
+  // what was just opened), so the mode can't go stale or contradict the feed.
+  const [activeProject, setActiveProjectState] = useState<Project | null>(null)
+  // Ref mirror written ONLY through the setter (callback context, never
+  // render), so sync-time comparisons don't chase stale closures. The seq
+  // token invalidates in-flight async syncs: every direct set bumps it, so
+  // a stale projects.list() resolution (open project conv → immediately open
+  // a plain one, or exit-project racing a pending sync) can never resurrect
+  // a project over what the user just switched to.
+  const activeProjectRef = useRef<Project | null>(null)
+  const projectSyncSeq = useRef(0)
+  const setActiveProject = useCallback((project: Project | null) => {
+    projectSyncSeq.current += 1
+    activeProjectRef.current = project
+    setActiveProjectState(project)
+  }, [])
+  const syncProjectFor = useCallback(
+    (projectId: string | null | undefined) => {
+      const id = projectId ?? null
+      if (id === (activeProjectRef.current?.id ?? null)) return
+      if (!id) {
+        setActiveProject(null)
+        return
+      }
+      projectSyncSeq.current += 1
+      const seq = projectSyncSeq.current
+      void window.api.projects
+        .list()
+        .then((all) => {
+          if (projectSyncSeq.current !== seq) return
+          setActiveProject(all.find((p) => p.id === id) ?? null)
+        })
+        .catch(() => {})
+    },
+    [setActiveProject]
+  )
   const [runStatuses, setRunStatuses] = useState<Record<string, ConversationRunStatus>>({})
   // Live info reported by each mounted Chat instance. State drives renders
   // (activeConversationId below); the ref mirror keeps reads synchronous
@@ -128,16 +173,22 @@ export function ChatSessionsProvider({ children }: { children: ReactNode }): Rea
   )
 
   const newSession = useCallback(
-    (opts?: { procedure?: PendingProcedure }) => {
+    (opts?: { procedure?: PendingProcedure; projectId?: string | null }) => {
       const procedure = opts?.procedure ?? null
+      const projectId = opts?.projectId ?? null
+      // Entering a plain fresh chat exits project mode; a project New keeps it.
+      syncProjectFor(projectId)
       if (!procedure) {
         // Reuse an existing empty idle session instead of stacking blanks —
         // clicking New Chat twice should land on the same fresh composer.
+        // Scoped per project: a project New never adopts a plain blank (its
+        // sends must carry the binding) and vice versa.
         const blank = sessions.find((s) => {
           const info = infosRef.current.get(s.key)
           return (
             s.initialConversationId === null &&
             s.procedure === null &&
+            s.projectId === projectId &&
             (!info || (info.conversationId === null && !info.streaming))
           )
         })
@@ -150,12 +201,14 @@ export function ChatSessionsProvider({ children }: { children: ReactNode }): Rea
         key: nextKey(),
         initialConversationId: null,
         initialMessages: null,
-        procedure
+        procedure,
+        projectId,
+        icon: procedure?.icon ?? null
       }
       setSessions((prev) => evictIfNeeded([...prev, descriptor], descriptor.key))
       setActiveSessionKey(descriptor.key)
     },
-    [sessions, evictIfNeeded]
+    [sessions, evictIfNeeded, syncProjectFor]
   )
 
   const openConversation = useCallback(
@@ -166,6 +219,9 @@ export function ChatSessionsProvider({ children }: { children: ReactNode }): Rea
       // the dedupe authority: two rapid opens of the same conversation both
       // await their load first, and the second's closure predates the
       // first's state commit — the registry doesn't.
+      // Opening a project-bound conversation activates its project; a plain
+      // one exits project mode. Runs on every open path (rail, History).
+      syncProjectFor(conversation.projectId)
       const existingKey = openConversationsRef.current.get(conversation.id)
       if (existingKey) {
         setActiveSessionKey(existingKey)
@@ -184,13 +240,15 @@ export function ChatSessionsProvider({ children }: { children: ReactNode }): Rea
         key: nextKey(),
         initialConversationId: conversation.id,
         initialMessages: messages,
-        procedure: null
+        procedure: null,
+        projectId: conversation.projectId ?? null,
+        icon: conversation.icon ?? null
       }
       openConversationsRef.current.set(conversation.id, descriptor.key)
       setSessions((prev) => evictIfNeeded([...prev, descriptor], descriptor.key))
       setActiveSessionKey(descriptor.key)
     },
-    [sessions, evictIfNeeded]
+    [sessions, evictIfNeeded, syncProjectFor]
   )
 
   const activateSession = useCallback((key: string) => {
@@ -199,9 +257,16 @@ export function ChatSessionsProvider({ children }: { children: ReactNode }): Rea
 
   const activateConversation = useCallback(
     (conversationId: string): boolean => {
+      const focus = (key: string): void => {
+        // Live activation skips the disk load, so derive the project binding
+        // from the session's own descriptor to keep the mode in sync.
+        const s = sessions.find((x) => x.key === key)
+        syncProjectFor(s?.projectId ?? null)
+        setActiveSessionKey(key)
+      }
       const existingKey = openConversationsRef.current.get(conversationId)
       if (existingKey) {
-        setActiveSessionKey(existingKey)
+        focus(existingKey)
         return true
       }
       // Fall back to a live-info scan (a session whose id was reported but
@@ -211,13 +276,13 @@ export function ChatSessionsProvider({ children }: { children: ReactNode }): Rea
         const cid = info?.conversationId ?? s.initialConversationId
         if (cid === conversationId) {
           openConversationsRef.current.set(conversationId, s.key)
-          setActiveSessionKey(s.key)
+          focus(s.key)
           return true
         }
       }
       return false
     },
-    [sessions]
+    [sessions, syncProjectFor]
   )
 
   const closeConversation = useCallback(
@@ -243,7 +308,9 @@ export function ChatSessionsProvider({ children }: { children: ReactNode }): Rea
             key: nextKey(),
             initialConversationId: null,
             initialMessages: null,
-            procedure: null
+            procedure: null,
+            projectId: null,
+            icon: null
           }
           setActiveSessionKey(blank.key)
           return [blank]
@@ -282,7 +349,9 @@ export function ChatSessionsProvider({ children }: { children: ReactNode }): Rea
       reportSession,
       markSending,
       consumeProcedure,
-      closeConversation
+      closeConversation,
+      activeProject,
+      setActiveProject
     }),
     [
       sessions,
@@ -296,7 +365,9 @@ export function ChatSessionsProvider({ children }: { children: ReactNode }): Rea
       reportSession,
       markSending,
       consumeProcedure,
-      closeConversation
+      closeConversation,
+      activeProject,
+      setActiveProject
     ]
   )
 

@@ -4,7 +4,6 @@ import os from 'node:os'
 import ExcelJS from 'exceljs'
 import Papa from 'papaparse'
 
-const MAX_FILE_SIZE = 100 * 1024 * 1024
 
 const toolDefinitions = [
   {
@@ -163,11 +162,9 @@ function resolvePath(input) {
   return path.resolve(input)
 }
 
+/** Existence probe (throws ENOENT early with a clean message); never a size gate. */
 async function checkFileSize(filePath) {
   const stat = await fs.stat(filePath)
-  if (stat.size > MAX_FILE_SIZE) {
-    throw new Error(`File exceeds 100MB limit (${(stat.size / 1024 / 1024).toFixed(1)}MB)`)
-  }
   return stat.size
 }
 
@@ -210,13 +207,8 @@ function cellValue(cell) {
 
 async function readXlsx(filePath, sheetId, range, useHeaders) {
   const workbook = new ExcelJS.Workbook()
-  const fileSize = await checkFileSize(filePath)
-
-  if (fileSize > 10 * 1024 * 1024) {
-    await workbook.xlsx.readFile(filePath)
-  } else {
-    await workbook.xlsx.readFile(filePath)
-  }
+  await checkFileSize(filePath)
+  await workbook.xlsx.readFile(filePath)
 
   let worksheet
   if (sheetId) {

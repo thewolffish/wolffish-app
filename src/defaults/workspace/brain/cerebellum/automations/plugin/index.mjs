@@ -166,12 +166,16 @@ async function createAutomation(args) {
   const rawSchedule = typeof args?.schedule === 'string' ? args.schedule.trim() : ''
   const instruction = typeof args?.instruction === 'string' ? args.instruction.trim() : ''
   const modeArg = typeof args?.mode === 'string' ? args.mode.trim().toLowerCase() : ''
+  const iconArg = typeof args?.icon === 'string' ? args.icon.trim() : ''
 
   if (!rawSchedule) return { success: false, error: 'automation_create: provide a `schedule`.' }
   if (!instruction) return { success: false, error: 'automation_create: provide an `instruction` to run.' }
   if (modeArg && modeArg !== 'single' && modeArg !== 'workflow') {
     return { success: false, error: "automation_create: `mode` must be 'single' or 'workflow'." }
   }
+  // The icon rides the file as `icon: <emoji>` — one whitespace-free token.
+  // A malformed pick falls back to the default rather than failing the create.
+  const icon = /^\S{1,16}$/.test(iconArg) ? iconArg : '🫀'
 
   const badBody = checkInstruction(instruction)
   if (badBody) return { success: false, error: badBody }
@@ -192,7 +196,7 @@ async function createAutomation(args) {
   const mode = modeArg || (automations.getGlobalMode ? await automations.getGlobalMode() : 'single')
 
   const raw = await loadHeartbeat()
-  const next = insertBlock(raw, normalizeHeading(schedule), composeBody(mode, instruction))
+  const next = insertBlock(raw, normalizeHeading(schedule), composeBody({ mode, icon }, instruction))
   const result = await automations.writeHeartbeat(next)
   if (!result.ok) {
     return { success: false, error: `automation_create: couldn't save — ${result.error ?? 'unknown error'}` }
@@ -257,10 +261,16 @@ async function editAutomation(args) {
 
   const heading = normalizeHeading(resolvedHeading)
   const body = newInstruction || target.block.body
-  // Preserve the block's mode stamp across edits unless explicitly changed.
+  // Preserve the block's mode stamp across edits unless explicitly changed;
+  // the project binding and icon always survive a plugin rewrite.
   const mode = newMode || target.block.mode
 
-  const next = applyEdit(raw, target.block, heading, composeBody(mode, body))
+  const next = applyEdit(
+    raw,
+    target.block,
+    heading,
+    composeBody({ mode, project: target.block.project, icon: target.block.icon }, body)
+  )
   const result = await automations.writeHeartbeat(next)
   if (!result.ok) {
     return { success: false, error: `automation_edit: couldn't save — ${result.error ?? 'unknown error'}` }
@@ -427,8 +437,17 @@ function parseActiveBlocks(raw) {
       .replace(/^---+\s*$/gm, '')
       .replace(/\n{3,}/g, '\n\n')
       .trim()
-    const { body, mode } = splitModeMarker(rawBody)
-    blocks.push({ index: i + 1, label: h.label, body, mode, headingStart: h.headingStart, end })
+    const { body, mode, project, icon } = splitMarkers(rawBody)
+    blocks.push({
+      index: i + 1,
+      label: h.label,
+      body,
+      mode,
+      project,
+      icon,
+      headingStart: h.headingStart,
+      end
+    })
   }
   return blocks
 }
@@ -454,23 +473,60 @@ function tidyOutsideComments(raw) {
 }
 
 /**
- * Per-job chat mode rides the block body's FIRST line as a plain marker
- * (`mode: single` / `mode: workflow`). The engine and the Heartbeat page
- * parse and strip the same line — keep the three parsers in sync. Bodies
- * exposed by parseActiveBlocks are always CLEAN (marker split off), so
- * label+body matching against live jobs stays symmetric.
+ * Per-job settings ride the block body's LEADING non-empty lines as plain
+ * markers — `mode: single|workflow`, `project: <id>`, `icon: <emoji>` — in
+ * any order, blank lines allowed between them. The engine (brainstem
+ * splitMarkers) and the Automations page parse and strip the same lines —
+ * keep the three parsers in sync. Bodies exposed by parseActiveBlocks are
+ * always CLEAN (markers split off), so label+body matching against live
+ * jobs stays symmetric, and edits COMPOSE the markers back so a plugin
+ * rewrite never drops a job's project binding or icon.
  */
 const MODE_MARKER_RE = /^mode:\s*(single|workflow)\s*$/i
+const PROJECT_MARKER_RE = /^project:\s*(\S+)\s*$/i
+const ICON_MARKER_RE = /^icon:\s*(\S+)\s*$/i
 
-function splitModeMarker(body) {
+function splitMarkers(body) {
   const lines = body.split('\n')
-  const m = lines[0] ? MODE_MARKER_RE.exec(lines[0]) : null
-  if (!m) return { body, mode: null }
-  return { body: lines.slice(1).join('\n').trim(), mode: m[1].toLowerCase() }
+  let mode = null
+  let project = null
+  let icon = null
+  let i = 0
+  while (i < lines.length) {
+    const line = lines[i].trim()
+    if (line === '') {
+      i++
+      continue
+    }
+    const m = MODE_MARKER_RE.exec(line)
+    if (m) {
+      mode = m[1].toLowerCase()
+      i++
+      continue
+    }
+    const p = PROJECT_MARKER_RE.exec(line)
+    if (p) {
+      project = p[1]
+      i++
+      continue
+    }
+    const ic = ICON_MARKER_RE.exec(line)
+    if (ic) {
+      icon = ic[1]
+      i++
+      continue
+    }
+    break
+  }
+  return { body: lines.slice(i).join('\n').trim(), mode, project, icon }
 }
 
-function composeBody(mode, body) {
-  return mode ? `mode: ${mode}\n\n${body.trim()}` : body.trim()
+function composeBody(markers, body) {
+  const lines = []
+  if (markers.mode) lines.push(`mode: ${markers.mode}`)
+  if (markers.project) lines.push(`project: ${markers.project}`)
+  if (markers.icon) lines.push(`icon: ${markers.icon}`)
+  return lines.length > 0 ? `${lines.join('\n')}\n\n${body.trim()}` : body.trim()
 }
 
 function formatBlock(heading, body) {

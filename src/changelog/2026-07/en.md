@@ -1,4 +1,30 @@
-## v1.0.223 — 2026-07-19 `Latest`
+## v1.0.224 — 2026-07-22 `Latest`
+
+### Projects: A Standing Brief for Your Work
+
+Some work isn't a conversation — it's a dozen conversations sharing one context: the same instructions repeated, the same files re-attached, the same background re-explained. **Projects** give that work a home. A project is a **name, an emoji, standing instructions, and a set of files**; every conversation inside it starts already briefed — the instructions ride each turn, and the files are known by name and read on demand rather than stuffed into context. Create and tend them on the new **Projects page**; in the chat, **hovering the new-conversation button fans out your projects** so a chat starts inside one from the very first word, and the sidebar and History **group and badge** every conversation under its project. Saved procedures and scheduled automations can be **bound to a project** too — their runs land under it, briefed like everything else. From your phone, **`/project`** on WhatsApp and Telegram lists your projects by number: pick one to start a conversation inside it, `/project close` to leave — and `/new` inside a project deliberately stays inside it. Wolffish itself got the same hands: **eight `project_*` tools** let you build and stock a whole project by just asking for it.
+
+### Files the Size of Books
+
+Hand Wolffish a huge file — a 3,000-page PDF, an hour of audio, a giant spreadsheet — and the old pipeline would try to **swallow it whole into the model's context**, which meant freezing, choking, or a flat refusal at an arbitrary size cap. That pipeline is gone. **No attachment content is ever injected automatically now.** Every file becomes a compact **reference note** — name, location, and real facts, like a page count probed lazily from the PDF's own index even when the file is enormous — and Wolffish **reads on demand**: `pdf_info`, `pdf_search`, and a cached `pdf_read` dig through thousand-page documents a page range at a time; `file_read` streams any slice of a giant text file; and vision models **pull an image's pixels only when they actually look**, with `image_view`. The arbitrary gates fell with it — the **100 MB** document and spreadsheet caps and the **500 MB** audio cap are gone. And because a deep read of a big file takes real time, Wolffish now **narrates it**: what it's about to extract, what each round turned up — no more minutes of silence that read like a hang.
+
+### Automations, Now With Faces
+
+The Automations page has been **rebuilt around cards**: each job is a card wearing **an emoji of its own** — 📧 for the inbox sweep, 📰 for the news digest — with its schedule and instruction in plain view, and the raw markdown file one click away for the purists. Editing happens in a proper **dialog**: schedule **chips** for daily, weekly, monthly, intervals, and full cron, a real **time input**, and a live **next-run preview** that shows exactly when the job will fire *before* you save. The emoji isn't decoration, either — an automation **stamps its icon on every conversation its runs create**, so the sidebar tells you at a glance which job an overnight run belongs to. **Procedures got the same treatment** — an emoji per procedure, stamped on its runs — and both can be **bound to a project**.
+
+### Several Questions, One Card
+
+When Wolffish needs more than one decision from you, it used to mean a chain of question cards, each waiting on the last. `ask_user` now takes **a list of questions**: in the app they arrive as **one card with chip tabs** — flip through, answer everything, and it resolves in a single reply. On WhatsApp and Telegram the same request walks you through the questions **one message at a time, in order**, collecting every answer before the work continues. Quizzes run through it now too: **all the questions in one card, graded and explained afterward** — never again a quiz pasted as text with the answers hiding a scroll below.
+
+### Replies That Fold
+
+Chat replies can now use a careful slice of real HTML: **collapsible sections** with a clickable summary — long appendices folded politely out of the way — plus **highlighted text**, keyboard keys like `Ctrl`+`C`, and proper sub- and superscripts. It's a **sanitized** subset: scripts, styles, frames, and event handlers are stripped outright, and an unknown tag degrades to its text instead of breaking the message. The **PDF export renders the exact same subset**, so an exported conversation shows what the feed showed.
+
+### A Card That Opens the Folder
+
+When the deliverable is a **place** rather than an attachable file — a folder Wolffish scaffolded, a sorted Downloads, a batch of outputs, a file deliberately left where you asked — it now pushes a **location card**: a folder gets an **Open** button straight into your file manager, a file gets **Reveal**, opening its folder with the file selected. The old behavior tried to **guess paths out of prose** and drew cards for whatever looked path-shaped — sometimes wrong, sometimes missing, never intentional. That guessing is deleted: a card exists now exactly **because Wolffish chose to hand you the place**, through a real tool with a checked, existing path.
+
+## v1.0.223 — 2026-07-19
 
 ### Keep Typing While Wolffish Works
 

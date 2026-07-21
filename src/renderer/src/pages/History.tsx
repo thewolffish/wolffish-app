@@ -3,10 +3,10 @@ import { Button } from '@components/core/Button'
 import { Modal } from '@components/core/Modal'
 import { CONVERSATION_CHIP_BASE, conversationChipClasses } from '@lib/conversation-chip'
 import { RTL_LOCALES } from '@lib/i18n'
-import { mapConversationMessages, warmPathCards } from '@lib/conversation-open'
+import { mapConversationMessages } from '@lib/conversation-open'
 import { cn } from '@lib/utils/cn'
 import { pageTopPadding } from '@lib/utils/platform'
-import type { ConversationMeta } from '@preload/index'
+import type { ConversationMeta, Project } from '@preload/index'
 import { useFlow } from '@providers/flow/useFlow'
 import { useSessions } from '@providers/sessions/useSessions'
 import { useLocale } from '@providers/locale/useLocale'
@@ -23,6 +23,7 @@ const skeletonTitleWidths = [62, 45, 78, 38, 55, 70, 48, 84, 41, 66]
 // return visits. Module-scoped: lives for the app session. (Same cold-start
 // pattern the channel settings panels use.)
 let cachedConversations: ConversationMeta[] | null = null
+let cachedProjects: Project[] | null = null
 
 export function History(): React.JSX.Element {
   const { t } = useTranslation()
@@ -42,6 +43,9 @@ export function History(): React.JSX.Element {
   const [conversations, setConversations] = useState<ConversationMeta[]>(
     () => cachedConversations ?? []
   )
+  // Projects, for resolving a bound conversation's emoji LIVE (an icon change
+  // on the Projects page propagates; a stamp would go stale).
+  const [projects, setProjects] = useState<Project[]>(() => cachedProjects ?? [])
   // Skeleton ONLY on the first-ever load (cold cache). Return visits seed from
   // the cache above and refresh silently — no skeleton flash.
   const [loading, setLoading] = useState(() => cachedConversations === null)
@@ -51,9 +55,14 @@ export function History(): React.JSX.Element {
   // the next remount paints instantly. Delete mutates state/cache locally
   // instead of refetching (see handleDelete).
   const refresh = useCallback(async () => {
-    const list = await window.api.conversation.list()
+    const [list, projectList] = await Promise.all([
+      window.api.conversation.list(),
+      window.api.projects.list().catch(() => [] as Project[])
+    ])
     cachedConversations = list
+    cachedProjects = projectList
     setConversations(list)
+    setProjects(projectList)
     setLoading(false)
   }, [])
 
@@ -90,7 +99,6 @@ export function History(): React.JSX.Element {
       const conv = await window.api.conversation.load(id)
       if (!conv) return
       const mapped = mapConversationMessages(conv)
-      await warmPathCards(mapped)
       openConversation(conv, mapped)
       goTo('chat')
     },
@@ -184,6 +192,15 @@ export function History(): React.JSX.Element {
                 // live-status title if one exists — never regress real → Untitled.
                 const title =
                   conv.title && conv.title !== 'Untitled' ? conv.title : (live?.title ?? conv.title)
+                // Same emoji rule as the rail badge: project emoji wins,
+                // then the stamped automation/procedure icon, else the
+                // channel glyph below.
+                const sourceIcon =
+                  (conv.projectId
+                    ? projects.find((p) => p.id === conv.projectId)?.icon
+                    : undefined) ??
+                  conv.icon ??
+                  null
                 return (
                   <div
                     key={conv.id}
@@ -211,11 +228,17 @@ export function History(): React.JSX.Element {
                     <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                       <div className="flex min-w-0 items-center gap-1.5">
                         <span className="text-fg truncate text-sm font-medium">{title}</span>
-                        <ChannelIcon
-                          channel={conv.channel}
-                          size={12}
-                          className="text-muted shrink-0"
-                        />
+                        {sourceIcon ? (
+                          <span aria-hidden className="shrink-0 text-xs leading-none">
+                            {sourceIcon}
+                          </span>
+                        ) : (
+                          <ChannelIcon
+                            channel={conv.channel}
+                            size={12}
+                            className="text-muted shrink-0"
+                          />
+                        )}
                       </div>
                       <span className="text-muted text-xs">
                         {relativeTime(conv.updatedAt, locale)}
@@ -255,14 +278,19 @@ export function History(): React.JSX.Element {
         title={t('history.deleteTitle')}
         footer={
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={() => setDeleteTarget(null)}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setDeleteTarget(null)}
+              className="flex-1"
+            >
               {t('history.deleteCancel')}
             </Button>
             <Button
               variant="primary"
               size="sm"
               onClick={handleDelete}
-              className="bg-red-600 hover:bg-red-700"
+              className="flex-1 border border-transparent bg-red-600 text-white shadow-none hover:bg-red-700"
             >
               {t('history.deleteConfirm')}
             </Button>

@@ -43,6 +43,10 @@ tools:
         required: false
         enum: ['single', 'workflow']
         description: Which chat mode the automation runs in — 'single' (one model, direct) or 'workflow' (the run can plan phases and drive parallel agents). Omit to use whatever mode the chat is in right now.
+      icon:
+        type: string
+        required: false
+        description: 'A single emoji for this automation — YOU pick one that fits what it does (📧 for an inbox sweep, 📰 for a news digest, 💌 for a message sender). Shown on its card and stamped on its run conversations. One emoji, no spaces. Omitted or invalid ⇒ the default 🫀.'
   - name: automation_edit
     description: Change an existing automation's schedule and/or its instruction. Identify it by the number from automation_list or its exact schedule label.
     parameters:
@@ -94,6 +98,13 @@ instruction. The brainstem parses that file, registers a cron job for each
 entry, and when a job fires it runs the instruction as a full autonomous agent
 turn. You manage all of this with the `automation_*` tools — you never have to
 hand-edit the file (though it's there if you want to read it).
+
+An entry's body may START with setting-marker lines the user configured from
+the Automations page — `mode: single|workflow`, `project: <id>` (the run gets
+that project's context and its conversation registers under the project), and
+`icon: <emoji>` (the card/badge emoji). They are settings, not instruction
+text. The `automation_*` tools preserve them automatically; if you ever edit
+the file directly, keep them in place.
 
 ## One-time vs recurring — YOU decide
 

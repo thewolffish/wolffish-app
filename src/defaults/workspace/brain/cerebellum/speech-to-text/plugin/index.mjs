@@ -5,7 +5,6 @@ import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const MAX_OUTPUT = 200_000
-const MAX_FILE_BYTES = 500 * 1024 * 1024
 const PLUGIN_DIR = path.dirname(fileURLToPath(import.meta.url))
 const SCRIPT = path.join(PLUGIN_DIR, 'transcribe.py')
 const IS_WIN = process.platform === 'win32'
@@ -313,12 +312,6 @@ async function transcribeFile(absPath, language, model, corpus) {
     return { success: false, error: `File not found: ${absPath}` }
   }
   if (!st.isFile()) return { success: false, error: `Not a file: ${absPath}` }
-  if (st.size > MAX_FILE_BYTES) {
-    return {
-      success: false,
-      error: `File too large (${Math.round(st.size / 1024 / 1024)} MB). Limit is ${MAX_FILE_BYTES / 1024 / 1024}MB; split the audio first.`
-    }
-  }
 
   const ext = path.extname(absPath).toLowerCase()
   if (!SUPPORTED_AUDIO_EXTS.has(ext)) {

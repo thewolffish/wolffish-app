@@ -1,5 +1,3 @@
-import { conversationPathCandidates } from '@components/common/path-card/extractPaths'
-import { statPathOnce } from '@components/common/path-card/pathStat'
 import type { ConversationFile, PersistedApproval } from '@preload/index'
 import type { ApprovalCardState, AssistantStatus, ChatMessage } from '@providers/flow/useFlow'
 
@@ -61,17 +59,4 @@ export function mapConversationMessages(conv: ConversationFile): ChatMessage[] {
       timestamp: m.timestamp
     }
   })
-}
-
-/**
- * Pre-warm the path-existence cache so the open-file/folder cards paint
- * their final state on the first frame instead of popping in one-by-one as
- * each PathCard's stat resolves. Bounded so a slow stat can't delay the
- * open; whatever isn't warm in time falls back to its own stat.
- */
-export async function warmPathCards(mapped: ChatMessage[]): Promise<void> {
-  await Promise.race([
-    Promise.allSettled(conversationPathCandidates(mapped).map((p) => statPathOnce(p))),
-    new Promise((resolve) => setTimeout(resolve, 200))
-  ])
 }

@@ -1,30 +1,31 @@
 import { ApprovalCard } from '@components/common/approval-card/ApprovalCard'
-import { QuestionCard } from '@components/common/question-card/QuestionCard'
 import { AttachmentList } from '@components/common/attachment-list/AttachmentList'
 import { AudioPlayer } from '@components/common/audio-player/AudioPlayer'
+import { BrainButton } from '@components/common/brain-button/BrainButton'
+import { ChatModeButton } from '@components/common/chat-mode-button/ChatModeButton'
 import { CompactionCard } from '@components/common/compaction-card/CompactionCard'
 import { ContextMeter, type SideSpend } from '@components/common/context-meter/ContextMeter'
 import { DocxViewer } from '@components/common/docx-viewer/DocxViewer'
 import { FileCard } from '@components/common/file-card/FileCard'
-import { PathCard } from '@components/common/path-card/PathCard'
-import { extractPathCandidates } from '@components/common/path-card/extractPaths'
-import { canonicalPath } from '@components/common/path-card/pathStat'
 import { HtmlFileViewer } from '@components/common/html-file-viewer/HtmlFileViewer'
 import { ImageViewer } from '@components/common/image-viewer/ImageViewer'
 import { MarkdownFileViewer } from '@components/common/markdown-file-viewer/MarkdownFileViewer'
+import { ModelSwitch } from '@components/common/model-switch/ModelSwitch'
+import { NewChatButton } from '@components/common/new-chat-button/NewChatButton'
 import { PageViewer } from '@components/common/page-viewer/PageViewer'
+import { PathCard } from '@components/common/path-card/PathCard'
+import { canonicalPath } from '@components/common/path-card/pathStat'
 import { PdfViewer } from '@components/common/pdf-viewer/PdfViewer'
+import { ProjectDialog } from '@components/common/project-dialog/ProjectDialog'
 import { ProviderErrorCards } from '@components/common/provider-error-card/ProviderErrorCard'
+import { QuestionCard } from '@components/common/question-card/QuestionCard'
 import { Sidebar } from '@components/common/sidebar/Sidebar'
 import { SpreadsheetViewer } from '@components/common/spreadsheet-viewer/SpreadsheetViewer'
-import { BrainButton } from '@components/common/brain-button/BrainButton'
-import { ModelSwitch } from '@components/common/model-switch/ModelSwitch'
-import { ChatModeButton } from '@components/common/chat-mode-button/ChatModeButton'
-import { WorkflowCard } from '@components/common/workflow-card/WorkflowCard'
 import { ToolCard } from '@components/common/tool-card/ToolCard'
 import { TurnFooter } from '@components/common/turn-footer/TurnFooter'
 import { UpdateCard } from '@components/common/update-card/UpdateCard'
 import { VideoPlayer } from '@components/common/video-player/VideoPlayer'
+import { WorkflowCard } from '@components/common/workflow-card/WorkflowCard'
 import { CodeEditor } from '@components/core/CodeEditor'
 import { CopyButton } from '@components/core/CopyButton'
 import { Markdown } from '@components/core/Markdown'
@@ -35,6 +36,16 @@ import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
 import { formatBytesL } from '@lib/utils/format'
 import { pageTopPadding } from '@lib/utils/platform'
+import {
+  upsertWorkflowSegment,
+  WORKFLOW_TOOL_NAMES,
+  type WorkflowSnapshot
+} from '@main/runtime/broca'
+import {
+  normalizeReasoningMode,
+  reasoningModesFor,
+  type ReasoningMode
+} from '@main/runtime/reasoning'
 import { preselectSettingsTab } from '@pages/settings/settingsNav'
 import type {
   AskUserResponse,
@@ -49,33 +60,23 @@ import type {
   TimelineEntry
 } from '@preload/index'
 import {
-  normalizeReasoningMode,
-  reasoningModesFor,
-  type ReasoningMode
-} from '@main/runtime/reasoning'
-import {
-  upsertWorkflowSegment,
-  WORKFLOW_TOOL_NAMES,
-  type WorkflowSnapshot
-} from '@main/runtime/broca'
-import {
   useFlow,
-  type PendingProcedure,
   type ApprovalCardState,
   type AskCardState,
   type AssistantMessage,
   type ChatMessage,
+  type PendingProcedure,
   type ToolTiming
 } from '@providers/flow/useFlow'
-import { useSessions, type SessionDescriptor } from '@providers/sessions/useSessions'
 import { useLocale } from '@providers/locale/useLocale'
+import { useSessions, type SessionDescriptor } from '@providers/sessions/useSessions'
 import { useTheme } from '@providers/theme/useTheme'
 import iconTransparent from '@resources/images/icon_transparent.png'
 import {
   AngelIcon,
   ArrowExpandIcon,
-  BubbleChatIcon,
   ArrowUp02Icon,
+  BubbleChatIcon,
   CancelCircleIcon,
   Clock01Icon,
   CloudUploadIcon,
@@ -88,16 +89,16 @@ import {
   HeartCheckIcon,
   Image02Icon,
   ListViewIcon,
-  Robot01Icon,
-  UserIcon,
   Mic01Icon,
-  WorkflowSquare03Icon,
   PauseIcon,
   PlayIcon,
   PlayListIcon,
   PlusSignIcon,
+  Robot01Icon,
   Settings02Icon,
-  StopCircleIcon
+  StopCircleIcon,
+  UserIcon,
+  WorkflowSquare03Icon
 } from 'hugeicons-react'
 import {
   createContext,
@@ -150,7 +151,20 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
   const toast = useToast()
   const isRtl = RTL_LOCALES.has(locale)
   const { goTo, status, refreshStatus } = useFlow()
-  const { newSession, reportSession, markSending, consumeProcedure } = useSessions()
+  const {
+    newSession,
+    reportSession,
+    markSending,
+    consumeProcedure,
+    activeProject,
+    setActiveProject
+  } = useSessions()
+  // Project mode: THIS session runs inside the globally active project. The
+  // binding is per-session (descriptor), so a backgrounded plain chat never
+  // borrows another session's project chrome.
+  const sessionProject =
+    activeProject !== null && descriptor.projectId === activeProject.id ? activeProject : null
+  const [projectDialogOpen, setProjectDialogOpen] = useState(false)
   // Per-session conversation state. Each mounted Chat instance owns ONE
   // conversation for its whole life: a fresh session starts null and gets an
   // id on first send; an opened conversation starts seeded. Switching
@@ -883,6 +897,8 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
         const conv = await window.api.conversation.create(
           localOnly ? currentModel : activeCloudModel
         )
+        if (descriptor.projectId) conv.projectId = descriptor.projectId
+        if (descriptor.icon) conv.icon = descriptor.icon
         conversationRef.current = conv
         setActiveConversationId(conv.id)
       }
@@ -921,6 +937,8 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
       await window.api.conversation.save(conversationRef.current)
     },
     [
+      descriptor.projectId,
+      descriptor.icon,
       currentModel,
       localOnly,
       activeCloudModel,
@@ -1090,9 +1108,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
   // message id and remount every item (images reloading, path cards
   // re-statting, the scroll jumping), which is exactly the flash to avoid. The
   // tail is safe to take by index because messages are append-only on disk
-  // (see conversations.ts): anything past what we already hold IS new. No
-  // warmPathCards — a tail arriving live stats its cards on mount, same as a
-  // streamed message; warming is for the bulk paint of an open.
+  // (see conversations.ts): anything past what we already hold IS new.
   useEffect(() => {
     if (!activeConversationId) return
     const targetId = activeConversationId
@@ -1507,12 +1523,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
         attachAsk(prev, {
           askId: event.id,
           toolCallId: event.toolCallId,
-          question: event.question,
-          details: event.details,
-          options: event.options,
-          allowOther: event.allowOther,
-          otherLabel: event.otherLabel,
-          otherDescription: event.otherDescription
+          questions: event.questions
         })
       )
     })
@@ -1564,8 +1575,9 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
 
   const respondAsk = useCallback(
     async (askId: string, response: AskUserResponse) => {
-      // Optimistically mark the card answered so the chosen option highlights
-      // the instant it's clicked — the tool_result lands a beat later.
+      // Optimistically mark the card answered so the chosen options highlight
+      // the instant the last one is clicked — the tool_result lands a beat
+      // later.
       setMessages((prev) =>
         prev.map((m) => {
           if (!isAssistant(m) || !m.asks) return m
@@ -1576,8 +1588,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
               next[key] = {
                 ...ask,
                 answered: true,
-                selectedIndex: response.kind === 'option' ? response.index : undefined,
-                customText: response.kind === 'custom' ? response.text : undefined
+                answers: response.kind === 'answered' ? response.answers : undefined
               }
               changed = true
             } else {
@@ -1611,20 +1622,34 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
             model: currentModel,
             messages: [],
             createdAt: now,
-            updatedAt: now
+            updatedAt: now,
+            // Disk was unreadable, so the merge has nothing to preserve the
+            // binding from — carry it from the session descriptor instead.
+            ...(descriptor.projectId ? { projectId: descriptor.projectId } : {}),
+            ...(descriptor.icon ? { icon: descriptor.icon } : {})
           }
         }
       }
       return activeConversationId
     }
     const conv = await window.api.conversation.create(localOnly ? currentModel : activeCloudModel)
+    if (descriptor.projectId) conv.projectId = descriptor.projectId
+    if (descriptor.icon) conv.icon = descriptor.icon
     conversationRef.current = conv
     // Sync the ref immediately — the event demux (matchesTurn) may need it
     // before the state commit re-runs the id effect.
     conversationIdRef.current = conv.id
     setActiveConversationId(conv.id)
     return conv.id
-  }, [activeConversationId, currentModel, localOnly, activeCloudModel, setActiveConversationId])
+  }, [
+    activeConversationId,
+    currentModel,
+    localOnly,
+    activeCloudModel,
+    setActiveConversationId,
+    descriptor.projectId,
+    descriptor.icon
+  ])
 
   const sendContent = useCallback(
     async (
@@ -1720,6 +1745,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
           userMessageId: userMessage.id,
           workingFolders,
           thinkingMode: thinkingMode as import('@preload/index').ThinkingMode,
+          projectId: descriptor.projectId ?? undefined,
           // Per-call only (procedure Play): a lingering state-based override
           // would leak the procedure's mode into later sends.
           ...(opts?.modeOverride ? { modeOverride: opts.modeOverride } : {})
@@ -1753,6 +1779,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
       }
     },
     [
+      descriptor.projectId,
       streaming,
       messages,
       setMessages,
@@ -1973,7 +2000,8 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
         // message, and it must carry the feed's id to reconcile later.
         userMessageId: userMsgId,
         workingFolders,
-        thinkingMode: thinkingMode as import('@preload/index').ThinkingMode
+        thinkingMode: thinkingMode as import('@preload/index').ThinkingMode,
+        projectId: descriptor.projectId ?? undefined
       })
       sendInFlightRef.current = false
       if (pendingTurnIdRef.current === null && response.turnId !== lastTerminalTurnIdRef.current) {
@@ -1995,6 +2023,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
       markSending(sessionKey, false)
     }
   }, [
+    descriptor.projectId,
     recBlobUrl,
     ensureConversationId,
     toast,
@@ -2284,6 +2313,12 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
             onClick: () => goTo('procedures')
           },
           {
+            key: 'projects',
+            icon: Folder01Icon,
+            label: t('chat.projects'),
+            onClick: () => goTo('projects')
+          },
+          {
             key: 'viewer',
             icon: FileEditIcon,
             label: t('chat.workspace'),
@@ -2329,16 +2364,39 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
         >
           {!hasMessages && (
             <div className="text-fg flex flex-col items-center gap-4 text-center">
-              <img
-                src={iconTransparent}
-                alt=""
-                aria-hidden
-                className="h-20 w-20 object-contain"
-                draggable={false}
-              />
+              {/* Project mode swaps the wolffish hero for the project's own
+                  identity: emoji icon, title, and a two-line instructions
+                  preview — the base every conversation here starts from. */}
+              {sessionProject ? (
+                <span aria-hidden className="text-6xl leading-none">
+                  {sessionProject.icon || '📁'}
+                </span>
+              ) : (
+                <img
+                  src={iconTransparent}
+                  alt=""
+                  aria-hidden
+                  className="h-20 w-20 object-contain"
+                  draggable={false}
+                />
+              )}
               <div className="flex flex-col gap-2">
-                <h2 className="text-2xl font-semibold tracking-tight">{t('chat.empty.title')}</h2>
-                <p className="text-muted text-sm leading-relaxed">{t('chat.empty.subtitle')}</p>
+                <h2 className="text-2xl font-semibold tracking-tight">
+                  {sessionProject
+                    ? sessionProject.title.trim() || t('projects.untitled')
+                    : t('chat.empty.title')}
+                </h2>
+                <p
+                  dir="auto"
+                  className={cn(
+                    'text-muted text-sm leading-relaxed',
+                    sessionProject && 'line-clamp-2 max-w-md'
+                  )}
+                >
+                  {sessionProject
+                    ? sessionProject.instructions.trim() || t('projects.noInstructions')
+                    : t('chat.empty.subtitle')}
+                </p>
               </div>
               {!hasAnyModel && (
                 <div
@@ -2467,23 +2525,35 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
             <div className="border-border bg-surface inline-flex shrink-0 items-center rounded-lg border p-0.5">
               {/* Always enabled — New Chat opens a SEPARATE session, so a
                     streaming conversation keeps running untouched while the
-                    user starts the next task. */}
-              <button
-                type="button"
-                onClick={onNewChat}
-                title={t('chat.newChat')}
-                aria-label={t('chat.newChat')}
-                className={cn(
-                  'flex w-14 flex-col items-center gap-0.5 rounded-md px-1.5 py-1',
-                  'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-                  'text-muted cursor-pointer hover:text-fg'
-                )}
-              >
-                <PlusSignIcon size={14} />
-                <span className="text-[10px] leading-tight font-medium">
-                  {t('chat.newChatShort')}
-                </span>
-              </button>
+                    user starts the next task. In project mode the slot becomes
+                    the Project button instead: the project's emoji + label,
+                    opening the manage dialog (edit / files / new conversation
+                    / exit). */}
+              {sessionProject ? (
+                <button
+                  type="button"
+                  onClick={() => setProjectDialogOpen(true)}
+                  title={sessionProject.title.trim() || t('projects.untitled')}
+                  aria-label={t('projects.project')}
+                  className={cn(
+                    'flex w-14 flex-col items-center gap-0.5 rounded-md px-1.5 py-1',
+                    'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+                    'text-muted cursor-pointer hover:text-fg'
+                  )}
+                >
+                  <span aria-hidden className="text-sm leading-none">
+                    {sessionProject.icon || '📁'}
+                  </span>
+                  <span className="text-[10px] leading-tight font-medium">
+                    {t('projects.project')}
+                  </span>
+                </button>
+              ) : (
+                <NewChatButton
+                  onNew={onNewChat}
+                  onNewInProject={(projectId) => newSession({ projectId })}
+                />
+              )}
             </div>
             <ModelSwitch
               localOnly={localOnly}
@@ -2848,6 +2918,24 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
           </div>,
           document.body
         )}
+      <ProjectDialog
+        project={projectDialogOpen ? sessionProject : null}
+        onClose={() => setProjectDialogOpen(false)}
+        onChanged={setActiveProject}
+        busy={streaming}
+        onNewConversation={(p) => {
+          setProjectDialogOpen(false)
+          newSession({ projectId: p.id })
+        }}
+        // Close = leave project mode and land in a fresh plain chat, right
+        // here — no detour to the Projects page. newSession() without a
+        // projectId both spawns/refocuses the blank session and clears the
+        // active project (syncProjectFor(null)).
+        onExitProject={() => {
+          setProjectDialogOpen(false)
+          newSession()
+        }}
+      />
     </main>
   )
 }
@@ -3171,7 +3259,7 @@ function WorkingFolderButton({
         <Folder01Icon size={18} />
       </button>
       {cardVisible && (
-        <div className="border-border bg-surface text-fg absolute bottom-full inset-e-0 z-20 mb-2 rounded-lg border px-2 py-2 text-xs shadow-md min-w-[200px] max-w-[280px]">
+        <div className="border-border bg-surface text-fg absolute bottom-full inset-e-0 z-20 mb-2 rounded-lg border px-2 py-2 text-xs shadow-md min-w-50 max-w-70">
           <div className="text-muted mb-1.5 text-[10px] font-medium uppercase tracking-wide whitespace-nowrap">
             {t('chat.workingFolder')}
           </div>
@@ -3919,8 +4007,7 @@ function AssistantBubble({
     message.toolTimings,
     onApprovalDecision,
     onAskRespond,
-    verbose,
-    isStreaming
+    verbose
   )
   const showThinking = isStreaming && renderable.empty
   const fullText = useMemo(() => collectText(message.segments), [message.segments])
@@ -4009,8 +4096,7 @@ function renderSegments(
   toolTimings: Record<string, ToolTiming> | undefined,
   onApprovalDecision: (id: string, decision: 'approved' | 'denied') => void,
   onAskRespond: (askId: string, response: AskUserResponse) => void,
-  verbose: boolean,
-  isStreaming: boolean
+  verbose: boolean
 ): RenderResult {
   const blocks: ReactNode[] = []
   let textBuffer = ''
@@ -4024,33 +4110,6 @@ function renderSegments(
     if (emittedFiles.has(filePath)) return false
     emittedFiles.add(filePath)
     return true
-  }
-
-  // Filesystem paths named anywhere in this turn (assistant prose or a tool
-  // result), collected in order and deduped. Rendered once as openable cards at
-  // the END of the message rather than inline at the first mention: in a long
-  // agentic turn the first mention is often a mid-message "plan" line, and a
-  // resumed chat auto-scrolls to the bottom — so an inline card ends up scrolled
-  // off-screen. The end is where the closing summary points and where the eye
-  // lands, and it's identical whether the message is live or restored.
-  //
-  // Verbose-only: a path merely *named* is a "manual" file surface, not a file
-  // the model deliberately delivered via send_file / an output marker. The
-  // clean feed shows only prose and explicitly delivered files, so collection
-  // is short-circuited when verbose is off (this also skips the regex scan on
-  // the default, hot render path).
-  const pathCandidates: string[] = []
-  const pathSeen = new Set<string>()
-  const collectPaths = (text: string): void => {
-    if (!verbose || isStreaming) return
-    for (const candidate of extractPathCandidates(text)) {
-      // Dedup on the canonical (home-folded) path so `~/x` and `/Users/me/x`
-      // don't both render; keep the first-seen spelling for display.
-      const key = canonicalPath(candidate)
-      if (pathSeen.has(key)) continue
-      pathSeen.add(key)
-      pathCandidates.push(candidate)
-    }
   }
 
   const flushText = (): void => {
@@ -4086,10 +4145,6 @@ function renderSegments(
       </div>
     )
     blocks.push(bubble)
-    // Collect any filesystem paths named in this bubble; the cards render at the
-    // end of the message (see collectPaths). Skipped mid-stream — a partial path
-    // token would resolve to nothing — and verified on-device by PathCard.
-    collectPaths(textBuffer)
     textBuffer = ''
   }
 
@@ -4172,12 +4227,13 @@ function renderSegments(
 
       // Clean feed (verbose off): the tool-activity card is dropped entirely —
       // successful, failed, AND denied calls alike. The clean feed relays only
-      // what the model produces FOR the user: prose plus the file viewers below
-      // (files delivered via send_file / [wolffish-output:] markers), which
-      // render in their own branches regardless of this flag. Tool mechanics,
-      // including failures, are verbose-only. Mirrors the channel renderSegment
-      // rules. (The model still sees every result — segment.output replays into
-      // its context; this gate is purely what the UI shows.)
+      // what the model produces FOR the user: prose plus the file viewers and
+      // location cards below (send_file's [wolffish-output:] / show_path's
+      // [wolffish-path:] markers), which render in their own branches
+      // regardless of this flag. Tool mechanics, including failures, are
+      // verbose-only. Mirrors the channel renderSegment rules. (The model
+      // still sees every result — segment.output replays into its context;
+      // this gate is purely what the UI shows.)
       const cardVisible = verbose
 
       if (voiceData) {
@@ -4439,17 +4495,23 @@ function renderSegments(
           }
         }
 
-        // Collect paths from tool output too — a short, successful result that
-        // names an absolute/home path (a created folder, an output file) earns
-        // the same end-of-message card as a path in assistant prose. Delivery
-        // markers are stripped first so a file already shown as a card isn't
-        // repeated, and big dumps (listings, logs) are skipped so they don't
-        // spray cards.
-        if (result?.status === 'success' && result.output) {
-          const toolText = result.output.replace(/\[wolffish-output:[^\]]+\]/g, '').trim()
-          if (toolText.length > 0 && toolText.length <= 2000) {
-            collectPaths(toolText)
-          }
+        // Location cards the model explicitly pushed via show_path — the
+        // [wolffish-path:] marker is their transport, mirroring send_file's
+        // delivery markers. Always rendered (clean feed too): pushing an
+        // openable folder/file location is a deliberate act FOR the user, not
+        // tool mechanics. Nothing is ever parsed out of prose or incidental
+        // tool output — no marker, no card. PathCard still verifies the path
+        // on-device; a since-deleted path keeps its card (it WAS a real tool
+        // call) with the button disabled and an "unavailable" note.
+        const shownPaths = extractToolResultPaths(result)
+        for (let pi = 0; pi < shownPaths.length; pi++) {
+          blocks.push(
+            <PathCard
+              key={`path_${seg.segmentId}_${pi}`}
+              path={shownPaths[pi].path}
+              kind={shownPaths[pi].kind}
+            />
+          )
         }
       }
     } else if (seg.kind === 'tool_result') {
@@ -4500,15 +4562,6 @@ function renderSegments(
   }
 
   flushText()
-
-  // Openable cards for every filesystem path named this turn, rendered together
-  // at the end so they sit with the closing summary and survive a resumed chat's
-  // auto-scroll to the bottom. Each verifies on-device and renders nothing if the
-  // path no longer exists. Verbose-only: pathCandidates stays empty on the clean
-  // feed (collectPaths short-circuits), so this loop no-ops there.
-  for (const candidate of pathCandidates) {
-    blocks.push(<PathCard key={`path-${candidate}`} path={candidate} />)
-  }
 
   return { blocks: <>{blocks}</>, empty: blocks.length === 0 }
 }
@@ -4619,6 +4672,11 @@ type ToolCallSegment = Extract<Segment, { kind: 'tool_call' }>
 const DELIVERY_MARKER_ONLY_RE =
   /^\[wolffish-output:\s*[^\]]+?\s+\((?:image|audio|video|document|file)\)\]$/
 
+// show_path's transport gets the same guard: its `path` arg may name a code
+// file whose LOCATION is being shown, which must not classify as file content
+// below (that branch renders nothing and would swallow the card).
+const PATH_MARKER_ONLY_RE = /^\[wolffish-path:\s*[^\]]+\]$/
+
 /**
  * True when a successful tool result is the CONTENT of the code/text file
  * named by the call's `path` arg (file_read/file_write/file_patch). Such
@@ -4628,7 +4686,8 @@ const DELIVERY_MARKER_ONLY_RE =
  */
 function isFileContentResult(call: ToolCallSegment, result?: ToolResultSegment): boolean {
   if (!result?.output || result.status !== 'success') return false
-  if (DELIVERY_MARKER_ONLY_RE.test(result.output.trim())) return false
+  const trimmed = result.output.trim()
+  if (DELIVERY_MARKER_ONLY_RE.test(trimmed) || PATH_MARKER_ONLY_RE.test(trimmed)) return false
   const argsPath = typeof call.args?.path === 'string' ? call.args.path : null
   return argsPath != null && CODE_EXTS_RE.test(argsPath)
 }
@@ -4756,6 +4815,33 @@ function extractToolResultGenericFiles(result?: ToolResultSegment): string[] {
     }
   }
   return paths
+}
+
+/**
+ * Extract folder/file locations the model explicitly pushed via show_path.
+ * These carry a `[wolffish-path: /abs/path (folder|file)]` marker — the
+ * model's own deliberate act, so the card renders on the clean feed too
+ * (like delivered files). The type suffix is the path's kind AT CALL TIME:
+ * it lets the card keep the right icon/labels after the path is deleted
+ * (the live stat can no longer answer). MARKER-ONLY by design: paths merely
+ * named in prose or incidental tool output never surface a card.
+ */
+function extractToolResultPaths(
+  result?: ToolResultSegment
+): { path: string; kind?: 'folder' | 'file' }[] {
+  if (!result?.output || result.status !== 'success') return []
+  const out: { path: string; kind?: 'folder' | 'file' }[] = []
+  const seen = new Set<string>()
+  const markerRegex = /\[wolffish-path:\s*([^\]]+?)(?:\s+\((folder|file)\))?\s*\]/g
+  let match: RegExpExecArray | null
+  while ((match = markerRegex.exec(result.output)) !== null) {
+    const p = match[1].trim()
+    if (!seen.has(p)) {
+      seen.add(p)
+      out.push({ path: p, kind: match[2] as 'folder' | 'file' | undefined })
+    }
+  }
+  return out
 }
 
 type DeliveredBucket = 'image' | 'audio' | 'video' | 'document' | 'file'

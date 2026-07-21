@@ -1,9 +1,12 @@
 import { CopyButton } from '@components/core/CopyButton'
+import { MARKDOWN_SANITIZE_SCHEMA } from '@lib/markdown/sanitize'
 import { cn } from '@lib/utils/cn'
 import { Download01Icon, FolderOpenIcon } from 'hugeicons-react'
 import { memo, type ReactNode } from 'react'
-import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown'
+import ReactMarkdown, { defaultUrlTransform, type Components, type Options } from 'react-markdown'
 import rehypeHighlight from 'rehype-highlight'
+import rehypeRaw from 'rehype-raw'
+import rehypeSanitize from 'rehype-sanitize'
 import remarkGfm from 'remark-gfm'
 
 function extractText(node: ReactNode): string {
@@ -157,8 +160,34 @@ const components: Components = {
     )
   },
   strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
-  em: ({ children }) => <em className="italic">{children}</em>
+  em: ({ children }) => <em className="italic">{children}</em>,
+  // Raw-HTML disclosure sections (rehype-raw + sanitize keep these) — the
+  // one collapsible primitive replies can use.
+  details: ({ children, open }) => (
+    <details
+      open={open}
+      className="border-border bg-bg/40 my-2 rounded-xl border px-3 py-2 first:mt-0 last:mb-0"
+    >
+      {children}
+    </details>
+  ),
+  summary: ({ children }) => (
+    <summary className="text-fg cursor-pointer font-medium select-none">{children}</summary>
+  )
 }
+
+/**
+ * Raw HTML in replies is parsed (rehype-raw) then reduced to a safe subset
+ * (rehype-sanitize with the shared schema) — collapsible details/summary,
+ * sub/sup/kbd/mark and friends render; scripts, iframes, styles, and event
+ * handlers are stripped, and unknown tags degrade to their text content.
+ * Highlight runs AFTER sanitize so its hljs- span classes survive.
+ */
+const rehypePlugins: Options['rehypePlugins'] = [
+  rehypeRaw,
+  [rehypeSanitize, MARKDOWN_SANITIZE_SCHEMA],
+  [rehypeHighlight, { detect: false, ignoreMissing: true }]
+]
 
 function urlTransform(url: string): string {
   if (url.startsWith('wolffish-media://')) return url
@@ -169,7 +198,7 @@ export const Markdown = memo(function Markdown({ content }: { content: string })
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
-      rehypePlugins={[[rehypeHighlight, { detect: false, ignoreMissing: true }]]}
+      rehypePlugins={rehypePlugins}
       components={components}
       urlTransform={urlTransform}
     >

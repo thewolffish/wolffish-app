@@ -12,6 +12,7 @@ import {
   setConversationIdForJid
 } from '@main/channels/whatsapp/conversations'
 import { markdownToPlain } from '@main/channels/format'
+import { listProjects, projectLabel, type Project } from '@main/projects'
 import { stripInlineMarkup } from '@main/channels/whatsapp/format'
 import { GIF_PLAYBACK_MAX_SECONDS, transcodeGifToMp4 } from '@main/channels/whatsapp/gif'
 import {
@@ -52,7 +53,8 @@ import type { Agent } from '@main/runtime/agent'
 import type { ApprovalDecision, ApprovalRequest } from '@main/runtime/amygdala'
 import {
   ASK_USER_TOOL,
-  type AskUserOption,
+  type AskUserAnswer,
+  type AskUserQuestion,
   type AskUserRequest,
   type AskUserResponse
 } from '@main/runtime/cerebellum'
@@ -167,6 +169,7 @@ const COMMANDS_HELP =
   '/status — system status report\n' +
   '/mode — single or workflow mode\n' +
   '/model — pick the cloud model\n' +
+  '/project — pick or exit a project\n' +
   '/local — switch to local model\n' +
   '/cloud — switch to cloud model'
 
@@ -200,11 +203,19 @@ type ActiveTurn = {
   pendingApprovalId: string | null
   pendingApprovalResolve: ((decision: ApprovalDecision) => void) | null
   /**
-   * Outstanding ask_user question. The next inbound message is the answer:
-   * a number in 1–options.length picks that option; any other text becomes
-   * custom instructions ("something else") when allowOther is set.
+   * Outstanding ask_user request. Questions are posed one message at a
+   * time, in order; each inbound message answers the CURRENT question: a
+   * number in 1–options.length picks that option; any other text becomes
+   * custom instructions ("something else") when allowOther is set. Answers
+   * accumulate until every question is answered, then the request resolves
+   * with all of them at once.
    */
-  pendingAsk: { id: string; options: AskUserOption[]; allowOther: boolean } | null
+  pendingAsk: {
+    id: string
+    questions: AskUserQuestion[]
+    current: number
+    answers: AskUserAnswer[]
+  } | null
   pendingAskResolve: ((response: AskUserResponse) => void) | null
   toolCallNames: Map<string, string>
   pendingActiveModel: string | null
@@ -247,6 +258,7 @@ type ActiveTurn = {
 type PendingSelection =
   | { command: 'resume' | 'delete'; items: ConversationMeta[]; page: number }
   | { command: 'model'; models: ModelOption[] }
+  | { command: 'project'; projects: Project[] }
 
 export class WhatsAppChannel {
   private sock: WASocket | null = null
@@ -1035,6 +1047,16 @@ export class WhatsAppChannel {
       return
     }
 
+    // /project — show the active project and a numbered picker; "/project
+    // close" leaves it. Listing is read-only and allowed mid-turn (like
+    // /model); selecting and exiting rotate the chat to a FRESH conversation
+    // (the project binding lives on the conversation itself), so those paths
+    // are busy-blocked inside the handler exactly like /new.
+    if (lower === '/project' || lower === 'project' || lower.startsWith('/project ')) {
+      await this.handleProjectCommand(jid, commandArg(trimmed), trimmed)
+      return
+    }
+
     // /stop — cancel the active turn for this JID
     if (lower === '/stop' || lower === 'stop') {
       if (!active) {
@@ -1119,7 +1141,10 @@ export class WhatsAppChannel {
       // number parse and the cancel fall-through below — otherwise the word
       // reads as "not a selection", silently drops the picker, and gets sent
       // to the model as an ordinary chat turn.
-      if (pending.command !== 'model' && isNextPageReply(lower)) {
+      if (
+        (pending.command === 'resume' || pending.command === 'delete') &&
+        isNextPageReply(lower)
+      ) {
         const page = pending.page + 1
         if (pageExists(pending.items, page)) {
           this.pendingSelections.set(jid, { ...pending, page })
@@ -1134,11 +1159,15 @@ export class WhatsAppChannel {
       const count =
         pending.command === 'model'
           ? pending.models.length
-          : selectableCount(pending.items, pending.page)
+          : pending.command === 'project'
+            ? pending.projects.length
+            : selectableCount(pending.items, pending.page)
       if (num !== null && num >= 1 && num <= count) {
         this.pendingSelections.delete(jid)
         if (pending.command === 'model') {
           await this.applyModelSelection(jid, pending.models[num - 1], trimmed)
+        } else if (pending.command === 'project') {
+          await this.applyProjectSelection(jid, pending.projects[num - 1], trimmed)
         } else if (pending.command === 'resume') {
           await this.handleResumeSelection(jid, pending.items[num - 1].id)
         } else {
@@ -1330,11 +1359,100 @@ export class WhatsAppChannel {
   }
 
   private async handleNewCommand(jid: string): Promise<void> {
+    // /new inside a project STAYS in the project — the fresh conversation
+    // inherits the current one's binding; /project close is the way out.
+    const project = await this.activeProjectForJid(jid)
     const fresh = createConversation(null)
     fresh.channel = 'whatsapp'
+    if (project) fresh.projectId = project.id
     await saveConversation(fresh)
     await setConversationIdForJid(jid, fresh.id)
+    if (project) {
+      await this.safeSend(
+        jid,
+        `New conversation started in ${projectLabel(project)}. To leave the project, use /project close.`
+      )
+      return
+    }
     await this.safeSend(jid, `New conversation started.\n\n${COMMANDS_HELP}`)
+  }
+
+  /**
+   * The project this jid is currently "in" — derived from the bound
+   * conversation's own projectId, never from separate channel state, so it
+   * survives restarts and can't drift from what turns actually run with.
+   * A dangling binding (project deleted in the app) reads as no project.
+   */
+  private async activeProjectForJid(jid: string): Promise<Project | null> {
+    const currentId = await getConversationIdForJid(jid)
+    if (!currentId) return null
+    const current = await loadConversation(currentId)
+    if (!current?.projectId) return null
+    const projects = await listProjects().catch(() => [] as Project[])
+    return projects.find((p) => p.id === current.projectId) ?? null
+  }
+
+  private async handleProjectCommand(jid: string, arg: string | null, raw: string): Promise<void> {
+    const active = await this.activeProjectForJid(jid)
+
+    if (arg && arg.trim().toLowerCase() === 'close') {
+      if (this.activeByJid.has(jid)) {
+        await this.sendBusyReply(jid, raw)
+        return
+      }
+      if (!active) {
+        await this.safeSend(jid, 'No active project to close.')
+        return
+      }
+      this.pendingSelections.delete(jid)
+      const fresh = createConversation(null)
+      fresh.channel = 'whatsapp'
+      await saveConversation(fresh)
+      await setConversationIdForJid(jid, fresh.id)
+      await this.safeSend(
+        jid,
+        `Left ${projectLabel(active)}. Fresh conversation started outside it.`
+      )
+      return
+    }
+
+    const projects = await listProjects().catch(() => [] as Project[])
+    if (projects.length === 0) {
+      await this.safeSend(jid, 'No projects yet — create one from the Projects page in the app.')
+      return
+    }
+    const lines: string[] = []
+    lines.push(active ? `Active project: ${projectLabel(active)}` : 'No active project.')
+    lines.push('')
+    projects.forEach((p, i) => {
+      lines.push(`${i + 1}. ${projectLabel(p)}`)
+    })
+    lines.push('')
+    lines.push(
+      active
+        ? 'Reply with a number to switch (starts a fresh conversation there) — or /project close to leave.'
+        : 'Reply with a number to start a conversation in that project.'
+    )
+    this.pendingSelections.set(jid, { command: 'project', projects })
+    await this.safeSend(jid, lines.join('\n'))
+  }
+
+  private async applyProjectSelection(jid: string, project: Project, raw: string): Promise<void> {
+    // Selecting rotates the chat to a fresh bound conversation — same
+    // mapping mutation as /new, so the same busy gate applies.
+    if (this.activeByJid.has(jid)) {
+      await this.sendBusyReply(jid, raw)
+      return
+    }
+    const fresh = createConversation(null)
+    fresh.channel = 'whatsapp'
+    fresh.projectId = project.id
+    await saveConversation(fresh)
+    await setConversationIdForJid(jid, fresh.id)
+    await this.safeSend(
+      jid,
+      `${project.icon || '📁'} Now in project “${project.title.trim() || 'Untitled'}”. Conversations here start from its instructions and files — /project close to leave.`
+    )
   }
 
   /**
@@ -1738,6 +1856,9 @@ export class WhatsAppChannel {
       history,
       conversationId: conversation.id,
       userMessageId: userMessage.id,
+      // Project binding rides the conversation file, so continued
+      // project conversations get the overlay on every channel turn.
+      projectId: conversation.projectId ?? null,
       channel: 'whatsapp',
       makeSink: ({ turnId, conversationId }) => this.createSink(turnId, conversationId, jid),
       onTurnStarted: ({ turnId, controller }) => {
@@ -1937,15 +2058,27 @@ export class WhatsAppChannel {
         if (autoRefresh && loaded.messages.length > 0) {
           const elapsed = Date.now() - loaded.updatedAt
           if (elapsed >= staleMs) {
+            // Idle rotation deliberately does NOT inherit the old
+            // conversation's projectId (unlike /new): hitting the idle
+            // limit closes the project — the fresh conversation is plain.
             const fresh = createConversation(null)
             fresh.channel = 'whatsapp'
             await saveConversation(fresh)
             await setConversationIdForJid(jid, fresh.id)
             const oldTitle = loaded.title || 'Untitled'
             const hours = Math.floor(elapsed / 3_600_000)
+            let projectNote = ''
+            if (loaded.projectId) {
+              const project = (await listProjects().catch(() => [] as Project[])).find(
+                (p) => p.id === loaded.projectId
+              )
+              projectNote = project
+                ? ` Left ${projectLabel(project)} — use /project to re-enter it.`
+                : ' Left its project — use /project to pick one.'
+            }
             await this.safeSend(
               jid,
-              `Conversation "${oldTitle}" was idle for ${hours}h — started a fresh one.\n\nUse /resume to go back.`
+              `Conversation "${oldTitle}" was idle for ${hours}h — started a fresh one.${projectNote}\n\nUse /resume to go back.`
             )
             return fresh
           }
@@ -2352,9 +2485,11 @@ export class WhatsAppChannel {
   }
 
   /**
-   * Ask the user a multiple-choice question and resolve once they reply.
-   * Posts a numbered list; the user's next message answers it (a number
-   * picks an option, other text becomes custom instructions). Mirrors
+   * Ask the user multiple-choice question(s) and resolve once they've
+   * answered them all. Questions are posted one at a time as numbered
+   * lists; each next message answers the current one (a number picks an
+   * option, other text becomes custom instructions), and the request
+   * resolves with every answer once the last question is done. Mirrors
    * handleApprovalRequest — resolver lives on the active turn, fired by
    * resolvePendingAsk or drained canceled at turn end.
    */
@@ -2365,51 +2500,75 @@ export class WhatsAppChannel {
   ): Promise<AskUserResponse> {
     return new Promise<AskUserResponse>((resolve) => {
       const active = this.activeByJid.get(jid)
-      if (!active || active.turnId !== turnId) {
+      if (!active || active.turnId !== turnId || req.questions.length === 0) {
         resolve({ kind: 'canceled' })
         return
       }
       if (active.pendingAskResolve) active.pendingAskResolve({ kind: 'canceled' })
-      active.pendingAsk = { id: req.id, options: req.options, allowOther: req.allowOther }
+      active.pendingAsk = { id: req.id, questions: req.questions, current: 0, answers: [] }
       active.pendingAskResolve = resolve
-      void this.safeSend(jid, formatAskRequestPlain(req))
+      void this.safeSend(jid, formatAskQuestionPlain(req.questions[0], 0, req.questions.length))
     })
   }
 
-  /** Interpret the user's reply to an outstanding ask_user question. */
+  /** Interpret the user's reply to the current outstanding ask_user question. */
   private async resolvePendingAsk(jid: string, active: ActiveTurn, text: string): Promise<void> {
     const pending = active.pendingAsk
     const resolve = active.pendingAskResolve
     if (!pending || !resolve) return
-    const n = pending.options.length
-    const outcome = interpretAskReply(text, n, pending.allowOther)
+    const question = pending.questions[pending.current]
+    const n = question.options.length
+    const outcome = interpretAskReply(text, n, question.allowOther)
 
-    if (outcome.kind === 'option') {
+    if (outcome.kind === 'reprompt') {
+      // Keep the question pending and tell the user how to answer.
+      await this.safeSend(
+        jid,
+        outcome.reason === 'out-of-range'
+          ? `⚠️ That isn't one of the options (1–${n}). Reply with a valid number${question.allowOther ? ', or type your own instructions' : ''}.`
+          : `Please reply with a number between 1 and ${n}.`
+      )
+      return
+    }
+
+    pending.answers.push(
+      outcome.kind === 'option'
+        ? { kind: 'option', index: outcome.index }
+        : { kind: 'custom', text: outcome.text }
+    )
+
+    // Last answer in: resolve BEFORE the ack so the agent loop resumes
+    // without waiting on a WhatsApp roundtrip (same ordering as before).
+    const finished = pending.current + 1 >= pending.questions.length
+    if (finished) {
       active.pendingAsk = null
       active.pendingAskResolve = null
-      resolve({ kind: 'option', index: outcome.index })
+      resolve({ kind: 'answered', answers: pending.answers })
+    }
+
+    if (outcome.kind === 'option') {
       // Same sanitization the question card applies to this label —
       // otherwise a model-authored '**Deploy now**' echoes back raw.
       await this.safeSend(
         jid,
-        `✅ Option ${outcome.index + 1}: ${stripInlineMarkup(pending.options[outcome.index].label)}`
+        `✅ Option ${outcome.index + 1}: ${stripInlineMarkup(question.options[outcome.index].label)}`
       )
-      return
-    }
-    if (outcome.kind === 'custom') {
-      active.pendingAsk = null
-      active.pendingAskResolve = null
-      resolve({ kind: 'custom', text: outcome.text })
+    } else {
       await this.safeSend(jid, '✅ Got it — using your instructions.')
-      return
     }
-    // reprompt — keep the question pending and tell the user how to answer.
-    await this.safeSend(
-      jid,
-      outcome.reason === 'out-of-range'
-        ? `⚠️ That isn't one of the options (1–${n}). Reply with a valid number${pending.allowOther ? ', or type your own instructions' : ''}.`
-        : `Please reply with a number between 1 and ${n}.`
-    )
+
+    // More questions? Post the next one and keep the request pending.
+    if (!finished) {
+      pending.current++
+      await this.safeSend(
+        jid,
+        formatAskQuestionPlain(
+          pending.questions[pending.current],
+          pending.current,
+          pending.questions.length
+        )
+      )
+    }
   }
 
   // --- Busy handling ---
@@ -2738,29 +2897,31 @@ function commandArg(text: string): string {
 }
 
 /**
- * Render an ask_user question as a WhatsApp message: bold question, optional
- * details, a numbered list (label + description), and a hint on how to answer.
- * The free-text "something else" option isn't numbered — the hint tells the
- * user they can just type their own instructions instead.
+ * Render ONE ask_user question as a WhatsApp message: bold question (with a
+ * "Question i of n" line when the request carries several), optional
+ * details, a numbered list (label + description), and a hint on how to
+ * answer. The free-text "something else" option isn't numbered — the hint
+ * tells the user they can just type their own instructions instead.
  */
-function formatAskRequestPlain(req: AskUserRequest): string {
+function formatAskQuestionPlain(q: AskUserQuestion, index: number, total: number): string {
   // The channel overlay instructs the model to write ask_user text as
   // plain prose, so details/descriptions pass through verbatim. The
   // question and labels are embedded inside this card's own *bold*
   // wrappers — flatten any stray inline markers so they can't break
   // the span.
-  const parts: string[] = [`❓ *${stripInlineMarkup(req.question)}*`]
-  if (req.details) parts.push(req.details)
-  const list = req.options
+  const parts: string[] = [`❓ *${stripInlineMarkup(q.question)}*`]
+  if (total > 1) parts.push(`_Question ${index + 1} of ${total}_`)
+  if (q.details) parts.push(q.details)
+  const list = q.options
     .map((opt, i) => {
       const head = `*${i + 1}.* ${stripInlineMarkup(opt.label)}`
       return opt.description ? `${head}\n${opt.description}` : head
     })
     .join('\n\n')
   parts.push(list)
-  const count = req.options.length
+  const count = q.options.length
   parts.push(
-    req.allowOther
+    q.allowOther
       ? `_Reply with a number (1–${count}) to choose — or just type what you'd rather do._`
       : `_Reply with a number (1–${count}) to choose._`
   )

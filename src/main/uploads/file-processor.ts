@@ -1,3 +1,7 @@
+// uploads.ts is deliberately Electron-free (its workspaceRoot comes from
+// workspace/root, not workspace.ts), which keeps this module loadable under
+// plain node despite the static import — what lets the policy tests exercise
+// processAttachmentAbsolute directly.
 import { resolveUploadPath } from '@main/uploads/uploads'
 import fs from 'node:fs/promises'
 import path from 'node:path'
@@ -15,20 +19,41 @@ export type ProcessedAttachment = {
 
 export type FileProcessorOptions = {
   /**
-   * True when the active model cannot ingest raw PDF bytes (local/Ollama):
-   * PDFs are flattened to extracted text instead of a base64 document block.
-   * A capability flag, not a provider id — cloud providers absent from an
-   * enum can never silently misroute onto the lossy path again.
-   */
-  pdfAsText: boolean
-  /**
-   * Whether the active model accepts image content parts. False never
-   * rejects an upload — images are handed to the model as a text note
-   * (name + on-disk path + how to operate on it with tools) instead of
-   * a base64 block a text-only API would 400 on.
+   * Whether the active model accepts image content parts. It only changes
+   * the WORDING of the image note: vision models are told to pull pixels
+   * on demand with image_view; text-only models are told they cannot see
+   * the image but can still operate on the file with tools.
    */
   supportsVision: boolean
 }
+
+// ── 100% model-led attachments ───────────────────────────────────────────
+//
+// NO attachment content is ever auto-injected into model context. Every
+// file becomes a compact reference note — name, absolute path, type facts
+// (page count, dimensions, size) — plus the exact tools to read it, and
+// the model decides what to load and when: pdf_info/pdf_search/pdf_read,
+// file_read line ranges, image_view for pixels, document/spreadsheet
+// tools, shell.
+//
+// Why: whole-file injection was the choke. A 3,000-page PDF extracts to
+// ~5-11M chars (~1.4-2.8M tokens — no context window holds it) and its
+// base64 document block is tens of MB, so providers rejected or timed out
+// after minutes of upload and retries and the turn looked hung. Reference
+// notes make that structurally impossible while tools keep every byte
+// reachable.
+//
+// The thresholds below choose a note's VERBOSITY tier, never whether
+// content is inlined: small files get a short "read it with X" note, big
+// files get the full traversal workflow plus the no-skip contract.
+const PDF_SMALL_MAX_PAGES = 15
+/** Above this, even the page-count probe (a full read into RAM) is skipped. */
+const PDF_PROBE_MAX_BYTES = 256 * 1024 * 1024
+/** Text/office files at or below this size count as "small" for note tier. */
+const DOC_SMALL_MAX_BYTES = 64 * 1024
+
+const NEVER_SKIP_NOTE =
+  'Never guess or claim knowledge of parts you have not read or searched. For questions about the whole file, work through it in slices until you have genuinely covered it — the tools reach every byte.'
 
 const IMAGE_MIMES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp'])
 const DOCUMENT_EXTS = new Set([
@@ -73,18 +98,27 @@ export async function processAttachment(
   originalName: string,
   options: FileProcessorOptions
 ): Promise<ProcessedAttachment | null> {
-  const abs = resolveUploadPath(relativePath)
+  const abs = await resolveUploadPath(relativePath)
   if (!abs) return null
+  return processAttachmentAbsolute(abs, mimeType, originalName, options)
+}
 
+/** Same as processAttachment but on an already-resolved absolute path. */
+export async function processAttachmentAbsolute(
+  abs: string,
+  mimeType: string,
+  originalName: string,
+  options: FileProcessorOptions
+): Promise<ProcessedAttachment | null> {
   const ext = path.extname(originalName).toLowerCase()
 
   if (IMAGE_MIMES.has(mimeType)) {
     if (!options.supportsVision) return imageAsTextNote(abs, originalName)
-    return processImage(abs, mimeType, originalName)
+    return imageReferenceNote(abs, originalName)
   }
 
   if (mimeType === 'application/pdf') {
-    return processPdf(abs, originalName, options)
+    return processPdf(abs, originalName)
   }
 
   if (DOCUMENT_EXTS.has(ext)) {
@@ -127,68 +161,134 @@ function imageAsTextNote(absPath: string, originalName: string): ProcessedAttach
   }
 }
 
-async function processImage(
+/**
+ * Vision models never get auto-injected pixels either — they get a note
+ * with the facts and pull the image on demand with image_view (which
+ * downscales and returns the pixels in the tool result). Metadata is probed
+ * from the header only; a probe failure just yields a sparser note — the
+ * image_view tool reports decode errors precisely when actually used.
+ */
+async function imageReferenceNote(
   absPath: string,
-  _mimeType: string,
   originalName: string
 ): Promise<ProcessedAttachment> {
-  const sharp = (await import('sharp')).default
-  const resized = await sharp(absPath)
-    .resize(1024, 1024, { fit: 'inside', withoutEnlargement: false })
-    .jpeg({ quality: 75 })
-    .toBuffer()
-
-  const data = resized.toString('base64')
-
+  const facts: string[] = []
+  try {
+    const stat = await fs.stat(absPath)
+    try {
+      const sharp = (await import('sharp')).default
+      const meta = await sharp(absPath).metadata()
+      if (meta.width && meta.height) facts.push(`${meta.width}x${meta.height}`)
+    } catch {
+      // undecodable header — size alone still helps
+    }
+    facts.push(sizeLabel(stat.size))
+  } catch {
+    // stat failure: note still carries name + path
+  }
+  const factsLabel = facts.length > 0 ? ` — ${facts.join(', ')}` : ''
   return {
     originalName,
     fileType: 'image',
-    blocks: [{ type: 'image', mediaType: 'image/jpeg', data }]
+    blocks: [
+      {
+        type: 'text',
+        text:
+          `[Image attached: ${originalName}${factsLabel} — not loaded into context]\n` +
+          `Path: ${absPath}\n` +
+          `View it with image_view (returns the pixels, downscaled) whenever its content matters — never describe or answer questions about an image you have not actually viewed. Shell tools (sips/exiftool/ffmpeg) can inspect or transform the file itself.`
+      }
+    ]
   }
+}
+
+function sizeLabel(sizeBytes: number): string {
+  const mb = sizeBytes / 1024 / 1024
+  return mb >= 1 ? `${mb.toFixed(1)}MB` : `${Math.ceil(sizeBytes / 1024)}KB`
 }
 
 /**
- * PDFs follow two paths depending on the active model's capability:
- * - Native ingestion (cloud providers): pass the raw bytes as a base64
- *   document block. The model handles layout, tables, embedded images
- *   natively; we don't pre-flatten anything. Oversized PDFs come back as
- *   an API error the user sees in the chat — that's strictly better than
- *   silently degrading the file to flat extracted text.
- * - pdfAsText (local/Ollama): no native PDF support, so we extract text
- *   with pdf-parse. This is the only place pdf-parse runs.
+ * Every PDF becomes a reference note — small ones get a one-liner naming
+ * the exact pdf_read call that returns the whole document; big ones get
+ * the full navigation workflow plus the no-skip contract. The page count
+ * is probed via a lazy xref-only load so the note states real facts.
  */
-async function processPdf(
-  absPath: string,
-  originalName: string,
-  options: FileProcessorOptions
-): Promise<ProcessedAttachment> {
-  const raw = await fs.readFile(absPath)
+async function processPdf(absPath: string, originalName: string): Promise<ProcessedAttachment> {
+  const stat = await fs.stat(absPath)
+  // Probe the page count even for huge files (the note should say "3,012
+  // pages", not shrug) — but not above the RAM-spike ceiling.
+  const probeSkipped = stat.size > PDF_PROBE_MAX_BYTES
+  const pageCount = probeSkipped ? null : await probePdfPageCount(absPath)
 
-  if (options.pdfAsText) {
-    const text = await extractPdfText(raw)
+  if (pageCount !== null && pageCount <= PDF_SMALL_MAX_PAGES) {
     return {
       originalName,
       fileType: 'pdf',
-      blocks: [{ type: 'text', text: `[PDF: ${originalName}]\n${text}` }]
+      blocks: [
+        {
+          type: 'text',
+          text:
+            `[PDF attached: ${originalName} — ${pageCount} page${pageCount === 1 ? '' : 's'}, ${sizeLabel(stat.size)} — not loaded into context]\n` +
+            `Path: ${absPath}\n` +
+            `Read it in full with pdf_read (pages="1-${pageCount}") before answering anything about its contents; pdf_search finds text across it.`
+        }
+      ]
     }
   }
 
-  const data = raw.toString('base64')
-  return {
-    originalName,
-    fileType: 'pdf',
-    blocks: [{ type: 'document', mediaType: 'application/pdf', data }]
+  return pdfReferenceNote(absPath, originalName, stat.size, pageCount, probeSkipped)
+}
+
+/** Page count via a lazy xref-only load — ~200ms even for thousands of pages. */
+async function probePdfPageCount(absPath: string): Promise<number | null> {
+  type LazyParser = {
+    load: () => Promise<void>
+    doc?: { numPages?: number }
+    destroy?: () => Promise<void>
+  }
+  let parser: LazyParser | null = null
+  try {
+    const raw = await fs.readFile(absPath)
+    const { PDFParse } = await import('pdf-parse')
+    parser = new PDFParse({ data: new Uint8Array(raw) }) as unknown as LazyParser
+    await parser.load()
+    return parser.doc?.numPages ?? null
+  } catch {
+    return null
+  } finally {
+    await parser?.destroy?.().catch(() => undefined)
   }
 }
 
-async function extractPdfText(buffer: Buffer): Promise<string> {
-  try {
-    const { PDFParse } = await import('pdf-parse')
-    const parser = new PDFParse({ data: new Uint8Array(buffer) })
-    const result = await parser.getText()
-    return result.text || '(no text extracted)'
-  } catch {
-    return '(PDF text extraction failed)'
+function pdfReferenceNote(
+  absPath: string,
+  originalName: string,
+  sizeBytes: number,
+  pageCount: number | null,
+  probeSkipped: boolean
+): ProcessedAttachment {
+  const pagesLabel =
+    pageCount !== null
+      ? `${pageCount.toLocaleString()} pages`
+      : probeSkipped
+        ? 'page count not probed at this size (pdf_info reports it)'
+        : 'page count unreadable (possibly encrypted or corrupt — the PDF tools will report the exact error)'
+  return {
+    originalName,
+    fileType: 'pdf',
+    blocks: [
+      {
+        type: 'text',
+        text:
+          `[PDF attached: ${originalName} — ${pagesLabel}, ${sizeLabel(sizeBytes)} — not loaded into context]\n` +
+          `Path: ${absPath}\n` +
+          `This document is too large to inject whole, but every page is reachable through your PDF tools, and you are expected to actually consult it before answering anything about it:\n` +
+          `- pdf_info: structure, outline, and text density (start here)\n` +
+          `- pdf_search: exhaustive full-document text search with authoritative match counts\n` +
+          `- pdf_read: exact text of any page range, e.g. pages="120-140"\n` +
+          NEVER_SKIP_NOTE
+      }
+    ]
   }
 }
 
@@ -197,111 +297,69 @@ async function processDocument(
   originalName: string,
   ext: string
 ): Promise<ProcessedAttachment> {
-  let text: string
+  const stat = await fs.stat(absPath)
+  return documentReferenceNote(absPath, originalName, stat.size, ext)
+}
 
-  switch (ext) {
-    case '.docx':
-      text = await extractDocx(absPath)
-      break
-    case '.xlsx':
-    case '.xls':
-      text = await extractSpreadsheet(absPath)
-      break
-    // Plain-text formats (incl. HTML) are inlined as their raw source — HTML is
-    // just text, so every model (vision or not) gets the full markup.
-    case '.html':
-    case '.htm':
-    case '.csv':
-    case '.tsv':
-    case '.txt':
-    case '.md':
-    case '.json':
-      text = await fs.readFile(absPath, 'utf-8')
-      break
-    case '.pptx':
-      text = await extractPptx(absPath)
-      break
-    default:
-      text = await fs.readFile(absPath, 'utf-8')
+/**
+ * Per-format tool guidance. Small files get the one exact call that reads
+ * them whole; big files get the traversal workflow plus the no-skip
+ * contract. Guidance only ever names tools that actually exist for the
+ * format: xlsx/pptx have no document_read support, and pptx has no reader
+ * capability at all (python/shell is the honest route there).
+ */
+function documentReferenceNote(
+  absPath: string,
+  originalName: string,
+  sizeBytes: number,
+  ext: string
+): ProcessedAttachment {
+  const small = sizeBytes <= DOC_SMALL_MAX_BYTES
+  let guidance: string
+  if (ext === '.docx') {
+    guidance = small
+      ? `Read it in full with document_read before answering anything about its contents.`
+      : `- document_read extracts the text (results are capped per call)\n` +
+        `- For a document this size, document_convert it to .txt once, then search that file with rg and page through it with file_read startLine/endLine`
+  } else if (ext === '.xlsx' || ext === '.xls') {
+    guidance = small
+      ? `Read it with spreadsheet_read before answering anything about its contents; use your spreadsheet/python tools for any analysis.`
+      : `- spreadsheet_read pages through sheets; for real analysis (aggregation, stats, pivots) load it with your spreadsheet or python tools — never eyeball thousands of rows\n` +
+        `- spreadsheet_convert to .csv turns it into plain text you can slice with shell tools (head, rg, awk)`
+  } else if (ext === '.pptx') {
+    guidance = `Extract the slide text with your python tool (python-pptx) or shell (unzip -p "${absPath}" ppt/slides/slide1.xml — one XML per slide; the text lives in <a:t> elements)${small ? '' : ', working through the slides in batches'}.`
+  } else if (ext === '.csv' || ext === '.tsv') {
+    guidance = small
+      ? `Read it in full with file_read before answering anything about its contents; use your python or spreadsheet tools for any analysis.`
+      : `- Slice it with shell tools first: head/tail for a preview, wc -l for row count, rg/awk for filtering\n` +
+        `- For real analysis (aggregation, stats, pivots), load it with your python or spreadsheet tools — never eyeball thousands of rows\n` +
+        `- file_read with startLine/endLine pages through any region exactly`
+  } else {
+    guidance = small
+      ? `Read it in full with file_read before answering anything about its contents.`
+      : `- file_read with startLine/endLine reads any exact line range\n` +
+        `- Search it with your shell tool: rg -n "pattern" finds every occurrence with line numbers (authoritative counts), sed -n '100,160p' prints a range\n` +
+        `- wc -lc gives you its true size before you plan the traversal`
   }
+
+  const preamble = small
+    ? ''
+    : `This file is large, and all of it is reachable through your tools — you are expected to actually consult it before answering anything about it:\n`
+  const tail = small ? '' : `\n${NEVER_SKIP_NOTE}`
 
   return {
     originalName,
     fileType: 'document',
-    blocks: [{ type: 'text', text: `[File: ${originalName}]\n${text}` }]
+    blocks: [
+      {
+        type: 'text',
+        text:
+          `[File attached: ${originalName} — ${sizeLabel(sizeBytes)} — not loaded into context]\n` +
+          `Path: ${absPath}\n` +
+          `${preamble}${guidance}${tail}`
+      }
+    ]
   }
-}
-
-async function extractDocx(absPath: string): Promise<string> {
-  try {
-    const mammoth = await import('mammoth')
-    const result = await mammoth.extractRawText({ path: absPath })
-    return result.value || '(no text extracted)'
-  } catch {
-    return '(DOCX text extraction failed)'
-  }
-}
-
-async function extractSpreadsheet(absPath: string): Promise<string> {
-  try {
-    const XLSX = await import('xlsx')
-    const workbook = XLSX.readFile(absPath)
-    const sheets: string[] = []
-    for (const name of workbook.SheetNames) {
-      const sheet = workbook.Sheets[name]
-      const csv = XLSX.utils.sheet_to_csv(sheet)
-      sheets.push(`--- Sheet: ${name} ---\n${csv}`)
-    }
-    return sheets.join('\n\n') || '(no data extracted)'
-  } catch {
-    return '(spreadsheet extraction failed)'
-  }
-}
-
-/**
- * PPTX is a ZIP containing per-slide XML at ppt/slides/slide{N}.xml.
- * Each text run lives inside an `<a:t>` element. We unzip with jszip
- * (already a transitive dep through mammoth), enumerate slide XMLs in
- * numeric order, and concatenate the inner text. No PPTX-specific lib
- * needed — the format is stable and the XML is small.
- */
-async function extractPptx(absPath: string): Promise<string> {
-  try {
-    const raw = await fs.readFile(absPath)
-    const JSZip = (await import('jszip')).default
-    const zip = await JSZip.loadAsync(raw)
-    const slideEntries: Array<{ index: number; path: string }> = []
-    for (const [filePath] of Object.entries(zip.files)) {
-      const match = filePath.match(/^ppt\/slides\/slide(\d+)\.xml$/)
-      if (match) slideEntries.push({ index: parseInt(match[1], 10), path: filePath })
-    }
-    slideEntries.sort((a, b) => a.index - b.index)
-    if (slideEntries.length === 0) return '(no slides found in PPTX)'
-
-    const slides: string[] = []
-    for (const { index, path: slidePath } of slideEntries) {
-      const file = zip.file(slidePath)
-      if (!file) continue
-      const xml = await file.async('string')
-      const parts = [...xml.matchAll(/<a:t[^>]*>([^<]*)<\/a:t>/g)].map((m) =>
-        decodeXmlEntities(m[1])
-      )
-      const slideText = parts.join(' ').trim()
-      if (slideText) slides.push(`--- Slide ${index} ---\n${slideText}`)
-    }
-    return slides.length > 0 ? slides.join('\n\n') : '(no text in PPTX slides)'
-  } catch {
-    return '(PPTX text extraction failed)'
-  }
-}
-
-function decodeXmlEntities(s: string): string {
-  return s
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
 }
 
 export type MessageAttachmentInput = {
@@ -314,10 +372,10 @@ export type MessageAttachmentInput = {
 
 // Processed-attachment cache: processHistoryAttachments re-runs for EVERY
 // user message with attachments on EVERY turn — without this, each turn
-// re-reads, re-resizes (sharp), and re-base64s every historical image/PDF
-// from scratch (measured: a 500KB jpeg re-encoded per turn, a 371KB PDF
-// re-base64'd to 495k chars per turn). Keyed on (path, mtime, options) so a
-// changed file re-processes; bounded LRU so blobs don't accumulate.
+// re-runs the note probes (PDF page count = a full file read + xref parse,
+// image dimensions = a header decode) for every attachment in the recent
+// window. Keyed on (path, mtime, options) so a changed file re-probes;
+// bounded LRU so entries don't accumulate.
 const PROCESSED_CACHE_MAX = 60
 const processedCache = new Map<string, ContentBlock[]>()
 
@@ -326,7 +384,7 @@ async function processAttachmentCached(
   options: FileProcessorOptions
 ): Promise<ContentBlock[]> {
   let mtimeMs = 0
-  const abs = resolveUploadPath(att.filePath)
+  const abs = await resolveUploadPath(att.filePath)
   if (abs) {
     try {
       mtimeMs = Math.floor((await fs.stat(abs)).mtimeMs)
@@ -334,7 +392,7 @@ async function processAttachmentCached(
       mtimeMs = 0
     }
   }
-  const key = `${att.filePath}|${mtimeMs}|${options.pdfAsText ? 1 : 0}|${options.supportsVision ? 1 : 0}`
+  const key = `${att.filePath}|${mtimeMs}|${options.supportsVision ? 1 : 0}`
   const hit = processedCache.get(key)
   if (hit) {
     // refresh LRU position

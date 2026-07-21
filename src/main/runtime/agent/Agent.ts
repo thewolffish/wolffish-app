@@ -25,6 +25,7 @@ import {
   type ToolResultStatus
 } from '@main/runtime/broca'
 import { Cerebellum, type WorkflowHost } from '@main/runtime/cerebellum'
+import { buildProjectOverlay } from '@main/projects'
 import { compactOverflow } from '@main/runtime/compactor'
 import { Corpus, turnScope, type CorpusEvent } from '@main/runtime/corpus'
 import { TurnStatsCollector } from '@main/channels/turn-stats'
@@ -146,6 +147,11 @@ export type AgentTurnOptions = {
   conversationId?: string | null
   conversationTitle?: string | null
   /**
+   * Project this conversation runs inside. Its instructions + file list
+   * (never file content — model-led) overlay the system prompt each turn.
+   */
+  projectId?: string | null
+  /**
    * Delivery channel for this turn's user-facing prose. Threaded into the
    * system prompt so the model writes in the channel's native text
    * formatting (WhatsApp renders no Markdown; see prefrontal's channel
@@ -230,6 +236,16 @@ export type AutonomousTurnOptions = {
    * modeOverride. Omitted ⇒ the run follows the global mode.
    */
   mode?: 'single' | 'workflow'
+  /**
+   * Project binding: the turn gets the project overlay and the sealed
+   * conversation registers under the project (rail groups/badges it).
+   */
+  projectId?: string
+  /**
+   * Source emoji stamped on the sealed conversation — the rail's number-chip
+   * badge shows it (automation's own icon, or a procedure's icon).
+   */
+  icon?: string
 }
 
 export type AutonomousTurnResult = {
@@ -552,19 +568,19 @@ export class Agent {
     modelSel: WorkflowModelChoice | null = null
   ): Promise<ChatMessage[]> {
     const provider = modelSel?.provider ?? this.thalamus.getActiveProvider()
-    // Capability flags, not provider ids: only local (Ollama) lacks native
-    // PDF ingestion — every cloud provider receives the raw document block.
+    // Attachments are 100% model-led: content is NEVER auto-injected — every
+    // file becomes a reference note and the model pulls what it needs via
+    // tools (pdf_read/pdf_search, file_read, image_view). supportsVision
+    // only picks the image note's wording (view-on-demand vs can't-see).
     const isLocal = provider === null || provider === 'local'
     const supportsVision = isLocal
       ? await this.thalamus.localSupportsVision()
       : cloudModelSupportsVision(provider, modelSel?.model ?? this.thalamus.getActiveModel() ?? '')
 
-    // Attachment aging: full content blocks (base64 images/PDFs, extracted
-    // documents) are generated only for attachments in the RECENT window —
+    // Attachment aging: reference notes (with their type facts and tool
+    // guidance) are generated only for attachments in the RECENT window —
     // older messages keep just their <attachments> metadata text, which
-    // already names each file's absolute path (file_read / memory_get
-    // retrieves it on demand). Without this, one attachment-heavy message
-    // permanently re-injected hundreds of KB into every subsequent request.
+    // already names each file's absolute path for on-demand retrieval.
     let lastAttachmentIdx = -1
     for (let i = history.length - 1; i >= 0; i--) {
       const m = history[i] as { role: string; attachments?: MessageAttachmentInput[] }
@@ -595,10 +611,7 @@ export class Agent {
         out.push(m)
         continue
       }
-      const fileBlocks = await processAttachments(raw.attachments, {
-        pdfAsText: isLocal,
-        supportsVision
-      })
+      const fileBlocks = await processAttachments(raw.attachments, { supportsVision })
       if (fileBlocks.length === 0) {
         out.push(m)
         continue
@@ -677,6 +690,10 @@ export class Agent {
       [...turn.history],
       turn.modelOverride ?? null
     )
+    // Project context: computed ONCE per turn (turn-stable, so the pinned
+    // prompt cache never churns mid-turn) and appended to the system prompt
+    // below. Instructions verbatim; files as a model-led reference list.
+    const projectOverlay = await buildProjectOverlay(turn.projectId ?? null).catch(() => '')
     let task: Awaited<ReturnType<typeof this.motor.createTask>> | null = null
     let totalToolCalls = 0
     let iterationCount = 0
@@ -874,6 +891,7 @@ export class Agent {
             toolRole
           )
         }
+        if (projectOverlay) systemPrompt = systemPrompt + projectOverlay
 
         // Context Compaction: if context exceeds the model's input budget,
         // use LLM-generated summaries to reduce size while retaining
@@ -993,8 +1011,12 @@ export class Agent {
           // Detect context-overflow 400s: the provider rejected the request
           // because the payload exceeded its context window. Instead of
           // crashing, force compaction and retry exactly once.
+          // "prompt is too long" is Anthropic's exact context-overflow 400
+          // wording; "request too large"/"payload too large" cover request-size
+          // rejections (413-class), where compacting bulky tool results can
+          // genuinely shrink the body enough to succeed.
           const isContextOverflow =
-            /maximum context length|context.length.*exceeded|too many tokens|reduce the length/i.test(
+            /maximum context length|context.length.*exceeded|too many tokens|reduce the length|prompt is too long|request too large|payload too large/i.test(
               parsed.error
             )
 
@@ -1629,7 +1651,9 @@ export class Agent {
       ...createConversation(null),
       title: summary === 'Untitled' ? opts.jobLabel : `${opts.jobLabel}: ${summary}`,
       channel: opts.channel ?? 'heartbeat',
-      sealed: true
+      sealed: true,
+      ...(opts.projectId ? { projectId: opts.projectId } : {}),
+      ...(opts.icon ? { icon: opts.icon } : {})
     }
 
     const turnId = `hb_${Date.now().toString(36)}`
@@ -1718,7 +1742,8 @@ export class Agent {
           broca: localBroca,
           bypassApproval: true,
           publishConversation: false,
-          modeOverride: opts.mode
+          modeOverride: opts.mode,
+          projectId: opts.projectId ?? null
         })
       )
     } finally {

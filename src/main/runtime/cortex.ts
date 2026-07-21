@@ -68,6 +68,7 @@ export type ConversationSummary = {
   messageCount: number
   sizeBytes: number
   sealed: boolean
+  projectId?: string
   sourceFile: string
 }
 
@@ -90,7 +91,10 @@ export type CortexOptions = {
 }
 
 /** Bump to force a full drop-and-rebuild on next launch. */
-const SCHEMA_VERSION = 2
+// v3: conversations.project_id — the bump forces a full rebuild on launch,
+// which re-ingests every conversation file and backfills the column for
+// rows indexed before projects existed.
+const SCHEMA_VERSION = 3
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS records (
@@ -135,6 +139,7 @@ CREATE TABLE IF NOT EXISTS conversations (
   message_count INTEGER NOT NULL,
   size_bytes INTEGER NOT NULL,
   sealed INTEGER NOT NULL,
+  project_id TEXT,
   source_file TEXT NOT NULL
 );
 
@@ -620,7 +625,7 @@ export class Cortex {
     params.push(Math.min(Math.max(opts.limit ?? 30, 1), 500))
     const rows = db
       .prepare(
-        `SELECT id, title, channel, created_at, updated_at, message_count, size_bytes, sealed, source_file
+        `SELECT id, title, channel, created_at, updated_at, message_count, size_bytes, sealed, project_id, source_file
          FROM conversations ${where} ORDER BY updated_at DESC LIMIT ?`
       )
       .all(...params) as Array<{
@@ -632,6 +637,7 @@ export class Cortex {
       message_count: number
       size_bytes: number
       sealed: number
+      project_id: string | null
       source_file: string
     }>
     return rows.map((r) => ({
@@ -643,6 +649,7 @@ export class Cortex {
       messageCount: r.message_count,
       sizeBytes: r.size_bytes,
       sealed: r.sealed === 1,
+      projectId: r.project_id ?? undefined,
       sourceFile: r.source_file
     }))
   }
@@ -829,8 +836,8 @@ export class Cortex {
         const c = result.conversation
         db.prepare(
           `INSERT OR REPLACE INTO conversations
-           (id, title, channel, created_at, updated_at, message_count, size_bytes, sealed, source_file)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           (id, title, channel, created_at, updated_at, message_count, size_bytes, sealed, project_id, source_file)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         ).run(
           c.id,
           c.title,
@@ -840,6 +847,7 @@ export class Cortex {
           c.messageCount,
           c.sizeBytes,
           c.sealed,
+          c.projectId,
           f.rel
         )
       }

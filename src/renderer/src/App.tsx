@@ -26,6 +26,7 @@ import { History } from '@pages/History'
 import { Changelog } from '@pages/Changelog'
 import { Heartbeat } from '@pages/Heartbeat'
 import { Procedures } from '@pages/Procedures'
+import { Projects } from '@pages/Projects'
 import { Soul } from '@pages/Soul'
 import { User } from '@pages/User'
 import { Agents } from '@pages/Agents'
@@ -150,6 +151,7 @@ const CHAT_KEEPALIVE_SCREENS = new Set<Screen>([
   'changelog',
   'heartbeat',
   'procedures',
+  'projects',
   'soul',
   'user',
   'agents',
@@ -184,6 +186,8 @@ function NonChatScreen({ screen }: { screen: Screen }): React.JSX.Element | null
       return <Heartbeat />
     case 'procedures':
       return <Procedures />
+    case 'projects':
+      return <Projects />
     case 'soul':
       return <Soul />
     case 'user':

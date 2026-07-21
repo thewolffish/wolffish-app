@@ -2,7 +2,8 @@ import { createContext, useContext } from 'react'
 import type {
   ApprovalDecision,
   ApprovalDescription,
-  AskUserOption,
+  AskUserAnswer,
+  AskUserQuestion,
   DangerLevel,
   DataAnalytics,
   MessageAttachment,
@@ -24,6 +25,7 @@ export type Screen =
   | 'changelog'
   | 'heartbeat'
   | 'procedures'
+  | 'projects'
   | 'soul'
   | 'user'
   | 'agents'
@@ -60,23 +62,18 @@ export type ApprovalCardState = {
 
 /**
  * Live state for an ask-the-user question card, keyed by toolCallId on the
- * assistant message (like approvals). Carries the question/options the agent
- * posed plus the user's optimistic answer (`selectedIndex` / `customText`)
- * so the card reflects the choice the instant it's clicked, before the
+ * assistant message (like approvals). Carries the questions the agent posed
+ * plus the user's optimistic answers (stamped when the card submits) so the
+ * card reflects the choices the instant the last one is clicked, before the
  * tool_result lands. Not persisted — a resumed conversation rebuilds the
  * answered card from the tool_call args + tool_result segments instead.
  */
 export type AskCardState = {
   askId: string
   toolCallId: string
-  question: string
-  details?: string
-  options: AskUserOption[]
-  allowOther: boolean
-  otherLabel?: string
-  otherDescription?: string
-  selectedIndex?: number
-  customText?: string
+  questions: AskUserQuestion[]
+  /** Filled on submit — answers[i] answers questions[i]. */
+  answers?: AskUserAnswer[]
   answered?: boolean
 }
 
@@ -148,7 +145,12 @@ export type ChatMessage = UserMessage | AssistantMessage
  * Carries the procedure's own chat mode so the run honors its stamp — the
  * override rides THIS object into the single send, never renderer state.
  */
-export type PendingProcedure = { prompt: string; mode?: 'single' | 'workflow' }
+export type PendingProcedure = {
+  prompt: string
+  mode?: 'single' | 'workflow'
+  /** The procedure's emoji — stamped on the run's conversation for the rail badge. */
+  icon?: string
+}
 
 export type FlowContextValue = {
   screen: Screen
