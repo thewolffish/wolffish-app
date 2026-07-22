@@ -137,10 +137,10 @@ for something that repeats.
   that deletes files or sends messages will do so unattended. Write instructions
   you'd be comfortable running with no one watching, and confirm anything
   destructive with the user *before* you schedule it.
-- **One at a time, queued — never dropped.** Jobs run one at a time. If a job
-  fires while another is running, it **queues** and runs right after (coalesced
-  per job, so a slow job can't pile up its own backlog). You don't have to
-  spread jobs out to avoid collisions anymore.
+- **Up to three at once, queued — never dropped.** Jobs run up to three at a
+  time. If a job fires while all three slots are busy, it **queues** and runs
+  as soon as a slot frees (coalesced per job, so a slow job can't pile up its
+  own backlog). You don't have to spread jobs out to avoid collisions anymore.
 - **Missed runs catch up.** If the app was off when a job was due, it runs once
   on the next launch (collapsed — a recurring job that missed several fires runs
   a single catch-up, not one per missed tick), as long as the missed time was
@@ -260,8 +260,9 @@ of waiting hours for the schedule:
 - **Search your existing automations first.** `automation_list` before creating
   — don't add a second near-duplicate of a job that already exists; edit the
   existing one instead.
-- **Don't stack heavy jobs on the same tick** — only one runs at a time; the
-  rest are skipped. Spread them out, or combine them into one instruction.
+- **Don't stack many heavy jobs on the same tick** — three run at once; the
+  rest queue behind them. Spread them out, or combine them into one
+  instruction.
 - **Memory compaction is not here.** The daily/weekly memory consolidation jobs
   are configured in Settings → Hippocampus → Compaction, not in this file, and
   won't appear in `automation_list`.

@@ -45,6 +45,15 @@ async function loadProcedures(): Promise<Procedure[]> {
 
 async function saveProcedures(procedures: Procedure[]): Promise<void> {
   await diskWriter.writeFileAtomic(proceduresFile(), JSON.stringify(procedures, null, 2))
+  // Fires on EVERY committed write, renderer- and agent-originated alike, so
+  // an open Procedures page re-fetches when the agent's procedure_* tools
+  // mutate the store mid-conversation (or from an autonomous run).
+  changedListener?.()
+}
+
+let changedListener: (() => void) | null = null
+export function setProceduresChangedListener(listener: (() => void) | null): void {
+  changedListener = listener
 }
 
 // Serialize every read-modify-write so two mutations that race (e.g. a debounced

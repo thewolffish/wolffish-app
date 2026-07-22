@@ -205,7 +205,7 @@ async function createAutomation(args) {
   const isOnce = preview.kind === 'once'
   const tail = isOnce
     ? "It fires once, by itself, then deletes itself — don't `automation_run` it to \"test\" (that would consume it early; it still fires at its set time). It runs unattended with tool calls auto-approved."
-    : 'Test it now with `automation_run` (runs in the background), then `automation_check` to see the result. It runs unattended with tool calls auto-approved, and only one automation runs at a time.'
+    : 'Test it now with `automation_run` (runs in the background), then `automation_check` to see the result. It runs unattended with tool calls auto-approved; up to three automations run at once, and extra fires queue.'
   return {
     success: true,
     output: [
@@ -279,7 +279,7 @@ async function editAutomation(args) {
   const preview = automations.previewSchedule(heading)
   return {
     success: true,
-    output: `Updated automation "${heading}"${preview.ok ? ` — now runs ${preview.human}` : ''}. It runs unattended with tool calls auto-approved, and only one automation runs at a time. Verify with \`automation_check\` (or \`automation_run\` to test).`
+    output: `Updated automation "${heading}"${preview.ok ? ` — now runs ${preview.human}` : ''}. It runs unattended with tool calls auto-approved; up to three automations run at once, and extra fires queue. Verify with \`automation_check\` (or \`automation_run\` to test).`
   }
 }
 
@@ -313,20 +313,23 @@ async function deleteAutomation(args) {
 
 async function checkAutomations() {
   if (!automations) return missingBridge()
-  const running = automations.getRunningJob()
   const live = automations.listJobs()
 
-  // A detached procedure run shares the brainstem's single run slot but is NOT
-  // an automation (its id is namespaced "procedure:"). Don't report it here as a
-  // running automation — that would contradict the list below and hand the user
-  // wrong status.
-  const runningAutomation = running && !running.id.startsWith('procedure:') ? running : null
+  // Detached procedure runs share the brainstem's run pool but are NOT
+  // automations (ids namespaced "procedure:"). Don't report them here as
+  // running automations — that would contradict the list below and hand the
+  // user wrong status.
+  const runningAutomations = automations
+    .getRunningJobs()
+    .filter((job) => !job.id.startsWith('procedure:'))
 
   const lines = ['## Automation status', '']
-  if (runningAutomation) {
-    const since = relativeTime(runningAutomation.startedAt)
+  if (runningAutomations.length > 0) {
+    for (const job of runningAutomations) {
+      lines.push(`▶ **Running now:** "${job.label}" — started ${relativeTime(job.startedAt)}.`)
+    }
     lines.push(
-      `▶ **Running now:** "${runningAutomation.label}" — started ${since}. It finishes on its own and lands in history; re-running automation_check won't speed it up, so don't poll it in a loop — just tell the user it's still running.`
+      "Runs finish on their own and land in history; re-running automation_check won't speed them up, so don't poll in a loop — just tell the user they're still running."
     )
   } else {
     lines.push('Nothing is running right now.')

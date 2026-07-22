@@ -57,6 +57,12 @@ an important result that only its author has seen.
 
 - Each agent sees ONLY the task you write. Make it self-contained: every
   fact, the exact deliverable, what to return.
+- Agents inherit the app's shared admin (sudo) session — privileged
+  commands authenticate inside an agent exactly as they do for you, so
+  delegate sudo work freely. If an agent still reports sudo as a blocker,
+  tell it to run the command (the session handles authentication) — or
+  absorb that slice yourself; an untried "can't run sudo" is a framing
+  error, not a real limit.
 - `agents_await` returns on the FIRST landing — react per result (spawn
   more, `agent_send` a revision, `agent_cancel` a dead end), don't stall on
   the slowest. An agent that failed is data: fix its task, try another

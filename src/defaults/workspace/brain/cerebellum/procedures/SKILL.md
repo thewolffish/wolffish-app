@@ -106,10 +106,11 @@ triggered automation uses**:
   acts unattended: a procedure that sends messages or deletes files will do so
   with no one watching. Only run prompts that are safe to execute unattended;
   confirm anything destructive with the user first.
-- **One at a time, coalesced.** Runs go through the single-flight queue shared
-  with automations: if something is already running, the procedure queues (and a
-  second run of the *same* procedure while it's in flight is folded in, not run
-  twice). If it didn't start immediately, say so — don't retry in a loop.
+- **Up to three at once, coalesced.** Runs go through the bounded run pool
+  shared with automations (three concurrent slots): if every slot is busy, the
+  procedure queues (and a second run of the *same* procedure while it's in
+  flight is folded in, not run twice). If it didn't start immediately, say so —
+  don't retry in a loop.
 - **Do NOT poll.** You can't pause between tool calls, so looping to "watch" a
   run just burns turns and can't make it finish sooner. Fire it, tell the user
   it's running, and move on. If they later ask how it went, point them to the

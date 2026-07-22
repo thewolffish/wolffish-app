@@ -112,6 +112,29 @@ export function Procedures(): React.JSX.Element {
     }
   }, [])
 
+  // Live refresh: the agent's procedure_* tools mutate the store outside any
+  // renderer action (mid-conversation, or from an autonomous run while this
+  // page sits open) — re-fetch so cards and their "edited …" stamps follow.
+  // Project pushes ride along for the card's project-title/emoji joins.
+  useEffect(() => {
+    const refetch = (): void => {
+      void window.api.procedures
+        .list()
+        .then(setProcedures)
+        .catch(() => {})
+      void window.api.projects
+        .list()
+        .then(setProjects)
+        .catch(() => {})
+    }
+    const offProcedures = window.api.procedures.onChanged(refetch)
+    const offProjects = window.api.projects.onChanged(refetch)
+    return () => {
+      offProcedures()
+      offProjects()
+    }
+  }, [])
+
   const projectsById = useMemo(() => new Map(projects.map((p) => [p.id, p])), [projects])
 
   // Card emoji: a project-bound procedure wears its PROJECT's emoji; an

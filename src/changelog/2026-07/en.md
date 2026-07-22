@@ -1,4 +1,22 @@
-## v1.0.224 — 2026-07-22 `Latest`
+## v1.0.225 — 2026-07-22 `Latest`
+
+### Background Runs Stop Taking Over
+
+When an automation fired, the whole app used to step aside — a full-screen "chat is paused" takeover you could only watch until the run ended. That's gone. A background run now surfaces as a **floating live card** pinned quietly over the top of the screen: pulsing icon, the job's name and mode, and a **live feed of what it's doing right now** — while the rest of Wolffish stays **fully usable**. Click the card and it expands into a **full activity panel**; press Escape or click away and it folds back to the card **without losing a line of history** — the run keeps going either way. Procedure runs deliberately stay out of sight — a saved prompt doing its job needs no stage — though a run that fails still raises a toast saying what broke.
+
+### Three at Once, the Rest in Line
+
+Background jobs used to run strictly one at a time — a slow nightly digest could make the whole schedule late. The engine now runs **up to three jobs side by side**, each with its own card, and everything past three **waits in a visible queue** — a row under the cards counts what's waiting and names it, and **nothing is ever dropped**: a queued job runs the moment a slot frees, and a job that fires while it's already running or waiting folds into the pending run instead of piling up copies. The Automations page plays along — a job that's currently running or queued shows a **note on its card**, and its play button rests until the run is done.
+
+### An Edit Counts, Whoever Makes It
+
+The "Edited" stamp on an automation card used to notice only edits made in the card editor itself — rewrite the file in the markdown view, ask Wolffish to retune a schedule, or touch it in an outside editor, and the stamp played dumb. The stamps now come **from the engine, which watches the file itself**: any hand that changes a job — the dialog, the markdown editor, **Wolffish's own tools**, an external editor, even a change made **while the app was closed** — stamps it, while merely switching a job on or off correctly counts for nothing. The pages caught up too: **Automations, Procedures, and Projects all refresh themselves live** when something changes under them — ask Wolffish mid-chat to add an automation and watch the card appear — and project cards now carry their own **"Edited"** time next to when they were last used. One small kindness in the card editor as well: the schedule field **no longer flashes red mid-keystroke** — it waits out your typing pause before calling a schedule wrong.
+
+### Admin Rights Reach the Agents
+
+Wolffish keeps one **saved admin session** per app run — you type your password into the system dialog once, and sudo commands authenticate app-side from then on. That session is now **genuinely app-wide**: workflow agents and scheduled runs — automations, procedures — elevate through the **same session as the chat**, so a delegated task that needs admin rights just runs instead of coming back with "this needs elevation." Agents are told as much, too: sudo is not a blocker, run the command, and only a real "operation not permitted" from the system counts as one.
+
+## v1.0.224 — 2026-07-22
 
 ### Projects: A Standing Brief for Your Work
 

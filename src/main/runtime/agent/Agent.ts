@@ -224,6 +224,13 @@ export type AgentTurnResult = {
 export type AutonomousTurnOptions = {
   instruction: string
   jobLabel: string
+  /**
+   * The brainstem job id this run belongs to (e.g. "every-2",
+   * "procedure:<id>") — the same id the pool's RunningJobInfo carries.
+   * Stamped on this run's onJobLog entries so the renderer can route live
+   * activity to the right concurrent run card. Absent ⇒ jobLabel is used.
+   */
+  jobId?: string
   signal?: AbortSignal
   /**
    * Channel stamped on the sealed conversation this run produces. Defaults to
@@ -1658,13 +1665,17 @@ export class Agent {
 
     const turnId = `hb_${Date.now().toString(36)}`
     const segments: import('@main/runtime/broca').Segment[] = []
+    // Log entries carry the brainstem job id (matching the pool's
+    // RunningJobInfo.id) so the renderer routes them to the right card when
+    // several runs are live at once.
+    const logId = opts.jobId ?? opts.jobLabel
     let textAccum = ''
     const flushText = (): void => {
       const trimmed = textAccum.trim()
       if (!trimmed) return
       const listener = this.brainstem?.['listener']
       listener?.onJobLog?.({
-        id: opts.jobLabel,
+        id: logId,
         timestamp: Date.now(),
         kind: 'text',
         summary: trimmed.slice(0, 120)
@@ -1685,7 +1696,7 @@ export class Agent {
       flushText()
       if (seg.kind === 'tool_call') {
         listener.onJobLog({
-          id: opts.jobLabel,
+          id: logId,
           timestamp: Date.now(),
           kind: 'tool_call',
           summary: `Tool: ${seg.name}`
@@ -1693,7 +1704,7 @@ export class Agent {
       } else if (seg.kind === 'tool_result') {
         const preview = seg.output?.slice(0, 80) ?? (seg.status === 'failed' ? 'error' : 'done')
         listener.onJobLog({
-          id: opts.jobLabel,
+          id: logId,
           timestamp: Date.now(),
           kind: 'tool_result',
           summary: `Result: ${preview}`

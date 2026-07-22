@@ -9,7 +9,7 @@ import { useToast } from '@components/core/toast/useToast'
 import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
 import { pageTopPadding } from '@lib/utils/platform'
-import type { HeartbeatJobView, Project } from '@preload/index'
+import type { HeartbeatJobView, HeartbeatRunsSnapshot, Project } from '@preload/index'
 import { useFlow } from '@providers/flow/useFlow'
 import { useLocale } from '@providers/locale/useLocale'
 import { useTheme } from '@providers/theme/useTheme'
@@ -22,6 +22,7 @@ import {
   FloppyDiskIcon,
   GridViewIcon,
   HelpCircleIcon,
+  InformationCircleIcon,
   PlayIcon,
   Refresh01Icon,
   SourceCodeIcon
@@ -254,46 +255,46 @@ function chipSchedule(kind: ChipKind): string {
 }
 
 /**
- * Per-automation "last edited" stamps, keyed by heading label. The heading
- * IS the job's identity in heartbeat.md — so the stamps live beside it and
- * migrate when a card edit renames the label. Display-only. (Icons used to
- * live here too; they now ride the file itself as an `icon: …` marker so
- * the engine can stamp them onto run conversations.)
+ * LEGACY per-automation "last edited" stamps in localStorage — superseded by
+ * the main-process store (brainstem's heartbeat-meta.json), which stamps
+ * edits from EVERY writer (this page, markdown edits, the agent's
+ * automation_* tools, external editors), not just this page's card editor.
+ * Read once on load, donated to main via heartbeat.adoptMeta (per-job stamps
+ * beat the store's coarse file-mtime seed), then cleared for good.
  */
-const META_STORE_KEY = 'wolffish.heartbeat.meta'
+const LEGACY_META_STORE_KEY = 'wolffish.heartbeat.meta'
 const LEGACY_EDITED_STORE_KEY = 'wolffish.heartbeat.editedAt'
 const DEFAULT_AUTOMATION_ICON = '🫀'
 
-type JobMeta = { editedAt?: number }
-
-function readJobMeta(): Record<string, JobMeta> {
-  try {
-    const raw = window.localStorage.getItem(META_STORE_KEY)
-    if (raw !== null) {
-      const parsed: unknown = JSON.parse(raw)
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
-      const out: Record<string, JobMeta> = {}
+function readLegacyEditStamps(): Record<string, number> {
+  const out: Record<string, number> = {}
+  // Newest store generation first — its value wins when a label is in both.
+  for (const key of [LEGACY_META_STORE_KEY, LEGACY_EDITED_STORE_KEY]) {
+    try {
+      const parsed: unknown = JSON.parse(window.localStorage.getItem(key) ?? '{}')
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue
       for (const [label, value] of Object.entries(parsed as Record<string, unknown>)) {
-        if (!value || typeof value !== 'object') continue
-        const meta = value as { editedAt?: unknown }
-        if (typeof meta.editedAt === 'number') out[label] = { editedAt: meta.editedAt }
+        if (typeof value === 'number') {
+          out[label] ??= value
+        } else if (value && typeof value === 'object') {
+          const ms = (value as { editedAt?: unknown }).editedAt
+          if (typeof ms === 'number') out[label] ??= ms
+        }
       }
-      return out
+    } catch {
+      // Corrupt store — nothing to donate from this key.
     }
-    // One-shot upgrade from the first-generation editedAt-only store.
-    const legacy: unknown = JSON.parse(window.localStorage.getItem(LEGACY_EDITED_STORE_KEY) ?? '{}')
-    if (legacy && typeof legacy === 'object' && !Array.isArray(legacy)) {
-      const out: Record<string, JobMeta> = {}
-      for (const [label, ms] of Object.entries(legacy as Record<string, unknown>)) {
-        if (typeof ms === 'number') out[label] = { editedAt: ms }
-      }
-      window.localStorage.removeItem(LEGACY_EDITED_STORE_KEY)
-      return out
-    }
-  } catch {
-    // Corrupt store — start fresh; this is display-only metadata.
   }
-  return {}
+  return out
+}
+
+function clearLegacyEditStamps(): void {
+  try {
+    window.localStorage.removeItem(LEGACY_META_STORE_KEY)
+    window.localStorage.removeItem(LEGACY_EDITED_STORE_KEY)
+  } catch {
+    // best-effort
+  }
 }
 
 /** Guide rows: syntax literals stay English (the file format), text localizes. */
@@ -522,7 +523,11 @@ export function Heartbeat(): React.JSX.Element {
   const [originalContent, setOriginalContent] = useState<string>('')
   const [saving, setSaving] = useState(false)
   const [loading, setLoading] = useState(true)
-  const [jobMeta, setJobMeta] = useState<Record<string, JobMeta>>(() => readJobMeta())
+  // Per-job "Edited …" stamps (label → epoch ms) mirrored from the MAIN
+  // store, which stamps every heartbeat write regardless of writer. The page
+  // only adds an optimistic local stamp on its own saves so the label moves
+  // instantly; heartbeat:changed then confirms with the store's truth.
+  const [editStamps, setEditStamps] = useState<Record<string, number>>({})
 
   // Card editor dialog state. editorJob is only a create/edit discriminator
   // for the title — the live binding is boundRef, which follows the block
@@ -564,45 +569,73 @@ export function Heartbeat(): React.JSX.Element {
     return () => clearInterval(id)
   }, [])
 
+  // Live run-pool state. A job that's running or waiting in the queue gets
+  // its play button disabled (with a note) — clicking again would only
+  // coalesce into the pending run anyway.
+  const [runs, setRuns] = useState<HeartbeatRunsSnapshot>({ running: [], queued: [] })
+  useEffect(() => {
+    let cancelled = false
+    window.api.heartbeat
+      .getRuns()
+      .then((snap) => {
+        if (!cancelled) setRuns(snap)
+      })
+      .catch(() => {})
+    const off = window.api.heartbeat.onRunsChanged(setRuns)
+    return () => {
+      cancelled = true
+      off()
+    }
+  }, [])
+
+  // Keyed by heading label (the page's job identity). Procedure runs share
+  // the pool but aren't automations — they never gate a card here.
+  const busyByLabel = useMemo(() => {
+    const map = new Map<string, 'running' | 'queued'>()
+    for (const run of runs.running) {
+      if (!run.id.startsWith('procedure:')) map.set(run.label, 'running')
+    }
+    for (const entry of runs.queued) {
+      if (!entry.id.startsWith('procedure:') && !map.has(entry.label)) {
+        map.set(entry.label, 'queued')
+      }
+    }
+    return map
+  }, [runs])
+
   useEffect(() => {
     contentRef.current = content
   }, [content])
-
-  const updateJobMeta = useCallback((mutate: (draft: Record<string, JobMeta>) => void): void => {
-    setJobMeta((prev) => {
-      const next = { ...prev }
-      mutate(next)
-      try {
-        window.localStorage.setItem(META_STORE_KEY, JSON.stringify(next))
-      } catch {
-        // Quota/serialization failure — display-only metadata, safe to drop.
-      }
-      return next
-    })
-  }, [])
 
   useEffect(() => {
     let cancelled = false
     Promise.all([
       window.api.heartbeat.getJobs(),
       window.api.viewer.readFile(HEARTBEAT_PATH),
-      window.api.projects.list().catch(() => [] as Project[])
+      window.api.projects.list().catch(() => [] as Project[]),
+      window.api.heartbeat.getMeta().catch(() => ({}) as Record<string, number>)
     ])
-      .then(([jobList, raw, projectList]) => {
+      .then(([jobList, raw, projectList, stamps]) => {
         if (cancelled) return
         setJobs(jobList)
         setProjects(projectList)
         contentRef.current = raw
         setContent(raw)
         setOriginalContent(raw)
-        // Prune metadata whose job no longer exists (deleted or renamed in
-        // the markdown editor, where edits can't be attributed per job).
-        const labels = new Set(parseSidebarJobs(raw, [], Date.now()).map((j) => j.label))
-        updateJobMeta((draft) => {
-          for (const key of Object.keys(draft)) {
-            if (!labels.has(key)) delete draft[key]
-          }
-        })
+        setEditStamps(stamps)
+        // One-shot migration: donate the legacy localStorage stamps to the
+        // main store — per-job precise, they overwrite the coarse file-mtime
+        // seed unknown jobs start with. Cleared only after main confirms.
+        const legacy = readLegacyEditStamps()
+        if (Object.keys(legacy).length > 0) {
+          void window.api.heartbeat
+            .adoptMeta(legacy)
+            .then((merged) => {
+              clearLegacyEditStamps()
+              if (!cancelled) setEditStamps(merged)
+            })
+            .catch(() => {})
+        }
       })
       .catch(() => {})
       .finally(() => {
@@ -611,13 +644,56 @@ export function Heartbeat(): React.JSX.Element {
     return () => {
       cancelled = true
     }
-  }, [updateJobMeta])
+  }, [])
 
   const applyContent = useCallback((next: string): void => {
     contentRef.current = next
     setContent(next)
     setOriginalContent(next)
   }, [])
+
+  // Mirrors for the change-subscription below — it mounts once and must read
+  // the CURRENT values without re-subscribing on every keystroke.
+  const editorOpenRef = useRef(false)
+  useEffect(() => {
+    editorOpenRef.current = editorOpen
+  }, [editorOpen])
+  const originalContentRef = useRef('')
+  useEffect(() => {
+    originalContentRef.current = originalContent
+  }, [originalContent])
+
+  // Live refresh: the heartbeat file changed underneath us — the agent's
+  // automation_* tools, a Once-job self-delete, an external edit, or the echo
+  // of our own save. Jobs + edit stamps always re-fetch; the markdown buffer
+  // is replaced only when it holds no unsaved local work (a dirty markdown
+  // view or an open card editor keeps local truth — the card save chain
+  // already re-locates its block against current content on every write).
+  useEffect(() => {
+    let disposed = false
+    const off = window.api.heartbeat.onChanged(() => {
+      void (async () => {
+        try {
+          const [jobList, stamps, raw] = await Promise.all([
+            window.api.heartbeat.getJobs(),
+            window.api.heartbeat.getMeta(),
+            window.api.viewer.readFile(HEARTBEAT_PATH)
+          ])
+          if (disposed) return
+          setJobs(jobList)
+          setEditStamps(stamps)
+          const dirty = contentRef.current !== originalContentRef.current
+          if (!dirty && !editorOpenRef.current) applyContent(raw)
+        } catch {
+          // Transient read failure — the next change event refreshes.
+        }
+      })()
+    })
+    return () => {
+      disposed = true
+      off()
+    }
+  }, [applyContent])
 
   const handleRun = useCallback(
     async (job: SidebarJob): Promise<void> => {
@@ -767,8 +843,10 @@ export function Heartbeat(): React.JSX.Element {
         const jobList = await window.api.heartbeat.getJobs()
         setJobs(jobList)
         setDeleteTarget(null)
-        updateJobMeta((draft) => {
-          delete draft[job.label]
+        setEditStamps((prev) => {
+          const next = { ...prev }
+          delete next[job.label]
+          return next
         })
         toast.show({ tone: 'success', message: t('heartbeat.deleteSuccess') })
       } catch {
@@ -777,7 +855,7 @@ export function Heartbeat(): React.JSX.Element {
         setDeleting(false)
       }
     },
-    [applyContent, content, deleting, t, toast, updateJobMeta]
+    [applyContent, content, deleting, t, toast]
   )
 
   const isDirty = content !== originalContent
@@ -823,8 +901,42 @@ export function Heartbeat(): React.JSX.Element {
         j.label.toLowerCase() === draftScheduleTrimmed.toLowerCase() &&
         j.label.toLowerCase() !== (boundLabel?.toLowerCase() ?? '')
     )
-  const draftNextMs = draftParsed
-    ? (draftParsed.atMs ?? (draftParsed.cron ? nextCronMs(draftParsed.cron, now) : null))
+  // Errors paint late, validity paints now: mid-edit keystrokes pass through
+  // invalid states ("Daily (09:3" on the way to "Daily (09:30)"), and turning
+  // the field red for each one reads as flicker. The red state waits out a
+  // typing pause; a parseable draft clears it immediately. Display-only — the
+  // autosave gate below still reads the raw validity.
+  const scheduleInvalid = draftParsed === null || isDuplicateSchedule
+  const [invalidHeld, setInvalidHeld] = useState(false)
+  useEffect(() => {
+    if (!scheduleInvalid) {
+      // Re-arm the debounce for the next invalid stretch. showScheduleError
+      // already derives false the instant the draft turns valid; the microtask
+      // keeps the write async (off the effect's synchronous path) yet still
+      // lands before any next input event can start a new stretch.
+      queueMicrotask(() => setInvalidHeld(false))
+      return
+    }
+    const handle = setTimeout(() => setInvalidHeld(true), 600)
+    return () => clearTimeout(handle)
+  }, [scheduleInvalid, draftScheduleTrimmed])
+  const showScheduleError = scheduleInvalid && invalidHeld
+  // While the error is held back, the helper line keeps previewing the last
+  // parseable draft — swapping to blank and back would be its own flash.
+  // Tracked as state from the event handlers that write the draft (never
+  // during render): every draftSchedule write funnels through
+  // applyDraftSchedule, which records the parse when it succeeds. Dialog
+  // opens always pass a parseable value, so a stale carry-over can't leak
+  // across dialogs.
+  const [lastParsed, setLastParsed] = useState<ReturnType<typeof parseSchedule>>(null)
+  const applyDraftSchedule = useCallback((value: string): void => {
+    setDraftSchedule(value)
+    const parsed = parseSchedule(value.trim())
+    if (parsed) setLastParsed(parsed)
+  }, [])
+  const displayParsed = draftParsed ?? lastParsed
+  const draftNextMs = displayParsed
+    ? (displayParsed.atMs ?? (displayParsed.cron ? nextCronMs(displayParsed.cron, now) : null))
     : null
   const draftProject = draftProjectId ? projectsById.get(draftProjectId) : undefined
 
@@ -833,28 +945,31 @@ export function Heartbeat(): React.JSX.Element {
     setBoundLabel(null)
     savedDraftRef.current = { schedule: '', prompt: '', icon: '', projectId: '' }
     setEditorJob(null)
-    setDraftSchedule(chipSchedule('daily'))
+    applyDraftSchedule(chipSchedule('daily'))
     setDraftPrompt('')
     setDraftIcon('')
     setDraftProjectId('')
     setEmojiOpen(false)
     setEditorOpen(true)
-  }, [])
+  }, [applyDraftSchedule])
 
-  const openEditor = useCallback((job: SidebarJob): void => {
-    const icon = job.icon ?? ''
-    const projectId = job.project ?? ''
-    boundRef.current = { label: job.label, active: job.active }
-    setBoundLabel(job.label)
-    savedDraftRef.current = { schedule: job.label, prompt: job.body, icon, projectId }
-    setEditorJob(job)
-    setDraftSchedule(job.label)
-    setDraftPrompt(job.body)
-    setDraftIcon(icon)
-    setDraftProjectId(projectId)
-    setEmojiOpen(false)
-    setEditorOpen(true)
-  }, [])
+  const openEditor = useCallback(
+    (job: SidebarJob): void => {
+      const icon = job.icon ?? ''
+      const projectId = job.project ?? ''
+      boundRef.current = { label: job.label, active: job.active }
+      setBoundLabel(job.label)
+      savedDraftRef.current = { schedule: job.label, prompt: job.body, icon, projectId }
+      setEditorJob(job)
+      applyDraftSchedule(job.label)
+      setDraftPrompt(job.body)
+      setDraftIcon(icon)
+      setDraftProjectId(projectId)
+      setEmojiOpen(false)
+      setEditorOpen(true)
+    },
+    [applyDraftSchedule]
+  )
 
   const persistDraft = useCallback(
     (schedule: string, prompt: string, icon: string, projectId: string): void => {
@@ -911,6 +1026,12 @@ export function Heartbeat(): React.JSX.Element {
         }
 
         applyContent(nextContent)
+        // The binding must move in the same render as the content swap: the
+        // duplicate check excludes the draft's own block only through
+        // boundLabel, so updating it after the awaits below paints a spurious
+        // "duplicate label" flash while the write is in flight.
+        boundRef.current = { label: schedule, active: nextActive }
+        setBoundLabel(schedule)
         try {
           await window.api.viewer.writeFile(HEARTBEAT_PATH, nextContent)
           const jobList = await window.api.heartbeat.getJobs()
@@ -919,15 +1040,17 @@ export function Heartbeat(): React.JSX.Element {
           toast.show({ tone: 'error', message: t('workspace.saveError') })
           return
         }
-        updateJobMeta((draft) => {
-          if (bound && bound.label !== schedule) delete draft[bound.label]
-          draft[schedule] = { editedAt: Date.now() }
+        // Optimistic stamp — the store's reload diff confirms moments later
+        // (via heartbeat:changed) with the file-mtime truth.
+        setEditStamps((prev) => {
+          const next = { ...prev }
+          if (bound && bound.label !== schedule) delete next[bound.label]
+          next[schedule] = Date.now()
+          return next
         })
-        boundRef.current = { label: schedule, active: nextActive }
-        setBoundLabel(schedule)
       })
     },
-    [applyContent, t, toast, updateJobMeta]
+    [applyContent, t, toast]
   )
 
   // Auto-save ~600ms after the last keystroke, but only while the draft is
@@ -1000,13 +1123,13 @@ export function Heartbeat(): React.JSX.Element {
       const parts = [scheduleText]
       const project = job.project ? projectsById.get(job.project) : undefined
       if (project) parts.push(project.title.trim() || t('projects.untitled'))
-      const edited = jobMeta[job.label]?.editedAt
+      const edited = editStamps[job.label]
       if (edited != null) {
         parts.push(t('heartbeat.editedAt', { time: formatFromNow(edited, now, locale) }))
       }
       return parts.join(' · ')
     },
-    [jobMeta, locale, now, projectsById, t]
+    [editStamps, locale, now, projectsById, t]
   )
 
   return (
@@ -1072,147 +1195,180 @@ export function Heartbeat(): React.JSX.Element {
               </div>
             ) : (
               <ul className="flex flex-col gap-3">
-                {orderedJobs.map((job) => (
-                  <li
-                    key={job.label}
-                    className={cn(
-                      'bg-surface border-border flex flex-col gap-2.5 rounded-2xl border px-4 py-3',
-                      !job.active && 'opacity-60'
-                    )}
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex min-w-0 flex-1 items-center gap-2.5">
-                        <span aria-hidden className="text-2xl leading-none">
-                          {jobCardIcon(job)}
-                        </span>
-                        <div className="flex min-w-0 items-center gap-2">
-                          <span title={job.label} className="text-fg truncate text-sm font-medium">
-                            <bdi>{job.label}</bdi>
+                {orderedJobs.map((job) => {
+                  const busy = job.active ? busyByLabel.get(job.label) : undefined
+                  return (
+                    <li
+                      key={job.label}
+                      className={cn(
+                        'bg-surface border-border flex flex-col gap-2.5 rounded-2xl border px-4 py-3',
+                        !job.active && 'opacity-60'
+                      )}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex min-w-0 flex-1 items-center gap-2.5">
+                          <span aria-hidden className="text-2xl leading-none">
+                            {jobCardIcon(job)}
                           </span>
-                          <Badge variant="primary" size="sm" className="shrink-0">
-                            {t(`heartbeat.type.${job.type}`)}
-                          </Badge>
+                          <div className="flex min-w-0 items-center gap-2">
+                            <span
+                              title={job.label}
+                              className="text-fg truncate text-sm font-medium"
+                            >
+                              <bdi>{job.label}</bdi>
+                            </span>
+                            <Badge variant="primary" size="sm" className="shrink-0">
+                              {t(`heartbeat.type.${job.type}`)}
+                            </Badge>
+                          </div>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-1">
+                          {job.active && (
+                            <button
+                              type="button"
+                              onClick={() => void handleRun(job)}
+                              disabled={!!busy}
+                              aria-label={t('heartbeat.run')}
+                              title={
+                                busy
+                                  ? t(
+                                      busy === 'running'
+                                        ? 'heartbeat.noteRunning'
+                                        : 'heartbeat.noteQueued'
+                                    )
+                                  : t('heartbeat.run')
+                              }
+                              className={cn(
+                                iconButtonClass,
+                                'hover:text-emerald-600 dark:hover:text-emerald-400',
+                                'disabled:cursor-not-allowed disabled:opacity-40'
+                              )}
+                            >
+                              <PlayIcon size={18} />
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => openEditor(job)}
+                            aria-label={t('heartbeat.edit')}
+                            title={t('heartbeat.edit')}
+                            className={cn(iconButtonClass, 'hover:text-fg')}
+                          >
+                            <Edit02Icon size={16} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setDeleteTarget(job)}
+                            aria-label={t('heartbeat.delete')}
+                            title={t('heartbeat.delete')}
+                            className={cn(iconButtonClass, 'hover:text-rose-500')}
+                          >
+                            <Delete02Icon size={16} />
+                          </button>
+                          <div
+                            role="tablist"
+                            className="border-border bg-bg/40 ms-1 inline-flex shrink-0 items-center rounded-lg border p-0.5"
+                          >
+                            <button
+                              role="tab"
+                              type="button"
+                              aria-selected={job.active}
+                              onClick={() => {
+                                if (!job.active) void handleToggle(job)
+                              }}
+                              className={cn(
+                                'rounded-md px-2 py-1 text-[10px] font-medium',
+                                job.active
+                                  ? 'bg-primary text-primary-fg shadow-sm'
+                                  : 'text-muted hover:text-fg cursor-pointer'
+                              )}
+                            >
+                              {t('settings.wolffish.toggle.on')}
+                            </button>
+                            <button
+                              role="tab"
+                              type="button"
+                              aria-selected={!job.active}
+                              onClick={() => {
+                                if (job.active) void handleToggle(job)
+                              }}
+                              className={cn(
+                                'rounded-md px-2 py-1 text-[10px] font-medium',
+                                !job.active
+                                  ? 'bg-primary text-primary-fg shadow-sm'
+                                  : 'text-muted hover:text-fg cursor-pointer'
+                              )}
+                            >
+                              {t('settings.wolffish.toggle.off')}
+                            </button>
+                          </div>
+                          <div
+                            role="tablist"
+                            aria-label={t('heartbeat.modeAria')}
+                            className="border-border bg-bg/40 inline-flex shrink-0 items-center rounded-lg border p-0.5"
+                          >
+                            {(['single', 'workflow'] as const).map((m) => {
+                              const selected = (job.mode ?? globalMode) === m
+                              return (
+                                <button
+                                  key={m}
+                                  role="tab"
+                                  type="button"
+                                  aria-selected={selected}
+                                  onClick={() => {
+                                    if (!selected) void handleSetMode(job, m)
+                                  }}
+                                  className={cn(
+                                    'rounded-md px-2 py-1 text-[10px] font-medium',
+                                    selected
+                                      ? 'bg-primary text-primary-fg shadow-sm'
+                                      : 'text-muted hover:text-fg cursor-pointer'
+                                  )}
+                                >
+                                  {t(
+                                    m === 'workflow'
+                                      ? 'chat.modePicker.workflow'
+                                      : 'chat.modePicker.single'
+                                  )}
+                                </button>
+                              )
+                            })}
+                          </div>
                         </div>
                       </div>
-                      <div className="flex shrink-0 items-center gap-1">
-                        {job.active && (
-                          <button
-                            type="button"
-                            onClick={() => void handleRun(job)}
-                            aria-label={t('heartbeat.run')}
-                            title={t('heartbeat.run')}
-                            className={cn(
-                              iconButtonClass,
-                              'hover:text-emerald-600 dark:hover:text-emerald-400'
-                            )}
-                          >
-                            <PlayIcon size={18} />
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => openEditor(job)}
-                          aria-label={t('heartbeat.edit')}
-                          title={t('heartbeat.edit')}
-                          className={cn(iconButtonClass, 'hover:text-fg')}
-                        >
-                          <Edit02Icon size={16} />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setDeleteTarget(job)}
-                          aria-label={t('heartbeat.delete')}
-                          title={t('heartbeat.delete')}
-                          className={cn(iconButtonClass, 'hover:text-rose-500')}
-                        >
-                          <Delete02Icon size={16} />
-                        </button>
-                        <div
-                          role="tablist"
-                          className="border-border bg-bg/40 ms-1 inline-flex shrink-0 items-center rounded-lg border p-0.5"
-                        >
-                          <button
-                            role="tab"
-                            type="button"
-                            aria-selected={job.active}
-                            onClick={() => {
-                              if (!job.active) void handleToggle(job)
-                            }}
-                            className={cn(
-                              'rounded-md px-2 py-1 text-[10px] font-medium',
-                              job.active
-                                ? 'bg-primary text-primary-fg shadow-sm'
-                                : 'text-muted hover:text-fg cursor-pointer'
-                            )}
-                          >
-                            {t('settings.wolffish.toggle.on')}
-                          </button>
-                          <button
-                            role="tab"
-                            type="button"
-                            aria-selected={!job.active}
-                            onClick={() => {
-                              if (job.active) void handleToggle(job)
-                            }}
-                            className={cn(
-                              'rounded-md px-2 py-1 text-[10px] font-medium',
-                              !job.active
-                                ? 'bg-primary text-primary-fg shadow-sm'
-                                : 'text-muted hover:text-fg cursor-pointer'
-                            )}
-                          >
-                            {t('settings.wolffish.toggle.off')}
-                          </button>
-                        </div>
-                        <div
-                          role="tablist"
-                          aria-label={t('heartbeat.modeAria')}
-                          className="border-border bg-bg/40 inline-flex shrink-0 items-center rounded-lg border p-0.5"
-                        >
-                          {(['single', 'workflow'] as const).map((m) => {
-                            const selected = (job.mode ?? globalMode) === m
-                            return (
-                              <button
-                                key={m}
-                                role="tab"
-                                type="button"
-                                aria-selected={selected}
-                                onClick={() => {
-                                  if (!selected) void handleSetMode(job, m)
-                                }}
-                                className={cn(
-                                  'rounded-md px-2 py-1 text-[10px] font-medium',
-                                  selected
-                                    ? 'bg-primary text-primary-fg shadow-sm'
-                                    : 'text-muted hover:text-fg cursor-pointer'
-                                )}
-                              >
-                                {t(
-                                  m === 'workflow'
-                                    ? 'chat.modePicker.workflow'
-                                    : 'chat.modePicker.single'
-                                )}
-                              </button>
-                            )
-                          })}
-                        </div>
-                      </div>
-                    </div>
-                    {/* Own full-width row — under the label column it wrapped
+                      {/* Own full-width row — under the label column it wrapped
                         onto two lines next to the action cluster. */}
-                    <span className="text-muted text-xs">{jobMetaLine(job)}</span>
-                    {job.body ? (
-                      <pre
-                        dir="auto"
-                        className="bg-bg border-border text-muted max-h-40 overflow-auto rounded-lg border px-3 py-2 font-mono text-xs leading-relaxed wrap-break-word whitespace-pre-wrap"
-                      >
-                        {job.body}
-                      </pre>
-                    ) : (
-                      <p className="text-muted text-xs italic">{t('heartbeat.promptEmpty')}</p>
-                    )}
-                  </li>
-                ))}
+                      <span className="text-muted text-xs">{jobMetaLine(job)}</span>
+                      {busy && (
+                        <span
+                          className={cn(
+                            'flex items-center gap-1.5 text-xs',
+                            busy === 'running'
+                              ? 'text-emerald-600 dark:text-emerald-400'
+                              : 'text-amber-600 dark:text-amber-400'
+                          )}
+                        >
+                          <InformationCircleIcon size={13} className="shrink-0" />
+                          <span className="truncate">
+                            {t(
+                              busy === 'running' ? 'heartbeat.noteRunning' : 'heartbeat.noteQueued'
+                            )}
+                          </span>
+                        </span>
+                      )}
+                      {job.body ? (
+                        <pre
+                          dir="auto"
+                          className="bg-bg border-border text-muted max-h-40 overflow-auto rounded-lg border px-3 py-2 font-mono text-xs leading-relaxed wrap-break-word whitespace-pre-wrap"
+                        >
+                          {job.body}
+                        </pre>
+                      ) : (
+                        <p className="text-muted text-xs italic">{t('heartbeat.promptEmpty')}</p>
+                      )}
+                    </li>
+                  )
+                })}
               </ul>
             )}
           </div>
@@ -1308,7 +1464,7 @@ export function Heartbeat(): React.JSX.Element {
               <button
                 key={kind}
                 type="button"
-                onClick={() => setDraftSchedule(chipSchedule(kind))}
+                onClick={() => applyDraftSchedule(chipSchedule(kind))}
                 className={cn(
                   'border-border bg-bg text-muted cursor-pointer rounded-full border px-2.5 py-1 text-xs',
                   'hover:border-accent/50 hover:text-fg',
@@ -1354,34 +1510,36 @@ export function Heartbeat(): React.JSX.Element {
             </div>
             <input
               value={draftSchedule}
-              onChange={(e) => setDraftSchedule(e.target.value)}
+              onChange={(e) => applyDraftSchedule(e.target.value)}
               placeholder="Daily (09:00)"
               dir="ltr"
               aria-label={t('heartbeat.editor.schedule')}
-              aria-invalid={draftParsed === null || isDuplicateSchedule}
+              aria-invalid={showScheduleError}
               className={cn(
                 fieldClass,
                 'min-w-0 font-mono',
-                (draftParsed === null || isDuplicateSchedule) && 'border-rose-500/70'
+                showScheduleError && 'border-rose-500/70'
               )}
             />
           </div>
-          {draftParsed === null ? (
-            <p className="text-xs text-rose-500">
-              {t('heartbeat.editor.invalid')}{' '}
-              <button
-                type="button"
-                onClick={() => setGuideOpen(true)}
-                className="cursor-pointer underline underline-offset-2"
-              >
-                {t('heartbeat.editor.guideButton')}
-              </button>
-            </p>
-          ) : isDuplicateSchedule ? (
-            <p className="text-xs text-rose-500">{t('heartbeat.editor.duplicate')}</p>
-          ) : draftParsed.type === 'startup' ? (
+          {showScheduleError || displayParsed === null ? (
+            draftParsed === null ? (
+              <p className="text-xs text-rose-500">
+                {t('heartbeat.editor.invalid')}{' '}
+                <button
+                  type="button"
+                  onClick={() => setGuideOpen(true)}
+                  className="cursor-pointer underline underline-offset-2"
+                >
+                  {t('heartbeat.editor.guideButton')}
+                </button>
+              </p>
+            ) : (
+              <p className="text-xs text-rose-500">{t('heartbeat.editor.duplicate')}</p>
+            )
+          ) : displayParsed.type === 'startup' ? (
             <p className="text-muted text-xs">{t('heartbeat.onLaunch')}</p>
-          ) : draftParsed.atMs != null && draftParsed.atMs <= now ? (
+          ) : displayParsed.atMs != null && displayParsed.atMs <= now ? (
             <p className="text-xs text-amber-600 dark:text-amber-400">
               {t('heartbeat.editor.pastOnce')}
             </p>

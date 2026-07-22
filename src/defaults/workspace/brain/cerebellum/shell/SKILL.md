@@ -105,7 +105,7 @@ triggers:
   - open terminal
 tools:
   - name: shell_exec
-    description: Run a shell command and return its output. Default cwd is the user home directory. Commands run until they exit — only set a timeout when you have a good reason to expect fast completion. Elevation commands (sudo, doas) are handled automatically via native OS password dialog — no TTY needed. Set background=true for long-lived processes (dev servers, watchers).
+    description: Run a shell command and return its output. Default cwd is the user home directory. Commands run until they exit — only set a timeout when you have a good reason to expect fast completion. Elevation commands (sudo, doas) authenticate automatically through the app's saved admin session (at most one native password dialog per app run, handled app-side) — no TTY needed, nothing for you to handle, works identically from workflow agents and scheduled turns. Set background=true for long-lived processes (dev servers, watchers).
     parameters:
       command:
         type: string
@@ -128,7 +128,7 @@ danger_patterns:
     reason: Recursive force delete
   - pattern: 'sudo\s+'
     level: destructive
-    reason: Privilege escalation — user will see native OS password dialog
+    reason: Privilege escalation — runs with admin rights via the app's saved sudo session
   - pattern: 'mkfs'
     level: block
     reason: Format disk
@@ -215,6 +215,13 @@ from your side. The plugin automatically:
 
 If the user cancels the dialog or no GUI tool is available, the plugin
 returns a non-retryable error immediately — it never hangs.
+
+The admin session is **app-wide**: workflow agents and autonomous turns
+(heartbeat jobs, procedures) share the exact same in-memory session as an
+interactive chat turn. If you are a workflow agent, sudo works for you
+exactly as described above — run the command; never report elevation back
+to the master as a blocker unless the tool actually returned an
+"operation not permitted" error.
 
 On Windows, sudo does not exist. If a task requires admin privileges on
 Windows (modifying system files, changing firewall rules, installing

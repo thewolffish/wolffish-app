@@ -5,9 +5,10 @@ import { useTranslation } from 'react-i18next'
 
 /**
  * Full-screen blocking overlay shown while the cortex search index is being
- * rebuilt (one-time after an app update). Mirrors HeartbeatActiveOverlay's
- * style: pulsing icon, started-at + live elapsed timer, an explanatory body,
- * and a "blocked" footer — with a progress bar instead of an activity log.
+ * rebuilt (one-time after an app update). Unlike automation/procedure runs
+ * (non-blocking, surfaced via ActiveRunCard), this one really does block:
+ * pulsing icon, started-at + live elapsed timer, an explanatory body, and a
+ * "blocked" footer — with a progress bar instead of an activity log.
  *
  * The agent already gates every turn on the index being ready; this just makes
  * that wait visible and explains why, so a long rebuild doesn't read as a hang.

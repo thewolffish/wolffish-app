@@ -8,6 +8,7 @@ import type { ChatMessage, Thalamus } from '@main/runtime/thalamus'
 import { DEFAULT_COMPACTION, type CompactionConfig } from '@main/workspace/workspace'
 import chokidar, { type FSWatcher } from 'chokidar'
 import cron, { type ScheduledTask } from 'node-cron'
+import { createHash } from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
@@ -164,6 +165,20 @@ export type RunningJobInfo = {
   mode: 'single' | 'workflow' | null
 }
 
+export type QueuedJobInfo = {
+  id: string
+  label: string
+  /** The job's own mode (stamped marker / procedure field); null ⇒ global. */
+  mode: 'single' | 'workflow' | null
+  queuedAt: number
+}
+
+/** Live state of the run pool: every in-flight run plus the FIFO overflow. */
+export type RunsSnapshot = {
+  running: RunningJobInfo[]
+  queued: QueuedJobInfo[]
+}
+
 /**
  * Last-run bookkeeping for a single heartbeat job, surfaced to the
  * `automations` capability via the AutomationsHost bridge so the agent can
@@ -196,7 +211,16 @@ export type BrainstemListener = {
   onJobStarted?: (info: RunningJobInfo) => void
   onJobEnded?: (payload: { id: string; status: 'completed' | 'failed'; error?: string }) => void
   onJobLog?: (entry: JobLogEntry) => void
+  /** The run pool changed: a run started or ended, or the queue moved. */
+  onRunsChanged?: (snapshot: RunsSnapshot) => void
 }
+
+/**
+ * How many jobs may run concurrently. Overflow fires wait in the FIFO queue
+ * and are surfaced to the renderer as "queued" (they keep their coalescing:
+ * a job already running or waiting never takes a second slot).
+ */
+export const MAX_CONCURRENT_JOBS = 3
 
 export class Brainstem {
   private workspaceRoot: string | null
@@ -208,17 +232,17 @@ export class Brainstem {
   private watcher: FSWatcher | null = null
   private jobs = new Map<string, BrainstemJob>()
   private pendingIndex = new Map<string, NodeJS.Timeout>()
-  private runningJobInfo: RunningJobInfo | null = null
-  // Jobs run one-at-a-time through a FIFO queue. An overlapping fire is QUEUED
-  // (not dropped), and coalesced per job id so a slow job can't build a backlog
-  // of its own ticks. `currentJobId` is the job draining right now.
+  // Up to MAX_CONCURRENT_JOBS jobs run at once through `running` (keyed by
+  // job id, insertion order = start order). An overflow fire is QUEUED (not
+  // dropped) in FIFO order, and coalesced per job id so a slow job can't
+  // build a backlog of its own ticks.
+  private running = new Map<string, RunningJobInfo>()
   private queue: Array<{
     schedule: ParsedSchedule
     handler: () => Promise<void>
     onComplete?: () => void
+    queuedAt: number
   }> = []
-  private draining = false
-  private currentJobId: string | null = null
   // One-time ('once') jobs: pending fire timers keyed by job id, and the labels
   // that have already fired this session (so a reload can't re-arm or re-run a
   // one-shot before its self-deletion from the file lands).
@@ -239,6 +263,16 @@ export class Brainstem {
   // Serializes scheduler reloads so a bridge-driven write and the chokidar
   // watcher firing on that same write can't interleave their stop/start.
   private reloadInFlight: Promise<void> = Promise.resolve()
+  // Per-job "last edited" stamps, keyed by heading label and persisted to
+  // brainstem/heartbeat-meta.json. Maintained by DIFF at every scheduler
+  // (re)load — the one point every writer funnels through (card editor,
+  // markdown editor, the automations plugin, external edits, once-job
+  // self-deletes) — so an edit stamps the job no matter who made it. The
+  // stored hash is what change detection compares against; editedAt is the
+  // heartbeat file's mtime at the moment the change was observed, which is
+  // also honest for edits made while the app was closed. Null until first
+  // loaded from disk.
+  private heartbeatMeta: Record<string, { editedAt: number; hash: string }> | null = null
 
   constructor(options: BrainstemOptions = {}) {
     this.workspaceRoot = options.workspaceRoot ?? null
@@ -258,8 +292,19 @@ export class Brainstem {
     this.listener = listener
   }
 
-  getRunningJob(): RunningJobInfo | null {
-    return this.runningJobInfo
+  /** Every in-flight run, oldest first (Map insertion order = start order). */
+  getRunningJobs(): RunningJobInfo[] {
+    return [...this.running.values()]
+  }
+
+  /** The FIFO overflow: jobs accepted while all run slots were busy. */
+  getQueuedJobs(): QueuedJobInfo[] {
+    return this.queue.map((q) => ({
+      id: q.schedule.id,
+      label: q.schedule.label,
+      mode: q.schedule.mode ?? null,
+      queuedAt: q.queuedAt
+    }))
   }
 
   async init(): Promise<void> {
@@ -360,6 +405,11 @@ export class Brainstem {
     } catch {
       return
     }
+
+    // Refresh the per-job edit stamps from this exact snapshot of the file —
+    // every write path lands here (init or reload), so the stamps can never
+    // miss an edit regardless of which surface made it.
+    await this.updateHeartbeatMeta(raw, heartbeatPath).catch(() => {})
 
     const schedules = parseHeartbeat(raw)
     const startupJobs: ParsedSchedule[] = []
@@ -491,6 +541,108 @@ export class Brainstem {
     }))
   }
 
+  // ── Per-job edit stamps ─────────────────────────────────────────────
+
+  private heartbeatMetaPath(): string | null {
+    if (!this.workspaceRoot) return null
+    return path.join(this.workspaceRoot, 'brain', 'brainstem', 'heartbeat-meta.json')
+  }
+
+  private async ensureHeartbeatMeta(): Promise<Record<string, { editedAt: number; hash: string }>> {
+    if (this.heartbeatMeta) return this.heartbeatMeta
+    const metaPath = this.heartbeatMetaPath()
+    const meta: Record<string, { editedAt: number; hash: string }> = {}
+    if (metaPath) {
+      try {
+        const parsed: unknown = JSON.parse(await fs.readFile(metaPath, 'utf8'))
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          for (const [label, value] of Object.entries(parsed as Record<string, unknown>)) {
+            if (!value || typeof value !== 'object') continue
+            const entry = value as { editedAt?: unknown; hash?: unknown }
+            if (typeof entry.editedAt !== 'number' || !Number.isFinite(entry.editedAt)) continue
+            if (typeof entry.hash !== 'string') continue
+            meta[label] = { editedAt: entry.editedAt, hash: entry.hash }
+          }
+        }
+      } catch {
+        // Missing/corrupt store — the next diff reseeds it from the file.
+      }
+    }
+    this.heartbeatMeta = meta
+    return meta
+  }
+
+  private async persistHeartbeatMeta(): Promise<void> {
+    const metaPath = this.heartbeatMetaPath()
+    if (!metaPath || !this.heartbeatMeta) return
+    try {
+      await diskWriter.writeFileAtomic(metaPath, JSON.stringify(this.heartbeatMeta, null, 2))
+    } catch {
+      // Display-only metadata — losing a write is acceptable.
+    }
+  }
+
+  /**
+   * Diff the file's job blocks against the stored hashes: a new or changed
+   * block (body, markers — but NOT the enabled/disabled toggle, which keeps
+   * the inner lines intact) gets stamped with the file's mtime; entries whose
+   * label vanished are dropped, so a rename reads as a fresh edit. On the
+   * very first run (no store yet) every job seeds from the file's mtime —
+   * from then on unchanged jobs keep their stamps forever.
+   */
+  private async updateHeartbeatMeta(raw: string, heartbeatPath: string): Promise<void> {
+    if (!this.heartbeatMetaPath()) return
+    const meta = await this.ensureHeartbeatMeta()
+    let mtimeMs = Date.now()
+    try {
+      mtimeMs = (await fs.stat(heartbeatPath)).mtimeMs
+    } catch {
+      // File vanished between read and stat — "now" is the best stamp left.
+    }
+    const next: Record<string, { editedAt: number; hash: string }> = {}
+    let changed = false
+    for (const { label, block } of parseHeartbeatBlocks(raw)) {
+      const hash = createHash('sha1').update(block).digest('hex')
+      const prev = meta[label]
+      if (prev && prev.hash === hash) {
+        next[label] = prev
+      } else {
+        next[label] = { editedAt: Math.round(mtimeMs), hash }
+        changed = true
+      }
+    }
+    if (Object.keys(meta).length !== Object.keys(next).length) changed = true
+    this.heartbeatMeta = next
+    if (changed) await this.persistHeartbeatMeta()
+  }
+
+  /** Label → editedAt map the Automations page renders "Edited …" from. */
+  async getHeartbeatEditStamps(): Promise<Record<string, number>> {
+    const meta = await this.ensureHeartbeatMeta()
+    return Object.fromEntries(Object.entries(meta).map(([label, e]) => [label, e.editedAt]))
+  }
+
+  /**
+   * One-shot migration: the renderer donates the per-job stamps it kept in
+   * localStorage (from the era when only in-app card edits were tracked).
+   * Those are per-job precise, so they beat the coarse whole-file mtime this
+   * store seeds with; labels that no longer exist are ignored. Returns the
+   * refreshed map so the caller can render it in the same round-trip.
+   */
+  async adoptHeartbeatEditStamps(stamps: Record<string, number>): Promise<Record<string, number>> {
+    const meta = await this.ensureHeartbeatMeta()
+    let changed = false
+    for (const [label, editedAt] of Object.entries(stamps)) {
+      if (typeof editedAt !== 'number' || !Number.isFinite(editedAt)) continue
+      const entry = meta[label]
+      if (!entry || entry.editedAt === Math.round(editedAt)) continue
+      meta[label] = { ...entry, editedAt: Math.round(editedAt) }
+      changed = true
+    }
+    if (changed) await this.persistHeartbeatMeta()
+    return this.getHeartbeatEditStamps()
+  }
+
   async runCompaction(date?: string, jobId?: string): Promise<CompactionResult> {
     const targetDate = date ?? formatDate(new Date())
     const log = (kind: JobLogEntry['kind'], summary: string): void => {
@@ -576,21 +728,19 @@ export class Brainstem {
   }
 
   /**
-   * Queue a job to run. Jobs run one-at-a-time; an overlapping fire is QUEUED
-   * rather than dropped. Coalesced per job id — if this job is already running
-   * or already waiting in the queue, the new fire is folded into the pending
-   * one (so a slow recurring job can never accumulate a backlog of its own
-   * ticks). Returns true if a new queue slot was taken, false if coalesced.
+   * Queue a job to run. Up to MAX_CONCURRENT_JOBS run at once; an overflow
+   * fire is QUEUED rather than dropped. Coalesced per job id — if this job is
+   * already running or already waiting in the queue, the new fire is folded
+   * into the pending one (so a slow recurring job can never accumulate a
+   * backlog of its own ticks). Returns where the fire landed: 'running' (a
+   * free slot took it immediately), 'queued' (all slots busy), or 'coalesced'.
    */
   private enqueue(
     schedule: ParsedSchedule,
     handler: () => Promise<void>,
     onComplete?: () => void
-  ): boolean {
-    if (
-      this.currentJobId === schedule.id ||
-      this.queue.some((q) => q.schedule.id === schedule.id)
-    ) {
+  ): 'running' | 'queued' | 'coalesced' {
+    if (this.running.has(schedule.id) || this.queue.some((q) => q.schedule.id === schedule.id)) {
       this.corpus?.emit('brainstem.jobCoalesced', { job: schedule.id, label: schedule.label })
       this.listener?.onJobLog?.({
         id: schedule.id,
@@ -598,34 +748,49 @@ export class Brainstem {
         kind: 'skipped',
         summary: `Coalesced "${schedule.label}" — it's already running or queued`
       })
-      return false
+      return 'coalesced'
     }
-    this.queue.push({ schedule, handler, onComplete })
-    void this.drain()
-    return true
+    this.queue.push({ schedule, handler, onComplete, queuedAt: Date.now() })
+    this.pump()
+    return this.running.has(schedule.id) ? 'running' : 'queued'
   }
 
-  /** Drain the queue one job at a time. Reentrancy-guarded by `draining`. */
-  private async drain(): Promise<void> {
-    if (this.draining) return
-    this.draining = true
+  /**
+   * Fill free run slots from the queue. Synchronous (runOne registers the run
+   * in `running` before its first await), so there is no window where a job is
+   * neither queued nor running and a same-id fire could slip past coalescing.
+   * Every pass ends by pushing the fresh pool snapshot to the listener — the
+   * renderer's run cards and play buttons track transitions without polling.
+   */
+  private pump(): void {
+    while (this.queue.length > 0 && this.running.size < MAX_CONCURRENT_JOBS) {
+      const item = this.queue.shift()!
+      void this.startRun(item)
+    }
+    this.listener?.onRunsChanged?.({
+      running: this.getRunningJobs(),
+      queued: this.getQueuedJobs()
+    })
+  }
+
+  private async startRun(item: {
+    schedule: ParsedSchedule
+    handler: () => Promise<void>
+    onComplete?: () => void
+  }): Promise<void> {
     try {
-      while (this.queue.length > 0) {
-        const item = this.queue.shift()!
-        this.currentJobId = item.schedule.id
-        try {
-          await this.runOne(item.schedule, item.handler)
-        } finally {
-          this.currentJobId = null
-        }
-        try {
-          item.onComplete?.()
-        } catch {
-          // an onComplete (e.g. once self-delete) must not break the drain loop
-        }
-      }
+      await this.runOne(item.schedule, item.handler)
+    } catch {
+      // runOne swallows handler errors itself — this only fires if a listener
+      // callback threw. Never let that become an unhandled rejection or skip
+      // the pump below.
     } finally {
-      this.draining = false
+      try {
+        item.onComplete?.()
+      } catch {
+        // an onComplete (e.g. once self-delete) must not break the pool
+      }
+      this.pump()
     }
   }
 
@@ -638,7 +803,7 @@ export class Brainstem {
       startedAt: start,
       mode: schedule.mode ?? null
     }
-    this.runningJobInfo = info
+    this.running.set(schedule.id, info)
     this.corpus?.emit('brainstem.jobStarted', {
       job: schedule.id,
       type: schedule.kind,
@@ -698,7 +863,7 @@ export class Brainstem {
         bumpRun: true
       })
     } finally {
-      this.runningJobInfo = null
+      this.running.delete(schedule.id)
     }
   }
 
@@ -896,11 +1061,11 @@ export class Brainstem {
 
   /**
    * Run a heartbeat job on demand, identified by its id (e.g. "every-2") or its
-   * exact heading label (e.g. "Every (5m)"). Goes through the very same queue a
-   * cron fire uses, so it runs one-at-a-time and produces the same sealed
-   * conversation + listener events. Fire-and-forget: returns as soon as the run
-   * is queued. If the job is already running or queued, it's coalesced (started
-   * = false) rather than run twice.
+   * exact heading label (e.g. "Every (5m)"). Goes through the very same pool a
+   * cron fire uses (up to MAX_CONCURRENT_JOBS at once, overflow queued) and
+   * produces the same sealed conversation + listener events. Fire-and-forget:
+   * returns as soon as the run is accepted; started=false means it's waiting
+   * (queued behind a full pool, or coalesced into an existing run).
    */
   runJobNow(idOrLabel: string): { ok: boolean; started: boolean; error?: string } {
     const job = this.findJob(idOrLabel)
@@ -932,24 +1097,25 @@ export class Brainstem {
       project: job.project ?? null,
       icon: job.icon ?? null
     }
-    const accepted = this.enqueue(schedule, handler)
-    if (!accepted) {
+    const state = this.enqueue(schedule, handler)
+    if (state === 'coalesced') {
       return {
         ok: true,
         started: false,
         error: `"${job.label}" is already running or queued — it'll run shortly.`
       }
     }
-    return { ok: true, started: true }
+    return { ok: true, started: state === 'running' }
   }
 
   /**
    * Run an ad-hoc instruction NOW as a detached background job — used by the
    * `procedures` capability so a saved procedure runs exactly like a triggered
-   * automation: through this same single-flight queue (one-at-a-time, coalesced),
-   * as a sealed autonomous conversation that lands in history. `key` dedupes
-   * re-runs of the same procedure — a second run while one is in flight is
-   * coalesced rather than run twice. Fire-and-forget: returns once queued.
+   * automation: through this same bounded run pool (up to MAX_CONCURRENT_JOBS
+   * at once, overflow queued, coalesced per key), as a sealed autonomous
+   * conversation that lands in history. `key` dedupes re-runs of the same
+   * procedure — a second run while one is in flight is coalesced rather than
+   * run twice. Fire-and-forget: returns once accepted.
    */
   runDetached(
     instruction: string,
@@ -977,17 +1143,17 @@ export class Brainstem {
       runAt: null,
       mode: mode ?? null
     }
-    const accepted = this.enqueue(schedule, () =>
-      this.runHeartbeatJob(instruction, label, 'procedure', mode, project, icon)
+    const state = this.enqueue(schedule, () =>
+      this.runHeartbeatJob(instruction, label, 'procedure', mode, project, icon, key)
     )
-    if (!accepted) {
+    if (state === 'coalesced') {
       return {
         ok: true,
         started: false,
         error: `"${label}" is already running or queued — it'll run shortly.`
       }
     }
-    return { ok: true, started: true }
+    return { ok: true, started: state === 'running' }
   }
 
   /** Resolve a job by id first, then by exact (case-insensitive) label. */
@@ -1005,6 +1171,7 @@ export class Brainstem {
   private handlerFor(
     _kind: ScheduleKind,
     source: {
+      id: string
       body: string
       label: string
       mode?: 'single' | 'workflow' | null
@@ -1020,7 +1187,8 @@ export class Brainstem {
         'heartbeat',
         source.mode,
         source.project,
-        source.icon
+        source.icon,
+        source.id
       )
   }
 
@@ -1030,19 +1198,22 @@ export class Brainstem {
     channel: 'heartbeat' | 'procedure' = 'heartbeat',
     mode?: 'single' | 'workflow' | null,
     project?: string | null,
-    icon?: string | null
+    icon?: string | null,
+    jobId?: string
   ): Promise<void> {
     if (!this.agent) return
-    // Serialization is handled by the drain loop, so this just runs the turn.
+    // Concurrency is handled by the run pool, so this just runs the turn.
     // `channel` stamps the sealed conversation so a procedure run reads as a
     // procedure (not an automation) in history; `project` binds the run to a
     // project (overlay + conversation registration) and `icon` stamps the
-    // conversation's rail-badge emoji.
+    // conversation's rail-badge emoji. `jobId` stamps the run's live log
+    // entries so the renderer can route them to the right concurrent card.
     const startedAt = Date.now()
     try {
       await this.agent.processAutonomous({
         instruction,
         jobLabel: label,
+        jobId,
         channel,
         mode: mode ?? undefined,
         projectId: project ?? undefined,
@@ -1230,6 +1401,9 @@ function shouldIgnoreWatch(filepath: string): boolean {
   const normalized = filepath.replace(/\\/g, '/')
   // The heartbeat "last seen" tick is rewritten every minute — never react to it.
   if (normalized.endsWith('/brain/brainstem/heartbeat-state.json')) return true
+  // Per-job edit stamps, rewritten by the scheduler on every heartbeat edit —
+  // display metadata, never index-worthy.
+  if (normalized.endsWith('/brain/brainstem/heartbeat-meta.json')) return true
   if (normalized.endsWith('cortex.db')) return true
   if (normalized.endsWith('cortex.db-wal') || normalized.endsWith('cortex.db-shm')) return true
   if (normalized.includes('/.debug/') || normalized.includes('/.debug-archive/')) return true
@@ -1277,6 +1451,70 @@ export function parseHeartbeat(raw: string): ParsedSchedule[] {
       mode,
       project,
       icon
+    })
+  }
+
+  return out
+}
+
+/**
+ * Every job block in the file — ACTIVE and DISABLED alike — as (label, block
+ * text) pairs for edit-stamp hashing. parseHeartbeat can't serve this: it
+ * strips HTML comments wholesale, so toggled-off jobs vanish. This mirrors
+ * the Automations page's section scan (Heartbeat.tsx parseSidebarJobs):
+ * a raw `<!--` line that isn't a `<!-- ##` toggle opens an opaque comment
+ * (the examples block), and jobs come in three forms — `## label`,
+ * `<!-- ## label -->` (body-less disabled), `<!-- ## label` … `-->` (block
+ * disabled). The block text keeps marker lines (a mode/project/icon change
+ * IS an edit) and drops the comment wrappers, so an enable/disable toggle —
+ * which only wraps, never rewrites — hashes identically. Keep in sync with
+ * the renderer's scan.
+ */
+export function parseHeartbeatBlocks(raw: string): Array<{ label: string; block: string }> {
+  const lines = raw.split(/\r?\n/)
+  const out: Array<{ label: string; block: string }> = []
+  let insideRawComment = false
+
+  for (let i = 0; i < lines.length; i++) {
+    if (
+      !insideRawComment &&
+      /<!--/.test(lines[i]) &&
+      !/-->/.test(lines[i]) &&
+      !/^<!--\s*##\s+/.test(lines[i])
+    ) {
+      insideRawComment = true
+      continue
+    }
+    if (insideRawComment) {
+      if (/-->/.test(lines[i])) insideRawComment = false
+      continue
+    }
+
+    const activeLine = lines[i].match(/^##\s+(.+?)\s*$/)
+    const inactiveSingle = lines[i].match(/^<!--\s*##\s+(.+?)\s*-->$/)
+    const inactiveBlock = !inactiveSingle && lines[i].match(/^<!--\s*##\s+(.+?)\s*$/)
+    if (!activeLine && !inactiveSingle && !inactiveBlock) continue
+
+    const label = (activeLine ?? inactiveSingle ?? inactiveBlock)![1]
+    if (!matchSchedule(label)) continue
+
+    const isBlock = !!inactiveBlock
+    const blockLines: string[] = []
+    if (!inactiveSingle) {
+      for (let j = i + 1; j < lines.length; j++) {
+        if (isBlock && /^\s*-->\s*$/.test(lines[j])) break
+        if (!isBlock && (/^##\s+/.test(lines[j]) || /^\s*<!--/.test(lines[j]))) break
+        // Dashed separators are not content (the engine drops them wholesale).
+        if (/^---+\s*$/.test(lines[j])) continue
+        blockLines.push(lines[j])
+      }
+    }
+    out.push({
+      label,
+      block: blockLines
+        .join('\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim()
     })
   }
 

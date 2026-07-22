@@ -1191,18 +1191,6 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     }
   }, [messages, persistConversation])
 
-  // Chat now stays MOUNTED while a background run's overlay is up (so the turn
-  // that triggered it finishes persisting). These dialogs portal to <body> with
-  // a high z-index, so an open one would paint OVER the run overlay. Close them
-  // when a run starts so the overlay is unobstructed.
-  useEffect(() => {
-    return window.api.heartbeat.onJobStarted(() => {
-      setTimelineOpen(false)
-      setFilesOpen(false)
-      setDraftExpanded(false)
-    })
-  }, [])
-
   useEffect(() => {
     // Demux for concurrent conversations: every chat:* event carries turnId +
     // conversationId. An event is OURS when its turnId matches the pending

@@ -54,6 +54,15 @@ async function loadProjects(): Promise<Project[]> {
 
 async function saveProjects(projects: Project[]): Promise<void> {
   await diskWriter.writeFileAtomic(projectsFile(), JSON.stringify(projects, null, 2))
+  // Fires on EVERY committed write, renderer- and agent-originated alike, so
+  // an open Projects page re-fetches when the agent's project_* tools mutate
+  // the store mid-conversation (or from an autonomous run).
+  changedListener?.()
+}
+
+let changedListener: (() => void) | null = null
+export function setProjectsChangedListener(listener: (() => void) | null): void {
+  changedListener = listener
 }
 
 // Serialize every read-modify-write (same discipline as procedures.ts) so a

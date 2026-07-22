@@ -905,6 +905,20 @@ export type HeartbeatRunningJob = {
   mode: 'single' | 'workflow' | null
 }
 
+export type HeartbeatQueuedJob = {
+  id: string
+  label: string
+  /** The job's own mode (stamped marker / procedure field); null ⇒ global. */
+  mode: 'single' | 'workflow' | null
+  queuedAt: number
+}
+
+/** Live run-pool state: up to 3 concurrent runs plus the FIFO overflow. */
+export type HeartbeatRunsSnapshot = {
+  running: HeartbeatRunningJob[]
+  queued: HeartbeatQueuedJob[]
+}
+
 export type HeartbeatLogEntry = {
   id: string
   timestamp: number
@@ -914,14 +928,27 @@ export type HeartbeatLogEntry = {
 
 export type HeartbeatApi = {
   getJobs: () => Promise<HeartbeatJobView[]>
-  getRunningJob: () => Promise<HeartbeatRunningJob | null>
+  /** Snapshot of the run pool — every running job plus the queued overflow. */
+  getRuns: () => Promise<HeartbeatRunsSnapshot>
   /** Run an automation on demand by id or exact heading label, bypassing its schedule. */
   runJob: (idOrLabel: string) => Promise<{ ok: boolean; started: boolean; error?: string }>
+  /**
+   * Per-job "Edited …" stamps (heading label → epoch ms), maintained in main
+   * by diffing the file at every scheduler reload — so edits stamp no matter
+   * which surface wrote them (card editor, markdown, the agent, external).
+   */
+  getMeta: () => Promise<Record<string, number>>
+  /** One-shot donation of the legacy localStorage stamps; returns the merged map. */
+  adoptMeta: (stamps: Record<string, number>) => Promise<Record<string, number>>
+  /** The heartbeat file changed (any writer) — re-fetch jobs + meta. */
+  onChanged: (listener: () => void) => () => void
   onJobStarted: (listener: (job: HeartbeatRunningJob) => void) => () => void
   onJobEnded: (
     listener: (payload: { id: string; status: 'completed' | 'failed'; error?: string }) => void
   ) => () => void
   onJobLog: (listener: (entry: HeartbeatLogEntry) => void) => () => void
+  /** The run pool changed: a run started or ended, or the queue moved. */
+  onRunsChanged: (listener: (snapshot: HeartbeatRunsSnapshot) => void) => () => void
 }
 
 export type Procedure = {
@@ -956,6 +983,8 @@ export type ProceduresApi = {
     projectId?: string
   }) => Promise<Procedure>
   delete: (id: string) => Promise<{ ok: true }>
+  /** The store changed (any writer, incl. the agent's tools) — re-fetch the list. */
+  onChanged: (listener: () => void) => () => void
 }
 
 export type ProjectFileRef = {
@@ -992,6 +1021,8 @@ export type ProjectsApi = {
    * or null on cancel.
    */
   pickFiles: (projectId: string) => Promise<Project | null>
+  /** The store changed (any writer, incl. the agent's tools) — re-fetch the list. */
+  onChanged: (listener: () => void) => () => void
 }
 
 export type ReindexStatus = {
@@ -1728,24 +1759,30 @@ const api: WolffishApi = {
   },
   heartbeat: {
     getJobs: () => ipcRenderer.invoke('heartbeat:getJobs'),
-    getRunningJob: () => ipcRenderer.invoke('heartbeat:getRunningJob'),
+    getRuns: () => ipcRenderer.invoke('heartbeat:getRuns'),
     runJob: (idOrLabel) => ipcRenderer.invoke('heartbeat:runJob', idOrLabel),
+    getMeta: () => ipcRenderer.invoke('heartbeat:getMeta'),
+    adoptMeta: (stamps) => ipcRenderer.invoke('heartbeat:adoptMeta', stamps),
+    onChanged: (listener) => subscribe('heartbeat:changed', listener),
     onJobStarted: (listener) => subscribe('heartbeat:jobStarted', listener),
     onJobEnded: (listener) => subscribe('heartbeat:jobEnded', listener),
-    onJobLog: (listener) => subscribe('heartbeat:jobLog', listener)
+    onJobLog: (listener) => subscribe('heartbeat:jobLog', listener),
+    onRunsChanged: (listener) => subscribe('heartbeat:runsChanged', listener)
   },
   procedures: {
     list: () => ipcRenderer.invoke('procedures:list'),
     create: (payload) => ipcRenderer.invoke('procedures:create', payload),
     update: (payload) => ipcRenderer.invoke('procedures:update', payload),
-    delete: (id) => ipcRenderer.invoke('procedures:delete', id)
+    delete: (id) => ipcRenderer.invoke('procedures:delete', id),
+    onChanged: (listener) => subscribe('procedures:changed', listener)
   },
   projects: {
     list: () => ipcRenderer.invoke('projects:list'),
     create: (payload) => ipcRenderer.invoke('projects:create', payload),
     update: (payload) => ipcRenderer.invoke('projects:update', payload),
     delete: (id) => ipcRenderer.invoke('projects:delete', id),
-    pickFiles: (projectId) => ipcRenderer.invoke('projects:pickFiles', projectId)
+    pickFiles: (projectId) => ipcRenderer.invoke('projects:pickFiles', projectId),
+    onChanged: (listener) => subscribe('projects:changed', listener)
   },
   reindex: {
     getStatus: () => ipcRenderer.invoke('reindex:getStatus'),

@@ -117,6 +117,18 @@ export function Projects(): React.JSX.Element {
     }
   }, [])
 
+  // Live refresh: the agent's project_* tools mutate the store outside any
+  // renderer action (mid-conversation, or from an autonomous run while this
+  // page sits open) — re-fetch so cards and their "edited …" stamps follow.
+  useEffect(() => {
+    return window.api.projects.onChanged(() => {
+      void window.api.projects
+        .list()
+        .then(setProjects)
+        .catch(() => {})
+    })
+  }, [])
+
   const handleCreate = useCallback(() => {
     void window.api.projects
       .create({ title: '' })
@@ -276,13 +288,14 @@ export function Projects(): React.JSX.Element {
                           <div className="flex min-w-0 flex-col gap-0.5">
                             <span className="text-fg truncate text-sm font-medium">{name}</span>
                             <span className="text-muted truncate text-xs">
-                              {t('projects.usedAt', {
-                                time: formatFromNow(
-                                  stats?.lastUsed ?? project.updatedAt,
-                                  now,
-                                  locale
-                                )
+                              {t('projects.editedAt', {
+                                time: formatFromNow(project.updatedAt, now, locale)
                               })}
+                              {stats
+                                ? ` · ${t('projects.usedAt', {
+                                    time: formatFromNow(stats.lastUsed, now, locale)
+                                  })}`
+                                : ''}
                               {' · '}
                               {t('projects.conversationCount', { count: stats?.count ?? 0 })}
                               {' · '}

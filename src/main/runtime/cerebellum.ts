@@ -353,8 +353,8 @@ export type AutomationsHost = {
   ) =>
     | { ok: true; kind: string; cron: string | null; human: string; runAt?: number | null }
     | { ok: false; error: string }
-  /** The currently-running automation, if any. */
-  getRunningJob: () => { id: string; label: string; body: string; startedAt: number } | null
+  /** Every automation currently running (up to the pool's cap), oldest first. */
+  getRunningJobs: () => Array<{ id: string; label: string; body: string; startedAt: number }>
   /** Run an automation immediately by id or heading label (fire-and-forget). */
   runJobNow: (idOrLabel: string) => { ok: boolean; started: boolean; error?: string }
 }

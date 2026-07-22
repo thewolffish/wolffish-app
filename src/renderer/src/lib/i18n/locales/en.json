@@ -1825,7 +1825,10 @@
     "inactive": "Inactive",
     "run": "Run now",
     "runStarted": "Automation started",
-    "runQueued": "Automation is already running — it’ll run shortly",
+    "runQueued": "Automation queued — it’ll run when a slot frees up",
+    "queuedCount": "{{count}} in queue",
+    "noteRunning": "This automation is running right now.",
+    "noteQueued": "This automation is queued and will run shortly.",
     "runError": "Couldn’t run automation",
     "runFailed": "Automation run failed",
     "delete": "Delete automation",
@@ -1850,7 +1853,6 @@
       "startedAt": "Started at {{time}}",
       "activity": "Activity",
       "waiting": "Waiting for output…",
-      "blocked": "Chat is paused while a heartbeat job is running.",
       "compactionDaily": "Summarize today's episodes and promote key facts to long-term knowledge.",
       "compactionWeekly": "Consolidate the past week's episodes into a digest."
     },
@@ -1903,6 +1905,7 @@
     "project": "Project",
     "untitled": "Untitled project",
     "empty": "No projects yet. Create one to give a set of conversations shared instructions and files.",
+    "editedAt": "Edited {{time}}",
     "usedAt": "Used {{time}}",
     "conversationCount": "{{count}} conversations",
     "viewConversations": "Conversations",
@@ -1973,12 +1976,6 @@
     "deleteSuccess": "Procedure deleted",
     "saveError": "Something went wrong",
     "runFailed": "Procedure run failed",
-    "overlay": {
-      "startedAt": "Started at {{time}}",
-      "activity": "Activity",
-      "waiting": "Waiting for output…",
-      "blocked": "Chat is paused while a procedure is running."
-    },
     "modeAria": "Run mode"
   },
   "history": {

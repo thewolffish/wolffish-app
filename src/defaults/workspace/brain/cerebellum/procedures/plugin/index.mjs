@@ -8,10 +8,10 @@
  * implemented in the main process over the very same store the Procedures page
  * reads and writes, so the agent's view can never drift from the user's.
  *
- * `procedure_run` fires the saved prompt through the Brainstem's single-flight
- * queue — the identical machinery a triggered automation uses — so it runs to
- * completion by itself as a sealed conversation that lands in history, while the
- * current conversation carries on.
+ * `procedure_run` fires the saved prompt through the Brainstem's bounded run
+ * pool (up to three concurrent runs) — the identical machinery a triggered
+ * automation uses — so it runs to completion by itself as a sealed conversation
+ * that lands in history, while the current conversation carries on.
  */
 
 // Procedure-management bridge, injected at init by the main process.
@@ -284,7 +284,7 @@ async function runProcedureTool(args) {
   if (!outcome.started) {
     return {
       success: true,
-      output: `Did not start "${title}": ${outcome.error ?? 'another job is running.'} It runs one-at-a-time, so it'll run once the current one frees up — or try again shortly.`
+      output: `Did not start "${title}" immediately: ${outcome.error ?? 'all run slots are busy.'} It's queued (or already in flight) and runs once a slot frees up — no need to retry.`
     }
   }
   return {

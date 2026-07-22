@@ -48,12 +48,19 @@ import { acquireLock, releaseLockSync } from '@main/lockfile'
 import { memesService, type MemesStatus, type MemesTestResult } from '@main/memes'
 import { notionService, type NotionStatus, type NotionTestResult } from '@main/notion'
 import { configureSummarizer, queueConversationSummarization } from '@main/conversation-summarizer'
-import { createProcedure, deleteProcedure, listProcedures, updateProcedure } from '@main/procedures'
+import {
+  createProcedure,
+  deleteProcedure,
+  listProcedures,
+  setProceduresChangedListener,
+  updateProcedure
+} from '@main/procedures'
 import {
   attachFilesToProject,
   createProject,
   deleteProject,
   listProjects,
+  setProjectsChangedListener,
   updateProject,
   type ProjectFileRef
 } from '@main/projects'
@@ -2441,7 +2448,7 @@ app.whenReady().then(async () => {
   // for "what automations exist and when they fire", not two.
   const heartbeatPath = (): string => join(workspaceRoot(), 'brain', 'brainstem', 'heartbeat.md')
   const snapshotAutomations = (): import('@main/runtime/cerebellum').AutomationJobInfo[] => {
-    const running = agent.brainstem.getRunningJob()
+    const runningIds = new Set(agent.brainstem.getRunningJobs().map((r) => r.id))
     const statuses = agent.brainstem.getJobStatuses()
     return agent.brainstem.getActiveJobs().map((j) => {
       const preview = previewSchedule(j.label)
@@ -2453,7 +2460,7 @@ app.whenReady().then(async () => {
         label: j.label,
         body: j.body,
         human: preview.ok ? preview.human : '(unrecognized schedule)',
-        running: running?.id === j.id,
+        running: runningIds.has(j.id),
         lastRunAt: status?.lastRunAt ?? null,
         lastStatus: status?.lastStatus ?? null,
         ...(status?.lastError ? { lastError: status.lastError } : {}),
@@ -2490,12 +2497,12 @@ app.whenReady().then(async () => {
     },
     listJobs: () => snapshotAutomations(),
     previewSchedule: (heading) => previewSchedule(heading),
-    getRunningJob: () => agent.brainstem.getRunningJob(),
+    getRunningJobs: () => agent.brainstem.getRunningJobs(),
     runJobNow: (idOrLabel) => agent.brainstem.runJobNow(idOrLabel)
   })
 
   // Procedures — the same store the renderer/IPC use, plus a detached run that
-  // fires a procedure's prompt through the Brainstem's single-flight queue so it
+  // fires a procedure's prompt through the Brainstem's bounded run pool so it
   // runs exactly like a triggered automation (sealed conversation, in history).
   agent.cerebellum.setProjectsHost({
     list: () => listProjects(),
@@ -3079,26 +3086,46 @@ app.whenReady().then(async () => {
     }))
   })
 
-  ipcMain.handle('heartbeat:getRunningJob', () => {
-    return agent.brainstem.getRunningJob()
-  })
+  // Live run-pool snapshot: up to 3 concurrent runs plus the FIFO overflow.
+  // The floating run cards and the Automations page's play-button gating both
+  // render from this seed + the heartbeat:runsChanged pushes below.
+  ipcMain.handle('heartbeat:getRuns', () => ({
+    running: agent.brainstem.getRunningJobs(),
+    queued: agent.brainstem.getQueuedJobs()
+  }))
 
   // Run an automation on demand from the Heartbeat page's run button. Goes
-  // through the same FIFO queue a cron fire uses, so it serializes with
-  // scheduled runs and coalesces if the job is already running or queued.
+  // through the same run pool a cron fire uses (up to 3 at once, overflow
+  // queued FIFO), and coalesces if the job is already running or queued.
   ipcMain.handle('heartbeat:runJob', (_event, idOrLabel: string) => {
     return agent.brainstem.runJobNow(idOrLabel)
   })
 
+  // Per-job "Edited …" stamps (label → epoch ms), maintained writer-agnostically
+  // by the brainstem's reload diff; adoptMeta is the one-shot donation of the
+  // legacy renderer-localStorage stamps.
+  ipcMain.handle('heartbeat:getMeta', () => agent.brainstem.getHeartbeatEditStamps())
+  ipcMain.handle('heartbeat:adoptMeta', (_event, stamps: Record<string, number>) =>
+    agent.brainstem.adoptHeartbeatEditStamps(stamps ?? {})
+  )
+
   agent.brainstem.setListener({
     onJobStarted: (info) => broadcast('heartbeat:jobStarted', info),
     onJobEnded: (payload) => broadcast('heartbeat:jobEnded', payload),
-    onJobLog: (entry) => broadcast('heartbeat:jobLog', entry)
+    onJobLog: (entry) => broadcast('heartbeat:jobLog', entry),
+    onRunsChanged: (snapshot) => broadcast('heartbeat:runsChanged', snapshot)
   })
+  // Every scheduler reload = the heartbeat file changed (any writer: card
+  // editor, markdown save, the agent's automation_* tools, once-job
+  // self-deletes). Push it so an open Automations page re-fetches jobs and
+  // edit stamps instead of showing them stale until re-entry.
+  agent.corpus.on('brainstem.schedulerReloaded', () => broadcast('heartbeat:changed', {}))
 
   // Procedures — saved prompts the user runs on demand from the Procedures page.
-  // Plain CRUD over a JSON file; the renderer re-fetches after each mutation, so
-  // there are no push events to broadcast (unlike heartbeat's job lifecycle).
+  // Plain CRUD over a JSON file. The store pushes procedures:changed on every
+  // committed write, so a page left open re-fetches when the agent's
+  // procedure_* tools mutate it outside any renderer action.
+  setProceduresChangedListener(() => broadcast('procedures:changed', {}))
   ipcMain.handle('procedures:list', () => listProcedures())
   ipcMain.handle(
     'procedures:create',
@@ -3132,8 +3159,10 @@ app.whenReady().then(async () => {
     return { ok: true as const }
   })
 
-  // Projects — same inert-data shape as procedures (flat JSON list, no push
-  // events); the file picker runs main-side because only main has dialog.
+  // Projects — same inert-data shape as procedures (flat JSON list, same
+  // projects:changed push); the file picker runs main-side because only main
+  // has dialog.
+  setProjectsChangedListener(() => broadcast('projects:changed', {}))
   ipcMain.handle('projects:list', () => listProjects())
   ipcMain.handle(
     'projects:create',
