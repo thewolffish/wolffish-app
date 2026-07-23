@@ -175,6 +175,13 @@ export type FlowContextValue = {
    * lands on whatever screen they would have started on.
    */
   revalidateScreen: () => Promise<void>
+  /**
+   * Close the low-disk warning for the rest of this session and route to
+   * the screen the user would have started on. Not persisted — the warning
+   * comes back on the next launch if space is still low. Past this point
+   * disk-full errors are on the user; they were warned.
+   */
+  dismissDiskGate: () => Promise<void>
 }
 
 export const FlowContext = createContext<FlowContextValue | null>(null)

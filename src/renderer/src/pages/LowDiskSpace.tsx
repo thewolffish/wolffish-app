@@ -23,7 +23,7 @@ export function LowDiskSpace(): React.JSX.Element {
   const isRtl = RTL_LOCALES.has(locale)
   const ArrowIcon = isRtl ? ArrowLeft02Icon : ArrowRight02Icon
 
-  const { revalidateScreen } = useFlow()
+  const { revalidateScreen, dismissDiskGate } = useFlow()
   const toast = useToast()
   const [freeBytes, setFreeBytes] = useState<number | null | undefined>(undefined)
   const [totalBytes, setTotalBytes] = useState<number | null>(null)
@@ -47,11 +47,18 @@ export function LowDiskSpace(): React.JSX.Element {
     }
   }
 
-  // User-initiated check — surface feedback via toast when still low.
-  // Silent detect is used for the initial mount so we don't spam toasts.
+  // User-initiated check — always answer with a toast: success when enough
+  // space was found, warning when still low. Silent detect is used for the
+  // initial mount so we don't spam toasts.
   const onRecalculateClick = async (): Promise<void> => {
     const bytes = await detect()
-    if (bytes != null && bytes >= MIN_FREE_DISK_BYTES) return
+    if (bytes != null && bytes >= MIN_FREE_DISK_BYTES) {
+      toast.show({
+        tone: 'success',
+        message: t('lowDiskSpace.toast.enough', { free: formatBytesL(bytes, t) })
+      })
+      return
+    }
     toast.show({
       tone: 'warning',
       message: t('lowDiskSpace.toast.stillLow')
@@ -71,6 +78,18 @@ export function LowDiskSpace(): React.JSX.Element {
     setContinuing(true)
     try {
       await revalidateScreen()
+    } finally {
+      setContinuing(false)
+    }
+  }
+
+  // Close the warning without freeing space. Session-only: the warning
+  // returns on the next launch if the disk is still low. From here on any
+  // disk-full failures are the user's call — they were warned.
+  const onContinueAnyway = async (): Promise<void> => {
+    setContinuing(true)
+    try {
+      await dismissDiskGate()
     } finally {
       setContinuing(false)
     }
@@ -153,6 +172,23 @@ export function LowDiskSpace(): React.JSX.Element {
             <span>{t('lowDiskSpace.continue')}</span>
             <ArrowIcon size={18} />
           </Button>
+        )}
+
+        {knowState && !sufficient && (
+          <div className="flex flex-col gap-2">
+            <Button
+              size="lg"
+              variant="ghost"
+              disabled={continuing}
+              onClick={() => void onContinueAnyway()}
+            >
+              <span>{t('lowDiskSpace.continueAnyway')}</span>
+              <ArrowIcon size={18} />
+            </Button>
+            <p className="text-muted text-center text-xs leading-relaxed">
+              {t('lowDiskSpace.continueAnywayHint')}
+            </p>
+          </div>
         )}
       </div>
     </main>

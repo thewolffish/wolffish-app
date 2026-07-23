@@ -1,9 +1,11 @@
 import type { DataAnalytics, SystemInfo, WorkspaceStatus } from '@preload/index'
 import { FlowContext, type FlowContextValue, type Screen } from '@providers/flow/useFlow'
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
 // 5 GiB. Anything below this and Wolffish can't pull a model, persist
-// conversations, or breathe — gate the entire app on it.
+// conversations, or breathe — warn on every launch. The warning is
+// dismissible: once the user closes it they proceed at their own risk,
+// and any disk-full errors downstream are on them.
 export const MIN_FREE_DISK_BYTES = 5 * 1024 ** 3
 
 export function FlowProvider({ children }: { children: ReactNode }): React.JSX.Element {
@@ -14,17 +16,28 @@ export function FlowProvider({ children }: { children: ReactNode }): React.JSX.E
   const [dataAnalytics, setDataAnalytics] = useState<DataAnalytics | null>(null)
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null)
 
+  // Session-only dismissal of the low-disk warning. A ref (not state) so
+  // decideInitialScreen keeps a stable identity — it resets on relaunch,
+  // which is exactly the contract: warn once per startup, then stay out
+  // of the way for the rest of the session.
+  const diskGateDismissedRef = useRef(false)
+
   const decideInitialScreen = useCallback(async (): Promise<{
     screen: Screen
     status: WorkspaceStatus
   }> => {
     let s = await window.api.workspace.getStatus()
 
-    // 0. Free disk gate. If we can't read free disk (null), don't block —
+    // 0. Free disk warning. If we can't read free disk (null), don't block —
     //    let the user through and surface real errors downstream rather
-    //    than stranding them on a warning they can't dismiss.
+    //    than stranding them on a warning they can't dismiss. Skipped once
+    //    the user has dismissed it this session — they were warned.
     const sys = await window.api.system.getInfo()
-    if (sys.freeDiskBytes != null && sys.freeDiskBytes < MIN_FREE_DISK_BYTES) {
+    if (
+      !diskGateDismissedRef.current &&
+      sys.freeDiskBytes != null &&
+      sys.freeDiskBytes < MIN_FREE_DISK_BYTES
+    ) {
       return { screen: 'low-disk-space', status: s }
     }
 
@@ -117,6 +130,11 @@ export function FlowProvider({ children }: { children: ReactNode }): React.JSX.E
     setScreen(r.screen)
   }, [decideInitialScreen])
 
+  const dismissDiskGate = useCallback(async () => {
+    diskGateDismissedRef.current = true
+    await revalidateScreen()
+  }, [revalidateScreen])
+
   const value = useMemo<FlowContextValue>(
     () => ({
       screen,
@@ -128,7 +146,8 @@ export function FlowProvider({ children }: { children: ReactNode }): React.JSX.E
       returnTo,
       refreshStatus,
       clearModel,
-      revalidateScreen
+      revalidateScreen,
+      dismissDiskGate
     }),
     [
       screen,
@@ -140,7 +159,8 @@ export function FlowProvider({ children }: { children: ReactNode }): React.JSX.E
       returnTo,
       refreshStatus,
       clearModel,
-      revalidateScreen
+      revalidateScreen,
+      dismissDiskGate
     ]
   )
 

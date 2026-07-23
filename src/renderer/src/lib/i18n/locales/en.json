@@ -59,8 +59,11 @@
     "enoughHint": "That's enough for Wolffish to run.",
     "recalculate": "Recalculate",
     "continue": "Continue",
+    "continueAnyway": "Continue anyway",
+    "continueAnywayHint": "You can keep using Wolffish, but with this little space things may fail — models, saves, and downloads can error until you free up room.",
     "toast": {
-      "stillLow": "Still low on space — delete files and retry."
+      "stillLow": "Still low on space — delete files and retry.",
+      "enough": "{{free}} free — enough to continue."
     }
   },
   "ollamaSetup": {

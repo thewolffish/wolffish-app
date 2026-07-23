@@ -1,4 +1,14 @@
-## v1.0.225 — 2026-07-22 `Latest`
+## v1.0.226 — 2026-07-23 `Latest`
+
+### Low on Disk? Warned, Not Walled
+
+Launching Wolffish with less than **5 GB free** used to mean a locked door — the low-space screen had no way past it short of actually deleting files. It's a **warning** now, not a wall: a new **"Continue anyway"** button closes it and takes you straight to your usual screen, with a plain note on what you're signing up for — with space that tight, **models, saves, and downloads can fail** until room is freed. The choice is yours, and it lasts exactly one sitting: the warning still greets **every launch** while the disk stays low. **Recalculate** learned to answer out loud, too — every re-check now ends in a toast, a green **"enough to continue"** with the exact free amount when you've cleared the bar, the familiar still-low warning when you haven't.
+
+### One Arabic Label, Mended
+
+A garbled character had crept into the Arabic label for **recording a voice note** — broken replacement marks sat in the middle of the phrase. It reads **«تسجيل رسالة صوتية»** again, as it should.
+
+## v1.0.225 — 2026-07-22
 
 ### Background Runs Stop Taking Over
 
