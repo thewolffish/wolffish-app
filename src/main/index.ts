@@ -7,7 +7,7 @@ import { collectChannelStatus } from '@main/channels/status'
 import { ElectronChannel } from '@main/channels/electron/channel'
 import { ExtensionServer } from '@main/channels/extension/server'
 import { TelegramChannel } from '@main/channels/telegram/channel'
-import { TurnRunner } from '@main/channels/turn-runner'
+import { TurnRunner, type ActiveRun } from '@main/channels/turn-runner'
 import { WhatsAppChannel } from '@main/channels/whatsapp/channel'
 import {
   countConversationsSince,
@@ -18,6 +18,7 @@ import {
   mergeConversationOnto,
   updateConversation,
   type ConversationFile,
+  type ConversationMessage,
   type ConversationMeta
 } from '@main/conversations'
 import { getDataAnalytics, type DataAnalytics } from '@main/data'
@@ -789,6 +790,27 @@ agent.corpus.on('index.reindexed', () => broadcast('conversation:changed', {}))
 const electronChannel = new ElectronChannel(agent, turnRunner)
 const telegramChannel = new TelegramChannel(agent, turnRunner, localProvider)
 const whatsappChannel = new WhatsAppChannel(agent, turnRunner, localProvider)
+// Live-mirror in-flight channel turns into the in-app view: a Telegram/WhatsApp
+// run streams throttled assistant-message snapshots to the renderer so an open
+// conversation reflects it AS IT HAPPENS, instead of the whole transcript
+// appearing at once only after the end-of-turn disk save. The snapshot's stable
+// id matches the message the same turn later persists, so the renderer upserts
+// by id (never a duplicate). Payload-targeted (unlike the id-less
+// conversation:changed) so the renderer only touches the named conversation.
+const mirrorMessageToRenderer = (conversationId: string, message: ConversationMessage): void => {
+  // Best-effort UI mirror. The channel invokes this from inside the turn's
+  // render chain (which also drives the outbound bot sends + the persist), so
+  // a throw here — e.g. webContents.send on a window torn down mid-send — must
+  // never propagate back and wedge the turn. Same contract as the turn
+  // lifecycle listener.
+  try {
+    broadcast('conversation:messageMirror', { conversationId, message })
+  } catch {
+    // a broken renderer bridge must never affect the channel turn
+  }
+}
+telegramChannel.setMessageMirror(mirrorMessageToRenderer)
+whatsappChannel.setMessageMirror(mirrorMessageToRenderer)
 const extensionServer = new ExtensionServer()
 
 // MCP server connections. Each connected server registers an in-process
@@ -2942,6 +2964,9 @@ app.whenReady().then(async () => {
   ipcMain.handle('runtime:getCompactionConfig', async () => {
     return getCompactionConfig()
   })
+  ipcMain.handle('runtime:getCompactionRuns', async () => {
+    return agent.brainstem.getCompactionRuns()
+  })
   ipcMain.handle(
     'runtime:setCompactionConfig',
     async (_e, patch: Partial<import('@main/workspace/workspace').CompactionConfig>) => {
@@ -3113,7 +3138,8 @@ app.whenReady().then(async () => {
     onJobStarted: (info) => broadcast('heartbeat:jobStarted', info),
     onJobEnded: (payload) => broadcast('heartbeat:jobEnded', payload),
     onJobLog: (entry) => broadcast('heartbeat:jobLog', entry),
-    onRunsChanged: (snapshot) => broadcast('heartbeat:runsChanged', snapshot)
+    onRunsChanged: (snapshot) => broadcast('heartbeat:runsChanged', snapshot),
+    onCompactionRun: () => broadcast('compaction:changed', {})
   })
   // Every scheduler reload = the heartbeat file changed (any writer: card
   // editor, markdown save, the agent's automation_* tools, once-job
@@ -3601,9 +3627,24 @@ app.whenReady().then(async () => {
     ) => electronChannel.send(e.sender, payload)
   )
 
-  ipcMain.handle('chat:cancel', (_e, payload?: { conversationId?: string | null }) =>
-    electronChannel.cancel(payload?.conversationId ?? null)
-  )
+  ipcMain.handle('chat:cancel', async (_e, payload?: { conversationId?: string | null }) => {
+    const conversationId = payload?.conversationId ?? null
+    const result = await electronChannel.cancel(conversationId)
+    // Nothing in-app owned that conversation — it's a Telegram/WhatsApp (or
+    // automation) run the user is watching from the app, so abort it through
+    // the runner. Without this the Stop button on a mirrored channel run
+    // would be a dead control.
+    if (!result.canceled && conversationId) {
+      return { canceled: turnRunner.cancelConversation(conversationId) }
+    }
+    return result
+  })
+
+  // Cold-start snapshot of every conversation currently running, on ANY
+  // channel. chat:turnState only broadcasts transitions, so a window opened
+  // (or reopened from the tray) mid-run has no way to learn about it —
+  // this is how the renderer seeds its live run state.
+  ipcMain.handle('chat:activeRuns', (): ActiveRun[] => turnRunner.activeRuns())
 
   ipcMain.handle(
     'chat:approvalRespond',

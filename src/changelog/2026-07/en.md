@@ -1,4 +1,22 @@
-## v1.0.226 — 2026-07-23 `Latest`
+## v1.0.227 — 2026-07-24 `Latest`
+
+### Nothing You Send Has to Be Resent
+
+Message Wolffish from **Telegram or WhatsApp** while it's still working on the last thing you asked, and it used to bounce back a polite "hold on, I'm busy" — the message was never kept, and remembering to type it again was your problem. It's **queued** now, exactly like the in-app composer: a reply confirms it landed and tells you **where it sits in line**, and it runs on its own turn the moment the current task finishes, **in the order you sent it**. Files and voice notes queue with it — they're **downloaded and transcribed the instant they arrive**, so nothing goes stale while it waits. Two commands keep you in charge: **`/cancel`** drops everything waiting and leaves the running task alone, while **`/stop`** stops the run and lets the queue carry on — and `/stop` now tells you how many messages are lined up behind it. Starting or switching conversations — `/new`, `/resume`, `/delete`, a project switch — **clears the queue along with it** and says so out loud, because a message typed into one conversation should never land in another. One habit to unlearn: on Telegram `/cancel` used to be another name for `/stop`, and it has a job of its own now.
+
+### The Chat on Your Phone, Live on Your Desk
+
+Open a conversation the app doesn't own — one **Telegram or WhatsApp is answering right now**, or an automation is working through — and it used to look finished and idle: a composer ready to send, no sign anything was happening, and the entire reply landing in one lump when the run ended. It **reads as live now**. The reply **streams into the feed as it's written**, a working bubble stands in until the first words arrive, and the app knows a run is in flight **even if you opened the window in the middle of one**. The chrome follows suit: the **Stop button genuinely stops it**, whichever device started it, and a message you type mid-run **queues and sends itself** the moment that run lands — one conversation, one order of events, no matter where the turn came from.
+
+### A Stuck Agent Says So
+
+In workflow mode, a delegated agent that got stuck — re-issuing the **same tool call over and over** with nothing to show for it — used to be invisible. The master sat blocked waiting for a result that was never coming, and a run could burn a long time before anyone noticed. Both ends are told now. The spinning agent gets a **note in its own feed** that it's repeating itself and should wrap up with whatever it has, and the master is **woken out of its wait** with the agent's name, the call it keeps making, and how many times — then decides for itself: **wait a little longer** for partial findings, or **cancel it** and cover that slice another way. Nothing is capped and nothing is killed automatically — the decision stays where it belongs.
+
+### Memory Compaction Shows Its Work
+
+Wolffish tidies its own memory on a **daily and weekly** schedule, and until now it did that entirely out of sight — you could see the schedule, never the result. The compaction settings now carry a **card for each job's last real run**: **when it ran**, **how long it took**, the **tokens in and out**, and **the output it actually produced**. Skipped or failed passes never overwrite a card, so what you're reading is always the last pass that did something — and its timestamp stays honest about how long ago that was. The **background side-calls got quicker** too: naming a conversation and writing a summary are quick utility jobs, so they now run **with reasoning off** on your configured Brain, whatever reasoning level you've picked for chat.
+
+## v1.0.226 — 2026-07-23
 
 ### Low on Disk? Warned, Not Walled
 

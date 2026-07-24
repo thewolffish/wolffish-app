@@ -31,7 +31,7 @@ import { CopyButton } from '@components/core/CopyButton'
 import { Markdown } from '@components/core/Markdown'
 import { useToast } from '@components/core/toast/useToast'
 import { buildChatPdfHtml, hasExportableContent } from '@lib/chat-export/buildChatPdfHtml'
-import { mapConversationMessages } from '@lib/conversation-open'
+import { mapConversationMessage, mapConversationMessages } from '@lib/conversation-open'
 import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
 import { formatBytesL } from '@lib/utils/format'
@@ -124,6 +124,23 @@ type ToolResultSegment = Extract<Segment, { kind: 'tool_result' }>
  */
 type QueuedPrompt = { id: string; text: string; attachments: MessageAttachment[] }
 
+/**
+ * Render-only bubble shown while a run this session doesn't own (a
+ * Telegram/WhatsApp turn, an automation) is working on the open
+ * conversation and hasn't mirrored an assistant message yet. Empty segments
+ * + 'streaming' is exactly what an in-app turn renders before its first
+ * token, so the feed reads the same either way. timestamp 0 suppresses the
+ * relative-time footer — this row is not a real message and never enters
+ * `messages`, so nothing can persist it.
+ */
+const REMOTE_RUN_PLACEHOLDER: AssistantMessage = {
+  id: '__remote_run__',
+  role: 'assistant',
+  segments: [],
+  status: 'streaming',
+  timestamp: 0
+}
+
 // In-app verbose display preference, mirroring the Telegram / WhatsApp
 // channel toggle but for what the renderer DISPLAYS (history is untouched).
 // false (default) = clean feed: agent replies, file-bearing tool results,
@@ -157,7 +174,8 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     markSending,
     consumeProcedure,
     activeProject,
-    setActiveProject
+    setActiveProject,
+    runStatuses
   } = useSessions()
   // Project mode: THIS session runs inside the globally active project. The
   // binding is per-session (descriptor), so a backgrounded plain chat never
@@ -324,11 +342,48 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
   const [draft, setDraft] = useState('')
   const [draftExpanded, setDraftExpanded] = useState(false)
   const [streaming, setStreaming] = useState(false)
+  /**
+   * A turn running for THIS conversation that this session does NOT own:
+   * started from Telegram / WhatsApp, from an automation, or before this
+   * window existed. `streaming` only ever tracks turns this session itself
+   * sent, so without this a channel conversation opened mid-run rendered as
+   * an idle, ready-to-send chat — composer live, model switchable, no stop —
+   * while the agent was still working on it.
+   *
+   * The message mirror streams that run's text into the feed but says
+   * nothing about liveness; the run state comes from the cross-channel
+   * lifecycle broadcast (ChatSessionsProvider.runStatuses), seeded on window
+   * open by chat:activeRuns so a mid-run open is covered too.
+   */
+  const remoteRunning =
+    activeConversationId !== null && runStatuses[activeConversationId]?.phase === 'processing'
+  /**
+   * "A turn is in flight for this conversation" — the gate EVERY piece of
+   * chat chrome reads (composer, stop/queue, pickers, export, folders, mic).
+   * `streaming` stays the narrower fact "this session owns the running turn"
+   * and keeps driving the local turn mechanics (event demux, finalize,
+   * persistence) — those must not fire for someone else's turn.
+   */
+  const busy = streaming || remoteRunning
+  /**
+   * The feed, plus a pending bubble while a channel run is live and hasn't
+   * mirrored its assistant message yet — otherwise the transcript would end
+   * on the user's message and look finished. Once the mirror lands (or the
+   * run ends) the real bubble takes over and this disappears.
+   */
+  const feedMessages = useMemo(() => {
+    if (!remoteRunning) return messages
+    const last = messages[messages.length - 1]
+    if (last && isAssistant(last) && last.status !== 'error') return messages
+    return [...messages, REMOTE_RUN_PLACEHOLDER]
+  }, [messages, remoteRunning])
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   // On turn end (done, error, cancel, failed send), return focus to the
   // composer so the user can keep typing without reaching for the mouse.
-  // Running as an effect on `streaming` (instead of the old rAF-after-onDone,
+  // Keyed on `busy`, so a channel run finishing hands the composer back the
+  // same way an in-app one does.
+  // Running as an effect on the flag (instead of the old rAF-after-onDone,
   // which raced the re-render and silently lost) guarantees it fires after
   // the end-of-turn commit. Don't steal focus if the user is deliberately
   // typing in another field, and it's a no-op when Chat is hidden
@@ -337,8 +392,8 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
   const prevStreamingRef = useRef(false)
   useEffect(() => {
     const wasStreaming = prevStreamingRef.current
-    prevStreamingRef.current = streaming
-    if (!wasStreaming || streaming) return
+    prevStreamingRef.current = busy
+    if (!wasStreaming || busy) return
     // A hidden session finishing in the background must not yank focus from
     // whatever the user is doing in the visible one.
     if (!visible) return
@@ -351,7 +406,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
       (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)
     if (typingElsewhere) return
     el.focus()
-  }, [streaming, visible])
+  }, [busy, visible])
 
   // The composer textarea and the expanded CodeMirror editor both use the app-wide
   // <InputContextMenu> (Select all / Copy / Paste / Clear + spelling corrections);
@@ -614,13 +669,16 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     queuedPrompts.length > 0 ||
     recPhase !== 'idle' ||
     messages.some((m) => m.role === 'user' && 'transcribing' in m && m.transcribing === true)
+  // Reports `busy`, not `streaming`: a session mirroring a live channel run
+  // is just as un-evictable as one running its own turn — dropping it
+  // mid-run would tear down the feed the mirror is writing into.
   useEffect(() => {
     reportSession(sessionKey, {
       conversationId: activeConversationId,
-      streaming,
+      streaming: busy,
       dirty: sessionDirty
     })
-  }, [sessionKey, activeConversationId, streaming, sessionDirty, reportSession])
+  }, [sessionKey, activeConversationId, busy, sessionDirty, reportSession])
 
   useEffect(() => {
     navigator.mediaDevices
@@ -1170,6 +1228,36 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     }
   }, [activeConversationId])
 
+  // Live mirror of an IN-FLIGHT Telegram/WhatsApp turn. The channel streams
+  // throttled snapshots of its in-progress assistant message (main-side
+  // conversation:messageMirror); we upsert by id so an open channel
+  // conversation fills in AS THE RUN HAPPENS — instead of the whole transcript
+  // landing at once only when the end-of-turn save + reindex fire
+  // conversation:changed (the sync() effect above). The snapshot's id is
+  // stable for the turn and equals the record that save writes, so sync() then
+  // sees it as already-known and no duplicate is ever appended.
+  useEffect(() => {
+    if (!activeConversationId) return
+    const targetId = activeConversationId
+    return window.api.conversation.onMessageMirror(({ conversationId, message }) => {
+      if (conversationId !== targetId || conversationIdRef.current !== targetId) return
+      // Our OWN in-app turn owns the feed while it streams (chat:segment) —
+      // never let a background channel mirror fight it. Same guard sync() uses.
+      if (pendingTurnIdRef.current !== null) return
+      const mapped = mapConversationMessage(message)
+      setMessages((prev) => {
+        const idx = prev.findIndex((m) => m.id === mapped.id)
+        // Not seen yet → append. Already present (same stable id) → replace in
+        // place; the shared id keeps React reconciling the one growing bubble
+        // rather than remounting it, so earlier messages never reload.
+        if (idx === -1) return [...prev, mapped]
+        const next = prev.slice()
+        next[idx] = mapped
+        return next
+      })
+    })
+  }, [activeConversationId])
+
   const shouldPersistRef = useRef(false)
 
   useLayoutEffect(() => {
@@ -1650,11 +1738,13 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
       // valid send. We require at least one of the two so a stray Enter
       // on an empty input doesn't fire.
       if (!trimmed && attachments.length === 0) return
-      // `streaming` doesn't flip until after the ensureConversationId() await
+      // `busy` doesn't flip until after the ensureConversationId() await
       // below (a disk create for a fresh session). sendingRef closes that
       // window synchronously so a second Enter can't fire a second turn, and
       // markSending tells the provider not to evict this session mid-create.
-      if (streaming || sendingRef.current) return
+      // Gating on `busy` also refuses to fire a turn INTO a live channel run:
+      // it would be built from a history the running turn is still extending.
+      if (busy || sendingRef.current) return
       sendingRef.current = true
       markSending(sessionKey, true)
 
@@ -1768,7 +1858,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     },
     [
       descriptor.projectId,
-      streaming,
+      busy,
       messages,
       setMessages,
       ensureConversationId,
@@ -1789,8 +1879,9 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     // above the composer and flushes when the turn ends. sendingRef counts
     // as mid-turn too — a send is already in flight, and clearing the
     // composer into sendContent's re-entry guard would silently eat the
-    // message.
-    if (streaming || sendingRef.current) {
+    // message. A live Telegram/WhatsApp turn queues identically: the reply
+    // goes out when that run finishes, in one ordered transcript.
+    if (busy || sendingRef.current) {
       setQueuedPrompts((prev) => [...prev, { id: cryptoId(), text: trimmed, attachments: atts }])
       setDraft('')
       setPendingAttachments([])
@@ -1799,7 +1890,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     setDraft('')
     setPendingAttachments([])
     await sendContent(trimmed, atts)
-  }, [draft, pendingAttachments, streaming, sendContent])
+  }, [draft, pendingAttachments, busy, sendContent])
 
   // Discarding a queued prompt drops only the metadata — like discarded
   // staged files, the already-uploaded bytes stay on disk (cheap; see the
@@ -1815,16 +1906,19 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
   // sendingRef guard covers the one race: if a manual send grabbed this gap
   // first, the queue holds and flushes when THAT turn ends instead of
   // vanishing into sendContent's re-entry guard.
+  // A channel run ending is the same transition (its terminal chat:turnState
+  // clears `remoteRunning`), so a prompt typed while Telegram was mid-answer
+  // sends itself the moment that answer lands.
   const prevStreamingQueueRef = useRef(false)
   useEffect(() => {
     const wasStreaming = prevStreamingQueueRef.current
-    prevStreamingQueueRef.current = streaming
-    if (!wasStreaming || streaming) return
+    prevStreamingQueueRef.current = busy
+    if (!wasStreaming || busy) return
     if (queuedPrompts.length === 0 || sendingRef.current) return
     const [next, ...rest] = queuedPrompts
     setQueuedPrompts(rest)
     void sendContent(next.text, next.attachments)
-  }, [streaming, queuedPrompts, sendContent])
+  }, [busy, queuedPrompts, sendContent])
 
   // "Try again" on a failed turn's error card: continue the conversation with
   // a message that names what went wrong, so the model resumes from where it
@@ -1844,7 +1938,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
   const procedureRunRef = useRef<PendingProcedure | null>(null)
   useEffect(() => {
     const procedure = descriptor.procedure
-    if (procedure == null || streaming) return
+    if (procedure == null || busy) return
     if (procedureRunRef.current === procedure) return
     procedureRunRef.current = procedure
     // Consume at the PROVIDER too: the descriptor outlives this instance, so
@@ -1853,15 +1947,15 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     consumeProcedure(sessionKey)
     const { prompt, mode } = procedure
     void sendContent(prompt, [], mode ? { modeOverride: mode } : undefined)
-  }, [descriptor.procedure, streaming, sendContent, consumeProcedure, sessionKey])
+  }, [descriptor.procedure, busy, sendContent, consumeProcedure, sessionKey])
 
   const sendRecording = useCallback(async () => {
     const blob = recBlobRef.current
     if (!blob) return
     // Same synchronous re-entry + eviction guard as sendContent: the STT and
-    // upload awaits below all precede setStreaming(true), so `streaming`
+    // upload awaits below all precede setStreaming(true), so `busy`
     // can't protect this window on its own.
-    if (streaming || sendingRef.current) return
+    if (busy || sendingRef.current) return
     sendingRef.current = true
     markSending(sessionKey, true)
     const blobUrl = recBlobUrl
@@ -2016,7 +2110,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     ensureConversationId,
     toast,
     t,
-    streaming,
+    busy,
     messages,
     setMessages,
     markSending,
@@ -2122,7 +2216,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
   )
 
   const exportChatPdf = useCallback(async () => {
-    if (exportingPdf || streaming || !hasExportableContent(messages, inAppVerbose)) return
+    if (exportingPdf || busy || !hasExportableContent(messages, inAppVerbose)) return
     setExportingPdf(true)
     try {
       const firstUser = messages.find(isUser)?.content.replace(/\s+/g, ' ').trim() ?? ''
@@ -2159,7 +2253,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     } finally {
       setExportingPdf(false)
     }
-  }, [exportingPdf, streaming, messages, inAppVerbose, t, locale, isRtl, toast])
+  }, [exportingPdf, busy, messages, inAppVerbose, t, locale, isRtl, toast])
 
   const persistWorkingFolders = useCallback(
     async (folders: string[]) => {
@@ -2173,13 +2267,13 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
   )
 
   const addWorkingFolder = useCallback(async () => {
-    if (streaming) return
+    if (busy) return
     const folder = await window.api.upload.pickFolder()
     if (!folder || storedFolders.includes(folder)) return
     const updated = [...storedFolders, folder]
     setStoredFolders(updated)
     await persistWorkingFolders(updated)
-  }, [streaming, storedFolders, persistWorkingFolders])
+  }, [busy, storedFolders, persistWorkingFolders])
 
   const removeWorkingFolder = useCallback(
     async (path: string) => {
@@ -2413,7 +2507,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
             </div>
           )}
           <InAppVerboseContext.Provider value={inAppVerbose}>
-            {messages.map((m, i) => (
+            {feedMessages.map((m, i) => (
               <ChatItem
                 key={m.id}
                 message={m}
@@ -2423,8 +2517,8 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                 onApprovalDecision={respondApproval}
                 onAskRespond={respondAsk}
                 onTryAgain={
-                  i === messages.length - 1 &&
-                  !streaming &&
+                  i === feedMessages.length - 1 &&
+                  !busy &&
                   m.role === 'assistant' &&
                   m.status === 'error'
                     ? handleTryAgain
@@ -2468,15 +2562,15 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
       <form
         onSubmit={(e) => {
           e.preventDefault()
-          if (streaming) stop()
+          if (busy) stop()
           else void send()
         }}
         className={cn(
           'bg-bg/80 relative z-40 p-4 backdrop-blur',
-          !streaming && 'border-t border-border/60'
+          !busy && 'border-t border-border/60'
         )}
       >
-        {streaming && <div className="rainbow-border" />}
+        {busy && <div className="rainbow-border" />}
         {(queuedPrompts.length > 0 || pendingAttachments.length > 0) && (
           <div className="pointer-events-none absolute inset-x-0 bottom-full flex flex-col gap-2 px-4 pb-2">
             {/* Queued prompts live HERE, above the composer — never in the
@@ -2548,7 +2642,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
               localModel={currentModel}
               providers={cloudProviders}
               brain={brain}
-              disabled={savingMode || streaming}
+              disabled={savingMode || busy}
               onModeChange={onModeChange}
               onSelectModel={async (sel) => {
                 await window.api.provider.setBrain(sel)
@@ -2560,13 +2654,13 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                 modes={reasoningModes}
                 value={thinkingMode}
                 onSelect={setThinkingMode}
-                disabled={savingMode || streaming}
+                disabled={savingMode || busy}
               />
             )}
             {recPhase === 'idle' && (
               <ChatModeButton
                 mode={chatMode}
-                disabled={savingMode || streaming}
+                disabled={savingMode || busy}
                 onSelect={async (mode) => {
                   if (mode === chatMode) return
                   await window.api.provider.setMode(mode)
@@ -2612,7 +2706,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
             <button
               type="button"
               onClick={() => void exportChatPdf()}
-              disabled={streaming || exportingPdf || !canExportPdf}
+              disabled={busy || exportingPdf || !canExportPdf}
               title={t('chat.downloadPdf')}
               aria-label={t('chat.downloadPdf')}
               className={cn(
@@ -2620,7 +2714,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                 'border-border bg-surface text-muted enabled:hover:text-fg enabled:hover:border-muted',
                 'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
                 'disabled:cursor-not-allowed disabled:opacity-50',
-                !streaming && !exportingPdf && canExportPdf && 'cursor-pointer'
+                !busy && !exportingPdf && canExportPdf && 'cursor-pointer'
               )}
             >
               <Download01Icon size={18} />
@@ -2646,12 +2740,12 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
               folders={workingFolders}
               onAdd={() => void addWorkingFolder()}
               onRemove={(folder) => void removeWorkingFolder(folder)}
-              disabled={streaming}
+              disabled={busy}
             />
             <button
               type="button"
               onClick={recPhase === 'idle' ? () => void startRecording() : undefined}
-              disabled={streaming || !micAvailable || recPhase !== 'idle'}
+              disabled={busy || !micAvailable || recPhase !== 'idle'}
               title={!micAvailable ? t('chat.voice.noMic') : t('chat.voice.record')}
               aria-label={t('chat.voice.record')}
               className={cn(
@@ -2659,15 +2753,15 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                 'border-border bg-surface text-muted enabled:hover:text-fg enabled:hover:border-muted',
                 'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
                 'disabled:cursor-not-allowed disabled:opacity-50',
-                !streaming && micAvailable && recPhase === 'idle' && 'cursor-pointer'
+                !busy && micAvailable && recPhase === 'idle' && 'cursor-pointer'
               )}
             >
               <Mic01Icon size={18} />
             </button>
             {/* Mid-turn the composer keeps a primary send: it QUEUES the
-                draft (send() branches on `streaming`) while the red submit
+                draft (send() branches on `busy`) while the red submit
                 button next to it stays the Stop. Enter matches the arrow. */}
-            {recPhase === 'idle' && streaming && (
+            {recPhase === 'idle' && busy && (
               <button
                 type="button"
                 onClick={() => void send()}
@@ -2691,19 +2785,19 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                 type="submit"
                 disabled={
                   !hasAnyModel ||
-                  (!streaming && draft.trim().length === 0 && pendingAttachments.length === 0)
+                  (!busy && draft.trim().length === 0 && pendingAttachments.length === 0)
                 }
-                aria-label={streaming ? t('chat.stop') : t('chat.send')}
+                aria-label={busy ? t('chat.stop') : t('chat.send')}
                 className={cn(
                   'flex h-[42.5px] w-10 shrink-0 cursor-pointer items-center justify-center rounded-lg',
                   'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
                   'disabled:cursor-not-allowed disabled:opacity-50',
-                  streaming
+                  busy
                     ? 'bg-red-600 text-white enabled:hover:bg-red-700'
                     : 'bg-primary text-primary-fg enabled:hover:brightness-110'
                 )}
               >
-                {streaming ? <StopCircleIcon size={18} /> : <ArrowUp02Icon size={18} />}
+                {busy ? <StopCircleIcon size={18} /> : <ArrowUp02Icon size={18} />}
               </button>
             )}
             {recPhase === 'idle' ? (
@@ -2716,12 +2810,12 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                     if (e.key === 'Enter' && !e.shiftKey) {
                       e.preventDefault()
                       // Mid-turn this queues instead of sending — send()
-                      // branches on `streaming`.
+                      // branches on `busy`.
                       void send()
                     }
                   }}
                   rows={1}
-                  placeholder={streaming ? t('chat.queue.placeholder') : t('chat.placeholder')}
+                  placeholder={busy ? t('chat.queue.placeholder') : t('chat.placeholder')}
                   dir={isRtl ? 'rtl' : 'ltr'}
                   className={cn(
                     'bg-surface text-fg border-border placeholder:text-muted enabled:hover:border-muted',
@@ -2910,7 +3004,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
         project={projectDialogOpen ? sessionProject : null}
         onClose={() => setProjectDialogOpen(false)}
         onChanged={setActiveProject}
-        busy={streaming}
+        busy={busy}
         onNewConversation={(p) => {
           setProjectDialogOpen(false)
           newSession({ projectId: p.id })

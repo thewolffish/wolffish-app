@@ -12,6 +12,13 @@ import { net } from 'electron'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { deliveredFileNames } from '@main/runtime/agent/delivered-files'
 import { emptyTurnNudge, MAX_EMPTY_TURN_NUDGES } from '@main/runtime/agent/empty-turn-guard'
+import {
+  NoProgressTracker,
+  noProgressNotice,
+  NO_PROGRESS_MASTER_REPEATS,
+  NO_PROGRESS_WORKER_REPEATS,
+  type NoProgressSignal
+} from '@main/runtime/agent/no-progress-guard'
 import { Amygdala, SafetyBlockedError } from '@main/runtime/amygdala'
 import { BasalGanglia } from '@main/runtime/basalganglia'
 import { Brainstem } from '@main/runtime/brainstem'
@@ -207,6 +214,14 @@ export type AgentTurnOptions = {
    * runAgentTurn), so concurrent workflows can never cross-attribute tokens.
    */
   onUsage?: (provider: ProviderId, model: string, usage: AgentUsageDelta) => void
+  /**
+   * No-progress escalation for a SUBAGENT turn — invoked (once per worsening
+   * band, never every iteration) when the agent has been re-issuing the same
+   * tool call past the master bar. Threaded by runAgentTurn to the workflow so
+   * the master is woken from agents_await to manage the spinning agent (cancel,
+   * steer, or keep waiting). Absent for master/single/background turns.
+   */
+  onNoProgress?: (signal: NoProgressSignal) => void
   /**
    * Per-turn chat-mode override — heartbeat jobs and procedures carry their
    * OWN mode (stamped at creation, user-editable per item), which beats the
@@ -558,7 +573,10 @@ export class Agent {
         // model's provider default. The user's Brain reasoning setting drives
         // only the master turn, never the agents.
         thinkingMode: args.effort,
-        onUsage: (provider, model, usage) => args.onLlmCall(provider, model, usage)
+        onUsage: (provider, model, usage) => args.onLlmCall(provider, model, usage),
+        // Surface this subagent's no-progress escalation up to the workflow so
+        // the master can be woken from agents_await to manage it.
+        onNoProgress: (signal) => args.onNoProgress?.(signal)
       })
       const text = texts.join('').trim()
       const failed = result.stopReason === 'error' || result.stopReason === 'no_provider_available'
@@ -714,6 +732,17 @@ export class Agent {
     // resets per respond() call; it is the only thing that stops such a turn
     // from looping (the outer while(true) has no numeric iteration cap).
     let emptyTurnNudges = 0
+    // No-progress guard: observes tool-call repetition and surfaces it to the
+    // model via the runtime tail (never caps or aborts). Loop-scoped, reset per
+    // respond() call. `noProgressReported` dedups the master escalation to once
+    // per spinning episode (re-armed when the agent recovers below the worker
+    // bar) so a parked master isn't re-woken on every iteration.
+    const noProgress = new NoProgressTracker()
+    // Highest master-escalation band already reported this episode (repeats /
+    // NO_PROGRESS_MASTER_REPEATS): escalate to the master only when it climbs to
+    // a new band, and reset to 0 when the agent recovers — so a parked master is
+    // woken a small, bounded number of times, not on every iteration.
+    let noProgressBand = 0
     let stopReason: SegmentTurnEndReason | 'canceled' = 'end_turn'
     let lastAssistantText = ''
     let lastReasoningContent: string | undefined
@@ -832,12 +861,37 @@ export class Agent {
         // must never mislabel a healthy connection.
         const online = isHostOnline()
 
+        // No-progress signal for THIS iteration, computed from the calls made so
+        // far. Rides the same volatile vehicle as the counters (runtime tail /
+        // legacy <runtime> block, both after every cache breakpoint) so it never
+        // perturbs the cached prompt prefix. `null` renders nothing.
+        const noProgressSignal = noProgress.signal()
+        const noProgressText = noProgressNotice(noProgressSignal) ?? undefined
+
+        // Escalate a SUBAGENT's runaway to its master (onNoProgress is wired only
+        // for agent turns) so the master can manage it — cancel, steer, or keep
+        // waiting. Once per worsening band; re-armed when the agent recovers
+        // below the worker bar. Never auto-acts; the master decides.
+        if (turn.onNoProgress) {
+          const repeats = noProgressSignal?.repeats ?? 0
+          if (repeats < NO_PROGRESS_WORKER_REPEATS) {
+            noProgressBand = 0
+          } else if (repeats >= NO_PROGRESS_MASTER_REPEATS && noProgressSignal) {
+            const band = Math.floor(repeats / NO_PROGRESS_MASTER_REPEATS)
+            if (band > noProgressBand) {
+              noProgressBand = band
+              turn.onNoProgress(noProgressSignal)
+            }
+          }
+        }
+
         const runtime = {
           iteration: iterationCount,
           toolsCalled: totalToolCalls,
           renderCounters: !optimizeContext,
           deliveredFiles: [...deliveredThisTurn],
-          online
+          online,
+          noProgress: noProgressText
         }
 
         let systemPrompt: string
@@ -964,12 +1018,14 @@ export class Agent {
           // cache breakpoint (see anthropic.ts), so it never perturbs a
           // prefix hash.
           volatileStatus:
-            optimizeContext && (iterationCount > 1 || workingFoldersBlock || !online)
+            optimizeContext &&
+            (iterationCount > 1 || workingFoldersBlock || !online || noProgressText)
               ? formatRuntimeStatus({
                   iteration: iterationCount,
                   toolsCalled: totalToolCalls,
                   deliveredFiles: [...deliveredThisTurn],
-                  online
+                  online,
+                  noProgress: noProgressText
                 }) + (workingFoldersBlock ? `\n${workingFoldersBlock}` : '')
               : undefined
         })
@@ -1183,6 +1239,14 @@ export class Agent {
           }
 
           const argsSummary = summarizeArgs(call.args)
+
+          // Feed the no-progress guard every call the model makes (any outcome —
+          // a denied-and-retried loop is no-progress too). Workflow orchestration
+          // tools are control-flow, not work: a master legitimately re-issues
+          // agents_await, so they never count toward repetition.
+          if (!WORKFLOW_TOOL_NAMES.has(call.name)) {
+            noProgress.record(call.name, call.args)
+          }
 
           // Resolve dependencies BEFORE the original tool's safety gate.
           // ensureDependencies has its own internal amygdala approvals for

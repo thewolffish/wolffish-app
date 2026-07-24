@@ -1,8 +1,10 @@
 import { Boom } from '@hapi/boom'
 import {
   assistantSegmentsToHistory,
+  buildAssistantMessage,
   replayWindow,
   stubStaleToolResults,
+  type MirrorMessageListener,
   type TurnSink
 } from '@main/channels/channel'
 import { queueConversationSummarization } from '@main/conversation-summarizer'
@@ -12,6 +14,14 @@ import {
   setConversationIdForJid
 } from '@main/channels/whatsapp/conversations'
 import { markdownToPlain } from '@main/channels/format'
+import {
+  ChannelMessageQueue,
+  queueClearedText,
+  queueEmptyText,
+  queuePendingNote,
+  queuedAckText,
+  type QueuedMessageBase
+} from '@main/channels/message-queue'
 import { listProjects, projectLabel, type Project } from '@main/projects'
 import { stripInlineMarkup } from '@main/channels/whatsapp/format'
 import { GIF_PLAYBACK_MAX_SECONDS, transcodeGifToMp4 } from '@main/channels/whatsapp/gif'
@@ -161,7 +171,8 @@ const BUSY_REPLY_TIMEOUT_MS = 8000
 const FALLBACK_BUSY_REPLY = "Hold on — I'm working on something. I'll get back to you in a moment."
 
 const COMMANDS_HELP =
-  '/stop — cancel the current task\n' +
+  '/stop — stop the current task\n' +
+  '/cancel — drop messages waiting in the queue\n' +
   '/new — start a fresh conversation\n' +
   '/resume — continue a previous chat\n' +
   '/delete — delete a saved conversation\n' +
@@ -172,6 +183,32 @@ const COMMANDS_HELP =
   '/project — pick or exit a project\n' +
   '/local — switch to local model\n' +
   '/cloud — switch to cloud model'
+
+/**
+ * Min gap between live in-app mirror snapshots of an in-flight turn — bursts
+ * of segments coalesce into at most one broadcast per window, a trailing timer
+ * guarantees the last state lands, and the end-of-turn drain emits one final
+ * un-throttled snapshot. Matches the Telegram twin.
+ */
+const MIRROR_THROTTLE_MS = 500
+
+/**
+ * How long a queue flush waits for the chat to come free before giving up on
+ * the head message, and how many consecutive failed starts of the SAME message
+ * it tolerates. Mirrors the Telegram twin — including the rule that a message
+ * parked behind OUR OWN running turn starts no flush at all (see
+ * enqueueMessage), so this budget never has to cover the length of a turn.
+ */
+const QUEUE_FLUSH_WAIT_MS = 30_000
+const QUEUE_FLUSH_POLL_MS = 50
+const QUEUE_FLUSH_ATTEMPTS = 3
+
+/**
+ * One message parked while this jid's turn was running. Everything the
+ * dispatcher needs and nothing else — attachments are already downloaded and
+ * on disk (see channels/message-queue.ts for why that cannot be deferred).
+ */
+type QueuedWhatsAppMessage = QueuedMessageBase
 
 type ActiveTurn = {
   jid: string
@@ -198,6 +235,18 @@ type ActiveTurn = {
   approvals: Map<string, PersistedApproval>
   toolTimings: Map<string, PersistedToolTiming>
   stopReason: SegmentTurnEndReason | null
+  /**
+   * Stable identity for THIS turn's assistant message, minted once at
+   * onTurnStarted. The live in-app mirror snapshots and the end-of-turn disk
+   * save share this id + timestamp, so the renderer treats them as one
+   * growing message instead of appending a duplicate when the file lands.
+   */
+  assistantMessageId: string
+  assistantTimestamp: number
+  /** Wall-clock of the last mirror snapshot emitted — backs the throttle. */
+  lastMirrorAt: number
+  /** Trailing-edge throttle timer for the mirror; cleared at end-of-turn. */
+  mirrorTimer: NodeJS.Timeout | null
   taskId: string | null
   controller: AbortController
   pendingApprovalId: string | null
@@ -281,6 +330,21 @@ export class WhatsAppChannel {
    * (two conversations, a lost turn, an orphaned ActiveTurn).
    */
   private readonly dispatchingByJid = new Set<string>()
+  /**
+   * Messages that arrived while this jid's turn was still running. Accepted
+   * and dispatched in order as the chat frees up — see
+   * channels/message-queue.ts. Drained by flushQueue from the same end-of-turn
+   * cleanup that releases the per-jid slot.
+   */
+  private readonly queue = new ChannelMessageQueue<string, QueuedWhatsAppMessage>()
+  /**
+   * Jids whose flush loop is already running. The loop is fired from
+   * end-of-turn cleanup AND from enqueue (covering the race where a turn ends
+   * between the busy check and the park), so it has to be idempotent.
+   */
+  private readonly flushingByJid = new Set<string>()
+  /** Live copy of QUEUE_FLUSH_WAIT_MS — instance state so tests can shorten it. */
+  private queueFlushWaitMs = QUEUE_FLUSH_WAIT_MS
   private readonly sentIds = new Set<string>()
   // Delivery-ack tracking. WhatsApp reports a sent message's status via
   // 'messages.update' (ERROR=0, PENDING=1, SERVER_ACK=2, DELIVERY_ACK=3, …).
@@ -303,12 +367,68 @@ export class WhatsAppChannel {
    * just-built socket) resurrect a channel the user deliberately closed.
    */
   private connectGeneration = 0
+  /**
+   * Wired by index.ts to a renderer broadcast. When set, in-flight turns push
+   * live assistant-message snapshots so an in-app viewer of the same
+   * conversation mirrors the run as it streams — not only at end-of-turn.
+   */
+  private mirrorListener: MirrorMessageListener | null = null
 
   constructor(
     private readonly agent: Agent,
     private readonly runner: TurnRunner,
     private readonly localProvider: LocalProvider
   ) {}
+
+  /**
+   * Wire the live in-app mirror. index.ts points this at a renderer
+   * broadcast so an open conversation reflects a WhatsApp run as it streams.
+   */
+  setMessageMirror(listener: MirrorMessageListener | null): void {
+    this.mirrorListener = listener
+  }
+
+  /** Override the queue-flush wait budget (tests use a short value). */
+  setQueueFlushWait(ms: number): void {
+    this.queueFlushWaitMs = ms
+  }
+
+  /**
+   * Emit a throttled live snapshot of the in-flight turn's assistant message
+   * (see the Telegram twin for the full rationale). Builds the same message
+   * the end-of-turn save persists — same stable id — so the renderer upserts
+   * by id and never duplicates it.
+   */
+  private scheduleMirror(jid: string, turnId: string): void {
+    if (!this.mirrorListener) return
+    const active = this.activeByJid.get(jid)
+    if (!active || active.turnId !== turnId) return
+    const conversationId = active.conversation.id
+    const emit = (): void => {
+      const current = this.activeByJid.get(jid)
+      if (!current || current.turnId !== turnId || !this.mirrorListener) return
+      const message = buildAssistantMessage(current)
+      if (!message) return
+      current.lastMirrorAt = Date.now()
+      this.mirrorListener(conversationId, message)
+    }
+    const sinceLast = Date.now() - active.lastMirrorAt
+    if (sinceLast >= MIRROR_THROTTLE_MS) {
+      if (active.mirrorTimer) {
+        clearTimeout(active.mirrorTimer)
+        active.mirrorTimer = null
+      }
+      emit()
+      return
+    }
+    if (active.mirrorTimer) return
+    active.mirrorTimer = setTimeout(() => {
+      const current = this.activeByJid.get(jid)
+      if (current) current.mirrorTimer = null
+      emit()
+    }, MIRROR_THROTTLE_MS - sinceLast)
+    active.mirrorTimer.unref?.()
+  }
 
   getStatus(): WhatsAppChannelStatus {
     const user = this.sock?.user
@@ -335,6 +455,10 @@ export class WhatsAppChannel {
       turn.controller.abort()
     }
     this.activeByJid.clear()
+    // App-wide abort (quit/shutdown) — dropping the queue here is what keeps a
+    // flush from starting a fresh turn on the way out.
+    this.queue.clearAll()
+    this.flushingByJid.clear()
   }
 
   updateAllowedPhoneNumbers(numbers: string[]): void {
@@ -419,6 +543,10 @@ export class WhatsAppChannel {
       }
     }
     this.activeByJid.clear()
+    // A disconnected socket must not resurrect a queue on reconnect — the
+    // parked messages are still in the user's phone chat if they want them.
+    this.queue.clearAll()
+    this.flushingByJid.clear()
     this.pendingSelections.clear()
     this.lidToPhone.clear()
     // Persist the read buffer before dropping it so history survives a restart;
@@ -1057,10 +1185,29 @@ export class WhatsAppChannel {
       return
     }
 
-    // /stop — cancel the active turn for this JID
+    // /cancel — drop everything this chat has waiting in the queue. Works
+    // mid-turn (that is the only time a queue exists), touches the running
+    // turn not at all, and is never itself queued.
+    if (lower === '/cancel' || lower === 'cancel') {
+      const dropped = this.clearQueue(jid)
+      await this.safeSend(
+        jid,
+        dropped > 0 ? queueClearedText(dropped) : queueEmptyText(this.activeByJid.has(jid))
+      )
+      return
+    }
+
+    // /stop — stop the active turn for this JID. The queue deliberately
+    // SURVIVES a stop (the in-app queue does too: stopping advances it rather
+    // than dropping it) — the trailing note makes that visible, and /cancel is
+    // the way out.
     if (lower === '/stop' || lower === 'stop') {
       if (!active) {
-        await this.safeSend(jid, 'Nothing to stop.')
+        const queued = this.clearQueue(jid)
+        await this.safeSend(
+          jid,
+          queued > 0 ? `Nothing to stop. ${queueClearedText(queued)}` : 'Nothing to stop.'
+        )
         return
       }
       active.controller.abort()
@@ -1076,15 +1223,22 @@ export class WhatsAppChannel {
           )
           .catch(() => undefined)
       }
+      // Read the depth NOW, not after the wait below: the cleanup that frees
+      // the chat also starts the flush, so by the time we get past the wait
+      // the queue has already been popped and the note would read zero.
+      const note = queuePendingNote(this.queue.size(jid))
       await this.safeSend(jid, 'Stopping...')
       const deadline = Date.now() + 10_000
       while (this.activeByJid.has(jid) && Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 100))
       }
       if (this.activeByJid.has(jid)) {
-        await this.safeSend(jid, 'Attempted to stop, but the task may still be winding down.')
+        await this.safeSend(
+          jid,
+          `Attempted to stop, but the task may still be winding down.${note}`
+        )
       } else {
-        await this.safeSend(jid, 'Stopped.')
+        await this.safeSend(jid, `Stopped.${note}`)
       }
       return
     }
@@ -1190,9 +1344,11 @@ export class WhatsAppChannel {
     // Busy check — one turn at a time PER CHAT. Other chats (and other
     // channels, and the in-app renderer) run their own turns concurrently;
     // the TurnRunner serializes per conversation, so per-jid gating is the
-    // whole story for ordering.
-    if (this.activeByJid.has(jid)) {
-      await this.sendBusyReply(jid, trimmed)
+    // whole story for ordering. A message that lands mid-turn is PARKED, not
+    // declined: it runs on its own turn the moment this chat frees up,
+    // exactly like the in-app composer's queue.
+    if (this.isJidBusy(jid)) {
+      await this.enqueueMessage(jid, { id: mintMessageId(), text: trimmed, attachments: [] })
       return
     }
 
@@ -1367,14 +1523,15 @@ export class WhatsAppChannel {
     if (project) fresh.projectId = project.id
     await saveConversation(fresh)
     await setConversationIdForJid(jid, fresh.id)
+    const note = this.dropQueueForRotation(jid)
     if (project) {
       await this.safeSend(
         jid,
-        `New conversation started in ${projectLabel(project)}. To leave the project, use /project close.`
+        `New conversation started in ${projectLabel(project)}.${note} To leave the project, use /project close.`
       )
       return
     }
-    await this.safeSend(jid, `New conversation started.\n\n${COMMANDS_HELP}`)
+    await this.safeSend(jid, `New conversation started.${note}\n\n${COMMANDS_HELP}`)
   }
 
   /**
@@ -1411,7 +1568,7 @@ export class WhatsAppChannel {
       await setConversationIdForJid(jid, fresh.id)
       await this.safeSend(
         jid,
-        `Left ${projectLabel(active)}. Fresh conversation started outside it.`
+        `Left ${projectLabel(active)}. Fresh conversation started outside it.${this.dropQueueForRotation(jid)}`
       )
       return
     }
@@ -1451,7 +1608,7 @@ export class WhatsAppChannel {
     await setConversationIdForJid(jid, fresh.id)
     await this.safeSend(
       jid,
-      `${project.icon || '📁'} Now in project “${project.title.trim() || 'Untitled'}”. Conversations here start from its instructions and files — /project close to leave.`
+      `${project.icon || '📁'} Now in project “${project.title.trim() || 'Untitled'}”.${this.dropQueueForRotation(jid)} Conversations here start from its instructions and files — /project close to leave.`
     )
   }
 
@@ -1538,7 +1695,7 @@ export class WhatsAppChannel {
       return disk
     })
     await setConversationIdForJid(jid, conversationId)
-    await this.safeSend(jid, `Resumed: *${conv.title}*`)
+    await this.safeSend(jid, `Resumed: *${conv.title}*${this.dropQueueForRotation(jid)}`)
   }
 
   private async handleDeleteSelection(jid: string, conversationId: string): Promise<void> {
@@ -1565,7 +1722,10 @@ export class WhatsAppChannel {
       fresh.channel = 'whatsapp'
       await saveConversation(fresh)
       await setConversationIdForJid(jid, fresh.id)
-      await this.safeSend(jid, `Deleted. New conversation started.\n\n${COMMANDS_HELP}`)
+      await this.safeSend(
+        jid,
+        `Deleted. New conversation started.${this.dropQueueForRotation(jid)}\n\n${COMMANDS_HELP}`
+      )
     } else {
       await this.safeSend(jid, 'Deleted.')
     }
@@ -1580,16 +1740,20 @@ export class WhatsAppChannel {
    * message; nothing throws back into the upsert loop.
    */
   private async handleInboundVoice(jid: string, msg: WAMessage): Promise<void> {
-    // One turn per chat at a time — mirrors Telegram's busy-guard.
-    if (this.activeByJid.has(jid)) {
-      await this.sendBusyReply(jid, '(voice message)')
-      return
-    }
+    // A busy chat parks the voice note instead of declining it. Download and
+    // transcription happen NOW, not at flush time: the media keys ride this
+    // inbound message and we no longer hold it later, and doing the STT up
+    // front is what lets the transcript echo (and the queue ack) reach the
+    // user immediately. Mirrors Telegram's handleVoiceMessage.
+    const busyTurn = this.activeByJid.get(jid)
     const sock = this.sock
     if (!sock) return
 
     try {
-      const conversation = await this.loadOrCreateConversation(jid)
+      // While a turn is running, its conversation IS this chat's conversation —
+      // use it directly so the upload lands in the folder the queued turn will
+      // read from, and so we never race loadOrCreateConversation's idle check.
+      const conversation = busyTurn?.conversation ?? (await this.loadOrCreateConversation(jid))
 
       let attachment: MessageAttachment
       try {
@@ -1648,6 +1812,18 @@ export class WhatsAppChannel {
       // LLM-bound history (the transcript IS the prompt) while preserving the
       // file on disk for replay.
       await this.safeSend(jid, `🎙 ${transcript}`)
+      // Busy (still, or newly) ⇒ park it with both flags intact, so the
+      // flushed turn is byte-identical to this one.
+      if (this.isJidBusy(jid)) {
+        await this.enqueueMessage(jid, {
+          id: mintMessageId(),
+          text: transcript,
+          attachments: [attachment],
+          voicePrompt: true,
+          voiceLang
+        })
+        return
+      }
       await this.dispatchTurn(jid, transcript, [attachment], { voicePrompt: true, voiceLang })
     } catch (err) {
       const errMessage = err instanceof Error ? err.message : String(err)
@@ -1672,12 +1848,13 @@ export class WhatsAppChannel {
     msg: WAMessage,
     media: InboundMedia
   ): Promise<void> {
-    // One turn per chat at a time — mirrors the voice + text paths. Decline
-    // BEFORE downloading so a busy agent never pulls a large blob it can't use.
-    if (this.activeByJid.has(jid)) {
-      await this.sendBusyReply(jid, media.caption || `(${media.kind})`)
-      return
-    }
+    // A busy chat no longer declines media — the file is downloaded and the
+    // message parked. The download CANNOT be deferred to flush time: the
+    // encrypted media keys ride this inbound message, which we no longer hold
+    // once the turn ends, so a queued photo would be undeliverable. The size
+    // guards below still apply, so the "don't pull a blob we can't use"
+    // concern stays bounded exactly as it is on an idle chat.
+    const busyTurn = this.activeByJid.get(jid)
     const sock = this.sock
     if (!sock) return
 
@@ -1694,7 +1871,10 @@ export class WhatsAppChannel {
     }
 
     try {
-      const conversation = await this.loadOrCreateConversation(jid)
+      // See handleInboundVoice — the running turn's conversation is this
+      // chat's conversation, and using it avoids re-reading (and re-racing)
+      // the mapping mid-turn.
+      const conversation = busyTurn?.conversation ?? (await this.loadOrCreateConversation(jid))
 
       let attachment: MessageAttachment
       try {
@@ -1745,6 +1925,20 @@ export class WhatsAppChannel {
 
       // Empty caption is fine — composeAttachmentContext forwards the file
       // with empty text and the model sees the attachment alone.
+      //
+      // Re-read the busy state: the download may have outlasted the turn that
+      // was running when this message arrived (dispatch now), or a turn may
+      // have started during it (park it). The queued entry carries the saved
+      // attachment, so the flushed turn hands the model the same native
+      // document/image blocks an unqueued one would.
+      if (this.isJidBusy(jid)) {
+        await this.enqueueMessage(jid, {
+          id: mintMessageId(),
+          text: media.caption ?? '',
+          attachments: [attachment]
+        })
+        return
+      }
       await this.dispatchTurn(jid, media.caption ?? '', [attachment])
     } catch (err) {
       const errMessage = err instanceof Error ? err.message : String(err)
@@ -1754,22 +1948,27 @@ export class WhatsAppChannel {
 
   // --- Turn dispatch (mirrors Telegram's pattern) ---
 
+  /**
+   * Run one user message as a turn. Resolves TRUE once the turn has finished,
+   * FALSE if the chat turned out to be busy and the message was parked instead
+   * (or, for a queue flush, handed back to the caller to re-queue).
+   */
   private async dispatchTurn(
     jid: string,
     userText: string,
     attachments: MessageAttachment[] = [],
-    options: { voicePrompt?: boolean; voiceLang?: string } = {}
-  ): Promise<void> {
+    options: { voicePrompt?: boolean; voiceLang?: string; fromQueue?: boolean } = {}
+  ): Promise<boolean> {
     // SYNCHRONOUS per-jid claim BEFORE any await — closes the TOCTOU where two
     // same-jid messages both reach dispatch (both past the arrival gate, both
-    // before activeByJid is set) and double-dispatch. The second is declined.
+    // before activeByJid is set) and double-dispatch. The second is parked.
     if (this.dispatchingByJid.has(jid) || this.activeByJid.has(jid)) {
-      await this.sendBusyReply(jid, userText || '(message)')
-      return
+      await this.parkOrYield(jid, userText, attachments, options)
+      return false
     }
     this.dispatchingByJid.add(jid)
     try {
-      await this.dispatchTurnInner(jid, userText, attachments, options)
+      return await this.dispatchTurnInner(jid, userText, attachments, options)
     } finally {
       // Safety net for early-return paths before onTurnStarted handed the
       // claim off to activeByJid (a no-op once already released there).
@@ -1777,19 +1976,41 @@ export class WhatsAppChannel {
     }
   }
 
+  /**
+   * A dispatch that lost the busy race. A normal message is parked and acked;
+   * one that came FROM the queue is left alone — it is already queued, and
+   * re-acking would tell the user "queued" twice for a single message. The
+   * flush loop puts it back at the head instead.
+   */
+  private async parkOrYield(
+    jid: string,
+    userText: string,
+    attachments: MessageAttachment[],
+    options: { voicePrompt?: boolean; voiceLang?: string; fromQueue?: boolean }
+  ): Promise<void> {
+    if (options.fromQueue) return
+    await this.enqueueMessage(jid, {
+      id: mintMessageId(),
+      text: userText,
+      attachments,
+      voicePrompt: options.voicePrompt,
+      voiceLang: options.voiceLang
+    })
+  }
+
   private async dispatchTurnInner(
     jid: string,
     userText: string,
     attachments: MessageAttachment[],
-    options: { voicePrompt?: boolean; voiceLang?: string }
-  ): Promise<void> {
+    options: { voicePrompt?: boolean; voiceLang?: string; fromQueue?: boolean }
+  ): Promise<boolean> {
     const conversation = await this.loadOrCreateConversation(jid)
 
     // A turn still QUEUED on this conversation's lane (not yet started, so not
-    // in activeByJid) is also busy — decline rather than stack a second turn.
+    // in activeByJid) is also busy — park rather than stack a second turn.
     if (this.runner.isConversationActive(conversation.id)) {
-      await this.sendBusyReply(jid, userText || '(message)')
-      return
+      await this.parkOrYield(jid, userText, attachments, options)
+      return false
     }
 
     // Resolve the verbosity preference once per turn. false (default) =
@@ -1862,6 +2083,9 @@ export class WhatsAppChannel {
       channel: 'whatsapp',
       makeSink: ({ turnId, conversationId }) => this.createSink(turnId, conversationId, jid),
       onTurnStarted: ({ turnId, controller }) => {
+        // Stamp the assistant message's identity up front so live mirror
+        // snapshots and the end-of-turn save share one id + timestamp.
+        const assistantTimestamp = Date.now()
         const active: ActiveTurn = {
           jid,
           turnId,
@@ -1873,6 +2097,10 @@ export class WhatsAppChannel {
           approvals: new Map(),
           toolTimings: new Map(),
           stopReason: null,
+          assistantMessageId: mintMessageId(assistantTimestamp),
+          assistantTimestamp,
+          lastMirrorAt: 0,
+          mirrorTimer: null,
           taskId: null,
           controller,
           pendingApprovalId: null,
@@ -1897,100 +2125,118 @@ export class WhatsAppChannel {
         // Drain the render queue (which includes the final text flush
         // enqueued by onDone) before cleaning up the active turn.
         const pending = this.segmentQueue.get(jid) ?? Promise.resolve()
-        void pending.then(() => {
-          // Persist and resolve against OUR captured turn object — the
-          // per-jid slot may already belong to a successor turn by the time
-          // this network-bound drain fires, and reading the map here used to
-          // silently drop the finished turn's transcript.
-          const finished = dispatchedTurn
-          if (finished) {
-            if (finished.pendingApprovalId) {
-              const stored = finished.approvals.get(finished.pendingApprovalId)
-              if (stored && !stored.decision) stored.decision = 'denied'
-            }
+        // .catch BEFORE .then — see the Telegram twin. A rejected render queue
+        // must still reach the cleanup that deletes activeByJid and flushes the
+        // queue; skipping it leaves the jid permanently "busy" and, since
+        // enqueue starts no flush while that slot is held, strands the queue.
+        void pending
+          .catch(() => undefined)
+          .then(() => {
+            // Persist and resolve against OUR captured turn object — the
+            // per-jid slot may already belong to a successor turn by the time
+            // this network-bound drain fires, and reading the map here used to
+            // silently drop the finished turn's transcript.
+            const finished = dispatchedTurn
+            if (finished) {
+              if (finished.pendingApprovalId) {
+                const stored = finished.approvals.get(finished.pendingApprovalId)
+                if (stored && !stored.decision) stored.decision = 'denied'
+              }
 
-            const content = finished.assistantContent.trim()
-            const hasSegments = finished.segments.length > 0
-            let assistant: ConversationMessage | null = null
-            if (content.length > 0 || hasSegments) {
-              assistant = {
-                id: mintMessageId(),
-                role: 'assistant',
-                content,
-                timestamp: Date.now()
-              }
-              if (hasSegments) assistant.segments = finished.segments
-              if (finished.approvals.size > 0) {
-                assistant.approvals = Object.fromEntries(
-                  [...finished.approvals.values()].map((a) => [a.toolCallId, a])
-                )
-              }
-              if (finished.toolTimings.size > 0) {
-                assistant.toolTimings = Object.fromEntries(finished.toolTimings)
-              }
-              if (finished.stopReason) assistant.stopReason = finished.stopReason
-              finished.conversation.messages.push(assistant)
-              finished.conversation.updatedAt = assistant.timestamp
-            }
-            // Fold this turn's tokenomics into the persisted stats so the
-            // in-app context-meter card restores real numbers for this WhatsApp
-            // conversation (it was blank before — channel turns never wrote
-            // stats). Persist even without an assistant message so an
-            // errored/empty turn still records its all-time roll-up.
-            const foldStats = finished.stats.hasData()
-            const endedAt = Date.now()
-            if (assistant || foldStats) {
-              // Append-RMW: the copy held since dispatch may be stale w.r.t.
-              // the summarizer (summary fields) — append onto the freshest disk
-              // state instead of whole-saving the held copy over it. A null disk
-              // means the conversation was deleted mid-drain — skip rather than
-              // resurrect it.
-              void updateConversation(finished.conversation.id, (disk) => {
-                if (!disk) return null
-                if (assistant) {
-                  disk.messages.push(assistant)
-                  disk.updatedAt = assistant.timestamp
+              // Assembled from the SAME accumulator the live mirror used — same
+              // stable id + timestamp — so the disk record and any already-
+              // mirrored in-app copy are one message, reconciled by id.
+              // Returns null only when there's nothing to save (no prose AND no
+              // segments), so tool-only turns still persist.
+              const endedAt = Date.now()
+              const assistant = buildAssistantMessage(finished)
+              if (assistant) {
+                finished.conversation.messages.push(assistant)
+                // updatedAt tracks the turn's END, not the assistant's stamped
+                // start time, so idle-rotation staleness + the rail's sort see
+                // fresh activity for a long turn.
+                finished.conversation.updatedAt = endedAt
+                // Kill any pending throttled snapshot and push the final,
+                // un-throttled one so an in-app viewer flips to the terminal
+                // message at once — ahead of the disk save + reindex.
+                if (finished.mirrorTimer) {
+                  clearTimeout(finished.mirrorTimer)
+                  finished.mirrorTimer = null
                 }
-                if (foldStats) disk.stats = finished.stats.foldInto(disk.stats, endedAt)
-                // A heartbeat/procedure run seals its conversation as a finished
-                // record, and the summarizer below skips sealed files. A user
-                // turn in it — reachable since a background run can hand this
-                // chat its conversation — makes it live again; left sealed it
-                // would replay the whole verbatim transcript on every reply
-                // forever. Mirrors the in-app unseal in persistConversation.
-                if (disk.sealed) disk.sealed = false
-                return disk
-              })
-                .then(() => {
-                  if (assistant) queueConversationSummarization(finished.conversation.id)
+                this.mirrorListener?.(finished.conversation.id, assistant)
+              }
+              // Fold this turn's tokenomics into the persisted stats so the
+              // in-app context-meter card restores real numbers for this WhatsApp
+              // conversation (it was blank before — channel turns never wrote
+              // stats). Persist even without an assistant message so an
+              // errored/empty turn still records its all-time roll-up.
+              const foldStats = finished.stats.hasData()
+              if (assistant || foldStats) {
+                // Append-RMW: the copy held since dispatch may be stale w.r.t.
+                // the summarizer (summary fields) — append onto the freshest disk
+                // state instead of whole-saving the held copy over it. A null disk
+                // means the conversation was deleted mid-drain — skip rather than
+                // resurrect it.
+                void updateConversation(finished.conversation.id, (disk) => {
+                  if (!disk) return null
+                  if (assistant) {
+                    disk.messages.push(assistant)
+                    disk.updatedAt = endedAt
+                  }
+                  if (foldStats) disk.stats = finished.stats.foldInto(disk.stats, endedAt)
+                  // A heartbeat/procedure run seals its conversation as a finished
+                  // record, and the summarizer below skips sealed files. A user
+                  // turn in it — reachable since a background run can hand this
+                  // chat its conversation — makes it live again; left sealed it
+                  // would replay the whole verbatim transcript on every reply
+                  // forever. Mirrors the in-app unseal in persistConversation.
+                  if (disk.sealed) disk.sealed = false
+                  return disk
                 })
-                .catch(() => undefined)
-            }
+                  .then(() => {
+                    if (assistant) queueConversationSummarization(finished.conversation.id)
+                  })
+                  .catch(() => undefined)
+              }
 
-            if (finished.pendingApprovalResolve) {
-              finished.pendingApprovalResolve('denied')
-              finished.pendingApprovalId = null
-              finished.pendingApprovalResolve = null
+              // Safety-net for the empty-turn path (assistant === null, so the
+              // block above didn't run): a trailing mirror timer must never
+              // outlive its turn and fire into a successor's state.
+              if (finished.mirrorTimer) {
+                clearTimeout(finished.mirrorTimer)
+                finished.mirrorTimer = null
+              }
+              if (finished.pendingApprovalResolve) {
+                finished.pendingApprovalResolve('denied')
+                finished.pendingApprovalId = null
+                finished.pendingApprovalResolve = null
+              }
+              // An unanswered question at end-of-turn resolves canceled so the
+              // ask tool's execute() unwinds and the run can finish.
+              if (finished.pendingAskResolve) {
+                finished.pendingAskResolve({ kind: 'canceled' })
+                finished.pendingAsk = null
+                finished.pendingAskResolve = null
+              }
             }
-            // An unanswered question at end-of-turn resolves canceled so the
-            // ask tool's execute() unwinds and the run can finish.
-            if (finished.pendingAskResolve) {
-              finished.pendingAskResolve({ kind: 'canceled' })
-              finished.pendingAsk = null
-              finished.pendingAskResolve = null
+            // Release the per-jid slot and render queue only if WE still own
+            // them — a successor turn's entries must survive our teardown.
+            if (!finished || this.activeByJid.get(jid) === finished) {
+              this.activeByJid.delete(jid)
+              this.segmentQueue.delete(jid)
+              // The chat is free: hand it to anything the user sent mid-turn.
+              // This is the channel's streaming→idle transition — the same edge
+              // the in-app composer flushes its queue on, and for the same
+              // reason it needs no special casing for /stop or an errored turn:
+              // both land here through the identical cleanup path.
+              this.flushQueue(jid)
             }
-          }
-          // Release the per-jid slot and render queue only if WE still own
-          // them — a successor turn's entries must survive our teardown.
-          if (!finished || this.activeByJid.get(jid) === finished) {
-            this.activeByJid.delete(jid)
-            this.segmentQueue.delete(jid)
-          }
-        })
+          })
       }
     })
 
     await handle.done
+    return true
   }
 
   /**
@@ -2101,7 +2347,12 @@ export class WhatsAppChannel {
       turnId,
       conversationId,
       onSegment: (segment) => {
-        this.enqueueRender(jid, () => this.renderSegment(jid, segment))
+        this.enqueueRender(jid, async () => {
+          await this.renderSegment(jid, segment)
+          // Mirror AFTER the render so the snapshot sees the freshly appended
+          // segment + accumulated prose. Throttled internally.
+          this.scheduleMirror(jid, turnId)
+        })
       },
       onTurnEvent: <E extends keyof CorpusEvents>(type: E, payload: CorpusEvents[E]): void => {
         const active = this.activeByJid.get(jid)
@@ -2569,6 +2820,132 @@ export class WhatsAppChannel {
         )
       )
     }
+  }
+
+  // --- Mid-turn message queue (see channels/message-queue.ts) ---
+
+  /**
+   * True while this jid cannot take a new turn. `dispatchingByJid` is the
+   * synchronous setup claim, `activeByJid` the running turn, and the runner
+   * lane covers one still QUEUED behind a predecessor — the same trio
+   * dispatchTurn gates on.
+   */
+  private isJidBusy(jid: string, conversationId?: string): boolean {
+    if (this.dispatchingByJid.has(jid) || this.activeByJid.has(jid)) return true
+    if (conversationId && this.runner.isConversationActive(conversationId)) return true
+    return false
+  }
+
+  /**
+   * Park a mid-turn message and tell the user it landed. Replaces the old
+   * "hold on, I'm busy" decline: nothing is lost, nothing has to be resent.
+   *
+   * The flush fires ONLY when no running turn owns this jid — see the Telegram
+   * twin for the full reasoning. Short version: `activeByJid` is what the wait
+   * polls, so flushing while it holds this jid starts a wait that can only
+   * expire, and an expiry counts as a failed dispatch — three of them warned
+   * the user their message was wedged on a turn that was merely long.
+   *
+   * Gated on `activeByJid` alone, NOT isJidBusy: `dispatchingByJid` is the
+   * pre-turn setup claim, and a setup that early-returns releases it without
+   * ever running the cleanup — so treating it as "a cleanup will flush" would
+   * strand the queue until the next turn ended.
+   */
+  private async enqueueMessage(jid: string, item: QueuedWhatsAppMessage): Promise<void> {
+    const depth = this.queue.enqueue(jid, item)
+    await this.safeSend(jid, queuedAckText(depth, item.attachments.length))
+    if (!this.activeByJid.has(jid)) this.flushQueue(jid)
+  }
+
+  /**
+   * Drain this jid's queue, one turn at a time, in arrival order. Twin of the
+   * Telegram implementation — see its comments for why the wait, the retry
+   * bound, and the fire-and-forget shape are each load-bearing.
+   */
+  private flushQueue(jid: string): void {
+    if (this.flushingByJid.has(jid)) return
+    if (this.queue.size(jid) === 0) return
+    this.flushingByJid.add(jid)
+    void (async () => {
+      let attempts = 0
+      try {
+        while (this.queue.size(jid) > 0) {
+          const freed = await this.waitForFreeJid(jid)
+          const next = this.queue.shift(jid)
+          if (!next) return
+          // A throwing dispatch counts as a failed attempt, not a lost message:
+          // the item is already off the queue here, so letting the throw escape
+          // would drop what the user was promised we'd run.
+          let started = false
+          if (freed) {
+            try {
+              started = await this.dispatchTurn(jid, next.text, next.attachments, {
+                voicePrompt: next.voicePrompt,
+                voiceLang: next.voiceLang,
+                fromQueue: true
+              })
+            } catch {
+              started = false
+            }
+          }
+          if (started) {
+            attempts = 0
+            continue
+          }
+          this.queue.requeue(jid, next)
+          // Back off before retrying. Without this the attempt budget can burn
+          // out in microseconds on a transient claim and cry wolf at the user.
+          await new Promise((r) => setTimeout(r, QUEUE_FLUSH_POLL_MS))
+          if (++attempts >= QUEUE_FLUSH_ATTEMPTS) {
+            await this.safeSend(
+              jid,
+              "Still busy, so your queued messages haven't run yet. /stop frees the chat, /cancel drops them."
+            )
+            return
+          }
+        }
+      } catch {
+        // A failed flush must never wedge the chat — the queue survives and the
+        // next end-of-turn cleanup retries it.
+      } finally {
+        this.flushingByJid.delete(jid)
+      }
+    })()
+  }
+
+  /**
+   * Poll until this jid can take a turn. False means the budget expired.
+   *
+   * Waiting on the RUNNER LANE, not just the per-jid slot, is load-bearing —
+   * see the Telegram twin for the microtask-ordering window this closes. The
+   * mapping read is memory-cached after the first hit.
+   */
+  private async waitForFreeJid(jid: string): Promise<boolean> {
+    const conversationId = (await getConversationIdForJid(jid).catch(() => null)) ?? undefined
+    const deadline = Date.now() + this.queueFlushWaitMs
+    while (this.isJidBusy(jid, conversationId) && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, QUEUE_FLUSH_POLL_MS))
+    }
+    return !this.isJidBusy(jid, conversationId)
+  }
+
+  private clearQueue(jid: string): number {
+    return this.queue.clear(jid)
+  }
+
+  /**
+   * Drop the queue because this chat is being pointed at a DIFFERENT
+   * conversation, and return a sentence the caller appends to its own reply.
+   * A message parked for this chat must never flush into a fresh or resumed
+   * conversation — the in-app queue clears on conversation switch for exactly
+   * this reason. Silent when nothing was queued.
+   */
+  private dropQueueForRotation(jid: string): string {
+    const dropped = this.clearQueue(jid)
+    if (dropped === 0) return ''
+    return dropped === 1
+      ? ' 1 queued message was dropped with it.'
+      : ` ${dropped} queued messages were dropped with it.`
   }
 
   // --- Busy handling ---

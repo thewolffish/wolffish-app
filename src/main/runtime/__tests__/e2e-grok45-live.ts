@@ -256,9 +256,10 @@ async function main(): Promise<void> {
     effort: 'max'
   })
   const a = await session.awaitNext()
+  assert.ok(a && a.kind === 'landed', 'agent alpha landed')
   report('agent alpha (effort max) completes', () => {
-    assert.ok(a && !a.result.failed)
-    assert.match(a?.result.text.toLowerCase() ?? '', /alpha done/)
+    assert.ok(!a.result.failed)
+    assert.match(a.result.text.toLowerCase(), /alpha done/)
   })
   report('wire: max clamped to high for agent', () =>
     assert.equal(wire.at(-1)?.reasoning_effort, 'high')
@@ -271,9 +272,10 @@ async function main(): Promise<void> {
     effort: 'off'
   })
   const b = await session.awaitNext()
+  assert.ok(b && b.kind === 'landed', 'agent beta landed')
   report('agent beta (effort off) completes', () => {
-    assert.ok(b && !b.result.failed)
-    assert.match(b?.result.text.toLowerCase() ?? '', /beta done/)
+    assert.ok(!b.result.failed)
+    assert.match(b.result.text.toLowerCase(), /beta done/)
   })
   report('wire: off clamped to on → low for agent', () =>
     assert.equal(wire.at(-1)?.reasoning_effort, 'low')

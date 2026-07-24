@@ -81,6 +81,15 @@ export type RuntimeContext = {
    * or true renders nothing: online is the silent default.
    */
   online?: boolean
+  /**
+   * No-progress notice for this iteration (the model has been re-issuing the
+   * same tool call to no effect — see no-progress-guard). Purely informational;
+   * the model decides what to do. Travels the same vehicle as the counters —
+   * volatile tail (optimized) or `<runtime>` block (legacy), both after every
+   * cache breakpoint — so its per-iteration appearance/change never perturbs a
+   * cached prompt prefix. Undefined (the common case) renders nothing.
+   */
+  noProgress?: string
 }
 
 const ALWAYS_INCLUDED: Array<{ category: ContextCategory; rel: string; tag: string }> = [
@@ -684,6 +693,8 @@ function formatRuntimeBody(runtime: RuntimeContext | undefined): string {
     // iteration so the notice lives here; optimized pins the prompt and the
     // notice rides the volatile tail instead.
     if (runtime.online === false) lines.push(`  ${OFFLINE_NOTICE}`)
+    // No-progress notice rides the same vehicle for the same reason.
+    if (runtime.noProgress) lines.push(`  ${runtime.noProgress}`)
   }
   return lines.join('\n')
 }

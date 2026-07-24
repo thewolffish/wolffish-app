@@ -1,10 +1,10 @@
 import { Select, type SelectOption } from '@components/core/Select'
 import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn'
-import type { CompactionConfig } from '@preload/index'
+import type { CompactionConfig, CompactionRunRecord, CompactionRuns } from '@preload/index'
 import { useFlow } from '@providers/flow/useFlow'
 import { useLocale } from '@providers/locale/useLocale'
-import { Refresh01Icon } from 'hugeicons-react'
+import { Activity04Icon, Refresh01Icon } from 'hugeicons-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -20,6 +20,7 @@ export function CompactionPanel(): React.JSX.Element {
   const { refreshStatus } = useFlow()
 
   const [config, setConfig] = useState<CompactionConfig | null>(null)
+  const [runs, setRuns] = useState<CompactionRuns | null>(null)
   const [saving, setSaving] = useState<'daily' | 'weekly' | null>(null)
   const [resyncing, setResyncing] = useState(false)
   const [now, setNow] = useState(() => Date.now())
@@ -29,8 +30,17 @@ export function CompactionPanel(): React.JSX.Element {
     void window.api.runtime.getCompactionConfig().then((cfg) => {
       if (!cancelled) setConfig(cfg)
     })
+    const loadRuns = (): void => {
+      void window.api.runtime.getCompactionRuns().then((r) => {
+        if (!cancelled) setRuns(r)
+      })
+    }
+    loadRuns()
+    // A compaction job can finish while the panel is open — refresh the cards.
+    const off = window.api.runtime.onCompactionChanged(loadRuns)
     return () => {
       cancelled = true
+      off()
     }
   }, [])
 
@@ -39,6 +49,7 @@ export function CompactionPanel(): React.JSX.Element {
     try {
       const cfg = await window.api.runtime.getCompactionConfig()
       setConfig(cfg)
+      setRuns(await window.api.runtime.getCompactionRuns())
       setNow(Date.now())
       toast.show({
         tone: 'success',
@@ -176,8 +187,92 @@ export function CompactionPanel(): React.JSX.Element {
             <NextRun ms={nextWeeklyMs(config.weeklyDay, config.weeklyHour, now)} locale={locale} />
           </div>
         </section>
+
+        {/* Last-run cards — absent entirely until a job has actually run. */}
+        {runs?.daily && <LastRunCard kind="daily" record={runs.daily} locale={locale} />}
+        {runs?.weekly && <LastRunCard kind="weekly" record={runs.weekly} locale={locale} />}
       </div>
     </div>
+  )
+}
+
+// ── Last-run cards ───────────────────────────────────────────────────
+
+const CHIP_CLASS = 'text-muted bg-bg/60 border-border/40 rounded border px-2 py-1 text-[11px]'
+
+function formatDuration(ms: number, locale: string): string {
+  const seconds = ms / 1000
+  try {
+    if (seconds < 90) {
+      return new Intl.NumberFormat(locale, {
+        style: 'unit',
+        unit: 'second',
+        maximumFractionDigits: seconds < 10 ? 1 : 0
+      }).format(seconds)
+    }
+    return new Intl.NumberFormat(locale, {
+      style: 'unit',
+      unit: 'minute',
+      maximumFractionDigits: 1
+    }).format(seconds / 60)
+  } catch {
+    return `${Math.round(seconds)}s`
+  }
+}
+
+function LastRunCard({
+  kind,
+  record,
+  locale
+}: {
+  kind: 'daily' | 'weekly'
+  record: CompactionRunRecord
+  locale: string
+}): React.JSX.Element {
+  const { t } = useTranslation()
+  return (
+    <section className="bg-surface border-border flex flex-col gap-3 rounded-2xl border p-6">
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-2">
+          <Activity04Icon size={16} className="text-muted" />
+          <span className="text-fg text-sm font-medium">
+            {t(`settings.hippocampus.compaction.lastRun.${kind}Title`)}
+          </span>
+        </div>
+        <code className={CHIP_CLASS}>
+          {t('settings.hippocampus.compaction.lastRun.ranAt', {
+            time: new Date(record.at).toLocaleString(locale, {
+              month: 'short',
+              day: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit'
+            })
+          })}
+        </code>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        {record.model && <code className={CHIP_CLASS}>{record.model}</code>}
+        <code className={CHIP_CLASS}>
+          {t('settings.hippocampus.compaction.lastRun.took', {
+            duration: formatDuration(record.durationMs, locale)
+          })}
+        </code>
+        {record.inputTokens !== null && record.outputTokens !== null && (
+          <code className={CHIP_CLASS}>
+            {t('settings.hippocampus.compaction.lastRun.tokens', {
+              input: record.inputTokens.toLocaleString(locale),
+              output: record.outputTokens.toLocaleString(locale)
+            })}
+          </code>
+        )}
+      </div>
+      <pre
+        dir="auto"
+        className="text-fg/80 bg-bg/60 border-border/40 max-h-64 overflow-auto rounded-lg border p-3 text-[11px] leading-relaxed whitespace-pre-wrap"
+      >
+        {record.output}
+      </pre>
+    </section>
   )
 }
 

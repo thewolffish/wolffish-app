@@ -578,19 +578,23 @@ export class Thalamus {
     const msgs: ChatMessage[] = [{ role: 'user', content: prompt }]
     const delays = [1000, 2000, 4000, 8000, 16000]
 
-    // Naming a conversation in 5 words is a labelling task; reasoning buys
-    // nothing and costs everything. This path never went through stream()'s
-    // normalization, so thinkingMode arrived undefined and effortFromMode()
-    // defaulted it to 'high' — every title was a high-effort reasoning call
-    // (measured: p50 11.4s, p90 22.2s, ~30% over the caller's 15s deadline,
-    // which then expired and left the conversation permanently 'Untitled').
-    // Clamped through the same registry stream() uses, because providers
-    // assume a normalized mode: an always-on reasoner (grok-4.5, qwq, k2-code)
-    // rejects a raw 'off' and gets its lowest valid mode instead.
-    // Summaries keep their reasoning — compaction is a judgement call.
-    const stream: ProviderStreamOptions = { system, messages: msgs, signal }
-    if (role === 'title') {
-      stream.thinkingMode = normalizeReasoningMode('off', this.reasoningModesForEntry(entry))
+    // Titling and summarizing are utility side-calls on the configured Brain,
+    // not judgement calls: reasoning buys nothing and costs everything. This
+    // path never goes through stream()'s normalization, so an undefined
+    // thinkingMode used to hit effortFromMode()'s 'high' default — every
+    // title was a high-effort reasoning call (measured: p50 11.4s, p90 22.2s,
+    // ~30% over the caller's 15s deadline, which then expired and left the
+    // conversation permanently 'Untitled'), and compaction summaries paid the
+    // same tax. Both roles now run with reasoning OFF — quick, cheap, and
+    // independent of the user's per-model reasoning selection — clamped
+    // through the same registry stream() uses, because providers assume a
+    // normalized mode: an always-on reasoner (grok-4.5, qwq, k2-code) rejects
+    // a raw 'off' and gets its lowest valid mode instead.
+    const stream: ProviderStreamOptions = {
+      system,
+      messages: msgs,
+      signal,
+      thinkingMode: normalizeReasoningMode('off', this.reasoningModesForEntry(entry))
     }
 
     for (let attempt = 0; attempt < 5; attempt++) {
@@ -719,6 +723,14 @@ export class Thalamus {
     if (options.role === 'agent') {
       const modes = this.reasoningModesForEntry(entry)
       opts = { ...options, thinkingMode: normalizeReasoningMode(options.thinkingMode, modes) }
+    } else if (options.role === 'summary') {
+      // Summarization side-calls that stream (the nightly memory compaction
+      // job) mirror completeSingle's policy: reasoning OFF, on the configured
+      // Brain, never the user's chat reasoning selection — utility work
+      // should be quick and cheap. Normalized so an always-on reasoner
+      // degrades to its lowest valid mode instead of erroring on a raw 'off'.
+      const modes = this.reasoningModesForEntry(entry)
+      opts = { ...options, thinkingMode: normalizeReasoningMode('off', modes) }
     }
 
     // Same-model retry: the cloud Brain (master / single) gets the transient

@@ -11,7 +11,8 @@ import {
   MAX_TOTAL_AGENTS,
   WorkflowSession,
   type RunAgentTurn,
-  type WorkflowAgentResult
+  type WorkflowAgentResult,
+  type WorkflowWaitOutcome
 } from '@main/runtime/workflow'
 
 type Controlled = {
@@ -44,6 +45,12 @@ function harness(): {
 
 const tick = (): Promise<void> => new Promise((r) => setTimeout(r, 0))
 
+/** Narrow an awaitNext outcome to a landing (asserts it isn't null / no-progress). */
+function landing(o: WorkflowWaitOutcome | null): Extract<WorkflowWaitOutcome, { kind: 'landed' }> {
+  assert.ok(o && o.kind === 'landed', 'expected a landing outcome')
+  return o
+}
+
 async function testSpawnAwaitTelemetry(): Promise<void> {
   const { session, pending, snapshots } = harness()
   session.plan(['analysis', 'verify'], 'test note')
@@ -67,8 +74,7 @@ async function testSpawnAwaitTelemetry(): Promise<void> {
   assert.equal(snap.note, 'test note')
 
   pending[0].resolve({ text: 'report text', stopReason: 'end_turn', failed: false })
-  const landed = await session.awaitNext()
-  assert.ok(landed)
+  const landed = landing(await session.awaitNext())
   assert.equal(landed.id, 'a1')
   assert.equal(landed.name, 'researcher')
   assert.equal(landed.result.text, 'report text')
@@ -168,8 +174,8 @@ async function testSendToAndGuards(): Promise<void> {
   assert.equal(history.length, 3)
   assert.deepEqual(history[1], { role: 'assistant', content: 'first done' })
   pending[1].resolve({ text: 'second done', stopReason: 'end_turn', failed: false })
-  const landed = await session.awaitNext()
-  assert.equal(landed?.result.text, 'second done')
+  const landed = landing(await session.awaitNext())
+  assert.equal(landed.result.text, 'second done')
   session.finalize('completed')
   console.log('ok: sendTo guards + text-only continuation history')
 }
@@ -179,8 +185,7 @@ async function testFailureAsData(): Promise<void> {
   session.spawn({ task: 'will crash' })
   await tick()
   pending[0].reject(new Error('provider exploded'))
-  const landed = await session.awaitNext()
-  assert.ok(landed)
+  const landed = landing(await session.awaitNext())
   assert.match(landed.result.text, /provider exploded/)
   assert.equal(landed.result.failed, true)
   assert.equal(session.snapshot().agents[0].status, 'failed')
@@ -227,6 +232,72 @@ async function testFinalizeTerminalSnapshot(): Promise<void> {
   console.log('ok: finalize aborts survivors, wakes awaiters, emits terminal snapshot')
 }
 
+async function testNoProgressWakesMaster(): Promise<void> {
+  const { session, pending } = harness()
+  const id = session.spawn({ task: 'stuck scanner' })
+  await tick()
+  // The master parks in awaitNext while the agent runs — this is the hole that
+  // let one spinning agent block the whole run for 37 minutes.
+  const waiting = session.awaitNext()
+  // The agent's loop escalates: it's been re-issuing the same call to no effect.
+  const signal = {
+    repeats: 12,
+    label: 'ext_read_page format=markdown',
+    distinct: 3,
+    windowSize: 24
+  }
+  pending[0].args.onNoProgress(signal)
+  const outcome = await waiting
+  assert.ok(outcome && outcome.kind === 'no_progress', 'a no-progress escalation wakes the master')
+  assert.equal(outcome.id, id)
+  assert.equal(outcome.signal.repeats, 12)
+  assert.match(outcome.signal.label, /ext_read_page/)
+
+  // Consumed once: with the agent still running and no NEW escalation, the next
+  // await parks again rather than re-firing the stale notice. Prove it stays
+  // parked by racing it against a tick.
+  const parked = session.awaitNext()
+  const raced = await Promise.race([parked, tick().then(() => 'still-parked' as const)])
+  assert.equal(raced, 'still-parked', 'a consumed no-progress notice is not re-delivered')
+
+  // A real landing supersedes the notice and resolves the parked master — even
+  // if the agent had a stale no-progress flag, the completion wins.
+  pending[0].resolve({ text: 'partial findings', stopReason: 'end_turn', failed: false })
+  const landed = landing(await parked)
+  assert.equal(landed.id, id)
+  assert.equal(landed.result.text, 'partial findings')
+  session.finalize('completed')
+  console.log('ok: no-progress wakes a parked master; consumed once; a landing supersedes it')
+}
+
+async function testLandingBeatsNoProgress(): Promise<void> {
+  const { session, pending } = harness()
+  const stuck = session.spawn({ task: 'stuck' })
+  const quick = session.spawn({ task: 'quick' })
+  await tick()
+  // Both a landing and a no-progress notice are pending at once → the landing is
+  // served first (a finished agent is more actionable than a stuck one).
+  pending[0].args.onNoProgress({
+    repeats: 15,
+    label: 'ext_read_page format=markdown',
+    distinct: 2,
+    windowSize: 24
+  })
+  pending[1].resolve({ text: 'quick done', stopReason: 'end_turn', failed: false })
+  // Let the landing settle into the landed queue so BOTH a landing and a
+  // no-progress notice are pending when awaitNext scans — the point of the test.
+  await tick()
+  const first = await session.awaitNext()
+  assert.ok(first && first.kind === 'landed', 'landing served before the no-progress notice')
+  assert.equal(first.id, quick)
+  // The stuck agent's notice is still available on the next await.
+  const second = await session.awaitNext()
+  assert.ok(second && second.kind === 'no_progress')
+  assert.equal(second.id, stuck)
+  session.finalize('completed')
+  console.log('ok: a landing is served before a pending no-progress notice')
+}
+
 async function main(): Promise<void> {
   await testSpawnAwaitTelemetry()
   await testFirstLandingWins()
@@ -236,6 +307,8 @@ async function main(): Promise<void> {
   await testFailureAsData()
   await testCancelAndLateCompletion()
   await testFinalizeTerminalSnapshot()
+  await testNoProgressWakesMaster()
+  await testLandingBeatsNoProgress()
   console.log('\nAll workflow-session tests passed.')
 }
 

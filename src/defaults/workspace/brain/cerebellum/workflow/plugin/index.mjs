@@ -129,13 +129,13 @@ function sendAgent(args) {
 async function awaitAgents(args) {
   if (!workflow) return missingBridge()
   const ids = Array.isArray(args?.agent_ids) ? args.agent_ids.map(str).filter(Boolean) : undefined
-  let landed
+  let outcome
   try {
-    landed = await workflow.awaitAgents(ids && ids.length ? ids : undefined)
+    outcome = await workflow.awaitAgents(ids && ids.length ? ids : undefined)
   } catch (err) {
     return { success: false, error: `agents_await: ${err instanceof Error ? err.message : String(err)}` }
   }
-  if (!landed) {
+  if (!outcome) {
     return {
       success: true,
       output:
@@ -144,7 +144,28 @@ async function awaitAgents(args) {
           : 'No agents are live — nothing to await. Spawn some, or finish up.'
     }
   }
-  const { id, name, result } = landed
+  const { id, name } = outcome
+  // A still-running agent that is stuck re-issuing the same call. NOT finished —
+  // no result yet. It has ALSO been told (in its own runtime feed) to wrap up,
+  // so waiting a little longer may let it conclude on its own with partial
+  // findings. You manage it: keep waiting, or cancel it (losing its in-progress
+  // work) and cover its slice another way. agent_send does NOT work on a running
+  // agent — cancel and respawn if you want to redirect it.
+  if (outcome.kind === 'no_progress') {
+    const s = outcome.signal
+    return {
+      success: true,
+      output: [
+        `⚠️ Agent ${id} (${name}) is STILL RUNNING but appears STUCK — no result yet.`,
+        `It has issued the same tool call (\`${s.label}\`) ${s.repeats} times to no effect (only ${s.distinct} distinct calls in its last ${s.windowSize}).`,
+        '',
+        `You decide: call agents_await again to let it wrap up on its own with what it has, or agent_cancel ${id} (its in-progress work is lost) and cover its part yourself or via a fresh, tighter-scoped agent.`,
+        '',
+        liveSummary(id)
+      ].join('\n')
+    }
+  }
+  const { result } = outcome
   const meta = result.failed
     ? `[FAILED: ${result.stopReason} — decide: respawn with a fix, try another model, or absorb the slice yourself]`
     : `[finished: ${result.stopReason}]`

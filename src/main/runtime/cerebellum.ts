@@ -16,7 +16,7 @@ import type {
   McpServerSnapshot,
   McpTestResult
 } from '@main/runtime/mcp/types'
-import type { WorkflowAgentResult, WorkflowEffort } from '@main/runtime/workflow'
+import type { WorkflowEffort, WorkflowWaitOutcome } from '@main/runtime/workflow'
 import type { WorkflowAgentView } from '@main/runtime/broca'
 import { sudoSession, type SudoSession } from '@main/runtime/sudoSession'
 import type { ToolDefinition } from '@main/runtime/thalamus'
@@ -484,12 +484,11 @@ export type WorkflowHost = {
   /** Send a follow-up to a landed agent, optionally re-tuning its effort. */
   sendToAgent: (agentId: string, message: string, effort?: WorkflowEffort) => void
   /**
-   * Block until the NEXT agent (optionally restricted to `agentIds`) lands,
-   * returning its id + name + result — or null when none is still live.
+   * Block until the NEXT agent (optionally restricted to `agentIds`) either
+   * lands (result ready) or trips a no-progress escalation (still running but
+   * stuck — the master is woken to decide) — or null when none is still live.
    */
-  awaitAgents: (
-    agentIds?: string[]
-  ) => Promise<{ id: string; name: string; result: WorkflowAgentResult } | null>
+  awaitAgents: (agentIds?: string[]) => Promise<WorkflowWaitOutcome | null>
   /** Cancel an agent, aborting its in-flight tool calls. */
   cancelAgent: (agentId: string) => void
   /** Snapshot every agent in the active turn's registry. */

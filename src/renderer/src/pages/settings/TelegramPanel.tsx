@@ -834,6 +834,7 @@ function CommandsSection(): React.JSX.Element {
     { name: '/delete', description: t('settings.services.telegram.commands.delete') },
     { name: '/clear', description: t('settings.services.telegram.commands.clear') },
     { name: '/stop', description: t('settings.services.telegram.commands.stop') },
+    { name: '/cancel', description: t('settings.services.telegram.commands.cancel') },
     { name: '/approve', description: t('settings.services.telegram.commands.approve') },
     { name: '/deny', description: t('settings.services.telegram.commands.deny') },
     { name: '/status', description: t('settings.services.telegram.commands.status') },
@@ -842,7 +843,6 @@ function CommandsSection(): React.JSX.Element {
   ]
   const limitations: string[] = [
     t('settings.services.telegram.limitations.singleConversation'),
-    t('settings.services.telegram.limitations.busyNotQueued'),
     t('settings.services.telegram.limitations.fileSize'),
     t('settings.services.telegram.limitations.allowList'),
     t('settings.services.telegram.limitations.silentIgnore')

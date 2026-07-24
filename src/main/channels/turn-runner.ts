@@ -90,6 +90,25 @@ export type TurnHandle = {
 }
 
 /**
+ * A turn in flight (or queued) for a conversation, as seen from outside.
+ * The renderer asks for these on window open: chat:turnState is a
+ * BROADCAST, so a window created after a Telegram/WhatsApp run started —
+ * the normal case for a tray app whose channels run headless — never saw
+ * the 'started' event and would otherwise render the conversation idle.
+ */
+export type ActiveRun = {
+  conversationId: string
+  channel: string
+  title: string | null
+}
+
+type LiveRun = {
+  controller: AbortController
+  channel: string
+  title: string | null
+}
+
+/**
  * Lifecycle notifications for every foreground turn, regardless of channel.
  * Broadcast to the renderer (chat:turnState) so the Conversations sidebar
  * can show live status chips for in-app, WhatsApp and Telegram runs alike.
@@ -128,6 +147,15 @@ export class TurnRunner {
   private readonly chains = new Map<string, Promise<void>>()
   /** Live turn count per conversation key — backs isConversationActive. */
   private readonly activeTurns = new Map<string, number>()
+  /**
+   * Live turns keyed conversationId → turnId, carrying what an outside
+   * observer needs: the abort handle (cross-channel cancel) and the channel
+   * + title (the renderer's cold-start snapshot). Kept SEPARATE from
+   * activeTurns because that map also lanes conversation-less turns under a
+   * synthetic key, and its counts back the quit-drain — neither of which
+   * this map should have to model.
+   */
+  private readonly liveRuns = new Map<string, Map<string, LiveRun>>()
   /**
    * Titles resolved this session, keyed by conversation id — skips the
    * per-turn disk check + LLM titling on every follow-up turn while still
@@ -198,6 +226,42 @@ export class TurnRunner {
     return n
   }
 
+  /**
+   * Snapshot of every conversation with a turn in flight, for a renderer
+   * window that missed the 'started' broadcasts (opened, or reopened from
+   * the tray, mid-run). One entry per conversation — the lane serializes
+   * them, so the head is the run the UI should reflect.
+   */
+  activeRuns(): ActiveRun[] {
+    const out: ActiveRun[] = []
+    for (const [conversationId, runs] of this.liveRuns) {
+      const head = runs.values().next().value
+      if (!head) continue
+      out.push({
+        conversationId,
+        channel: head.channel,
+        title: head.title ?? this.titledCache.get(conversationId) ?? null
+      })
+    }
+    return out
+  }
+
+  /**
+   * Abort every live turn of a conversation, whatever channel owns it. This
+   * is what makes the in-app Stop button real for a Telegram/WhatsApp run
+   * the user is watching from the app: the originating channel keeps its own
+   * controllers, but they all resolve through here.
+   *
+   * In-app turns go through ElectronChannel.cancel first (it also forwards
+   * the stop to motor) — this is the fallback for everything else.
+   */
+  cancelConversation(conversationId: string): boolean {
+    const runs = this.liveRuns.get(conversationId)
+    if (!runs || runs.size === 0) return false
+    for (const run of runs.values()) run.controller.abort()
+    return true
+  }
+
   private emitLifecycle(ev: TurnLifecycleEvent): void {
     try {
       this.lifecycleListener?.(ev)
@@ -258,6 +322,24 @@ export class TurnRunner {
     const laneKey = conversationId ?? `turn:${turnId}`
     const prevChain = this.chains.get(laneKey) ?? Promise.resolve()
     this.activeTurns.set(laneKey, (this.activeTurns.get(laneKey) ?? 0) + 1)
+    // Register NOW, not at lane start: a turn queued behind its
+    // conversation's predecessor is already something the UI must render as
+    // running (and something Stop must be able to cancel).
+    if (conversationId) {
+      let runs = this.liveRuns.get(conversationId)
+      if (!runs) {
+        runs = new Map<string, LiveRun>()
+        this.liveRuns.set(conversationId, runs)
+      }
+      runs.set(turnId, {
+        controller,
+        channel: sink.channelId,
+        title:
+          opts.conversationTitle && opts.conversationTitle !== 'Untitled'
+            ? opts.conversationTitle
+            : (this.titledCache.get(conversationId) ?? null)
+      })
+    }
 
     const done = (async () => {
       // Wait for any in-flight turn OF THIS CONVERSATION to finish. A channel
@@ -359,6 +441,8 @@ export class TurnRunner {
         }
         if (conversationId && title && title !== 'Untitled') {
           this.titledCache.set(conversationId, title)
+          const run = this.liveRuns.get(conversationId)?.get(turnId)
+          if (run) run.title = title
         }
       }
 
@@ -415,6 +499,11 @@ export class TurnRunner {
       if (remaining <= 0) this.activeTurns.delete(laneKey)
       else this.activeTurns.set(laneKey, remaining)
       if (this.chains.get(laneKey) === tail) this.chains.delete(laneKey)
+      if (conversationId) {
+        const runs = this.liveRuns.get(conversationId)
+        runs?.delete(turnId)
+        if (runs && runs.size === 0) this.liveRuns.delete(conversationId)
+      }
     })
 
     return { turnId, controller, done }

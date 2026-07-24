@@ -488,6 +488,19 @@ export type ChatTurnStateEvent = {
   error?: string
 }
 
+/**
+ * One conversation with a turn in flight right now, on any channel
+ * (chat:activeRuns). The lifecycle broadcast above only carries
+ * TRANSITIONS, so a window that opened mid-run — the normal case for a tray
+ * app whose Telegram/WhatsApp channels keep running with no window — needs
+ * this snapshot to render those conversations as running.
+ */
+export type ChatActiveRun = {
+  conversationId: string
+  channel: string
+  title: string | null
+}
+
 export type ChatTurnEvent = {
   turnId: string
   conversationId: string | null
@@ -639,12 +652,31 @@ export type RuntimeApi = {
   setLastSettingsState: (patch: Record<string, string>) => Promise<void>
   getCompactionConfig: () => Promise<CompactionConfig>
   setCompactionConfig: (patch: Partial<CompactionConfig>) => Promise<CompactionConfig>
+  getCompactionRuns: () => Promise<CompactionRuns>
+  onCompactionChanged: (listener: (payload: unknown) => void) => () => void
 }
 
 export type CompactionConfig = {
   dailyHour: number
   weeklyDay: number
   weeklyHour: number
+}
+
+/** Last completed run of a compaction job (mirrors brainstem's type). */
+export type CompactionRunRecord = {
+  at: number
+  durationMs: number
+  /** Null for the weekly digest — that pass makes no LLM call. */
+  provider: string | null
+  model: string | null
+  inputTokens: number | null
+  outputTokens: number | null
+  output: string
+}
+
+export type CompactionRuns = {
+  daily: CompactionRunRecord | null
+  weekly: CompactionRunRecord | null
 }
 
 export type OllamaModelDetail = {
@@ -754,8 +786,14 @@ export type ChatApi = {
     /** Project this conversation runs inside — overlays its context on the turn. */
     projectId?: string | null
   }) => Promise<{ turnId: string; ok: boolean; error?: string }>
-  /** Cancel one conversation's in-flight turn; omitted id cancels all. */
+  /**
+   * Cancel one conversation's in-flight turn; omitted id cancels all. Works
+   * whatever channel started the turn — an in-app Stop on a mirrored
+   * Telegram/WhatsApp run aborts it through the shared TurnRunner.
+   */
   cancel: (payload?: { conversationId?: string | null }) => Promise<{ canceled: boolean }>
+  /** Conversations running RIGHT NOW, any channel (window cold-start seed). */
+  activeRuns: () => Promise<ChatActiveRun[]>
   respondApproval: (payload: { id: string; decision: ApprovalDecision }) => Promise<{ ok: boolean }>
   respondAsk: (payload: { id: string; response: AskUserResponse }) => Promise<{ ok: boolean }>
   /** Save-dialog + Chromium print of a renderer-built transcript HTML. */
@@ -811,6 +849,16 @@ export type ConversationApi = {
    * History refetch. Payload-free: the listener just re-lists.
    */
   onChanged: (listener: () => void) => () => void
+  /**
+   * Fired repeatedly while a Telegram/WhatsApp turn is IN FLIGHT — a live
+   * snapshot of its in-progress assistant message so an in-app viewer of the
+   * same conversation mirrors the run as it streams, not only at end-of-turn.
+   * The message id is stable for the turn and matches the record the save
+   * later writes, so the renderer upserts by id (never a duplicate).
+   */
+  onMessageMirror: (
+    listener: (payload: { conversationId: string; message: ConversationMessage }) => void
+  ) => () => void
 }
 
 export type ViewerTreeNode =
@@ -1722,6 +1770,7 @@ const api: WolffishApi = {
   chat: {
     send: (payload) => ipcRenderer.invoke('chat:send', payload),
     cancel: (payload) => ipcRenderer.invoke('chat:cancel', payload),
+    activeRuns: () => ipcRenderer.invoke('chat:activeRuns'),
     respondApproval: (payload) => ipcRenderer.invoke('chat:approvalRespond', payload),
     respondAsk: (payload) => ipcRenderer.invoke('chat:askRespond', payload),
     exportPdf: (payload) => ipcRenderer.invoke('chat:exportPdf', payload),
@@ -1742,7 +1791,8 @@ const api: WolffishApi = {
     create: (model) => ipcRenderer.invoke('conversation:create', model),
     onSummaryUpdated: (listener) => subscribe('conversation:summaryUpdated', listener),
     onDeleted: (listener) => subscribe('conversation:deleted', listener),
-    onChanged: (listener) => subscribe('conversation:changed', listener)
+    onChanged: (listener) => subscribe('conversation:changed', listener),
+    onMessageMirror: (listener) => subscribe('conversation:messageMirror', listener)
   },
   viewer: {
     readTree: () => ipcRenderer.invoke('viewer:readTree'),
@@ -1810,7 +1860,9 @@ const api: WolffishApi = {
     setWeekStartsOn: (value) => ipcRenderer.invoke('runtime:setWeekStartsOn', value),
     setLastSettingsState: (patch) => ipcRenderer.invoke('runtime:setLastSettingsState', patch),
     getCompactionConfig: () => ipcRenderer.invoke('runtime:getCompactionConfig'),
-    setCompactionConfig: (patch) => ipcRenderer.invoke('runtime:setCompactionConfig', patch)
+    setCompactionConfig: (patch) => ipcRenderer.invoke('runtime:setCompactionConfig', patch),
+    getCompactionRuns: () => ipcRenderer.invoke('runtime:getCompactionRuns'),
+    onCompactionChanged: (listener) => subscribe('compaction:changed', listener)
   },
   usage: {
     getSummary: (range) => ipcRenderer.invoke('usage:getSummary', range),

@@ -1,5 +1,6 @@
 import type { WorkflowAgentView, WorkflowPhaseStatus, WorkflowSnapshot } from '@main/runtime/broca'
 import type { ChatMessage, ProviderId } from '@main/runtime/thalamus'
+import type { NoProgressSignal } from '@main/runtime/agent/no-progress-guard'
 import { calculateCost } from '@main/runtime/usage'
 
 /**
@@ -38,6 +39,16 @@ export type WorkflowAgentResult = {
   failed: boolean
 }
 
+/**
+ * What awaitNext hands back. Either an agent LANDED (finished — its result is
+ * ready) or a still-running agent tripped a NO-PROGRESS escalation (it's stuck
+ * re-issuing the same call; the master is woken to decide cancel/steer/wait).
+ * Landings always take priority over no-progress notices.
+ */
+export type WorkflowWaitOutcome =
+  | { kind: 'landed'; id: string; name: string; result: WorkflowAgentResult }
+  | { kind: 'no_progress'; id: string; name: string; signal: NoProgressSignal }
+
 export type AgentUsageDelta = {
   inputTokens: number
   outputTokens: number
@@ -60,6 +71,13 @@ export type RunAgentTurn = (args: {
   effort?: WorkflowEffort
   onToolCall: () => void
   onLlmCall: (provider: ProviderId, model: string, usage: AgentUsageDelta) => void
+  /**
+   * Fired (bounded — once per worsening band, not every iteration) when this
+   * agent has been re-issuing the same tool call to no effect. The session
+   * records it and wakes any master parked in awaitNext so it can manage the
+   * spinning agent. Never enforced here — the master decides.
+   */
+  onNoProgress: (signal: NoProgressSignal) => void
 }) => Promise<WorkflowAgentResult>
 
 export type SpawnAgentArgs = {
@@ -104,6 +122,8 @@ type AgentRecord = {
   cacheWriteTokens: number
   cost: number
   resultChars?: number
+  /** Latest no-progress escalation from the agent's loop (for the master's notice). */
+  noProgress?: NoProgressSignal | null
 }
 
 export class WorkflowSession {
@@ -117,7 +137,14 @@ export class WorkflowSession {
   // completion. Insertion order is preserved, so awaitNext still returns the
   // earliest unconsumed landing.
   private landed = new Set<string>()
-  // Resolvers parked in awaitNext, woken when an agent lands (or on finalize).
+  // Running agents that tripped a no-progress escalation and haven't been
+  // surfaced to the master yet. Consumed by awaitNext AFTER landings (a
+  // finished agent is more actionable than a stuck one). Cleared the moment the
+  // agent lands, is re-driven, or is cancelled — the notice must never outlive
+  // the condition that raised it.
+  private noProgressPending = new Set<string>()
+  // Resolvers parked in awaitNext, woken when an agent lands, escalates, or on
+  // finalize.
   private waiters: Array<() => void> = []
   // Spawned-but-not-started agents waiting for a running slot.
   private pending: string[] = []
@@ -268,6 +295,20 @@ export class WorkflowSession {
   }
 
   /**
+   * A running agent tripped a no-progress escalation — record it and wake a
+   * parked master so it can decide. Ignored once the workflow is disposed or if
+   * the agent is no longer running (a landing that raced the escalation wins).
+   */
+  private wakeNoProgress(id: string, signal: NoProgressSignal): void {
+    if (this.disposed) return
+    const rec = this.agents.get(id)
+    if (!rec || rec.status !== 'running') return
+    rec.noProgress = signal
+    this.noProgressPending.add(id)
+    this.waiters.shift()?.()
+  }
+
+  /**
    * The MASTER turn's own LLM usage, fed per-call from the agent loop. Kept
    * separate from the per-agent rows so the card can show both the agents'
    * spend and the true whole-turn number.
@@ -335,7 +376,8 @@ export class WorkflowSession {
           usage.cacheReadTokens
         )
         this.emitUsage()
-      }
+      },
+      onNoProgress: (signal) => this.wakeNoProgress(rec.id, signal)
     })
       .then(
         (result) => result,
@@ -356,6 +398,9 @@ export class WorkflowSession {
         // Append the reply so a follow-up continues the same thread.
         rec.history.push({ role: 'assistant', content: result.text })
         rec.status = result.failed ? 'failed' : 'completed'
+        // The landing supersedes any stuck-notice — the agent is done, not stuck.
+        this.noProgressPending.delete(rec.id)
+        rec.noProgress = null
         this.wake(rec.id)
         this.emit()
         this.drainPending()
@@ -430,6 +475,10 @@ export class WorkflowSession {
     // Drop any unconsumed prior landing — it's about to be superseded by a
     // fresh run, and must not surface as a stale completion of the new task.
     this.landed.delete(id)
+    // Likewise drop a stale no-progress notice: the re-driven turn gets a fresh
+    // tracker, so any earlier stuck-signal no longer describes it.
+    this.noProgressPending.delete(id)
+    rec.noProgress = null
     if (effort !== undefined) rec.effort = effort
     rec.history.push({ role: 'user', content: message })
     rec.result = null
@@ -443,14 +492,14 @@ export class WorkflowSession {
   }
 
   /**
-   * Block until the NEXT agent (optionally restricted to `ids`) lands, and
-   * return its id + result. Returns null when no matching agent is still
-   * running or queued (nothing left to wait for). Event-driven: resolves on
-   * the first landing, leaving other landed agents for later calls.
+   * Block until the NEXT agent (optionally restricted to `ids`) either LANDS or
+   * trips a no-progress escalation, and return that outcome. Returns null when
+   * no matching agent is still running or queued (nothing left to wait for).
+   * Event-driven: resolves on the first landing/escalation, leaving others for
+   * later calls. Landings are served BEFORE no-progress notices — a finished
+   * agent is more actionable than a stuck one.
    */
-  async awaitNext(
-    ids?: string[]
-  ): Promise<{ id: string; name: string; result: WorkflowAgentResult } | null> {
+  async awaitNext(ids?: string[]): Promise<WorkflowWaitOutcome | null> {
     const want = ids && ids.length ? new Set(ids) : null
     for (;;) {
       let pick: string | undefined
@@ -463,7 +512,25 @@ export class WorkflowSession {
       if (pick !== undefined) {
         this.landed.delete(pick)
         const rec = this.agents.get(pick)
-        if (rec?.result) return { id: pick, name: rec.name, result: rec.result }
+        if (rec?.result) return { kind: 'landed', id: pick, name: rec.name, result: rec.result }
+        continue
+      }
+      // No landing waiting — surface a no-progress notice if one is pending.
+      let stuck: string | undefined
+      for (const id of this.noProgressPending) {
+        if (!want || want.has(id)) {
+          stuck = id
+          break
+        }
+      }
+      if (stuck !== undefined) {
+        this.noProgressPending.delete(stuck)
+        const rec = this.agents.get(stuck)
+        // Only surface it if the agent is genuinely still running with a signal —
+        // a landing/cancel that raced this consume clears both, so re-loop.
+        if (rec && rec.status === 'running' && rec.noProgress) {
+          return { kind: 'no_progress', id: stuck, name: rec.name, signal: rec.noProgress }
+        }
         continue
       }
       if (this.disposed) return null
@@ -481,6 +548,8 @@ export class WorkflowSession {
     const rec = this.require(id)
     rec.abort.abort()
     this.landed.delete(id)
+    this.noProgressPending.delete(id)
+    rec.noProgress = null
     const idx = this.pending.indexOf(id)
     if (idx >= 0) this.pending.splice(idx, 1)
     rec.status = 'cancelled'
@@ -512,6 +581,7 @@ export class WorkflowSession {
       this.usageTimer = null
     }
     this.landed.clear()
+    this.noProgressPending.clear()
     this.pending = []
     for (const rec of this.agents.values()) {
       if (rec.status === 'running' || rec.status === 'queued') {

@@ -727,6 +727,7 @@ function CommandsSection(): React.JSX.Element {
     { name: '/resume', description: t('settings.services.whatsapp.commands.resume') },
     { name: '/delete', description: t('settings.services.whatsapp.commands.delete') },
     { name: '/stop', description: t('settings.services.whatsapp.commands.stop') },
+    { name: '/cancel', description: t('settings.services.whatsapp.commands.cancel') },
     { name: '/approve', description: t('settings.services.whatsapp.commands.approve') },
     { name: '/deny', description: t('settings.services.whatsapp.commands.deny') },
     { name: '/status', description: t('settings.services.whatsapp.commands.status') },
@@ -737,7 +738,6 @@ function CommandsSection(): React.JSX.Element {
   ]
   const limitations: string[] = [
     t('settings.services.whatsapp.limitations.singleConversation'),
-    t('settings.services.whatsapp.limitations.busyNotQueued'),
     t('settings.services.whatsapp.limitations.allowList'),
     t('settings.services.whatsapp.limitations.silentIgnore')
   ]

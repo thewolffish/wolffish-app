@@ -1,13 +1,13 @@
 import type { ApprovalDecision, ApprovalRequest } from '@main/runtime/amygdala'
 import type { AskUserRequest, AskUserResponse } from '@main/runtime/cerebellum'
-import type { Segment } from '@main/runtime/broca'
+import type { Segment, SegmentTurnEndReason } from '@main/runtime/broca'
 import { turnScope, type CorpusEvent, type CorpusEvents } from '@main/runtime/corpus'
 import {
   resolveSummaryMarkIndex,
   type ConversationFile,
   type ConversationMessage
 } from '@main/conversations'
-import type { ChatHistoryMessage } from '@preload/index'
+import type { ChatHistoryMessage, PersistedApproval, PersistedToolTiming } from '@preload/index'
 
 /**
  * A channel is one mouth wolffish can speak through. The Electron renderer
@@ -120,6 +120,63 @@ class TurnRouter {
 }
 
 export const turnRouter = new TurnRouter()
+
+/**
+ * Notified with a live snapshot of a channel turn's in-progress assistant
+ * message so the in-app renderer can mirror a Telegram/WhatsApp run as it
+ * streams — instead of the whole transcript appearing at once only after the
+ * end-of-turn disk save. index.ts wires this to a renderer broadcast; the
+ * same `message` identity (stable id) lands on disk at end-of-turn, so the
+ * renderer reconciles the two by id and never shows the assistant twice.
+ */
+export type MirrorMessageListener = (conversationId: string, message: ConversationMessage) => void
+
+/**
+ * The per-turn assistant-message accumulator a channel builds up as segments
+ * stream in. TelegramChannel and WhatsAppChannel both hold these fields on
+ * their ActiveTurn; buildAssistantMessage turns them into the persisted
+ * assistant message — reused for BOTH the live mid-turn mirror snapshots and
+ * the single end-of-turn save, keyed by the SAME stable id and timestamp so
+ * the two are one message, never a duplicate.
+ */
+export type AssistantAccumulator = {
+  /** Stable message id, minted once at onTurnStarted (mirror + persist share it). */
+  assistantMessageId: string
+  /** Stable message timestamp, stamped once at onTurnStarted (mirror + persist share it). */
+  assistantTimestamp: number
+  assistantContent: string
+  segments: Segment[]
+  approvals: Map<string, PersistedApproval>
+  toolTimings: Map<string, PersistedToolTiming>
+  stopReason: SegmentTurnEndReason | null
+}
+
+/**
+ * Assemble the assistant ConversationMessage from a turn's accumulated
+ * output, or null when the turn produced nothing to save (no prose AND no
+ * segments). Same shape the Electron channel persists via the renderer, so
+ * the in-app history replays the exact sequence the channel user saw.
+ */
+export function buildAssistantMessage(acc: AssistantAccumulator): ConversationMessage | null {
+  const content = acc.assistantContent.trim()
+  const hasSegments = acc.segments.length > 0
+  if (content.length === 0 && !hasSegments) return null
+  const assistant: ConversationMessage = {
+    id: acc.assistantMessageId,
+    role: 'assistant',
+    content,
+    timestamp: acc.assistantTimestamp
+  }
+  if (hasSegments) assistant.segments = acc.segments
+  if (acc.approvals.size > 0) {
+    assistant.approvals = Object.fromEntries(
+      [...acc.approvals.values()].map((a) => [a.toolCallId, a])
+    )
+  }
+  if (acc.toolTimings.size > 0) assistant.toolTimings = Object.fromEntries(acc.toolTimings)
+  if (acc.stopReason) assistant.stopReason = acc.stopReason
+  return assistant
+}
 
 /**
  * The replay window for a persisted conversation: when a rolling prefix

@@ -66,6 +66,30 @@ export type CompactionResult = {
   reason?: string
 }
 
+/**
+ * Last completed run of a compaction job, persisted for the settings panel.
+ * Skipped fires (no episode, too few entries, LLM error) never overwrite the
+ * record — the card always shows the last run that actually produced output,
+ * and its timestamp keeps staleness honest.
+ */
+export type CompactionRunRecord = {
+  /** Epoch ms when the run finished. */
+  at: number
+  durationMs: number
+  /** Model that served the run — null for the weekly digest (no LLM call). */
+  provider: string | null
+  model: string | null
+  inputTokens: number | null
+  outputTokens: number | null
+  /** The run's raw output: daily summary text / weekly digest line. */
+  output: string
+}
+
+export type CompactionRuns = {
+  daily: CompactionRunRecord | null
+  weekly: CompactionRunRecord | null
+}
+
 export type BrainstemOptions = {
   workspaceRoot?: string
   corpus?: Corpus
@@ -213,6 +237,8 @@ export type BrainstemListener = {
   onJobLog?: (entry: JobLogEntry) => void
   /** The run pool changed: a run started or ended, or the queue moved. */
   onRunsChanged?: (snapshot: RunsSnapshot) => void
+  /** A compaction job (daily/weekly) finished and its last-run record updated. */
+  onCompactionRun?: (payload: { kind: 'daily' | 'weekly' }) => void
 }
 
 /**
@@ -273,6 +299,10 @@ export class Brainstem {
   // also honest for edits made while the app was closed. Null until first
   // loaded from disk.
   private heartbeatMeta: Record<string, { editedAt: number; hash: string }> | null = null
+  // Last-run records for the two compaction jobs, persisted to
+  // brainstem/compaction-meta.json so the settings panel can show what the
+  // last daily/weekly pass actually did. Null until first loaded from disk.
+  private compactionRuns: CompactionRuns | null = null
 
   constructor(options: BrainstemOptions = {}) {
     this.workspaceRoot = options.workspaceRoot ?? null
@@ -582,6 +612,69 @@ export class Brainstem {
     }
   }
 
+  // ── Compaction last-run records ─────────────────────────────────────
+
+  private compactionRunsPath(): string | null {
+    if (!this.workspaceRoot) return null
+    return path.join(this.workspaceRoot, 'brain', 'brainstem', 'compaction-meta.json')
+  }
+
+  private async ensureCompactionRuns(): Promise<CompactionRuns> {
+    if (this.compactionRuns) return this.compactionRuns
+    const runs: CompactionRuns = { daily: null, weekly: null }
+    const runsPath = this.compactionRunsPath()
+    if (runsPath) {
+      try {
+        const parsed: unknown = JSON.parse(await fs.readFile(runsPath, 'utf8'))
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          for (const kind of ['daily', 'weekly'] as const) {
+            const value = (parsed as Record<string, unknown>)[kind]
+            if (!value || typeof value !== 'object') continue
+            const r = value as Record<string, unknown>
+            if (typeof r.at !== 'number' || !Number.isFinite(r.at)) continue
+            if (typeof r.durationMs !== 'number' || !Number.isFinite(r.durationMs)) continue
+            if (typeof r.output !== 'string') continue
+            runs[kind] = {
+              at: r.at,
+              durationMs: r.durationMs,
+              provider: typeof r.provider === 'string' ? r.provider : null,
+              model: typeof r.model === 'string' ? r.model : null,
+              inputTokens: typeof r.inputTokens === 'number' ? r.inputTokens : null,
+              outputTokens: typeof r.outputTokens === 'number' ? r.outputTokens : null,
+              output: r.output
+            }
+          }
+        }
+      } catch {
+        // Missing/corrupt store — reseeded by the next completed run.
+      }
+    }
+    this.compactionRuns = runs
+    return runs
+  }
+
+  async getCompactionRuns(): Promise<CompactionRuns> {
+    const runs = await this.ensureCompactionRuns()
+    return { daily: runs.daily, weekly: runs.weekly }
+  }
+
+  private async recordCompactionRun(
+    kind: 'daily' | 'weekly',
+    record: CompactionRunRecord
+  ): Promise<void> {
+    const runs = await this.ensureCompactionRuns()
+    runs[kind] = record
+    const runsPath = this.compactionRunsPath()
+    if (runsPath) {
+      try {
+        await diskWriter.writeFileAtomic(runsPath, JSON.stringify(runs, null, 2))
+      } catch {
+        // Display-only metadata — losing a write is acceptable.
+      }
+    }
+    this.listener?.onCompactionRun?.({ kind })
+  }
+
   /**
    * Diff the file's job blocks against the stored hashes: a new or changed
    * block (body, markers — but NOT the enabled/disabled toggle, which keeps
@@ -675,6 +768,11 @@ export class Brainstem {
     ]
 
     let response = ''
+    let runProvider: string | null = null
+    let runModel: string | null = null
+    let runInputTokens: number | null = null
+    let runOutputTokens: number | null = null
+    const startedAt = Date.now()
     const thalamus = this.thalamus
     try {
       // role:'summary' stamps the emitted llm.response as summarization
@@ -690,7 +788,13 @@ export class Brainstem {
           role: 'summary'
         })) {
           if (chunk.type === 'text') response += chunk.text
-          else if (chunk.type === 'error') throw new Error(chunk.message)
+          else if (chunk.type === 'active_model') {
+            runProvider = chunk.provider
+            runModel = chunk.model
+          } else if (chunk.type === 'turn_meta' && chunk.usage) {
+            runInputTokens = chunk.usage.inputTokens
+            runOutputTokens = chunk.usage.outputTokens
+          } else if (chunk.type === 'error') throw new Error(chunk.message)
         }
       })
     } catch (err) {
@@ -698,12 +802,26 @@ export class Brainstem {
       return { date: targetDate, promoted: 0, skipped: true, reason: `llm error: ${message}` }
     }
 
+    // Both success exits below record the run for the settings panel; failed
+    // and skipped fires above never do, so the card keeps the last real run.
+    const recordRun = (): Promise<void> =>
+      this.recordCompactionRun('daily', {
+        at: Date.now(),
+        durationMs: Date.now() - startedAt,
+        provider: runProvider,
+        model: runModel,
+        inputTokens: runInputTokens,
+        outputTokens: runOutputTokens,
+        output: response.trim()
+      })
+
     if (NOTHING_TO_PROMOTE.test(response.trim())) {
       log('text', 'Nothing to promote')
       await this.hippocampus.writeConsolidated(
         weekKey(targetDate),
         summaryHeader(targetDate, response)
       )
+      await recordRun()
       return { date: targetDate, promoted: 0, skipped: false, reason: 'nothing to promote' }
     }
 
@@ -724,6 +842,7 @@ export class Brainstem {
       summaryHeader(targetDate, response)
     )
 
+    await recordRun()
     return { date: targetDate, promoted, skipped: false }
   }
 
@@ -1264,6 +1383,7 @@ export class Brainstem {
 
     if (!this.hippocampus) return
     const today = new Date()
+    const startedAt = Date.now()
     log('text', 'Fetching recent episodes')
     const recent = await this.hippocampus.getRecentEpisodes(7)
     if (recent.length === 0) {
@@ -1284,6 +1404,17 @@ export class Brainstem {
     const digest = `Week in review: ${entryCount} logged turns across ${dates.length} active day${dates.length === 1 ? '' : 's'} (${dates[0]} → ${dates[dates.length - 1]}). Daily summaries above; full logs in episodes/.`
     await this.hippocampus.writeConsolidated(weekKey(formatDate(today)), digest)
     log('text', 'Weekly digest written')
+    // No LLM call in the weekly pass — provider/model/tokens stay null and
+    // the panel card shows just the digest, duration, and timestamp.
+    await this.recordCompactionRun('weekly', {
+      at: Date.now(),
+      durationMs: Date.now() - startedAt,
+      provider: null,
+      model: null,
+      inputTokens: null,
+      outputTokens: null,
+      output: digest
+    })
   }
 
   // ── Config-driven compaction scheduler ────────────────────────────────
@@ -1404,6 +1535,8 @@ function shouldIgnoreWatch(filepath: string): boolean {
   // Per-job edit stamps, rewritten by the scheduler on every heartbeat edit —
   // display metadata, never index-worthy.
   if (normalized.endsWith('/brain/brainstem/heartbeat-meta.json')) return true
+  // Compaction last-run records — display metadata for the settings panel.
+  if (normalized.endsWith('/brain/brainstem/compaction-meta.json')) return true
   if (normalized.endsWith('cortex.db')) return true
   if (normalized.endsWith('cortex.db-wal') || normalized.endsWith('cortex.db-shm')) return true
   if (normalized.includes('/.debug/') || normalized.includes('/.debug-archive/')) return true

@@ -84,6 +84,9 @@ export function formatRuntimeStatus(runtime: RuntimeContext, now: Date = new Dat
     `Tool iteration this turn: ${runtime.iteration}. Tools called this turn: ${runtime.toolsCalled}. ` +
     (delivered ? `${delivered} ` : '') +
     (runtime.online === false ? `${OFFLINE_NOTICE} ` : '') +
+    // No-progress notice rides here — after every cache breakpoint — so its
+    // appearance/change never perturbs the cached prompt prefix.
+    (runtime.noProgress ? `${runtime.noProgress} ` : '') +
     `(Automated telemetry, not a user message — do not reply to it or summarize progress because of it. ` +
     `If the task is unfinished, keep calling tools: a response without tool calls ends the task; there is no next turn.)`
   )

@@ -101,6 +101,40 @@ export function ChatSessionsProvider({ children }: { children: ReactNode }): Rea
     }
   }, [])
 
+  // Cold-start seed: chat:turnState carries TRANSITIONS only, and this app
+  // keeps running (channels included) with no window at all — so a window
+  // opened, reopened from the tray, or reloaded while a Telegram/WhatsApp
+  // turn is in flight never saw its 'started' and would render the
+  // conversation idle. Ask main what's running right now.
+  useEffect(() => {
+    let cancelled = false
+    void window.api.chat
+      .activeRuns()
+      .then((runs) => {
+        if (cancelled || runs.length === 0) return
+        setRunStatuses((prev) => {
+          const next = { ...prev }
+          for (const run of runs) {
+            // A live event that landed while this call was in flight is
+            // strictly fresher than the snapshot — never overwrite it (the
+            // run may already have finished).
+            if (next[run.conversationId]) continue
+            next[run.conversationId] = {
+              phase: 'processing',
+              channel: run.channel,
+              title: run.title,
+              at: Date.now()
+            }
+          }
+          return next
+        })
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   // Turn lifecycle across ALL channels (in-app, WhatsApp, Telegram) — the
   // single source for the sidebar's status chips.
   useEffect(() => {

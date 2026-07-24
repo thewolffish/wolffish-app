@@ -268,7 +268,14 @@
         "nextRun": "Next run {{time}}",
         "resync": "Resync",
         "resyncSuccessToast": "Compaction config resynced",
-        "resyncErrorToast": "Failed to resync compaction config"
+        "resyncErrorToast": "Failed to resync compaction config",
+        "lastRun": {
+          "dailyTitle": "Last daily run",
+          "weeklyTitle": "Last weekly run",
+          "ranAt": "Ran {{time}}",
+          "took": "Took {{duration}}",
+          "tokens": "{{input}} tokens in · {{output}} tokens out"
+        }
       }
     },
     "cellebrum": {
@@ -573,12 +580,13 @@
         "commandsTitle": "Available commands",
         "commandsSubtitle": "Slash commands users send from Telegram. Type each one exactly.",
         "commands": {
-          "new": "Start a fresh conversation. Only works when nothing is processing — use /stop first if a task is running.",
+          "new": "Start a fresh conversation. Only works when nothing is processing — use /stop first if a task is running. Anything still queued is dropped with the old conversation.",
           "current": "Current conversation.",
-          "resume": "Pick a past conversation to continue. The chat switches to the one you choose.",
-          "delete": "Pick a conversation to delete. If it was the active one, a fresh conversation starts.",
+          "resume": "Pick a past conversation to continue. The chat switches to the one you choose, and anything still queued is dropped.",
+          "delete": "Pick a conversation to delete. If it was the active one, a fresh conversation starts and anything still queued is dropped.",
           "clear": "Clear all messages.",
-          "stop": "Cancel the task currently running in this chat.",
+          "stop": "Stop the task currently running in this chat. Anything queued still runs after it.",
+          "cancel": "Drop every message waiting in the queue. Leaves the running task alone.",
           "approve": "Approve a pending confirmation prompt (e.g. before a destructive action runs).",
           "deny": "Deny a pending confirmation prompt.",
           "status": "Wolffish current status.",
@@ -587,8 +595,7 @@
         },
         "limitationsTitle": "Limitations",
         "limitations": {
-          "singleConversation": "Only one conversation processes at a time.",
-          "busyNotQueued": "Messages sent while busy aren't queued — resend after.",
+          "singleConversation": "Only one conversation processes at a time. Messages sent meanwhile are queued and run in order.",
           "fileSize": "File downloads capped at 20 MB.",
           "allowList": "Only allowed user IDs receive replies.",
           "silentIgnore": "Other messages are silently ignored."
@@ -997,11 +1004,12 @@
         "commandsTitle": "Available commands",
         "commandsSubtitle": "Send these commands in your WhatsApp chat.",
         "commands": {
-          "new": "Start a fresh conversation",
+          "new": "Start a fresh conversation — anything still queued is dropped",
           "current": "Show the active conversation",
-          "resume": "Continue a previous chat",
-          "delete": "Delete a saved conversation",
-          "stop": "Cancel the current task",
+          "resume": "Continue a previous chat — anything still queued is dropped",
+          "delete": "Delete a saved conversation — deleting the active one also drops anything queued",
+          "stop": "Stop the current task — anything queued still runs after it",
+          "cancel": "Drop every message waiting in the queue",
           "approve": "Approve a pending tool call",
           "deny": "Deny a pending tool call",
           "status": "System status report",
@@ -1012,8 +1020,7 @@
         },
         "limitationsTitle": "Limitations",
         "limitations": {
-          "singleConversation": "One active conversation per phone number at a time",
-          "busyNotQueued": "Messages sent while busy get a short reply, not queued",
+          "singleConversation": "One active conversation per phone number at a time. Messages sent meanwhile are queued and run in order",
           "allowList": "Only allowed phone numbers can interact",
           "silentIgnore": "Messages from non-allowed numbers are silently ignored"
         },
