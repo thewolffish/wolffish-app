@@ -545,6 +545,31 @@ export class Thalamus {
   }
 
   /**
+   * One-shot analysis call for the diagnostic export: a system prompt plus the
+   * conversation material as the user turn, exactly like {@link title}. No
+   * tools, no streaming, no conversation created — the model only writes its
+   * opinion of what went wrong, and the caller drops that text into the
+   * diagnostic archive.
+   *
+   * Tagged role:'summary' rather than a role of its own, deliberately: this is
+   * the same utility side-call family as summarization (Brain, reasoning off,
+   * off every conversation's context meter), and a fourth role would have to
+   * be threaded through the corpus event, the ledger and the meter's
+   * side-spend split to buy nothing a reader of the ledger needs.
+   */
+  async diagnose(
+    material: string,
+    systemPrompt: string,
+    signal?: AbortSignal
+  ): Promise<{ text: string; provider: string; model: string }> {
+    const entry = this.resolveEntry()
+    if (!entry) throw new Error('No diagnostic provider available')
+    const result = await this.completeSingle(entry, systemPrompt, material, 'summary', signal)
+    if (result) return result
+    throw new Error('Diagnostic provider failed')
+  }
+
+  /**
    * The reasoning modes THIS entry's model actually honours — the same source
    * of truth the Brain button reads. Providers assume `thinkingMode` arrives
    * already clamped to this list (see xai.ts's grok-4.5 branch), so every

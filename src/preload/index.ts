@@ -1052,6 +1052,21 @@ export type Project = {
   updatedAt: number
 }
 
+/**
+ * Live ticks while picked files are copied into the project's uploads dir.
+ * `copiedBytes`/`totalBytes` span the whole batch (dual decl — see
+ * AttachFilesProgress in src/main/projects.ts).
+ */
+export type ProjectCopyProgress = {
+  projectId: string
+  /** 1-based position of the file being copied. */
+  index: number
+  total: number
+  name: string
+  copiedBytes: number
+  totalBytes: number
+}
+
 export type ProjectsApi = {
   list: () => Promise<Project[]>
   create: (payload: { title: string; icon?: string; instructions?: string }) => Promise<Project>
@@ -1071,6 +1086,12 @@ export type ProjectsApi = {
   pickFiles: (projectId: string) => Promise<Project | null>
   /** The store changed (any writer, incl. the agent's tools) — re-fetch the list. */
   onChanged: (listener: () => void) => () => void
+  /**
+   * Copy progress for an in-flight pickFiles(). The FIRST tick means the
+   * picker closed and bytes are moving — nothing fires while the user is
+   * still browsing.
+   */
+  onCopyProgress: (listener: (progress: ProjectCopyProgress) => void) => () => void
 }
 
 export type ReindexStatus = {
@@ -1084,6 +1105,57 @@ export type ReindexApi = {
   onStarted: (listener: (status: { startedAt: number; total: number }) => void) => () => void
   onProgress: (listener: (status: { done: number; total: number }) => void) => () => void
   onEnded: (listener: (payload: { filesCount: number; durationMs: number }) => void) => () => void
+}
+
+/**
+ * Per-conversation diagnostic export (dual decl — mirrors src/main/diagnostics.ts).
+ * The overlay renders one localized line per step key, so the union here and
+ * DIAGNOSTIC_STEPS there must stay in step.
+ */
+export type DiagnosticStep =
+  | 'conversation'
+  | 'logs'
+  | 'tasks'
+  | 'memory'
+  | 'context'
+  | 'settings'
+  | 'attachments'
+  | 'opinion'
+  | 'archive'
+
+export type DiagnosticProgress = {
+  conversationId: string
+  step: DiagnosticStep
+  index: number
+  total: number
+  files: number
+}
+
+export type DiagnosticResult = {
+  ok: boolean
+  error?: string
+  conversationId: string
+  conversationTitle: string
+  fileName: string
+  zipPath: string
+  relativePath: string
+  sizeBytes: number
+  fileCount: number
+  durationMs: number
+  modelOpinion: boolean
+  opinionSkipped?: 'no-model' | 'local-only' | 'failed' | 'empty'
+  groups: Array<{ key: string; count: number }>
+  warnings: string[]
+}
+
+export type DiagnosticsApi = {
+  export: (payload: { conversationId: string }) => Promise<DiagnosticResult>
+  saveCopy: (payload: {
+    zipPath: string
+    fileName: string
+  }) => Promise<{ ok: boolean; canceled?: boolean; error?: string }>
+  reveal: (zipPath: string) => Promise<{ ok: boolean }>
+  onProgress: (listener: (progress: DiagnosticProgress) => void) => () => void
 }
 
 export type CapabilityEntry = {
@@ -1616,12 +1688,21 @@ export type FolderListing = {
   error?: string
 }
 
+/** Byte progress for one in-flight saveFile(), keyed by its progressId. */
+export type UploadCopyProgress = {
+  progressId: string
+  copiedBytes: number
+  totalBytes: number
+}
+
 export type UploadApi = {
   pickFile: () => Promise<string[]>
   pickFolder: () => Promise<string | null>
   saveFile: (payload: {
     conversationId: string
     sourcePath: string
+    /** Opt in to onCopyProgress ticks tagged with this id. */
+    progressId?: string
   }) => Promise<UploadedFileMetadata>
   saveBuffer: (payload: {
     conversationId: string
@@ -1652,6 +1733,8 @@ export type UploadApi = {
   revealInFolder: (relativePath: string) => Promise<{ ok: boolean }>
   /** Resolve the absolute filesystem path for a File object (e.g. from drag-and-drop). */
   getPathForFile: (file: File) => string
+  /** Byte progress for saveFile() calls that passed a progressId. */
+  onCopyProgress: (listener: (progress: UploadCopyProgress) => void) => () => void
 }
 
 /** Spellcheck fields relayed from the main-process `context-menu` event — the
@@ -1688,6 +1771,7 @@ export type WolffishApi = {
   procedures: ProceduresApi
   projects: ProjectsApi
   reindex: ReindexApi
+  diagnostics: DiagnosticsApi
   app: AppApi
   data: DataApi
   runtime: RuntimeApi
@@ -1834,13 +1918,20 @@ const api: WolffishApi = {
     update: (payload) => ipcRenderer.invoke('projects:update', payload),
     delete: (id) => ipcRenderer.invoke('projects:delete', id),
     pickFiles: (projectId) => ipcRenderer.invoke('projects:pickFiles', projectId),
-    onChanged: (listener) => subscribe('projects:changed', listener)
+    onChanged: (listener) => subscribe('projects:changed', listener),
+    onCopyProgress: (listener) => subscribe('projects:copyProgress', listener)
   },
   reindex: {
     getStatus: () => ipcRenderer.invoke('reindex:getStatus'),
     onStarted: (listener) => subscribe('reindex:started', listener),
     onProgress: (listener) => subscribe('reindex:progress', listener),
     onEnded: (listener) => subscribe('reindex:ended', listener)
+  },
+  diagnostics: {
+    export: (payload) => ipcRenderer.invoke('diagnostics:export', payload),
+    saveCopy: (payload) => ipcRenderer.invoke('diagnostics:saveCopy', payload),
+    reveal: (zipPath) => ipcRenderer.invoke('diagnostics:reveal', zipPath),
+    onProgress: (listener) => subscribe('diagnostics:progress', listener)
   },
   app: {
     factoryReset: () => ipcRenderer.invoke('app:factoryReset'),
@@ -1908,7 +1999,8 @@ const api: WolffishApi = {
     downloadPath: (path) => ipcRenderer.invoke('upload:downloadPath', path),
     download: (relativePath) => ipcRenderer.invoke('upload:download', relativePath),
     revealInFolder: (relativePath) => ipcRenderer.invoke('upload:revealInFolder', relativePath),
-    getPathForFile: (file) => webUtils.getPathForFile(file)
+    getPathForFile: (file) => webUtils.getPathForFile(file),
+    onCopyProgress: (listener) => subscribe('upload:copyProgress', listener)
   },
   telegram: {
     getConfig: () => ipcRenderer.invoke('telegram:getConfig'),

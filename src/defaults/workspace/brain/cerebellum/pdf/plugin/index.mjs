@@ -1,6 +1,8 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
+import crypto from 'node:crypto'
+import { fileURLToPath } from 'node:url'
 import { PDFDocument, StandardFonts, rgb, degrees, PageSizes } from 'pdf-lib'
 
 // NO size gates anywhere — the model decides what to operate on. Write ops
@@ -144,15 +146,46 @@ const toolDefinitions = [
   },
   {
     name: 'pdf_extract_images',
-    description: 'Extract embedded images from a PDF.',
+    description:
+      'Save the photos/raster figures embedded in specific PDF pages as real PNG or JPEG files. ALWAYS pass "pages" — omitting it walks the whole document, which on a big book means thousands of files and a very long run. Skips sub-80px fragments by default. If a page reports no embedded images, its figure is vector art: use pdf_render_pages instead.',
     parameters: {
       type: 'object',
       properties: {
         path: { type: 'string', description: 'Absolute path to the PDF' },
         output_dir: { type: 'string', description: 'Directory to save extracted images' },
-        format: { type: 'string', enum: ['png', 'jpg'] }
+        pages: {
+          type: 'string',
+          description: 'Page selection like "84", "84-85", "1-3,10,50-60". Omit for every page.'
+        },
+        format: { type: 'string', enum: ['png', 'jpg'] },
+        min_size: {
+          type: 'number',
+          description: 'Skip images narrower or shorter than this many pixels (default 80, 0 keeps everything)'
+        }
       },
       required: ['path', 'output_dir']
+    }
+  },
+  {
+    name: 'pdf_render_pages',
+    description:
+      'Render whole PDF pages to PNG/JPEG images — the way to SHOW someone a figure, chart, algorithm, or scanned page. Works for vector figures, which pdf_extract_images cannot return because they are drawn rather than embedded. Page-scoped and fast on any file size.',
+    parameters: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Absolute path to the PDF' },
+        pages: {
+          type: 'string',
+          description: 'Page selection like "84", "84-85", "1-3,10". Required.'
+        },
+        output_dir: { type: 'string', description: 'Directory to save the rendered pages' },
+        scale: {
+          type: 'number',
+          description: 'Zoom factor; 1 = 72dpi, 2 = 144dpi (default), max 8. Raise it for small print.'
+        },
+        format: { type: 'string', enum: ['png', 'jpg'] }
+      },
+      required: ['path', 'pages', 'output_dir']
     }
   },
   {
@@ -290,6 +323,40 @@ function cacheEntryFor(filePath, stat, totalPages) {
   return entry
 }
 
+let pdfAssetDirs
+
+/**
+ * pdf.js ships its own data files — base-14 font substitutes, CJK CMaps, ICC
+ * profiles, and the wasm decoders (JPEG 2000, JBIG2) — and does NOT find them
+ * on its own outside a browser. Without them: standard-font text renders wrong
+ * or not at all, CJK and encoded text extracts as gibberish, and JPX images
+ * fail to decode outright. In Node, pdf.js loads each one with
+ * fs.readFile(url + filename), so these must be plain directory paths with a
+ * trailing separator — NOT file:// URLs.
+ *
+ * Best-effort: if the layout ever moves, reading still works exactly as it did
+ * before, just without the extras.
+ */
+function pdfAssetOptions() {
+  if (pdfAssetDirs !== undefined) return pdfAssetDirs
+  pdfAssetDirs = {}
+  try {
+    const entry = fileURLToPath(import.meta.resolve('pdfjs-dist/legacy/build/pdf.mjs'))
+    const root = path.dirname(path.dirname(path.dirname(entry))) // …/build → …/legacy → …/pdfjs-dist
+    const dir = (name) => `${path.join(root, name)}${path.sep}`
+    pdfAssetDirs = {
+      standardFontDataUrl: dir('standard_fonts'),
+      cMapUrl: dir('cmaps'),
+      cMapPacked: true,
+      iccUrl: dir('iccs'),
+      wasmUrl: dir('wasm')
+    }
+  } catch {
+    // leave empty — pdf.js falls back to its built-in behaviour
+  }
+  return pdfAssetDirs
+}
+
 /** Open a transient pdf-parse handle. Caller MUST call destroy() (use try/finally). */
 async function openPdf(filePath) {
   const buffer = await fs.readFile(filePath).catch((err) => {
@@ -299,7 +366,7 @@ async function openPdf(filePath) {
     throw err
   })
   const { PDFParse } = await import('pdf-parse')
-  const parser = new PDFParse(new Uint8Array(buffer))
+  const parser = new PDFParse({ data: new Uint8Array(buffer), ...pdfAssetOptions() })
   await parser.load()
   if (!parser.doc || !parser.doc.numPages) throw new Error('PDF has no readable pages')
   return parser
@@ -1187,63 +1254,546 @@ async function pdfSecure(args) {
   }
 }
 
-async function pdfExtractImages(args) {
-  const filePath = resolvePath(args.path)
-  const outputDir = resolvePath(args.output_dir)
-  const format = args.format || 'png'
+// ---------------------------------------------------------------------------
+// Raster side: image extraction and page rendering.
+//
+// Both run on the SAME pdf.js engine as the read path (pdf-parse), never on
+// pdf-lib. Three reasons, all measured on a real 250MB, 3,000+ page book with
+// over half a million indirect objects and tens of thousands of images:
+//
+//  1. CORRECTNESS. pdf-lib has no image API. The old extractor walked every
+//     indirect object and wrote each image stream's RAW bytes to "<n>.png" —
+//     but a PDF image stream is not a PNG, it is the *encoded samples*
+//     (FlateDecode zlib, DCTDecode JPEG, CCITT/JBIG2 fax, JPX...). Naming zlib
+//     output ".png" yields a file nothing can open. On that book it wrote
+//     over 32,000 files of which ZERO were valid images. pdf.js DECODES to pixels;
+//     the canvas re-encodes to a real PNG/JPEG.
+//  2. SCOPE. pdf-lib has to inflate the whole document before it can enumerate
+//     anything, so there was no way to ask for one page — every call did the
+//     entire book (~13s of parse into a 1.3GB heap, then tens of thousands of
+//     individual file writes, which is where the wall-clock really goes; on
+//     Windows with real-time AV scanning that alone runs for hours). pdf.js
+//     parses lazily: rendering one page of that same book takes ~0.3s.
+//  3. NOTHING TO SHOW ANYWAY. A typeset figure is usually DRAWN — vectors and
+//     text — so extraction returns nothing for it no matter how well it works.
+//     That is why pdf_render_pages exists and why extraction points at it.
+//
+// So everything here is page-at-a-time: decode one page, write its images,
+// release the page, yield to the event loop, check the abort signal, repeat.
+// Nothing accumulates across pages except a short manifest of what was written.
+// ---------------------------------------------------------------------------
 
+const IMAGE_MIN_SIZE_DEFAULT = 80 // px; below this it's a glyph/rule/bullet, not a figure
+const IMAGE_RESOLVE_TIMEOUT_MS = 20_000
+const RENDER_SCALE_DEFAULT = 2 // 144 dpi — legible for figures without huge files
+const RENDER_SCALE_MAX = 8
+const RASTER_LIST_LIMIT = 50 // files named in the result; the rest are counted
+
+let pdfjsPromise
+
+/**
+ * pdf.js, imported through the SAME specifier pdf-parse uses so Node's module
+ * cache hands back one shared instance. It's a transitive dependency of
+ * pdf-parse (hoisted into this capability's node_modules) and deliberately NOT
+ * declared in package.json: adding a dep changes the install marker and forces
+ * an `npm install` on next use, which would break this tool for anyone offline.
+ */
+function loadPdfjs() {
+  pdfjsPromise ??= import('pdfjs-dist/legacy/build/pdf.mjs').catch((err) => {
+    pdfjsPromise = undefined
+    throw new Error(
+      `pdf.js unavailable (${err.message}). Delete this capability's node_modules directory so its dependencies reinstall.`
+    )
+  })
+  return pdfjsPromise
+}
+
+let canvasModulePromise
+
+/** A drawing surface pdf.js can render onto. Caller MUST call release(). */
+async function createRasterCanvas(doc, width, height) {
+  const w = Math.max(1, Math.ceil(width))
+  const h = Math.max(1, Math.ceil(height))
+  const factory = doc?.canvasFactory
+  if (typeof factory?.create === 'function') {
+    const made = factory.create(w, h)
+    return { canvas: made.canvas, context: made.context, release: () => factory.destroy?.(made) }
+  }
+  canvasModulePromise ??= import('@napi-rs/canvas')
+  const { createCanvas } = await canvasModulePromise
+  const canvas = createCanvas(w, h)
+  return { canvas, context: canvas.getContext('2d'), release: () => undefined }
+}
+
+function encodeCanvas(canvas, format) {
+  const ext = format === 'jpg' ? 'jpg' : 'png'
+  const raw = canvas.toBuffer(ext === 'jpg' ? 'image/jpeg' : 'image/png')
+  return { buffer: Buffer.isBuffer(raw) ? raw : Buffer.from(raw), ext }
+}
+
+/** Let the Electron main process serve IPC/paint between units of work. */
+function yieldToEventLoop() {
+  return new Promise((resolve) => setImmediate(resolve))
+}
+
+/**
+ * Which object store holds an image, by pdf.js's own rule: ids minted for a
+ * document-wide (multi-page) image are prefixed "g_" and land in commonObjs,
+ * everything else is page-local. Do NOT decide this with `has()` — that only
+ * reports what has already SETTLED, so a shared image still in flight looks
+ * absent from commonObjs, and asking page.objs for it registers a callback
+ * against data that will never arrive there: a permanent hang.
+ */
+function storeFor(page, name) {
+  return name.startsWith('g_') ? page.commonObjs : page.objs
+}
+
+/**
+ * pdf.js hands image objects over a callback that may never fire if the image
+ * failed to decode. Without a timeout that is an unkillable hang inside the
+ * main process — the exact failure this rewrite exists to remove. The timer is
+ * deliberately NOT unref'd: an unref'd timer cannot fire when it is the only
+ * thing left pending, which is precisely the case it has to cover.
+ */
+function resolveImageObject(objs, name, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    let settled = false
+    const timer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      reject(new Error(`image "${name}" did not decode within ${timeoutMs}ms`))
+    }, timeoutMs)
+    const finish = (fn, value) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      fn(value)
+    }
+    try {
+      objs.get(name, (img) =>
+        img ? finish(resolve, img) : finish(reject, new Error(`image "${name}" is empty`))
+      )
+    } catch (err) {
+      finish(reject, err)
+    }
+  })
+}
+
+function asBytes(data) {
+  if (data instanceof Uint8Array) return data
+  if (data instanceof Uint8ClampedArray) return new Uint8Array(data)
+  if (ArrayBuffer.isView(data)) return new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+  return null
+}
+
+/**
+ * Which pixel layout `src` is in. pdf.js normally tags this on `img.kind`, but
+ * inline images and some masks arrive untagged — infer those from bytes/pixel.
+ */
+function pixelMode(img, src, ImageKind) {
+  if (img.kind === ImageKind.RGBA_32BPP) return 'rgba'
+  if (img.kind === ImageKind.RGB_24BPP) return 'rgb'
+  if (img.kind === ImageKind.GRAYSCALE_1BPP) return 'gray1'
+  const pixels = img.width * img.height
+  if (!pixels) return null
+  const bpp = src.length / pixels
+  if (Math.abs(bpp - 4) < 0.05) return 'rgba'
+  if (Math.abs(bpp - 3) < 0.05) return 'rgb'
+  if (Math.abs(bpp - 1) < 0.05) return 'gray8'
+  if (bpp > 0 && bpp <= 0.2) return 'gray1' // 1bpp is ~0.125 bytes/pixel
+  return null
+}
+
+/** Paint a decoded pdf.js image onto a fresh canvas. null when undecodable. */
+async function paintImage(doc, img, ImageKind) {
+  const { width, height } = img
+  if (!(width > 0) || !(height > 0)) return null
+  const made = await createRasterCanvas(doc, width, height)
   try {
-    await checkFileSize(filePath)
-    const bytes = await fs.readFile(filePath)
-    const pdfDoc = await PDFDocument.load(bytes, { ignoreEncryption: true })
-    await fs.mkdir(outputDir, { recursive: true })
-
-    const extracted = []
-    const pages = pdfDoc.getPages()
-
-    for (let pageIdx = 0; pageIdx < pages.length; pageIdx++) {
-      const page = pages[pageIdx]
-      const xObjects = page.node.Resources()?.lookup(page.node.Resources().get('XObject')?.constructor?.name === 'PDFName' ? undefined : undefined)
-
-      // pdf-lib doesn't have a direct image extraction API.
-      // We'll attempt to find embedded images via the document's indirect objects.
+    if (img.bitmap) {
+      made.context.drawImage(img.bitmap, 0, 0)
+      return made
+    }
+    const src = asBytes(img.data)
+    if (!src) {
+      made.release()
+      return null
+    }
+    const mode = pixelMode(img, src, ImageKind)
+    if (!mode) {
+      made.release()
+      return null
     }
 
-    // Fallback: iterate through all objects in the PDF looking for image streams
-    const enumeratedObjects = pdfDoc.context.enumerateIndirectObjects()
-    let imgCount = 0
-
-    for (const [ref, obj] of enumeratedObjects) {
-      if (obj?.constructor?.name === 'PDFRawStream' || obj?.constructor?.name === 'PDFStream') {
-        try {
-          const dict = obj.dict
-          if (!dict) continue
-          const subtype = dict.get(dict.context?.obj('Subtype') || Symbol())
-          const subtypeStr = subtype?.toString?.() || ''
-          if (!subtypeStr.includes('Image')) continue
-
-          const contents = obj.contents || obj.getContents?.()
-          if (!contents || contents.length === 0) continue
-
-          imgCount++
-          const ext = format === 'jpg' ? 'jpg' : 'png'
-          const outPath = path.join(outputDir, `image_${imgCount}.${ext}`)
-          await fs.writeFile(outPath, contents)
-          extracted.push({ path: outPath, size: contents.length })
-        } catch {}
+    const imageData = made.context.createImageData(width, height)
+    const dest = imageData.data // RGBA bytes — written byte-wise, so endian-safe
+    if (mode === 'rgba') {
+      dest.set(src.subarray(0, Math.min(src.length, dest.length)))
+    } else if (mode === 'rgb') {
+      for (let i = 0, o = 0; o < dest.length; i += 3, o += 4) {
+        dest[o] = src[i]
+        dest[o + 1] = src[i + 1]
+        dest[o + 2] = src[i + 2]
+        dest[o + 3] = 255
+      }
+    } else if (mode === 'gray8') {
+      for (let i = 0, o = 0; o < dest.length; i += 1, o += 4) {
+        dest[o] = dest[o + 1] = dest[o + 2] = src[i]
+        dest[o + 3] = 255
+      }
+    } else {
+      // 1 bit per pixel. pdf.js pads every ROW to a byte boundary, so walking
+      // the bits as one continuous stream shears the image diagonally whenever
+      // width % 8 !== 0 — index per row instead.
+      const rowBytes = (width + 7) >> 3
+      for (let y = 0; y < height; y++) {
+        const row = y * rowBytes
+        for (let x = 0; x < width; x++) {
+          const value = (src[row + (x >> 3)] >> (7 - (x & 7))) & 1 ? 255 : 0
+          const o = (y * width + x) * 4
+          dest[o] = dest[o + 1] = dest[o + 2] = value
+          dest[o + 3] = 255
+        }
       }
     }
+    made.context.putImageData(imageData, 0, 0)
+    return made
+  } catch {
+    made.release()
+    return null
+  }
+}
 
-    return {
-      success: true,
-      output: JSON.stringify({
-        outputDir,
-        imagesFound: extracted.length,
-        images: extracted
-      })
+function allPages(totalPages) {
+  return Array.from({ length: totalPages }, (_, i) => i + 1)
+}
+
+/** Too small to be a figure — a glyph, rule, bullet or hairline. */
+function belowFloor(width, height, minSize) {
+  return minSize > 0 && (width < minSize || height < minSize)
+}
+
+function describeBytes(bytes) {
+  return bytes < 1024 ? `${bytes}B` : `${Math.round(bytes / 1024)}KB`
+}
+
+/** Name the written files, but never dump thousands of paths into the context. */
+function listWritten(written, outputDir) {
+  const lines = []
+  for (const w of written.slice(0, RASTER_LIST_LIMIT)) {
+    lines.push(`  p.${w.page}  ${w.file}  (${w.width}x${w.height}, ${describeBytes(w.bytes)})`)
+  }
+  if (written.length > RASTER_LIST_LIMIT) {
+    lines.push(
+      `  …and ${written.length - RASTER_LIST_LIMIT} more in ${outputDir} — list them with wolffish_list_files.`
+    )
+  }
+  return lines
+}
+
+async function pdfExtractImages(args, signal) {
+  const filePath = resolvePath(args.path)
+  const outputDir = resolvePath(args.output_dir)
+  const format = args.format === 'jpg' || args.format === 'jpeg' ? 'jpg' : 'png'
+  const rawMin = Number(args.min_size)
+  const minSize = Number.isFinite(rawMin) && rawMin >= 0 ? rawMin : IMAGE_MIN_SIZE_DEFAULT
+
+  let parser
+  try {
+    const pdfjs = await loadPdfjs()
+    parser = await openPdf(filePath) // its own ENOENT/EBUSY messages beat a raw stat error
+    const doc = parser.doc
+    const totalPages = doc.numPages
+    const selected = parsePageSelection(args.pages, totalPages) ?? allPages(totalPages)
+    await fs.mkdir(outputDir, { recursive: true })
+
+    const written = []
+    const emptyPages = []
+    // Two dedup layers, because one bitmap can reach us under several names.
+    // `seenIds` catches a repeat placement before any work happens (cheap, but
+    // pdf.js re-ids the same XObject per page until it decides to cache it
+    // document-wide, so it only catches some). `seenHashes` compares the actual
+    // encoded pixels afterwards, which catches everything — the same figure on
+    // facing pages, and the icon a book embeds separately on 900 pages.
+    const seenIds = new Set()
+    const seenHashes = new Set()
+    let skippedSmall = 0
+    let duplicates = 0
+    let failed = 0
+    let stoppedAt = null
+
+    for (const pageNum of selected) {
+      if (signal?.aborted) {
+        stoppedAt = pageNum
+        break
+      }
+      const page = await doc.getPage(pageNum)
+      try {
+        const ops = await page.getOperatorList()
+        let indexOnPage = 0 // files written FOR this page — drives the filenames
+        let rasterOnPage = 0 // image XObjects PRESENT — drives the vector-art hint
+        for (let i = 0; i < ops.fnArray.length; i++) {
+          const fn = ops.fnArray[i]
+          const inline = fn === pdfjs.OPS.paintInlineImageXObject
+          if (!inline && fn !== pdfjs.OPS.paintImageXObject) continue
+          if (signal?.aborted) {
+            stoppedAt = pageNum // set here too: aborting on the LAST page would
+            break //              otherwise look like a clean finish
+          }
+          const opArgs = ops.argsArray[i] ?? []
+          rasterOnPage++
+
+          // Inline images (BI/ID/EI) come through already decoded, as the
+          // operand itself rather than a name to look up — pdf.js only routes
+          // an image this way when width + height < 200, so these are the
+          // page's smallest decorations. (Runs of them get merged into
+          // paintInlineImageXObjectGroup, which is left alone for the same
+          // reason: nothing that small is the figure anyone asked for.)
+          let img = null
+          let key = null
+          if (inline) {
+            img = opArgs[0]
+            if (!(img?.width > 0) || !(img?.height > 0)) {
+              failed++
+              continue
+            }
+            if (belowFloor(img.width, img.height, minSize)) {
+              skippedSmall++
+              continue
+            }
+          } else {
+            key = opArgs[0]
+            if (typeof key !== 'string') {
+              failed++
+              continue
+            }
+            // /Width and /Height ride along in the operator args, so a fragment
+            // can be rejected on two integer comparisons instead of a full
+            // decode + re-encode. On a typeset book that is thousands of
+            // glyphs, rules and bullets never touched.
+            const [, declaredWidth, declaredHeight] = opArgs
+            if (
+              typeof declaredWidth === 'number' &&
+              typeof declaredHeight === 'number' &&
+              belowFloor(declaredWidth, declaredHeight, minSize)
+            ) {
+              skippedSmall++
+              continue
+            }
+            // The same XObject gets painted repeatedly (a figure reused on
+            // facing pages, a running-header logo). Decode + encode it once.
+            if (seenIds.has(key)) {
+              duplicates++
+              continue
+            }
+            seenIds.add(key)
+          }
+
+          let made
+          try {
+            if (!inline) {
+              img = await resolveImageObject(storeFor(page, key), key, IMAGE_RESOLVE_TIMEOUT_MS)
+            }
+            if (!(img?.width > 0) || !(img?.height > 0)) {
+              failed++
+              continue
+            }
+            // Authoritative check: the decoded size wins over the declared one.
+            if (belowFloor(img.width, img.height, minSize)) {
+              skippedSmall++
+              continue
+            }
+            made = await paintImage(doc, img, pdfjs.ImageKind)
+            if (!made) {
+              failed++
+              continue
+            }
+            const { buffer, ext } = encodeCanvas(made.canvas, format)
+            const hash = crypto.createHash('sha1').update(buffer).digest('hex')
+            if (seenHashes.has(hash)) {
+              duplicates++
+              continue
+            }
+            seenHashes.add(hash)
+            indexOnPage++
+            const file = `p${String(pageNum).padStart(4, '0')}-img${indexOnPage}-${img.width}x${img.height}.${ext}`
+            await fs.writeFile(path.join(outputDir, file), buffer)
+            written.push({
+              page: pageNum,
+              file,
+              width: img.width,
+              height: img.height,
+              bytes: buffer.length
+            })
+          } catch {
+            // One undecodable image must never abort the run.
+            failed++
+          } finally {
+            made?.release()
+          }
+        }
+        // Only pages that hold NO image XObject at all — not pages whose images
+        // were merely deduped or size-filtered. Saying "vector art" about a page
+        // that does have a picture would send the model down the wrong path.
+        if (rasterOnPage === 0) emptyPages.push(pageNum)
+      } finally {
+        page.cleanup() // drop this page's decoded objects before the next one
+      }
+      await yieldToEventLoop()
     }
+
+    const scope =
+      selected.length === totalPages
+        ? `all ${totalPages} pages`
+        : `page${selected.length === 1 ? '' : 's'} ${describePageList(selected)}`
+    const lines = []
+    lines.push(
+      `${written.length} image${written.length === 1 ? '' : 's'} extracted from ${path.basename(filePath)} (${scope}) → ${outputDir}`
+    )
+    if (stoppedAt !== null) {
+      lines.push(`STOPPED by the user at page ${stoppedAt}. The images listed below were written.`)
+    }
+    const notes = []
+    if (skippedSmall > 0) {
+      notes.push(
+        `${skippedSmall} below ${minSize}px (glyphs/rules/bullets — pass min_size to change or 0 to keep them)`
+      )
+    }
+    if (duplicates > 0) {
+      notes.push(
+        `${duplicates} repeat placement${duplicates === 1 ? '' : 's'} of an image already written`
+      )
+    }
+    if (failed > 0) notes.push(`${failed} could not be decoded`)
+    if (notes.length > 0) lines.push(`Skipped: ${notes.join('; ')}.`)
+
+    if (written.length > 0) {
+      lines.push('')
+      lines.push(...listWritten(written, outputDir))
+      lines.push('')
+      lines.push('These are real PNG/JPEG files. Use send_file to show one to the user.')
+    }
+
+    // The single most useful thing to say when someone asked for a figure: a
+    // page can look full of figures and yield nothing here, because the figure
+    // is DRAWN — vector lines and text, with no stored image to pull out (or
+    // only the sub-80px fragments a typeset page is littered with). Extraction
+    // can never return that figure; rendering the page always can. Say so
+    // whenever the caller ended up with nothing, not just on the tidy case.
+    if (written.length === 0) {
+      lines.push('')
+      lines.push(
+        `Nothing to extract here — this page range stores no picture big enough to be a figure. ` +
+          `If you are after a figure, chart, diagram, algorithm, or table, it is drawn on the page rather than ` +
+          `embedded in it: use pdf_render_pages on ${describePageList(selected.slice(0, 8))} to get an image of it.`
+      )
+    } else if (emptyPages.length > 0 && emptyPages.length <= 20) {
+      lines.push('')
+      lines.push(
+        `No embedded raster images on page${emptyPages.length === 1 ? '' : 's'} ${describePageList(emptyPages)}. ` +
+          `Figures there are drawn as vectors and text, so nothing can be "extracted" from them — ` +
+          `render the page instead with pdf_render_pages to get a picture of the figure.`
+      )
+    } else if (emptyPages.length > 20) {
+      lines.push('')
+      lines.push(
+        `${emptyPages.length} of the ${selected.length} pages have no embedded raster images (their figures are vector art). ` +
+          `Use pdf_render_pages for those.`
+      )
+    }
+
+    if (stoppedAt !== null) return { success: false, error: lines.join('\n') }
+    return { success: true, output: lines.join('\n') }
   } catch (err) {
     return { success: false, error: `Image extraction failed: ${err.message}` }
+  } finally {
+    if (parser) await parser.destroy?.().catch(() => undefined)
+  }
+}
+
+async function pdfRenderPages(args, signal) {
+  const filePath = resolvePath(args.path)
+  const outputDir = resolvePath(args.output_dir)
+  const format = args.format === 'jpg' || args.format === 'jpeg' ? 'jpg' : 'png'
+  const rawScale = Number(args.scale)
+  const scale =
+    Number.isFinite(rawScale) && rawScale > 0
+      ? Math.min(rawScale, RENDER_SCALE_MAX)
+      : RENDER_SCALE_DEFAULT
+
+  let parser
+  try {
+    await loadPdfjs() // same failure message as extraction when pdf.js is missing
+    parser = await openPdf(filePath)
+    const doc = parser.doc
+    const totalPages = doc.numPages
+    const selected = parsePageSelection(args.pages, totalPages)
+    if (!selected) {
+      throw new Error(
+        `pages is required — name the pages to render, e.g. "84" or "84-85". This document has ${totalPages} pages.`
+      )
+    }
+    await fs.mkdir(outputDir, { recursive: true })
+
+    const written = []
+    let stoppedAt = null
+
+    for (const pageNum of selected) {
+      if (signal?.aborted) {
+        stoppedAt = pageNum
+        break
+      }
+      const page = await doc.getPage(pageNum)
+      try {
+        const viewport = page.getViewport({ scale })
+        const made = await createRasterCanvas(doc, viewport.width, viewport.height)
+        try {
+          // PDF pages have no background of their own; without this the render
+          // is transparent (and would come out black as a JPEG).
+          made.context.fillStyle = '#ffffff'
+          made.context.fillRect(0, 0, made.canvas.width, made.canvas.height)
+          await page.render({ canvasContext: made.context, viewport, canvas: made.canvas }).promise
+          const { buffer, ext } = encodeCanvas(made.canvas, format)
+          const file = `page-${String(pageNum).padStart(4, '0')}.${ext}`
+          await fs.writeFile(path.join(outputDir, file), buffer)
+          written.push({
+            page: pageNum,
+            file,
+            width: made.canvas.width,
+            height: made.canvas.height,
+            bytes: buffer.length
+          })
+        } finally {
+          made.release()
+        }
+      } finally {
+        page.cleanup()
+      }
+      await yieldToEventLoop()
+    }
+
+    const lines = []
+    lines.push(
+      `Rendered ${written.length} page${written.length === 1 ? '' : 's'} of ${path.basename(filePath)} at ${scale}x (${Math.round(scale * 72)} dpi) → ${outputDir}`
+    )
+    if (stoppedAt !== null) {
+      lines.push(`STOPPED by the user at page ${stoppedAt}. The pages listed below were written.`)
+    }
+    if (written.length > 0) {
+      lines.push('')
+      lines.push(...listWritten(written, outputDir))
+      lines.push('')
+      lines.push(
+        'Each file is a full page image — the figure is on it, along with the rest of the page. ' +
+          'Use send_file to show it to the user, and image_view if you need to read it yourself.'
+      )
+    }
+    if (stoppedAt !== null) return { success: false, error: lines.join('\n') }
+    return { success: true, output: lines.join('\n') }
+  } catch (err) {
+    return { success: false, error: `Page render failed: ${err.message}` }
+  } finally {
+    if (parser) await parser.destroy?.().catch(() => undefined)
   }
 }
 
@@ -1314,7 +1864,9 @@ function describeAction(toolName, args) {
     case 'pdf_secure':
       return { title: `${args?.action === 'encrypt' ? 'Encrypt' : 'Decrypt'} PDF`, description: `${args?.action} ${basename}`, command: targetPath, risk: 'medium' }
     case 'pdf_extract_images':
-      return { title: 'Extract Images', description: `Extract images from ${basename}`, risk: 'low' }
+      return { title: 'Extract Images', description: `Extract images from ${basename}${args?.pages ? ` (pages ${args.pages})` : ' (every page)'}`, risk: 'low' }
+    case 'pdf_render_pages':
+      return { title: 'Render Pages', description: `Render ${basename} pages ${args?.pages ?? ''} to images`.trim(), risk: 'low' }
     case 'pdf_compress':
       return { title: 'Compress PDF', description: `Compress ${basename}`, command: targetPath, risk: 'medium' }
     default:
@@ -1326,7 +1878,7 @@ const plugin = {
   name: 'pdf',
   tools: toolDefinitions,
   describeAction,
-  async execute(toolName, args) {
+  async execute(toolName, args, signal) {
     switch (toolName) {
       case 'pdf_info': return pdfInfo(args)
       case 'pdf_read': return pdfRead(args)
@@ -1337,7 +1889,8 @@ const plugin = {
       case 'pdf_modify': return pdfModify(args)
       case 'pdf_form': return pdfForm(args)
       case 'pdf_secure': return pdfSecure(args)
-      case 'pdf_extract_images': return pdfExtractImages(args)
+      case 'pdf_extract_images': return pdfExtractImages(args, signal)
+      case 'pdf_render_pages': return pdfRenderPages(args, signal)
       case 'pdf_compress': return pdfCompress(args)
       default: return { success: false, error: `pdf: unknown tool ${toolName}` }
     }

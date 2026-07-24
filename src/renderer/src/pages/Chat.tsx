@@ -5,6 +5,7 @@ import { BrainButton } from '@components/common/brain-button/BrainButton'
 import { ChatModeButton } from '@components/common/chat-mode-button/ChatModeButton'
 import { CompactionCard } from '@components/common/compaction-card/CompactionCard'
 import { ContextMeter, type SideSpend } from '@components/common/context-meter/ContextMeter'
+import { DiagnosticExportOverlay } from '@components/common/diagnostic-export-overlay/DiagnosticExportOverlay'
 import { DocxViewer } from '@components/common/docx-viewer/DocxViewer'
 import { FileCard } from '@components/common/file-card/FileCard'
 import { HtmlFileViewer } from '@components/common/html-file-viewer/HtmlFileViewer'
@@ -77,6 +78,7 @@ import {
   ArrowExpandIcon,
   ArrowUp02Icon,
   BubbleChatIcon,
+  Bug01Icon,
   CancelCircleIcon,
   Clock01Icon,
   CloudUploadIcon,
@@ -118,11 +120,36 @@ import { useTranslation } from 'react-i18next'
 type ToolResultSegment = Extract<Segment, { kind: 'tool_result' }>
 
 /**
+ * A voice take waiting in the queue. The blob is held in memory (a webm/opus
+ * recording is ~1KB/s) and only hits disk when its row flushes — upload and
+ * transcription belong to the send, exactly as they do for a take sent
+ * straight away. `blobUrl` backs the row's playback button and is owned by
+ * the queue: an effect revokes it when the row leaves.
+ */
+type QueuedVoice = { blob: Blob; blobUrl: string | null; durationSec: number }
+
+/**
  * A prompt submitted while a turn was still streaming. It waits in a
  * cancelable row above the composer (never in the feed) and is sent
- * through the normal send path when the running turn ends.
+ * through the normal send path when the running turn ends. A voice take
+ * queues the same way — `voice` routes it through the recorder's send path
+ * (upload → STT → turn) instead of sendContent.
  */
-type QueuedPrompt = { id: string; text: string; attachments: MessageAttachment[] }
+type QueuedPrompt = {
+  id: string
+  text: string
+  attachments: MessageAttachment[]
+  voice?: QueuedVoice
+}
+
+/**
+ * A file mid-copy into the conversation's uploads folder. It holds a chip in
+ * the composer from the moment it's picked until the bytes have landed, so a
+ * large file no longer copies invisibly. `id` is also the progressId main
+ * tags its byte ticks with; `percent` is null when the source has no
+ * measurable transfer (clipboard bytes) and the chip spins instead.
+ */
+type StagingFile = { id: string; name: string; percent: number | null }
 
 /**
  * Render-only bubble shown while a run this session doesn't own (a
@@ -426,6 +453,15 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
    */
   const [pendingAttachments, setPendingAttachments] = useState<MessageAttachment[]>([])
   /**
+   * Files currently being copied into the conversation's uploads folder.
+   * Each gets a chip in the composer the instant it's picked/dropped —
+   * copying a large file is not instant, and before this the composer sat
+   * blank until the finished attachment popped into existence. Send is
+   * blocked while any is live: the bytes aren't on disk yet.
+   */
+  const [stagingFiles, setStagingFiles] = useState<StagingFile[]>([])
+  const staging = stagingFiles.length > 0
+  /**
    * Prompts queued while a turn streams. Each streaming→idle transition
    * flushes exactly one — and because a user Stop also resolves the turn
    * through chat:done, stopping a run advances the queue the same way a
@@ -666,6 +702,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
   const sessionDirty =
     draft.trim().length > 0 ||
     pendingAttachments.length > 0 ||
+    staging ||
     queuedPrompts.length > 0 ||
     recPhase !== 'idle' ||
     messages.some((m) => m.role === 'user' && 'transcribing' in m && m.transcribing === true)
@@ -782,12 +819,6 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     audio.play()
     setRecPlaying(true)
   }, [recBlobUrl, recPlaying])
-
-  const formatRecTime = (seconds: number): string => {
-    const m = Math.floor(seconds / 60)
-    const s = seconds % 60
-    return `${m}:${s.toString().padStart(2, '0')}`
-  }
 
   useEffect(() => {
     return () => {
@@ -1874,6 +1905,10 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
   const send = useCallback(async () => {
     const trimmed = draft.trim()
     if (!trimmed && pendingAttachments.length === 0) return
+    // A file is still being copied into the workspace — sending now would
+    // drop it from the message. The buttons are disabled too; this catches
+    // the Enter key, which doesn't go through them.
+    if (staging) return
     const atts = pendingAttachments
     // Mid-turn submits QUEUE instead of sending: the prompt waits in a row
     // above the composer and flushes when the turn ends. sendingRef counts
@@ -1890,7 +1925,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     setDraft('')
     setPendingAttachments([])
     await sendContent(trimmed, atts)
-  }, [draft, pendingAttachments, busy, sendContent])
+  }, [draft, pendingAttachments, staging, busy, sendContent])
 
   // Discarding a queued prompt drops only the metadata — like discarded
   // staged files, the already-uploaded bytes stay on disk (cheap; see the
@@ -1898,27 +1933,6 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
   const cancelQueued = useCallback((id: string) => {
     setQueuedPrompts((prev) => prev.filter((q) => q.id !== id))
   }, [])
-
-  // Queue flush: each streaming→idle transition sends the next queued
-  // prompt. Every end path lands here — chat:done covers natural completion
-  // AND user Stop (cancel resolves the turn as done), chat:error covers
-  // failures — so a stopped run still advances the queue by design. The
-  // sendingRef guard covers the one race: if a manual send grabbed this gap
-  // first, the queue holds and flushes when THAT turn ends instead of
-  // vanishing into sendContent's re-entry guard.
-  // A channel run ending is the same transition (its terminal chat:turnState
-  // clears `remoteRunning`), so a prompt typed while Telegram was mid-answer
-  // sends itself the moment that answer lands.
-  const prevStreamingQueueRef = useRef(false)
-  useEffect(() => {
-    const wasStreaming = prevStreamingQueueRef.current
-    prevStreamingQueueRef.current = busy
-    if (!wasStreaming || busy) return
-    if (queuedPrompts.length === 0 || sendingRef.current) return
-    const [next, ...rest] = queuedPrompts
-    setQueuedPrompts(rest)
-    void sendContent(next.text, next.attachments)
-  }, [busy, queuedPrompts, sendContent])
 
   // "Try again" on a failed turn's error card: continue the conversation with
   // a message that names what went wrong, so the model resumes from where it
@@ -1949,16 +1963,204 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     void sendContent(prompt, [], mode ? { modeOverride: mode } : undefined)
   }, [descriptor.procedure, busy, sendContent, consumeProcedure, sessionKey])
 
+  /**
+   * Send one voice take: upload the audio, drop it in the feed with a
+   * transcribing placeholder, run STT, then fire the turn. Takes the blob as
+   * an argument instead of reading the recorder state, because the same path
+   * serves a take sent straight from review AND one that waited in the queue
+   * while another turn ran — upload and STT happen on the send either way.
+   */
+  const sendVoiceBlob = useCallback(
+    async (blob: Blob, blobUrl: string | null) => {
+      // Same synchronous re-entry + eviction guard as sendContent: the STT and
+      // upload awaits below all precede setStreaming(true), so `busy`
+      // can't protect this window on its own.
+      if (busy || sendingRef.current) return
+      sendingRef.current = true
+      markSending(sessionKey, true)
+
+      try {
+        const conversationId = await ensureConversationId()
+        const buffer = await blob.arrayBuffer()
+        const fileName = `recording-${Date.now()}.webm`
+        const meta = await window.api.upload.saveBuffer({ conversationId, buffer, fileName })
+        if (blobUrl) URL.revokeObjectURL(blobUrl)
+        const attachment: MessageAttachment = {
+          type: meta.type,
+          filePath: meta.filePath,
+          originalName: meta.originalName,
+          mimeType: meta.mimeType,
+          sizeBytes: meta.sizeBytes
+        }
+
+        // Render the audio in chat immediately with a transcribing
+        // placeholder, BEFORE running STT — so the player shows up the
+        // instant the user clicks send, and the transcript fills in
+        // when whisper returns.
+        const userMsgId = cryptoId()
+        const userTs = Date.now()
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: userMsgId,
+            role: 'user',
+            content: '',
+            attachments: [attachment],
+            transcribing: true,
+            timestamp: userTs
+          }
+        ])
+
+        const sttResult = await window.api.stt.transcribe({
+          filePath: meta.filePath,
+          conversationId
+        })
+
+        if (!sttResult.ok) {
+          toast.show({ message: sttResult.error, tone: 'error' })
+          setMessages((prev) =>
+            prev.map((m) => (m.id === userMsgId ? { ...m, content: '', transcribing: false } : m))
+          )
+          return
+        }
+
+        const transcript = sttResult.transcript
+        // voicePrompt/voiceLang are what the CHANNELS stamp on a voice note, and
+        // textHistory reads them to replay this message as `<voice_note>` +
+        // transcript on every later turn. Without them the audio path would be
+        // re-advertised to the model in an <attachments> block for the rest of
+        // the conversation, and the detected language would be lost after turn 1.
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === userMsgId
+              ? {
+                  ...m,
+                  content: transcript,
+                  transcribing: false,
+                  voicePrompt: true,
+                  ...(sttResult.language ? { voiceLang: sttResult.language } : {})
+                }
+              : m
+          )
+        )
+
+        // Now trigger the LLM — mirrors sendContent's tail. We use the
+        // raw transcript (no 🎙 prefix) for the model-facing history so
+        // the agent doesn't echo our UI marker back. The <voice_note lang="…">
+        // tag carries Whisper's detected language so the model replies in it
+        // instead of guessing from a short transcript.
+        const workspaceRoot = status?.rootPath ?? null
+        const langAttr = sttResult.language ? ` lang="${sttResult.language}"` : ''
+        const historyContent = `<voice_note${langAttr}>\n${composeHistoryContent(
+          transcript,
+          [attachment],
+          workspaceRoot
+        )}`
+        const currentEntry: {
+          role: 'user'
+          content: string
+          attachments?: MessageAttachment[]
+        } = { role: 'user', content: historyContent, attachments: [attachment] }
+        const history = textHistory(messages, workspaceRoot, {
+          summary: conversationRef.current?.summary,
+          summarizedThroughMessage: conversationRef.current?.summarizedThroughMessage,
+          summarizedThroughMessageId: conversationRef.current?.summarizedThroughMessageId,
+          conversationId: conversationRef.current?.id ?? null
+        }).concat(currentEntry)
+
+        const assistantPlaceholder: AssistantMessage = {
+          id: cryptoId(),
+          role: 'assistant',
+          segments: [],
+          status: 'streaming',
+          timestamp: Date.now()
+        }
+        setMessages((prev) => [...prev, assistantPlaceholder])
+        scrollToBottom()
+        setStreaming(true)
+        const sendNow = Date.now()
+        setTurnStartedAt(sendNow)
+        turnStartedAtRef.current = sendNow
+        setTurnEndedAt(null)
+        setInputTokens(0)
+        setOutputTokens(0)
+        setCacheReadTokens(0)
+        setCacheWriteTokens(0)
+        setSideSpend(null)
+        setWorkflowSpend(null)
+        setUsageUnavailable(false)
+        pendingTurnUsageRef.current = null
+        turnStatsRef.current = emptyTurnStats()
+        // Keep the timeline additive across the whole conversation — seed a
+        // boundary for this turn instead of wiping the prior turns' events.
+        setTimelineEntries((prev) => [...prev, makeTurnBoundary(transcript)])
+        setTimelineOpen(false)
+        setFilesOpen(false)
+
+        sendInFlightRef.current = true
+        const response = await window.api.chat.send({
+          history,
+          conversationId,
+          // Same contract as sendContent: the titler shell persists this very
+          // message, and it must carry the feed's id to reconcile later.
+          userMessageId: userMsgId,
+          workingFolders,
+          thinkingMode: thinkingMode as import('@preload/index').ThinkingMode,
+          projectId: descriptor.projectId ?? undefined
+        })
+        sendInFlightRef.current = false
+        if (
+          pendingTurnIdRef.current === null &&
+          response.turnId !== lastTerminalTurnIdRef.current
+        ) {
+          pendingTurnIdRef.current = response.turnId
+        }
+        if (!response.ok && response.error) {
+          pendingTurnIdRef.current = null
+          setStreaming(false)
+          setTurnEndedAt(Date.now())
+          // The send never became a turn — don't let a later finalize fold it.
+          turnStartedAtRef.current = null
+          shouldPersistRef.current = true
+          setMessages((prev) => markError(prev, response.turnId, response.error ?? 'unknown error'))
+        }
+      } catch {
+        toast.show({ message: t('chat.voice.error'), tone: 'error' })
+      } finally {
+        sendingRef.current = false
+        markSending(sessionKey, false)
+      }
+    },
+    [
+      descriptor.projectId,
+      ensureConversationId,
+      toast,
+      t,
+      busy,
+      messages,
+      setMessages,
+      markSending,
+      sessionKey,
+      status,
+      workingFolders,
+      thinkingMode,
+      scrollToBottom
+    ]
+  )
+
+  /**
+   * The review row's send button. Mid-turn it QUEUES the take instead of
+   * sending it — same rule as a typed prompt (see `send`), so a voice message
+   * recorded while the agent is working waits its turn in the same ordered
+   * queue rather than being refused. The recorder resets either way: the take
+   * now belongs to the queue row (or to the send in flight), not to the
+   * composer.
+   */
   const sendRecording = useCallback(async () => {
     const blob = recBlobRef.current
     if (!blob) return
-    // Same synchronous re-entry + eviction guard as sendContent: the STT and
-    // upload awaits below all precede setStreaming(true), so `busy`
-    // can't protect this window on its own.
-    if (busy || sendingRef.current) return
-    sendingRef.current = true
-    markSending(sessionKey, true)
     const blobUrl = recBlobUrl
+    const durationSec = recElapsed
     if (recAudioRef.current) {
       recAudioRef.current.pause()
       recAudioRef.current = null
@@ -1966,160 +2168,69 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     setRecPhase('idle')
     setRecPlaying(false)
     setRecElapsed(0)
-
-    try {
-      const conversationId = await ensureConversationId()
-      const buffer = await blob.arrayBuffer()
-      const fileName = `recording-${Date.now()}.webm`
-      const meta = await window.api.upload.saveBuffer({ conversationId, buffer, fileName })
-      if (blobUrl) URL.revokeObjectURL(blobUrl)
-      setRecBlobUrl(null)
-      recBlobRef.current = null
-      const attachment: MessageAttachment = {
-        type: meta.type,
-        filePath: meta.filePath,
-        originalName: meta.originalName,
-        mimeType: meta.mimeType,
-        sizeBytes: meta.sizeBytes
-      }
-
-      // Render the audio in chat immediately with a transcribing
-      // placeholder, BEFORE running STT — so the player shows up the
-      // instant the user clicks send, and the transcript fills in
-      // when whisper returns.
-      const userMsgId = cryptoId()
-      const userTs = Date.now()
-      setMessages((prev) => [
+    recBlobRef.current = null
+    // Hand the object URL over WITHOUT revoking: the queue row plays it back,
+    // and sendVoiceBlob revokes it once the audio is on disk.
+    setRecBlobUrl(null)
+    if (busy || sendingRef.current) {
+      setQueuedPrompts((prev) => [
         ...prev,
-        {
-          id: userMsgId,
-          role: 'user',
-          content: '',
-          attachments: [attachment],
-          transcribing: true,
-          timestamp: userTs
-        }
+        { id: cryptoId(), text: '', attachments: [], voice: { blob, blobUrl, durationSec } }
       ])
-
-      const sttResult = await window.api.stt.transcribe({
-        filePath: meta.filePath,
-        conversationId
-      })
-
-      if (!sttResult.ok) {
-        toast.show({ message: sttResult.error, tone: 'error' })
-        setMessages((prev) =>
-          prev.map((m) => (m.id === userMsgId ? { ...m, content: '', transcribing: false } : m))
-        )
-        return
-      }
-
-      const transcript = sttResult.transcript
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === userMsgId ? { ...m, content: transcript, transcribing: false } : m
-        )
-      )
-
-      // Now trigger the LLM — mirrors sendContent's tail. We use the
-      // raw transcript (no 🎙 prefix) for the model-facing history so
-      // the agent doesn't echo our UI marker back. The <voice_note lang="…">
-      // tag carries Whisper's detected language so the model replies in it
-      // instead of guessing from a short transcript.
-      const workspaceRoot = status?.rootPath ?? null
-      const langAttr = sttResult.language ? ` lang="${sttResult.language}"` : ''
-      const historyContent = `<voice_note${langAttr}>\n${composeHistoryContent(
-        transcript,
-        [attachment],
-        workspaceRoot
-      )}`
-      const currentEntry: {
-        role: 'user'
-        content: string
-        attachments?: MessageAttachment[]
-      } = { role: 'user', content: historyContent, attachments: [attachment] }
-      const history = textHistory(messages, workspaceRoot, {
-        summary: conversationRef.current?.summary,
-        summarizedThroughMessage: conversationRef.current?.summarizedThroughMessage,
-        summarizedThroughMessageId: conversationRef.current?.summarizedThroughMessageId,
-        conversationId: conversationRef.current?.id ?? null
-      }).concat(currentEntry)
-
-      const assistantPlaceholder: AssistantMessage = {
-        id: cryptoId(),
-        role: 'assistant',
-        segments: [],
-        status: 'streaming',
-        timestamp: Date.now()
-      }
-      setMessages((prev) => [...prev, assistantPlaceholder])
-      scrollToBottom()
-      setStreaming(true)
-      const sendNow = Date.now()
-      setTurnStartedAt(sendNow)
-      turnStartedAtRef.current = sendNow
-      setTurnEndedAt(null)
-      setInputTokens(0)
-      setOutputTokens(0)
-      setCacheReadTokens(0)
-      setCacheWriteTokens(0)
-      setSideSpend(null)
-      setWorkflowSpend(null)
-      setUsageUnavailable(false)
-      pendingTurnUsageRef.current = null
-      turnStatsRef.current = emptyTurnStats()
-      // Keep the timeline additive across the whole conversation — seed a
-      // boundary for this turn instead of wiping the prior turns' events.
-      setTimelineEntries((prev) => [...prev, makeTurnBoundary(transcript)])
-      setTimelineOpen(false)
-      setFilesOpen(false)
-
-      sendInFlightRef.current = true
-      const response = await window.api.chat.send({
-        history,
-        conversationId,
-        // Same contract as sendContent: the titler shell persists this very
-        // message, and it must carry the feed's id to reconcile later.
-        userMessageId: userMsgId,
-        workingFolders,
-        thinkingMode: thinkingMode as import('@preload/index').ThinkingMode,
-        projectId: descriptor.projectId ?? undefined
-      })
-      sendInFlightRef.current = false
-      if (pendingTurnIdRef.current === null && response.turnId !== lastTerminalTurnIdRef.current) {
-        pendingTurnIdRef.current = response.turnId
-      }
-      if (!response.ok && response.error) {
-        pendingTurnIdRef.current = null
-        setStreaming(false)
-        setTurnEndedAt(Date.now())
-        // The send never became a turn — don't let a later finalize fold it.
-        turnStartedAtRef.current = null
-        shouldPersistRef.current = true
-        setMessages((prev) => markError(prev, response.turnId, response.error ?? 'unknown error'))
-      }
-    } catch {
-      toast.show({ message: t('chat.voice.error'), tone: 'error' })
-    } finally {
-      sendingRef.current = false
-      markSending(sessionKey, false)
+      return
     }
-  }, [
-    descriptor.projectId,
-    recBlobUrl,
-    ensureConversationId,
-    toast,
-    t,
-    busy,
-    messages,
-    setMessages,
-    markSending,
-    sessionKey,
-    status,
-    workingFolders,
-    thinkingMode,
-    scrollToBottom
-  ])
+    await sendVoiceBlob(blob, blobUrl)
+  }, [busy, recBlobUrl, recElapsed, sendVoiceBlob])
+
+  // Queue flush: each streaming→idle transition sends the next queued
+  // prompt. Every end path lands here — chat:done covers natural completion
+  // AND user Stop (cancel resolves the turn as done), chat:error covers
+  // failures — so a stopped run still advances the queue by design. The
+  // sendingRef guard covers the one race: if a manual send grabbed this gap
+  // first, the queue holds and flushes when THAT turn ends instead of
+  // vanishing into sendContent's re-entry guard.
+  // A channel run ending is the same transition (its terminal chat:turnState
+  // clears `remoteRunning`), so a prompt typed while Telegram was mid-answer
+  // sends itself the moment that answer lands.
+  // Declared after sendVoiceBlob on purpose: the dependency array is read
+  // during render, so naming it any earlier would hit the const's TDZ.
+  const prevStreamingQueueRef = useRef(false)
+  useEffect(() => {
+    const wasStreaming = prevStreamingQueueRef.current
+    prevStreamingQueueRef.current = busy
+    if (!wasStreaming || busy) return
+    if (queuedPrompts.length === 0 || sendingRef.current) return
+    const [next, ...rest] = queuedPrompts
+    setQueuedPrompts(rest)
+    // A voice row carries no text — it flushes through the recorder path,
+    // which uploads the audio, transcribes it, then fires the turn. Both
+    // senders run inside the async IIFE (the repo's set-state-in-effect
+    // pattern): they mark the session sending, which is a setState the rule
+    // won't allow synchronously in an effect body.
+    const voice = next.voice
+    void (async () => {
+      if (voice) await sendVoiceBlob(voice.blob, voice.blobUrl)
+      else await sendContent(next.text, next.attachments)
+    })()
+  }, [busy, queuedPrompts, sendContent, sendVoiceBlob])
+
+  // The queue owns its takes' object URLs: revoke each one as its row leaves
+  // (cancel, flush, or the defensive wipe on conversation switch) so a
+  // dropped recording doesn't pin its audio for the life of the session.
+  const liveVoiceUrlsRef = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    const present = new Set<string>()
+    for (const q of queuedPrompts) if (q.voice?.blobUrl) present.add(q.voice.blobUrl)
+    for (const url of liveVoiceUrlsRef.current) {
+      if (!present.has(url)) URL.revokeObjectURL(url)
+    }
+    liveVoiceUrlsRef.current = present
+  }, [queuedPrompts])
+  useEffect(() => {
+    // Reads the ref at teardown, not at mount: the effect above swaps the Set
+    // on every queue change, so capturing it here would revoke nothing.
+    return () => liveVoiceUrlsRef.current.forEach((url) => URL.revokeObjectURL(url))
+  }, [])
 
   const stop = useCallback(() => {
     // Scoped: only THIS session's conversation stops — the other sessions'
@@ -2142,44 +2253,87 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     async (sources: Array<{ kind: 'path'; path: string } | { kind: 'file'; file: File }>) => {
       if (sources.length === 0) return
       const conversationId = await ensureConversationId()
-      const next: MessageAttachment[] = []
       let currentCount = pendingAttachments.length
       let currentTotalBytes = pendingAttachments.reduce((s, a) => s + a.sizeBytes, 0)
 
-      for (const source of sources) {
-        try {
-          let meta: MessageAttachment
-          if (source.kind === 'path') {
-            meta = await window.api.upload.saveFile({ conversationId, sourcePath: source.path })
-          } else {
-            const buffer = await source.file.arrayBuffer()
-            const fileName = pastedFileName(source.file)
-            meta = await window.api.upload.saveBuffer({ conversationId, buffer, fileName })
+      // Every chip appears at once, before the first byte moves — a 5-file
+      // pick shouldn't reveal itself one file at a time. `id` doubles as the
+      // progressId main tags its copy ticks with.
+      const staged: StagingFile[] = sources.map((source) => ({
+        id: cryptoId(),
+        name: source.kind === 'path' ? baseNameOf(source.path) : pastedFileName(source.file),
+        // Path sources copy main-side and report real bytes; in-memory ones
+        // (clipboard pastes) have no measurable transfer — they spin instead.
+        percent: source.kind === 'path' ? 0 : null
+      }))
+      const unstage = (id: string): void =>
+        setStagingFiles((prev) => prev.filter((s) => s.id !== id))
+      setStagingFiles((prev) => [...prev, ...staged])
+
+      try {
+        for (const [i, source] of sources.entries()) {
+          const stagedId = staged[i].id
+          try {
+            let meta: MessageAttachment
+            if (source.kind === 'path') {
+              meta = await window.api.upload.saveFile({
+                conversationId,
+                sourcePath: source.path,
+                progressId: stagedId
+              })
+            } else {
+              const buffer = await source.file.arrayBuffer()
+              const fileName = pastedFileName(source.file)
+              meta = await window.api.upload.saveBuffer({ conversationId, buffer, fileName })
+            }
+            const error = await window.api.upload.validate({
+              fileName: meta.originalName,
+              sizeBytes: meta.sizeBytes,
+              currentCount,
+              currentTotalBytes
+            })
+            if (error) {
+              const msg = validationErrorMessage(error, t)
+              toast.show({ message: msg, tone: 'error' })
+              continue
+            }
+            // Committed one at a time so a finished chip hands straight over
+            // to its real attachment instead of the row emptying and refilling.
+            setPendingAttachments((prev) => [...prev, meta])
+            currentCount++
+            currentTotalBytes += meta.sizeBytes
+          } catch {
+            // skip this file — multi-file batches shouldn't fail-fast
+          } finally {
+            unstage(stagedId)
           }
-          const error = await window.api.upload.validate({
-            fileName: meta.originalName,
-            sizeBytes: meta.sizeBytes,
-            currentCount,
-            currentTotalBytes
-          })
-          if (error) {
-            const msg = validationErrorMessage(error, t)
-            toast.show({ message: msg, tone: 'error' })
-            continue
-          }
-          next.push(meta)
-          currentCount++
-          currentTotalBytes += meta.sizeBytes
-        } catch {
-          // skip this file — multi-file batches shouldn't fail-fast
         }
-      }
-      if (next.length > 0) {
-        setPendingAttachments((prev) => [...prev, ...next])
+      } finally {
+        // Belt and braces: nothing from this batch can outlive it, however
+        // it ended — a stuck chip would block send forever.
+        setStagingFiles((prev) => prev.filter((s) => !staged.some((x) => x.id === s.id)))
       }
     },
     [ensureConversationId, pendingAttachments, toast, t]
   )
+
+  // Byte ticks for the staged chips' rings, correlated by progressId. A tick
+  // for an id that's already landed (or never staged) is a no-op that keeps
+  // the array identity, so it can't cost a render.
+  useEffect(() => {
+    return window.api.upload.onCopyProgress(({ progressId, copiedBytes, totalBytes }) => {
+      setStagingFiles((prev) => {
+        const index = prev.findIndex((s) => s.id === progressId)
+        if (index === -1) return prev
+        const percent =
+          totalBytes > 0 ? Math.min(100, Math.round((copiedBytes / totalBytes) * 100)) : 100
+        if (prev[index].percent === percent) return prev
+        const next = prev.slice()
+        next[index] = { ...next[index], percent }
+        return next
+      })
+    })
+  }, [])
 
   const stageFiles = useCallback(
     async (files: File[]) => {
@@ -2214,6 +2368,13 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     () => hasExportableContent(messages, inAppVerbose),
     [messages, inAppVerbose]
   )
+
+  // Diagnostic export — per conversation, so it needs a persisted conversation
+  // to bundle. Deliberately NOT gated on `busy`: a turn that has gone wrong is
+  // exactly when this gets pressed, and the export only reads (the turn keeps
+  // streaming behind the overlay and this Chat stays mounted to persist it).
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false)
+  const canExportDiagnostics = activeConversationId !== null && messages.length > 0
 
   const exportChatPdf = useCallback(async () => {
     if (exportingPdf || busy || !hasExportableContent(messages, inAppVerbose)) return
@@ -2571,7 +2732,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
         )}
       >
         {busy && <div className="rainbow-border" />}
-        {(queuedPrompts.length > 0 || pendingAttachments.length > 0) && (
+        {(queuedPrompts.length > 0 || pendingAttachments.length > 0 || staging) && (
           <div className="pointer-events-none absolute inset-x-0 bottom-full flex flex-col gap-2 px-4 pb-2">
             {/* Queued prompts live HERE, above the composer — never in the
                 feed. A message only enters the feed once its turn is sent. */}
@@ -2582,7 +2743,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                 ))}
               </div>
             )}
-            {pendingAttachments.length > 0 && (
+            {(pendingAttachments.length > 0 || staging) && (
               <div className="pointer-events-auto mx-auto flex max-w-xl flex-wrap gap-2">
                 {pendingAttachments.map((att) => (
                   <PendingAttachmentChip
@@ -2590,6 +2751,11 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                     attachment={att}
                     onRemove={() => removePending(att.filePath)}
                   />
+                ))}
+                {/* Copying chips sit at the end and are swapped for the real
+                    chip above as each file lands. */}
+                {stagingFiles.map((file) => (
+                  <StagingAttachmentChip key={file.id} file={file} />
                 ))}
               </div>
             )}
@@ -2719,6 +2885,24 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
             >
               <Download01Icon size={18} />
             </button>
+            {/* Diagnostic export — bundles this conversation's logs, prompts,
+                tasks and context into a zip for the developer. */}
+            <button
+              type="button"
+              onClick={() => setDiagnosticsOpen(true)}
+              disabled={!canExportDiagnostics || diagnosticsOpen}
+              title={t('diagnostics.button')}
+              aria-label={t('diagnostics.button')}
+              className={cn(
+                'flex h-[42.5px] w-10 shrink-0 items-center justify-center rounded-lg border',
+                'border-border bg-surface text-muted enabled:hover:text-fg enabled:hover:border-muted',
+                'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+                'disabled:cursor-not-allowed disabled:opacity-50',
+                canExportDiagnostics && !diagnosticsOpen && 'cursor-pointer'
+              )}
+            >
+              <Bug01Icon size={18} />
+            </button>
             {/* Attaching stays live mid-turn — staged files ride the next
                 queued prompt instead of the running one. */}
             <button
@@ -2742,18 +2926,26 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
               onRemove={(folder) => void removeWorkingFolder(folder)}
               disabled={busy}
             />
+            {/* Recording stays live mid-turn, like attaching: the take is
+                queued instead of sent, and goes out when the turn ends. */}
             <button
               type="button"
               onClick={recPhase === 'idle' ? () => void startRecording() : undefined}
-              disabled={busy || !micAvailable || recPhase !== 'idle'}
-              title={!micAvailable ? t('chat.voice.noMic') : t('chat.voice.record')}
-              aria-label={t('chat.voice.record')}
+              disabled={!micAvailable || recPhase !== 'idle'}
+              title={
+                !micAvailable
+                  ? t('chat.voice.noMic')
+                  : busy
+                    ? t('chat.voice.queue')
+                    : t('chat.voice.record')
+              }
+              aria-label={busy ? t('chat.voice.queue') : t('chat.voice.record')}
               className={cn(
                 'flex h-[42.5px] w-10 shrink-0 items-center justify-center rounded-lg border',
                 'border-border bg-surface text-muted enabled:hover:text-fg enabled:hover:border-muted',
                 'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
                 'disabled:cursor-not-allowed disabled:opacity-50',
-                !busy && micAvailable && recPhase === 'idle' && 'cursor-pointer'
+                micAvailable && recPhase === 'idle' && 'cursor-pointer'
               )}
             >
               <Mic01Icon size={18} />
@@ -2766,9 +2958,11 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                 type="button"
                 onClick={() => void send()}
                 disabled={
-                  !hasAnyModel || (draft.trim().length === 0 && pendingAttachments.length === 0)
+                  !hasAnyModel ||
+                  staging ||
+                  (draft.trim().length === 0 && pendingAttachments.length === 0)
                 }
-                title={t('chat.queue.add')}
+                title={staging ? t('chat.upload.copyingWait') : t('chat.queue.add')}
                 aria-label={t('chat.queue.add')}
                 className={cn(
                   'flex h-[42.5px] w-10 shrink-0 cursor-pointer items-center justify-center rounded-lg',
@@ -2780,13 +2974,20 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                 <ArrowUp02Icon size={18} />
               </button>
             )}
-            {recPhase === 'idle' && (
+            {/* The recorder hides Send (the review row has its own) but never
+                Stop: a turn you can't stop while you happen to be recording
+                would be a trap. */}
+            {(recPhase === 'idle' || busy) && (
               <button
                 type="submit"
+                // Stop is never gated on staging — a turn you can't stop
+                // because a file is copying would be a trap.
                 disabled={
                   !hasAnyModel ||
-                  (!busy && draft.trim().length === 0 && pendingAttachments.length === 0)
+                  (!busy &&
+                    (staging || (draft.trim().length === 0 && pendingAttachments.length === 0)))
                 }
+                title={!busy && staging ? t('chat.upload.copyingWait') : undefined}
                 aria-label={busy ? t('chat.stop') : t('chat.send')}
                 className={cn(
                   'flex h-[42.5px] w-10 shrink-0 cursor-pointer items-center justify-center rounded-lg',
@@ -2839,11 +3040,15 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                   {formatRecTime(recElapsed)}
                 </span>
                 <span className="text-muted flex-1 text-xs">{t('chat.voice.recording')}</span>
+                {/* Ends the RECORDING, not the turn — while a turn runs the
+                    red turn-Stop sits right beside it, so it needs its own
+                    label. */}
                 <button
                   type="button"
                   onClick={stopRecording}
                   className="bg-red-600 text-white flex h-7 w-7 items-center justify-center rounded-md hover:bg-red-700"
-                  aria-label={t('chat.stop')}
+                  aria-label={t('chat.voice.stopRecording')}
+                  title={t('chat.voice.stopRecording')}
                 >
                   <StopCircleIcon size={14} />
                 </button>
@@ -2854,7 +3059,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                   type="button"
                   onClick={togglePlayback}
                   className="text-muted hover:text-fg flex h-7 w-7 shrink-0 items-center justify-center rounded-md"
-                  aria-label={recPlaying ? t('chat.stop') : 'Play'}
+                  aria-label={recPlaying ? t('chat.voice.pause') : t('chat.voice.play')}
                 >
                   {recPlaying ? <PauseIcon size={14} /> : <PlayIcon size={14} />}
                 </button>
@@ -2871,14 +3076,16 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                 >
                   <Delete02Icon size={14} />
                 </button>
+                {/* Mid-turn this queues the take rather than sending it —
+                    the icon swaps to a clock to say so. */}
                 <button
                   type="button"
                   onClick={() => void sendRecording()}
                   className="bg-primary text-primary-fg flex h-7 w-7 shrink-0 items-center justify-center rounded-md hover:brightness-110"
-                  aria-label={t('chat.voice.send')}
-                  title={t('chat.voice.send')}
+                  aria-label={busy ? t('chat.voice.queue') : t('chat.voice.send')}
+                  title={busy ? t('chat.voice.queue') : t('chat.voice.send')}
                 >
-                  <ArrowUp02Icon size={14} />
+                  {busy ? <Clock01Icon size={14} /> : <ArrowUp02Icon size={14} />}
                 </button>
               </div>
             )}
@@ -2913,6 +3120,12 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
       {/* Gated on visibility: these portal to <body>, so without this they would
           escape the hidden wrapper and paint over another screen (or another
           session's view). */}
+      {visible && diagnosticsOpen && activeConversationId && (
+        <DiagnosticExportOverlay
+          conversationId={activeConversationId}
+          onClose={() => setDiagnosticsOpen(false)}
+        />
+      )}
       {visible &&
         timelineOpen &&
         createPortal(
@@ -4686,8 +4899,87 @@ function PendingAttachmentChip({
 }
 
 /**
+ * The chip a file holds while it is being copied into the conversation's
+ * uploads folder — same shape as the finished attachment chip so the swap at
+ * the end doesn't jump. It carries no remove button: the copy is a main-side
+ * operation with nothing to cancel, and it is over in a moment.
+ */
+function StagingAttachmentChip({ file }: { file: StagingFile }): React.JSX.Element {
+  const { t } = useTranslation()
+  return (
+    <div
+      className={cn(
+        'border-border bg-surface text-muted flex max-w-xs items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs'
+      )}
+      title={t('chat.upload.copyingFile', { name: file.name })}
+    >
+      <ProgressRing percent={file.percent} />
+      <span className="truncate" dir="ltr">
+        {file.name}
+      </span>
+      <span className="shrink-0 tabular-nums text-[10px]">
+        {file.percent === null ? t('chat.upload.copying') : `${file.percent}%`}
+      </span>
+    </div>
+  )
+}
+
+/**
+ * 16px ring. A known percentage fills clockwise from the top; `null` (no
+ * measurable transfer) spins a fixed arc instead. Strokes are currentColor
+ * so the ring inherits the chip's accent without depending on stroke-*
+ * utilities existing for the theme tokens.
+ */
+function ProgressRing({ percent }: { percent: number | null }): React.JSX.Element {
+  const radius = 6
+  const circumference = 2 * Math.PI * radius
+  const filled = percent === null ? 25 : percent
+  return (
+    <svg
+      width={14}
+      height={14}
+      viewBox="0 0 16 16"
+      aria-hidden
+      className={cn('text-primary shrink-0', percent === null && 'animate-spin')}
+    >
+      <circle
+        cx="8"
+        cy="8"
+        r={radius}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        opacity=".2"
+      />
+      <circle
+        cx="8"
+        cy="8"
+        r={radius}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeDasharray={circumference}
+        strokeDashoffset={circumference * (1 - filled / 100)}
+        transform="rotate(-90 8 8)"
+      />
+    </svg>
+  )
+}
+
+/** m:ss for a recording's length — shared by the recorder rows and the
+ *  queued-take row (module scope so both can reach it). */
+function formatRecTime(seconds: number): string {
+  const m = Math.floor(seconds / 60)
+  const s = seconds % 60
+  return `${m}:${s.toString().padStart(2, '0')}`
+}
+
+/**
  * One prompt waiting above the composer for the running turn to end. An
- * attachment-only prompt (no caption) labels itself with its file names.
+ * attachment-only prompt (no caption) labels itself with its file names; a
+ * voice take shows its length and plays back, since there's no transcript to
+ * show yet — it is transcribed when the row flushes, not when it's queued.
  */
 function QueuedPromptRow({
   prompt,
@@ -4697,12 +4989,56 @@ function QueuedPromptRow({
   onCancel: () => void
 }): React.JSX.Element {
   const { t } = useTranslation()
+  const [playing, setPlaying] = useState(false)
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const voiceUrl = prompt.voice?.blobUrl ?? null
+  // The URL is revoked when this row leaves the queue — stop playback with it.
+  useEffect(() => {
+    return () => {
+      audioRef.current?.pause()
+      audioRef.current = null
+    }
+  }, [])
+  const togglePlay = useCallback(() => {
+    if (!voiceUrl) return
+    if (playing && audioRef.current) {
+      audioRef.current.pause()
+      setPlaying(false)
+      return
+    }
+    const audio = new Audio(voiceUrl)
+    audioRef.current = audio
+    audio.onended = () => setPlaying(false)
+    void audio.play().catch(() => setPlaying(false))
+    setPlaying(true)
+  }, [voiceUrl, playing])
+
   return (
     <div className="border-border bg-surface text-fg flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs">
       <Clock01Icon size={12} className="text-muted shrink-0" aria-hidden />
-      <span className="min-w-0 flex-1 truncate" dir="auto" title={prompt.text}>
-        {prompt.text || prompt.attachments.map((a) => a.originalName).join(', ')}
-      </span>
+      {prompt.voice ? (
+        <>
+          {voiceUrl && (
+            <button
+              type="button"
+              onClick={togglePlay}
+              aria-label={playing ? t('chat.voice.pause') : t('chat.voice.play')}
+              title={playing ? t('chat.voice.pause') : t('chat.voice.play')}
+              className="text-muted hover:text-fg focus-visible:ring-2 focus-visible:ring-accent shrink-0 cursor-pointer rounded"
+            >
+              {playing ? <PauseIcon size={12} /> : <PlayIcon size={12} />}
+            </button>
+          )}
+          <span className="min-w-0 flex-1 truncate">{t('chat.voice.queued')}</span>
+          <span className="text-muted shrink-0 tabular-nums text-[10px]">
+            {formatRecTime(prompt.voice.durationSec)}
+          </span>
+        </>
+      ) : (
+        <span className="min-w-0 flex-1 truncate" dir="auto" title={prompt.text}>
+          {prompt.text || prompt.attachments.map((a) => a.originalName).join(', ')}
+        </span>
+      )}
       {prompt.attachments.length > 0 && (
         <span
           className="text-muted flex shrink-0 items-center gap-1 text-[10px] tabular-nums"
@@ -5635,6 +5971,16 @@ function composeHistoryContent(
     }
   }
   return parts.join('\n\n')
+}
+
+/**
+ * Last segment of a device path, for labelling a chip before main has
+ * reported the file's final (collision-suffixed) name. Handles both
+ * separators — the picker returns native paths.
+ */
+function baseNameOf(filePath: string): string {
+  const parts = filePath.split(/[\\/]/)
+  return parts[parts.length - 1] || filePath
 }
 
 // Clipboard images (e.g. screenshots) often arrive as File objects with no

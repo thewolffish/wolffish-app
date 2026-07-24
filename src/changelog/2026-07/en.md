@@ -1,4 +1,22 @@
-## v1.0.228 — 2026-07-24 `Latest`
+## v1.0.229 — 2026-07-25 `Latest`
+
+### One Button Packs Up Everything That Went Wrong
+
+When a conversation goes sideways, explaining it to the developer used to be your job — which log, which file, which prompt, and where on earth any of them live. A new **bug button** sits beside the export button in every chat and does the whole errand for you: one press bundles **that conversation and nothing else** — the transcript, the event log for the days it spans plus a slice filtered down to its own turns, the **records of every task it spawned**, the **memory** the agent was working from, the **prompts and instructions** it actually built, and your **settings** — into a single zip you can forward as it is. Two things stay out on purpose: **every credential is redacted**, replaced by a length marker and never the value, and **attachment media is left behind**, so the archive is safe to hand over and small enough to send. On a cloud model it also asks **the model itself what it thinks went wrong** and tucks that opinion into the bundle. A card at the end lists what went in, and **reveals the archive** or **saves a copy** wherever you want it.
+
+### Big Files Say So While They Copy
+
+Attach something large — a video, a hefty PDF, a folder-sized archive — and the composer used to sit **completely blank** while it was copied into Wolffish, until the chip simply appeared seconds or minutes later with nothing in between to say anything was happening. Every file you pick, drop, or paste now **claims its chip the instant you choose it**, carrying a **filling ring and a live percentage** counting real bytes, and hands over to the finished attachment the moment those bytes land. **Send waits for them** — the button rests, the Enter key is caught too, and a tooltip says why — because a message sent mid-copy would have quietly gone without the file. Stopping a running turn is never blocked. **Project files** got the same treatment: adding files to a project draws **one bar across the whole batch**, tells you **which file of how many** is moving, and holds the Add files button until the copy is done.
+
+### Record While It's Still Working
+
+The microphone used to go dark the moment Wolffish started answering — a thought you wanted to record had to wait for the turn to end, and remembering to come back to it was your problem. **Recording stays live now**, exactly like attaching. Start a take mid-answer and it **waits in the row above the composer**, with a **play button and its length** so you can hear it back before it goes, and it **sends itself the moment the turn finishes** — uploaded, transcribed, and answered in its proper place in the queue. Discard it instead and the recording is dropped for good, along with the audio it was holding.
+
+### Show Me the Figure
+
+Ask about a diagram, chart, algorithm, or table inside a PDF and Wolffish could only ever read you the words around it. It can **render the page itself as an image** now — the figure exactly as printed, at whatever zoom the small print calls for — and send that straight into the conversation. This is the fix for a quiet failure: a textbook figure is usually **drawn, not stored**, so there is no picture inside the file to pull out and the old image extraction correctly came back with nothing. Extraction itself got sharper too — it now works on **the pages you name** rather than the entire book, and **skips the tiny fragments** (glyphs, rules, bullets) that used to bury the one figure you wanted under thousands of unusable files.
+
+## v1.0.228 — 2026-07-24
 
 ### Workflow Mode, Working Again
 

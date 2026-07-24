@@ -4,7 +4,7 @@ import { CodeEditor } from '@components/core/CodeEditor'
 import { Modal } from '@components/core/Modal'
 import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn'
-import type { Project, ProjectFileRef } from '@preload/index'
+import type { Project, ProjectCopyProgress, ProjectFileRef } from '@preload/index'
 import { useTheme } from '@providers/theme/useTheme'
 import { Add01Icon, Copy01Icon, Delete02Icon } from 'hugeicons-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -144,9 +144,31 @@ function ProjectDialogBody({
     [project, onChanged, t, toast]
   )
 
+  // A pickFiles() call is in flight — the whole time, including while the
+  // native picker is open. Adding and removing lock: both write the same
+  // file list, and a second picker over the first is just a race.
+  const [adding, setAdding] = useState(false)
+  // Copy ticks from main. Non-null only once bytes are actually moving, so
+  // the bar appears when the picker closes rather than behind it.
+  const [copy, setCopy] = useState<ProjectCopyProgress | null>(null)
+
+  // Subscribed only for the duration of OUR add. The ticks are a broadcast,
+  // and this dialog can be mounted twice for one project (Projects page +
+  // chat's project mode) — a copy started elsewhere would otherwise leave a
+  // bar here with no completion to clear it.
+  useEffect(() => {
+    if (!adding) return
+    return window.api.projects.onCopyProgress((progress) => {
+      if (progress.projectId !== project.id) return
+      setCopy(progress)
+    })
+  }, [adding, project.id])
+
   const addFiles = useCallback(() => {
+    if (adding) return
     // Pick + copy happen main-side in one step (files are copied into the
     // project's uploads dir); the returned project is already persisted.
+    setAdding(true)
     void window.api.projects
       .pickFiles(project.id)
       .then((updated) => {
@@ -156,7 +178,18 @@ function ProjectDialogBody({
         onChanged(updated)
       })
       .catch(() => toast.show({ tone: 'error', message: t('projects.saveError') }))
-  }, [project.id, onChanged, t, toast])
+      .finally(() => {
+        setAdding(false)
+        setCopy(null)
+      })
+  }, [adding, project.id, onChanged, t, toast])
+
+  const copyPercent = copy
+    ? copy.totalBytes > 0
+      ? Math.min(100, Math.round((copy.copiedBytes / copy.totalBytes) * 100))
+      : 100
+    : 0
+  const locked = busy || adding
 
   const copyInstructions = useCallback(() => {
     void navigator.clipboard
@@ -286,13 +319,44 @@ function ProjectDialogBody({
             variant="outline"
             size="sm"
             onClick={addFiles}
-            disabled={busy}
+            disabled={locked}
             className="flex items-center gap-1"
           >
             <Add01Icon size={13} />
-            <span>{t('projects.addFiles')}</span>
+            <span>{adding ? t('projects.addingFiles') : t('projects.addFiles')}</span>
           </Button>
         </div>
+        {/* Copying a large file into the workspace is not instant. Without
+            this the dialog showed nothing at all and then the file simply
+            appeared. Real bytes, batch-wide, from the main-side copy. */}
+        {copy && (
+          <div className="flex flex-col gap-1">
+            <div className="text-muted flex items-center gap-2 text-[11px]">
+              <span dir="ltr" title={copy.name} className="min-w-0 flex-1 truncate">
+                {copy.name}
+              </span>
+              {copy.total > 1 && (
+                <span className="shrink-0 tabular-nums">
+                  {t('projects.copyingCount', { index: copy.index, total: copy.total })}
+                </span>
+              )}
+              <span className="shrink-0 tabular-nums">{copyPercent}%</span>
+            </div>
+            <div
+              role="progressbar"
+              aria-label={t('projects.copyingFiles')}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={copyPercent}
+              className="bg-border h-1 w-full overflow-hidden rounded-full"
+            >
+              <div
+                className="bg-primary h-full rounded-full transition-[width] duration-150"
+                style={{ width: `${copyPercent}%` }}
+              />
+            </div>
+          </div>
+        )}
         {files.length > 0 && (
           <ul className="border-border bg-bg flex max-h-36 flex-col gap-0.5 overflow-y-auto rounded-lg border p-1.5">
             {files.map((file) => {
@@ -315,12 +379,14 @@ function ProjectDialogBody({
                   <button
                     type="button"
                     onClick={() => persistFiles(files.filter((f) => f.path !== file.path))}
-                    disabled={busy}
+                    disabled={locked}
                     aria-label={t('projects.removeFile')}
                     title={t('projects.removeFile')}
                     className={cn(
                       'text-muted flex h-6 w-6 shrink-0 items-center justify-center rounded-md',
-                      busy ? 'cursor-not-allowed opacity-40' : 'cursor-pointer hover:text-rose-500'
+                      locked
+                        ? 'cursor-not-allowed opacity-40'
+                        : 'cursor-pointer hover:text-rose-500'
                     )}
                   >
                     <Delete02Icon size={13} />

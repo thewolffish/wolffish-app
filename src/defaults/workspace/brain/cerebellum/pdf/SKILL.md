@@ -10,6 +10,13 @@ triggers:
   - watermark
   - form fill
   - extract text
+  - figure
+  - diagram
+  - chart
+  - render page
+  - page image
+  - show me the figure
+  - extract images
   - encrypt pdf
   - compress pdf
   - pdf password
@@ -207,8 +214,31 @@ tools:
         type: string
         description: 'Optional JSON array of allowed permissions when encrypting: ["printing","modify","copy","annotate"]'
         required: false
+  - name: pdf_render_pages
+    description: Render whole PDF pages to PNG/JPEG images. This is how you SHOW someone a figure, chart, algorithm, table, or scanned page — it captures the page exactly as it looks, including figures drawn as vectors (which pdf_extract_images cannot return). Page-scoped and fast on any file size, including a 250MB book. Then send_file the result.
+    parameters:
+      path:
+        type: string
+        description: Absolute path to the source PDF
+      pages:
+        type: string
+        description: 'Page selection like "84", "84-85", or "1-3,10". Required — name the pages you want.'
+      output_dir:
+        type: string
+        description: Absolute path to the directory where the rendered pages will be saved
+      scale:
+        type: number
+        description: 'Zoom factor: 1 is 72dpi, 2 is 144dpi (default), maximum 8. Raise it when the figure has small print.'
+        required: false
+      format:
+        type: string
+        description: Output image format (png keeps transparency, jpg is smaller)
+        enum:
+          - png
+          - jpg
+        required: false
   - name: pdf_extract_images
-    description: Extract all embedded images from a PDF and save them to a directory.
+    description: Save the photos and raster figures embedded in specific PDF pages as real PNG/JPEG files. ALWAYS pass "pages" — without it every page in the document is walked, which on a large book means thousands of files and a very long run. Fragments below 80px (glyphs, rules, bullets) are skipped by default. A page reporting no embedded images means its figure is vector art, so nothing can be extracted from it — render that page with pdf_render_pages instead.
     parameters:
       path:
         type: string
@@ -216,12 +246,20 @@ tools:
       output_dir:
         type: string
         description: Absolute path to the directory where images will be saved
+      pages:
+        type: string
+        description: 'Page selection like "84", "84-85", or "1-3,10,50-60". Omit only when you truly want every page in the document.'
+        required: false
       format:
         type: string
         description: Output image format
         enum:
           - png
           - jpg
+        required: false
+      min_size:
+        type: number
+        description: Skip images narrower or shorter than this many pixels (default 80; 0 keeps every fragment)
         required: false
   - name: pdf_compress
     description: Reduce PDF file size by optimizing content and removing unused objects.
@@ -288,6 +326,33 @@ actually use them:
 
 The first `pdf_search` over a huge document extracts all pages once (a few seconds) and is
 cached after that — later searches and reads on the same file are near-instant.
+
+## Showing someone a figure, chart, or table
+
+"Show me Figure 7.2", "what does that diagram look like", "send me the algorithm on p.84" —
+the answer is almost always **`pdf_render_pages`**, not image extraction:
+
+1. Find the page (`pdf_search` for the figure number, or `pdf_read` the page to confirm it's there).
+2. `pdf_render_pages` with **`pages` set to that page** (add the facing page if the figure may
+   span both, and raise `scale` to 3–4 if the print is small).
+3. `send_file` the rendered PNG so it actually appears in the conversation. Rendering does not
+   deliver it — you deliver it.
+
+Why rendering rather than extraction: a textbook figure is usually **drawn** — vector lines,
+boxes, and text laid down by the page's content stream, with no embedded image anywhere.
+`pdf_extract_images` can only return images the PDF actually stores, so on such a page it
+correctly returns nothing. Rendering captures the page as printed, so it always works.
+
+Reach for `pdf_extract_images` when you specifically want the stored assets — a photograph, a
+scanned plate, an illustration you need on its own without surrounding page text — and give it
+`pages`. **Never run it over a whole book.** A 3,000-page reference text stores tens of thousands
+of images, nearly all of them sub-kilobyte fragments; that run writes thousands of files, takes
+hours, and buries the one figure you wanted. Scope it to the pages you already located.
+
+**If this conversation already contains an `pdf_extract_images` call with no `pages`, or a folder
+holding thousands of extracted images, ignore it — do not copy that call.** It predates page
+scoping, those files are unreadable, and repeating it will not produce the figure. Delete the
+folder if it is in the way, then render the page you want.
 
 ## Choosing how to make a PDF — read this first
 
@@ -443,7 +508,7 @@ Start from this and adapt — it already encodes all three rules:
 
 ## Interface
 
-- Tools: `pdf_info`, `pdf_read`, `pdf_search`, `pdf_create`, `pdf_merge`, `pdf_split`, `pdf_modify`, `pdf_form`, `pdf_secure`, `pdf_extract_images`, `pdf_compress`
+- Tools: `pdf_info`, `pdf_read`, `pdf_search`, `pdf_create`, `pdf_merge`, `pdf_split`, `pdf_modify`, `pdf_form`, `pdf_secure`, `pdf_render_pages`, `pdf_extract_images`, `pdf_compress`
 - All paths must be absolute. Use `~` prefix for home directory.
 - Complex parameters (arrays, objects) are passed as JSON strings.
 
@@ -453,7 +518,12 @@ Start from this and adapt — it already encodes all three rules:
   any file size directly (a 250MB, 3,000-page book is a normal input) — splitting first only
   wastes minutes and disk. Split only when the user actually wants separate files. Ignore any
   split-first workaround you may see in older conversation history; it predates the size-gate
-  removal.
+  removal. The same goes for figures: `pdf_render_pages` and `pdf_extract_images` are
+  page-scoped, so never split or extract pages just to get at a picture.
+- **Always scope `pdf_render_pages` and `pdf_extract_images` with `pages`.** Locate the content
+  first (`pdf_search`/`pdf_read`), then act on those page numbers. Both tools stream page by
+  page and can be stopped mid-run, but an unscoped extraction over a large book is still hours
+  of work and thousands of files.
 - If a WRITE op (`pdf_split`/`pdf_merge`/…) fails on a huge or unusual file, don't retry the
   same call — fall back to python (pypdf) or shell, and tell the user what happened.
 - **Every `output_path`/`output_dir` defaults to the workspace `files/` directory** (e.g.

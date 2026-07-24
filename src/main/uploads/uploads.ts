@@ -1,5 +1,6 @@
 import { conversationDirName, type MessageAttachmentType } from '@main/conversations'
 import { diskWriter } from '@main/io/diskWriter'
+import { copyFileWithProgress } from '@main/uploads/copy-progress'
 // workspace/root, not workspace.ts (which reaches electron): file-processor
 // imports this module statically, and its policy tests run under plain node.
 import { workspaceRoot } from '@main/workspace/root'
@@ -190,10 +191,15 @@ async function uniqueFilename(dir: string, originalName: string): Promise<string
  * resolving name collisions by appending a counter. Returns metadata
  * including the path RELATIVE to workspace root (what gets stored in the
  * conversation message) plus the type bucket and mime type.
+ *
+ * `onProgress` (optional) reports copied bytes while the copy runs — the
+ * composer's staging chip draws its ring from it. Omitting it skips the
+ * polling entirely, so non-UI callers pay nothing.
  */
 export async function saveUpload(
   conversationId: string,
-  sourcePath: string
+  sourcePath: string,
+  onProgress?: (copiedBytes: number, totalBytes: number) => void
 ): Promise<UploadedFileMetadata> {
   const sourceStat = await fs.stat(sourcePath)
   if (!sourceStat.isFile()) {
@@ -206,7 +212,15 @@ export async function saveUpload(
   const originalName = path.basename(sourcePath)
   const finalName = await uniqueFilename(dir, originalName)
   const destPath = path.join(dir, finalName)
-  await fs.copyFile(sourcePath, destPath)
+  // The size is known before the first byte moves — emit it immediately so
+  // the chip can show a real denominator instead of a mystery spinner.
+  onProgress?.(0, sourceStat.size)
+  await copyFileWithProgress(
+    sourcePath,
+    destPath,
+    sourceStat.size,
+    onProgress ? (copied) => onProgress(copied, sourceStat.size) : undefined
+  )
 
   const { type, mimeType } = classifyFile(finalName)
   const root = workspaceRoot()

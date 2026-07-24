@@ -1485,7 +1485,10 @@
       "maxFiles": "Maximum {{count}} files per message",
       "totalExceeded": "Total attachments cannot exceed {{limit}}",
       "typeNotSupported": "File type not supported",
-      "videoNotAllowed": "Video files are not supported"
+      "videoNotAllowed": "Video files are not supported",
+      "copying": "Copying",
+      "copyingFile": "Copying {{name}} into Wolffish",
+      "copyingWait": "Wait for the file to finish copying"
     },
     "pdfViewer": {
       "loading": "Loading PDF",
@@ -1544,9 +1547,14 @@
     },
     "voice": {
       "record": "Record voice message",
+      "queue": "Queue voice message",
+      "queued": "Voice message",
       "noMic": "No microphone available",
       "permissionDenied": "Mic access denied — allow in system settings.",
       "recording": "Recording",
+      "stopRecording": "Stop recording",
+      "play": "Play",
+      "pause": "Pause",
       "send": "Send recording",
       "delete": "Delete recording",
       "transcribing": "Transcribing…",
@@ -1822,6 +1830,57 @@
       "blocked": "Chat is paused until the rebuild finishes — it's a one-time wait, not a hang."
     }
   },
+  "diagnostics": {
+    "button": "Export diagnostics",
+    "overlay": {
+      "title": "Collecting diagnostics",
+      "startedAt": "Started at {{time}}",
+      "body": "Wolffish is gathering everything related to this conversation — the transcript, its event logs, task records, prompts, memory and settings — into one archive you can send to the developer. Credentials are redacted and attachment media is left out.",
+      "progress": "Preparing",
+      "filesCollected": "{{count}} files collected",
+      "blocked": "This takes a few seconds. The window stays put until the archive is ready.",
+      "doneTitle": "Diagnostic archive ready",
+      "fileCount": "{{count}} files",
+      "summary": "What went in",
+      "reveal": "Reveal",
+      "saveCopy": "Save a copy",
+      "copySaved": "Copy saved",
+      "done": "Done",
+      "opinionIncluded": "Included",
+      "opinionSkipped": {
+        "no-model": "No model configured",
+        "local-only": "Skipped on local model",
+        "failed": "Model did not respond",
+        "empty": "Model returned nothing"
+      },
+      "forward": "Send this archive to the developer so they can analyse the problem and fix it. It is used for that analysis only and discarded immediately afterwards.",
+      "failedTitle": "Diagnostic export failed",
+      "failedBody": "The archive could not be created.",
+      "failedHint": "Nothing was changed. You can close this and try again."
+    },
+    "steps": {
+      "conversation": "Reading the conversation",
+      "logs": "Collecting logs",
+      "tasks": "Collecting task records",
+      "memory": "Collecting memory",
+      "context": "Collecting prompts and instructions",
+      "settings": "Collecting settings",
+      "attachments": "Listing attachments",
+      "opinion": "Asking the model for its opinion",
+      "archive": "Building the archive"
+    },
+    "groups": {
+      "summary": "Readme and environment",
+      "conversation": "Conversation",
+      "logs": "Logs",
+      "tasks": "Task records",
+      "memory": "Memory",
+      "context": "Prompts and instructions",
+      "settings": "Settings",
+      "attachments": "Attachments",
+      "opinion": "Model opinion"
+    }
+  },
   "heartbeat": {
     "title": "Automations",
     "subtitle": "Scheduled prompts that run on their own.",
@@ -1948,6 +2007,9 @@
     },
     "files": "Files ({{count}})",
     "addFiles": "Add files",
+    "addingFiles": "Adding…",
+    "copyingFiles": "Copying files into Wolffish",
+    "copyingCount": "File {{index}} of {{total}}",
     "removeFile": "Remove file",
     "newConversation": "New conversation",
     "exit": "Close project",

@@ -22,6 +22,11 @@ import {
   type ConversationMeta
 } from '@main/conversations'
 import { getDataAnalytics, type DataAnalytics } from '@main/data'
+import {
+  copyDiagnosticArchive,
+  exportConversationDiagnostics,
+  type DiagnosticResult
+} from '@main/diagnostics'
 import { githubService, type GitHubStatus, type GitHubTestResult } from '@main/github'
 import {
   getSttInstallState,
@@ -2711,11 +2716,22 @@ app.whenReady().then(async () => {
     'upload:saveFile',
     async (
       _e,
-      payload: { conversationId: string; sourcePath: string }
+      payload: { conversationId: string; sourcePath: string; progressId?: string }
     ): Promise<UploadedFileMetadata> => {
       if (!payload?.conversationId) throw new Error('conversationId is required')
       if (!payload?.sourcePath) throw new Error('sourcePath is required')
-      const meta = await saveUpload(payload.conversationId, payload.sourcePath)
+      // The renderer stages a chip the moment the user picks the file and
+      // correlates these ticks to it by progressId — a big copy is not
+      // instant, and without them the composer sits blank until it lands.
+      const progressId = payload.progressId
+      const meta = await saveUpload(
+        payload.conversationId,
+        payload.sourcePath,
+        progressId
+          ? (copiedBytes, totalBytes) =>
+              broadcast('upload:copyProgress', { progressId, copiedBytes, totalBytes })
+          : undefined
+      )
       agent.corpus.emit('upload.completed', {
         filePath: meta.filePath,
         type: meta.type,
@@ -3229,7 +3245,12 @@ app.whenReady().then(async () => {
       properties: ['openFile', 'multiSelections']
     })
     if (result.canceled || result.filePaths.length === 0) return null
-    const attached = await attachFilesToProject(projectId, result.filePaths)
+    // Copying starts only once the picker closes, so these ticks double as
+    // the dialog's "the copy is running now" signal — it shows its bar on
+    // the first one rather than while the user is still browsing.
+    const attached = await attachFilesToProject(projectId, result.filePaths, (progress) =>
+      broadcast('projects:copyProgress', { projectId, ...progress })
+    )
     return attached.project
   })
 
@@ -3240,6 +3261,92 @@ app.whenReady().then(async () => {
   agent.corpus.on('index.reindexStarted', (p) => broadcast('reindex:started', p))
   agent.corpus.on('index.reindexProgress', (p) => broadcast('reindex:progress', p))
   agent.corpus.on('index.reindexed', (p) => broadcast('reindex:ended', p))
+
+  // Per-conversation diagnostic export — bundles everything relevant to one
+  // conversation into a zip under workspace/diagnostics/ for the developer.
+  // Serialized behind a single in-flight guard: the collectors read the same
+  // log files, and two overlapping runs would only fight over IO.
+  let diagnosticsRunning = false
+  ipcMain.handle(
+    'diagnostics:export',
+    async (_e, payload: { conversationId: string }): Promise<DiagnosticResult> => {
+      if (diagnosticsRunning) {
+        return {
+          ok: false,
+          error: 'another diagnostic export is already running',
+          conversationId: payload.conversationId,
+          conversationTitle: '',
+          fileName: '',
+          zipPath: '',
+          relativePath: '',
+          sizeBytes: 0,
+          fileCount: 0,
+          durationMs: 0,
+          modelOpinion: false,
+          groups: [],
+          warnings: []
+        }
+      }
+      diagnosticsRunning = true
+      try {
+        const config = await readConfig()
+        const provider = agent.thalamus.getActiveProvider()
+        // Cloud-only, by design: the opinion is a lean side-call and a local
+        // model is the one case where "quick" isn't true. No model at all and
+        // it's skipped outright.
+        const cloud = provider !== null && provider !== 'local'
+        return await exportConversationDiagnostics({
+          conversationId: payload.conversationId,
+          env: {
+            appVersion: app.getVersion(),
+            packaged: app.isPackaged,
+            provider,
+            model: agent.thalamus.getActiveModel(),
+            chatMode: config?.llm.mode ?? 'single',
+            locale: config?.locale ?? null
+          },
+          llm: cloud ? agent.thalamus : null,
+          toolCapability: (tool) => agent.cerebellum.getToolCapability(tool),
+          capabilities: agent.cerebellum
+            .getCapabilities()
+            .map((c) => ({ name: c.name, dir: c.dir })),
+          onProgress: (p) => broadcast('diagnostics:progress', p)
+        })
+      } finally {
+        diagnosticsRunning = false
+      }
+    }
+  )
+
+  // "Save a copy" on the confirmation card — the archive already lives in the
+  // workspace; this only duplicates it wherever the user points.
+  ipcMain.handle(
+    'diagnostics:saveCopy',
+    async (
+      _e,
+      payload: { zipPath: string; fileName: string }
+    ): Promise<{ ok: boolean; canceled?: boolean; error?: string }> => {
+      const mainWin = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+      if (!mainWin) return { ok: false, error: 'no window' }
+      const result = await dialog.showSaveDialog(mainWin, {
+        defaultPath: join(app.getPath('downloads'), payload.fileName),
+        filters: [{ name: 'Zip archive', extensions: ['zip'] }]
+      })
+      if (result.canceled || !result.filePath) return { ok: false, canceled: true }
+      try {
+        await copyDiagnosticArchive(payload.zipPath, result.filePath)
+        return { ok: true }
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      }
+    }
+  )
+
+  ipcMain.handle('diagnostics:reveal', (_e, zipPath: string): { ok: boolean } => {
+    if (!zipPath) return { ok: false }
+    shell.showItemInFolder(zipPath)
+    return { ok: true }
+  })
 
   // Conversations
   ipcMain.handle('conversation:list', async (): Promise<ConversationMeta[]> => {

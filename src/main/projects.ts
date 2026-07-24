@@ -3,6 +3,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { diskWriter } from '@main/io/diskWriter'
+import { copyFileWithProgress } from '@main/uploads/copy-progress'
 import { workspaceRoot } from '@main/workspace/root'
 
 /**
@@ -191,6 +192,20 @@ function resolveTilde(input: string): string {
   return path.resolve(input)
 }
 
+/**
+ * One tick of a project file-add. `copiedBytes`/`totalBytes` span the WHOLE
+ * batch (not the current file), so the dialog draws a single bar that only
+ * moves forward instead of N bars that restart per file.
+ */
+export type AttachFilesProgress = {
+  /** 1-based position of the file being copied. */
+  index: number
+  total: number
+  name: string
+  copiedBytes: number
+  totalBytes: number
+}
+
 export type AttachFilesResult = {
   project: Project
   added: ProjectFileRef[]
@@ -208,7 +223,8 @@ export type AttachFilesResult = {
  */
 export function attachFilesToProject(
   id: string,
-  sourcePaths: string[]
+  sourcePaths: string[],
+  onProgress?: (progress: AttachFilesProgress) => void
 ): Promise<AttachFilesResult> {
   return serialize(async () => {
     const projects = await loadProjects()
@@ -222,7 +238,19 @@ export function attachFilesToProject(
     const skipped: string[] = []
     const missing: string[] = []
 
-    for (const raw of sourcePaths) {
+    // Progress denominator: one cheap stat pass up front (only when someone
+    // is listening). Sources that fail to stat contribute nothing here and
+    // land in `missing` below, so the two passes agree.
+    let totalBytes = 0
+    if (onProgress) {
+      for (const raw of sourcePaths) {
+        const st = await fs.stat(resolveTilde(String(raw))).catch(() => null)
+        if (st?.isFile()) totalBytes += st.size
+      }
+    }
+    let copiedBytes = 0
+
+    for (const [i, raw] of sourcePaths.entries()) {
       const source = resolveTilde(String(raw))
       const stat = await fs.stat(source).catch(() => null)
       if (!stat || !stat.isFile()) {
@@ -230,13 +258,29 @@ export function attachFilesToProject(
         continue
       }
       const baseName = path.basename(source)
+      const report = onProgress
+        ? (fileCopied: number): void =>
+            onProgress({
+              index: i + 1,
+              total: sourcePaths.length,
+              name: baseName,
+              copiedBytes: copiedBytes + fileCopied,
+              totalBytes
+            })
+        : undefined
       if (knownNames.has(baseName)) {
         skipped.push(source)
+        // It counted toward the denominator in the pre-pass — credit it now
+        // or the bar can never reach the end.
+        copiedBytes += stat.size
+        report?.(0)
         continue
       }
       const finalName = await uniqueFilename(dir, baseName)
       const dest = path.join(dir, finalName)
-      await fs.copyFile(source, dest)
+      report?.(0)
+      await copyFileWithProgress(source, dest, stat.size, report)
+      copiedBytes += stat.size
       knownNames.add(finalName)
       added.push({ path: dest, name: finalName })
     }
