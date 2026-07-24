@@ -83,6 +83,7 @@ import type { ApprovalDecision } from '@main/runtime/amygdala'
 import { previewSchedule } from '@main/runtime/brainstem'
 import { COMPACTION_THRESHOLD } from '@main/runtime/compactor'
 import type { AskUserResponse } from '@main/runtime/cerebellum'
+import { LOCKED_CAPABILITIES } from '@main/runtime/cerebellum'
 import { deleteCapabilityFolder, importCapability } from '@main/runtime/capabilityImport'
 import { McpManager } from '@main/runtime/mcp/manager'
 import type { McpAddInput, McpHeader } from '@main/runtime/mcp/types'
@@ -2287,6 +2288,7 @@ app.whenReady().then(async () => {
       triggers: string[]
       requires: string[]
       official: boolean
+      core: boolean
       enabled: boolean
       error?: string
     }>
@@ -2304,6 +2306,7 @@ app.whenReady().then(async () => {
         triggers: c.triggers.keywords,
         requires: c.requires,
         official: bundled.has(c.name),
+        core: LOCKED_CAPABILITIES.has(c.name),
         enabled: !agent.cerebellum.isDisabled(c.name),
         error: c.error
       }))
@@ -2320,6 +2323,9 @@ app.whenReady().then(async () => {
   })
 
   ipcMain.handle('cerebellum:toggleCapability', async (_e, name: string, enabled: boolean) => {
+    // Locked core capabilities can never be disabled — refuse the write so a
+    // stray call can't persist a disabled entry the runtime would ignore anyway.
+    if (!enabled && LOCKED_CAPABILITIES.has(name)) return
     const cfg = await readConfig()
     const disabled = new Set(cfg?.disabledCapabilities ?? [])
     if (enabled) disabled.delete(name)
@@ -2412,6 +2418,7 @@ app.whenReady().then(async () => {
         status: c.status,
         enabled: !agent.cerebellum.isDisabled(c.name),
         official: Boolean(c.inProcess) || bundled.has(c.name),
+        core: LOCKED_CAPABILITIES.has(c.name),
         inProcess: Boolean(c.inProcess),
         dir: c.dir,
         error: c.error

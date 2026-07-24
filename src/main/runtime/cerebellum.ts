@@ -260,6 +260,8 @@ export type ManagedCapability = {
   status: CapabilityStatus
   enabled: boolean
   official: boolean
+  /** A locked core capability (see LOCKED_CAPABILITIES) — cannot be disabled. */
+  core: boolean
   inProcess: boolean
   dir: string
   error?: string
@@ -733,6 +735,30 @@ export const CORE_CAPABILITIES: ReadonlySet<string> = new Set([
   'operating-manual'
 ])
 
+/**
+ * The "core" capabilities surfaced in the Cellebrum settings panel with a
+ * primary "Core" badge, sorted last, and LOCKED — they can never be toggled
+ * off (from the UI, the agent's skill_disable, or a stale config entry). These
+ * are the load-bearing built-ins the app assumes are always present:
+ * self-management (skills), workflow delegation, introspection, the operating
+ * discipline, automations/procedures/projects scheduling, secrets, and the
+ * shared utilities. Distinct from CORE_CAPABILITIES above, which governs
+ * always-expose-to-the-model (no discovery hop) — a different concern that
+ * happens to overlap. setDisabled() filters this set out defensively, so
+ * membership here is the single source of truth for "cannot be disabled".
+ */
+export const LOCKED_CAPABILITIES: ReadonlySet<string> = new Set([
+  'workflow',
+  'automations',
+  'projects',
+  'introspect',
+  'operating-manual',
+  'procedures',
+  'secrets',
+  'skills',
+  'utilities'
+])
+
 /** Max non-core capabilities exposed per conversation before LRU eviction. */
 const ACTIVE_SET_MAX = 10
 
@@ -849,7 +875,10 @@ export class Cerebellum {
   }
 
   setDisabled(names: string[]): void {
-    this.disabled = new Set(names)
+    // Locked core capabilities can never be disabled — filter them out here so
+    // this is the single runtime chokepoint: a stale config entry, an agent's
+    // skill_disable, or a UI toggle can't remove a load-bearing built-in.
+    this.disabled = new Set(names.filter((n) => !LOCKED_CAPABILITIES.has(n)))
     this.generation++
   }
 

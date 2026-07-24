@@ -18,7 +18,8 @@ import {
   InformationCircleIcon,
   Loading03Icon,
   Refresh01Icon,
-  SecurityCheckIcon
+  SecurityCheckIcon,
+  SquareLock02Icon
 } from 'hugeicons-react'
 
 export function CelebrumPanel(): React.JSX.Element {
@@ -180,7 +181,12 @@ export function CelebrumPanel(): React.JSX.Element {
         ) : (
           <section className="bg-surface border-border flex flex-col rounded-2xl border">
             {[...capabilities]
-              .sort((a, b) => Number(a.official) - Number(b.official))
+              // Locked core capabilities sink to the very bottom; within each
+              // group official caps sort after user-imported ones. (Array.sort
+              // is stable, so same-key rows keep their load order.)
+              .sort(
+                (a, b) => Number(a.core) - Number(b.core) || Number(a.official) - Number(b.official)
+              )
               .map((cap, i) => (
                 <div key={cap.name}>
                   {i > 0 && <div className="border-border/60 border-t" />}
@@ -474,7 +480,16 @@ function CapabilityRow({
 
             {cap.enabled &&
               isOk &&
-              (cap.official ? (
+              (cap.core ? (
+                <Badge
+                  variant="default"
+                  size="sm"
+                  className="!bg-primary/10 !text-primary !ring-primary/30"
+                >
+                  <SquareLock02Icon size={11} />
+                  {t('settings.cellebrum.core')}
+                </Badge>
+              ) : cap.official ? (
                 <Badge
                   variant="default"
                   size="sm"
@@ -510,32 +525,43 @@ function CapabilityRow({
               <Delete02Icon size={16} />
             </button>
           )}
-          <div
-            role="tablist"
-            className="border-border bg-bg/40 inline-flex items-center rounded-lg border p-0.5"
-          >
-            {[false, true].map((val) => {
-              const active = val === cap.enabled
-              return (
-                <button
-                  key={String(val)}
-                  role="tab"
-                  type="button"
-                  aria-selected={active}
-                  onClick={() => onToggle(val)}
-                  className={cn(
-                    'rounded-md px-3 py-1 text-xs font-medium',
-                    'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-                    active
-                      ? 'bg-primary text-primary-fg shadow-sm'
-                      : 'text-muted hover:text-fg cursor-pointer'
-                  )}
-                >
-                  {t(val ? 'settings.wolffish.toggle.on' : 'settings.wolffish.toggle.off')}
-                </button>
-              )
-            })}
-          </div>
+          {cap.core ? (
+            // Locked core capability — no toggle; it can never be turned off.
+            <div
+              title={t('settings.cellebrum.lockedHint')}
+              className="border-border bg-bg/40 text-muted inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium"
+            >
+              <SquareLock02Icon size={12} />
+              {t('settings.cellebrum.alwaysOn')}
+            </div>
+          ) : (
+            <div
+              role="tablist"
+              className="border-border bg-bg/40 inline-flex items-center rounded-lg border p-0.5"
+            >
+              {[false, true].map((val) => {
+                const active = val === cap.enabled
+                return (
+                  <button
+                    key={String(val)}
+                    role="tab"
+                    type="button"
+                    aria-selected={active}
+                    onClick={() => onToggle(val)}
+                    className={cn(
+                      'rounded-md px-3 py-1 text-xs font-medium',
+                      'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+                      active
+                        ? 'bg-primary text-primary-fg shadow-sm'
+                        : 'text-muted hover:text-fg cursor-pointer'
+                    )}
+                  >
+                    {t(val ? 'settings.wolffish.toggle.on' : 'settings.wolffish.toggle.off')}
+                  </button>
+                )
+              })}
+            </div>
+          )}
         </div>
       </div>
 

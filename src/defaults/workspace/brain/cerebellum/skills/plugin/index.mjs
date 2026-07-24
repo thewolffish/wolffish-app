@@ -166,6 +166,7 @@ async function listSkills() {
     const tags = []
     if (c.official) tags.push('official')
     else tags.push('custom')
+    if (c.core) tags.push('core')
     if (!c.enabled) tags.push('disabled')
     if (c.status !== 'ok') tags.push(`error: ${c.error ?? 'unknown'}`)
     const toolCount = c.tools.length
@@ -174,7 +175,7 @@ async function listSkills() {
   }
   lines.push('')
   lines.push(
-    'Legend: *custom* skills can be disabled or deleted; *official* skills can be disabled but not deleted.'
+    'Legend: *custom* skills can be disabled or deleted; *official* skills can be disabled but not deleted; *core* skills are load-bearing and can be neither disabled nor deleted.'
   )
   return { success: true, output: lines.join('\n') }
 }
@@ -399,6 +400,12 @@ async function setEnabled(args, enabled) {
     return {
       success: false,
       error: `No skill named "${name}". Run skill_list to see exact names.`
+    }
+  }
+  if (!enabled && cap.core) {
+    return {
+      success: false,
+      error: `"${name}" is a core capability and can't be disabled — it's load-bearing for Wolffish and stays on. Disable a non-core skill instead.`
     }
   }
   if (cap.enabled === enabled) {

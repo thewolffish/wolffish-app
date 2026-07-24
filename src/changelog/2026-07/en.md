@@ -1,4 +1,14 @@
-## v1.0.227 — 2026-07-24 `Latest`
+## v1.0.228 — 2026-07-24 `Latest`
+
+### Workflow Mode, Working Again
+
+Put Wolffish in **workflow mode** — where it splits a big task into slices and runs them across **parallel agents it steers itself** — and in the previous version the delegation quietly never happened: the tools it uses to **plan phases, spawn agents, and gather their results had failed to load**, so the mode fell back to working alone with no hint of why. The cause was a tiny formatting slip in an internal file; it's **fixed**, and workflow mode plans, delegates, and collects work the way it should again.
+
+### Core Capabilities Can't Be Switched Off by Accident
+
+Wolffish's settings let you turn individual capabilities on and off — but a handful are **load-bearing**: the workflow engine, your secrets, skills, projects, automations, procedures, and the shared tools the rest leans on. Those now wear a **"Core" badge**, **settle at the bottom of the list** out of your way, and **can no longer be turned off** — a locked **"Always on"** marker sits where their switch used to be. Everything you added yourself stays exactly as toggleable as before; only the essentials are protected, so a stray click can't quietly pull the floor out from under a feature you depend on.
+
+## v1.0.227 — 2026-07-24
 
 ### Nothing You Send Has to Be Resent
 

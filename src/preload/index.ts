@@ -1095,6 +1095,8 @@ export type CapabilityEntry = {
   triggers: string[]
   requires: string[]
   official: boolean
+  /** A locked core capability — shows the Core badge, sorts last, can't be disabled. */
+  core: boolean
   enabled: boolean
   error?: string
 }
