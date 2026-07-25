@@ -1,4 +1,30 @@
-## v1.0.229 — 2026-07-25 `Latest`
+## v1.0.230 — 2026-07-25 `Latest`
+
+### Zoom Into What You're Looking At
+
+An image in a conversation opened big and stopped there — a screenshot with small print, a diagram with the one label you needed, and no way past whatever the screen happened to give you. The expanded view now **zooms to your cursor**: scroll and the pixel under the pointer stays exactly where it is, up to **eight times** in, then **drag to pan** around what you've magnified. A small toolbar carries the **live percentage** with zoom in, zoom out, and a press to snap back; `+`, `-`, and `0` do the same from the keyboard, and a **double-click** jumps in or back out. **Videos got the same surface** — a new expand button opens the player there, sized to **the picture's real shape** rather than an assumed widescreen, native controls and all. **PDFs expand too**, to a full 80% of the window, where the built-in viewer keeps its own scrolling and paging. Escape or a click outside closes any of them, and a drag that happens to end outside the frame no longer counts as that click.
+
+### One Conversation, One Story, Whichever List You Read It In
+
+The right-hand rail, the **History** page, and a project's conversation list each had their own idea of what to show, and only the rail was genuinely live. All three now share **one definition**, so a conversation reads identically wherever you meet it — and each of them **keeps up on its own**. Start a chat in the app, message from **WhatsApp or Telegram**, or let an **automation or a saved procedure** open one: the row appears **the moment its first turn starts**, carrying the same **pulsing chip**, instead of surfacing only once the work was already over. On the **Projects** page the **conversation counts and "last used" stamps** used to freeze the instant the page loaded — a reply arriving while you sat looking at it changed nothing on screen — and they **refresh themselves live** now. The small **source emoji** on a numbered chip, a project's icon or an automation's, used to appear only after a full re-index; it's there from the start.
+
+### Report a Bug Without Opening the Conversation First
+
+The **bug button** that packs up everything about a conversation that went wrong was reachable only from inside that conversation — which meant reopening it, and on the History page that's most of them. Every row there now carries **its own bug button**, so you can hand over a bundle for a conversation you aren't in. It rests for the chat you currently have open, because the composer's own button belongs to that one, and for a conversation whose very first turn is still running, which has nothing saved yet to collect. The export itself got steadier in three places: the collecting screen no longer **spins forever over an archive that already landed** — switching away and back was enough to cause it — returning to a run **already in flight now attaches to it** instead of reporting failure for work that was about to succeed, and the optional step that **asks the model what it thinks went wrong** gives up after ninety seconds, so a stalled provider costs the bundle one section rather than the whole export.
+
+### Point at a Folder Mid-Answer
+
+Handing Wolffish a **working folder** was locked the moment it started answering: the button went grey, and the folder you wanted it to look in had to wait for the turn to end. Adding one is **live now**, exactly like attaching a file or recording a take — the folder rides your **next queued message** rather than the running one. **Removing** a folder is still held while a turn is going, and deliberately so: the agent may be reading files in there this second, and the delete button says as much when you hover it.
+
+### Windows: PDF Tools and Shell Commands, Unstuck
+
+Two Windows-only faults, both of which looked like nothing was wrong at all. **Every PDF tool** — reading, searching, rendering a page — failed on its very first call, because a file path was assembled with the platform's own separator where the PDF engine insists on one particular character. The identical code was perfectly healthy on macOS and Linux, which is exactly why it stayed hidden. And a **shell command** that printed anything to the error stream — which is how `npm`, `git`, `pip`, and `ffmpeg` report ordinary progress — could be **reported as failed when it had fully succeeded**, its real output buried under error noise, whenever a stray `2>&1` was appended out of habit. That redirect never bought anything here, since both streams already come back together, so it's now **dropped before the command runs** and written down so the habit stops.
+
+### The Project Dialog Stops Shifting Under You
+
+Adding a file to a project moved everything below it twice — once when the progress bar appeared, again when that bar gave way to the finished file's row. The progress card and the file list now **share one shell and one row height**, so the block claims its space once and simply keeps it. And the **copy button** on a project's standing instructions used to sit parked over the first line the entire time you were writing; it now **appears when you hover** the block, like every other code block in the app.
+
+## v1.0.229 — 2026-07-25
 
 ### One Button Packs Up Everything That Went Wrong
 

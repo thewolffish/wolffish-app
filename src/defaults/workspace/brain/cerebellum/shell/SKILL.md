@@ -184,6 +184,7 @@ The selected shell determines the syntax that works. Mismatched syntax fails fas
 - **PowerShell (pwsh or powershell.exe)** — use PowerShell cmdlets and operators. `Get-ChildItem` (or its alias `ls`/`dir`), `Get-Content` (`cat`/`type`), `Start-Process`, `$env:NAME` for env vars, `2>$null` to discard stderr.
   - On Windows PowerShell 5.1 specifically, `&&` and `||` chain operators do NOT exist — use `;` for unconditional chaining, or wrap in `if ($?) { ... }` for conditional. pwsh 7+ supports `&&`/`||` natively.
   - `where` is an alias for `Where-Object`; to find an executable use `where.exe foo` or `Get-Command foo`.
+  - **Never append `2>&1`.** This tool already returns combined stdout+stderr, so it adds nothing — and on PowerShell it actively breaks the result. See "Never append 2>&1 on PowerShell" below.
 - **cmd.exe** — classic cmd syntax. `dir`, `type`, `set FOO=bar`, `%ENV%` expansion, `2>nul`, `&&` / `||` work.
 - **/bin/sh** — POSIX. `ls`, `cat`, `export FOO=bar`, `$ENV`, `2>/dev/null`, `&&` / `||`.
 
@@ -270,7 +271,16 @@ Notes:
 ## Rules
 
 - Always show the command to the user before running it.
-- Chain dependent commands with `&&` (fail fast), not `;`.
+- Chain dependent commands so a failure stops the chain — but the operator is
+  shell-specific, so check `shell:` in the `<device>` block first:
+  - `/bin/sh`, `cmd.exe`, `pwsh` 7+ → `&&`
+  - **Windows PowerShell 5.1 (`shell: powershell`) → `&&` is a hard parse
+    error** ("The token '&&' is not a valid statement separator in this
+    version"). Use `cmd1; if ($?) { cmd2 }`, or `;` when you don't need the
+    fail-fast.
+- Never append `2>&1` — this tool already returns combined stdout+stderr, and
+  on PowerShell the redirect turns a successful command into a reported
+  failure. Details in the PowerShell pitfalls section.
 - Prefer `git status` / `git diff` over `git status .` / `git diff .` (cleaner output).
 - For long-running commands (builds, installs), warn the user first.
 - If a command fails, read the error and try to fix it before retrying.
@@ -280,6 +290,28 @@ Notes:
 ## Windows PowerShell pitfalls
 
 These are the most common causes of wasted tool calls on Windows. Read this section if `<device>` shows `shell: powershell`.
+
+### Never append `2>&1` on PowerShell
+
+This is the single most expensive habit on Windows, because it *parses fine* — nothing errors, the result just comes back wrong.
+
+Redirecting a **native** command's stderr into the success stream makes PowerShell wrap every stderr line in a `NativeCommandError` record. That leaves `$?` false, which makes `powershell -Command` exit **1 even when the child exited 0**. The tool classifies exit≠0 as failure, so a command that fully succeeded is reported to you as FAILED, with its real output buried under `CategoryInfo` / `FullyQualifiedErrorId` / tilde-underline noise.
+
+Measured, same command both ways:
+
+| command | exit | reported |
+| --- | --- | --- |
+| `node noisy.js 2>&1` | 1 | ❌ FAILED (stdout buried in an error blob) |
+| `node noisy.js` | 0 | ✅ success (clean stdout) |
+
+This bites every modern CLI, because they write progress to stderr: `npm`, `uv`, `pip`, `git`, `ffmpeg`, `cargo`, `docker`. A real example — `uv run --with pymupdf …` printed `pymupdf ready` and `Installed 1 package`, and came back FAILED purely because of a trailing `2>&1`.
+
+**You never need it.** `shell_exec` already returns combined stdout+stderr (see Interface above). The runtime now strips a trailing bare `2>&1` on PowerShell as a backstop, but write commands without it:
+
+**Broken:** `node script.mjs 2>&1`
+**Correct:** `node script.mjs`
+
+`> file 2>&1` (send stderr to a log) and `cmd 2>&1 | Select-String x` (send stderr through a pipe) are left alone — those are real uses. To *discard* stderr use `2>$null`.
 
 ### Don't wrap PowerShell in PowerShell
 

@@ -1478,6 +1478,8 @@
     "selectFolder": "Select working folder",
     "clearFolder": "Clear working folder",
     "workingFolder": "Working folders",
+    "removeFolder": "Remove folder",
+    "removeFolderBusy": "Can't remove a folder while a turn is running",
     "addMore": "Add more",
     "dropToAttach": "Drop files to attach",
     "upload": {
@@ -2007,7 +2009,6 @@
     },
     "files": "Files ({{count}})",
     "addFiles": "Add files",
-    "addingFiles": "Adding…",
     "copyingFiles": "Copying files into Wolffish",
     "copyingCount": "File {{index}} of {{total}}",
     "removeFile": "Remove file",
@@ -2062,7 +2063,8 @@
     "deleteConfirm": "Delete",
     "deleteCancel": "Cancel",
     "newChat": "New chat",
-    "processing": "Processing…"
+    "processing": "Processing…",
+    "diagnosticsActive": "Export this conversation from the chat screen"
   },
   "units": {
     "bytes": "{{value}} B",

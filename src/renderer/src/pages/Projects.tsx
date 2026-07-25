@@ -6,6 +6,7 @@ import { Modal } from '@components/core/Modal'
 import { useToast } from '@components/core/toast/useToast'
 import { CONVERSATION_CHIP_BASE, conversationChipClasses } from '@lib/conversation-chip'
 import { mapConversationMessages } from '@lib/conversation-open'
+import { buildConversationRows, runPhaseKey, type ConversationRow } from '@lib/conversation-rows'
 import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
 import { pageTopPadding } from '@lib/utils/platform'
@@ -76,7 +77,7 @@ export function Projects(): React.JSX.Element {
   const [deleteTarget, setDeleteTarget] = useState<Project | null>(null)
   /** Project whose conversations dialog is open. */
   const [convsProject, setConvsProject] = useState<Project | null>(null)
-  const [convDeleteTarget, setConvDeleteTarget] = useState<ConversationMeta | null>(null)
+  const [convDeleteTarget, setConvDeleteTarget] = useState<ConversationRow | null>(null)
 
   // Per-project conversation stats derived from the conversation index:
   // count + the latest activity timestamp ("last used" beats "last edited"
@@ -100,13 +101,15 @@ export function Projects(): React.JSX.Element {
     return () => clearInterval(id)
   }, [])
 
+  // Projects own the page's loading gate; the conversation index is fetched by
+  // the live effect below (which also owns the mount fetch, so there is never
+  // a double call) and only feeds counts, stamps and the conversations dialog.
   useEffect(() => {
     let cancelled = false
-    Promise.all([window.api.projects.list(), window.api.conversation.list().catch(() => [])])
-      .then(([list, convMetas]) => {
-        if (cancelled) return
-        setProjects(list)
-        setMetas(convMetas)
+    window.api.projects
+      .list()
+      .then((list) => {
+        if (!cancelled) setProjects(list)
       })
       .catch(() => {})
       .finally(() => {
@@ -128,6 +131,33 @@ export function Projects(): React.JSX.Element {
         .catch(() => {})
     })
   }, [])
+
+  // Same for the conversation index, which the mount fetch above would
+  // otherwise freeze for the page's whole life: a project conversation can be
+  // created, titled or replied to at any moment from ANY channel (in-app,
+  // WhatsApp, Telegram, an automation), and the counts, "last used" stamps and
+  // the conversations dialog all read from it. Debounced against a turn's write
+  // bursts, and re-run on every turn start/end — that transition is exactly
+  // when a new conversation appears.
+  const statusKey = useMemo(() => runPhaseKey(runStatuses), [runStatuses])
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const fetchMetas = (): void => {
+      void window.api.conversation
+        .list()
+        .then(setMetas)
+        .catch(() => {})
+    }
+    fetchMetas()
+    const off = window.api.conversation.onChanged(() => {
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(fetchMetas, 250)
+    })
+    return () => {
+      if (timer) clearTimeout(timer)
+      off()
+    }
+  }, [statusKey])
 
   const handleCreate = useCallback(() => {
     void window.api.projects
@@ -203,14 +233,16 @@ export function Projects(): React.JSX.Element {
   )
 
   const handleDeleteConversation = useCallback(async () => {
-    const target = convDeleteTarget
-    if (!target) return
-    const result = await window.api.conversation.delete(target.id)
+    if (!convDeleteTarget) return
+    const id = convDeleteTarget.conversationId
+    const result = await window.api.conversation.delete(id)
     if (result.ok) {
-      closeConversation(target.id)
+      // Drops the lingering run status too, so a live-only row can't survive
+      // its own deletion as a synthesized ghost.
+      closeConversation(id)
       // Optimistic drop — the cortex row lingers ~500ms after the file goes;
-      // the next page mount re-fetches the reconciled truth.
-      setMetas((prev) => prev.filter((m) => m.id !== target.id))
+      // the conversation:changed push re-fetches the reconciled truth.
+      setMetas((prev) => prev.filter((m) => m.id !== id))
     }
     setConvDeleteTarget(null)
   }, [convDeleteTarget, closeConversation])
@@ -380,7 +412,24 @@ export function Projects(): React.JSX.Element {
       >
         {(() => {
           if (!convsProject) return null
-          const rows = metas.filter((m) => m.projectId === convsProject.id)
+          // The rail's exact merge — indexed conversations PLUS this session's
+          // live runs — so a conversation started inside this project shows its
+          // pulsing chip here too, whatever channel started it. A live-only row
+          // has no indexed projectId yet, so the one being created right now
+          // bridges through on its id (only while THIS project is the active
+          // one — otherwise it belongs to some other project's dialog).
+          const rows = buildConversationRows({
+            metas,
+            runStatuses,
+            projects,
+            untitled: t('chat.conversationsUntitled')
+          }).filter(
+            (r) =>
+              r.projectId === convsProject.id ||
+              (!r.indexed &&
+                activeProject?.id === convsProject.id &&
+                r.conversationId === activeConversationId)
+          )
           if (rows.length === 0) {
             return (
               <p className="text-muted py-6 text-center text-sm">{t('projects.noConversations')}</p>
@@ -388,18 +437,13 @@ export function Projects(): React.JSX.Element {
           }
           return (
             <div className="flex max-h-96 flex-col gap-0.5 overflow-y-auto">
-              {rows.map((conv, index) => {
-                const isActive = activeConversationId === conv.id
-                const live = runStatuses[conv.id]
-                const phase = live?.phase ?? null
-                const processing = phase === 'processing'
-                const title =
-                  conv.title && conv.title !== 'Untitled'
-                    ? conv.title
-                    : (live?.title ?? t('chat.conversationsUntitled'))
+              {rows.map((row, index) => {
+                const isActive = activeConversationId === row.conversationId
+                const processing = row.phase === 'processing'
+                const title = row.title
                 return (
                   <div
-                    key={conv.id}
+                    key={row.conversationId}
                     className={cn(
                       'group flex items-center gap-3 rounded-xl px-4 py-3',
                       // History's row treatment, inverted for the surface-
@@ -410,14 +454,14 @@ export function Projects(): React.JSX.Element {
                     )}
                     onClick={() => {
                       setConvsProject(null)
-                      void handleResumeConversation(conv.id)
+                      void handleResumeConversation(row.conversationId)
                     }}
                     role="button"
                     tabIndex={0}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') {
                         setConvsProject(null)
-                        void handleResumeConversation(conv.id)
+                        void handleResumeConversation(row.conversationId)
                       }
                     }}
                   >
@@ -425,7 +469,7 @@ export function Projects(): React.JSX.Element {
                       aria-hidden
                       className={cn(
                         CONVERSATION_CHIP_BASE,
-                        conversationChipClasses(phase, isActive)
+                        conversationChipClasses(row.phase, isActive)
                       )}
                     >
                       {index + 1}
@@ -434,20 +478,20 @@ export function Projects(): React.JSX.Element {
                       <div className="flex min-w-0 items-center gap-1.5">
                         <span className="text-fg truncate text-sm font-medium">{title}</span>
                         <ChannelIcon
-                          channel={conv.channel}
+                          channel={row.channel}
                           size={12}
                           className="text-muted shrink-0"
                         />
                       </div>
                       <span className="text-muted text-xs">
-                        {formatFromNow(conv.updatedAt, now, locale)}
+                        {formatFromNow(row.updatedAt, now, locale)}
                       </span>
                     </div>
                     <button
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation()
-                        if (!processing) setConvDeleteTarget(conv)
+                        if (!processing) setConvDeleteTarget(row)
                       }}
                       disabled={processing}
                       aria-label={t('history.delete')}

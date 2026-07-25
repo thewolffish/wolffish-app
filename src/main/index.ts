@@ -3266,11 +3266,22 @@ app.whenReady().then(async () => {
   // conversation into a zip under workspace/diagnostics/ for the developer.
   // Serialized behind a single in-flight guard: the collectors read the same
   // log files, and two overlapping runs would only fight over IO.
-  let diagnosticsRunning = false
+  //
+  // A caller that arrives while a run is in flight ATTACHES to it rather than
+  // being turned away. The overlay is remounted by things that have nothing to
+  // do with the export (switching session and back re-evaluates its render
+  // gate), and a fresh mount that got "already running" would show a failure
+  // card for a run that is still going and about to succeed. Same conversation
+  // means the same bundle either way; a DIFFERENT conversation is a real
+  // conflict and still gets told so.
+  let diagnosticsRunning: { conversationId: string; run: Promise<DiagnosticResult> } | null = null
   ipcMain.handle(
     'diagnostics:export',
     async (_e, payload: { conversationId: string }): Promise<DiagnosticResult> => {
       if (diagnosticsRunning) {
+        if (diagnosticsRunning.conversationId === payload.conversationId) {
+          return await diagnosticsRunning.run
+        }
         return {
           ok: false,
           error: 'another diagnostic export is already running',
@@ -3287,8 +3298,7 @@ app.whenReady().then(async () => {
           warnings: []
         }
       }
-      diagnosticsRunning = true
-      try {
+      const run = (async (): Promise<DiagnosticResult> => {
         const config = await readConfig()
         const provider = agent.thalamus.getActiveProvider()
         // Cloud-only, by design: the opinion is a lean side-call and a local
@@ -3312,8 +3322,14 @@ app.whenReady().then(async () => {
             .map((c) => ({ name: c.name, dir: c.dir })),
           onProgress: (p) => broadcast('diagnostics:progress', p)
         })
+      })()
+      // Published before the first await inside `run` can yield, so a caller
+      // arriving mid-run always finds it.
+      diagnosticsRunning = { conversationId: payload.conversationId, run }
+      try {
+        return await run
       } finally {
-        diagnosticsRunning = false
+        diagnosticsRunning = null
       }
     }
   )
@@ -3369,6 +3385,7 @@ app.whenReady().then(async () => {
           updatedAt: r.updatedAt,
           channel: r.channel as ConversationMeta['channel'],
           projectId: r.projectId,
+          icon: r.icon,
           messageCount: r.messageCount
         }))
       }

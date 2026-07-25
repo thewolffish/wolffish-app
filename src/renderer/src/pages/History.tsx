@@ -1,7 +1,9 @@
 import { ChannelIcon } from '@components/common/channel-icon/ChannelIcon'
+import { DiagnosticExportOverlay } from '@components/common/diagnostic-export-overlay/DiagnosticExportOverlay'
 import { Button } from '@components/core/Button'
 import { Modal } from '@components/core/Modal'
 import { CONVERSATION_CHIP_BASE, conversationChipClasses } from '@lib/conversation-chip'
+import { buildConversationRows, runPhaseKey, type ConversationRow } from '@lib/conversation-rows'
 import { RTL_LOCALES } from '@lib/i18n'
 import { mapConversationMessages } from '@lib/conversation-open'
 import { cn } from '@lib/utils/cn'
@@ -10,8 +12,14 @@ import type { ConversationMeta, Project } from '@preload/index'
 import { useFlow } from '@providers/flow/useFlow'
 import { useSessions } from '@providers/sessions/useSessions'
 import { useLocale } from '@providers/locale/useLocale'
-import { ArrowLeft02Icon, ArrowRight02Icon, BubbleChatIcon, Delete01Icon } from 'hugeicons-react'
-import { useCallback, useEffect, useState } from 'react'
+import {
+  ArrowLeft02Icon,
+  ArrowRight02Icon,
+  BubbleChatIcon,
+  Bug01Icon,
+  Delete01Icon
+} from 'hugeicons-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 // Varied title-bar widths so the loading skeleton looks like real conversation rows.
@@ -49,7 +57,11 @@ export function History(): React.JSX.Element {
   // Skeleton ONLY on the first-ever load (cold cache). Return visits seed from
   // the cache above and refresh silently — no skeleton flash.
   const [loading, setLoading] = useState(() => cachedConversations === null)
-  const [deleteTarget, setDeleteTarget] = useState<ConversationMeta | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<ConversationRow | null>(null)
+  // Diagnostic export target — the same per-conversation bundle the chat
+  // composer's bug button produces, reachable for a conversation you are not
+  // currently in (which is most of them, on this page).
+  const [diagnosticsTarget, setDiagnosticsTarget] = useState<string | null>(null)
 
   // The SINGLE fetch path (mount + live refresh). Writes the module cache so
   // the next remount paints instantly. Delete mutates state/cache locally
@@ -72,6 +84,12 @@ export function History(): React.JSX.Element {
   // fires after the cortex row is (re)indexed/removed, so this page stays fresh
   // for conversations arriving on any channel or from an autonomous run).
   // Debounced to coalesce a turn's write bursts.
+  //
+  // It ALSO re-runs whenever a turn starts or ends anywhere (statusKey) — the
+  // rail's rule, for the rail's reason: that transition is exactly when a new
+  // conversation can appear, whatever channel it came from, and the list call
+  // is cortex-backed at ~1ms.
+  const statusKey = useMemo(() => runPhaseKey(runStatuses), [runStatuses])
   useEffect(() => {
     // The mount refresh rides the same timer as the live pushes: scheduled,
     // never called synchronously in the effect body (setState-in-effect
@@ -85,7 +103,23 @@ export function History(): React.JSX.Element {
       if (timer) clearTimeout(timer)
       off()
     }
-  }, [refresh])
+  }, [refresh, statusKey])
+
+  // Indexed conversations MERGED with this session's live runs, so a
+  // conversation started anywhere — in-app, WhatsApp, Telegram, an automation,
+  // a procedure — shows up here the moment its first turn starts, with the
+  // same pulsing number chip the rail gives it, instead of only once the work
+  // is over and the cortex has caught up.
+  const rows = useMemo(
+    () =>
+      buildConversationRows({
+        metas: conversations,
+        runStatuses,
+        projects,
+        untitled: t('chat.conversationsUntitled')
+      }),
+    [conversations, runStatuses, projects, t]
+  )
 
   const handleResume = useCallback(
     async (id: string) => {
@@ -107,18 +141,18 @@ export function History(): React.JSX.Element {
 
   const handleDelete = useCallback(async () => {
     if (!deleteTarget) return
-    const target = deleteTarget
+    const id = deleteTarget.conversationId
     // Main refuses while the conversation has a turn in flight (ok:false) —
     // the row's disabled state should prevent it, this is the backstop.
-    const result = await window.api.conversation.delete(target.id)
+    const result = await window.api.conversation.delete(id)
     if (result.ok) {
-      closeConversation(target.id)
+      closeConversation(id)
       // Drop the row optimistically. deleteConversation removes the FILE, but
       // the cortex row lingers until the watcher's removeFile (~500ms) — so a
       // refresh() here would re-fetch the still-indexed row and flash it back.
       // The conversation:changed push reconciles the list silently right after.
-      cachedConversations = cachedConversations?.filter((c) => c.id !== target.id) ?? null
-      setConversations((prev) => prev.filter((c) => c.id !== target.id))
+      cachedConversations = cachedConversations?.filter((c) => c.id !== id) ?? null
+      setConversations((prev) => prev.filter((c) => c.id !== id))
     }
     setDeleteTarget(null)
   }, [deleteTarget, closeConversation])
@@ -174,53 +208,39 @@ export function History(): React.JSX.Element {
               ))}
             </div>
           )}
-          {!loading && conversations.length === 0 && (
+          {!loading && rows.length === 0 && (
             <div className="text-muted flex flex-1 flex-col items-center justify-center gap-3 text-center">
               <BubbleChatIcon size={40} className="opacity-40" />
               <p className="text-sm">{t('history.empty')}</p>
             </div>
           )}
-          {!loading && conversations.length > 0 && (
+          {!loading && rows.length > 0 && (
             <div className="grid grid-cols-1 gap-x-3 gap-y-1 md:grid-cols-2">
-              {conversations.map((conv, index) => {
-                const isActive = activeConversationId === conv.id
-                const live = runStatuses[conv.id]
-                const phase = live?.phase ?? null
-                const processing = phase === 'processing'
-                // Same title preference as the rail: while the indexed title
-                // is still the pre-titling 'Untitled' sentinel, show the
-                // live-status title if one exists — never regress real → Untitled.
-                const title =
-                  conv.title && conv.title !== 'Untitled' ? conv.title : (live?.title ?? conv.title)
-                // Same emoji rule as the rail badge: project emoji wins,
-                // then the stamped automation/procedure icon, else the
-                // channel glyph below.
-                const sourceIcon =
-                  (conv.projectId
-                    ? projects.find((p) => p.id === conv.projectId)?.icon
-                    : undefined) ??
-                  conv.icon ??
-                  null
+              {rows.map((row, index) => {
+                const isActive = activeConversationId === row.conversationId
+                const processing = row.phase === 'processing'
+                const title = row.title
+                const sourceIcon = row.icon
                 return (
                   <div
-                    key={conv.id}
+                    key={row.conversationId}
                     className={cn(
                       'group flex items-center gap-3 rounded-xl px-4 py-3',
                       'hover:bg-surface cursor-pointer',
                       isActive && 'bg-surface border-border border'
                     )}
-                    onClick={() => handleResume(conv.id)}
+                    onClick={() => handleResume(row.conversationId)}
                     role="button"
                     tabIndex={0}
                     onKeyDown={(e) => {
-                      if (e.key === 'Enter') void handleResume(conv.id)
+                      if (e.key === 'Enter') void handleResume(row.conversationId)
                     }}
                   >
                     <span
                       aria-hidden
                       className={cn(
                         CONVERSATION_CHIP_BASE,
-                        conversationChipClasses(phase, isActive)
+                        conversationChipClasses(row.phase, isActive)
                       )}
                     >
                       {index + 1}
@@ -234,36 +254,72 @@ export function History(): React.JSX.Element {
                           </span>
                         ) : (
                           <ChannelIcon
-                            channel={conv.channel}
+                            channel={row.channel}
                             size={12}
                             className="text-muted shrink-0"
                           />
                         )}
                       </div>
                       <span className="text-muted text-xs">
-                        {relativeTime(conv.updatedAt, locale)}
+                        {relativeTime(row.updatedAt, locale)}
                       </span>
                     </div>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        if (!processing) setDeleteTarget(conv)
-                      }}
-                      disabled={processing}
-                      aria-label={t('history.delete')}
-                      title={processing ? t('history.processing') : undefined}
-                      className={cn(
-                        'text-muted rounded-lg p-1.5 opacity-0',
-                        'group-hover:opacity-100',
-                        processing
-                          ? 'cursor-not-allowed opacity-40'
-                          : 'cursor-pointer hover:text-red-600 dark:hover:text-red-400',
-                        'focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-accent'
-                      )}
-                    >
-                      <Delete01Icon size={14} />
-                    </button>
+                    {/* Row actions as one cluster — the row's own gap-3 would
+                        read as two unrelated controls rather than a pair. */}
+                    <div className="flex shrink-0 items-center gap-0.5">
+                      {/* Diagnostic export, disabled for the conversation that
+                          is currently open: the chat composer carries its own
+                          export button, and that live session is what persists
+                          the conversation — collecting it from here would read
+                          whatever the session had last flushed rather than what
+                          is on screen. A conversation merely PROCESSING in the
+                          background stays exportable; a run that has gone wrong
+                          is exactly when this gets pressed, and it only reads.
+                          Also off while the row is live-only (`!indexed`): that
+                          conversation isn't in the index — for an in-app first
+                          turn it isn't even on disk yet — so there is nothing
+                          to collect until the index catches up. */}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          if (!isActive && row.indexed) setDiagnosticsTarget(row.conversationId)
+                        }}
+                        disabled={isActive || !row.indexed}
+                        aria-label={t('diagnostics.button')}
+                        title={isActive ? t('history.diagnosticsActive') : t('diagnostics.button')}
+                        className={cn(
+                          'text-muted rounded-lg p-1.5 opacity-0',
+                          'group-hover:opacity-100',
+                          isActive || !row.indexed
+                            ? 'cursor-not-allowed opacity-40'
+                            : 'cursor-pointer hover:text-fg',
+                          'focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-accent'
+                        )}
+                      >
+                        <Bug01Icon size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          if (!processing) setDeleteTarget(row)
+                        }}
+                        disabled={processing}
+                        aria-label={t('history.delete')}
+                        title={processing ? t('history.processing') : undefined}
+                        className={cn(
+                          'text-muted rounded-lg p-1.5 opacity-0',
+                          'group-hover:opacity-100',
+                          processing
+                            ? 'cursor-not-allowed opacity-40'
+                            : 'cursor-pointer hover:text-red-600 dark:hover:text-red-400',
+                          'focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-accent'
+                        )}
+                      >
+                        <Delete01Icon size={14} />
+                      </button>
+                    </div>
                   </div>
                 )
               })}
@@ -299,6 +355,16 @@ export function History(): React.JSX.Element {
       >
         <p className="text-muted">{t('history.deleteWarning')}</p>
       </Modal>
+
+      {/* Portals to <body> and owns the screen until the archive is written.
+          History unmounts on navigation, so it needs no visibility gate the way
+          the always-mounted Chat sessions do. */}
+      {diagnosticsTarget && (
+        <DiagnosticExportOverlay
+          conversationId={diagnosticsTarget}
+          onClose={() => setDiagnosticsTarget(null)}
+        />
+      )}
     </main>
   )
 }

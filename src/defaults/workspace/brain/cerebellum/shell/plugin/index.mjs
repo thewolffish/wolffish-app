@@ -24,13 +24,13 @@ let shellPromise = null
 
 async function probeWindowsShell() {
   const candidates = [
-    { name: 'pwsh', args: ['-NoProfile', '-NonInteractive', '-Command'] },
-    { name: 'powershell', args: ['-NoProfile', '-NonInteractive', '-Command'] }
+    { name: 'pwsh', args: ['-NoProfile', '-NonInteractive', '-Command'], powershell: true },
+    { name: 'powershell', args: ['-NoProfile', '-NonInteractive', '-Command'], powershell: true }
   ]
   for (const c of candidates) {
     try {
       await execFileP('where', [c.name], { windowsHide: true })
-      return { bin: c.name, args: c.args }
+      return { bin: c.name, args: c.args, powershell: c.powershell }
     } catch {
       // not on PATH
     }
@@ -46,6 +46,38 @@ function detectShell() {
   }
   shellPromise = probeWindowsShell().catch(() => ({ bin: 'cmd.exe', args: ['/c'] }))
   return shellPromise
+}
+
+/**
+ * Drop a trailing bare `2>&1` when the shell is PowerShell.
+ *
+ * `2>&1` is a POSIX reflex and it parses fine in PowerShell, so it fails
+ * silently rather than loudly: redirecting a NATIVE command's stderr into the
+ * success stream makes PowerShell wrap every stderr line in a
+ * NativeCommandError record, which leaves `$?` false, which makes
+ * `powershell -Command` exit 1 — even when the child exited 0. A command that
+ * fully succeeded then gets reported to the model as FAILED, with its real
+ * output buried under CategoryInfo/FullyQualifiedErrorId noise. Measured:
+ * `node noisy.js 2>&1` exits 1, the same command without it exits 0.
+ *
+ * The redirect buys nothing here regardless — execForeground already returns
+ * combine(stdout, stderr) — so on PowerShell it is pure downside.
+ *
+ * Deliberately narrow. Only a TRAILING `2>&1` is dropped, and only when the
+ * rest of the command has no other `>`: that leaves `cmd > out.log 2>&1`
+ * (stderr belongs in the file) and `cmd 2>&1 | Select-String x` (stderr
+ * belongs in the pipe) exactly as written. cmd.exe and /bin/sh are never
+ * touched — POSIX behaviour is byte-for-byte unchanged.
+ */
+const TRAILING_STDERR_MERGE_RE = /\s+2>&1\s*$/
+
+function stripRedundantStderrMerge(command, shell) {
+  if (!shell?.powershell) return command
+  const match = TRAILING_STDERR_MERGE_RE.exec(command)
+  if (!match) return command
+  const head = command.slice(0, match.index)
+  if (head.includes('>')) return command
+  return head.trim() || command
 }
 
 // ---------------------------------------------------------------------------
@@ -418,6 +450,10 @@ async function execShell(args, signal) {
       await runCollect('sudo', ['-A', '-v'], execEnv)
     }
   }
+
+  // Applied after elevation rewriting so both dispatch paths get the same
+  // command text. No-op on cmd.exe and /bin/sh.
+  execCommand = stripRedundantStderrMerge(execCommand, shell)
 
   if (args?.background === true) {
     return execBackground({ command: execCommand, cwd, shell, env: execEnv })

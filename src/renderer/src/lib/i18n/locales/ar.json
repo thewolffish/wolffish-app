@@ -1474,6 +1474,8 @@
     "selectFolder": "اختر مجلد العمل",
     "clearFolder": "إزالة مجلد العمل",
     "workingFolder": "مجلدات العمل",
+    "removeFolder": "إزالة المجلد",
+    "removeFolderBusy": "لا يمكن إزالة مجلد أثناء تشغيل الدور",
     "addMore": "إضافة المزيد",
     "dropToAttach": "أفلِت الملفات للإرفاق",
     "upload": {
@@ -2260,7 +2262,6 @@
     },
     "files": "الملفات ({{count}})",
     "addFiles": "إضافة ملفات",
-    "addingFiles": "جارٍ الإضافة…",
     "copyingFiles": "جارٍ نسخ الملفات إلى وولففيش",
     "copyingCount": "الملف {{index}} من {{total}}",
     "removeFile": "إزالة الملف",
@@ -2315,7 +2316,8 @@
     "deleteConfirm": "حذف",
     "deleteCancel": "إلغاء",
     "newChat": "محادثة جديدة",
-    "processing": "قيد المعالجة…"
+    "processing": "قيد المعالجة…",
+    "diagnosticsActive": "صدّر هذه المحادثة من شاشة الدردشة"
   },
   "units": {
     "bytes": "{{value}} بايت",

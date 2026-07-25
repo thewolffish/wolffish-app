@@ -69,6 +69,8 @@ export type ConversationSummary = {
   sizeBytes: number
   sealed: boolean
   projectId?: string
+  /** Source emoji (automation/procedure icon) for the rail's number-chip badge. */
+  icon?: string
   sourceFile: string
 }
 
@@ -94,7 +96,10 @@ export type CortexOptions = {
 // v3: conversations.project_id — the bump forces a full rebuild on launch,
 // which re-ingests every conversation file and backfills the column for
 // rows indexed before projects existed.
-const SCHEMA_VERSION = 3
+// v4: conversations.icon — same deal for the stamped automation/procedure
+// emoji. Without it the list fast path returned no icon, so the rail's
+// number-chip badge only ever appeared on a cold index.
+const SCHEMA_VERSION = 4
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS records (
@@ -140,6 +145,7 @@ CREATE TABLE IF NOT EXISTS conversations (
   size_bytes INTEGER NOT NULL,
   sealed INTEGER NOT NULL,
   project_id TEXT,
+  icon TEXT,
   source_file TEXT NOT NULL
 );
 
@@ -625,7 +631,7 @@ export class Cortex {
     params.push(Math.min(Math.max(opts.limit ?? 30, 1), 500))
     const rows = db
       .prepare(
-        `SELECT id, title, channel, created_at, updated_at, message_count, size_bytes, sealed, project_id, source_file
+        `SELECT id, title, channel, created_at, updated_at, message_count, size_bytes, sealed, project_id, icon, source_file
          FROM conversations ${where} ORDER BY updated_at DESC LIMIT ?`
       )
       .all(...params) as Array<{
@@ -638,6 +644,7 @@ export class Cortex {
       size_bytes: number
       sealed: number
       project_id: string | null
+      icon: string | null
       source_file: string
     }>
     return rows.map((r) => ({
@@ -650,6 +657,7 @@ export class Cortex {
       sizeBytes: r.size_bytes,
       sealed: r.sealed === 1,
       projectId: r.project_id ?? undefined,
+      icon: r.icon ?? undefined,
       sourceFile: r.source_file
     }))
   }
@@ -836,8 +844,8 @@ export class Cortex {
         const c = result.conversation
         db.prepare(
           `INSERT OR REPLACE INTO conversations
-           (id, title, channel, created_at, updated_at, message_count, size_bytes, sealed, project_id, source_file)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           (id, title, channel, created_at, updated_at, message_count, size_bytes, sealed, project_id, icon, source_file)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         ).run(
           c.id,
           c.title,
@@ -848,6 +856,7 @@ export class Cortex {
           c.sizeBytes,
           c.sealed,
           c.projectId,
+          c.icon,
           f.rel
         )
       }

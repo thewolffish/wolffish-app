@@ -1,7 +1,14 @@
+import { MediaLightbox } from '@components/common/media-lightbox/MediaLightbox'
 import { useUploadBlob } from '@hooks/use-upload-blob/useUploadBlob'
 import { cn } from '@lib/utils/cn'
-import { Download01Icon, FolderOpenIcon, LinkSquare02Icon, VideoOffIcon } from 'hugeicons-react'
-import { useCallback } from 'react'
+import {
+  ArrowExpandIcon,
+  Download01Icon,
+  FolderOpenIcon,
+  LinkSquare02Icon,
+  VideoOffIcon
+} from 'hugeicons-react'
+import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 export type VideoPlayerProps = {
@@ -54,6 +61,7 @@ function ActiveVideo({
   fileName: string
 }): React.JSX.Element {
   const { url, error } = useUploadBlob(filePath, mimeType)
+  const [open, setOpen] = useState(false)
 
   const openExternal = useCallback(async () => {
     try {
@@ -115,6 +123,19 @@ function ActiveVideo({
         </span>
         <button
           type="button"
+          onClick={() => setOpen(true)}
+          disabled={!url}
+          title="Expand"
+          className={cn(
+            'text-muted hover:text-fg flex shrink-0 cursor-pointer items-center justify-center rounded p-1',
+            'disabled:cursor-default disabled:opacity-40',
+            'focus-visible:ring-2 focus-visible:ring-accent'
+          )}
+        >
+          <ArrowExpandIcon size={14} />
+        </button>
+        <button
+          type="button"
           onClick={openExternal}
           title="Open in default player"
           className={cn(
@@ -147,6 +168,53 @@ function ActiveVideo({
           <Download01Icon size={14} />
         </button>
       </div>
+      {/* Portals to document.body, so nesting it in the card costs no layout. */}
+      {url && (
+        <VideoLightbox open={open} onClose={() => setOpen(false)} url={url} fileName={fileName} />
+      )}
     </div>
+  )
+}
+
+export type VideoLightboxProps = {
+  open: boolean
+  onClose: () => void
+  url: string
+  fileName: string
+}
+
+/**
+ * Expanded video on the same zoom/pan surface as the image overlay. The ratio
+ * comes from the decoded stream rather than an assumed 16:9, so the frame hugs
+ * the picture. Native controls live inside the transform and therefore slide
+ * out of frame while zoomed — reset (the toolbar, `0`, or a double-click)
+ * brings them back.
+ */
+export function VideoLightbox({
+  open,
+  onClose,
+  url,
+  fileName
+}: VideoLightboxProps): React.JSX.Element | null {
+  const [ratio, setRatio] = useState(16 / 9)
+
+  return (
+    <MediaLightbox
+      open={open}
+      onClose={onClose}
+      label={fileName}
+      frameStyle={{ aspectRatio: `${ratio}`, width: `min(80vw, calc(80vh * ${ratio}))` }}
+    >
+      <video
+        src={url}
+        controls
+        preload="metadata"
+        className="h-full w-full bg-black object-contain"
+        onLoadedMetadata={(e) => {
+          const { videoWidth, videoHeight } = e.currentTarget
+          if (videoWidth && videoHeight) setRatio(videoWidth / videoHeight)
+        }}
+      />
+    </MediaLightbox>
   )
 }

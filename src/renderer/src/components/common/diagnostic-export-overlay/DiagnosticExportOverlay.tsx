@@ -71,14 +71,17 @@ export function DiagnosticExportOverlay({
   useEffect(() => {
     if (startedRef.current) return
     startedRef.current = true
-    let cancelled = false
+    // No `cancelled` flag here, deliberately. It would pair with the guard above
+    // to hang the overlay forever: StrictMode mounts, runs the cleanup, then
+    // mounts again — and on that second pass `startedRef` short-circuits before
+    // a fresh flag is created, so the first pass's flag stays true and swallows
+    // the only result this component will ever receive. The archive lands on
+    // disk and the screen keeps spinning over it. Settling state after a real
+    // unmount is a harmless no-op in React 18+, so there is nothing to guard.
     window.api.diagnostics
       .export({ conversationId })
-      .then((r) => {
-        if (!cancelled) setResult(r)
-      })
+      .then((r) => setResult(r))
       .catch((err: unknown) => {
-        if (cancelled) return
         setResult({
           ok: false,
           error: err instanceof Error ? err.message : String(err),
@@ -95,9 +98,6 @@ export function DiagnosticExportOverlay({
           warnings: []
         })
       })
-    return () => {
-      cancelled = true
-    }
   }, [conversationId])
 
   // Ticks only while collecting — a finished bundle shows its own duration.

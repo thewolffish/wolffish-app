@@ -25,6 +25,15 @@ const fieldClass = cn(
   'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-bg focus-visible:outline-none'
 )
 
+// The copy-progress card and the referenced-files list share one shell, and
+// hold rows of one fixed height — so the block claims its space the moment a
+// copy starts and keeps it when progress gives way to the finished file row,
+// instead of shifting the dialog a second time on completion.
+const fileCardClass = 'border-border bg-bg rounded-lg border p-1.5'
+/** h-8 — the remove button's h-6 plus the row's former py-1, top and bottom. */
+const fileRowHeight = 'h-8'
+const fileRowClass = cn(fileRowHeight, 'flex items-center gap-2 rounded-md px-1.5')
+
 export type ProjectDialogProps = {
   project: Project | null
   onClose: () => void
@@ -285,14 +294,19 @@ function ProjectDialogBody({
         <span className="text-muted text-xs font-medium">{t('projects.instructions')}</span>
         {/* Same CodeMirror surface override as the procedures editor so the
             instructions block matches the card code block. Copy floats ON
-            the block (top corner), like code blocks everywhere else. */}
-        <div className="border-border relative h-[220px] overflow-hidden rounded-lg border [&_.cm-editor]:bg-bg!">
+            the block (top corner) and reveals on hover, like code blocks
+            everywhere else — parked over the first line, it would otherwise
+            sit on top of the text the whole time you're writing. */}
+        <div className="group/prompt border-border relative h-[220px] overflow-hidden rounded-lg border [&_.cm-editor]:bg-bg!">
           <button
             type="button"
             onClick={copyInstructions}
             aria-label={t('projects.copy')}
             title={t('projects.copy')}
-            className="text-muted hover:text-fg bg-surface/90 border-border absolute end-2 top-2 z-10 flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border"
+            className={cn(
+              'text-muted hover:text-fg bg-surface/90 border-border absolute end-2 top-2 z-10 flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border',
+              'opacity-0 group-hover/prompt:opacity-100 focus-visible:opacity-100'
+            )}
           >
             <Copy01Icon size={14} />
           </button>
@@ -323,49 +337,52 @@ function ProjectDialogBody({
             className="flex items-center gap-1"
           >
             <Add01Icon size={13} />
-            <span>{adding ? t('projects.addingFiles') : t('projects.addFiles')}</span>
+            {/* Label is fixed while a pick/copy is in flight — the disabled
+                state carries "busy", and the progress bar below reports it. */}
+            <span>{t('projects.addFiles')}</span>
           </Button>
         </div>
         {/* Copying a large file into the workspace is not instant. Without
             this the dialog showed nothing at all and then the file simply
             appeared. Real bytes, batch-wide, from the main-side copy. */}
         {copy && (
-          <div className="flex flex-col gap-1">
-            <div className="text-muted flex items-center gap-2 text-[11px]">
-              <span dir="ltr" title={copy.name} className="min-w-0 flex-1 truncate">
-                {copy.name}
-              </span>
-              {copy.total > 1 && (
-                <span className="shrink-0 tabular-nums">
-                  {t('projects.copyingCount', { index: copy.index, total: copy.total })}
+          <div className={fileCardClass}>
+            {/* Label + bar stack inside ONE row box: the card is then exactly
+                as tall as the files list holding a single file. */}
+            <div className={cn(fileRowHeight, 'flex flex-col justify-center gap-1 px-1.5')}>
+              <div className="text-muted flex items-center gap-2 text-xs">
+                <span dir="ltr" title={copy.name} className="min-w-0 flex-1 truncate">
+                  {copy.name}
                 </span>
-              )}
-              <span className="shrink-0 tabular-nums">{copyPercent}%</span>
-            </div>
-            <div
-              role="progressbar"
-              aria-label={t('projects.copyingFiles')}
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={copyPercent}
-              className="bg-border h-1 w-full overflow-hidden rounded-full"
-            >
+                {copy.total > 1 && (
+                  <span className="shrink-0 tabular-nums">
+                    {t('projects.copyingCount', { index: copy.index, total: copy.total })}
+                  </span>
+                )}
+                <span className="shrink-0 tabular-nums">{copyPercent}%</span>
+              </div>
               <div
-                className="bg-primary h-full rounded-full transition-[width] duration-150"
-                style={{ width: `${copyPercent}%` }}
-              />
+                role="progressbar"
+                aria-label={t('projects.copyingFiles')}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={copyPercent}
+                className="bg-border h-1 w-full overflow-hidden rounded-full"
+              >
+                <div
+                  className="bg-primary h-full rounded-full transition-[width] duration-150"
+                  style={{ width: `${copyPercent}%` }}
+                />
+              </div>
             </div>
           </div>
         )}
         {files.length > 0 && (
-          <ul className="border-border bg-bg flex max-h-36 flex-col gap-0.5 overflow-y-auto rounded-lg border p-1.5">
+          <ul className={cn(fileCardClass, 'flex max-h-36 flex-col gap-0.5 overflow-y-auto')}>
             {files.map((file) => {
               const { base, ext } = splitFileName(file.name)
               return (
-                <li
-                  key={file.path}
-                  className="group flex items-center gap-2 rounded-md px-1.5 py-1"
-                >
+                <li key={file.path} className={cn('group shrink-0', fileRowClass)}>
                   {/* dir=ltr pins filename order (and the pinned extension)
                       even in the RTL locale — paths are LTR text. */}
                   <span

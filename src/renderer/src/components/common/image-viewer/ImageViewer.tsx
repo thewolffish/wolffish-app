@@ -1,8 +1,8 @@
+import { MediaLightbox } from '@components/common/media-lightbox/MediaLightbox'
 import { useUploadBlob } from '@hooks/use-upload-blob/useUploadBlob'
 import { cn } from '@lib/utils/cn'
 import { Download01Icon, FolderOpenIcon, Image02Icon, LinkSquare02Icon } from 'hugeicons-react'
-import { useCallback, useEffect, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 export type ImageViewerProps = {
@@ -211,12 +211,11 @@ export type ImageLightboxProps = {
 }
 
 /**
- * Click-to-zoom overlay. The card grows to the same limit as the expanded
+ * Click-to-zoom overlay. The frame grows to the same limit as the expanded
  * prompt editor (80vw × 80vh) but keeps the image's aspect ratio: width is
  * min(80vw, 80vh · ratio), so whichever axis hits its limit first wins and
- * the card hugs the image with no letterbox bars. Until the ratio is known
- * the image shows at natural size capped to the same limits. Dismissed by
- * backdrop click or Escape, like the core Modal it replaced.
+ * the frame hugs the image with no letterbox bars. Scroll zooms into the
+ * cursor and dragging pans; see `MediaLightbox`.
  */
 export function ImageLightbox({
   open,
@@ -225,43 +224,33 @@ export function ImageLightbox({
   fileName,
   ratio
 }: ImageLightboxProps): React.JSX.Element | null {
-  useEffect(() => {
-    if (!open) return
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') onClose()
-    }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [open, onClose])
+  // Callers seed the ratio from attachment metadata, which can be absent; the
+  // overlay's own decode is the backstop so the frame is definite either way.
+  const [decoded, setDecoded] = useState<number | null>(null)
+  const shape = ratio ?? decoded
 
-  if (!open || typeof document === 'undefined') return null
-
-  return createPortal(
-    <div
-      role="presentation"
-      onClick={onClose}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+  return (
+    <MediaLightbox
+      open={open}
+      onClose={onClose}
+      label={fileName}
+      frameStyle={
+        shape
+          ? { aspectRatio: `${shape}`, width: `min(80vw, calc(80vh * ${shape}))` }
+          : { maxWidth: '80vw', maxHeight: '80vh' }
+      }
     >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label={fileName}
-        onClick={(e) => e.stopPropagation()}
-        className="border-border bg-surface overflow-hidden rounded-2xl border shadow-xl"
-      >
-        <img
-          src={url}
-          alt={fileName}
-          draggable={false}
-          className="block object-contain"
-          style={
-            ratio
-              ? { aspectRatio: `${ratio}`, width: `min(80vw, calc(80vh * ${ratio}))` }
-              : { maxWidth: '80vw', maxHeight: '80vh' }
-          }
-        />
-      </div>
-    </div>,
-    document.body
+      <img
+        src={url}
+        alt={fileName}
+        draggable={false}
+        className={shape ? 'h-full w-full object-contain' : 'block'}
+        style={shape ? undefined : { maxWidth: '80vw', maxHeight: '80vh' }}
+        onLoad={(e) => {
+          const { naturalWidth, naturalHeight } = e.currentTarget
+          if (naturalWidth && naturalHeight) setDecoded(naturalWidth / naturalHeight)
+        }}
+      />
+    </MediaLightbox>
   )
 }

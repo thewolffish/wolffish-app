@@ -334,6 +334,15 @@ let pdfAssetDirs
  * fs.readFile(url + filename), so these must be plain directory paths with a
  * trailing separator — NOT file:// URLs.
  *
+ * The separator must be a literal '/' on EVERY platform, never path.sep.
+ * pdf.js validates each of these with `val.endsWith("/")` and throws
+ * `Invalid factory url: "…" must include trailing slash` otherwise — so on
+ * Windows a path.sep-terminated path killed every read, search and render in
+ * this plugin while POSIX (where path.sep IS '/') looked perfectly healthy.
+ * A trailing '/' after Windows backslashes is safe: pdf.js only concatenates
+ * the filename onto it and hands the result to fs.readFile, which accepts
+ * mixed separators on Windows.
+ *
  * Best-effort: if the layout ever moves, reading still works exactly as it did
  * before, just without the extras.
  */
@@ -343,14 +352,19 @@ function pdfAssetOptions() {
   try {
     const entry = fileURLToPath(import.meta.resolve('pdfjs-dist/legacy/build/pdf.mjs'))
     const root = path.dirname(path.dirname(path.dirname(entry))) // …/build → …/legacy → …/pdfjs-dist
-    const dir = (name) => `${path.join(root, name)}${path.sep}`
-    pdfAssetDirs = {
+    const dir = (name) => `${path.join(root, name)}/`
+    const dirs = {
       standardFontDataUrl: dir('standard_fonts'),
       cMapUrl: dir('cmaps'),
       cMapPacked: true,
       iccUrl: dir('iccs'),
       wasmUrl: dir('wasm')
     }
+    // Re-assert pdf.js's own invariant before handing these over. If a future
+    // path change ever violates it again, degrade to the built-in behaviour
+    // (slightly worse text/image fidelity) instead of throwing on every call.
+    const urls = Object.entries(dirs).filter(([, v]) => typeof v === 'string')
+    if (urls.every(([, v]) => v.endsWith('/'))) pdfAssetDirs = dirs
   } catch {
     // leave empty — pdf.js falls back to its built-in behaviour
   }

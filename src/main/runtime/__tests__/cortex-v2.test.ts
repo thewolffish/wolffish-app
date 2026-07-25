@@ -100,6 +100,7 @@ async function run(): Promise<void> {
       createdAt: 1751360400000,
       updatedAt: 1751364000000,
       sealed: false,
+      icon: '🛩️',
       messages: [
         { role: 'user', content: 'send me the flight plan', timestamp: 1751360400000 },
         {
@@ -247,6 +248,9 @@ async function run(): Promise<void> {
   check('one conversation listed', convs.length, 1)
   check('conversation channel', convs[0]?.channel, 'telegram')
   check('conversation msg count', convs[0]?.messageCount, 2)
+  // The list fast path feeds the rail's number-chip badge straight from this
+  // row — a missing icon column is why the badge only showed on a cold index.
+  check('conversation icon', convs[0]?.icon, '🛩️')
   const byChannel = cortex.listConversations({ channel: 'whatsapp' })
   check('channel filter empty', byChannel.length, 0)
 
@@ -274,6 +278,8 @@ async function run(): Promise<void> {
   check('cold cortex counts null before init', emptyCortex.countConversationsSince(0), null)
   await emptyCortex.init()
   check('empty table counts null, not 0', emptyCortex.countConversationsSince(0), null)
+  // Windows keeps the db file locked while the handle is open — rmSync EBUSYs.
+  emptyCortex.close()
   fs.rmSync(emptyRoot, { recursive: true, force: true })
 
   // ── Usage ledger ────────────────────────────────────────────────────

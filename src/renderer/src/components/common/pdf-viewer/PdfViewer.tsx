@@ -1,7 +1,14 @@
+import { MediaLightbox } from '@components/common/media-lightbox/MediaLightbox'
 import { useUploadBlob } from '@hooks/use-upload-blob/useUploadBlob'
 import { cn } from '@lib/utils/cn'
-import { Download01Icon, FolderOpenIcon, LinkSquare02Icon, Pdf02Icon } from 'hugeicons-react'
-import { useCallback } from 'react'
+import {
+  ArrowExpandIcon,
+  Download01Icon,
+  FolderOpenIcon,
+  LinkSquare02Icon,
+  Pdf02Icon
+} from 'hugeicons-react'
+import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 export type PdfViewerProps = {
@@ -50,6 +57,7 @@ function ActivePdf({
 }): React.JSX.Element {
   const { t } = useTranslation()
   const { url, error } = useUploadBlob(filePath, 'application/pdf')
+  const [open, setOpen] = useState(false)
 
   const openExternal = useCallback(async () => {
     try {
@@ -103,6 +111,19 @@ function ActivePdf({
         </span>
         <button
           type="button"
+          onClick={() => setOpen(true)}
+          disabled={!url}
+          title={t('chat.fileCard.expand')}
+          className={cn(
+            'text-muted hover:text-fg flex shrink-0 cursor-pointer items-center justify-center rounded p-1',
+            'disabled:cursor-default disabled:opacity-40',
+            'focus-visible:ring-2 focus-visible:ring-accent'
+          )}
+        >
+          <ArrowExpandIcon size={14} />
+        </button>
+        <button
+          type="button"
           onClick={openExternal}
           title={t('chat.pdfViewer.openExternal')}
           className={cn(
@@ -135,6 +156,42 @@ function ActivePdf({
           <Download01Icon size={14} />
         </button>
       </div>
+      {/* Portals to document.body, so nesting it in the card costs no layout. */}
+      {url && (
+        <PdfLightbox open={open} onClose={() => setOpen(false)} url={url} fileName={fileName} />
+      )}
     </div>
+  )
+}
+
+export type PdfLightboxProps = {
+  open: boolean
+  onClose: () => void
+  url: string
+  fileName: string
+}
+
+/**
+ * The same native PDF viewer, on the same overlay surface as the image and
+ * video lightboxes, at 80% of the window. No zoom/pan wrapper: Chromium's
+ * viewer already scrolls and zooms, and its frame swallows those events before
+ * the stage would ever see them. Dismissed by Escape or a backdrop click.
+ */
+export function PdfLightbox({
+  open,
+  onClose,
+  url,
+  fileName
+}: PdfLightboxProps): React.JSX.Element | null {
+  return (
+    <MediaLightbox
+      open={open}
+      onClose={onClose}
+      label={fileName}
+      zoomable={false}
+      frameStyle={{ width: '80vw', height: '80vh' }}
+    >
+      <iframe src={url} title={fileName} className="h-full w-full border-0" />
+    </MediaLightbox>
   )
 }

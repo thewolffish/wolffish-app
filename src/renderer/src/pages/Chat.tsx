@@ -2427,17 +2427,25 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     [ensureConversationId]
   )
 
+  // Adding stays live mid-turn, like attaching: the running turn already has
+  // the folder list it was sent with, and a folder picked now rides the NEXT
+  // (queued) prompt — sendContent reads `workingFolders` when the queue
+  // flushes, not when the row was queued.
   const addWorkingFolder = useCallback(async () => {
-    if (busy) return
     const folder = await window.api.upload.pickFolder()
     if (!folder || storedFolders.includes(folder)) return
     const updated = [...storedFolders, folder]
     setStoredFolders(updated)
     await persistWorkingFolders(updated)
-  }, [busy, storedFolders, persistWorkingFolders])
+  }, [storedFolders, persistWorkingFolders])
 
+  // Removing does NOT: the running turn may be reading files under that
+  // folder, so pulling it out mid-turn would strand the work in flight.
+  // The UI disables the delete affordance while busy; this guard is the
+  // backstop for any other caller.
   const removeWorkingFolder = useCallback(
     async (path: string) => {
+      if (busy) return
       const updated = storedFolders.filter((f) => f !== path)
       setStoredFolders(updated)
       const conv = conversationRef.current
@@ -2445,7 +2453,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
       conv.workingFolder = updated.length > 0 ? updated : null
       await window.api.conversation.save(conv)
     },
-    [storedFolders]
+    [busy, storedFolders]
   )
 
   const handleDragEnter = useCallback((e: React.DragEvent<HTMLDivElement>) => {
@@ -2903,6 +2911,16 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
             >
               <Bug01Icon size={18} />
             </button>
+            {/* Picking a folder stays live mid-turn — it rides the next queued
+                prompt, same as an attachment. Removing is locked while the turn
+                runs so the agent can't lose a folder it's working in. */}
+            <WorkingFolderButton
+              key={activeConversationId ?? 'none'}
+              folders={workingFolders}
+              onAdd={() => void addWorkingFolder()}
+              onRemove={(folder) => void removeWorkingFolder(folder)}
+              removeDisabled={busy}
+            />
             {/* Attaching stays live mid-turn — staged files ride the next
                 queued prompt instead of the running one. */}
             <button
@@ -2919,13 +2937,6 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
             >
               <Image02Icon size={18} />
             </button>
-            <WorkingFolderButton
-              key={activeConversationId ?? 'none'}
-              folders={workingFolders}
-              onAdd={() => void addWorkingFolder()}
-              onRemove={(folder) => void removeWorkingFolder(folder)}
-              disabled={busy}
-            />
             {/* Recording stays live mid-turn, like attaching: the take is
                 queued instead of sent, and goes out when the turn ends. */}
             <button
@@ -3465,12 +3476,15 @@ function WorkingFolderButton({
   folders,
   onAdd,
   onRemove,
-  disabled
+  removeDisabled
 }: {
   folders: string[]
   onAdd: () => void
   onRemove: (folder: string) => void
-  disabled: boolean
+  // Mid-turn (queue mode) the picker stays open for business — only the
+  // per-folder delete locks, so a queued prompt can gain a folder but the
+  // running turn can never lose one out from under it.
+  removeDisabled: boolean
 }): React.JSX.Element {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
@@ -3537,18 +3551,15 @@ function WorkingFolderButton({
         }}
         onFocus={onEnter}
         onBlur={onLeave}
-        disabled={disabled}
         aria-expanded={cardVisible}
         title={hasFolders ? t('chat.workingFolder') : t('chat.selectFolder')}
         aria-label={hasFolders ? t('chat.workingFolder') : t('chat.selectFolder')}
         className={cn(
-          'flex h-[42.5px] w-10 shrink-0 items-center justify-center rounded-lg border',
+          'flex h-[42.5px] w-10 shrink-0 cursor-pointer items-center justify-center rounded-lg border',
           'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-          'disabled:cursor-not-allowed disabled:opacity-50',
-          !disabled && 'cursor-pointer',
           hasFolders
-            ? 'border-primary/40 bg-primary/10 text-primary enabled:hover:border-primary/60'
-            : 'border-border bg-surface text-muted enabled:hover:text-fg enabled:hover:border-muted'
+            ? 'border-primary/40 bg-primary/10 text-primary hover:border-primary/60'
+            : 'border-border bg-surface text-muted hover:text-fg hover:border-muted'
         )}
       >
         <Folder01Icon size={18} />
@@ -3574,8 +3585,14 @@ function WorkingFolderButton({
                   <button
                     type="button"
                     onClick={() => onRemove(folder)}
-                    className="text-muted/40 hover:text-red-500 shrink-0 cursor-pointer"
-                    title="Remove"
+                    disabled={removeDisabled}
+                    className={cn(
+                      'text-muted/40 shrink-0',
+                      'enabled:hover:text-red-500 enabled:cursor-pointer',
+                      'disabled:cursor-not-allowed disabled:opacity-40'
+                    )}
+                    title={removeDisabled ? t('chat.removeFolderBusy') : t('chat.removeFolder')}
+                    aria-label={t('chat.removeFolder')}
                   >
                     <Delete02Icon size={12} />
                   </button>
@@ -3586,8 +3603,7 @@ function WorkingFolderButton({
           <button
             type="button"
             onClick={onAdd}
-            disabled={disabled}
-            className="text-muted enabled:hover:text-fg disabled:cursor-not-allowed disabled:opacity-50 mt-1.5 flex w-full cursor-pointer items-center gap-1 text-[10px]"
+            className="text-muted hover:text-fg mt-1.5 flex w-full cursor-pointer items-center gap-1 text-[10px]"
           >
             <PlusSignIcon size={10} />
             {t('chat.addMore')}

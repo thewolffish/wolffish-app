@@ -149,6 +149,13 @@ const FALLBACK_SNAPSHOTS = 5
 const MAX_LOG_DAYS = 30
 /** Input ceiling for the opinion call — lean by construction, never an exhaustive replay. */
 const OPINION_MAX_CHARS = 60_000
+/**
+ * Wall-clock ceiling on that call. The opinion is the one stage that waits on a
+ * remote service, and it is optional by construction — so a provider that stalls
+ * costs the bundle a section, not the whole export. Without this the overlay
+ * (which cannot be dismissed while collecting) is held hostage by a hung socket.
+ */
+const OPINION_TIMEOUT_MS = 90_000
 /** Per-message excerpt inside that transcript. */
 const OPINION_PER_MESSAGE_CHARS = 1_500
 
@@ -456,7 +463,7 @@ export async function exportConversationDiagnostics(
       env,
       metrics,
       corpusBlocks: convBlocks,
-      signal: options.signal
+      signal: opinionSignal(options.signal)
     })
     if (opinion.text) {
       bundle.add('opinion', '08_analysis/model-opinion.md', opinion.text)
@@ -1323,6 +1330,16 @@ const OPINION_SYSTEM =
   `error strings from the material. Cite the numbers when they matter (a turn that took minutes, ` +
   `context near its budget, a model you did not expect). Where you are guessing, say so in that ` +
   `line. If nothing actually looks wrong, say that plainly instead of inventing a fault.`
+
+/**
+ * The caller's abort (if any) OR the timeout, whichever fires first. An aborted
+ * call lands in runOpinion's catch and skips the section — the same path a
+ * provider error already takes.
+ */
+function opinionSignal(caller?: AbortSignal): AbortSignal {
+  const timeout = AbortSignal.timeout(OPINION_TIMEOUT_MS)
+  return caller ? AbortSignal.any([caller, timeout]) : timeout
+}
 
 async function runOpinion(
   llm: DiagnosticLLM,

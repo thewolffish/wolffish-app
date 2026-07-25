@@ -2,32 +2,17 @@ import { ChannelIcon } from '@components/common/channel-icon/ChannelIcon'
 import { hasChannelIcon } from '@components/common/channel-icon/hasChannelIcon'
 import { CONVERSATION_CHIP_BASE, conversationChipClasses } from '@lib/conversation-chip'
 import { mapConversationMessages } from '@lib/conversation-open'
+import { buildConversationRows, runPhaseKey, type ConversationRow } from '@lib/conversation-rows'
 import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
 import { pageTopPadding } from '@lib/utils/platform'
-import type { ConversationChannel, ConversationMeta, Project } from '@preload/index'
+import type { ConversationMeta, Project } from '@preload/index'
 import { useFlow } from '@providers/flow/useFlow'
 import { useLocale } from '@providers/locale/useLocale'
-import { useSessions, type ConversationRunPhase } from '@providers/sessions/useSessions'
+import { useSessions } from '@providers/sessions/useSessions'
 import { SidebarRightIcon } from 'hugeicons-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-
-type Row = {
-  conversationId: string
-  title: string
-  phase: ConversationRunPhase | null
-  /** Origin — drives the small badge on the number chip. */
-  channel: ConversationChannel | string | null
-  /**
-   * Source emoji for the number-chip badge: the conversation's project icon
-   * (resolved live) or its stamped automation/procedure icon. Null falls
-   * back to the channel-glyph badge.
-   */
-  icon: string | null
-  /** Recency key — live phase changes beat file mtimes. */
-  at: number
-}
 
 // Mirrors the left Sidebar's module-scoped collapse cache: the toggle is the
 // source of truth across remounts, independent of the status IPC's timing.
@@ -76,13 +61,7 @@ export function ConversationsSidebar(): React.JSX.Element {
   // Refresh the list on mount and whenever any turn starts/ends anywhere — a
   // turn starting is exactly when a new conversation can appear, and the
   // cortex-backed list call is ~1ms.
-  const statusKey = useMemo(
-    () =>
-      Object.entries(runStatuses)
-        .map(([id, s]) => `${id}:${s.phase}`)
-        .join('|'),
-    [runStatuses]
-  )
+  const statusKey = useMemo(() => runPhaseKey(runStatuses), [runStatuses])
   useEffect(() => {
     let cancelled = false
     void window.api.conversation.list().then((list) => {
@@ -117,60 +96,20 @@ export function ConversationsSidebar(): React.JSX.Element {
     }
   }, [])
 
-  const rows = useMemo<Row[]>(() => {
-    const projectIcons = new Map(projects.map((p) => [p.id, p.icon]))
-    const byId = new Map<string, Row>()
-    for (const meta of metas) {
-      const live = runStatuses[meta.id]
-      // A just-created conversation reaches the index BEFORE its LLM title
-      // resolves (the shell persists as 'Untitled'; the titled write re-indexes
-      // 1–4s later). While the indexed title is still the sentinel, prefer the
-      // live-status title when one exists — the row only ever transitions
-      // Untitled → real, never regresses.
-      const indexedTitle = meta.title && meta.title !== 'Untitled' ? meta.title : null
-      byId.set(meta.id, {
-        conversationId: meta.id,
-        title: indexedTitle ?? live?.title ?? t('chat.conversationsUntitled'),
-        phase: live?.phase ?? null,
-        channel: meta.channel ?? live?.channel ?? null,
-        // Project emoji wins (a project conversation reads as its project);
-        // otherwise the stamped automation/procedure emoji.
-        icon: (meta.projectId ? projectIcons.get(meta.projectId) : undefined) ?? meta.icon ?? null,
-        at: Math.max(meta.updatedAt, live?.at ?? 0)
-      })
-    }
-    // A conversation not yet in the cortex-backed list (an in-app chat is
-    // indexed a beat after it persists) is surfaced from its lifecycle status.
-    // ALL phases, not just 'processing': gating on processing made a
-    // conversation VANISH the instant it completed — its phase flipped to
-    // 'completed' synchronously while the metas re-fetch was still in flight,
-    // so it fell out of both metas AND this loop for a render, and the whole
-    // list reflowed (the "jump on completion"). Synthesizing terminal phases
-    // too keeps it pinned through the catch-up; once metas has it, `byId.has`
-    // skips this branch, so the synthesized row is only ever a brief bridge —
-    // never a lingering ghost for a real conversation.
-    for (const [id, s] of Object.entries(runStatuses)) {
-      if (byId.has(id)) continue
-      byId.set(id, {
-        conversationId: id,
-        title: s.title ?? t('chat.conversationsUntitled'),
-        phase: s.phase,
-        channel: s.channel ?? null,
-        icon: null,
-        at: s.at
-      })
-    }
-    const all = [...byId.values()].sort((a, b) => b.at - a.at)
+  const rows = useMemo<ConversationRow[]>(() => {
+    const all = buildConversationRows({
+      metas,
+      runStatuses,
+      projects,
+      untitled: t('chat.conversationsUntitled')
+    })
     if (!activeProject) return all
     // Project mode: only this project's conversations. A brand-new one has no
     // indexed projectId until its first end-of-turn save, so the active
     // conversation bridges through on its id — it is by construction the one
     // being created inside the project right now.
-    const projectIds = new Set(
-      metas.filter((m) => m.projectId === activeProject.id).map((m) => m.id)
-    )
     return all.filter(
-      (r) => projectIds.has(r.conversationId) || r.conversationId === activeConversationId
+      (r) => r.projectId === activeProject.id || r.conversationId === activeConversationId
     )
   }, [metas, projects, runStatuses, t, activeProject, activeConversationId])
 
