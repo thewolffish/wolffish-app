@@ -197,7 +197,7 @@ export function History(): React.JSX.Element {
       <div className="flex-1 overflow-y-auto px-6 pb-6">
         <div className="mx-auto flex h-full max-w-5xl flex-col">
           {loading && (
-            <div className="grid grid-cols-1 gap-x-3 gap-y-1 md:grid-cols-2">
+            <div className="grid grid-cols-1 gap-x-3 gap-y-1 pb-8 md:grid-cols-2">
               {Array.from({ length: 20 }).map((_, i) => (
                 <div
                   key={i}
@@ -226,7 +226,14 @@ export function History(): React.JSX.Element {
             </div>
           )}
           {!loading && rows.length > 0 && (
-            <div className="flex flex-col gap-5">
+            /* The bottom breathing room lives HERE, on the content, not on the
+               scroll container's pb-6: the wrapper above is h-full, so the
+               groups overflow OUT of its box and Chromium drops the scroller's
+               end-side padding — the last row ends flush against the window
+               edge. Padding on the overflowing content itself survives (a
+               margin does not). The scroller keeps its pb-6 for short lists
+               that never overflow. */
+            <div className="flex flex-col gap-5 pb-8">
               {groups.map((group) => (
                 <section key={group.key} className="flex flex-col gap-1.5">
                   {/* The header sits at the row padding's inset so it lines up
