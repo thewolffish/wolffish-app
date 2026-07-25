@@ -1,4 +1,10 @@
-## v1.0.230 — 2026-07-25 `Latest`
+## v1.0.231 — 2026-07-25 `Latest`
+
+### Find a Conversation by When It Happened
+
+Every conversation list was one long stack sorted newest-first — which reads perfectly down to about the twentieth row and not at all after that, where finding last Tuesday's chat meant scrolling and squinting at "5 days ago" stamps. All three lists — the **right-hand rail**, the **Conversations page**, and a **project's conversation list** — now break themselves into **dated groups**: **Today**, **Yesterday**, **Previous 7 days**, **Previous 30 days**, then **Previous 3 months**, **Previous 6 months**, **Previous year**, and **Older**. The windows **widen as they recede**, deliberately — recent work is the kind you look for by its exact day, older work by roughly its era — so the list stays scannable however far back it runs. A heading only appears when something sits under it, and the **numbered chips keep counting straight through** those headings, so a conversation's number is still its place in the whole list rather than its place in one group. The **collapsed rail** keeps its chips-only look and marks each boundary with a **thin rule** instead of a heading. Groups are cut on **calendar days**, so something from eleven last night reads as **Yesterday** rather than falling inside a rolling twenty-four hours.
+
+## v1.0.230 — 2026-07-25
 
 ### Zoom Into What You're Looking At
 

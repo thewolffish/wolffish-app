@@ -2064,7 +2064,17 @@
     "deleteCancel": "Cancel",
     "newChat": "New chat",
     "processing": "Processing…",
-    "diagnosticsActive": "Export this conversation from the chat screen"
+    "diagnosticsActive": "Export this conversation from the chat screen",
+    "groups": {
+      "today": "Today",
+      "yesterday": "Yesterday",
+      "last7": "Previous 7 days",
+      "last30": "Previous 30 days",
+      "last3m": "Previous 3 months",
+      "last6m": "Previous 6 months",
+      "lastYear": "Previous year",
+      "older": "Older"
+    }
   },
   "units": {
     "bytes": "{{value}} B",

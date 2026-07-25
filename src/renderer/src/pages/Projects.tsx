@@ -6,7 +6,12 @@ import { Modal } from '@components/core/Modal'
 import { useToast } from '@components/core/toast/useToast'
 import { CONVERSATION_CHIP_BASE, conversationChipClasses } from '@lib/conversation-chip'
 import { mapConversationMessages } from '@lib/conversation-open'
-import { buildConversationRows, runPhaseKey, type ConversationRow } from '@lib/conversation-rows'
+import {
+  buildConversationRows,
+  groupConversationRows,
+  runPhaseKey,
+  type ConversationRow
+} from '@lib/conversation-rows'
 import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
 import { pageTopPadding } from '@lib/utils/platform'
@@ -435,81 +440,95 @@ export function Projects(): React.JSX.Element {
               <p className="text-muted py-6 text-center text-sm">{t('projects.noConversations')}</p>
             )
           }
+          // The app-wide recency buckets, on the page's own ticking `now` so the
+          // headers and the "x minutes ago" stamps under them agree.
+          const groups = groupConversationRows(rows, now)
           return (
-            <div className="flex max-h-96 flex-col gap-0.5 overflow-y-auto">
-              {rows.map((row, index) => {
-                const isActive = activeConversationId === row.conversationId
-                const processing = row.phase === 'processing'
-                const title = row.title
-                return (
-                  <div
-                    key={row.conversationId}
-                    className={cn(
-                      'group flex items-center gap-3 rounded-xl px-4 py-3',
-                      // History's row treatment, inverted for the surface-
-                      // colored modal card: the fill is bg (not surface),
-                      // else hover/active would vanish into the card.
-                      'hover:bg-bg cursor-pointer',
-                      isActive && 'bg-bg border-border border'
-                    )}
-                    onClick={() => {
-                      setConvsProject(null)
-                      void handleResumeConversation(row.conversationId)
-                    }}
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        setConvsProject(null)
-                        void handleResumeConversation(row.conversationId)
-                      }
-                    }}
-                  >
-                    <span
-                      aria-hidden
-                      className={cn(
-                        CONVERSATION_CHIP_BASE,
-                        conversationChipClasses(row.phase, isActive)
-                      )}
-                    >
-                      {index + 1}
-                    </span>
-                    <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                      <div className="flex min-w-0 items-center gap-1.5">
-                        <span className="text-fg truncate text-sm font-medium">{title}</span>
-                        <ChannelIcon
-                          channel={row.channel}
-                          size={12}
-                          className="text-muted shrink-0"
-                        />
+            <div className="flex max-h-96 flex-col gap-3 overflow-y-auto">
+              {groups.map((group) => (
+                <div key={group.key} className="flex flex-col gap-0.5">
+                  {/* Inset to the rows' padding so it aligns with the titles. */}
+                  <h3 className="text-muted px-4 pt-1 text-[11px] font-medium tracking-wide uppercase">
+                    {t(group.labelKey)}
+                  </h3>
+                  {group.rows.map((row, i) => {
+                    // Rank in the WHOLE dialog list — the chip keeps counting
+                    // across headers rather than restarting under each.
+                    const position = group.startIndex + i
+                    const isActive = activeConversationId === row.conversationId
+                    const processing = row.phase === 'processing'
+                    const title = row.title
+                    return (
+                      <div
+                        key={row.conversationId}
+                        className={cn(
+                          'group flex items-center gap-3 rounded-xl px-4 py-3',
+                          // History's row treatment, inverted for the surface-
+                          // colored modal card: the fill is bg (not surface),
+                          // else hover/active would vanish into the card.
+                          'hover:bg-bg cursor-pointer',
+                          isActive && 'bg-bg border-border border'
+                        )}
+                        onClick={() => {
+                          setConvsProject(null)
+                          void handleResumeConversation(row.conversationId)
+                        }}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            setConvsProject(null)
+                            void handleResumeConversation(row.conversationId)
+                          }
+                        }}
+                      >
+                        <span
+                          aria-hidden
+                          className={cn(
+                            CONVERSATION_CHIP_BASE,
+                            conversationChipClasses(row.phase, isActive)
+                          )}
+                        >
+                          {position}
+                        </span>
+                        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                          <div className="flex min-w-0 items-center gap-1.5">
+                            <span className="text-fg truncate text-sm font-medium">{title}</span>
+                            <ChannelIcon
+                              channel={row.channel}
+                              size={12}
+                              className="text-muted shrink-0"
+                            />
+                          </div>
+                          <span className="text-muted text-xs">
+                            {formatFromNow(row.updatedAt, now, locale)}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            if (!processing) setConvDeleteTarget(row)
+                          }}
+                          disabled={processing}
+                          aria-label={t('history.delete')}
+                          title={processing ? t('history.processing') : undefined}
+                          className={cn(
+                            'text-muted rounded-lg p-1.5 opacity-0',
+                            'group-hover:opacity-100',
+                            processing
+                              ? 'cursor-not-allowed opacity-40'
+                              : 'cursor-pointer hover:text-red-600 dark:hover:text-red-400',
+                            'focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-accent'
+                          )}
+                        >
+                          <Delete01Icon size={14} />
+                        </button>
                       </div>
-                      <span className="text-muted text-xs">
-                        {formatFromNow(row.updatedAt, now, locale)}
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        if (!processing) setConvDeleteTarget(row)
-                      }}
-                      disabled={processing}
-                      aria-label={t('history.delete')}
-                      title={processing ? t('history.processing') : undefined}
-                      className={cn(
-                        'text-muted rounded-lg p-1.5 opacity-0',
-                        'group-hover:opacity-100',
-                        processing
-                          ? 'cursor-not-allowed opacity-40'
-                          : 'cursor-pointer hover:text-red-600 dark:hover:text-red-400',
-                        'focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-accent'
-                      )}
-                    >
-                      <Delete01Icon size={14} />
-                    </button>
-                  </div>
-                )
-              })}
+                    )
+                  })}
+                </div>
+              ))}
             </div>
           )
         })()}

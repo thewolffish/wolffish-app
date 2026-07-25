@@ -2,7 +2,12 @@ import { ChannelIcon } from '@components/common/channel-icon/ChannelIcon'
 import { hasChannelIcon } from '@components/common/channel-icon/hasChannelIcon'
 import { CONVERSATION_CHIP_BASE, conversationChipClasses } from '@lib/conversation-chip'
 import { mapConversationMessages } from '@lib/conversation-open'
-import { buildConversationRows, runPhaseKey, type ConversationRow } from '@lib/conversation-rows'
+import {
+  buildConversationRows,
+  groupConversationRows,
+  runPhaseKey,
+  type ConversationRow
+} from '@lib/conversation-rows'
 import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
 import { pageTopPadding } from '@lib/utils/platform'
@@ -113,6 +118,11 @@ export function ConversationsSidebar(): React.JSX.Element {
     )
   }, [metas, projects, runStatuses, t, activeProject, activeConversationId])
 
+  // Same recency buckets the Conversations page and the project dialog use.
+  // Recomputed with the rows, which refresh on every turn start/end and every
+  // conversation:changed push — so the day boundary never lags the list.
+  const groups = useMemo(() => groupConversationRows(rows), [rows])
+
   const open = useCallback(
     async (conversationId: string) => {
       // A still-processing in-app conversation has no file on disk yet, so
@@ -182,82 +192,106 @@ export function ConversationsSidebar(): React.JSX.Element {
         !collapsed && <p className="text-muted px-2 pt-2 text-xs">{t('history.empty')}</p>
       ) : (
         <nav className="pointer-events-auto flex w-full flex-col gap-0.5">
-          {rows.map((row, index) => {
-            const isActive = row.conversationId === activeConversationId
-            return (
-              <button
-                key={row.conversationId}
-                type="button"
-                onClick={() => void open(row.conversationId)}
-                title={row.title}
-                aria-label={row.title}
-                className={cn(
-                  // `group` lets the chip react to hovering anywhere on the row.
-                  'group flex w-full cursor-pointer items-center gap-2 rounded-lg px-1.5 py-1.5 text-start text-muted',
-                  'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-                  // Expanded rows carry the same card affordance as the
-                  // Conversations page: the active/selected row gets a surface
-                  // fill + border, hover previews the fill. The border is
-                  // emitted as one ternary (never `border-transparent` and
-                  // `border-border` at once) because `cn` is a plain join, not
-                  // tailwind-merge — two border-color utilities would resolve by
-                  // CSS source order. Both states keep the 1px border reserved
-                  // so switching the selection never reflows the rail. Collapsed
-                  // stays chip-only (the chip tint is the sole affordance).
-                  !collapsed &&
-                    (isActive
-                      ? 'bg-surface border border-border'
-                      : 'border border-transparent hover:bg-surface'),
-                  collapsed && 'justify-center px-1'
-                )}
-              >
-                <span className="relative inline-flex shrink-0">
-                  <span
-                    aria-hidden
-                    className={cn(
-                      CONVERSATION_CHIP_BASE,
-                      conversationChipClasses(row.phase, isActive)
-                    )}
-                  >
-                    {index + 1}
-                  </span>
-                  {/* Origin badge: where this conversation came from (channel /
-                      automation / procedure), floated off the chip's bottom-end
-                      corner so it clears the number. Both offsets are negative
-                      — it sits OUTSIDE the chip — and the horizontal one is
-                      direction-logical, so it hangs to the right in LTR and
-                      mirrors to the left in RTL. It overhangs into the row's own
-                      padding and the gap before the title, never the next row.
-                      Bare glyph, no bordered circle — the emoji/icon alone at
-                      the same footprint. */}
-                  {row.icon ? (
-                    <span
-                      aria-hidden
-                      className="absolute -inset-e-1 -bottom-1.5 flex h-3.5 w-3.5 items-center justify-center text-[9px] leading-none"
-                    >
-                      {row.icon}
-                    </span>
-                  ) : (
-                    hasChannelIcon(row.channel) && (
-                      <span className="absolute -inset-e-1 -bottom-1.5 flex h-3.5 w-3.5 items-center justify-center">
-                        <ChannelIcon channel={row.channel} size={9} className="text-muted" />
-                      </span>
-                    )
-                  )}
+          {groups.map((group, groupIndex) => (
+            <div key={group.key} className="flex w-full flex-col gap-0.5">
+              {/* Expanded names the bucket, a step smaller than the rail's own
+                  header above it. Collapsed keeps its chip-only rule and marks
+                  the seam with a hairline instead — the grouping survives the
+                  narrow rail without putting any text in it — and draws nothing
+                  above the first group, which has no rows before it to divide
+                  from. */}
+              {!collapsed ? (
+                <span className="text-muted truncate px-1.5 pt-2 text-[10px] font-medium tracking-wide uppercase">
+                  {t(group.labelKey)}
                 </span>
-                {!collapsed && (
-                  <span
+              ) : (
+                groupIndex > 0 && (
+                  <span aria-hidden className="border-border/60 mx-auto my-1 w-5 border-t" />
+                )
+              )}
+              {group.rows.map((row, i) => {
+                // Rank in the WHOLE list — the chip keeps counting past the
+                // group headers rather than restarting at 1 under each.
+                const position = group.startIndex + i
+                const isActive = row.conversationId === activeConversationId
+                return (
+                  <button
+                    key={row.conversationId}
+                    type="button"
+                    onClick={() => void open(row.conversationId)}
+                    title={row.title}
+                    aria-label={row.title}
                     className={cn(
-                      'min-w-0 flex-1 truncate whitespace-nowrap text-xs group-hover:text-fg',
-                      isActive && 'text-fg'
+                      // `group` lets the chip react to hovering anywhere on the row.
+                      'group flex w-full cursor-pointer items-center gap-2 rounded-lg px-1.5 py-1.5 text-start text-muted',
+                      'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+                      // Expanded rows carry the same card affordance as the
+                      // Conversations page: the active/selected row gets a
+                      // surface fill + border, hover previews the fill. The
+                      // border is emitted as one ternary (never
+                      // `border-transparent` and `border-border` at once)
+                      // because `cn` is a plain join, not tailwind-merge — two
+                      // border-color utilities would resolve by CSS source
+                      // order. Both states keep the 1px border reserved so
+                      // switching the selection never reflows the rail.
+                      // Collapsed stays chip-only (the chip tint is the sole
+                      // affordance).
+                      !collapsed &&
+                        (isActive
+                          ? 'bg-surface border border-border'
+                          : 'border border-transparent hover:bg-surface'),
+                      collapsed && 'justify-center px-1'
                     )}
                   >
-                    {row.title}
-                  </span>
-                )}
-              </button>
-            )
-          })}
+                    <span className="relative inline-flex shrink-0">
+                      <span
+                        aria-hidden
+                        className={cn(
+                          CONVERSATION_CHIP_BASE,
+                          conversationChipClasses(row.phase, isActive)
+                        )}
+                      >
+                        {position}
+                      </span>
+                      {/* Origin badge: where this conversation came from
+                          (channel / automation / procedure), floated off the
+                          chip's bottom-end corner so it clears the number. Both
+                          offsets are negative — it sits OUTSIDE the chip — and
+                          the horizontal one is direction-logical, so it hangs to
+                          the right in LTR and mirrors to the left in RTL. It
+                          overhangs into the row's own padding and the gap before
+                          the title, never the next row. Bare glyph, no bordered
+                          circle — the emoji/icon alone at the same footprint. */}
+                      {row.icon ? (
+                        <span
+                          aria-hidden
+                          className="absolute -inset-e-1 -bottom-1.5 flex h-3.5 w-3.5 items-center justify-center text-[9px] leading-none"
+                        >
+                          {row.icon}
+                        </span>
+                      ) : (
+                        hasChannelIcon(row.channel) && (
+                          <span className="absolute -inset-e-1 -bottom-1.5 flex h-3.5 w-3.5 items-center justify-center">
+                            <ChannelIcon channel={row.channel} size={9} className="text-muted" />
+                          </span>
+                        )
+                      )}
+                    </span>
+                    {!collapsed && (
+                      <span
+                        className={cn(
+                          'min-w-0 flex-1 truncate whitespace-nowrap text-xs group-hover:text-fg',
+                          isActive && 'text-fg'
+                        )}
+                      >
+                        {row.title}
+                      </span>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+          ))}
         </nav>
       )}
     </aside>

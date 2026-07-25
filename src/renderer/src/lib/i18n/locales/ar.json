@@ -2317,7 +2317,17 @@
     "deleteCancel": "إلغاء",
     "newChat": "محادثة جديدة",
     "processing": "قيد المعالجة…",
-    "diagnosticsActive": "صدّر هذه المحادثة من شاشة الدردشة"
+    "diagnosticsActive": "صدّر هذه المحادثة من شاشة الدردشة",
+    "groups": {
+      "today": "اليوم",
+      "yesterday": "أمس",
+      "last7": "آخر 7 أيام",
+      "last30": "آخر 30 يوماً",
+      "last3m": "آخر 3 أشهر",
+      "last6m": "آخر 6 أشهر",
+      "lastYear": "آخر سنة",
+      "older": "أقدم"
+    }
   },
   "units": {
     "bytes": "{{value}} بايت",
