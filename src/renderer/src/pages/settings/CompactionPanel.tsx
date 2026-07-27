@@ -1,6 +1,7 @@
 import { Select, type SelectOption } from '@components/core/Select'
 import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn'
+import { formatCompact } from '@lib/utils/format'
 import type { CompactionConfig, CompactionRunRecord, CompactionRuns } from '@preload/index'
 import { useFlow } from '@providers/flow/useFlow'
 import { useLocale } from '@providers/locale/useLocale'
@@ -260,8 +261,8 @@ function LastRunCard({
         {record.inputTokens !== null && record.outputTokens !== null && (
           <code className={CHIP_CLASS}>
             {t('settings.knowledge.compaction.lastRun.tokens', {
-              input: record.inputTokens.toLocaleString(locale),
-              output: record.outputTokens.toLocaleString(locale)
+              input: formatCompact(record.inputTokens, locale),
+              output: formatCompact(record.outputTokens, locale)
             })}
           </code>
         )}

@@ -73,6 +73,30 @@ export function formatGBL(bytes: number | null | undefined, t: TFn): string {
 }
 
 /**
+ * Compact count: 967232 → "967.2k". The single k/m/b formatter for every
+ * numeric chip in the UI — token counts, message counts, query counts.
+ *
+ * `locale` is optional because several call sites are module-level render
+ * helpers with no hook scope; omitting it falls back to the runtime locale.
+ * Pass it wherever the app locale is already in hand so Arabic renders its
+ * own digits. Scaling happens before formatting, so the scaled value is
+ * always under 1000 and no group separator ever appears.
+ */
+export function formatCompact(n: number, locale?: string): string {
+  const fmt = (v: number): string => {
+    try {
+      return new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(v)
+    } catch {
+      return String(Math.round(v * 10) / 10)
+    }
+  }
+  if (n >= 1_000_000_000) return `${fmt(n / 1_000_000_000)}b`
+  if (n >= 1_000_000) return `${fmt(n / 1_000_000)}m`
+  if (n >= 1_000) return `${fmt(n / 1_000)}k`
+  return fmt(n)
+}
+
+/**
  * Wrap a value with Unicode First Strong Isolate (FSI) + Pop Directional
  * Isolate (PDI) so the bidi algorithm renders it as a directional unit
  * regardless of the surrounding text direction. Use this for numbers and

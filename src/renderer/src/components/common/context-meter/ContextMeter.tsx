@@ -2,8 +2,8 @@ import {
   AnthropicLogo,
   DeepSeekLogo,
   KimiLogo,
-  MiniMaxLogo,
   MimoLogo,
+  MiniMaxLogo,
   OllamaLogo,
   OpenAILogo,
   OpenRouterLogo,
@@ -12,6 +12,7 @@ import {
   XAILogo,
   ZaiLogo
 } from '@components/core/ProviderLogos'
+import { formatCompact } from '@lib/utils/format'
 import type { WorkflowAgentView, WorkflowSnapshot } from '@main/runtime/broca'
 import type { ConversationStats, ConversationTurnStats } from '@preload/index'
 import {
@@ -117,21 +118,6 @@ const AGENT_DOT: Record<WorkflowAgentView['status'], string> = {
 /** Everything an agent consumed: prompt ingest (fresh + cache) plus output. */
 function agentSpend(a: WorkflowAgentView): number {
   return a.inputTokens + a.cacheReadTokens + a.cacheWriteTokens + a.outputTokens
-}
-
-/** Locale-aware compact token count: 967232 → "967.2k". One format everywhere. */
-function formatTokens(n: number, locale: string): string {
-  const fmt = (v: number): string => {
-    try {
-      return new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(v)
-    } catch {
-      return String(Math.round(v * 10) / 10)
-    }
-  }
-  if (n >= 1_000_000_000) return `${fmt(n / 1_000_000_000)}b`
-  if (n >= 1_000_000) return `${fmt(n / 1_000_000)}m`
-  if (n >= 1_000) return `${fmt(n / 1_000)}k`
-  return fmt(n)
 }
 
 function formatElapsed(ms: number): string {
@@ -475,7 +461,7 @@ export function ContextMeter({
         }}
         onFocus={onEnter}
         onBlur={onLeave}
-        className="bg-surface relative flex h-[42.5px] w-[62px] shrink-0 cursor-default items-center justify-center rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
+        className="bg-surface relative flex h-[42.5px] w-15.5 shrink-0 cursor-default items-center justify-center rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
       >
         {/* The gauge frame (colored by context) is the card border. Fixed
             62×42.5 to match the New Chat button. Before any turn runs there's
@@ -529,8 +515,8 @@ export function ContextMeter({
                   trailing={
                     <span className="text-fg font-mono text-[10px] tabular-nums" dir="ltr">
                       {t('chat.contextCard.usage', {
-                        used: formatTokens(used, locale),
-                        max: formatTokens(budget, locale),
+                        used: formatCompact(used, locale),
+                        max: formatCompact(budget, locale),
                         percent
                       })}
                     </span>
@@ -560,7 +546,7 @@ export function ContextMeter({
                       // inset would mirror the tick to the wrong spot.
                       style={{ left: `${tickPct}%` }}
                       title={t('chat.contextCard.compactAt', {
-                        value: formatTokens(compactionAt ?? 0, locale)
+                        value: formatCompact(compactionAt ?? 0, locale)
                       })}
                     />
                   )}
@@ -575,7 +561,7 @@ export function ContextMeter({
                         />
                         {s.label}
                         <span className="font-mono tabular-nums" dir="ltr">
-                          {formatTokens(s.value, locale)}
+                          {formatCompact(s.value, locale)}
                         </span>
                       </span>
                     ))}
@@ -584,7 +570,7 @@ export function ContextMeter({
                 {tickPct !== null && (
                   <p className="text-muted mt-1 text-[10px]">
                     {t('chat.contextCard.compactAt', {
-                      value: formatTokens(compactionAt ?? 0, locale)
+                      value: formatCompact(compactionAt ?? 0, locale)
                     })}
                   </p>
                 )}
@@ -620,28 +606,28 @@ export function ContextMeter({
                     <StatRow
                       icon={<ArrowUp02Icon size={12} />}
                       label={t('chat.contextCard.input')}
-                      value={formatTokens(turnIn, locale)}
+                      value={formatCompact(turnIn, locale)}
                       frac={turnIn / turnMax}
                       color={COLOR_FRESH}
                     />
                     <StatRow
                       icon={<ArrowDown02Icon size={12} />}
                       label={t('chat.contextCard.output')}
-                      value={formatTokens(turnOut, locale)}
+                      value={formatCompact(turnOut, locale)}
                       frac={turnOut / turnMax}
                       color="#f59e0b"
                     />
                     <StatRow
                       icon={<Database01Icon size={12} />}
                       label={t('chat.contextCard.cacheRead')}
-                      value={formatTokens(turnCacheR, locale)}
+                      value={formatCompact(turnCacheR, locale)}
                       frac={turnCacheR / turnMax}
                       color={COLOR_CACHE_READ}
                     />
                     <StatRow
                       icon={<Database02Icon size={12} />}
                       label={t('chat.contextCard.cacheWrite')}
-                      value={formatTokens(turnCacheW, locale)}
+                      value={formatCompact(turnCacheW, locale)}
                       frac={turnCacheW / turnMax}
                       color={COLOR_CACHE_WRITE}
                     />
@@ -670,7 +656,7 @@ export function ContextMeter({
                           <span dir="ltr" className="font-mono tabular-nums">
                             {t('chat.contextCard.workers', {
                               turns: sideSpend.workerTurns,
-                              tokens: formatTokens(sideSpend.workerTokens, locale)
+                              tokens: formatCompact(sideSpend.workerTokens, locale)
                             })}
                             {sideSpend.workerCost > 0
                               ? ` · ${formatCost(sideSpend.workerCost)}`
@@ -681,7 +667,7 @@ export function ContextMeter({
                         <span dir="ltr" className="font-mono tabular-nums">
                           {t('chat.contextCard.summaries', {
                             calls: sideSpend.summaryCalls,
-                            tokens: formatTokens(sideSpend.summaryTokens, locale)
+                            tokens: formatCompact(sideSpend.summaryTokens, locale)
                           })}
                           {sideSpend.summaryCost > 0
                             ? ` · ${formatCost(sideSpend.summaryCost)}`
@@ -716,7 +702,7 @@ export function ContextMeter({
                           />
                         }
                         label={a.name}
-                        value={`${formatTokens(agentSpend(a), locale)}${
+                        value={`${formatCompact(agentSpend(a), locale)}${
                           a.cost > 0 ? ` · ${formatCost(a.cost)}` : ''
                         }`}
                         frac={agentSpend(a) / wfMaxSpend}
@@ -728,7 +714,7 @@ export function ContextMeter({
                     <span dir="ltr" className="font-mono tabular-nums">
                       {t('chat.contextCard.workflowTotals', {
                         tools: workflow.totals.toolCalls,
-                        tokens: formatTokens(wfTokens, locale)
+                        tokens: formatCompact(wfTokens, locale)
                       })}
                       {workflow.totals.cost > 0 ? ` · ${formatCost(workflow.totals.cost)}` : ''}
                     </span>
@@ -767,28 +753,28 @@ export function ContextMeter({
                     <StatRow
                       icon={<ArrowUp02Icon size={12} />}
                       label={t('chat.contextCard.input')}
-                      value={formatTokens(allTime.inputTokens, locale)}
+                      value={formatCompact(allTime.inputTokens, locale)}
                       frac={allTime.inputTokens / allMax}
                       color={COLOR_FRESH}
                     />
                     <StatRow
                       icon={<ArrowDown02Icon size={12} />}
                       label={t('chat.contextCard.output')}
-                      value={formatTokens(allTime.outputTokens, locale)}
+                      value={formatCompact(allTime.outputTokens, locale)}
                       frac={allTime.outputTokens / allMax}
                       color="#f59e0b"
                     />
                     <StatRow
                       icon={<Database01Icon size={12} />}
                       label={t('chat.contextCard.cacheRead')}
-                      value={formatTokens(allTime.cacheReadTokens, locale)}
+                      value={formatCompact(allTime.cacheReadTokens, locale)}
                       frac={allTime.cacheReadTokens / allMax}
                       color={COLOR_CACHE_READ}
                     />
                     <StatRow
                       icon={<Database02Icon size={12} />}
                       label={t('chat.contextCard.cacheWrite')}
-                      value={formatTokens(allTime.cacheCreationTokens, locale)}
+                      value={formatCompact(allTime.cacheCreationTokens, locale)}
                       frac={allTime.cacheCreationTokens / allMax}
                       color={COLOR_CACHE_WRITE}
                     />

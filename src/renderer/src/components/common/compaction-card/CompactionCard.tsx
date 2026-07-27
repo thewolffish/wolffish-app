@@ -1,5 +1,6 @@
 import { CodeBlock } from '@components/core/CodeBlock'
 import { cn } from '@lib/utils/cn'
+import { formatCompact } from '@lib/utils/format'
 import { ArrowDown01Icon, ArrowRight01Icon } from 'hugeicons-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -16,12 +17,6 @@ type CompactionCardProps = {
   tokensSaved: number
   durationMs?: number
   details: CompactionDetail[]
-}
-
-function formatK(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}m`
-  if (n >= 1_000) return `${(n / 1_000).toFixed(0)}k`
-  return String(n)
 }
 
 function formatElapsed(ms: number): string {
@@ -42,7 +37,7 @@ export function CompactionCard({
   const { t } = useTranslation()
   const [expanded, setExpanded] = useState(false)
   const canExpand = details.length > 0
-  const tokens = formatK(tokensSaved)
+  const tokens = formatCompact(tokensSaved)
   const elapsed = durationMs && durationMs > 0 ? formatElapsed(durationMs) : null
 
   const summary =
@@ -62,8 +57,8 @@ export function CompactionCard({
           : rawName === 'user'
             ? t('chat.compactionCard.targetUser')
             : rawName
-      const from = formatK(d.originalChars)
-      const to = formatK(d.compactedChars)
+      const from = formatCompact(d.originalChars)
+      const to = formatCompact(d.compactedChars)
       const isCheap =
         d.compactedBy === 'truncate' ||
         d.compactedBy === 'truncation' ||

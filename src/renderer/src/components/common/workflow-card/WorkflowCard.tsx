@@ -1,4 +1,5 @@
 import { cn } from '@lib/utils/cn'
+import { formatCompact } from '@lib/utils/format'
 import type { WorkflowAgentView, WorkflowSnapshot } from '@main/runtime/broca'
 import { PROVIDER_LOGOS } from '@pages/settings/modelCatalog'
 import type { CloudProviderConfig } from '@preload/index'
@@ -125,10 +126,13 @@ export function WorkflowCard({ snapshot }: { snapshot: WorkflowSnapshot }): Reac
           {formatElapsed(elapsedMs)}
         </span>
         {contextTokens > 0 && (
-          // No forced LTR: the localized "1.2M tok"/"1.2M رمز" must follow the
+          // No forced LTR: the localized "1.2m tok"/"1.2m رمز" must follow the
           // UI direction so the unit sits on the correct side in Arabic.
           <span className="text-muted shrink-0 text-xs tabular-nums">
-            {t('chat.workflow.tokens', { count: contextTokens, compact: compact(contextTokens) })}
+            {t('chat.workflow.tokens', {
+              count: contextTokens,
+              compact: formatCompact(contextTokens)
+            })}
           </span>
         )}
         {totalCost > 0 && (
@@ -277,7 +281,7 @@ function AgentRow({ agent, now }: { agent: WorkflowAgentView; now: number }): Re
           : formatElapsed(elapsedMs)}
       </td>
       <td className="text-muted px-1.5 py-1.5 text-end tabular-nums" dir="ltr">
-        {tokens > 0 ? `${compact(tokens)} / ${compact(agent.outputTokens)}` : '—'}
+        {tokens > 0 ? `${formatCompact(tokens)} / ${formatCompact(agent.outputTokens)}` : '—'}
       </td>
       <td className="text-muted px-1.5 py-1.5 text-end tabular-nums" dir="ltr">
         {agent.toolCalls}
@@ -287,13 +291,6 @@ function AgentRow({ agent, now }: { agent: WorkflowAgentView; now: number }): Re
       </td>
     </tr>
   )
-}
-
-function compact(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
-  if (n >= 10_000) return `${Math.round(n / 1000)}k`
-  if (n >= 1_000) return `${(n / 1000).toFixed(1)}k`
-  return String(n)
 }
 
 function formatElapsed(ms: number): string {

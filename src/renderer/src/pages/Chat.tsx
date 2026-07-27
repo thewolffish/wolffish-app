@@ -35,7 +35,7 @@ import { buildChatPdfHtml, hasExportableContent } from '@lib/chat-export/buildCh
 import { mapConversationMessage, mapConversationMessages } from '@lib/conversation-open'
 import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
-import { formatBytesL } from '@lib/utils/format'
+import { formatBytesL, formatCompact } from '@lib/utils/format'
 import { pageTopPadding } from '@lib/utils/platform'
 import {
   upsertWorkflowSegment,
@@ -3327,8 +3327,8 @@ function CompactionStartedCard({
         {t('chat.compactionCard.compacting', {
           targets: targetsCount,
           messages: messagesCount,
-          current: fmtNum(tokenCount),
-          limit: fmtNum(tokenBudget)
+          current: formatCompact(tokenCount),
+          limit: formatCompact(tokenBudget)
         })}
       </p>
     </div>
@@ -3342,13 +3342,6 @@ function formatCompactionElapsed(ms: number): string {
   const minutes = Math.floor(totalSeconds / 60)
   const seconds = Math.floor(totalSeconds % 60)
   return `${minutes}m ${seconds}s`
-}
-
-function fmtNum(n: number): string {
-  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}B`
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
-  return String(n)
 }
 
 // Per-turn aggregates mirrored from the live token state (see turnStatsRef)
@@ -3937,7 +3930,7 @@ function buildSegmentTimelineEntry(segment: Segment): TimelineEntry | null {
       return `${d.toolName ?? 'unknown'}: ${d.originalChars} → ${d.compactedChars} chars (${pct}% reduced)`
     })
     lines.unshift(
-      `~${fmtNum(segment.tokensSaved)} tokens saved in ${formatDuration(segment.durationMs)}`
+      `~${formatCompact(segment.tokensSaved)} tokens saved in ${formatDuration(segment.durationMs)}`
     )
     return {
       id: segment.segmentId,
@@ -3999,7 +3992,9 @@ function timelineEventSummary(
         : null
       const lines: string[] = []
       if (count != null)
-        lines.push(`Tokens: ${fmtNum(count)}${budget != null ? ` / ${fmtNum(budget)} budget` : ''}`)
+        lines.push(
+          `Tokens: ${formatCompact(count)}${budget != null ? ` / ${formatCompact(budget)} budget` : ''}`
+        )
       if (sections) lines.push(`Sections: ${sections}`)
       return { detail: lines.length > 0 ? lines.join('\n') : undefined }
     }
@@ -4014,17 +4009,17 @@ function timelineEventSummary(
       const model = typeof payload.model === 'string' ? payload.model : null
       const role = typeof payload.role === 'string' ? payload.role : null
       const lines: string[] = []
-      lines.push(`Input: ${fmtNum(inp)} tokens`)
-      lines.push(`Output: ${fmtNum(out)} tokens`)
-      if (cache > 0) lines.push(`Cache read: ${fmtNum(cache)} tokens`)
-      if (cacheCreated > 0) lines.push(`Cache created: ${fmtNum(cacheCreated)} tokens`)
+      lines.push(`Input: ${formatCompact(inp)} tokens`)
+      lines.push(`Output: ${formatCompact(out)} tokens`)
+      if (cache > 0) lines.push(`Cache read: ${formatCompact(cache)} tokens`)
+      if (cacheCreated > 0) lines.push(`Cache created: ${formatCompact(cacheCreated)} tokens`)
       if (provider) lines.push(`Provider: ${provider}`)
       if (model) lines.push(`Model: ${model}`)
       if (role && role !== 'brain') lines.push(`Role: ${role === 'worker' ? 'agent' : role}`)
       if (dur != null) lines.push(`Duration: ${formatDuration(dur)}`)
       const roleTag = role && role !== 'brain' ? ` (${role})` : ''
       return {
-        summary: `${fmtNum(inp)} in / ${fmtNum(out)} out${roleTag}`,
+        summary: `${formatCompact(inp)} in / ${formatCompact(out)} out${roleTag}`,
         detail: lines.join('\n')
       }
     }
@@ -4095,12 +4090,12 @@ function timelineEventSummary(
       if (turnStats) {
         if (turnStats.inputTokens > 0 || turnStats.outputTokens > 0)
           lines.push(
-            `Tokens: ${fmtNum(turnStats.inputTokens)} in / ${fmtNum(turnStats.outputTokens)} out`
+            `Tokens: ${formatCompact(turnStats.inputTokens)} in / ${formatCompact(turnStats.outputTokens)} out`
           )
         if (turnStats.cacheReadTokens > 0)
-          lines.push(`Cache read: ${fmtNum(turnStats.cacheReadTokens)} tokens`)
+          lines.push(`Cache read: ${formatCompact(turnStats.cacheReadTokens)} tokens`)
         if (turnStats.contextTokens > 0)
-          lines.push(`Context: ${fmtNum(turnStats.contextTokens)} tokens`)
+          lines.push(`Context: ${formatCompact(turnStats.contextTokens)} tokens`)
       }
       return { detail: lines.length > 0 ? lines.join('\n') : undefined }
     }

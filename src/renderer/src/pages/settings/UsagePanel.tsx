@@ -19,6 +19,7 @@ import {
 } from '@components/core/ProviderLogos'
 import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn'
+import { formatCompact } from '@lib/utils/format'
 import type {
   BraveUsageSummary,
   UsageDailyEntry,
@@ -294,7 +295,7 @@ export function UsagePanel(): React.JSX.Element {
               formatTooltip={(e) =>
                 t('settings.usage.activityTooltip', {
                   date: e.date,
-                  tokens: formatNumber(e.value)
+                  tokens: formatCompact(e.value)
                 })
               }
             />
@@ -410,7 +411,7 @@ function ProviderCard({ provider }: { provider: UsageProviderSummary }): React.J
         {hasUsage ? (
           <div className="flex items-center gap-4">
             <span className="text-muted text-xs">
-              {formatNumber(totalTokens)} {t('settings.usage.tokens')}
+              {formatCompact(totalTokens)} {t('settings.usage.tokens')}
             </span>
             <span className="text-fg text-xs font-medium">${provider.totalCost.toFixed(2)}</span>
           </div>
@@ -426,7 +427,7 @@ function ProviderCard({ provider }: { provider: UsageProviderSummary }): React.J
               <span className="text-muted truncate max-w-[200px]">{m.model}</span>
               <div className="flex items-center gap-3">
                 <span className="text-muted">
-                  {formatNumber(m.inputTokens + m.outputTokens)} {t('settings.usage.tokens')}
+                  {formatCompact(m.inputTokens + m.outputTokens)} {t('settings.usage.tokens')}
                 </span>
                 <span className="text-muted">${m.cost.toFixed(2)}</span>
               </div>
@@ -454,7 +455,7 @@ function BraveSearchCard({ brave }: { brave: BraveUsageSummary }): React.JSX.Ele
         {hasUsage ? (
           <div className="flex items-center gap-4">
             <span className="text-muted text-xs">
-              {formatNumber(brave.totalQueries)} {t('settings.usage.queries')}
+              {formatCompact(brave.totalQueries)} {t('settings.usage.queries')}
             </span>
             <span className="text-fg text-xs font-medium">${brave.totalCost.toFixed(2)}</span>
           </div>
@@ -471,22 +472,22 @@ function StatsGrid({ stats }: { stats: UsageStats }): React.JSX.Element {
   const items: Array<{ label: string; value: string; icon: IconComp }> = [
     {
       label: t('settings.usage.stats.conversations'),
-      value: formatNumber(stats.conversations),
+      value: formatCompact(stats.conversations),
       icon: MessageMultiple01Icon
     },
     {
       label: t('settings.usage.stats.messages'),
-      value: formatNumber(stats.messages),
+      value: formatCompact(stats.messages),
       icon: BubbleChatIcon
     },
     {
       label: t('settings.usage.stats.totalTokens'),
-      value: formatNumber(stats.totalTokens),
+      value: formatCompact(stats.totalTokens),
       icon: Database02Icon
     },
     {
       label: t('settings.usage.stats.activeDays'),
-      value: formatNumber(stats.activeDays),
+      value: formatCompact(stats.activeDays),
       icon: CalendarCheckOut02Icon
     },
     {
@@ -641,12 +642,6 @@ function ActivityMapSkeleton({
       />
     </div>
   )
-}
-
-function formatNumber(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
-  return String(n)
 }
 
 function formatCost(v: number): string {
