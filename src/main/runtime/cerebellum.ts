@@ -736,7 +736,7 @@ export const CORE_CAPABILITIES: ReadonlySet<string> = new Set([
 ])
 
 /**
- * The "core" capabilities surfaced in the Cellebrum settings panel with a
+ * The "core" capabilities surfaced in the Capabilities settings panel with a
  * primary "Core" badge, sorted last, and LOCKED — they can never be toggled
  * off (from the UI, the agent's skill_disable, or a stale config entry). These
  * are the load-bearing built-ins the app assumes are always present:

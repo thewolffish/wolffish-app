@@ -22,7 +22,7 @@ import {
   SquareLock02Icon
 } from 'hugeicons-react'
 
-export function CelebrumPanel(): React.JSX.Element {
+export function CapabilitiesPanel(): React.JSX.Element {
   const { t } = useTranslation()
   const toast = useToast()
   const [capabilities, setCapabilities] = useState<CapabilityEntry[]>([])
@@ -53,9 +53,9 @@ export function CelebrumPanel(): React.JSX.Element {
     try {
       const data = await window.api.cerebellum.reload()
       setCapabilities(data)
-      toast.show({ tone: 'success', message: t('settings.cellebrum.resyncSuccessToast') })
+      toast.show({ tone: 'success', message: t('settings.capabilities.resyncSuccessToast') })
     } catch {
-      toast.show({ tone: 'error', message: t('settings.cellebrum.resyncErrorToast') })
+      toast.show({ tone: 'error', message: t('settings.capabilities.resyncErrorToast') })
     } finally {
       setResyncing(false)
     }
@@ -75,16 +75,16 @@ export function CelebrumPanel(): React.JSX.Element {
           setCapabilities(fresh)
           toast.show({
             tone: 'success',
-            message: t('settings.cellebrum.import.successToast', { name: result.name })
+            message: t('settings.capabilities.import.successToast', { name: result.name })
           })
         } else {
           setImportError(result.error)
-          toast.show({ tone: 'error', message: t('settings.cellebrum.import.errorToast') })
+          toast.show({ tone: 'error', message: t('settings.capabilities.import.errorToast') })
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
         setImportError(message)
-        toast.show({ tone: 'error', message: t('settings.cellebrum.import.errorToast') })
+        toast.show({ tone: 'error', message: t('settings.capabilities.import.errorToast') })
       } finally {
         setImporting(false)
       }
@@ -95,8 +95,8 @@ export function CelebrumPanel(): React.JSX.Element {
   const onBrowse = useCallback(async (): Promise<void> => {
     if (importing) return
     const picked = await window.api.cerebellum.pickImport({
-      title: t('settings.cellebrum.import.dialogTitle'),
-      filterName: t('settings.cellebrum.import.dialogFilter')
+      title: t('settings.capabilities.import.dialogTitle'),
+      filterName: t('settings.capabilities.import.dialogFilter')
     })
     if (picked) await runImport(picked)
   }, [importing, runImport, t])
@@ -112,7 +112,7 @@ export function CelebrumPanel(): React.JSX.Element {
           setCapabilities(result.capabilities)
           toast.show({
             tone: 'success',
-            message: t('settings.cellebrum.delete.successToast', { name })
+            message: t('settings.capabilities.delete.successToast', { name })
           })
         } else {
           toast.show({ tone: 'error', message: result.error })
@@ -135,7 +135,7 @@ export function CelebrumPanel(): React.JSX.Element {
           <div className="flex flex-col gap-2">
             <div className="flex items-center gap-2">
               <h1 className="text-fg text-2xl font-semibold tracking-tight">
-                {t('settings.cellebrum.title')}
+                {t('settings.capabilities.title')}
               </h1>
               {!loading && (
                 <Badge variant="default" size="sm">
@@ -143,13 +143,15 @@ export function CelebrumPanel(): React.JSX.Element {
                 </Badge>
               )}
             </div>
-            <p className="text-muted text-sm leading-relaxed">{t('settings.cellebrum.subtitle')}</p>
+            <p className="text-muted text-sm leading-relaxed">
+              {t('settings.capabilities.subtitle')}
+            </p>
           </div>
           <button
             type="button"
             onClick={() => void onResync()}
             disabled={resyncing}
-            aria-label={t('settings.cellebrum.resync')}
+            aria-label={t('settings.capabilities.resync')}
             className={cn(
               'inline-flex items-center gap-1 rounded-md text-xs cursor-pointer',
               'text-muted hover:text-fg px-1.5 py-0.5',
@@ -158,7 +160,7 @@ export function CelebrumPanel(): React.JSX.Element {
             )}
           >
             <Refresh01Icon size={14} />
-            <span>{t('settings.cellebrum.resync')}</span>
+            <span>{t('settings.capabilities.resync')}</span>
           </button>
         </header>
 
@@ -172,11 +174,11 @@ export function CelebrumPanel(): React.JSX.Element {
 
         {loading ? (
           <div className="text-muted py-12 text-center text-sm">
-            {t('settings.cellebrum.loading')}
+            {t('settings.capabilities.loading')}
           </div>
         ) : capabilities.length === 0 ? (
           <div className="text-muted py-12 text-center text-sm">
-            {t('settings.cellebrum.empty')}
+            {t('settings.capabilities.empty')}
           </div>
         ) : (
           <section className="bg-surface border-border flex flex-col rounded-2xl border">
@@ -233,7 +235,7 @@ function DeleteCapabilityModal({
       open={name !== null}
       onClose={onCancel}
       dismissable={!deleting}
-      title={t('settings.cellebrum.delete.title')}
+      title={t('settings.capabilities.delete.title')}
       footer={
         <>
           <Button
@@ -244,16 +246,16 @@ function DeleteCapabilityModal({
             className="bg-red-600 text-white hover:bg-red-700"
           >
             {deleting
-              ? t('settings.cellebrum.delete.deleting')
-              : t('settings.cellebrum.delete.cta')}
+              ? t('settings.capabilities.delete.deleting')
+              : t('settings.capabilities.delete.cta')}
           </Button>
           <Button size="md" variant="ghost" onClick={onCancel} disabled={deleting}>
-            {t('settings.cellebrum.delete.cancel')}
+            {t('settings.capabilities.delete.cancel')}
           </Button>
         </>
       }
     >
-      <p>{t('settings.cellebrum.delete.warning', { name: name ?? '' })}</p>
+      <p>{t('settings.capabilities.delete.warning', { name: name ?? '' })}</p>
     </Modal>
   )
 }
@@ -306,7 +308,7 @@ function ImportSection({
       // .zip alike. main does the rest (validate, unpack, copy).
       const sourcePath = window.api.upload.getPathForFile(file)
       if (!sourcePath) {
-        toast.show({ tone: 'error', message: t('settings.cellebrum.import.readError') })
+        toast.show({ tone: 'error', message: t('settings.capabilities.import.readError') })
         return
       }
       onImport(sourcePath)
@@ -318,15 +320,15 @@ function ImportSection({
     <section className="bg-surface border-border flex flex-col gap-4 rounded-2xl border p-6">
       <div className="flex flex-col gap-1.5">
         <span className="text-muted text-xs font-medium uppercase tracking-wider">
-          {t('settings.cellebrum.import.label')}
+          {t('settings.capabilities.import.label')}
         </span>
-        <p className="text-muted text-xs">{t('settings.cellebrum.import.hint')}</p>
+        <p className="text-muted text-xs">{t('settings.capabilities.import.hint')}</p>
       </div>
 
       <div
         role="button"
         tabIndex={importing ? -1 : 0}
-        aria-label={t('settings.cellebrum.import.dropzone')}
+        aria-label={t('settings.capabilities.import.dropzone')}
         aria-disabled={importing}
         onClick={() => !importing && onBrowse()}
         onKeyDown={(e) => {
@@ -352,15 +354,17 @@ function ImportSection({
         {importing ? (
           <>
             <Loading03Icon size={24} className="text-muted animate-spin" />
-            <span className="text-muted text-sm">{t('settings.cellebrum.import.importing')}</span>
+            <span className="text-muted text-sm">
+              {t('settings.capabilities.import.importing')}
+            </span>
           </>
         ) : (
           <>
             <CloudUploadIcon size={24} className={dragActive ? 'text-primary' : 'text-muted'} />
             <span className={cn('text-sm', dragActive ? 'text-primary' : 'text-muted')}>
               {dragActive
-                ? t('settings.cellebrum.import.dropzoneActive')
-                : t('settings.cellebrum.import.dropzone')}
+                ? t('settings.capabilities.import.dropzoneActive')
+                : t('settings.capabilities.import.dropzone')}
             </span>
           </>
         )}
@@ -387,7 +391,7 @@ function ImportErrorAlert({
         <div className="flex items-center gap-2">
           <AlertCircleIcon size={15} className="shrink-0 text-rose-500" />
           <span className="text-sm font-medium text-rose-500">
-            {t('settings.cellebrum.import.errorTitle')}
+            {t('settings.capabilities.import.errorTitle')}
           </span>
         </div>
         <button
@@ -399,7 +403,7 @@ function ImportErrorAlert({
             'focus-visible:ring-2 focus-visible:ring-rose-500 focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
           )}
         >
-          {t('settings.cellebrum.import.dismiss')}
+          {t('settings.capabilities.import.dismiss')}
         </button>
       </div>
       <pre className="bg-bg/60 border-border text-fg/90 whitespace-pre-wrap wrap-break-word rounded-md border px-3 py-2 font-mono text-xs leading-relaxed">
@@ -417,7 +421,7 @@ const IMPORT_OPTIONS = [
 
 function ImportGuide(): React.JSX.Element {
   const { t } = useTranslation()
-  const base = 'settings.cellebrum.import.guide'
+  const base = 'settings.capabilities.import.guide'
 
   return (
     <div className="border-border/60 flex flex-col gap-3 border-t pt-4">
@@ -464,17 +468,17 @@ function CapabilityRow({
               isOk ? (
                 <Badge variant="success" size="sm">
                   <CheckmarkBadge01Icon size={11} />
-                  {t('settings.cellebrum.active')}
+                  {t('settings.capabilities.active')}
                 </Badge>
               ) : (
                 <Badge variant="danger" size="sm">
                   <AlertCircleIcon size={11} />
-                  {t('settings.cellebrum.error')}
+                  {t('settings.capabilities.error')}
                 </Badge>
               )
             ) : (
               <Badge variant="default" size="sm">
-                {t('settings.cellebrum.inactive')}
+                {t('settings.capabilities.inactive')}
               </Badge>
             )}
 
@@ -487,7 +491,7 @@ function CapabilityRow({
                   className="!bg-primary/10 !text-primary !ring-primary/30"
                 >
                   <SquareLock02Icon size={11} />
-                  {t('settings.cellebrum.core')}
+                  {t('settings.capabilities.core')}
                 </Badge>
               ) : cap.official ? (
                 <Badge
@@ -496,12 +500,12 @@ function CapabilityRow({
                   className="!bg-primary/10 !text-primary !ring-primary/30"
                 >
                   <SecurityCheckIcon size={11} />
-                  {t('settings.cellebrum.official')}
+                  {t('settings.capabilities.official')}
                 </Badge>
               ) : (
                 <Badge variant="default" size="sm">
                   <HelpCircleIcon size={11} />
-                  {t('settings.cellebrum.unknown')}
+                  {t('settings.capabilities.unknown')}
                 </Badge>
               ))}
           </div>
@@ -514,8 +518,8 @@ function CapabilityRow({
             <button
               type="button"
               onClick={onRequestDelete}
-              title={t('settings.cellebrum.delete.action')}
-              aria-label={t('settings.cellebrum.delete.action', { name: cap.name })}
+              title={t('settings.capabilities.delete.action')}
+              aria-label={t('settings.capabilities.delete.action', { name: cap.name })}
               className={cn(
                 'flex h-8 w-8 items-center justify-center rounded-md cursor-pointer',
                 'text-muted hover:bg-rose-500/10 hover:text-rose-500',
@@ -528,11 +532,11 @@ function CapabilityRow({
           {cap.core ? (
             // Locked core capability — no toggle; it can never be turned off.
             <div
-              title={t('settings.cellebrum.lockedHint')}
+              title={t('settings.capabilities.lockedHint')}
               className="border-border bg-bg/40 text-muted inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium"
             >
               <SquareLock02Icon size={12} />
-              {t('settings.cellebrum.alwaysOn')}
+              {t('settings.capabilities.alwaysOn')}
             </div>
           ) : (
             <div
@@ -570,17 +574,17 @@ function CapabilityRow({
       <div className="flex flex-wrap items-center gap-2">
         {cap.hasPlugin && (
           <span className="text-muted bg-border/30 rounded px-1.5 py-0.5 text-[10px] font-medium">
-            {t('settings.cellebrum.plugin')}
+            {t('settings.capabilities.plugin')}
           </span>
         )}
         {cap.toolCount > 0 && (
           <span className="text-muted bg-border/30 rounded px-1.5 py-0.5 text-[10px] font-medium">
-            {t('settings.cellebrum.tools', { count: cap.toolCount })}
+            {t('settings.capabilities.tools', { count: cap.toolCount })}
           </span>
         )}
         {cap.requires.length > 0 && (
           <span className="text-muted bg-border/30 rounded px-1.5 py-0.5 text-[10px] font-medium">
-            {t('settings.cellebrum.requires', { deps: cap.requires.join(', ') })}
+            {t('settings.capabilities.requires', { deps: cap.requires.join(', ') })}
           </span>
         )}
       </div>

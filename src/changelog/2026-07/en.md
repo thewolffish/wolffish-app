@@ -1,4 +1,14 @@
-## v1.0.231 — 2026-07-25 `Latest`
+## v1.0.232 — 2026-07-27 `Latest`
+
+### Settings Tabs That Say What They Hold
+
+Two tabs in settings were named after parts of a brain rather than after anything you would go looking for. **Cellebrum** — the page listing every skill, plugin, and tool Wolffish can call on — is now **Capabilities**, and **Hippocampus**, where the memory compaction schedule lives, is now **Knowledge**. The pages themselves are unchanged down to the last switch; only the words you navigate by have moved into plain English, so finding the place where you import a skill no longer depends on knowing which lobe the developer had in mind. The **Data** page follows suit — its storage breakdown now reports what memory costs you under **Knowledge** — and the import panel drops its instruction to add skills "to the Cellebrum" in favour of simply **adding them here**. Wolffish's inner workings keep their anatomical names; what changed is the labels you actually click.
+
+### Room at the Bottom of the Conversations List
+
+Scroll to the end of the **Conversations** page and the last row stopped flush against the window's edge, close enough to look cut off rather than finished. The list now **keeps a margin of space past its final row**, so the bottom of a long scroll reads as the bottom.
+
+## v1.0.231 — 2026-07-25
 
 ### Find a Conversation by When It Happened
 

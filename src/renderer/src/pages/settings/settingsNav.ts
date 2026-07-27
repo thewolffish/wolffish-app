@@ -7,8 +7,8 @@ export type TabKey =
   | 'updates'
   | 'wolffish'
   | 'variables'
-  | 'cellebrum'
-  | 'hippocampus'
+  | 'capabilities'
+  | 'knowledge'
   | 'usage'
   | 'data'
 

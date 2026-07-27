@@ -24,7 +24,7 @@ import { pageTopPadding } from '@lib/utils/platform'
 import { ModelPicker } from '@pages/ModelPicker'
 import { BravePanel } from '@pages/settings/BravePanel'
 import { BrowserExtensionPanel } from '@pages/settings/BrowserExtensionPanel'
-import { CelebrumPanel } from '@pages/settings/CelebrumPanel'
+import { CapabilitiesPanel } from '@pages/settings/CapabilitiesPanel'
 import { CloudProviderPanel } from '@pages/settings/CloudProviderPanel'
 import { CompactionPanel } from '@pages/settings/CompactionPanel'
 import { ComputerUsePanel } from '@pages/settings/ComputerUsePanel'
@@ -89,8 +89,8 @@ const TABS: Tab[] = [
   { key: 'services', icon: <PuzzleIcon size={18} />, labelKey: 'settings.tabs.services' },
   { key: 'mcp', icon: <McpServerIcon size={18} />, labelKey: 'settings.tabs.mcp' },
   { key: 'variables', icon: <Key01Icon size={18} />, labelKey: 'settings.tabs.variables' },
-  { key: 'cellebrum', icon: <BrainIcon size={18} />, labelKey: 'settings.tabs.cellebrum' },
-  { key: 'hippocampus', icon: <DnaIcon size={18} />, labelKey: 'settings.tabs.hippocampus' },
+  { key: 'capabilities', icon: <BrainIcon size={18} />, labelKey: 'settings.tabs.capabilities' },
+  { key: 'knowledge', icon: <DnaIcon size={18} />, labelKey: 'settings.tabs.knowledge' },
   { key: 'usage', icon: <AnalyticsUpIcon size={18} />, labelKey: 'settings.tabs.usage' },
   { key: 'data', icon: <Database02Icon size={18} />, labelKey: 'settings.tabs.data' },
   { key: 'updates', icon: <ArrowUp02Icon size={18} />, labelKey: 'settings.tabs.updates' },
@@ -105,7 +105,7 @@ type SettingsSnapshot = {
   provider: Provider
   channel: Channel
   service: Service
-  hippocampusTab: HippocampusTab
+  knowledgeTab: KnowledgeTab
 }
 
 let memo: SettingsSnapshot | null = null
@@ -124,9 +124,9 @@ function restoreSnapshot(
     channel:
       s?.channel && CHANNELS.includes(s.channel as Channel) ? (s.channel as Channel) : 'inapp',
     service: s?.service ? (s.service as Service) : 'browserExtension',
-    hippocampusTab:
-      s?.hippocampusTab && HIPPOCAMPUS_TABS.includes(s.hippocampusTab as HippocampusTab)
-        ? (s.hippocampusTab as HippocampusTab)
+    knowledgeTab:
+      s?.knowledgeTab && KNOWLEDGE_TABS.includes(s.knowledgeTab as KnowledgeTab)
+        ? (s.knowledgeTab as KnowledgeTab)
         : 'compaction'
   }
   memo = result
@@ -152,7 +152,7 @@ export function Settings(): React.JSX.Element {
   const [provider, setProviderRaw] = useState<Provider>(snapshot.provider)
   const [channel, setChannelRaw] = useState<Channel>(snapshot.channel)
   const [service, setServiceRaw] = useState<Service>(snapshot.service)
-  const [hippocampusTab, setHippocampusTabRaw] = useState<HippocampusTab>(snapshot.hippocampusTab)
+  const [knowledgeTab, setKnowledgeTabRaw] = useState<KnowledgeTab>(snapshot.knowledgeTab)
 
   const setActive = useCallback(
     (key: TabKey) => {
@@ -192,11 +192,11 @@ export function Settings(): React.JSX.Element {
     [snapshot]
   )
 
-  const setHippocampusTab = useCallback(
-    (ht: HippocampusTab) => {
-      setHippocampusTabRaw(ht)
-      memo = { ...(memo ?? snapshot), hippocampusTab: ht }
-      persistField('hippocampusTab', ht)
+  const setKnowledgeTab = useCallback(
+    (kt: KnowledgeTab) => {
+      setKnowledgeTabRaw(kt)
+      memo = { ...(memo ?? snapshot), knowledgeTab: kt }
+      persistField('knowledgeTab', kt)
     },
     [snapshot]
   )
@@ -430,7 +430,7 @@ export function Settings(): React.JSX.Element {
                   </div>
                 )}
 
-                {tab.key === 'hippocampus' && (
+                {tab.key === 'knowledge' && (
                   <div
                     className={cn(
                       'grid transition-[grid-template-rows] duration-200 ease-out',
@@ -439,14 +439,14 @@ export function Settings(): React.JSX.Element {
                   >
                     <div className="overflow-hidden">
                       <div className="flex flex-col gap-0.5 ps-7 pe-1 py-1">
-                        {HIPPOCAMPUS_TABS.map((ht) => {
-                          const subActive = isActive && hippocampusTab === ht
+                        {KNOWLEDGE_TABS.map((kt) => {
+                          const subActive = isActive && knowledgeTab === kt
                           return (
                             <button
-                              key={ht}
+                              key={kt}
                               type="button"
                               tabIndex={isActive ? 0 : -1}
-                              onClick={() => setHippocampusTab(ht)}
+                              onClick={() => setKnowledgeTab(kt)}
                               className={cn(
                                 'flex items-center gap-2 rounded-lg px-3 py-1.5 text-start text-sm cursor-pointer whitespace-nowrap',
                                 'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
@@ -455,7 +455,7 @@ export function Settings(): React.JSX.Element {
                                   : 'text-muted hover:bg-border/30 hover:text-fg'
                               )}
                             >
-                              <span>{t(`settings.hippocampus.tabs.${ht}`)}</span>
+                              <span>{t(`settings.knowledge.tabs.${kt}`)}</span>
                             </button>
                           )
                         })}
@@ -482,10 +482,10 @@ export function Settings(): React.JSX.Element {
         <TabPanel active={active === 'variables'}>
           <VariablesPanel />
         </TabPanel>
-        <TabPanel active={active === 'cellebrum'}>
-          <CelebrumPanel />
+        <TabPanel active={active === 'capabilities'}>
+          <CapabilitiesPanel />
         </TabPanel>
-        <TabPanel active={active === 'hippocampus' && hippocampusTab === 'compaction'}>
+        <TabPanel active={active === 'knowledge' && knowledgeTab === 'compaction'}>
           <CompactionPanel />
         </TabPanel>
         <TabPanel active={active === 'usage'}>
@@ -652,8 +652,8 @@ const CHANNEL_ICONS: Record<Channel, React.ComponentType<{ size?: number }>> = {
   whatsapp: WhatsappIcon
 }
 
-type HippocampusTab = 'compaction'
-const HIPPOCAMPUS_TABS: HippocampusTab[] = ['compaction']
+type KnowledgeTab = 'compaction'
+const KNOWLEDGE_TABS: KnowledgeTab[] = ['compaction']
 
 type Service =
   | 'browserExtension'

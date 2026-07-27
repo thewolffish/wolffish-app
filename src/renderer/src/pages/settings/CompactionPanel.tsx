@@ -53,10 +53,10 @@ export function CompactionPanel(): React.JSX.Element {
       setNow(Date.now())
       toast.show({
         tone: 'success',
-        message: t('settings.hippocampus.compaction.resyncSuccessToast')
+        message: t('settings.knowledge.compaction.resyncSuccessToast')
       })
     } catch {
-      toast.show({ tone: 'error', message: t('settings.hippocampus.compaction.resyncErrorToast') })
+      toast.show({ tone: 'error', message: t('settings.knowledge.compaction.resyncErrorToast') })
     } finally {
       setResyncing(false)
     }
@@ -87,7 +87,7 @@ export function CompactionPanel(): React.JSX.Element {
     () =>
       [0, 1, 2, 3, 4, 5, 6].map((d) => ({
         value: String(d),
-        label: t(`settings.hippocampus.compaction.days.${d}`)
+        label: t(`settings.knowledge.compaction.days.${d}`)
       })),
     [t]
   )
@@ -100,17 +100,17 @@ export function CompactionPanel(): React.JSX.Element {
         <header className="flex items-start justify-between gap-4">
           <div className="flex flex-col gap-2">
             <h1 className="text-fg text-2xl font-semibold tracking-tight">
-              {t('settings.hippocampus.compaction.title')}
+              {t('settings.knowledge.compaction.title')}
             </h1>
             <p className="text-muted text-sm leading-relaxed">
-              {t('settings.hippocampus.compaction.subtitle')}
+              {t('settings.knowledge.compaction.subtitle')}
             </p>
           </div>
           <button
             type="button"
             onClick={() => void onResync()}
             disabled={resyncing}
-            aria-label={t('settings.hippocampus.compaction.resync')}
+            aria-label={t('settings.knowledge.compaction.resync')}
             className={cn(
               'inline-flex items-center gap-1 rounded-md text-xs cursor-pointer',
               'text-muted hover:text-fg px-1.5 py-0.5',
@@ -119,7 +119,7 @@ export function CompactionPanel(): React.JSX.Element {
             )}
           >
             <Refresh01Icon size={14} />
-            <span>{t('settings.hippocampus.compaction.resync')}</span>
+            <span>{t('settings.knowledge.compaction.resync')}</span>
           </button>
         </header>
 
@@ -140,7 +140,7 @@ export function CompactionPanel(): React.JSX.Element {
           <div className="flex flex-col gap-2">
             <div className="flex items-center justify-between gap-4">
               <span className="text-fg text-sm font-medium">
-                {t('settings.hippocampus.compaction.daily.label')}
+                {t('settings.knowledge.compaction.daily.label')}
               </span>
               <Select<string>
                 className="min-w-28"
@@ -151,7 +151,7 @@ export function CompactionPanel(): React.JSX.Element {
               />
             </div>
             <p className="text-muted text-xs leading-relaxed">
-              {t('settings.hippocampus.compaction.daily.description')}
+              {t('settings.knowledge.compaction.daily.description')}
             </p>
             <NextRun ms={nextDailyMs(config.dailyHour, now)} locale={locale} />
           </div>
@@ -162,7 +162,7 @@ export function CompactionPanel(): React.JSX.Element {
           <div className="flex flex-col gap-2">
             <div className="flex items-center justify-between gap-4">
               <span className="text-fg text-sm font-medium">
-                {t('settings.hippocampus.compaction.weekly.label')}
+                {t('settings.knowledge.compaction.weekly.label')}
               </span>
               <div className="flex items-center gap-2">
                 <Select<string>
@@ -182,7 +182,7 @@ export function CompactionPanel(): React.JSX.Element {
               </div>
             </div>
             <p className="text-muted text-xs leading-relaxed">
-              {t('settings.hippocampus.compaction.weekly.description')}
+              {t('settings.knowledge.compaction.weekly.description')}
             </p>
             <NextRun ms={nextWeeklyMs(config.weeklyDay, config.weeklyHour, now)} locale={locale} />
           </div>
@@ -236,11 +236,11 @@ function LastRunCard({
         <div className="flex items-center gap-2">
           <Activity04Icon size={16} className="text-muted" />
           <span className="text-fg text-sm font-medium">
-            {t(`settings.hippocampus.compaction.lastRun.${kind}Title`)}
+            {t(`settings.knowledge.compaction.lastRun.${kind}Title`)}
           </span>
         </div>
         <code className={CHIP_CLASS}>
-          {t('settings.hippocampus.compaction.lastRun.ranAt', {
+          {t('settings.knowledge.compaction.lastRun.ranAt', {
             time: new Date(record.at).toLocaleString(locale, {
               month: 'short',
               day: 'numeric',
@@ -253,13 +253,13 @@ function LastRunCard({
       <div className="flex flex-wrap items-center gap-2">
         {record.model && <code className={CHIP_CLASS}>{record.model}</code>}
         <code className={CHIP_CLASS}>
-          {t('settings.hippocampus.compaction.lastRun.took', {
+          {t('settings.knowledge.compaction.lastRun.took', {
             duration: formatDuration(record.durationMs, locale)
           })}
         </code>
         {record.inputTokens !== null && record.outputTokens !== null && (
           <code className={CHIP_CLASS}>
-            {t('settings.hippocampus.compaction.lastRun.tokens', {
+            {t('settings.knowledge.compaction.lastRun.tokens', {
               input: record.inputTokens.toLocaleString(locale),
               output: record.outputTokens.toLocaleString(locale)
             })}
@@ -314,7 +314,7 @@ function NextRun({ ms, locale }: { ms: number; locale: string }): React.JSX.Elem
   const { t } = useTranslation()
   return (
     <code className="text-muted bg-bg/60 border-border/40 inline-block self-start rounded border px-2 py-1 text-[11px]">
-      {t('settings.hippocampus.compaction.nextRun', { time: formatFromNow(ms, locale) })}
+      {t('settings.knowledge.compaction.nextRun', { time: formatFromNow(ms, locale) })}
     </code>
   )
 }

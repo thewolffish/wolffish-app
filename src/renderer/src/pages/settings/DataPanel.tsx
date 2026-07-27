@@ -141,7 +141,7 @@ function AnalyticsGrid({ analytics }: { analytics: DataAnalytics }): React.JSX.E
       icon: HardDriveIcon
     },
     {
-      label: t('settings.data.metrics.hippocampus'),
+      label: t('settings.data.metrics.knowledge'),
       value: formatBytesL(analytics.hippocampusBytes, t),
       icon: AiBrain01Icon
     },

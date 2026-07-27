@@ -355,7 +355,7 @@ export type WorkspaceConfig = {
     provider?: string
     channel?: string
     service?: string
-    hippocampusTab?: string
+    knowledgeTab?: string
     sidebarCollapsed?: string
     rightSidebarCollapsed?: string
   }

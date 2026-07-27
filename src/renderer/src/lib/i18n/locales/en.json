@@ -199,14 +199,14 @@
       "model": "Models",
       "wolffish": "Preferences",
       "variables": "Variables",
-      "cellebrum": "Cellebrum",
+      "capabilities": "Capabilities",
       "channels": "Channels",
       "services": "Services",
       "mcp": "MCP",
       "usage": "Usage",
       "data": "Data",
       "updates": "Updates",
-      "hippocampus": "Hippocampus"
+      "knowledge": "Knowledge"
     },
     "wolffish": {
       "title": "Wolffish",
@@ -241,7 +241,7 @@
         "description": "Sets the day Wolffish treats as the first day of the week. Drives how the activity heatmap is laid out and how date ranges like \"this week\" line up in your head. Default is Monday (the ISO 8601 standard most of the world uses); pick Sunday if your calendar app and routines start there. Internal weekly memory files keep their existing ISO-week names so older summaries don't shift."
       }
     },
-    "hippocampus": {
+    "knowledge": {
       "tabs": {
         "compaction": "Compaction"
       },
@@ -278,8 +278,8 @@
         }
       }
     },
-    "cellebrum": {
-      "title": "Cellebrum",
+    "capabilities": {
+      "title": "Capabilities",
       "subtitle": "Loaded capabilities and their runtime status.",
       "loading": "Loading capabilities…",
       "empty": "No capabilities loaded.",
@@ -299,7 +299,7 @@
       "resyncErrorToast": "Failed to resync capabilities",
       "import": {
         "label": "Import a capability",
-        "hint": "Add your own skills, plugins, and tools to the Cellebrum.",
+        "hint": "Add your own skills, plugins, and tools here.",
         "dropzone": "Drag a SKILL.md, folder, or .zip here — or click to browse",
         "dropzoneActive": "Drop to import",
         "dialogTitle": "Import a capability",
@@ -1350,7 +1350,7 @@
       },
       "metrics": {
         "workspace": "Workspace",
-        "hippocampus": "Hippocampus",
+        "knowledge": "Knowledge",
         "corpus": "Corpus",
         "prefrontal": "Prefrontal",
         "ram": "RAM",
