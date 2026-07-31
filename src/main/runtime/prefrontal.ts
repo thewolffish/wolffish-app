@@ -90,6 +90,16 @@ export type RuntimeContext = {
    * cached prompt prefix. Undefined (the common case) renders nothing.
    */
   noProgress?: string
+  /**
+   * Channel-format notice for this iteration — a prose-mirroring channel
+   * (Telegram/WhatsApp) reporting that a prose block ALREADY DELIVERED to
+   * the user's phone carried raw markup (leaked Markdown, broken HTML), so
+   * the model can repair the delivered message and write clean blocks for
+   * the rest of the turn. Observe-and-notify: nothing rewrites model prose.
+   * Same vehicle and cache rationale as noProgress. Undefined renders
+   * nothing.
+   */
+  channelFormat?: string
 }
 
 const ALWAYS_INCLUDED: Array<{ category: ContextCategory; rel: string; tag: string }> = [
@@ -152,10 +162,10 @@ You are running as a locally-hosted model on the user's own machine. If a task e
 // and raw Markdown in the user's chat — the model IS the formatter.
 const CHANNEL_PROMPTS: Readonly<Record<string, string>> = {
   whatsapp: `<channel>
-You are talking with the user over WhatsApp: every prose reply you write is delivered VERBATIM as WhatsApp messages — there is no Markdown renderer and no converter between you and the user. WhatsApp does NOT render Markdown; write replies in WhatsApp's own text formatting and nothing else:
+You are talking with the user over WhatsApp: EVERY prose block you write — full replies AND the one-line narration between tool calls ("Checking the flight…", "Found it —") — is delivered VERBATIM to their phone as a WhatsApp message the moment you call the next tool or end the turn. Nothing you write here is internal, in-app-only, or "thinking out loud"; there is no Markdown renderer and no converter between you and the user. WhatsApp does NOT render Markdown; write ALL prose, narration included, in WhatsApp's own text formatting and nothing else:
 - *bold* (single asterisks), _italic_ (single underscores), ~strikethrough~ (single tildes), \`inline code\` (backticks), \`\`\`monospace block\`\`\` (triple backticks, no language tag).
 - Lists: start a line with "- " for a bullet or "1. " for a numbered item. Quote: start the line with "> ".
-- NEVER use Markdown syntax: no **double asterisks**, no # headings, no | tables |, no [text](url) links, no --- rules. Every leaked marker reaches the user as raw, ugly syntax. GOOD: *Flight details*\n_Gate 22_. BAD: **Flight details**\n| gate | 22 |.
+- NEVER use Markdown syntax: no **double asterisks**, no # headings, no | tables |, no [text](url) links, no --- rules. Every leaked marker reaches the user as raw, ugly syntax: the send tools REFUSE Markdown outright, and narration that leaks it lands on their phone before anything can stop it. GOOD: *Flight details*\n_Gate 22_. BAD: **Flight details**\n| gate | 22 |. BAD narration: "Key findings:\n- **Departed**: 10:23 PM" — write "Key findings:\n- *Departed:* 10:23 PM".
 - NEVER use HTML: WhatsApp renders no tags and no entities — <b>hi</b> and &amp; reach the user as literal text. Write plain & < > characters and WhatsApp markup, never Telegram-style HTML. To show a tag or code as text on purpose, wrap it in \`backticks\`.
 - If a message contains any formatting, call whatsapp_check_format on the exact text FIRST and only send once it comes back clean.
 - Instead of a heading, write a short *bold* line. Instead of a table, write one "*Label:* value" line per fact. For a link, paste the bare URL — WhatsApp makes it clickable.
@@ -167,11 +177,11 @@ You are talking with the user over WhatsApp: every prose reply you write is deli
 - This is a phone chat: keep replies short and scannable. Prefer a few tight lines over long structured documents.
 </channel>`,
   telegram: `<channel>
-You are talking with the user over Telegram: every prose reply you write is delivered VERBATIM as Telegram messages sent with parse_mode HTML — there is no Markdown renderer and no converter between you and the user. Telegram does NOT render Markdown; write replies in Telegram's HTML subset and nothing else:
+You are talking with the user over Telegram: EVERY prose block you write — full replies AND the one-line narration between tool calls ("Checking the flight…", "Found it —") — is delivered VERBATIM to their phone as a Telegram message (sent with parse_mode HTML) the moment you call the next tool or end the turn. Nothing you write here is internal, in-app-only, or "thinking out loud"; there is no Markdown renderer and no converter between you and the user. Telegram does NOT render Markdown; write ALL prose, narration included, in Telegram's HTML subset and nothing else:
 - Allowed tags: <b>bold</b>, <i>italic</i>, <u>underline</u>, <s>strikethrough</s>, <code>inline code</code>, <pre>multi-line code block</pre> (or <pre><code class="language-python">…</code></pre>), <a href="https://…">link</a>, <blockquote>quote</blockquote>, <span class="tg-spoiler">spoiler</span>.
 - NO other tags exist: no <br> (use real newlines), no <p>, <ul>, <li>, <h1>, <table>, and NEVER wrap the message in a container tag like <message>/<html>. One unknown tag, unclosed tag, or bare < / & makes Telegram reject the ENTIRE message and it arrives as raw tag soup — write literal & as &amp;, < as &lt;, > as &gt;, in prose and inside <code>/<pre> alike, and close every tag you open. The tags THEMSELVES are raw < > characters — entity-escaping a tag (&lt;b&gt; instead of <b>) makes Telegram show the user literal "<b>" text instead of bold. GOOD: <b>Digest</b>\ncost &lt;5. BAD: <b>Digest</b>…</message> (stray wrapper), &lt;b&gt;Digest&lt;/b&gt; (escaped tags — arrive as literal text), line<br>line, cost < 5 & up (unescaped).
 - If a message contains ANY HTML tag or literal < / &, call telegram_check_format on the exact text FIRST and only send once it returns valid — never guess.
-- NEVER use Markdown syntax: no **bold**, no # headings, no | tables |, no [text](url), no --- rules. Every leaked marker reaches the user as raw, ugly syntax.
+- NEVER use Markdown syntax: no **bold**, no # headings, no | tables |, no [text](url), no --- rules. Every leaked marker reaches the user as raw, ugly syntax: the send tools REFUSE Markdown outright, and narration that leaks it lands on their phone before anything can stop it. BAD narration: "Key findings:\n- **Departed**: 10:23 PM" — write "Key findings:\n- <b>Departed:</b> 10:23 PM".
 - Instead of a heading, write a short <b>bold</b> line. Instead of a table, write one "<b>Label:</b> value" line per fact. Lists are plain lines starting with "- " or "1. " (literal text is fine there).
 - NEVER draw horizontal divider lines: no ━━━━━, ═════, ─────, -----, _____, or any line of repeated bar/dash characters — a phone's narrow bubble wraps them into several broken lines of bars, and the send tools reject them. A blank line separates sections; an emoji + <b>bold</b> line is the header. Progress bars like ▓▓▓▓░░ 60% are fine — the ban is on drawn rules, not block-character bars.
 - The same applies to everything you relay: tool results, file contents, and subagent reports are often Markdown — rewrite them in Telegram HTML before quoting them.
@@ -695,6 +705,9 @@ function formatRuntimeBody(runtime: RuntimeContext | undefined): string {
     if (runtime.online === false) lines.push(`  ${OFFLINE_NOTICE}`)
     // No-progress notice rides the same vehicle for the same reason.
     if (runtime.noProgress) lines.push(`  ${runtime.noProgress}`)
+    // Channel-format notice (prose delivered to a phone with raw markup) —
+    // same vehicle, same reason.
+    if (runtime.channelFormat) lines.push(`  ${runtime.channelFormat}`)
   }
   return lines.join('\n')
 }

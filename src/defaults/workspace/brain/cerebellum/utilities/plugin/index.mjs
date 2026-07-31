@@ -22,6 +22,9 @@ const MAX_SURFACE_BYTES = 50 * 1024 * 1024
 // `[wolffish-output: <path> (<type>)]` marker we emit is recognized and
 // delivered everywhere. Anything not in these sets is delivered as a
 // generic `(file)` (rendered as a file card / sent as a document).
+// One suffix-based type rides above the buckets: `*.chart.json` → `(chart)`,
+// the interactive chart-card spec (see the dataviz capability) — the in-app
+// renderer draws it as a live chart; channels fall back to a document send.
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.tiff', '.tif'])
 const AUDIO_EXTS = new Set(['.mp3', '.wav', '.m4a', '.ogg', '.flac', '.aac', '.wma', '.opus'])
 const VIDEO_EXTS = new Set(['.mp4', '.mov', '.avi', '.mkv', '.m4v', '.wmv', '.flv', '.webm'])
@@ -109,7 +112,10 @@ async function sendFile(args) {
     // Copy failed — remote channels can still send the original absolute path.
   }
 
-  const type = classify(path.extname(markerPath).toLowerCase())
+  // `.chart.json` outranks the extension buckets: the full suffix — not the
+  // bare `.json` — is what routes a chart spec to the in-app chart card.
+  const isChart = markerPath.toLowerCase().endsWith('.chart.json')
+  const type = isChart ? 'chart' : classify(path.extname(markerPath).toLowerCase())
   // The marker is what every channel + the in-app renderer parse to deliver
   // the file. Emit it as the whole output so nothing leaks as stray text.
   return { success: true, output: `[wolffish-output: ${markerPath} (${type})]` }

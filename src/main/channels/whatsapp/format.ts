@@ -37,17 +37,21 @@ export type WhatsAppFormatReport = {
   /** All problems, hard first — what `whatsapp_check_format` lists. */
   issues: string[]
   /**
-   * The message would reach the recipient visibly broken: HTML tags or
+   * The message would reach the recipient visibly wrong: HTML tags or
    * entities, which WhatsApp NEVER parses — they arrive as literal
-   * "<b>" / "&amp;" text — or a decorative divider-bar line that wraps
-   * into several broken lines of bar characters on a phone. Send tools
-   * refuse to send while any exist.
+   * "<b>" / "&amp;" text — a decorative divider-bar line that wraps
+   * into several broken lines of bar characters on a phone, or leaked
+   * Markdown (**bold**, __bold__, # headings, [text](url), | tables |,
+   * --- rules), whose raw symbols WhatsApp shows as-is. Send tools
+   * refuse to send while any exist; the model rewrites its own text
+   * (sendAsIs is the escape hatch for markup that IS the content, and
+   * RejectBudget still force-delivers after repeated bounces so a
+   * message is never lost). Quoting inside `backticks`/``` is exempt.
    */
   hard: string[]
   /**
-   * Delivered, but Markdown symbols reach the recipient raw. Heuristic —
-   * text legitimately QUOTING `**`/`#` content trips it, so these never
-   * block a send; they're reported on the send result instead.
+   * Delivered with a note on the send result instead of blocking —
+   * cosmetic-only findings (currently just the ```lang fence tag).
    */
   soft: string[]
 }
@@ -84,12 +88,14 @@ const HTML_ENTITY = /&(?:amp|lt|gt|quot|apos|nbsp|#\d+|#x[0-9a-fA-F]+);/g
  * about the API; it's about what the recipient SEES. This does NOT rewrite
  * anything (the model is the formatter). Hard: HTML tags/entities —
  * WhatsApp parses no HTML, so `<b>` and `&amp;` arrive as literal text
- * (the cross-channel confusion class) — and decorative divider-bar lines
+ * (the cross-channel confusion class) — decorative divider-bar lines
  * (━━━━━, ═════, -----), which a phone's narrow bubble wraps into several
- * broken lines of bar characters. Soft: leaked Markdown, shown as
- * raw symbols. All classes are exempt inside ``` fences and `inline
- * code` spans, where showing markup is the point. WhatsApp's real syntax
- * is single-char: *bold* _italic_ ~strike~ `code` ```block``` ,
+ * broken lines of bar characters, and leaked Markdown (**bold**,
+ * __bold__, # headings, [text](url), | tables |, --- rules), shown as
+ * raw symbols. Soft: cosmetic-only findings (the ```lang fence tag).
+ * All classes are exempt inside ``` fences and `inline code` spans,
+ * where showing markup is the point. WhatsApp's real syntax is
+ * single-char: *bold* _italic_ ~strike~ `code` ```block``` ,
  * "- "/"1. " lists, "> " quotes — those are fine.
  */
 export function validateWhatsAppFormat(message: string): WhatsAppFormatReport {
@@ -119,32 +125,41 @@ export function validateWhatsAppFormat(message: string): WhatsAppFormatReport {
     )
   }
 
-  if (/\*\*[^*\n]+\*\*/.test(masked)) {
-    soft.push(
+  // Leaked Markdown — WhatsApp renders none of it, so the raw symbols would
+  // reach the recipient. HARD: the send gates refuse the message and the
+  // model rewrites its own text in WhatsApp markup (sendAsIs is the escape
+  // hatch when the markup IS the content; RejectBudget still guarantees
+  // delivery if the model can't converge). All checks run on the code-span-
+  // masked text — quoting Markdown inside `backticks` / ``` fences is
+  // intentional display. The lookaround guards keep "x**2 + y**2",
+  // "f(**kwargs)" and mid-word underscores legal: real Markdown emphasis
+  // hugs non-space text and is not glued to a word character on the outside.
+  if (/(?<![\w*])\*\*(?!\s)[^*\n]+?(?<!\s)\*\*(?![\w*])/.test(masked)) {
+    hard.push(
       'Markdown **bold** (double asterisks) — WhatsApp bold is a SINGLE *asterisk*: *bold*.'
     )
   }
-  if (/__[^_\n]+__/.test(masked)) {
-    soft.push(
-      'Markdown __bold__ (double underscores) — WhatsApp italic is a SINGLE _underscore_: _italic_.'
+  if (/(?<![\w_])__(?!\s)[^_\n]+?(?<!\s)__(?![\w_])/.test(masked)) {
+    hard.push(
+      'Markdown __bold__ (double underscores) — WhatsApp italic is a SINGLE _underscore_: _italic_. To show a literal dunder name like __init__, wrap it in `backticks`.'
     )
   }
   if (/^\s{0,3}#{1,6}\s+\S/m.test(masked)) {
-    soft.push('Markdown "# heading" — WhatsApp has no headings. Use a short *bold* line instead.')
+    hard.push('Markdown "# heading" — WhatsApp has no headings. Use a short *bold* line instead.')
   }
   // [text](url) links — but NOT the allowed ![alt](wolffish-media://…) image marker.
   if (/!?\[[^\]\n]*\]\((?!wolffish-media:\/\/)[^)\s]+\)/.test(masked)) {
-    soft.push(
+    hard.push(
       'Markdown [text](url) link — WhatsApp shows it raw. Paste the bare URL; WhatsApp auto-links it.'
     )
   }
   if (/^\s*\|.*\|.*$/m.test(masked) || /\|\s*:?-{2,}/.test(masked)) {
-    soft.push(
+    hard.push(
       'Markdown | table | — WhatsApp has no tables. Write one "*Label:* value" line per fact.'
     )
   }
   if (/^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/m.test(masked)) {
-    soft.push(
+    hard.push(
       'Markdown "---" horizontal rule — WhatsApp shows it raw. Use a blank line to separate sections.'
     )
   }

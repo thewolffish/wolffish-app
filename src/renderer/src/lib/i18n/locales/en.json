@@ -1505,6 +1505,11 @@
       "expand": "Expand",
       "close": "Close"
     },
+    "chartCard": {
+      "savePng": "Save as image",
+      "viewChart": "Chart",
+      "viewData": "Data"
+    },
     "pathCard": {
       "folder": "Folder",
       "file": "File",

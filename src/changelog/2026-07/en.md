@@ -1,4 +1,4 @@
-## v1.0.232 — 2026-07-27 `Latest`
+## v1.0.232 — 2026-07-27
 
 ### Settings Tabs That Say What They Hold
 

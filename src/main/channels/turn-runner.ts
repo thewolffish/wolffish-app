@@ -65,6 +65,18 @@ export type TurnSendOptions = {
    */
   modeOverride?: 'single' | 'workflow'
   /**
+   * Channel-format feedback pull (observe-and-notify — see the channel
+   * overlays' verbatim-prose contract). A prose-mirroring channel
+   * (Telegram/WhatsApp) validates each prose block it delivers; when a
+   * block leaked raw markup it parks a notice, and the agent drains this
+   * every iteration to ride the notices on the volatile runtime tail —
+   * the model then fixes the delivered message (telegram_edit_message)
+   * and writes clean blocks for the rest of the turn. Nothing rewrites
+   * or withholds the model's prose; the framework only tells it what the
+   * user actually received. Omitted for channels that render Markdown.
+   */
+  formatNotices?: () => string[]
+  /**
    * External controller. Lets channels tie cancellation to a parent
    * lifecycle (e.g. closing the renderer window aborts every pending
    * Electron turn).
@@ -462,7 +474,8 @@ export class TurnRunner {
             signal: controller.signal,
             onSegment: (segment) => sink.onSegment(segment),
             thinkingMode: opts.thinkingMode,
-            modeOverride: opts.modeOverride
+            modeOverride: opts.modeOverride,
+            formatNotices: opts.formatNotices
           })
         )
         sink.onDone()

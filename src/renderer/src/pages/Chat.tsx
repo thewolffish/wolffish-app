@@ -7,6 +7,7 @@ import { CompactionCard } from '@components/common/compaction-card/CompactionCar
 import { ContextMeter, type SideSpend } from '@components/common/context-meter/ContextMeter'
 import { DiagnosticExportOverlay } from '@components/common/diagnostic-export-overlay/DiagnosticExportOverlay'
 import { DocxViewer } from '@components/common/docx-viewer/DocxViewer'
+import { ChartCard } from '@components/common/chart-card/ChartCard'
 import { FileCard } from '@components/common/file-card/FileCard'
 import { HtmlFileViewer } from '@components/common/html-file-viewer/HtmlFileViewer'
 import { ImageViewer } from '@components/common/image-viewer/ImageViewer'
@@ -4801,6 +4802,27 @@ function renderSegments(
           }
         }
 
+        // Interactive chart cards — `.chart.json` specs explicitly delivered
+        // via send_file carry the (chart) marker (see the dataviz capability's
+        // spec contract). Rendered on the clean feed too, like every delivered
+        // file; a spec that fails to parse falls back to a plain file card
+        // inside ChartCard itself.
+        const chartFiles = extractToolResultCharts(result)
+        for (let ci = 0; ci < chartFiles.length; ci++) {
+          const cPath = chartFiles[ci]
+          if (!emitOnce(cPath)) continue
+          blocks.push(
+            <ChartCard
+              key={`chart_${seg.segmentId}_${ci}`}
+              filePath={cPath}
+              fileExists={true}
+              fileName={cPath.split('/').pop() ?? 'chart.json'}
+              sizeBytes={0}
+              mimeType="application/json"
+            />
+          )
+        }
+
         // Location cards the model explicitly pushed via show_path — the
         // [wolffish-path:] marker is their transport, mirroring send_file's
         // delivery markers. Always rendered (clean feed too): pushing an
@@ -5099,7 +5121,7 @@ type ToolCallSegment = Extract<Segment, { kind: 'tool_call' }>
 // and `path` args, so a `{path: 'report.md'}` mis-call would otherwise be
 // classified as file content below and its delivery would never render.
 const DELIVERY_MARKER_ONLY_RE =
-  /^\[wolffish-output:\s*[^\]]+?\s+\((?:image|audio|video|document|file)\)\]$/
+  /^\[wolffish-output:\s*[^\]]+?\s+\((?:image|audio|video|document|file|chart)\)\]$/
 
 // show_path's transport gets the same guard: its `path` arg may name a code
 // file whose LOCATION is being shown, which must not classify as file content
@@ -5247,6 +5269,28 @@ function extractToolResultGenericFiles(result?: ToolResultSegment): string[] {
 }
 
 /**
+ * Extract chart specs explicitly delivered via send_file. These carry a
+ * `[wolffish-output: /path (chart)]` marker — emitted for `*.chart.json`
+ * files (the interactive chart-card spec; see the dataviz capability).
+ * MARKER-ONLY like every delivery type above.
+ */
+function extractToolResultCharts(result?: ToolResultSegment): string[] {
+  if (!result?.output || result.status !== 'success') return []
+  const paths: string[] = []
+  const seen = new Set<string>()
+  const markerRegex = /\[wolffish-output:\s*([^\]]+?)\s+\(chart\)\]/g
+  let match: RegExpExecArray | null
+  while ((match = markerRegex.exec(result.output)) !== null) {
+    const p = match[1].trim()
+    if (!seen.has(p)) {
+      seen.add(p)
+      paths.push(p)
+    }
+  }
+  return paths
+}
+
+/**
  * Extract folder/file locations the model explicitly pushed via show_path.
  * These carry a `[wolffish-path: /abs/path (folder|file)]` marker — the
  * model's own deliberate act, so the card renders on the clean feed too
@@ -5273,7 +5317,7 @@ function extractToolResultPaths(
   return out
 }
 
-type DeliveredBucket = 'image' | 'audio' | 'video' | 'document' | 'file'
+type DeliveredBucket = 'image' | 'audio' | 'video' | 'document' | 'file' | 'chart'
 
 // Extension → media bucket, so a file path found anywhere (a tool arg, a
 // marker) gets the right viewer. Kept intentionally broad — View Files is a
@@ -5324,6 +5368,8 @@ function extToBucket(filePath: string): DeliveredBucket {
   // wolffish-media:// refs carry no extension and are almost always images.
   if (filePath.startsWith('wolffish-media://')) return 'image'
   const base = filePath.split(/[\\/]/).pop() ?? ''
+  // The chart-card spec suffix outranks the bare `.json` extension.
+  if (base.toLowerCase().endsWith('.chart.json')) return 'chart'
   const ext = (base.match(/\.[^.]+$/)?.[0].slice(1) ?? '').toLowerCase()
   if (IMAGE_EXTS.has(ext)) return 'image'
   if (AUDIO_EXTS.has(ext)) return 'audio'
@@ -5516,6 +5562,9 @@ function deliveredFilesToAttachments(result: ToolResultSegment): MessageAttachme
   for (const p of extractToolResultGenericFiles(result))
     atts.push(fileToAttachment(toWorkspaceRelative(p), 'file'))
 
+  for (const p of extractToolResultCharts(result))
+    atts.push(fileToAttachment(toWorkspaceRelative(p), 'chart'))
+
   return atts
 }
 
@@ -5542,7 +5591,9 @@ function fileToAttachment(
     type,
     filePath,
     originalName: fileName,
-    mimeType: mimeForAttachment(type, ext),
+    // Chart specs are JSON; AttachmentList keys the chart card off the
+    // `.chart.json` filename, this just keeps the type label honest.
+    mimeType: bucket === 'chart' ? 'application/json' : mimeForAttachment(type, ext),
     sizeBytes
   }
 }

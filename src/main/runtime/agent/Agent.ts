@@ -36,6 +36,7 @@ import { buildProjectOverlay } from '@main/projects'
 import { compactOverflow } from '@main/runtime/compactor'
 import { Corpus, turnScope, type CorpusEvent } from '@main/runtime/corpus'
 import { TurnStatsCollector } from '@main/channels/turn-stats'
+import type { TurnLifecycleEvent } from '@main/channels/turn-runner'
 import { Cortex } from '@main/runtime/cortex'
 import { Device } from '@main/runtime/device'
 import { Hippocampus, type TurnToolCall } from '@main/runtime/hippocampus'
@@ -228,6 +229,16 @@ export type AgentTurnOptions = {
    * global setting for that run. Omitted ⇒ the global mode.
    */
   modeOverride?: 'single' | 'workflow'
+  /**
+   * Channel-format feedback pull. A prose-mirroring channel (Telegram/
+   * WhatsApp) validates every prose block it delivers to the user's phone;
+   * a block that leaked raw markup parks a notice which this drains once
+   * per iteration. Notices ride the volatile runtime tail (same vehicle
+   * and cache rationale as the no-progress notice) so the model can repair
+   * the delivered message and write clean blocks for the rest of the turn.
+   * Observe-and-notify only — the framework never rewrites model prose.
+   */
+  formatNotices?: () => string[]
 }
 
 export type AgentTurnResult = {
@@ -329,6 +340,14 @@ export class Agent {
 
   private cortexReady: Promise<void> | null = null
   private cerebellumReady: Promise<void> | null = null
+
+  // Lifecycle broadcast for AUTONOMOUS runs (heartbeat/procedure) — the same
+  // TurnLifecycleEvent shape TurnRunner emits for channel turns, wired to the
+  // same chat:turnState broadcast in index.ts. Only TERMINAL phases are
+  // emitted: the sealed conversation reaches disk (and the rail) when the run
+  // ends, so there is no row to pulse mid-run — the Heartbeat page's run
+  // cards carry live progress instead.
+  private autonomousLifecycle: ((ev: TurnLifecycleEvent) => void) | null = null
 
   // Workflow mode. `mode` is the global chat setting (chat-page mode button).
   // The active master turn's agent registry rides on AsyncLocalStorage — NOT a
@@ -474,6 +493,11 @@ export class Agent {
    */
   setMode(mode: 'single' | 'workflow'): void {
     this.mode = mode
+  }
+
+  /** Wire the autonomous-run lifecycle broadcast (renderer status chips). */
+  setAutonomousLifecycleListener(listener: ((ev: TurnLifecycleEvent) => void) | null): void {
+    this.autonomousLifecycle = listener
   }
 
   /**
@@ -868,6 +892,15 @@ export class Agent {
         const noProgressSignal = noProgress.signal()
         const noProgressText = noProgressNotice(noProgressSignal) ?? undefined
 
+        // Channel-format notices — a prose-mirroring channel reporting that an
+        // already-DELIVERED prose block reached the user's phone with raw
+        // markup (observe-and-notify: the model repairs its own text; nothing
+        // rewrites it). Drained once per iteration; rides the same volatile
+        // vehicle as the no-progress notice so it never perturbs the cached
+        // prompt prefix. Empty (the common case) renders nothing.
+        const channelNotices = turn.formatNotices?.() ?? []
+        const channelFormatText = channelNotices.length > 0 ? channelNotices.join(' ') : undefined
+
         // Escalate a SUBAGENT's runaway to its master (onNoProgress is wired only
         // for agent turns) so the master can manage it — cancel, steer, or keep
         // waiting. Once per worsening band; re-armed when the agent recovers
@@ -891,7 +924,8 @@ export class Agent {
           renderCounters: !optimizeContext,
           deliveredFiles: [...deliveredThisTurn],
           online,
-          noProgress: noProgressText
+          noProgress: noProgressText,
+          channelFormat: channelFormatText
         }
 
         let systemPrompt: string
@@ -1019,13 +1053,14 @@ export class Agent {
           // prefix hash.
           volatileStatus:
             optimizeContext &&
-            (iterationCount > 1 || workingFoldersBlock || !online || noProgressText)
+            (iterationCount > 1 || workingFoldersBlock || !online || noProgressText || channelFormatText)
               ? formatRuntimeStatus({
                   iteration: iterationCount,
                   toolsCalled: totalToolCalls,
                   deliveredFiles: [...deliveredThisTurn],
                   online,
-                  noProgress: noProgressText
+                  noProgress: noProgressText,
+                  channelFormat: channelFormatText
                 }) + (workingFoldersBlock ? `\n${workingFoldersBlock}` : '')
               : undefined
         })
@@ -1797,6 +1832,61 @@ export class Agent {
       })
     )
 
+    // Persist the sealed conversation — shared by the success path and the
+    // failure path below. A failed run MUST still land in history: the rail
+    // can only mark a conversation red if a conversation exists to mark
+    // (previously a thrown run saved nothing and simply vanished from the
+    // list, so failures were invisible outside the Heartbeat page).
+    const persistRun = async (stopReason: ConversationMessage['stopReason']): Promise<string> => {
+      const responseText = segments
+        .filter((s): s is Extract<typeof s, { kind: 'text' }> => s.kind === 'text')
+        .map((s) => s.delta)
+        .join('')
+      const now = Date.now()
+      const userMsg: ConversationMessage = {
+        id: mintMessageId(conv.createdAt),
+        role: 'user',
+        content: opts.instruction,
+        timestamp: conv.createdAt
+      }
+      const assistantMsg: ConversationMessage = {
+        id: mintMessageId(now),
+        role: 'assistant',
+        content: responseText,
+        timestamp: now,
+        segments,
+        stopReason
+      }
+      // A run that died before producing anything keeps just the instruction —
+      // an empty assistant bubble would render as noise.
+      conv.messages = segments.length > 0 ? [userMsg, assistantMsg] : [userMsg]
+      conv.updatedAt = now
+      // Persist the context-meter stats so opening this heartbeat / procedure
+      // conversation in-app shows real numbers. Skipped when the run never
+      // reached the model (nothing consumed → a blank gauge is correct).
+      if (statsCollector.hasData()) conv.stats = statsCollector.foldInto(null, now)
+      await saveConversation(conv).catch(() => undefined)
+      return responseText
+    }
+    // Terminal chat:turnState for this run — emitted AFTER the save, so the
+    // list refetch the broadcast triggers finds the conversation on disk.
+    // Guarded like TurnRunner's emit: a broken listener must never turn into
+    // a job failure.
+    const emitLifecycle = (phase: 'done' | 'canceled' | 'error', error?: string): void => {
+      try {
+        this.autonomousLifecycle?.({
+          phase,
+          turnId,
+          conversationId: conv.id,
+          channel: conv.channel ?? 'heartbeat',
+          title: conv.title,
+          ...(error !== undefined ? { error } : {})
+        })
+      } catch {
+        // never let a listener failure surface as a run failure
+      }
+    }
+
     // Run inside a sealed autonomous turn scope so this background run's
     // corpus events (context/tokens/tools/tasks) are NOT relayed into a live
     // chat that may still be streaming — they'd otherwise corrupt that
@@ -1821,39 +1911,23 @@ export class Agent {
           projectId: opts.projectId ?? null
         })
       )
+    } catch (err) {
+      flushText()
+      await persistRun('end_turn')
+      emitLifecycle(
+        opts.signal?.aborted ? 'canceled' : 'error',
+        err instanceof Error ? err.message : String(err)
+      )
+      throw err
     } finally {
       for (const off of statsOffs) off()
     }
     flushText()
 
-    const responseText = segments
-      .filter((s): s is Extract<typeof s, { kind: 'text' }> => s.kind === 'text')
-      .map((s) => s.delta)
-      .join('')
-
-    const now = Date.now()
-    const userMsg: ConversationMessage = {
-      id: mintMessageId(conv.createdAt),
-      role: 'user',
-      content: opts.instruction,
-      timestamp: conv.createdAt
-    }
-    const assistantMsg: ConversationMessage = {
-      id: mintMessageId(now),
-      role: 'assistant',
-      content: responseText,
-      timestamp: now,
-      segments,
-      stopReason: result.stopReason === 'canceled' ? 'end_turn' : result.stopReason
-    }
-    conv.messages = [userMsg, assistantMsg]
-    conv.updatedAt = now
-    // Persist the context-meter stats so opening this heartbeat / procedure
-    // conversation in-app shows real numbers. Skipped when the run never
-    // reached the model (nothing consumed → a blank gauge is correct).
-    if (statsCollector.hasData()) conv.stats = statsCollector.foldInto(null, now)
-
-    await saveConversation(conv).catch(() => undefined)
+    const responseText = await persistRun(
+      result.stopReason === 'canceled' ? 'end_turn' : result.stopReason
+    )
+    emitLifecycle(result.stopReason === 'canceled' ? 'canceled' : 'done')
 
     return {
       success: result.stopReason === 'end_turn',

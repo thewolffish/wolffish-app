@@ -11,7 +11,8 @@
  * is 100% the model's job; this module only remembers what it already sent.
  */
 
-const MARKER_RE = /\[wolffish-output:\s*([^\]]+?)\s+\((?:image|audio|video|document|file)\)\]/g
+const MARKER_RE =
+  /\[wolffish-output:\s*([^\]]+?)\s+\((?:image|audio|video|document|file|chart)\)\]/g
 
 function basename(p: string): string {
   const cleaned = p.trim().replace(/[/\\]+$/, '')

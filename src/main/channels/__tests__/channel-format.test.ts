@@ -177,11 +177,46 @@ eq(
     : 'missing',
   'taught'
 )
-// hard/soft split: send tools refuse hard, deliver-and-note soft.
+// hard/soft split: send tools refuse hard, deliver-and-note soft. Markdown
+// is HARD — Telegram renders none of it, so the raw symbols would reach the
+// user (the 00:14 flight-tracking narration shipped exactly this); the gate
+// refuses and the model rewrites (sendAsIs = the intentional-content escape).
 ok('escaped tags are hard', validateTelegramHtml('&lt;b&gt;x&lt;/b&gt;').hard.length > 0, true)
 ok('unclosed tag is hard', validateTelegramHtml('<b>x').hard.length > 0, true)
-ok('markdown bold is soft not hard', validateTelegramHtml('**x** ok').hard.length === 0, true)
-ok('markdown bold lands in soft', validateTelegramHtml('**x** ok').soft.length === 1, true)
+ok('markdown bold is hard', validateTelegramHtml('**x** ok').hard.length === 1, true)
+ok('markdown bold leaves soft empty', validateTelegramHtml('**x** ok').soft.length === 0, true)
+ok(
+  'the flight-narration leak shape is hard',
+  validateTelegramHtml('Key findings:\n- **Departed**: 10:23 PM (18 min late)').hard.length > 0,
+  true
+)
+ok('markdown heading is hard', validateTelegramHtml('# Digest\nbody').hard.length > 0, true)
+ok(
+  'markdown link is hard',
+  validateTelegramHtml('see [docs](https://x.example)').hard.length > 0,
+  true
+)
+ok('markdown table is hard', validateTelegramHtml('| item | price |\n| a | 5 |').hard.length > 0, true)
+ok('markdown hr is hard', validateTelegramHtml('above\n---\nbelow').hard.length > 0, true)
+// Plain "- " bullets are legal Telegram text (the overlay teaches them) —
+// only the Markdown markers inside them are the leak.
+ok('plain dash bullets pass', validateTelegramHtml('- Departed: 10:23 PM\n- Seat: 18E').ok, true)
+// Legit double-asterisk prose is not Markdown bold: exponents and **kwargs
+// hug word characters on the outside, real bold never does.
+ok('exponent x**2 passes', validateTelegramHtml('x**2 + y**2 = z**2').ok, true)
+ok('python kwargs pass', validateTelegramHtml('call f(**kwargs) and g(**opts)').ok, true)
+// Quoting Markdown inside <code>/<pre> is intentional display — exempt.
+ok('markdown inside <code> passes', validateTelegramHtml('<code>**x**</code> is bold').ok, true)
+ok(
+  'markdown inside <pre> passes',
+  validateTelegramHtml('<pre># heading\n**bold** [a](b)</pre>').ok,
+  true
+)
+ok(
+  'media marker not flagged on telegram',
+  validateTelegramHtml('![meme](wolffish-media://a.png)').ok,
+  true
+)
 
 // Decorative divider-bar lines are perfectly valid HTML but a phone's
 // narrow bubble wraps them into several broken lines of bar characters —
@@ -266,8 +301,17 @@ ok(
   validateWhatsAppFormat('```\n**not markdown, just code**\n```').ok,
   true
 )
-ok('markdown bold is soft not hard', validateWhatsAppFormat('**x** ok').hard.length === 0, true)
-ok('markdown bold lands in soft', validateWhatsAppFormat('**x** ok').soft.length === 1, true)
+// Markdown is HARD on WhatsApp too — nothing renders it, the raw symbols
+// would reach the recipient; the gate refuses and the model rewrites.
+ok('markdown bold is hard', validateWhatsAppFormat('**x** ok').hard.length === 1, true)
+ok('markdown bold leaves soft empty', validateWhatsAppFormat('**x** ok').soft.length === 0, true)
+ok('double-underscore bold is hard', validateWhatsAppFormat('__very__ bold').hard.length > 0, true)
+// Deliberate tradeoff: a bare dunder name reads as Markdown __bold__ and
+// bounces — the fix the gate teaches (`__init__` in backticks) is also the
+// better phone rendering.
+ok('bare dunder bounces', validateWhatsAppFormat('call __init__ now').hard.length > 0, true)
+ok('backticked dunder passes', validateWhatsAppFormat('call `__init__` now').ok, true)
+ok('exponent x**2 passes on whatsapp', validateWhatsAppFormat('x**2 + y**2').ok, true)
 ok('heading flagged', validateWhatsAppFormat('# Digest\nbody').ok, false)
 ok('markdown link flagged', validateWhatsAppFormat('see [docs](https://x.example)').ok, false)
 ok('bare url passes', validateWhatsAppFormat('see https://x.example').ok, true)
@@ -287,8 +331,8 @@ ok(
   true
 )
 ok(
-  'short md hr stays soft-only',
-  validateWhatsAppFormat('above\n---\nbelow').hard.length === 0,
+  'short md hr is hard too (markdown rule)',
+  validateWhatsAppFormat('above\n---\nbelow').hard.length > 0,
   true
 )
 ok('spaced bullet bar is hard', validateWhatsAppFormat('• • • • • •').hard.length > 0, true)

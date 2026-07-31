@@ -20,11 +20,13 @@ const CHIP_PRIMARY = 'border-primary/40 bg-primary/15 text-primary'
 
 /**
  * Color per run phase. `processing` pulses in the primary color while the turn
- * streams; a finished run keeps its terminal color for the rest of the app
- * session (success / danger / warning); a conversation that hasn't run this
- * session gets the neutral outline. The active row's chip — and, when the row
- * lives in a `group`, any chip on hover (group-hover beats the base color by
- * specificity) — takes the subtle primary tint instead of a heavy background.
+ * streams; a freshly finished run keeps its terminal color (success / danger /
+ * warning) while the row is fresh — buildConversationRows expires the phase to
+ * null past TERMINAL_FRESH_WINDOW_MS, so an old row reads neutral like any
+ * conversation that hasn't run this session. The active row's chip — and, when
+ * the row lives in a `group`, any chip on hover (group-hover beats the base
+ * color by specificity) — takes the subtle primary tint instead of a heavy
+ * background.
  */
 export function conversationChipClasses(
   phase: ConversationRunPhase | null,

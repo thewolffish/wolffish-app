@@ -695,21 +695,16 @@ Never repeat passwords to the user in conversation text. Confirm storage with "C
 ## Saving a page as a PDF (`browser_pdf`)
 
 `browser_pdf` prints the current page **full bleed** (zero page margin), so the HTML controls
-every bit of spacing and color. When you're generating a document to hand to the user (a report,
-invoice, summary), this HTML → PDF path is the default — it produces clean, colored output, unlike
-the plain `pdf_create` builder. Build the HTML to these rules (the `pdf` capability's SKILL.md has
-the full recipe + a reusable skeleton):
+every millimeter of spacing and color. When you're generating a document to hand to the user (a
+report, invoice, summary), this HTML → PDF path is the default — but the authoring system lives
+elsewhere: **call the core `pdf_design` tool BEFORE writing the HTML.** It returns the document
+design manual (page architecture, type scale, color rules, the component kit, and the mandatory
+render-verify loop). Do not improvise document design from memory.
 
-- **Solid text colors only — never a gradient on text.** `background-clip: text` /
-  `-webkit-text-fill-color: transparent` are unreliable in PDF and frequently print as a solid
-  colored block instead of the words. Put gradients on backgrounds, hero bands, cards, chips, and
-  badges; keep every text `color` solid.
-- **No white bars:** paint the background on `html, body`, set `@page { margin: 0 }`, and keep
-  `print_background: true`. Add spacing with padding on an inner wrapper, not page margins.
-- **No jammed/clipped content:** wrap blocks in `break-inside: avoid;` containers with vertical
-  margin, and start each major part with `break-before: page;`.
-
-`browser_pdf` does not auto-deliver — call `send_file` on the resulting `.pdf`.
+Mechanics that stay true regardless of design: the page prints with zero margin (`@page{margin:0}`
+plus your own painted background = no white bars), `print_background` defaults to true, the
+`format` argument (`"A4"`/`"Letter"`) — not CSS `@page size` — decides the paper size, and
+`browser_pdf` does **not** auto-deliver: call `send_file` on the resulting `.pdf`.
 
 ## Selectors
 

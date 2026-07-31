@@ -1,4 +1,5 @@
 import { AudioPlayer } from '@components/common/audio-player/AudioPlayer'
+import { ChartCard } from '@components/common/chart-card/ChartCard'
 import { FileCard } from '@components/common/file-card/FileCard'
 import { HtmlFileViewer } from '@components/common/html-file-viewer/HtmlFileViewer'
 import { ImageViewer } from '@components/common/image-viewer/ImageViewer'
@@ -131,6 +132,17 @@ function renderViewer(att: MessageAttachment, exists: boolean): React.JSX.Elemen
       />
     )
   }
+  if (isChartAttachment(att)) {
+    return (
+      <ChartCard
+        filePath={att.filePath}
+        fileExists={exists}
+        fileName={att.originalName}
+        sizeBytes={att.sizeBytes}
+        mimeType={att.mimeType}
+      />
+    )
+  }
   if (isMarkdownAttachment(att) || isPlainTextAttachment(att)) {
     return (
       <MarkdownFileViewer
@@ -162,6 +174,12 @@ function renderViewer(att: MessageAttachment, exists: boolean): React.JSX.Elemen
       mimeType={att.mimeType}
     />
   )
+}
+
+function isChartAttachment(att: MessageAttachment): boolean {
+  // The full `.chart.json` suffix — not the mime type — is the chart-card
+  // contract; a plain .json stays a generic file.
+  return /\.chart\.json$/i.test(att.originalName)
 }
 
 function isMarkdownAttachment(att: MessageAttachment): boolean {

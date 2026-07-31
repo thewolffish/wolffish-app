@@ -87,6 +87,9 @@ export function formatRuntimeStatus(runtime: RuntimeContext, now: Date = new Dat
     // No-progress notice rides here — after every cache breakpoint — so its
     // appearance/change never perturbs the cached prompt prefix.
     (runtime.noProgress ? `${runtime.noProgress} ` : '') +
+    // Channel-format notice (a prose block already delivered to the user's
+    // phone carried raw markup) — same vehicle, same cache reason.
+    (runtime.channelFormat ? `${runtime.channelFormat} ` : '') +
     `(Automated telemetry, not a user message — do not reply to it or summarize progress because of it. ` +
     `If the task is unfinished, keep calling tools: a response without tool calls ends the task; there is no next turn.)`
   )

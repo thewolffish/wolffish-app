@@ -23,7 +23,7 @@ import {
   type QueuedMessageBase
 } from '@main/channels/message-queue'
 import { listProjects, projectLabel, type Project } from '@main/projects'
-import { bidiMark, escapeHtml } from '@main/channels/telegram/format'
+import { bidiMark, escapeHtml, validateTelegramHtml } from '@main/channels/telegram/format'
 import {
   flushMessageIds,
   loadMessageIds,
@@ -298,6 +298,16 @@ type ActiveTurn = {
    */
   textBuffer: string
   /**
+   * Channel-format notices parked for the agent loop — one per flushed
+   * prose block that failed validateTelegramHtml AFTER it was already
+   * delivered (delivery always wins; observe-and-notify, never rewrite).
+   * Drained by the formatNotices pull the runner threads to the agent
+   * (ridden on the volatile runtime tail); leftovers at turn end carry
+   * over to pendingFormatNotices so the NEXT turn still hears about a
+   * leak in the final prose block.
+   */
+  formatNotices: string[]
+  /**
    * Last seen workflow snapshot per run (workflow mode). renderSegment
    * diffs the incoming snapshot against this to derive phase-transition
    * and per-agent progress messages deterministically.
@@ -467,6 +477,15 @@ export class TelegramChannel {
   private reconnectAttempt = 0
   private reconnectTimer: NodeJS.Timeout | null = null
   private readonly activeByChat = new Map<number, ActiveTurn>()
+  /**
+   * Channel-format notices whose turn ended before the agent loop could
+   * drain them (a leak in the FINAL prose block has no next iteration).
+   * Keyed by chat; merged into the next turn's first drain so the model
+   * still hears what reached the user's phone and can repair it with
+   * telegram_edit_message. In-memory only — a restart drops them, which
+   * is fine: the notice is a correction aid, not a delivery record.
+   */
+  private readonly pendingFormatNotices = new Map<number, string[]>()
   /**
    * Messages that arrived while this chat's turn was still running. They are
    * accepted and dispatched in order as the chat frees up — see
@@ -2361,6 +2380,7 @@ export class TelegramChannel {
         // project conversations get the overlay on every channel turn.
         projectId: conversation.projectId ?? null,
         channel: 'telegram',
+        formatNotices: () => this.drainFormatNotices(chatId),
         makeSink: ({ turnId, conversationId }) => this.createSink(turnId, conversationId, chatId),
         onTurnStarted: ({ turnId, controller }) => {
           // Stamp the assistant message's identity up front so live mirror
@@ -2371,6 +2391,7 @@ export class TelegramChannel {
             turnId,
             conversation,
             textBuffer: '',
+            formatNotices: [],
             workflowState: new Map(),
             assistantContent: '',
             segments: [],
@@ -2516,6 +2537,15 @@ export class TelegramChannel {
                 if (finished.typingTimer) {
                   clearInterval(finished.typingTimer)
                   finished.typingTimer = null
+                }
+                // Format leaks flushed with no agent iteration left to read
+                // them (typically the FINAL prose block) carry over to the
+                // next turn's drain, so the model still hears what reached
+                // the user's phone and can repair it there.
+                if (finished.formatNotices.length > 0) {
+                  const prior = this.pendingFormatNotices.get(chatId) ?? []
+                  this.pendingFormatNotices.set(chatId, [...prior, ...finished.formatNotices])
+                  finished.formatNotices = []
                 }
                 // Safety-net for the empty-turn path (assistant === null, so the
                 // block above didn't run): a trailing mirror timer must never
@@ -3081,13 +3111,45 @@ export class TelegramChannel {
     const cleaned = stripWolffishMediaMarkdown(raw)
 
     if (cleaned.trim().length > 0) {
+      const sentIds: number[] = []
       for (const chunk of splitForTelegram(cleaned)) {
-        await this.safeSend(chatId, chunk)
+        const id = await this.safeSend(chatId, chunk)
+        if (id !== null) sentIds.push(id)
+      }
+      // Observe-and-notify (never rewrite, never withhold): the block above
+      // was DELIVERED exactly as the model wrote it — the delivery guarantee
+      // outranks formatting — but if it violates the Telegram contract
+      // (leaked Markdown, broken HTML) the model is told on its next
+      // iteration via the runner's formatNotices pull, with the message ids
+      // so it can telegram_edit_message the damage and write clean HTML in
+      // the remaining blocks. Validated on the whole un-split block: a 4096
+      // split can cut a tag/marker pair in half and fake a clean chunk.
+      const report = validateTelegramHtml(cleaned)
+      if (!report.ok) {
+        const issues = report.issues.slice(0, 3).join(' ')
+        const ids = sentIds.length > 0 ? ` (message_id ${sentIds.join(', ')})` : ''
+        active.formatNotices.push(
+          `⚠️ Channel formatting: your prose was already DELIVERED to the user's Telegram chat${ids} with raw markup — ${issues} EVERY prose block you write in this conversation, including narration between tool calls, goes verbatim to their phone as a Telegram message (Telegram HTML only, NEVER Markdown). If the delivered text matters, repair it now with telegram_edit_message; either way write clean Telegram HTML in every remaining prose block.`
+        )
       }
     }
     for (const imgPath of imagePaths) {
       await this.sendImageFile(chatId, imgPath)
     }
+  }
+
+  /**
+   * Drain every parked channel-format notice for this chat — the pull end
+   * of the observe-and-notify loop (TurnSendOptions.formatNotices). Merges
+   * notices carried over from a previous turn (a leak in the final prose
+   * block has no next iteration inside its own turn) with the live turn's.
+   */
+  private drainFormatNotices(chatId: number): string[] {
+    const pending = this.pendingFormatNotices.get(chatId) ?? []
+    this.pendingFormatNotices.delete(chatId)
+    const active = this.activeByChat.get(chatId)
+    const live = active ? active.formatNotices.splice(0) : []
+    return [...pending, ...live]
   }
 
   private async flushFinalText(chatId: number): Promise<void> {
@@ -3250,7 +3312,7 @@ export class TelegramChannel {
    * falls back to the same text with known Telegram tags stripped so
    * the user still sees the content rather than nothing.
    */
-  private async safeSend(chatId: number, text: string): Promise<void> {
+  private async safeSend(chatId: number, text: string): Promise<number | null> {
     // ⚠️ Potential breaking change — the leading zero-width mark may
     // interfere with downstream text matching, hashing, or /command parsing.
     // The mark is derived from the TAG-STRIPPED text: tag names are Latin
@@ -3258,7 +3320,7 @@ export class TelegramChannel {
     // with <b> a wrong LTR mark — the exact reordering bug the mark exists
     // to prevent.
     const mark = bidiMark(stripHtmlTags(text))
-    await this.dispatchSend(chatId, mark + text, mark + stripHtmlTags(text))
+    return this.dispatchSend(chatId, mark + text, mark + stripHtmlTags(text))
   }
 
   /**
@@ -3284,27 +3346,33 @@ export class TelegramChannel {
     await this.dispatchSend(chatId, html, stripHtmlTags(html))
   }
 
-  private async dispatchSend(chatId: number, html: string, plainFallback: string): Promise<void> {
-    if (!this.bot) return
+  private async dispatchSend(
+    chatId: number,
+    html: string,
+    plainFallback: string
+  ): Promise<number | null> {
+    if (!this.bot) return null
     try {
       const sent = await this.bot.api.sendMessage(chatId, html, { parse_mode: 'HTML' })
       this.trackMessageId(chatId, sent.message_id)
-      return
+      return sent.message_id
     } catch (err) {
       const kind = classifyBotError(err)
       if (kind !== 'send' && kind !== 'unknown') {
         const message = err instanceof Error ? err.message : String(err)
         this.agent.corpus.emit('telegram.error', { kind, message })
-        return
+        return null
       }
     }
     try {
       const sent = await this.bot.api.sendMessage(chatId, plainFallback)
       this.trackMessageId(chatId, sent.message_id)
+      return sent.message_id
     } catch (err) {
       const kind = classifyBotError(err)
       const message = err instanceof Error ? err.message : String(err)
       this.agent.corpus.emit('telegram.error', { kind, message })
+      return null
     }
   }
 }
@@ -3759,14 +3827,16 @@ function extractDocumentPaths(output: string): string[] {
 }
 
 // Generic files explicitly delivered via send_file carry a `(file)` marker
-// (any extension that isn't an image/audio/video/document). Only the
-// explicit marker is matched — no bare-path fallback — so incidental paths
-// in tool output are never mistaken for a delivery.
+// (any extension that isn't an image/audio/video/document). `(chart)` — the
+// in-app interactive chart-card spec — has no channel rendering, so it rides
+// this same path and arrives as a plain document instead of being silently
+// dropped. Only the explicit marker is matched — no bare-path fallback — so
+// incidental paths in tool output are never mistaken for a delivery.
 function extractGenericFilePaths(output: string): string[] {
   const paths: string[] = []
   const seen = new Set<string>()
   const home = os.homedir()
-  const markerRegex = /\[wolffish-output:\s*([^\]]+?)\s+\(file\)\]/g
+  const markerRegex = /\[wolffish-output:\s*([^\]]+?)\s+\((?:file|chart)\)\]/g
   let match: RegExpExecArray | null
   while ((match = markerRegex.exec(output)) !== null) {
     const raw = match[1].trim()

@@ -781,12 +781,18 @@ const turnRunner = new TurnRunner(agent)
 // Conversations sidebar can show live status chips for in-app, WhatsApp,
 // Telegram runs alike.
 turnRunner.setLifecycleListener((ev) => broadcast('chat:turnState', ev))
+// Autonomous heartbeat/procedure runs never pass through the TurnRunner —
+// they end inside Agent.processAutonomous. Broadcast their terminal lifecycle
+// through the SAME chat:turnState event, so their sealed conversations get
+// the fresh success/danger chip tint in the rail exactly like a channel run.
+agent.setAutonomousLifecycleListener((ev) => broadcast('chat:turnState', ev))
 // Relay conversation deletions to the renderer so the sidebar prunes its live
 // run-status — a channel-side /delete never touches the renderer otherwise.
 agent.corpus.on('conversation.deleted', ({ id }) => broadcast('conversation:deleted', { id }))
 // Relay conversation (re)index/remove so the rail + History refresh for every
-// create/rename/delete path — including autonomous heartbeat/procedure runs
-// that never emit a turn lifecycle. Fires after the cortex row is committed.
+// create/rename/delete path — including the ones that emit no turn lifecycle
+// at all (renames, imports, rebuilds). Fires after the cortex row is
+// committed.
 agent.corpus.on('conversation.indexed', () => broadcast('conversation:changed', {}))
 // Full rebuilds + the startup catch-up index via indexWalkedSync directly, so
 // no conversation.indexed fires while they run — a list fetched mid-rebuild

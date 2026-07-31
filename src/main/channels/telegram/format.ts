@@ -57,17 +57,22 @@ export type TelegramHtmlReport = {
   /** All problems, hard first — what `telegram_check_format` lists. */
   issues: string[]
   /**
-   * The message would reach the user broken: Telegram rejects the HTML
+   * The message would reach the user wrong: Telegram rejects the HTML
    * (400 → plain fallback shows tag soup), entity-escaped tags render
-   * as literal "<b>" text, or a decorative divider-bar line wraps into
-   * several broken lines of bar characters on a phone. Send tools
-   * refuse to send while any exist.
+   * as literal "<b>" text, a decorative divider-bar line wraps into
+   * several broken lines of bar characters on a phone, or leaked
+   * Markdown (**bold**, # headings, [text](url), | tables |, --- rules)
+   * shows its raw symbols — Telegram renders no Markdown. Send tools
+   * refuse to send while any exist; the model rewrites its own text
+   * (sendAsIs is the escape hatch for markup that IS the content, and
+   * RejectBudget still force-delivers after repeated bounces so a
+   * message is never lost). Quoting inside <code>/<pre> is exempt.
    */
   hard: string[]
   /**
-   * Delivered, but Markdown symbols reach the user raw. Heuristic — text
-   * legitimately QUOTING `**`/`#` content trips it, so these never block
-   * a send; they're reported on the send result instead.
+   * Delivered with a note on the send result instead of blocking.
+   * Currently empty on Telegram — kept for report-shape parity with
+   * WhatsApp (which parks cosmetic-only findings here).
    */
   soft: string[]
 }
@@ -91,7 +96,11 @@ export type TelegramHtmlReport = {
  *   6. decorative divider-bar lines (━━━━━, ═════, -----) — perfectly valid
  *      text, but a phone's narrow bubble wraps them into several broken
  *      lines of bar characters. Bars inside `<code>`/`<pre>` are exempt —
- *      quoted CLI output legitimately contains long box-drawing runs.
+ *      quoted CLI output legitimately contains long box-drawing runs,
+ *   7. leaked Markdown (**bold**, # headings, [text](url), | tables |,
+ *      --- rules) — parses fine as HTML, but Telegram renders no Markdown,
+ *      so the raw symbols reach the user. Also exempt inside
+ *      `<code>`/`<pre>`, where quoting Markdown is the point.
  * `>` is left unchecked — Telegram accepts a bare `>` in text.
  */
 /**
@@ -211,34 +220,45 @@ export function validateTelegramHtml(message: string): TelegramHtmlReport {
   if (bareAmp > 0) {
     hard.push(`${bareAmp} bare "&" not part of an entity — write a literal ampersand as &amp;.`)
   }
-  const bars = findDividerBars(maskCodeSpans(message))
+  const masked = maskCodeSpans(message)
+  const bars = findDividerBars(masked)
   if (bars.length > 0) {
     hard.push(
       `Decorative divider line(s) ${bars.join(' ')} — a phone's narrow bubble wraps these into several broken lines of bar characters. Delete them: a blank line separates sections, and an emoji + <b>bold</b> line is the header.`
     )
   }
 
-  // Leaked Markdown parses fine as HTML but Telegram renders NO Markdown, so
-  // the raw symbols reach the user. The overlay/tool description forbid these;
-  // flag them here too so the check tool catches "ugly" as well as "rejected".
-  const soft: string[] = []
-  if (/\*\*[^*\n]+\*\*/.test(message)) {
-    soft.push('Markdown **bold** — Telegram shows the asterisks literally. Use <b>bold</b>.')
+  // Leaked Markdown parses fine as HTML but Telegram renders NO Markdown — the
+  // raw symbols reach the user, so these are HARD: the send gates refuse the
+  // message and the model rewrites its own text in Telegram HTML (sendAsIs is
+  // the deliberate escape hatch when the markup IS the content; RejectBudget
+  // still guarantees delivery if the model can't converge). Checks run on the
+  // code-span-masked text — quoting Markdown inside <code>/<pre> is
+  // intentional display, never a leak. The ** and lookaround guards keep
+  // prose like "x**2 + y**2" or "f(**kwargs)" legal: real Markdown bold hugs
+  // non-space text and is not glued to a word character on the outside.
+  if (/(?<![\w*])\*\*(?!\s)[^*\n]+?(?<!\s)\*\*(?![\w*])/.test(masked)) {
+    hard.push('Markdown **bold** — Telegram shows the asterisks literally. Use <b>bold</b>.')
   }
-  if (/^\s{0,3}#{1,6}\s+\S/m.test(message)) {
-    soft.push('Markdown "# heading" — Telegram has no headings. Use a short <b>bold</b> line.')
+  if (/^\s{0,3}#{1,6}\s+\S/m.test(masked)) {
+    hard.push('Markdown "# heading" — Telegram has no headings. Use a short <b>bold</b> line.')
   }
-  if (/!?\[[^\]\n]*\]\((?!wolffish-media:\/\/)[^)\s]+\)/.test(message)) {
-    soft.push('Markdown [text](url) link — Telegram shows it raw. Use <a href="url">text</a>.')
+  if (/!?\[[^\]\n]*\]\((?!wolffish-media:\/\/)[^)\s]+\)/.test(masked)) {
+    hard.push('Markdown [text](url) link — Telegram shows it raw. Use <a href="url">text</a>.')
   }
-  if (/^\s*\|.*\|.*$/m.test(message) || /\|\s*:?-{2,}/.test(message)) {
-    soft.push(
+  if (/^\s*\|.*\|.*$/m.test(masked) || /\|\s*:?-{2,}/.test(masked)) {
+    hard.push(
       'Markdown | table | — Telegram has no tables. Use one "<b>Label:</b> value" line per fact.'
     )
   }
-  if (/^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/m.test(message)) {
-    soft.push('Markdown "---" rule — Telegram shows it raw. Use a blank line to separate sections.')
+  if (/^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/m.test(masked)) {
+    hard.push('Markdown "---" rule — Telegram shows it raw. Use a blank line to separate sections.')
   }
+
+  // Reserved for delivered-with-a-note cosmetics (WhatsApp keeps its ```lang
+  // check here). Telegram currently has none: every leak class above either
+  // breaks the HTML parse or shows raw symbols, so all of it refuses the send.
+  const soft: string[] = []
 
   const issues = [...hard, ...soft]
   return { ok: issues.length === 0, issues, hard, soft }

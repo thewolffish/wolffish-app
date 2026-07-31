@@ -732,7 +732,13 @@ export const CORE_CAPABILITIES: ReadonlySet<string> = new Set([
   // discovery hop (a 2-hop skill_read_source path halved the trigger rate in
   // testing). The manual BODY loads only when the tool is CALLED, so trivial
   // turns pay just this ~1 tool schema, never the manual text.
-  'operating-manual'
+  'operating-manual',
+  // Same body-load pattern for the two design manuals. Document/PDF requests
+  // and chart requests are frequent and quality-critical; a discovery hop
+  // before the manual halves the trigger rate (measured for operating-manual),
+  // which is exactly the inconsistent-output failure these exist to fix.
+  'pdf-design',
+  'dataviz'
 ])
 
 /**
@@ -753,6 +759,8 @@ export const LOCKED_CAPABILITIES: ReadonlySet<string> = new Set([
   'projects',
   'introspect',
   'operating-manual',
+  'pdf-design',
+  'dataviz',
   'procedures',
   'secrets',
   'skills',

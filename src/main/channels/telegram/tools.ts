@@ -35,7 +35,7 @@ const DOCUMENT_LIMIT = 50 * 1024 * 1024
  * telegram_send message rules (captions are parsed identically).
  */
 const CAPTION_HTML_RULES =
-  'Delivered with Telegram parse_mode HTML — Telegram HTML subset ONLY (<b> <i> <u> <s> <code> <pre> <a href> <blockquote> <span class="tg-spoiler">), never Markdown (**, #, tables, [text](url) show raw), never a wrapper/<br> tag, close every tag. Tags are RAW < > characters — entity-escape only a literal & < > in prose as &amp; &lt; &gt;, never the tags themselves (&lt;b&gt; arrives as literal text, not bold). A broken caption is rejected without sending; if it has any tag, run telegram_check_format on it first.'
+  'Delivered with Telegram parse_mode HTML — Telegram HTML subset ONLY (<b> <i> <u> <s> <code> <pre> <a href> <blockquote> <span class="tg-spoiler">), never Markdown (**, #, tables, [text](url) show raw), never a wrapper/<br> tag, close every tag. Tags are RAW < > characters — entity-escape only a literal & < > in prose as &amp; &lt; &gt;, never the tags themselves (&lt;b&gt; arrives as literal text, not bold). A broken or Markdown-formatted caption is rejected without sending; if it has any markup, run telegram_check_format on it first.'
 
 /**
  * The model's override for the pre-send format gate: information, not
@@ -104,7 +104,7 @@ export function buildTelegramCapability(deps: ToolDeps): {
     {
       name: 'telegram_check_format',
       description:
-        'Validate text against Telegram\'s HTML rules WITHOUT sending it. Returns "valid" or the exact problems (unsupported tag, unclosed tag, orphan closing tag, bare < or &, formatting tags written as &lt;b&gt; entities instead of raw <b> characters, leaked Markdown). It changes nothing — you fix your own text and re-check. ALWAYS call this right before you send any text OR MEDIA CAPTION that contains ANY HTML tag or literal < & characters — via telegram_send, telegram_edit_message, or the caption of telegram_send_photo / telegram_send_document / telegram_send_video / telegram_send_audio: one bad tag makes Telegram reject that message/caption and it arrives as raw tag soup. Plain text with no tags never needs checking.',
+        'Validate text against Telegram\'s HTML rules WITHOUT sending it. Returns "valid" or the exact problems (unsupported tag, unclosed tag, orphan closing tag, bare < or &, formatting tags written as &lt;b&gt; entities instead of raw <b> characters, leaked Markdown). It changes nothing — you fix your own text and re-check. ALWAYS call this right before you send any text OR MEDIA CAPTION that contains ANY HTML tag, literal < & characters, or ANY formatting markup — via telegram_send, telegram_edit_message, or the caption of telegram_send_photo / telegram_send_document / telegram_send_video / telegram_send_audio: one bad tag makes Telegram reject that message/caption and it arrives as raw tag soup, and the send tools REFUSE broken HTML and Markdown outright. Plain prose with no markup never needs checking.',
       parameters: {
         message: {
           type: 'string',
@@ -122,7 +122,7 @@ export function buildTelegramCapability(deps: ToolDeps): {
         message: {
           type: 'string',
           description:
-            'The message body. 1–4096 characters, delivered with Telegram parse_mode HTML. Telegram does NOT render Markdown (no **, no # headings, no | tables |, no [text](url) — they show as raw syntax). Formatting, if any, is Telegram HTML ONLY: <b>, <i>, <u>, <s>, <code>, <pre>, <a href="…">, <blockquote>, <span class="tg-spoiler">. NO other tags exist — never wrap the body in a container like <message>/<html>/<p>, never use <br> (use a real newline), and close every tag you open. Write the tags as RAW < > characters: entity-escape ONLY a literal & < > in prose (as &amp; &lt; &gt;), NEVER the tags themselves — "&lt;b&gt;Digest&lt;/b&gt;" reaches the user as literal "<b>Digest</b>" text, not bold. One unknown or unclosed tag makes Telegram reject the WHOLE message and it arrives as literal tag soup, so if the text has ANY tag, call telegram_check_format first and only send once it returns valid; broken HTML is rejected by this tool without sending (fix it and resend). GOOD: "📬 <b>Digest</b>\\n<i>2 unread</i>\\nTotal &lt;5 items&gt;". BAD: "📬 <b>Digest</b> …😄</message>" (stray wrapper tag), "&lt;b&gt;Digest&lt;/b&gt;" (escaped tags — arrive as literal text), "**Digest**" (Markdown), "line<br>line" (no <br>), "cost < 5 & rising" (unescaped < &), "━━━━━━━━━━" (divider-bar line — wraps into broken bars on a phone; separate sections with a blank line, not a drawn rule). Plain prose with no markup and no divider bars is always safe.',
+            'The message body. 1–4096 characters, delivered with Telegram parse_mode HTML. Telegram does NOT render Markdown (no **, no # headings, no | tables |, no [text](url) — they show as raw syntax). Formatting, if any, is Telegram HTML ONLY: <b>, <i>, <u>, <s>, <code>, <pre>, <a href="…">, <blockquote>, <span class="tg-spoiler">. NO other tags exist — never wrap the body in a container like <message>/<html>/<p>, never use <br> (use a real newline), and close every tag you open. Write the tags as RAW < > characters: entity-escape ONLY a literal & < > in prose (as &amp; &lt; &gt;), NEVER the tags themselves — "&lt;b&gt;Digest&lt;/b&gt;" reaches the user as literal "<b>Digest</b>" text, not bold. One unknown or unclosed tag makes Telegram reject the WHOLE message and it arrives as literal tag soup, so if the text has ANY tag, call telegram_check_format first and only send once it returns valid; broken HTML is rejected by this tool without sending, and so is Markdown-formatted text (**bold**, # headings, | tables |, [text](url), --- rules) — rewrite it in Telegram HTML and resend. GOOD: "📬 <b>Digest</b>\\n<i>2 unread</i>\\nTotal &lt;5 items&gt;". BAD: "📬 <b>Digest</b> …😄</message>" (stray wrapper tag), "&lt;b&gt;Digest&lt;/b&gt;" (escaped tags — arrive as literal text), "**Digest**" (Markdown), "line<br>line" (no <br>), "cost < 5 & rising" (unescaped < &), "━━━━━━━━━━" (divider-bar line — wraps into broken bars on a phone; separate sections with a blank line, not a drawn rule). Plain prose with no markup and no divider bars is always safe.',
           required: true
         },
         sendAsIs: SEND_AS_IS_PARAM,
@@ -333,18 +333,19 @@ function checkFormat(args: Record<string, unknown>): ToolExecutionResult {
     return success('Valid Telegram HTML — safe to send with telegram_send / telegram_edit_message.')
   }
   return success(
-    `NOT CLEAN — fix these so the message renders right (an unsupported/unclosed tag or bare < & is REJECTED and arrives as raw tag soup; entity-escaped tags like &lt;b&gt; are delivered but show as literal "<b>" text; leaked Markdown is delivered but shows raw symbols). Fix, then re-check before sending:\n- ${issues.join('\n- ')}`
+    `NOT CLEAN — fix these so the message renders right (an unsupported/unclosed tag or bare < & makes Telegram reject the HTML and it arrives as raw tag soup; entity-escaped tags like &lt;b&gt; show as literal "<b>" text; leaked Markdown shows raw symbols — the send tools REFUSE all of these until fixed). Fix, then re-check before sending:\n- ${issues.join('\n- ')}`
   )
 }
 
 /**
  * Pre-send gate shared by telegram_send / captions / telegram_edit_message:
  * the same engine as telegram_check_format, run unconditionally because the
- * model can (and does) skip the check tool. Hard issues refuse the send —
- * a rejected call is a one-round-trip fix, while delivering one means tag
- * soup or literal "&lt;b&gt;" text reaching the user. Soft issues (Markdown
- * heuristics) never block: text that legitimately QUOTES ** or # content
- * must still deliver — they come back as a note for the model instead.
+ * model can (and does) skip the check tool. Hard issues — broken HTML AND
+ * leaked Markdown — refuse the send: a rejected call is a one-round-trip
+ * fix, while delivering one means tag soup, literal "&lt;b&gt;" text, or
+ * raw **Markdown** symbols reaching the user. Text that legitimately
+ * QUOTES markup still delivers: code spans are masked by the validator,
+ * and sendAsIs is the model's deliberate override for everything else.
  * The "invalid argument" prefix is load-bearing: motor's classifyError maps
  * it to validation/non-retryable, so the model sees the reject immediately
  * instead of motor retrying identical args three times.
@@ -359,9 +360,9 @@ function formatGate(
       what === 'edit' ? 'edit NOT applied (the existing message is unchanged)' : 'NOT sent'
     return {
       reject: failure(
-        `invalid argument — ${consequence}, the ${what === 'caption' ? 'caption' : 'message'} HTML would reach the user broken:\n- ${report.hard.join(
+        `invalid argument — ${consequence}, the ${what === 'caption' ? 'caption' : 'message'} would reach the user broken or as raw markup symbols:\n- ${report.hard.join(
           '\n- '
-        )}\nFix the markup and resend (telegram_check_format verifies without sending). If the flagged markup is INTENTIONAL content — you are showing code/markup as text, not formatting — resend the exact same text with sendAsIs: true and it goes out exactly as written.`
+        )}\nRewrite it in Telegram HTML and resend (telegram_check_format verifies without sending). If the flagged markup is INTENTIONAL content — you are showing code/markup as text, not formatting — resend the exact same text with sendAsIs: true and it goes out exactly as written.`
       ),
       note: ''
     }

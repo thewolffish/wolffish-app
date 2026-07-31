@@ -49,6 +49,11 @@ ok(
   deliveredFileNames('[wolffish-output: /w/data.tar.gz (file)]').join() === 'data.tar.gz'
 )
 ok(
+  'chart marker delivers',
+  deliveredFileNames('[wolffish-output: /w/files/revenue.chart.json (chart)]').join() ===
+    'revenue.chart.json'
+)
+ok(
   'multiple markers dedupe and keep order',
   deliveredFileNames(
     '[wolffish-output: /a/one.pdf (document)]\n[wolffish-output: /b/two.png (image)]\n[wolffish-output: /a/one.pdf (document)]'

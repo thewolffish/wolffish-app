@@ -145,7 +145,7 @@ export function buildWhatsAppCapability(deps: ToolDeps): {
     {
       name: 'whatsapp_check_format',
       description:
-        'Check a message for markup WhatsApp would show as raw, ugly text WITHOUT sending it. Returns "clean" or the exact problems: HTML tags/entities (<b>, &amp;, &lt; — WhatsApp renders NO HTML, they arrive as literal text) and leaked Markdown (**double asterisks**, # headings, [text](url) links, | tables |, --- rules, ```lang fences). Content inside `backticks` or ``` fences is exempt — that is how you show markup on purpose. It changes nothing — you fix your own text and re-check. Call this before whatsapp_send / whatsapp_reply whenever your message has any formatting. WhatsApp\'s real syntax is single-char: *bold* _italic_ ~strike~ `code`.',
+        'Check a message for markup WhatsApp would show as raw, ugly text WITHOUT sending it. Returns "clean" or the exact problems: HTML tags/entities (<b>, &amp;, &lt; — WhatsApp renders NO HTML, they arrive as literal text) and leaked Markdown (**double asterisks**, # headings, [text](url) links, | tables |, --- rules, ```lang fences). The send tools REFUSE HTML and Markdown outright, so fixing it here saves the bounced send. Content inside `backticks` or ``` fences is exempt — that is how you show markup on purpose. It changes nothing — you fix your own text and re-check. Call this before whatsapp_send / whatsapp_reply whenever your message has any formatting. WhatsApp\'s real syntax is single-char: *bold* _italic_ ~strike~ `code`.',
       parameters: {
         message: {
           type: 'string',
@@ -181,7 +181,7 @@ export function buildWhatsAppCapability(deps: ToolDeps): {
         message: {
           type: 'string',
           description:
-            'The message body, delivered VERBATIM — nothing converts it. WhatsApp formatting only: *bold* (single asterisks), _italic_, ~strikethrough~, `inline code`, ```monospace```, "- " bullets, "1. " numbered items, "> " quotes. NEVER Markdown (no **double asterisks**, no # headings, no | tables |, no [text](url), no --- rules) — leaked Markdown reaches the recipient as raw syntax. NEVER HTML: WhatsApp renders no tags and no entities, so "<b>hi</b>" and "&amp;" arrive as literal text — write plain & < > characters and WhatsApp markup, never Telegram-style HTML. A message with HTML is rejected without sending (fix it and resend). Instead of a table write one "*Label:* value" line per fact; paste links as bare URLs. If the message has ANY formatting, run whatsapp_check_format on it first. GOOD: "*Order arrived* 🍽\\nTotal: _53 SAR_". BAD: "**Order arrived**\\n| item | price |" (Markdown bold + table), "<b>Order arrived</b>" (HTML — arrives as literal text), "━━━━━━━━━━" (divider-bar line — wraps into broken bars on a phone; separate sections with a blank line, not a drawn rule).',
+            'The message body, delivered VERBATIM — nothing converts it. WhatsApp formatting only: *bold* (single asterisks), _italic_, ~strikethrough~, `inline code`, ```monospace```, "- " bullets, "1. " numbered items, "> " quotes. NEVER Markdown (no **double asterisks**, no # headings, no | tables |, no [text](url), no --- rules) — leaked Markdown reaches the recipient as raw syntax. NEVER HTML: WhatsApp renders no tags and no entities, so "<b>hi</b>" and "&amp;" arrive as literal text — write plain & < > characters and WhatsApp markup, never Telegram-style HTML. A message with HTML or Markdown is rejected without sending (rewrite it in WhatsApp formatting and resend). Instead of a table write one "*Label:* value" line per fact; paste links as bare URLs. If the message has ANY formatting, run whatsapp_check_format on it first. GOOD: "*Order arrived* 🍽\\nTotal: _53 SAR_". BAD: "**Order arrived**\\n| item | price |" (Markdown bold + table), "<b>Order arrived</b>" (HTML — arrives as literal text), "━━━━━━━━━━" (divider-bar line — wraps into broken bars on a phone; separate sections with a blank line, not a drawn rule).',
           required: true
         },
         sendAsIs: SEND_AS_IS_PARAM
@@ -212,7 +212,7 @@ export function buildWhatsAppCapability(deps: ToolDeps): {
         caption: {
           type: 'string',
           description:
-            'Optional caption shown beneath the image, delivered VERBATIM. WhatsApp formatting only (*bold*, _italic_) — never Markdown (no **double asterisks**, no [text](url)) and never HTML tags/entities (they arrive as literal text; a caption with HTML is rejected without sending). If the caption has any formatting, run whatsapp_check_format on it first.',
+            'Optional caption shown beneath the image, delivered VERBATIM. WhatsApp formatting only (*bold*, _italic_) — never Markdown (no **double asterisks**, no [text](url)) and never HTML tags/entities (they arrive as literal text; a caption with HTML or Markdown is rejected without sending). If the caption has any formatting, run whatsapp_check_format on it first.',
           required: false
         },
         sendAsIs: SEND_AS_IS_PARAM,
@@ -255,7 +255,7 @@ export function buildWhatsAppCapability(deps: ToolDeps): {
         caption: {
           type: 'string',
           description:
-            'Optional caption, delivered VERBATIM. WhatsApp formatting only (*bold*, _italic_) — never Markdown (no **double asterisks**, no [text](url)) and never HTML tags/entities (they arrive as literal text; a caption with HTML is rejected without sending). If the caption has any formatting, run whatsapp_check_format on it first.',
+            'Optional caption, delivered VERBATIM. WhatsApp formatting only (*bold*, _italic_) — never Markdown (no **double asterisks**, no [text](url)) and never HTML tags/entities (they arrive as literal text; a caption with HTML or Markdown is rejected without sending). If the caption has any formatting, run whatsapp_check_format on it first.',
           required: false
         },
         sendAsIs: SEND_AS_IS_PARAM,
@@ -315,7 +315,7 @@ export function buildWhatsAppCapability(deps: ToolDeps): {
         message: {
           type: 'string',
           description:
-            'The reply text, delivered VERBATIM — nothing converts it. WhatsApp formatting only (*bold*, _italic_, `inline code`, "- " bullets) — never Markdown (no **double asterisks**, no [text](url)) and never HTML tags/entities (WhatsApp renders no HTML; they arrive as literal text and the reply is rejected without sending). Run whatsapp_check_format first if the text has any formatting.',
+            'The reply text, delivered VERBATIM — nothing converts it. WhatsApp formatting only (*bold*, _italic_, `inline code`, "- " bullets) — never Markdown (no **double asterisks**, no [text](url)) and never HTML tags/entities (WhatsApp renders no HTML; they arrive as literal text). A reply with HTML or Markdown is rejected without sending — rewrite it in WhatsApp formatting and resend. Run whatsapp_check_format first if the text has any formatting.',
           required: true
         },
         sendAsIs: SEND_AS_IS_PARAM
@@ -519,20 +519,23 @@ function checkFormat(args: Record<string, unknown>): ToolExecutionResult {
     return success('Clean — safe to send with whatsapp_send / whatsapp_reply.')
   }
   return success(
-    `NOT CLEAN — fix these so the message reads right (WhatsApp renders NO HTML, so tags/entities arrive as literal "<b>" / "&amp;" text; leaked Markdown shows raw symbols). Fix, then re-check before sending:\n- ${issues.join('\n- ')}`
+    `NOT CLEAN — fix these so the message reads right (WhatsApp renders NO HTML, so tags/entities arrive as literal "<b>" / "&amp;" text; leaked Markdown shows raw symbols — the send tools REFUSE both until fixed). Fix, then re-check before sending:\n- ${issues.join('\n- ')}`
   )
 }
 
 /**
  * Pre-send gate shared by whatsapp_send / whatsapp_reply / captions: the
  * same engine as whatsapp_check_format, run unconditionally because the
- * model can (and does) skip the check tool. Hard issues (HTML tags or
- * entities — WhatsApp parses no HTML, so they arrive as literal text)
- * refuse the send with a teaching error; soft issues (Markdown-leak
- * heuristics) never block — quoting ** or # content must still deliver —
- * and come back as a note. The "invalid argument" prefix is load-bearing:
- * motor's classifyError maps it to validation/non-retryable, so the model
- * sees the reject immediately instead of motor retrying identical args.
+ * model can (and does) skip the check tool. Hard issues — HTML tags or
+ * entities (WhatsApp parses no HTML, so they arrive as literal text) AND
+ * leaked Markdown (WhatsApp renders none, so the raw symbols arrive) —
+ * refuse the send with a teaching error. Text that legitimately QUOTES
+ * markup still delivers: code spans are masked by the validator, and
+ * sendAsIs is the model's deliberate override for everything else. Soft
+ * issues (cosmetic-only) come back as a note. The "invalid argument"
+ * prefix is load-bearing: motor's classifyError maps it to
+ * validation/non-retryable, so the model sees the reject immediately
+ * instead of motor retrying identical args.
  */
 function formatGate(
   text: string,
@@ -542,9 +545,9 @@ function formatGate(
   if (report.hard.length > 0) {
     return {
       reject: failure(
-        `invalid argument — NOT sent, the ${what} would reach the recipient as broken-looking text:\n- ${report.hard.join(
+        `invalid argument — NOT sent, the ${what} would reach the recipient as broken-looking text or raw markup symbols:\n- ${report.hard.join(
           '\n- '
-        )}\nFix it and resend (whatsapp_check_format verifies without sending). If the flagged markup is INTENTIONAL content — you are showing code/markup as text — resend the exact same text with sendAsIs: true and it goes out exactly as written.`
+        )}\nRewrite it in WhatsApp formatting and resend (whatsapp_check_format verifies without sending). If the flagged markup is INTENTIONAL content — you are showing code/markup as text — resend the exact same text with sendAsIs: true and it goes out exactly as written.`
       ),
       note: ''
     }

@@ -59,6 +59,11 @@ regenerate, "make it red", "now orange" — call `send_file` on the **updated** 
 even if you delivered a file at that same path in an earlier turn. Each new version is a new
 result the user must see. A new turn, a different file, or an edited version always gets sent.
 
+**Chart cards.** A file whose name ends in `.chart.json` is a chart spec: `send_file` delivers
+it as an interactive chart card in the in-app chat (on WhatsApp/Telegram it arrives as a plain
+document, so prefer a text table there). The spec format and when to chart live in the core
+`dataviz` tool's manual — call `dataviz` before authoring one.
+
 ### When NOT to call it — almost never
 
 NOTHING auto-attaches anymore: no generation tool (pdf, browser_pdf, ffmpeg, image/meme

@@ -8,8 +8,9 @@ import type { ConversationRunPhase, ConversationRunStatus } from '@providers/ses
  * IDENTICALLY wherever it was started from: in-app, WhatsApp, Telegram, a
  * heartbeat automation, a played procedure. The numbered chip's phase colors
  * (primary pulse while processing, then the terminal success/danger/warning
- * tint) come from the cross-channel chat:turnState broadcast, so they only
- * ever depend on a run existing — never on which channel owns it.
+ * tint while the row is FRESH) come from the cross-channel chat:turnState
+ * broadcast, so they only ever depend on a run existing — never on which
+ * channel owns it.
  */
 export type ConversationRow = {
   conversationId: string
@@ -37,6 +38,31 @@ export type ConversationRow = {
 }
 
 /**
+ * How long a finished run's terminal chip tint (success/danger/warning) marks
+ * its conversation as FRESH. Past the window the row reads as any other old
+ * conversation (neutral chip) — the tint exists to distinguish runs that JUST
+ * ended, not to be a permanent record. Deliberately evaluated at list-build
+ * time with NO timer of its own: the tint expires on whatever next rebuilds
+ * the list (a turn starting or ending anywhere, an index change, navigation).
+ * Resuming an expired conversation restarts the cycle naturally — its new
+ * turn re-stamps the status clock through chat:turnState.
+ */
+export const TERMINAL_FRESH_WINDOW_MS = 30 * 60 * 1000
+
+/**
+ * The phase a row should RENDER: `processing` always shows (a live run pulses
+ * however long it takes); a terminal phase shows only while fresh.
+ */
+function effectivePhase(
+  live: ConversationRunStatus | undefined,
+  now: number
+): ConversationRunPhase | null {
+  if (!live) return null
+  if (live.phase !== 'processing' && now - live.at > TERMINAL_FRESH_WINDOW_MS) return null
+  return live.phase
+}
+
+/**
  * Merge the indexed conversation list with this app session's live run
  * statuses into the rows a list surface renders.
  *
@@ -57,7 +83,8 @@ export function buildConversationRows({
   metas,
   runStatuses,
   projects,
-  untitled
+  untitled,
+  now = Date.now()
 }: {
   metas: readonly ConversationMeta[]
   runStatuses: Record<string, ConversationRunStatus>
@@ -65,6 +92,8 @@ export function buildConversationRows({
   projects?: readonly Project[]
   /** Localized label for a conversation whose title hasn't resolved yet. */
   untitled: string
+  /** Freshness clock for the terminal-tint window (injectable for tests). */
+  now?: number
 }): ConversationRow[] {
   const projectIcons = new Map((projects ?? []).map((p) => [p.id, p.icon]))
   const byId = new Map<string, ConversationRow>()
@@ -80,7 +109,7 @@ export function buildConversationRows({
     byId.set(meta.id, {
       conversationId: meta.id,
       title: indexedTitle ?? live?.title ?? untitled,
-      phase: live?.phase ?? null,
+      phase: effectivePhase(live, now),
       channel: meta.channel ?? live?.channel ?? null,
       // Project emoji wins (a project conversation reads as its project);
       // otherwise the stamped automation/procedure emoji.
@@ -97,7 +126,7 @@ export function buildConversationRows({
     byId.set(id, {
       conversationId: id,
       title: s.title ?? untitled,
-      phase: s.phase,
+      phase: effectivePhase(s, now),
       channel: s.channel ?? null,
       icon: null,
       projectId: null,

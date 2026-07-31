@@ -23,7 +23,7 @@ import {
   type QueuedMessageBase
 } from '@main/channels/message-queue'
 import { listProjects, projectLabel, type Project } from '@main/projects'
-import { stripInlineMarkup } from '@main/channels/whatsapp/format'
+import { stripInlineMarkup, validateWhatsAppFormat } from '@main/channels/whatsapp/format'
 import { GIF_PLAYBACK_MAX_SECONDS, transcodeGifToMp4 } from '@main/channels/whatsapp/gif'
 import {
   extractInboundMedia,
@@ -221,6 +221,15 @@ type ActiveTurn = {
   conversation: ConversationFile
   textBuffer: string
   /**
+   * Channel-format notices parked for the agent loop — one per flushed
+   * prose block that failed validateWhatsAppFormat AFTER it was already
+   * delivered (delivery always wins; observe-and-notify, never rewrite).
+   * Drained by the formatNotices pull the runner threads to the agent;
+   * leftovers at turn end carry over to pendingFormatNotices so the NEXT
+   * turn still hears about a leak in the final prose block.
+   */
+  formatNotices: string[]
+  /**
    * Last seen workflow snapshot per run (workflow mode). renderSegment
    * diffs the incoming snapshot against this to derive phase-transition
    * and per-agent progress messages deterministically.
@@ -318,6 +327,15 @@ export class WhatsAppChannel {
   private reconnectTimer: NodeJS.Timeout | null = null
   private authDir: string | null = null
   private readonly activeByJid = new Map<string, ActiveTurn>()
+  /**
+   * Channel-format notices whose turn ended before the agent loop could
+   * drain them (a leak in the FINAL prose block has no next iteration).
+   * Keyed by jid; merged into the next turn's first drain so the model
+   * still hears what reached the user's phone. In-memory only — a restart
+   * drops them, which is fine: the notice is a correction aid, not a
+   * delivery record.
+   */
+  private readonly pendingFormatNotices = new Map<string, string[]>()
   /**
    * Synchronous per-jid "a turn is being set up" claim. Inbound messages are
    * fired via `void` per upsert with no per-jid serialization, so a batch (a
@@ -2081,6 +2099,7 @@ export class WhatsAppChannel {
       // project conversations get the overlay on every channel turn.
       projectId: conversation.projectId ?? null,
       channel: 'whatsapp',
+      formatNotices: () => this.drainFormatNotices(jid),
       makeSink: ({ turnId, conversationId }) => this.createSink(turnId, conversationId, jid),
       onTurnStarted: ({ turnId, controller }) => {
         // Stamp the assistant message's identity up front so live mirror
@@ -2091,6 +2110,7 @@ export class WhatsAppChannel {
           turnId,
           conversation,
           textBuffer: '',
+          formatNotices: [],
           workflowState: new Map(),
           assistantContent: '',
           segments: [],
@@ -2199,6 +2219,15 @@ export class WhatsAppChannel {
                   .catch(() => undefined)
               }
 
+              // Format leaks flushed with no agent iteration left to read
+              // them (typically the FINAL prose block) carry over to the
+              // next turn's drain, so the model still hears what reached
+              // the user's phone.
+              if (finished.formatNotices.length > 0) {
+                const prior = this.pendingFormatNotices.get(jid) ?? []
+                this.pendingFormatNotices.set(jid, [...prior, ...finished.formatNotices])
+                finished.formatNotices = []
+              }
               // Safety-net for the empty-turn path (assistant === null, so the
               // block above didn't run): a trailing mirror timer must never
               // outlive its turn and fire into a successor's state.
@@ -2677,10 +2706,38 @@ export class WhatsAppChannel {
       for (const chunk of splitForWhatsApp(cleaned)) {
         await this.safeSend(jid, chunk)
       }
+      // Observe-and-notify (never rewrite, never withhold): the block above
+      // was DELIVERED exactly as the model wrote it — the delivery guarantee
+      // outranks formatting — but if it violates the WhatsApp contract
+      // (leaked Markdown, HTML) the model is told on its next iteration via
+      // the runner's formatNotices pull so it writes clean WhatsApp markup
+      // in the remaining blocks. Validated on the whole un-split block: a
+      // length split can cut a marker pair in half and fake a clean chunk.
+      const report = validateWhatsAppFormat(cleaned)
+      if (report.hard.length > 0) {
+        const issues = report.hard.slice(0, 3).join(' ')
+        active.formatNotices.push(
+          `⚠️ Channel formatting: your prose was already DELIVERED to the user's WhatsApp chat with raw markup — ${issues} EVERY prose block you write in this conversation, including narration between tool calls, goes verbatim to their phone as a WhatsApp message (WhatsApp markup only: *bold* _italic_ \`code\`, NEVER Markdown, NEVER HTML). Write clean WhatsApp formatting in every remaining prose block.`
+        )
+      }
     }
     for (const imgPath of imagePaths) {
       await this.sendImageFile(jid, imgPath)
     }
+  }
+
+  /**
+   * Drain every parked channel-format notice for this jid — the pull end
+   * of the observe-and-notify loop (TurnSendOptions.formatNotices). Merges
+   * notices carried over from a previous turn (a leak in the final prose
+   * block has no next iteration inside its own turn) with the live turn's.
+   */
+  private drainFormatNotices(jid: string): string[] {
+    const pending = this.pendingFormatNotices.get(jid) ?? []
+    this.pendingFormatNotices.delete(jid)
+    const active = this.activeByJid.get(jid)
+    const live = active ? active.formatNotices.splice(0) : []
+    return [...pending, ...live]
   }
 
   private async flushFinalText(jid: string): Promise<void> {
@@ -3405,14 +3462,16 @@ function extractDocumentPaths(output: string): string[] {
 }
 
 // Generic files explicitly delivered via send_file carry a `(file)` marker
-// (any extension that isn't an image/audio/video/document). Only the
-// explicit marker is matched — no bare-path fallback — so incidental paths
-// in tool output are never mistaken for a delivery.
+// (any extension that isn't an image/audio/video/document). `(chart)` — the
+// in-app interactive chart-card spec — has no channel rendering, so it rides
+// this same path and arrives as a plain document instead of being silently
+// dropped. Only the explicit marker is matched — no bare-path fallback — so
+// incidental paths in tool output are never mistaken for a delivery.
 function extractGenericFilePaths(output: string): string[] {
   const paths: string[] = []
   const seen = new Set<string>()
   const home = os.homedir()
-  const markerRegex = /\[wolffish-output:\s*([^\]]+?)\s+\(file\)\]/g
+  const markerRegex = /\[wolffish-output:\s*([^\]]+?)\s+\((?:file|chart)\)\]/g
   let match: RegExpExecArray | null
   while ((match = markerRegex.exec(output)) !== null) {
     const raw = match[1].trim()

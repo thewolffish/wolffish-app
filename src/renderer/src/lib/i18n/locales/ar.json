@@ -1501,6 +1501,11 @@
       "expand": "توسيع",
       "close": "إغلاق"
     },
+    "chartCard": {
+      "savePng": "حفظ كصورة",
+      "viewChart": "الرسم البياني",
+      "viewData": "البيانات"
+    },
     "pathCard": {
       "folder": "مجلد",
       "file": "ملف",
