@@ -798,6 +798,18 @@ agent.corpus.on('conversation.deleted', ({ id }) => broadcast('conversation:dele
 // at all (renames, imports, rebuilds). Fires after the cortex row is
 // committed.
 agent.corpus.on('conversation.indexed', () => broadcast('conversation:changed', {}))
+// Relay turn scores to the renderer so an open chat reflects a vote cast on
+// ANY surface — a bare-number Telegram/WhatsApp reply lands on the in-app
+// rating bar live (a ratings-only write reindexes nothing, so no
+// conversation:changed ever fires for it). Payload-targeted like
+// messageMirror; the file's ratings[] stays the single source of truth, this
+// is just the change push.
+agent.corpus.on('conversation.rated', ({ conversation, messageId, score, at, source }) =>
+  broadcast('conversation:ratingChanged', {
+    conversationId: conversation,
+    rating: { messageId, score, at, source }
+  })
+)
 // Full rebuilds + the startup catch-up index via indexWalkedSync directly, so
 // no conversation.indexed fires while they run — a list fetched mid-rebuild
 // can be partial (see the getReindexStatus guard in conversation:list). Push
@@ -3048,7 +3060,9 @@ app.whenReady().then(async () => {
       if (rating) {
         agent.corpus.emit('conversation.rated', {
           conversation: payload.conversationId,
+          messageId: rating.messageId,
           score: rating.score,
+          at: rating.at,
           source: 'inapp'
         })
       }

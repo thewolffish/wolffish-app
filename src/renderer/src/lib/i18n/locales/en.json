@@ -1677,6 +1677,9 @@
     "turnFooter": {
       "error": "Connection error"
     },
+    "reasoningCard": {
+      "title": "Reasoning"
+    },
     "providerError": {
       "retry": "Try again"
     },

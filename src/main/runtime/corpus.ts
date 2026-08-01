@@ -173,7 +173,14 @@ export type CorpusEvents = {
   'reflection.playbookUpdated': { day: string; bytes: number }
   'reflection.deepCleaned': { changedFiles: string[] }
 
-  'conversation.rated': { conversation: string; score: number; source: string }
+  'conversation.rated': {
+    conversation: string
+    /** Assistant message the score applies to — lets the renderer key its overlay. */
+    messageId: string
+    score: number
+    at: number
+    source: string
+  }
 
   'feedback.recorded': {
     action: string

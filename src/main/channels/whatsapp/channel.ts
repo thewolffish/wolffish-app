@@ -1373,11 +1373,13 @@ export class WhatsAppChannel {
     // off, the chat is unbound, or nothing is rateable yet.
     if (parseTurnScore(trimmed) !== null) {
       const boundId = await getConversationIdForJid(jid).catch(() => null)
-      const rating = await tryCaptureChannelScore('whatsapp', boundId, trimmed)
+      const rating = await tryCaptureChannelScore('whatsapp', boundId, trimmed, getReflectionConfig)
       if (rating) {
         this.agent.corpus.emit('conversation.rated', {
           conversation: boundId!,
+          messageId: rating.messageId,
           score: rating.score,
+          at: rating.at,
           source: 'whatsapp'
         })
         // ✍ = "noted": react to the vote instead of sending a bubble.

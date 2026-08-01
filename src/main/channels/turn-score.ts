@@ -1,4 +1,5 @@
 import { rateConversationTurn, type ConversationRating } from '@main/conversations'
+import type { ReflectionConfig } from '@main/workspace/workspace'
 
 /**
  * Channel turn scoring — the WhatsApp/Telegram equivalent of the in-app
@@ -43,16 +44,17 @@ export function parseTurnScore(text: string): number | null {
 export async function tryCaptureChannelScore(
   channel: 'telegram' | 'whatsapp',
   conversationId: string | null | undefined,
-  text: string
+  text: string,
+  // Injected (only a type is imported from workspace.ts): a value import of
+  // workspace.ts would drag electron-toolkit into this module at load, and
+  // the parse half must stay loadable in plain-node tests.
+  getConfig: () => Promise<ReflectionConfig>
 ): Promise<ConversationRating | null> {
   const score = parseTurnScore(text)
   if (score === null) return null
   if (!conversationId) return null
   try {
-    // Lazy import: workspace.ts drags in electron-toolkit at module load,
-    // and this module's parse half is useful in plain-node tests.
-    const { getReflectionConfig } = await import('@main/workspace/workspace')
-    const cfg = await getReflectionConfig()
+    const cfg = await getConfig()
     if (!cfg.scoring[channel]) return null
     return await rateConversationTurn(conversationId, null, score, channel)
   } catch {

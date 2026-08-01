@@ -1262,11 +1262,13 @@ export class TelegramChannel {
     // through as an ordinary message.
     if (parseTurnScore(trimmed) !== null) {
       const boundId = await getConversationIdForChat(chatId).catch(() => null)
-      const rating = await tryCaptureChannelScore('telegram', boundId, trimmed)
+      const rating = await tryCaptureChannelScore('telegram', boundId, trimmed, getReflectionConfig)
       if (rating) {
         this.agent.corpus.emit('conversation.rated', {
           conversation: boundId!,
+          messageId: rating.messageId,
           score: rating.score,
+          at: rating.at,
           source: 'telegram'
         })
         // ✍ = "noted": a reaction acknowledges the vote without adding a

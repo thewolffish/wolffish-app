@@ -1,4 +1,18 @@
-## v1.0.233 — 2026-08-01 `Latest`
+## v1.0.234 — 2026-08-01 `Latest`
+
+### Every Browser You Own, One Extension
+
+The Wolffish extension used to assume one browser — connect it from Chrome and that was the whole story. It now speaks to **several browsers at once**: Chrome, Edge, Brave, Firefox — and **two profiles of the same browser count as two browsers**, told apart by each profile's **signed-in email**, so "work Chrome" and "personal Chrome" stop being guesswork. Every connected browser introduces itself on arrival — name, version, operating system, profile — and takes **its own row** in Settings → Browser Extension, a row that holds steady through extension reloads instead of flickering away. The agent sees the same roster: it can **list what's connected** and **choose which browser a conversation drives** — a choice that **sticks for that conversation** until it deliberately switches — picking for itself when you named a browser or the context makes it obvious, and asking you first when nothing does. Each browser remains a fully separate world — its own tabs, logins, and cookies — and the agent is taught never to mix them up.
+
+### Your Phone Vote Lands on the Open Chat
+
+Score a reply from WhatsApp or Telegram — a bare number, 0 to 10 — and the desktop app used to sit there looking as if nothing had happened; worse, a conversation reopened later showed **no scores at all**, even though every vote was safely on disk. Scores now travel: a vote cast on **any surface appears live** on the rating bar of the chat you have open, reopened conversations **show every score they've earned**, and when the same turn ends up voted on twice, the **most recent vote wins** — a re-vote from your phone can no longer be quietly overwritten by a stale copy the desktop was still holding. In-app clicks paint instantly and roll themselves back on the rare failed write, so the bar never claims a score that wasn't recorded.
+
+### The Reasoning Behind a Reply, One Click Away
+
+When the model thinks before it answers, that thinking no longer evaporates. A reply that carries reasoning now ends with a small collapsed **Reasoning** card in the chat feed — click it to unfold the model's **raw thinking text**, click again to tuck it away. Nothing appears when there was no reasoning, and the card mirrors the one the mobile app already shows, so both surfaces tell the same story about how an answer came to be.
+
+## v1.0.233 — 2026-08-01
 
 ### Documents Designed by a Manual, Not a Mood
 

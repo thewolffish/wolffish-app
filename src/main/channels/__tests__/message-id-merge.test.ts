@@ -25,7 +25,8 @@
 import {
   mergeConversationOnto,
   type ConversationFile,
-  type ConversationMessage
+  type ConversationMessage,
+  type ConversationRating
 } from '@main/conversations'
 
 let passed = 0
@@ -376,6 +377,81 @@ for (const scenario of scenarios) {
       merged.summarizedThroughMessageId === 'C',
     JSON.stringify({ m: merged.summarizedThroughMessage, id: merged.summarizedThroughMessageId })
   )
+}
+
+// ── field rules: ratings (fresher-at wins, id-keyed union) ────────────────
+{
+  // A function declaration, not a const arrow: tsc's error recovery reads a
+  // concise `=> ({...})` body followed by this section's bare-block cases as
+  // an arrow missing its `=>` and refuses to parse (TS1005).
+  function rating(
+    messageId: string,
+    score: number,
+    at: number,
+    source: ConversationRating['source']
+  ): ConversationRating {
+    return { messageId, score, at, source }
+  }
+
+  // A renderer whole-file save that carries no ratings must not erase a
+  // channel-written score.
+  {
+    const disk = conv([clone(u1), clone(a1)], { ratings: [rating('B', 8, 100, 'telegram')] })
+    const incoming = conv([clone(u1), clone(a1)])
+    const merged = mergeConversationOnto(disk, incoming)
+    ok(
+      'ratings: channel score survives a ratings-less save',
+      merged.ratings?.length === 1 && merged.ratings[0].score === 8
+    )
+  }
+  // THE clobber case the fresher-at rule exists for: the renderer saves a
+  // whole-file copy loaded BEFORE a phone re-vote landed — its stale older
+  // vote must not resurrect over the fresher disk one.
+  {
+    const disk = conv([clone(u1), clone(a1)], { ratings: [rating('B', 9, 200, 'whatsapp')] })
+    const incoming = conv([clone(u1), clone(a1)], { ratings: [rating('B', 4, 100, 'inapp')] })
+    const merged = mergeConversationOnto(disk, incoming)
+    ok(
+      'ratings: stale incoming vote cannot clobber a fresher disk re-vote',
+      merged.ratings?.length === 1 && merged.ratings[0].score === 9,
+      JSON.stringify(merged.ratings)
+    )
+  }
+  // A genuinely fresher incoming re-vote still replaces the disk copy.
+  {
+    const disk = conv([clone(u1), clone(a1)], { ratings: [rating('B', 4, 100, 'telegram')] })
+    const incoming = conv([clone(u1), clone(a1)], { ratings: [rating('B', 7, 200, 'inapp')] })
+    const merged = mergeConversationOnto(disk, incoming)
+    ok(
+      'ratings: fresher incoming re-vote wins',
+      merged.ratings?.length === 1 && merged.ratings[0].score === 7
+    )
+  }
+  // Equal at (one vote round-tripped through load → save) keeps incoming.
+  {
+    const disk = conv([clone(u1), clone(a1)], { ratings: [rating('B', 6, 100, 'inapp')] })
+    const incoming = conv([clone(u1), clone(a1)], { ratings: [rating('B', 6, 100, 'inapp')] })
+    const merged = mergeConversationOnto(disk, incoming)
+    ok('ratings: identical round-tripped vote merges to one', merged.ratings?.length === 1)
+  }
+  // Different turns from different writers union, ordered by at.
+  {
+    const disk = conv([clone(u1), clone(a1), msg('C', 'user', 'q'), msg('D', 'assistant', 'a')], {
+      ratings: [rating('D', 10, 300, 'telegram')]
+    })
+    const incoming = conv(
+      [clone(u1), clone(a1), msg('C', 'user', 'q'), msg('D', 'assistant', 'a')],
+      { ratings: [rating('B', 5, 100, 'inapp')] }
+    )
+    const merged = mergeConversationOnto(disk, incoming)
+    ok(
+      'ratings: distinct turns union and sort by at',
+      merged.ratings?.length === 2 &&
+        merged.ratings[0].messageId === 'B' &&
+        merged.ratings[1].messageId === 'D',
+      JSON.stringify(merged.ratings)
+    )
+  }
 }
 
 console.log(`\n${passed} passed, ${failed} failed`)

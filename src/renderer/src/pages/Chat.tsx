@@ -21,6 +21,7 @@ import { PdfViewer } from '@components/common/pdf-viewer/PdfViewer'
 import { ProjectDialog } from '@components/common/project-dialog/ProjectDialog'
 import { ProviderErrorCards } from '@components/common/provider-error-card/ProviderErrorCard'
 import { QuestionCard } from '@components/common/question-card/QuestionCard'
+import { ReasoningCard } from '@components/common/reasoning-card/ReasoningCard'
 import { Sidebar } from '@components/common/sidebar/Sidebar'
 import { SpreadsheetViewer } from '@components/common/spreadsheet-viewer/SpreadsheetViewer'
 import { ToolCard } from '@components/common/tool-card/ToolCard'
@@ -54,6 +55,7 @@ import type {
   AskUserResponse,
   ChatHistoryMessage,
   ConversationFile,
+  ConversationRating,
   ConversationStats,
   ConversationTurnStats,
   MessageAttachment,
@@ -711,25 +713,35 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
   // directly there would see stale (turn-start) values — the ref does not.
   const turnStatsRef = useRef<TurnStats>(emptyTurnStats())
 
-  // Persisted scores from the loaded conversation file fold into the
-  // reactive `turnRatings` map here — an effect may read the ref, render may
-  // not (ref mutations don't re-render, so a render-time read could pin a
-  // stale score). Keyed on messages so it re-checks after every load/append;
-  // merge-if-absent keeps this session's fresh votes authoritative.
-  useEffect(() => {
-    const persisted = conversationRef.current?.ratings
-    if (!persisted?.length) return
+  // In-flight in-app votes. A disk fold landing mid-IPC must not flip the
+  // just-clicked segment back to a stale copy; resolve/revert releases the hold.
+  const pendingVotesRef = useRef(new Set<string>())
+
+  /**
+   * Fold persisted scores into the reactive `turnRatings` overlay. Called at
+   * every point a fresh copy of the truth arrives — conversation load, the
+   * conversation:changed disk sync, the conversation:ratingChanged push — NOT
+   * keyed on `messages`: a sidebar open seeds the full feed before the async
+   * load sets conversationRef, and the load then changes no message identity,
+   * so a messages-keyed effect never saw a reopened conversation's scores
+   * (the "scored on Telegram, looks unscored on desktop" bug). Overwrites:
+   * the file's ratings[] is the single source of truth, so a phone re-vote
+   * replaces what this surface shows; only in-flight local votes hold.
+   */
+  const foldRatings = useCallback((ratings: ConversationRating[] | null | undefined): void => {
+    if (!ratings?.length) return
     setTurnRatings((prev) => {
       let changed = false
       const next = { ...prev }
-      for (const r of persisted) {
-        if (r.messageId in next) continue
+      for (const r of ratings) {
+        if (pendingVotesRef.current.has(r.messageId)) continue
+        if (next[r.messageId] === r.score) continue
         next[r.messageId] = r.score
         changed = true
       }
       return changed ? next : prev
     })
-  }, [messages])
+  }, [])
 
   // The bar targets the last completed assistant message of an idle chat
   // that has a persisted conversation to attach the score to.
@@ -747,19 +759,39 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
   const rateTurn = useCallback((messageId: string, score: number): void => {
     const conv = conversationRef.current
     if (!conv) return
+    // Optimistic paint, held against disk folds until the write settles.
+    pendingVotesRef.current.add(messageId)
     setTurnRatings((prev) => ({ ...prev, [messageId]: score }))
+    // The write never landed — fall back to what the file truly holds: the
+    // prior persisted score on a failed re-vote, unscored otherwise.
+    const revert = (): void => {
+      const persisted = conversationRef.current?.ratings?.find((r) => r.messageId === messageId)
+      setTurnRatings((prev) => {
+        const next = { ...prev }
+        if (persisted) next[messageId] = persisted.score
+        else delete next[messageId]
+        return next
+      })
+    }
     void window.api.conversation
       .rate({ conversationId: conv.id, messageId, score })
       .then((rating) => {
+        if (!rating) {
+          revert()
+          return
+        }
         // Fold into the in-memory copy so the next whole-file save carries it.
-        if (rating && conversationRef.current?.id === conv.id) {
+        if (conversationRef.current?.id === conv.id) {
           const rest = (conversationRef.current.ratings ?? []).filter(
             (r) => r.messageId !== messageId
           )
           conversationRef.current.ratings = [...rest, rating]
         }
       })
-      .catch(() => undefined)
+      .catch(revert)
+      .finally(() => {
+        pendingVotesRef.current.delete(messageId)
+      })
   }, [])
 
   // ── Voice recording ───────────────────────────────────────────
@@ -1140,6 +1172,10 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
         // newer effect run is now in flight and owns conversationRef.
         if (!conv || conversationIdRef.current !== targetId) return
         conversationRef.current = conv
+        // Scores live on the file, and the descriptor-seeded feed usually
+        // makes the setMessages below a no-op — fold them here, at the load
+        // itself, or a reopened conversation shows its rating bar unscored.
+        foldRatings(conv.ratings)
         // A turn still in flight for the OUTGOING conversation must not
         // bleed into this one (its llm.response events would overwrite the
         // restored meter and its done would persist the wrong reading here).
@@ -1265,7 +1301,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
         setFilesOpen(false)
       })
     }
-  }, [activeConversationId, resetTurnStats])
+  }, [activeConversationId, resetTurnStats, foldRatings])
 
   // Pull in messages another surface appended to the conversation we have open
   // — you answer on your phone while this chat sits on screen. Nothing else
@@ -1293,6 +1329,9 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
       if (pendingTurnIdRef.current !== null) return
       const conv = await window.api.conversation.load(targetId)
       if (cancelled || !conv || conversationIdRef.current !== targetId) return
+      // This load is the freshest copy of the file we'll hold — carry its
+      // scores along with its messages (a channel vote rides the same disk).
+      foldRatings(conv.ratings)
       setMessages((prev) => {
         const persistedPrev = prev.filter(isPersistedMessage)
         // Id-keyed diff when both sides are fully id'd (every post-migration
@@ -1338,7 +1377,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
       if (timer) clearTimeout(timer)
       off()
     }
-  }, [activeConversationId])
+  }, [activeConversationId, foldRatings])
 
   // Live mirror of an IN-FLIGHT Telegram/WhatsApp turn. The channel streams
   // throttled snapshots of its in-progress assistant message (main-side
@@ -1369,6 +1408,27 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
       })
     })
   }, [activeConversationId])
+
+  // A turn score cast on ANY surface while this conversation is open — the
+  // usual case is a bare-number Telegram/WhatsApp reply landing on a chat
+  // that's on screen. A vote writes only ratings[] (no reindex, so no
+  // conversation:changed and no sync()); this targeted push is the only way
+  // it reaches an open feed. Folds into the in-memory copy too, so our next
+  // whole-file save carries the vote instead of racing it (the merge's
+  // fresher-at rule backstops the race either way).
+  useEffect(() => {
+    if (!activeConversationId) return
+    const targetId = activeConversationId
+    return window.api.conversation.onRatingChanged(({ conversationId, rating }) => {
+      if (conversationId !== targetId || conversationIdRef.current !== targetId) return
+      foldRatings([rating])
+      const conv = conversationRef.current
+      if (conv && conv.id === targetId) {
+        const rest = (conv.ratings ?? []).filter((r) => r.messageId !== rating.messageId)
+        conv.ratings = [...rest, rating].sort((a, b) => a.at - b.at)
+      }
+    })
+  }, [activeConversationId, foldRatings])
 
   const shouldPersistRef = useRef(false)
 
@@ -1802,6 +1862,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
         const loaded = await window.api.conversation.load(activeConversationId)
         if (loaded) {
           conversationRef.current = loaded
+          foldRatings(loaded.ratings)
         } else {
           const now = Date.now()
           conversationRef.current = {
@@ -1836,7 +1897,8 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     activeCloudModel,
     setActiveConversationId,
     descriptor.projectId,
-    descriptor.icon
+    descriptor.icon,
+    foldRatings
   ])
 
   const sendContent = useCallback(
@@ -4979,6 +5041,9 @@ function renderSegments(
         blocks.push(<ProviderErrorCards key={seg.segmentId} failures={seg.providerErrors} />)
       } else if (seg.stopReason === 'error') {
         blocks.push(<TurnFooter key={seg.segmentId} stopReason={seg.stopReason} />)
+      }
+      if (seg.reasoningContent?.trim()) {
+        blocks.push(<ReasoningCard key={`r-${seg.segmentId}`} content={seg.reasoningContent} />)
       }
     }
   }

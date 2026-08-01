@@ -621,7 +621,7 @@ export function mergeConversationOnto(
   }
   // Ratings: id-keyed union, same spirit as messages. A renderer whole-file
   // save that doesn't know about a channel-written score must not erase it;
-  // when both sides scored the same turn the incoming copy wins (a re-vote).
+  // when both sides hold a vote for the same turn the FRESHER one wins.
   merged.ratings = mergeRatings(disk.ratings, incoming.ratings)
   return merged
 }
@@ -634,7 +634,16 @@ function mergeRatings(
   if (!incoming?.length) return disk
   const byId = new Map<string, ConversationRating>()
   for (const r of disk) if (r?.messageId) byId.set(r.messageId, r)
-  for (const r of incoming) if (r?.messageId) byId.set(r.messageId, r)
+  // Same turn on both sides → the later `at` wins, whichever copy carries it.
+  // Writer identity can't arbitrate this: a renderer whole-file save loaded
+  // BEFORE a phone re-vote landed would hand mergeRatings the older score as
+  // "incoming" — incoming-always-wins would resurrect it over the re-vote.
+  // Ties (the common round-trip of one unchanged vote) keep incoming.
+  for (const r of incoming) {
+    if (!r?.messageId) continue
+    const prior = byId.get(r.messageId)
+    if (!prior || r.at >= prior.at) byId.set(r.messageId, r)
+  }
   return [...byId.values()].sort((a, b) => a.at - b.at)
 }
 

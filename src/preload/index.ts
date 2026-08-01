@@ -904,6 +904,16 @@ export type ConversationApi = {
   onMessageMirror: (
     listener: (payload: { conversationId: string; message: ConversationMessage }) => void
   ) => () => void
+  /**
+   * Fired when a turn score was recorded on ANY surface (in-app bar, or a
+   * bare-number Telegram/WhatsApp reply). The conversation file's ratings[]
+   * is the single source of truth; this push lets an open chat fold the vote
+   * into its rating-bar overlay without a reload. Payload-targeted, so only
+   * the named conversation reacts.
+   */
+  onRatingChanged: (
+    listener: (payload: { conversationId: string; rating: ConversationRating }) => void
+  ) => () => void
 }
 
 export type ViewerTreeNode =
@@ -1941,7 +1951,8 @@ const api: WolffishApi = {
     onSummaryUpdated: (listener) => subscribe('conversation:summaryUpdated', listener),
     onDeleted: (listener) => subscribe('conversation:deleted', listener),
     onChanged: (listener) => subscribe('conversation:changed', listener),
-    onMessageMirror: (listener) => subscribe('conversation:messageMirror', listener)
+    onMessageMirror: (listener) => subscribe('conversation:messageMirror', listener),
+    onRatingChanged: (listener) => subscribe('conversation:ratingChanged', listener)
   },
   viewer: {
     readTree: () => ipcRenderer.invoke('viewer:readTree'),
