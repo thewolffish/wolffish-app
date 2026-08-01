@@ -138,7 +138,7 @@ workspace/
 ├── .lock              Single-instance guard (holds the running PID). Don't touch.
 ├── config.json        All app config + provider API keys (schema in §8). Holds secrets.
 ├── brain/             The 15-module brain state — detailed next.
-├── extension/         The bundled Chrome/Brave extension the ext_* tools drive.
+├── extension/         The bundled browser extension the ext_* tools drive (multi-browser).
 ├── usage/             Token & cost accounting.
 ├── logs/              Live application + extension logs.
 ├── files/             Working files the agent reads/writes during tasks.
@@ -209,7 +209,9 @@ brain/
 
 ### `workspace/extension/` — the browser extension (bundled, app-managed)
 
-The unpacked extension loaded into the user's browser; the `ext_*` tools talk to it.
+The unpacked extension loaded into the user's browser(s); the `ext_*` tools talk to it.
+The same folder can be loaded into several browsers at once (Chrome + Edge + Brave …)
+and each maintains its own connection to the app.
 App-managed (refreshed from the bundle), so treat it as read-only.
 
 ```
@@ -343,7 +345,7 @@ so hidden — `ls -a` to see them). Drop a folder in, and the agent learns a ski
 | | `.system` | Apps & power — `app_open`, `app_quit`, `app_list`, `open_path`, `system_power` |
 | **Web** | `.web-search` | `web_search` (Brave), `web_fetch` (read a page) |
 | | `.browser` | Headless Playwright automation — `browser_launch`, `browser_navigate`, `browser_click`, … |
-| | `.browser-extension` | Drive the user's **real, logged-in** Chrome/Brave via the extension — ~60 `ext_*` tools (`ext_navigate`, `ext_click`, `ext_set_value`, `ext_read_page`, `ext_query_selector`, `ext_get_url`, `ext_screenshot`, `ext_wait`, …) |
+| | `.browser-extension` | Drive the user's **real, logged-in** browsers (Chrome, Edge, Brave, Firefox — several can be connected at once) via the extension — ~60 `ext_*` tools (`ext_navigate`, `ext_click`, `ext_set_value`, `ext_read_page`, `ext_screenshot`, `ext_wait`, …; `ext_browsers` lists connections, `ext_use_browser` picks one per conversation) |
 | | `.cloudflared` | Expose a local service — `cloudflared_tunnel` |
 | **Documents** | `.document` | docx/html/md — `document_read/create/modify/convert/merge` |
 | | `.pdf` | `pdf_read/create/merge/split/modify/form/secure/compress` |

@@ -1,11 +1,15 @@
 ---
 name: browser-extension
-description: Control the user's connected Chrome/Brave browser via the Wolffish extension — navigate pages, click elements, fill forms, take screenshots, read content, manage tabs, and execute JavaScript in the user's real browser session.
+description: Control the user's connected browsers (Chrome, Edge, Brave, Firefox — several at once) via the Wolffish extension — navigate pages, click elements, fill forms, take screenshots, read content, manage tabs, and execute JavaScript in the user's real browser session.
 triggers:
   - browser
   - extension
   - chrome
   - brave
+  - edge
+  - firefox
+  - opera
+  - which browser
   - web
   - navigate
   - click
@@ -858,6 +862,16 @@ tools:
         type: number
         description: Target tab.
         required: false
+  # Multi-browser
+  - name: ext_browsers
+    description: List the browsers currently connected through the Wolffish extension — name, version, OS, signed-in profile email, and the selection key for ext_use_browser. Two profiles of the same browser are two entries told apart by profile email. With one browser connected every ext_* tool targets it automatically.
+    parameters: {}
+  - name: ext_use_browser
+    description: Choose which connected browser this conversation drives. Required before other ext_* tools when several browsers are connected. Pick it yourself when the user named a browser or context makes it obvious; otherwise ask the user first. Tabs, cookies and logins are separate per browser.
+    parameters:
+      browser:
+        type: string
+        description: Selection key, slug, name, or profile-email fragment of a connected browser (see ext_browsers), e.g. chrome, edge-2, firefox, work@company.com.
 danger_patterns:
   - pattern: 'ext_execute_js\s.*document\.cookie'
     level: block
@@ -874,16 +888,28 @@ confirm_patterns:
     reason: Modifying browser cookies
   - pattern: 'ext_navigate\s.*(?:bank|paypal|venmo|stripe\.com|checkout|payment)'
     reason: Navigating to a financial or payment site
-version: 1.4.0
+version: 1.5.1
 ---
 
 # Browser Extension
 
-Control the user's real Chrome or Brave browser through the Wolffish extension. This operates in the user's actual browser — their cookies, logins, extensions, and open tabs are all available.
+Control the user's real browser (Chrome, Edge, Brave, Firefox, …) through the Wolffish extension. This operates in the user's actual browser — their cookies, logins, extensions, and open tabs are all available. Several browsers can be connected at the same time.
 
 ## Tool Naming
 
 All tools use the `ext_` prefix. The wire protocol translates these to `browser_` commands. For example `ext_navigate` sends `browser_navigate` to the extension.
+
+## Multiple browsers
+
+The extension can be connected from several browsers at once (e.g. Chrome and Edge). Every connected browser is a fully separate world: its own tabs, tab ids, windows, cookie jars, logins, and its own debugger attachment.
+
+- **One browser connected** — nothing to do; every `ext_*` tool targets it automatically.
+- **Several connected** — each conversation drives exactly one browser at a time. Pick it with `ext_use_browser` (the choice sticks for the rest of the conversation; call it again to switch). Until a browser is picked, `ext_*` tools return an error listing the connected browsers.
+- **How to pick**: if the user named a browser ("open it in Edge") or the context makes it obvious (the site is logged in only in Chrome, earlier in the conversation you were working in Brave), call `ext_use_browser` yourself and briefly say which browser you're using. If there is no signal which browser the user means, ask them before acting.
+- **Profiles**: two Chrome profiles are two separate connections with separate logins. `ext_browsers` reports each profile's signed-in email — use it to tell them apart ("work" vs "personal") and pass an email fragment to `ext_use_browser` when the user means a specific profile.
+- `ext_browsers` lists what is connected (name, version, OS, profile email, selection key) — check it when unsure what's available.
+- Selection keys are stable while the app runs: a browser that reloads or reconnects keeps its key (chrome-2 stays the same profile). After an app restart keys may be assigned afresh — re-check `ext_browsers` rather than assuming.
+- Never mix ids across browsers: a `tabId` from `ext_tabs_list` in Chrome is meaningless in Edge. After switching browsers, re-list tabs before acting on them.
 
 ## Selectors
 
@@ -923,7 +949,7 @@ Debugger mode is the best way to drive a page, and you should attach it by defau
 
 If `ext_debugger_attach` fails (a restricted page like `chrome://`, DevTools already open, or another debugger attached), proceed without it — every interaction command falls back to content-script mode automatically, just with synthetic events. Don't abort the task over a failed attach; continue.
 
-**Always detach** when finished. Never leave the debugger attached between turns — Chrome shows a "Wolffish is debugging this browser" banner the entire time it is attached, so a forgotten detach leaves that banner up. You can only attach one tab at a time; attaching to a different tab auto-detaches the previous one.
+**Always detach** when finished. Never leave the debugger attached between turns — Chrome shows a "Wolffish is debugging this browser" banner the entire time it is attached, so a forgotten detach leaves that banner up. You can only attach one tab at a time per connected browser; attaching to a different tab auto-detaches the previous one.
 
 ## Mouse control & coordinates
 

@@ -1587,11 +1587,26 @@ export type BrowserExtensionConfig = {
 
 export type ExtensionConnectionStatus = 'stopped' | 'listening' | 'connected' | 'error'
 
+export type ExtensionBrowserInfo = {
+  id: string
+  instanceId: string | null
+  key: string
+  browser: string
+  name: string
+  version: string | null
+  browserVersion: string | null
+  os: string | null
+  profileEmail: string | null
+  connectedAt: number
+  lastPing: number
+}
+
 export type ExtensionServerStatus = {
   status: ExtensionConnectionStatus
   error: string | null
   extensionVersion: string | null
   port: number
+  browsers: ExtensionBrowserInfo[]
 }
 
 export type BrowserExtensionApi = {
@@ -1602,8 +1617,10 @@ export type BrowserExtensionApi = {
   status: () => Promise<ExtensionServerStatus>
   openExtensionFolder: () => Promise<void>
   getExtensionPath: () => Promise<string>
-  updateExtension: () => Promise<{ ok: true }>
-  testConnection: () => Promise<{ ok: boolean; steps: number; passed: number; error?: string }>
+  updateExtension: (target?: string | null) => Promise<{ ok: true }>
+  testConnection: (
+    target?: string | null
+  ) => Promise<{ ok: boolean; steps: number; passed: number; error?: string }>
   openExtensionsPage: () => Promise<void>
   onStatusChange: (callback: (status: ExtensionServerStatus) => void) => () => void
 }
@@ -2160,8 +2177,8 @@ const api: WolffishApi = {
     status: () => ipcRenderer.invoke('browserExtension:status'),
     openExtensionFolder: () => ipcRenderer.invoke('browserExtension:openExtensionFolder'),
     getExtensionPath: () => ipcRenderer.invoke('browserExtension:getExtensionPath'),
-    updateExtension: () => ipcRenderer.invoke('browserExtension:updateExtension'),
-    testConnection: () => ipcRenderer.invoke('browserExtension:testConnection'),
+    updateExtension: (target) => ipcRenderer.invoke('browserExtension:updateExtension', target),
+    testConnection: (target) => ipcRenderer.invoke('browserExtension:testConnection', target),
     openExtensionsPage: () => ipcRenderer.invoke('browserExtension:openExtensionsPage'),
     onStatusChange: (listener) => subscribe('extension:statusChange', listener)
   },

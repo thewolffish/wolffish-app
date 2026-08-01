@@ -1103,7 +1103,7 @@
       },
       "browserExtension": {
         "title": "Browser Extension",
-        "subtitle": "Connect the Wolffish browser extension to control Chrome or Brave from the agent.",
+        "subtitle": "Connect the Wolffish browser extension to control your browsers from the agent. Several browsers can be connected at the same time.",
         "status": {
           "stopped": "Stopped",
           "listening": "Waiting for extension",

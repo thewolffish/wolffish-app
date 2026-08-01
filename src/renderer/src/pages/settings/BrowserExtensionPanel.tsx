@@ -4,6 +4,7 @@ import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn'
 import type {
   BrowserExtensionConfig,
+  ExtensionBrowserInfo,
   ExtensionConnectionStatus,
   ExtensionServerStatus
 } from '@preload/index'
@@ -13,9 +14,17 @@ import chromiumIcon from '@renderer/assets/browsers/chromium.svg'
 import edgeIcon from '@renderer/assets/browsers/edge.svg'
 import firefoxIcon from '@renderer/assets/browsers/firefox.svg'
 import safariIcon from '@renderer/assets/browsers/safari.svg'
-import { ArrowDown01Icon, FolderOpenIcon, Tick02Icon } from 'hugeicons-react'
-import { useCallback, useEffect, useState } from 'react'
+import { ArrowDown01Icon, FolderOpenIcon, RefreshIcon, Tick02Icon } from 'hugeicons-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
+/**
+ * How long a browser's row survives after its socket drops. A reload
+ * (button, version-mismatch, service-worker restart) disconnects for a few
+ * seconds — the row must not blank out and re-pop. Expired grace means the
+ * browser is genuinely gone and the row honestly disappears.
+ */
+const RELOAD_GRACE_MS = 20_000
 
 const STATUS_COLORS: Record<ExtensionConnectionStatus, string> = {
   stopped: 'text-red-400',
@@ -29,6 +38,15 @@ const STATUS_DOT_COLORS: Record<ExtensionConnectionStatus, string> = {
   listening: 'bg-amber-400',
   connected: 'bg-green-500',
   error: 'bg-red-400'
+}
+
+const BROWSER_ICONS: Record<string, string> = {
+  chrome: chromeIcon,
+  chromium: chromiumIcon,
+  brave: braveIcon,
+  edge: edgeIcon,
+  firefox: firefoxIcon,
+  safari: safariIcon
 }
 
 const ACTIONS = [
@@ -114,7 +132,13 @@ export function BrowserExtensionPanel(): React.JSX.Element {
   const [busy, setBusy] = useState(false)
   const [copied, setCopied] = useState(false)
   const [testing, setTesting] = useState(false)
+  const [testingKey, setTestingKey] = useState<string | null>(null)
+  const [lastTestedKey, setLastTestedKey] = useState<string | null>(null)
+  const [updating, setUpdating] = useState(false)
   const [testResult, setTestResult] = useState<'success' | 'failed' | null>(null)
+  const [displayBrowsers, setDisplayBrowsers] = useState<ExtensionBrowserInfo[]>([])
+  const graceRef = useRef<Map<string, { info: ExtensionBrowserInfo; at: number }>>(new Map())
+  const prevLiveRef = useRef<ExtensionBrowserInfo[]>([])
   const [everConnected, setEverConnected] = useState(false)
   const [debuggerGuideOpen, setDebuggerGuideOpen] = useState(false)
 
@@ -149,6 +173,41 @@ export function BrowserExtensionPanel(): React.JSX.Element {
   const isListening = status?.status === 'listening'
   const showInstallGuide = !isConnected && !everConnected
 
+  // Reload-stable browser list: rows survive the few-second reconnect gap of
+  // an extension reload instead of blanking to "waiting". Only the status
+  // dot/text tracks the live connection state. Rows whose browser does not
+  // come back within the grace window drop out; genuinely-zero-connection
+  // states (fresh install, server stopped) render truthfully empty.
+  useEffect(() => {
+    const idOf = (b: ExtensionBrowserInfo): string => b.instanceId ?? b.id
+    const reconcile = (): void => {
+      const live = status?.browsers ?? []
+      const now = Date.now()
+      if (!status || status.status === 'stopped' || status.status === 'error') {
+        graceRef.current.clear()
+        prevLiveRef.current = live
+        setDisplayBrowsers(live)
+        return
+      }
+      for (const prev of prevLiveRef.current) {
+        if (!live.some((b) => idOf(b) === idOf(prev)) && !graceRef.current.has(idOf(prev))) {
+          graceRef.current.set(idOf(prev), { info: prev, at: now })
+        }
+      }
+      for (const [key, entry] of graceRef.current) {
+        if (live.some((b) => idOf(b) === key) || now - entry.at > RELOAD_GRACE_MS) {
+          graceRef.current.delete(key)
+        }
+      }
+      prevLiveRef.current = live
+      setDisplayBrowsers([...live, ...[...graceRef.current.values()].map((entry) => entry.info)])
+    }
+    reconcile()
+    if (graceRef.current.size === 0) return undefined
+    const timer = setInterval(reconcile, 1000)
+    return () => clearInterval(timer)
+  }, [status])
+
   const handlePortSave = useCallback(async () => {
     const port = parseInt(portInput, 10)
     if (isNaN(port) || port < 1 || port > 65535) {
@@ -176,6 +235,7 @@ export function BrowserExtensionPanel(): React.JSX.Element {
 
   const handleUpdate = useCallback(async () => {
     setBusy(true)
+    setUpdating(true)
     try {
       await window.api.browserExtension.updateExtension()
       toast.show({
@@ -189,35 +249,45 @@ export function BrowserExtensionPanel(): React.JSX.Element {
       })
     } finally {
       setBusy(false)
+      setUpdating(false)
     }
   }, [t, toast])
 
-  const handleTest = useCallback(async () => {
-    setTesting(true)
-    setTestResult(null)
-    try {
-      const result = await window.api.browserExtension.testConnection()
-      setTestResult(result.ok ? 'success' : 'failed')
-      toast.show({
-        message: result.ok
-          ? t('settings.services.browserExtension.testPassedToast', {
-              passed: result.passed,
-              steps: result.steps
-            })
-          : t('settings.services.browserExtension.testFailedToast', {
-              passed: result.passed,
-              steps: result.steps
-            }),
-        tone: result.ok ? 'success' : 'error'
-      })
-    } catch {
-      setTestResult('failed')
-      toast.show({ message: t('settings.services.browserExtension.testErrorToast'), tone: 'error' })
-    } finally {
-      setTesting(false)
-      setTimeout(() => setTestResult(null), 4000)
-    }
-  }, [t, toast])
+  const handleTest = useCallback(
+    async (target?: string) => {
+      setTesting(true)
+      setTestingKey(target ?? null)
+      setLastTestedKey(target ?? null)
+      setTestResult(null)
+      try {
+        const result = await window.api.browserExtension.testConnection(target ?? null)
+        setTestResult(result.ok ? 'success' : 'failed')
+        toast.show({
+          message: result.ok
+            ? t('settings.services.browserExtension.testPassedToast', {
+                passed: result.passed,
+                steps: result.steps
+              })
+            : t('settings.services.browserExtension.testFailedToast', {
+                passed: result.passed,
+                steps: result.steps
+              }),
+          tone: result.ok ? 'success' : 'error'
+        })
+      } catch {
+        setTestResult('failed')
+        toast.show({
+          message: t('settings.services.browserExtension.testErrorToast'),
+          tone: 'error'
+        })
+      } finally {
+        setTesting(false)
+        setTestingKey(null)
+        setTimeout(() => setTestResult(null), 4000)
+      }
+    },
+    [t, toast]
+  )
 
   const handleScreenshotSave = useCallback(
     async (patch: { screenshotMaxWidth?: number; screenshotFormat?: 'jpeg' | 'png' }) => {
@@ -337,46 +407,100 @@ export function BrowserExtensionPanel(): React.JSX.Element {
                 >
                   {t(`settings.services.browserExtension.status.${status.status}`)}
                 </span>
-                <code
-                  className={cn(
-                    'rounded px-1.5 py-0.5 text-[11px] font-mono',
-                    isConnected && status.extensionVersion ? 'bg-bg text-muted' : 'invisible'
-                  )}
-                >
-                  v{status.extensionVersion ?? '0.0.0'}
-                </code>
                 {status.error && <span className="text-muted text-xs">{status.error}</span>}
               </div>
             </div>
 
-            <div className="flex items-center justify-between">
-              <Button onClick={handleUpdate} disabled={busy || !isConnected} className="text-xs">
-                {t('settings.services.browserExtension.updateBtn')}
-              </Button>
+            {displayBrowsers.length > 0 && (
+              <div className="flex flex-col gap-2">
+                {displayBrowsers.map((b) => (
+                  <div key={b.id} className="bg-bg flex flex-col gap-2.5 rounded-xl px-3 py-2.5">
+                    <div className="flex items-center gap-3">
+                      <img
+                        src={BROWSER_ICONS[b.browser] ?? chromiumIcon}
+                        alt=""
+                        className="h-5 w-5 shrink-0"
+                      />
+                      <div className="flex min-w-0 flex-1 flex-col">
+                        <span className="text-fg truncate text-sm font-medium">
+                          {b.name}
+                          {b.browserVersion && (
+                            <span className="text-muted font-normal">
+                              {' '}
+                              {b.browserVersion.split('.')[0]}
+                            </span>
+                          )}
+                        </span>
+                        <span className="text-muted truncate text-xs">
+                          {[
+                            b.profileEmail,
+                            b.os,
+                            `${t('settings.services.browserExtension.status.connected')} ${new Date(
+                              b.connectedAt
+                            ).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+                          ]
+                            .filter(Boolean)
+                            .join(' · ')}
+                        </span>
+                      </div>
+                      {displayBrowsers.length > 1 && (
+                        <code className="bg-surface text-muted rounded px-1.5 py-0.5 font-mono text-[11px]">
+                          {b.key}
+                        </code>
+                      )}
+                      {b.version && (
+                        <code className="bg-surface text-muted rounded px-1.5 py-0.5 font-mono text-[11px]">
+                          v{b.version}
+                        </code>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-3 ps-8">
+                      <button
+                        type="button"
+                        disabled={busy || testing}
+                        onClick={() => handleTest(b.key)}
+                        className={cn(
+                          'text-xs font-medium capitalize',
+                          busy || (testing && testingKey !== b.key)
+                            ? 'text-muted cursor-not-allowed'
+                            : testing && testingKey === b.key
+                              ? 'text-muted animate-pulse cursor-wait'
+                              : testResult === 'success' && lastTestedKey === b.key
+                                ? 'text-green-500'
+                                : testResult === 'failed' && lastTestedKey === b.key
+                                  ? 'text-red-400'
+                                  : 'text-primary hover:text-primary/80 cursor-pointer'
+                        )}
+                      >
+                        {testing && testingKey === b.key
+                          ? t('settings.services.browserExtension.testRunning')
+                          : testResult === 'success' && lastTestedKey === b.key
+                            ? t('settings.services.browserExtension.testPassed')
+                            : testResult === 'failed' && lastTestedKey === b.key
+                              ? t('settings.services.browserExtension.testFailed')
+                              : t('settings.services.browserExtension.testBtn')}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="flex items-center">
               <button
                 type="button"
-                disabled={busy || testing || !isConnected}
-                onClick={handleTest}
+                onClick={() => void handleUpdate()}
+                disabled={busy || !isConnected}
                 className={cn(
-                  'text-xs font-medium capitalize',
-                  !isConnected || busy
-                    ? 'text-muted cursor-not-allowed'
-                    : testing
-                      ? 'text-muted animate-pulse cursor-wait'
-                      : testResult === 'success'
-                        ? 'text-green-500'
-                        : testResult === 'failed'
-                          ? 'text-red-400'
-                          : 'text-primary hover:text-primary/80 cursor-pointer'
+                  'border-border bg-bg/40 inline-flex items-center gap-1.5 rounded-lg border px-3 py-1 text-xs font-medium',
+                  'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+                  busy || !isConnected
+                    ? 'text-muted/50 cursor-not-allowed'
+                    : 'text-fg hover:bg-border/40 cursor-pointer'
                 )}
               >
-                {testing
-                  ? t('settings.services.browserExtension.testRunning')
-                  : testResult === 'success'
-                    ? t('settings.services.browserExtension.testPassed')
-                    : testResult === 'failed'
-                      ? t('settings.services.browserExtension.testFailed')
-                      : t('settings.services.browserExtension.testBtn')}
+                <RefreshIcon size={12} />
+                <span>{updating ? '…' : t('settings.services.browserExtension.updateBtn')}</span>
               </button>
             </div>
           </section>

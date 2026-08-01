@@ -35,6 +35,12 @@ export interface ExtensionEvent {
   type: ExtensionEventType
   title: string
   timestamp: number
+  /**
+   * Stable id of the browser instance that executed the command. Scopes the
+   * extension side panel: each browser lists only conversations it ran.
+   * Absent on events written before multi-browser shipped.
+   */
+  instanceId?: string
 }
 
 const COMMAND_EVENT_MAP: Record<string, ExtensionEventType> = {
@@ -197,14 +203,16 @@ function buildTitle(commandType: string, params: Record<string, unknown>): strin
 export async function logEvent(
   conversationId: string,
   commandType: string,
-  params: Record<string, unknown>
+  params: Record<string, unknown>,
+  instanceId?: string | null
 ): Promise<ExtensionEvent> {
   const eventType = COMMAND_EVENT_MAP[commandType] ?? 'unknown'
   const event: ExtensionEvent = {
     id: randomUUID(),
     type: eventType,
     title: buildTitle(commandType, params),
-    timestamp: Date.now()
+    timestamp: Date.now(),
+    ...(instanceId ? { instanceId } : {})
   }
   try {
     await ensureDir()
@@ -234,6 +242,12 @@ export interface ConversationSummary {
   title: string
   eventCount: number
   lastTimestamp: number
+  /**
+   * Browser instances that ran events in this conversation (null entry =
+   * pre-multi-browser events). Server-side scoping only — stripped before
+   * the summary is pushed to a side panel.
+   */
+  instanceIds?: Array<string | null>
 }
 
 export async function lookupTitle(conversationId: string): Promise<string> {
@@ -263,13 +277,22 @@ export async function listConversations(): Promise<ConversationSummary[]> {
         const raw = await readFile(join(LOGS_DIR, file), 'utf8')
         const lines = raw.split('\n').filter(Boolean)
         if (lines.length === 0) continue
+        const instances = new Set<string | null>()
+        for (const line of lines) {
+          try {
+            instances.add((JSON.parse(line) as ExtensionEvent).instanceId ?? null)
+          } catch {
+            // skip corrupt line
+          }
+        }
         const last = JSON.parse(lines[lines.length - 1]) as ExtensionEvent
         const title = await lookupTitle(conversationId)
         summaries.push({
           conversationId,
           title,
           eventCount: lines.length,
-          lastTimestamp: last.timestamp
+          lastTimestamp: last.timestamp,
+          instanceIds: [...instances]
         })
       } catch {
         continue

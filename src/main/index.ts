@@ -1918,12 +1918,14 @@ app.whenReady().then(async () => {
     return extensionFolderPath()
   })
 
-  ipcMain.handle('browserExtension:updateExtension', async () => {
-    await extensionServer.requestReload()
+  ipcMain.handle('browserExtension:updateExtension', async (_e, target?: string | null) => {
+    await extensionServer.requestReload(target ?? null)
     return { ok: true }
   })
 
-  ipcMain.handle('browserExtension:testConnection', () => extensionServer.runTestScenario())
+  ipcMain.handle('browserExtension:testConnection', (_e, target?: string | null) =>
+    extensionServer.runTestScenario(target ?? null)
+  )
 
   ipcMain.handle('browserExtension:openExtensionsPage', () => {
     const url = 'chrome://extensions'

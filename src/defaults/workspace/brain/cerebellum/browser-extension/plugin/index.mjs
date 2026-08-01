@@ -98,7 +98,9 @@ const toolDefinitions = [
   { name: 'ext_mouse_drag', description: 'Drag from a start point to an end point (press → move with button held → release). Provide startX/startY + endX/endY, or sourceSelector + targetSelector. Far more reliable than ext_drag_drop for canvas, kanban, sliders — especially in debugger mode.', parameters: { type: 'object', properties: { startX: { type: 'number' }, startY: { type: 'number' }, endX: { type: 'number' }, endY: { type: 'number' }, sourceSelector: { type: 'string' }, targetSelector: { type: 'string' }, tabId: { type: 'number' } }, required: [] } },
   { name: 'ext_element_from_point', description: 'Describe the topmost element at viewport coordinates (x,y) — tag, text, attributes, rect. Pair with ext_screenshot to learn what is under a pixel before clicking it.', parameters: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' }, tabId: { type: 'number' } }, required: ['x', 'y'] } },
   { name: 'ext_get_interactive_elements', description: 'List visible interactive elements (links, buttons, inputs, role=button, etc.) with center coordinates, rect, text label, and attributes — the map for clicking and moving through a web app.', parameters: { type: 'object', properties: { selector: { type: 'string' }, limit: { type: 'number' }, tabId: { type: 'number' } }, required: [] } },
-  { name: 'ext_humanize', description: 'Inject a random human micro-action between real actions.', parameters: { type: 'object', properties: { intensity: { type: 'string' }, tabId: { type: 'number' } }, required: [] } }
+  { name: 'ext_humanize', description: 'Inject a random human micro-action between real actions.', parameters: { type: 'object', properties: { intensity: { type: 'string' }, tabId: { type: 'number' } }, required: [] } },
+  { name: 'ext_browsers', description: 'List the browsers currently connected through the Wolffish extension (name, version, signed-in profile email, selection key). Two profiles of the same browser are two separate entries — the profile email tells them apart. With one browser connected every ext_* tool targets it automatically; with several, pick one per conversation via ext_use_browser.', parameters: { type: 'object', properties: {}, required: [] } },
+  { name: 'ext_use_browser', description: 'Choose which connected browser this conversation drives (e.g. "chrome", "edge", "brave", "firefox", or a profile email fragment like "work@"). Required before other ext_* tools when several browsers are connected. Pick it yourself when the user named a browser or context makes it obvious; otherwise ask the user first. Tabs, cookies and logins are separate per browser.', parameters: { type: 'object', properties: { browser: { type: 'string', description: 'Selection key, slug, name, or profile-email fragment of a connected browser (see ext_browsers).' } }, required: ['browser'] } }
 ]
 
 const plugin = {
@@ -127,10 +129,45 @@ const plugin = {
       }
     }
 
+    if (toolName === 'ext_browsers') {
+      const browsers = bridge.listBrowsers?.() ?? []
+      return {
+        success: true,
+        output: JSON.stringify({
+          browsers: browsers.map((b) => ({
+            key: b.key,
+            name: b.name,
+            browser: b.browser,
+            browserVersion: b.browserVersion,
+            os: b.os,
+            profileEmail: b.profileEmail ?? undefined,
+            extensionVersion: b.version,
+            connectedAt: b.connectedAt
+          }))
+        })
+      }
+    }
+
+    if (toolName === 'ext_use_browser') {
+      try {
+        const picked = bridge.useBrowser(String(args?.browser ?? ''), getConversationId())
+        const version = picked.browserVersion ? ' ' + picked.browserVersion.split('.')[0] : ''
+        const profile = picked.profileEmail ? ` (${picked.profileEmail})` : ''
+        return {
+          success: true,
+          output: `Now driving ${picked.name}${version}${profile} [${picked.key}] for this conversation. Tabs, cookies and logins are specific to this browser.`
+        }
+      } catch (err) {
+        return { success: false, error: err?.message || String(err) }
+      }
+    }
+
     const commandName = toCommand(toolName)
 
     try {
-      const response = await bridge.sendCommand(commandName, args)
+      const response = await bridge.sendCommand(commandName, args, {
+        conversationId: getConversationId()
+      })
 
       if (!response.success) {
         return { success: false, error: response.error ?? 'Extension command failed' }
