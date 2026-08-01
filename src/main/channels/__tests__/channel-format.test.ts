@@ -196,7 +196,11 @@ ok(
   validateTelegramHtml('see [docs](https://x.example)').hard.length > 0,
   true
 )
-ok('markdown table is hard', validateTelegramHtml('| item | price |\n| a | 5 |').hard.length > 0, true)
+ok(
+  'markdown table is hard',
+  validateTelegramHtml('| item | price |\n| a | 5 |').hard.length > 0,
+  true
+)
 ok('markdown hr is hard', validateTelegramHtml('above\n---\nbelow').hard.length > 0, true)
 // Plain "- " bullets are legal Telegram text (the overlay teaches them) —
 // only the Markdown markers inside them are the leak.

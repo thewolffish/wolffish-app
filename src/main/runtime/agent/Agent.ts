@@ -1053,7 +1053,11 @@ export class Agent {
           // prefix hash.
           volatileStatus:
             optimizeContext &&
-            (iterationCount > 1 || workingFoldersBlock || !online || noProgressText || channelFormatText)
+            (iterationCount > 1 ||
+              workingFoldersBlock ||
+              !online ||
+              noProgressText ||
+              channelFormatText)
               ? formatRuntimeStatus({
                   iteration: iterationCount,
                   toolsCalled: totalToolCalls,

@@ -32,6 +32,7 @@ import {
 } from '@main/channels/telegram/messages'
 import { buildTelegramCapability, TELEGRAM_CAPABILITY_NAME } from '@main/channels/telegram/tools'
 import { TurnStatsCollector } from '@main/channels/turn-stats'
+import { parseTurnScore, tryCaptureChannelScore } from '@main/channels/turn-score'
 import type { TurnRunner } from '@main/channels/turn-runner'
 import {
   createConversation,
@@ -67,6 +68,7 @@ import type { LocalProvider } from '@main/runtime/providers/local'
 import { composeAttachmentContext } from '@main/uploads/compose-attachments'
 import { saveUploadFromBuffer } from '@main/uploads/uploads'
 import {
+  getReflectionConfig,
   getTelegramConfig,
   readConfig,
   setBrain as persistBrain,
@@ -1249,6 +1251,31 @@ export class TelegramChannel {
     if (active && active.pendingAsk && active.pendingAskResolve) {
       await this.resolvePendingAsk(chatId, active, trimmed)
       return
+    }
+
+    // Turn scoring: a bare 0-10 reply is the user's score for this chat's
+    // last completed turn — captured for the nightly reflection, never
+    // dispatched as a message. Deliberately AFTER the picker and ask_user
+    // checks (a "3" answering a numbered card keeps meaning option 3) and
+    // before the busy/queue path. When scoring is toggled off, the chat has
+    // no bound conversation, or nothing is rateable yet, the number falls
+    // through as an ordinary message.
+    if (parseTurnScore(trimmed) !== null) {
+      const boundId = await getConversationIdForChat(chatId).catch(() => null)
+      const rating = await tryCaptureChannelScore('telegram', boundId, trimmed)
+      if (rating) {
+        this.agent.corpus.emit('conversation.rated', {
+          conversation: boundId!,
+          score: rating.score,
+          source: 'telegram'
+        })
+        // ✍ = "noted": a reaction acknowledges the vote without adding a
+        // message bubble. Best-effort — the score is already recorded.
+        if (ctx.message?.message_id) {
+          await ctx.react('✍').catch(() => undefined)
+        }
+        return
+      }
     }
 
     // One turn at a time PER CHAT. Another allowed user's chat (and every
@@ -2532,6 +2559,19 @@ export class TelegramChannel {
                     .then(() => {
                       if (assistant) queueConversationSummarization(finished.conversation.id)
                     })
+                    .catch(() => undefined)
+                }
+                // Turn-score invite — the channel twin of the in-app rating
+                // bar: one minimal line after each completed reply telling the
+                // user how to score it. The same per-channel toggle that gates
+                // vote capture gates this invite, so off = fully silent.
+                if (assistant) {
+                  void getReflectionConfig()
+                    .then((cfg) =>
+                      cfg.scoring.telegram
+                        ? this.sendHtml(chatId, '<i>Rate this reply: send 0-10</i>')
+                        : undefined
+                    )
                     .catch(() => undefined)
                 }
                 if (finished.typingTimer) {

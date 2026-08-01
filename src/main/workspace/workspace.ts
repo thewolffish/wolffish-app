@@ -254,6 +254,36 @@ export type CompactionConfig = {
   weeklyHour: number
 }
 
+/**
+ * Which surfaces accept a turn score (the 0-10 rating). In-app renders a
+ * rating bar under a completed turn; on Telegram/WhatsApp a bare-number
+ * reply (0-10) is captured as a score instead of dispatched as a message.
+ * Per-surface so the channel voting can be turned off where it annoys
+ * (a numeric answer to a numeric question would be swallowed as a score).
+ */
+export type ReflectionScoringConfig = {
+  inapp: boolean
+  telegram: boolean
+  whatsapp: boolean
+}
+
+export type ReflectionConfig = {
+  /**
+   * Hour of day (0-23) the nightly reflection fires. Defaults to 3. The
+   * nightly reflection AND the monthly deep clean (which runs at hour+1 on
+   * the 1st) are CORE features with no off switch — the learning loop gets
+   * scheduled, never disabled.
+   */
+  hour: number
+  /**
+   * A conversation is only reviewed once it has been quiet for this many
+   * hours — a conversation still warm may not be done (or scored) yet.
+   * Defaults to 12.
+   */
+  quietHours: number
+  scoring: ReflectionScoringConfig
+}
+
 export type WorkspaceConfig = {
   version: 1
   // When true, Wolffish registers itself as a login item so the OS
@@ -290,6 +320,9 @@ export type WorkspaceConfig = {
   }
   // Optional so configs written before this field shipped still parse.
   safety?: SafetyConfig
+  // Nightly self-review (reflection), turn scoring, and the monthly deep
+  // clean. Optional so configs written before the feature shipped parse.
+  reflection?: ReflectionConfig
   // Context optimization (prompt caching). On by default; set
   // enabled: false to restore the legacy per-iteration prompt rebuild
   // for debugging. Gates the per-turn pinning of system prompt + tools,
@@ -1140,6 +1173,51 @@ export async function setCompactionConfig(
   return patchConfig((c) => {
     const current = c.compaction ?? DEFAULT_COMPACTION
     return { ...c, compaction: { ...current, ...patch } }
+  })
+}
+
+export const DEFAULT_REFLECTION: ReflectionConfig = {
+  hour: 3,
+  quietHours: 12,
+  scoring: { inapp: true, telegram: true, whatsapp: true }
+}
+
+/**
+ * Merge a possibly-partial stored value over the defaults (nested scoring
+ * included). Constructed field-by-field so retired keys in an older stored
+ * config (e.g. the removed `enabled` switch) are dropped rather than
+ * carried forward.
+ */
+export function normalizeReflectionConfig(
+  raw: Partial<ReflectionConfig> | undefined | null
+): ReflectionConfig {
+  return {
+    hour: raw?.hour ?? DEFAULT_REFLECTION.hour,
+    quietHours: raw?.quietHours ?? DEFAULT_REFLECTION.quietHours,
+    scoring: { ...DEFAULT_REFLECTION.scoring, ...(raw?.scoring ?? {}) }
+  }
+}
+
+export async function getReflectionConfig(): Promise<ReflectionConfig> {
+  const cfg = await readConfig()
+  return normalizeReflectionConfig(cfg?.reflection)
+}
+
+export async function setReflectionConfig(
+  patch: Partial<ReflectionConfig>
+): Promise<WorkspaceConfig> {
+  return patchConfig((c) => {
+    const current = normalizeReflectionConfig(c.reflection)
+    return {
+      ...c,
+      // Re-normalized so only known fields persist — a stale caller can't
+      // write retired keys back into the stored config.
+      reflection: normalizeReflectionConfig({
+        ...current,
+        ...patch,
+        scoring: { ...current.scoring, ...(patch.scoring ?? {}) }
+      })
+    }
   })
 }
 

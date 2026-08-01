@@ -216,6 +216,97 @@ export class Hippocampus {
   }
 
   /**
+   * Guarantee the `## Entity` structure the memory map depends on. The
+   * curator prompts mandate sections, but structure is a mechanical
+   * invariant — deepseek-v4-pro was observed flattening small files to
+   * bullet lists no matter how loudly the prompt insisted — so a flat
+   * rewrite gets its `- **Label** — fact` bullets promoted to sections in
+   * code instead of betting on model discipline. Files that already carry
+   * `##` headings pass through untouched.
+   */
+  static normalizeKnowledgeStructure(body: string): string {
+    const lines = body.split('\n')
+    if (lines.some((l) => /^## /.test(l))) return body
+    const out: string[] = []
+    let promoted = 0
+    for (const line of lines) {
+      const m = /^- \*\*(.+?)\*\*\s*[—:–-]?\s*(.*)$/.exec(line)
+      if (m) {
+        const label = m[1].trim().replace(/[:：]\s*$/, '')
+        if (out.length > 0 && out[out.length - 1].trim() !== '') out.push('')
+        out.push(`## ${label}`)
+        if (m[2].trim()) out.push(`- ${m[2].trim()}`)
+        promoted += 1
+      } else {
+        out.push(line)
+      }
+    }
+    return promoted > 0 ? out.join('\n') : body
+  }
+
+  /** Read one knowledge file's current content (null when missing/empty). */
+  async getKnowledgeFile(file: KnowledgeFile): Promise<string | null> {
+    if (!this.workspaceRoot) return null
+    const filepath = path.join(
+      this.workspaceRoot,
+      'brain',
+      'hippocampus',
+      'knowledge',
+      `${file}.md`
+    )
+    try {
+      const raw = await fs.readFile(filepath, 'utf8')
+      return raw.trim().length > 0 ? raw : null
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * Replace a knowledge file wholesale — the curatorial write path. The
+   * nightly compaction and the monthly deep clean REWRITE these files (merge
+   * duplicates, resolve contradictions, restructure under `## Entity`
+   * headers) instead of appending bullets; promoteToKnowledge stays the
+   * append path for one-off memory_save facts, which the next rewrite folds
+   * into structure. The previous content is kept as `<file>.md.bak` so a bad
+   * LLM rewrite is one copy away from restored.
+   */
+  async replaceKnowledgeFile(file: KnowledgeFile, content: string): Promise<void> {
+    if (!this.workspaceRoot) return
+    const trimmed = content.trim()
+    if (trimmed.length === 0) return
+    const filepath = path.join(
+      this.workspaceRoot,
+      'brain',
+      'hippocampus',
+      'knowledge',
+      `${file}.md`
+    )
+    const headed = trimmed.startsWith('#') ? trimmed : `# ${capitalize(file)}\n\n${trimmed}`
+    const body = Hippocampus.normalizeKnowledgeStructure(headed)
+
+    let previous: string | null = null
+    try {
+      previous = await fs.readFile(filepath, 'utf8')
+    } catch {
+      previous = null
+    }
+    if (previous && previous.trim().length > 0 && previous.trim() !== body) {
+      try {
+        await diskWriter.update(`${filepath}.bak`, () => previous)
+      } catch {
+        // Backup is best-effort; the rewrite itself must still land.
+      }
+    }
+    try {
+      await diskWriter.update(filepath, () => `${body}\n`)
+    } catch {
+      return
+    }
+    this.corpus?.emit('memory.knowledgeRewritten', { file, bytes: body.length })
+  }
+
+  /**
    * Write a weekly digest to consolidated/YYYY-WNN.md. Used by the
    * nightly compaction job in brainstem.
    */

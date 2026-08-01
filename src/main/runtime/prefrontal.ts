@@ -197,6 +197,13 @@ You are talking with the user over Telegram: EVERY prose block you write — ful
 // real values — URLs, names, IDs, keys — are never touched.
 const VARIABLE_VALUE_MAX_CHARS = 400
 
+// Framing prepended to the playbook when it rides into the prompt. The
+// playbook is written by a nightly LLM pass, so the framing — how much
+// authority these lessons carry — must come from code, not from content the
+// merge could mangle: learned tendencies to apply by default, never rules
+// that outrank the user's live instruction.
+const PLAYBOOK_FRAMING = `Your playbook — lessons distilled nightly from your own reviewed conversations and the user's 0-10 turn scores. Recall it naturally before and while acting, the way practice shapes habit: check Recipes when a task matches one, respect Avoid before repeating a known failure, and lean on Do / User likes to shape tone and approach. These are evidence-dated tendencies, not laws — the newest entry wins a conflict, and the user's live instruction always outranks the playbook.`
+
 // <workflow_models> caps: enough for a realistic multi-provider setup while
 // keeping the master's overlay lean (the block is per-turn pinned prompt text).
 const MODELS_BLOCK_PER_PROVIDER = 10
@@ -574,6 +581,23 @@ export class Prefrontal {
   }
 
   private async collectFeedbackCandidate(windowDays: number): Promise<ContextCandidate | null> {
+    // The playbook — the nightly reflection's distilled lessons (what the
+    // user liked and disliked, what worked, what failed and why, per-task
+    // recipes) — is the ambient learning surface. It SUPERSEDES the raw
+    // basalganglia digest: the digest was reliability stats plus the last 12
+    // raw failures, which in practice was twelve copies of one transient
+    // error; the playbook carries root causes with dated evidence instead.
+    // The digest remains the bootstrap fallback until the first reflection
+    // run writes a playbook, and stays available on demand via the insula.
+    const playbook = (await this.readFile('brain/reflection/playbook.md'))?.trim() ?? ''
+    if (playbook.length > 0) {
+      return {
+        category: 'prefrontal',
+        source: 'playbook (nightly reflection)',
+        content: `${PLAYBOOK_FRAMING}\n\n${playbook}`
+      }
+    }
+
     if (!this.basalganglia) return null
     const content = await this.basalganglia.getPreferences(windowDays).catch(() => '')
     if (!content || content.trim().length === 0) return null

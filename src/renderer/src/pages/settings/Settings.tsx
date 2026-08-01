@@ -27,6 +27,7 @@ import { BrowserExtensionPanel } from '@pages/settings/BrowserExtensionPanel'
 import { CapabilitiesPanel } from '@pages/settings/CapabilitiesPanel'
 import { CloudProviderPanel } from '@pages/settings/CloudProviderPanel'
 import { CompactionPanel } from '@pages/settings/CompactionPanel'
+import { ReflectionPanel } from '@pages/settings/ReflectionPanel'
 import { ComputerUsePanel } from '@pages/settings/ComputerUsePanel'
 import { DataPanel } from '@pages/settings/DataPanel'
 import { GitHubPanel } from '@pages/settings/GitHubPanel'
@@ -488,6 +489,9 @@ export function Settings(): React.JSX.Element {
         <TabPanel active={active === 'knowledge' && knowledgeTab === 'compaction'}>
           <CompactionPanel />
         </TabPanel>
+        <TabPanel active={active === 'knowledge' && knowledgeTab === 'reflection'}>
+          <ReflectionPanel />
+        </TabPanel>
         <TabPanel active={active === 'usage'}>
           <UsagePanel />
         </TabPanel>
@@ -652,8 +656,8 @@ const CHANNEL_ICONS: Record<Channel, React.ComponentType<{ size?: number }>> = {
   whatsapp: WhatsappIcon
 }
 
-type KnowledgeTab = 'compaction'
-const KNOWLEDGE_TABS: KnowledgeTab[] = ['compaction']
+type KnowledgeTab = 'compaction' | 'reflection'
+const KNOWLEDGE_TABS: KnowledgeTab[] = ['compaction', 'reflection']
 
 type Service =
   | 'browserExtension'

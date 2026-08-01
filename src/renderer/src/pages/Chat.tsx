@@ -25,6 +25,7 @@ import { Sidebar } from '@components/common/sidebar/Sidebar'
 import { SpreadsheetViewer } from '@components/common/spreadsheet-viewer/SpreadsheetViewer'
 import { ToolCard } from '@components/common/tool-card/ToolCard'
 import { TurnFooter } from '@components/common/turn-footer/TurnFooter'
+import { TurnRating } from '@components/common/turn-rating/TurnRating'
 import { UpdateCard } from '@components/common/update-card/UpdateCard'
 import { VideoPlayer } from '@components/common/video-player/VideoPlayer'
 import { WorkflowCard } from '@components/common/workflow-card/WorkflowCard'
@@ -393,6 +394,34 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
    * persistence) — those must not fire for someone else's turn.
    */
   const busy = streaming || remoteRunning
+
+  /**
+   * Turn scoring (the 0-10 rating bar above the composer). Gated by the
+   * in-app toggle in Settings → Knowledge → Reflection; scores persist onto
+   * the conversation file and become the nightly reflection's ground-truth
+   * signal. `turnRatings` overlays this session's votes on whatever the
+   * loaded conversation already carried.
+   */
+  const [scoringEnabled, setScoringEnabled] = useState(false)
+  const [turnRatings, setTurnRatings] = useState<Record<string, number>>({})
+  useEffect(() => {
+    let cancelled = false
+    const load = (): void => {
+      void window.api.runtime
+        .getReflectionConfig()
+        .then((cfg) => {
+          if (!cancelled) setScoringEnabled(cfg.scoring.inapp)
+        })
+        .catch(() => undefined)
+    }
+    load()
+    const off = window.api.runtime.onReflectionChanged(load)
+    return () => {
+      cancelled = true
+      off()
+    }
+  }, [])
+
   /**
    * The feed, plus a pending bubble while a channel run is live and hasn't
    * mirrored its assistant message yet — otherwise the transcript would end
@@ -681,6 +710,57 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
   // The onTurnEvent closure is created once, so reading the token state
   // directly there would see stale (turn-start) values — the ref does not.
   const turnStatsRef = useRef<TurnStats>(emptyTurnStats())
+
+  // Persisted scores from the loaded conversation file fold into the
+  // reactive `turnRatings` map here — an effect may read the ref, render may
+  // not (ref mutations don't re-render, so a render-time read could pin a
+  // stale score). Keyed on messages so it re-checks after every load/append;
+  // merge-if-absent keeps this session's fresh votes authoritative.
+  useEffect(() => {
+    const persisted = conversationRef.current?.ratings
+    if (!persisted?.length) return
+    setTurnRatings((prev) => {
+      let changed = false
+      const next = { ...prev }
+      for (const r of persisted) {
+        if (r.messageId in next) continue
+        next[r.messageId] = r.score
+        changed = true
+      }
+      return changed ? next : prev
+    })
+  }, [messages])
+
+  // The bar targets the last completed assistant message of an idle chat
+  // that has a persisted conversation to attach the score to.
+  const lastFeedMessage = messages[messages.length - 1]
+  const ratableMessage =
+    scoringEnabled &&
+    !busy &&
+    activeConversationId !== null &&
+    lastFeedMessage &&
+    isAssistant(lastFeedMessage) &&
+    lastFeedMessage.status !== 'streaming'
+      ? lastFeedMessage
+      : null
+  const ratableScore = ratableMessage ? (turnRatings[ratableMessage.id] ?? null) : null
+  const rateTurn = useCallback((messageId: string, score: number): void => {
+    const conv = conversationRef.current
+    if (!conv) return
+    setTurnRatings((prev) => ({ ...prev, [messageId]: score }))
+    void window.api.conversation
+      .rate({ conversationId: conv.id, messageId, score })
+      .then((rating) => {
+        // Fold into the in-memory copy so the next whole-file save carries it.
+        if (rating && conversationRef.current?.id === conv.id) {
+          const rest = (conversationRef.current.ratings ?? []).filter(
+            (r) => r.messageId !== messageId
+          )
+          conversationRef.current.ratings = [...rest, rating]
+        }
+      })
+      .catch(() => undefined)
+  }, [])
 
   // ── Voice recording ───────────────────────────────────────────
   type RecorderPhase = 'idle' | 'recording' | 'review'
@@ -2741,8 +2821,22 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
         )}
       >
         {busy && <div className="rainbow-border" />}
-        {(queuedPrompts.length > 0 || pendingAttachments.length > 0 || staging) && (
+        {(queuedPrompts.length > 0 ||
+          pendingAttachments.length > 0 ||
+          staging ||
+          ratableMessage !== null) && (
           <div className="pointer-events-none absolute inset-x-0 bottom-full flex flex-col gap-2 px-4 pb-2">
+            {/* Turn score bar — an idle chat's last completed turn is
+                rateable 0-10. Mutually exclusive with queued prompts in
+                practice (those only exist while busy). */}
+            {ratableMessage !== null && (
+              <div className="pointer-events-auto mx-auto">
+                <TurnRating
+                  score={ratableScore}
+                  onRate={(score) => rateTurn(ratableMessage.id, score)}
+                />
+              </div>
+            )}
             {/* Queued prompts live HERE, above the composer — never in the
                 feed. A message only enters the feed once its turn is sent. */}
             {queuedPrompts.length > 0 && (

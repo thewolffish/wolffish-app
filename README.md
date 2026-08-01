@@ -1,5 +1,5 @@
 <picture>
-  <img src="https://cdn.wolffi.sh/general/og_image.jpg" alt="wolffish" />
+  <img src="https://cdn.wolffi.sh/generic/banner.jpg" alt="wolffish" />
 </picture>
 
 # wolffish-app
@@ -30,15 +30,15 @@ Built around a 15-module runtime modeled after the human brain, from memory cons
 <table>
   <tr>
     <td align="center">
-      <a href="https://www.youtube.com/watch?v=oog1q7T8H-s"><img src="https://cdn.wolffi.sh/general/Demo%20walkthrough.png" width="360" alt="Demo walkthrough" /></a>
+      <a href="https://www.youtube.com/watch?v=oog1q7T8H-s"><img src="https://cdn.wolffi.sh/generic/demo_walkthrough.jpg" width="360" alt="Demo walkthrough" /></a>
       <br /><b>Demo walkthrough</b>
     </td>
     <td align="center">
-      <a href="https://www.youtube.com/watch?v=XZdBttn-99E"><img src="https://cdn.wolffi.sh/general/wolffish.jpg" width="360" alt="Cinematic launch" /></a>
+      <a href="https://www.youtube.com/watch?v=XZdBttn-99E"><img src="https://cdn.wolffi.sh/generic/cinematic_launch.jpg" width="360" alt="Cinematic launch" /></a>
       <br /><b>Cinematic launch</b>
     </td>
     <td align="center">
-      <a href="https://www.youtube.com/watch?v=TKdTWd6BXR8"><img src="https://cdn.wolffi.sh/general/Cinematic%20reveal.png" width="360" alt="Cinematic reveal" /></a>
+      <a href="https://www.youtube.com/watch?v=TKdTWd6BXR8"><img src="https://cdn.wolffi.sh/generic/cinematic_reveal.jpg" width="360" alt="Cinematic reveal" /></a>
       <br /><b>Cinematic reveal</b>
     </td>
   </tr>
@@ -116,7 +116,8 @@ Wolffish maps human brain regions to software modules. Each module handles exact
 | **Broca**         | Streams responses to the UI               | Language production         |
 | **Amygdala**      | Safety gate for dangerous operations      | Threat detection            |
 | **Motor**         | Executes tasks with retry logic           | Motor cortex                |
-| **Basal Ganglia** | Records outcomes for feedback learning    | Reward processing           |
+| **Basal Ganglia** | Records raw tool outcomes (telemetry)     | Reward processing           |
+| **Reflection**    | Nightly self-review + playbook distilled into every prompt | Sleep consolidation |
 | **Hypothalamus**  | Monitors system health (RAM, disk, CPU)   | Homeostasis                 |
 | **Brainstem**     | Runs background processes and cron jobs   | Autonomic functions         |
 | **Corpus**        | Event bus connecting all modules          | Corpus callosum             |
@@ -248,7 +249,8 @@ src/
 │   │   ├── cortex/              Search index
 │   │   ├── corpus/              Event bus
 │   │   ├── ras/                 Attention filtering
-│   │   ├── basalganglia/        Feedback learning
+│   │   ├── basalganglia/        Outcome telemetry
+│   │   ├── reflection/          Nightly self-review, playbook, monthly deep reflection
 │   │   ├── hypothalamus/        System health
 │   │   ├── brainstem/           Background processes
 │   │   ├── insula/              Self-awareness

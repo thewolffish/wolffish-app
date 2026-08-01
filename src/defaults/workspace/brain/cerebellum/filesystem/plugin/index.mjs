@@ -64,6 +64,14 @@ const toolDefinitions = [
   }
 ]
 
+function workspaceRoot() {
+  return path.join(homedir(), '.wolffish', 'workspace')
+}
+
+// Accept absolute, ~/-relative, and workspace-relative paths. Relative paths
+// resolve against the workspace root — that's where the agent keeps generated
+// files (files/…, uploads/…), matching the utilities plugin's send_file —
+// never against cwd (the repo in dev, "/" in a packaged app).
 function resolveUserPath(input) {
   if (typeof input !== 'string' || input.length === 0) {
     throw new Error('path is required')
@@ -72,7 +80,7 @@ function resolveUserPath(input) {
   if (input.startsWith('~/') || input.startsWith('~\\')) {
     return path.join(homedir(), input.slice(2))
   }
-  return path.resolve(input)
+  return path.resolve(workspaceRoot(), input)
 }
 
 /**

@@ -430,6 +430,18 @@ export type ConversationFile = {
   summarizedThroughMessage?: number | null
   /** Id of the first message NOT covered by `summary` — survives id-keyed merges that insert before the mark (dual decl — see src/main/conversations.ts). */
   summarizedThroughMessageId?: string | null
+  /** Per-turn 0-10 user scores, keyed by assistant message id (dual decl — see src/main/conversations.ts). */
+  ratings?: ConversationRating[]
+}
+
+export type ConversationRatingSource = 'inapp' | 'telegram' | 'whatsapp'
+
+/** A user's 0-10 score for one completed turn (dual decl — see src/main/conversations.ts). */
+export type ConversationRating = {
+  messageId: string
+  score: number
+  at: number
+  source: ConversationRatingSource
 }
 
 export type ConversationMeta = {
@@ -654,6 +666,11 @@ export type RuntimeApi = {
   setCompactionConfig: (patch: Partial<CompactionConfig>) => Promise<CompactionConfig>
   getCompactionRuns: () => Promise<CompactionRuns>
   onCompactionChanged: (listener: (payload: unknown) => void) => () => void
+  getReflectionConfig: () => Promise<ReflectionConfig>
+  setReflectionConfig: (patch: Partial<ReflectionConfig>) => Promise<ReflectionConfig>
+  runReflectionNow: () => Promise<'running' | 'queued' | 'coalesced'>
+  runDeepCleanNow: () => Promise<'running' | 'queued' | 'coalesced'>
+  onReflectionChanged: (listener: (payload: unknown) => void) => () => void
 }
 
 export type CompactionConfig = {
@@ -677,6 +694,24 @@ export type CompactionRunRecord = {
 export type CompactionRuns = {
   daily: CompactionRunRecord | null
   weekly: CompactionRunRecord | null
+  /** Nightly reflection pass (mirrors brainstem's type; absent pre-feature). */
+  reflection?: CompactionRunRecord | null
+  /** Monthly adversarial deep clean. */
+  deepClean?: CompactionRunRecord | null
+}
+
+/** Mirrors workspace's ReflectionScoringConfig (dual decl). */
+export type ReflectionScoringConfig = {
+  inapp: boolean
+  telegram: boolean
+  whatsapp: boolean
+}
+
+/** Mirrors workspace's ReflectionConfig (dual decl). Reflection + deep clean are core — no off switches, only the hour. */
+export type ReflectionConfig = {
+  hour: number
+  quietHours: number
+  scoring: ReflectionScoringConfig
 }
 
 export type OllamaModelDetail = {
@@ -829,6 +864,16 @@ export type ConversationApi = {
   /** ok:false ⇒ refused (conversation has a turn in flight). */
   delete: (id: string) => Promise<{ ok: boolean }>
   create: (model: string | null) => Promise<ConversationFile>
+  /**
+   * Score a completed turn 0-10 (the rating bar). Null messageId scores the
+   * most recent assistant turn on disk. Returns the applied rating, or null
+   * when nothing was rateable.
+   */
+  rate: (payload: {
+    conversationId: string
+    messageId: string | null
+    score: number
+  }) => Promise<ConversationRating | null>
   /**
    * Fired when the main-side rolling summarizer persisted a new prefix
    * summary. The renderer folds it into its in-memory conversation so the
@@ -1875,6 +1920,7 @@ const api: WolffishApi = {
     save: (conv) => ipcRenderer.invoke('conversation:save', conv),
     delete: (id) => ipcRenderer.invoke('conversation:delete', id),
     create: (model) => ipcRenderer.invoke('conversation:create', model),
+    rate: (payload) => ipcRenderer.invoke('conversation:rate', payload),
     onSummaryUpdated: (listener) => subscribe('conversation:summaryUpdated', listener),
     onDeleted: (listener) => subscribe('conversation:deleted', listener),
     onChanged: (listener) => subscribe('conversation:changed', listener),
@@ -1955,7 +2001,12 @@ const api: WolffishApi = {
     getCompactionConfig: () => ipcRenderer.invoke('runtime:getCompactionConfig'),
     setCompactionConfig: (patch) => ipcRenderer.invoke('runtime:setCompactionConfig', patch),
     getCompactionRuns: () => ipcRenderer.invoke('runtime:getCompactionRuns'),
-    onCompactionChanged: (listener) => subscribe('compaction:changed', listener)
+    onCompactionChanged: (listener) => subscribe('compaction:changed', listener),
+    getReflectionConfig: () => ipcRenderer.invoke('runtime:getReflectionConfig'),
+    setReflectionConfig: (patch) => ipcRenderer.invoke('runtime:setReflectionConfig', patch),
+    runReflectionNow: () => ipcRenderer.invoke('runtime:runReflectionNow'),
+    runDeepCleanNow: () => ipcRenderer.invoke('runtime:runDeepCleanNow'),
+    onReflectionChanged: (listener) => subscribe('reflection:changed', listener)
   },
   usage: {
     getSummary: (range) => ipcRenderer.invoke('usage:getSummary', range),

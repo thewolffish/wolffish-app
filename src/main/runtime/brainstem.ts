@@ -4,8 +4,14 @@ import { runDetached, type Corpus } from '@main/runtime/corpus'
 import type { Cortex } from '@main/runtime/cortex'
 import { isIndexablePath } from '@main/runtime/cortexIngest'
 import type { Hippocampus, KnowledgeFile } from '@main/runtime/hippocampus'
+import { parseFileBlocks, runDeepClean, runNightlyReflection } from '@main/runtime/reflection'
 import type { ChatMessage, Thalamus } from '@main/runtime/thalamus'
-import { DEFAULT_COMPACTION, type CompactionConfig } from '@main/workspace/workspace'
+import {
+  DEFAULT_COMPACTION,
+  DEFAULT_REFLECTION,
+  type CompactionConfig,
+  type ReflectionConfig
+} from '@main/workspace/workspace'
 import chokidar, { type FSWatcher } from 'chokidar'
 import cron, { type ScheduledTask } from 'node-cron'
 import { createHash } from 'node:crypto'
@@ -85,10 +91,18 @@ export type CompactionRunRecord = {
   output: string
 }
 
+export type CompactionRunKind = 'daily' | 'weekly' | 'reflection' | 'deepClean'
+
 export type CompactionRuns = {
   daily: CompactionRunRecord | null
   weekly: CompactionRunRecord | null
+  /** Nightly reflection pass — optional keys so pre-feature meta files parse. */
+  reflection?: CompactionRunRecord | null
+  /** Monthly adversarial deep clean. */
+  deepClean?: CompactionRunRecord | null
 }
+
+const RUN_KINDS: readonly CompactionRunKind[] = ['daily', 'weekly', 'reflection', 'deepClean']
 
 export type BrainstemOptions = {
   workspaceRoot?: string
@@ -108,19 +122,69 @@ const KNOWLEDGE_FILES: readonly KnowledgeFile[] = [
   'decisions'
 ]
 
-const COMPACTION_SYSTEM_PROMPT =
-  'You are the consolidation pass for a personal AI agent. Your job is to extract durable, long-term facts from a single day of conversation logs.'
+/**
+ * Compaction v2 — the CURATOR, not an extractor. The old pass was stateless
+ * (never saw the existing knowledge), so it re-derived the same facts night
+ * after night and appended every paraphrase as a new bullet: after three
+ * months the wife's phone number sat in people.md thirteen times, sub-headers
+ * were stripped so facts glued onto the wrong person, and contradictions
+ * ("black coffee" vs "coffee with cardamom") accumulated instead of
+ * resolving. v2 receives the CURRENT files plus the day's log and rewrites
+ * the files — one entity, one section, growing richer over time, the way
+ * someone who lives with you accumulates one coherent picture rather than a
+ * pile of sticky notes.
+ */
+const COMPACTION_SYSTEM_PROMPT = `You are the nightly memory curator of a personal AI agent. You maintain five long-term knowledge files about the agent's user and their world. You receive the CURRENT content of all five files plus ONE day of conversation logs, and you produce the complete UPDATED files.
 
-const COMPACTION_USER_PREFIX = `Summarize the following daily log into key facts worth remembering long-term.
-Extract: user preferences learned, project details mentioned, decisions made, people referenced.
-Output as markdown sections matching: projects.md, people.md, preferences.md, technical.md, decisions.md
-Only include facts that are genuinely worth remembering beyond today.
-If nothing is worth promoting, say "Nothing to promote."
+You are a curator, not a logger:
+- MERGE, never duplicate. Each person, project, or topic gets ONE "## Entity" section whose bullets grow richer over time. If today's log restates something a file already holds, the file stays as it was — do not add a paraphrase.
+- RESOLVE contradictions: newest evidence wins; keep one bullet, drop the stale one (date the change when the reversal itself matters).
+- DELETE junk you encounter: contentless bullets, one-off session trivia, orphan fragments attached to the wrong entity, telemetry masquerading as knowledge.
+- Facts must be attributed to the right entity. Never attach a fact to a person unless the log clearly supports it.
+- Provenance discipline: entries in the log marked as heartbeat/procedure automations or [worker] sub-agents are the agent's own machinery. A worker's prompt is agent-authored — never derive user preferences from it. An automation's prompt was authored by the user when they set it up — its existence is already recorded elsewhere, so record only genuinely NEW durable insight from such runs, never restatements of the schedule itself.
+- What belongs: durable facts about the user (habits, likes, dislikes, temperament, people in their life, ongoing projects, decisions, technical environment). What does not: how the agent should behave (that lives in the agent's playbook, not here), secrets/keys/tokens/passwords, anything true only today.
+- Size is NOT a constraint — never drop a true, durable fact to save space. Files may grow indefinitely; your only duty is that they stay CLEAN: unique, attributed, current.
 
-DAILY LOG:
-`
+File shapes — STRUCTURE IS MANDATORY: every entity/topic is a "## Section" heading with its bullets underneath. Never emit a flat bullet list under the "# Header" — the agent's memory map surfaces the "##" headings, so a flat file is invisible to it. Skeleton every file must follow:
 
-const NOTHING_TO_PROMOTE = /nothing to promote/i
+# People
+<!-- People mentioned in conversations, relationships, roles -->
+## Sana (wife)
+- WhatsApp \`+9665…\`. Enjoys a daily funny-romantic meme; formats tracked to avoid repeats.
+## Mom
+- SMS bank alerts forwarded via …
+
+- projects.md, people.md: one "## Entity" section per project/person.
+- preferences.md: "## Topic" sections (e.g. "## Communication", "## Content", "## Lifestyle").
+- technical.md: "## Area" sections (environment, pipelines, integrations).
+- decisions.md: "## YYYY-MM" sections, newest first, one bullet per standing decision.
+
+Output format — marker line of five equals signs, file name, five equals signs, then the COMPLETE file content:
+
+===== summary =====
+<3-6 bullets: what changed in the files tonight — the settings card shows this>
+===== projects.md =====
+===== people.md =====
+===== preferences.md =====
+===== technical.md =====
+===== decisions.md =====
+
+Output ALL five files whenever anything changes (unchanged files repeated verbatim). If the day's log adds nothing durable and the files need no cleanup, output exactly:
+NO CHANGES
+<one line saying why>`
+
+const NOTHING_TO_PROMOTE = /^\s*NO CHANGES\b|nothing to promote/i
+
+/** Episode input budget for the compaction call (chars ≈ tokens×4). */
+const COMPACTION_EPISODE_MAX_CHARS = 160_000
+
+/** Middle-truncate: openings carry the ask, endings carry the resolution. */
+function capMiddle(text: string, max: number): string {
+  if (text.length <= max) return text
+  const head = Math.floor(max * 0.6)
+  const tail = max - head - 60
+  return `${text.slice(0, head)}\n…[${text.length - max} chars of mid-day log omitted]…\n${text.slice(text.length - tail)}`
+}
 
 const DEFAULT_DEBOUNCE_MS = 500
 
@@ -237,8 +301,8 @@ export type BrainstemListener = {
   onJobLog?: (entry: JobLogEntry) => void
   /** The run pool changed: a run started or ended, or the queue moved. */
   onRunsChanged?: (snapshot: RunsSnapshot) => void
-  /** A compaction job (daily/weekly) finished and its last-run record updated. */
-  onCompactionRun?: (payload: { kind: 'daily' | 'weekly' }) => void
+  /** A compaction-family job finished and its last-run record updated. */
+  onCompactionRun?: (payload: { kind: CompactionRunKind }) => void
 }
 
 /**
@@ -279,6 +343,17 @@ export class Brainstem {
   private tickTimer: NodeJS.Timeout | null = null
   private compactionTasks: ScheduledTask[] = []
   private compactionConfig: CompactionConfig = DEFAULT_COMPACTION
+  private reflectionTasks: ScheduledTask[] = []
+  private reflectionConfig: ReflectionConfig = DEFAULT_REFLECTION
+  // Missed-fire sweep for the self-improvement jobs. node-cron can't fire
+  // while the machine sleeps, and reflection defaults to 3 AM — on a laptop
+  // most fires would be missed entirely. The sweep re-checks on launch and
+  // every half hour, and enqueues any job whose most recent scheduled fire
+  // has no completed run on record. Runs record even on failure, so a broken
+  // provider can't put this in a hot retry loop — the next DUE fire retries,
+  // and unreviewed conversations carry over on their own.
+  private selfImproveSweep: NodeJS.Timeout | null = null
+  private selfImproveKickoff: NodeJS.Timeout | null = null
   private readonly debounceMs: number
   private listener: BrainstemListener | null = null
   // Per-job last-run bookkeeping, keyed by the job's heading LABEL — the stable
@@ -344,6 +419,8 @@ export class Brainstem {
     await this.startScheduler()
     this.startTicking()
     this.startCompactionScheduler()
+    this.startReflectionScheduler()
+    this.startSelfImprovementSweep()
   }
 
   async stop(): Promise<void> {
@@ -351,6 +428,8 @@ export class Brainstem {
   }
 
   async stopAll(): Promise<void> {
+    this.stopSelfImprovementSweep()
+    this.stopReflectionScheduler()
     this.stopCompactionScheduler()
     this.stopTicking()
     // Record a final tick so a clean shutdown is the downtime boundary.
@@ -621,13 +700,13 @@ export class Brainstem {
 
   private async ensureCompactionRuns(): Promise<CompactionRuns> {
     if (this.compactionRuns) return this.compactionRuns
-    const runs: CompactionRuns = { daily: null, weekly: null }
+    const runs: CompactionRuns = { daily: null, weekly: null, reflection: null, deepClean: null }
     const runsPath = this.compactionRunsPath()
     if (runsPath) {
       try {
         const parsed: unknown = JSON.parse(await fs.readFile(runsPath, 'utf8'))
         if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          for (const kind of ['daily', 'weekly'] as const) {
+          for (const kind of RUN_KINDS) {
             const value = (parsed as Record<string, unknown>)[kind]
             if (!value || typeof value !== 'object') continue
             const r = value as Record<string, unknown>
@@ -655,11 +734,16 @@ export class Brainstem {
 
   async getCompactionRuns(): Promise<CompactionRuns> {
     const runs = await this.ensureCompactionRuns()
-    return { daily: runs.daily, weekly: runs.weekly }
+    return {
+      daily: runs.daily,
+      weekly: runs.weekly,
+      reflection: runs.reflection ?? null,
+      deepClean: runs.deepClean ?? null
+    }
   }
 
   private async recordCompactionRun(
-    kind: 'daily' | 'weekly',
+    kind: CompactionRunKind,
     record: CompactionRunRecord
   ): Promise<void> {
     const runs = await this.ensureCompactionRuns()
@@ -763,9 +847,19 @@ export class Brainstem {
 
     log('text', `Analyzing ${entryCount} episode entries`)
 
-    const messages: ChatMessage[] = [
-      { role: 'user', content: `${COMPACTION_USER_PREFIX}${episode.content}` }
-    ]
+    // v2 is stateful: the model sees the CURRENT files so it can merge and
+    // clean instead of re-extracting. Episode capped so a heavy day (500KB of
+    // automation logs) can't blow the context; head+tail survive a cut.
+    const currentFiles: string[] = []
+    for (const file of KNOWLEDGE_FILES) {
+      const raw = await this.hippocampus.getKnowledgeFile(file)
+      currentFiles.push(`===== ${file}.md =====\n${raw?.trim() || '(empty)'}`)
+    }
+    const material =
+      `CURRENT KNOWLEDGE FILES:\n\n${currentFiles.join('\n\n')}\n\n` +
+      `TODAY'S LOG (${targetDate}):\n\n${capMiddle(episode.content, COMPACTION_EPISODE_MAX_CHARS)}`
+
+    const messages: ChatMessage[] = [{ role: 'user', content: material }]
 
     let response = ''
     let runProvider: string | null = null
@@ -825,21 +919,49 @@ export class Brainstem {
       return { date: targetDate, promoted: 0, skipped: false, reason: 'nothing to promote' }
     }
 
-    const sections = parsePromotionSections(response)
+    // v2 path: complete-file blocks. Each present, sane block replaces its
+    // file (previous content kept as .md.bak by the hippocampus). The
+    // summary block — not the whole response — is what lands in the weekly
+    // consolidated file and the settings card.
+    const blocks = parseFileBlocks(response)
     let promoted = 0
-    for (const [file, facts] of sections) {
-      for (const fact of facts) {
-        await this.hippocampus.promoteToKnowledge(file, fact)
+    let consolidatedNote: string
+    const hasFileBlocks = KNOWLEDGE_FILES.some((f) => blocks.has(`${f}.md`))
+    if (hasFileBlocks) {
+      for (const file of KNOWLEDGE_FILES) {
+        const next = blocks.get(`${file}.md`)
+        if (!next || next === '(empty)') continue
+        const current = (await this.hippocampus.getKnowledgeFile(file))?.trim() ?? ''
+        if (next.trim() === current) continue
+        if (next.length < 20) continue
+        await this.hippocampus.replaceKnowledgeFile(file, next)
         promoted += 1
-        log('tool_result', `Promoted fact to ${file}`)
+        log('tool_result', `Rewrote ${file}.md`)
       }
+      consolidatedNote = blocks.get('summary') ?? `Curated ${promoted} knowledge file(s).`
+      log('text', `Curated ${promoted} knowledge file${promoted === 1 ? '' : 's'}`)
+    } else {
+      // Fallback: the model answered in the legacy "# projects.md + bullets"
+      // shape. Append-with-dedup keeps the night's facts rather than losing
+      // them; the next successful v2 run folds them into structure.
+      const sections = parsePromotionSections(response)
+      for (const [file, facts] of sections) {
+        for (const fact of facts) {
+          await this.hippocampus.promoteToKnowledge(file, fact)
+          promoted += 1
+          log('tool_result', `Promoted fact to ${file}`)
+        }
+      }
+      consolidatedNote = response
+      log(
+        'text',
+        `Promoted ${promoted} fact${promoted === 1 ? '' : 's'} to knowledge (legacy format)`
+      )
     }
-
-    log('text', `Promoted ${promoted} fact${promoted === 1 ? '' : 's'} to knowledge`)
 
     await this.hippocampus.writeConsolidated(
       weekKey(targetDate),
-      summaryHeader(targetDate, response)
+      summaryHeader(targetDate, consolidatedNote)
     )
 
     await recordRun()
@@ -1484,6 +1606,214 @@ export class Brainstem {
 
   getCompactionConfig(): CompactionConfig {
     return { ...this.compactionConfig }
+  }
+
+  // ── Reflection & deep clean (self-improvement jobs) ───────────────────
+
+  setReflectionConfig(config: ReflectionConfig): void {
+    this.reflectionConfig = config
+    this.startReflectionScheduler()
+  }
+
+  getReflectionConfig(): ReflectionConfig {
+    return { ...this.reflectionConfig, scoring: { ...this.reflectionConfig.scoring } }
+  }
+
+  private startReflectionScheduler(): void {
+    this.stopReflectionScheduler()
+    const cfg = this.reflectionConfig
+    // The nightly reflection is a CORE feature — it always schedules; only
+    // its hour is configurable. The learning loop has no off switch.
+    const nightlyCron = `0 ${cfg.hour} * * *`
+    try {
+      this.reflectionTasks.push(
+        cron.schedule(nightlyCron, () => this.enqueueReflection(nightlyCron))
+      )
+    } catch {
+      /* invalid cron — shouldn't happen with validated hours */
+    }
+    // First of the month, one hour after reflection so the two never
+    // contend. Core like the nightly pass — no off switch.
+    const monthlyCron = `0 ${(cfg.hour + 1) % 24} 1 * *`
+    try {
+      this.reflectionTasks.push(
+        cron.schedule(monthlyCron, () => this.enqueueDeepClean(monthlyCron))
+      )
+    } catch {
+      /* invalid cron */
+    }
+  }
+
+  private stopReflectionScheduler(): void {
+    for (const task of this.reflectionTasks) {
+      try {
+        task.stop()
+      } catch {
+        /* best-effort */
+      }
+    }
+    this.reflectionTasks = []
+  }
+
+  private enqueueReflection(cronExpr: string | null): 'running' | 'queued' | 'coalesced' {
+    return this.enqueue(
+      {
+        id: 'reflection-nightly',
+        kind: 'daily',
+        cron: cronExpr,
+        label: 'Nightly reflection',
+        body: 'heartbeat.overlay.reflection'
+      },
+      () => this.runReflectionJob('reflection-nightly')
+    )
+  }
+
+  private enqueueDeepClean(cronExpr: string | null): 'running' | 'queued' | 'coalesced' {
+    return this.enqueue(
+      {
+        id: 'reflection-deepclean',
+        kind: 'monthly',
+        cron: cronExpr,
+        label: 'Deep reflection',
+        body: 'heartbeat.overlay.deepClean'
+      },
+      () => this.runDeepCleanJob('reflection-deepclean')
+    )
+  }
+
+  /** Manual "run now" from the settings panel. */
+  runReflectionNow(): 'running' | 'queued' | 'coalesced' {
+    return this.enqueueReflection(null)
+  }
+
+  runDeepCleanNow(): 'running' | 'queued' | 'coalesced' {
+    return this.enqueueDeepClean(null)
+  }
+
+  private async runReflectionJob(jobId?: string): Promise<void> {
+    const log = (kind: JobLogEntry['kind'], summary: string): void => {
+      if (jobId) {
+        this.listener?.onJobLog?.({ id: jobId, timestamp: Date.now(), kind, summary })
+      }
+    }
+    if (!this.thalamus || !this.workspaceRoot) return
+    const startedAt = Date.now()
+    try {
+      const result = await runNightlyReflection(
+        {
+          workspaceRoot: this.workspaceRoot,
+          thalamus: this.thalamus,
+          corpus: this.corpus,
+          log: (s) => log('text', s)
+        },
+        this.reflectionConfig.quietHours
+      )
+      await this.recordCompactionRun('reflection', {
+        at: Date.now(),
+        durationMs: Date.now() - startedAt,
+        provider: result.provider,
+        model: result.model,
+        inputTokens: result.inputTokens > 0 ? result.inputTokens : null,
+        outputTokens: result.outputTokens > 0 ? result.outputTokens : null,
+        output: result.output
+      })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      log('text', `Reflection failed: ${message}`)
+      // Record the failure too: it bounds the missed-fire sweep to one
+      // attempt per scheduled fire, and unreviewed conversations simply
+      // carry over to the next night.
+      await this.recordCompactionRun('reflection', {
+        at: Date.now(),
+        durationMs: Date.now() - startedAt,
+        provider: null,
+        model: null,
+        inputTokens: null,
+        outputTokens: null,
+        output: `Failed: ${message}`
+      })
+    }
+  }
+
+  private async runDeepCleanJob(jobId?: string): Promise<void> {
+    const log = (kind: JobLogEntry['kind'], summary: string): void => {
+      if (jobId) {
+        this.listener?.onJobLog?.({ id: jobId, timestamp: Date.now(), kind, summary })
+      }
+    }
+    if (!this.thalamus || !this.workspaceRoot || !this.hippocampus) return
+    const startedAt = Date.now()
+    try {
+      const result = await runDeepClean({
+        workspaceRoot: this.workspaceRoot,
+        thalamus: this.thalamus,
+        hippocampus: this.hippocampus,
+        corpus: this.corpus,
+        log: (s) => log('text', s)
+      })
+      await this.recordCompactionRun('deepClean', {
+        at: Date.now(),
+        durationMs: Date.now() - startedAt,
+        provider: result.provider,
+        model: result.model,
+        inputTokens: result.inputTokens > 0 ? result.inputTokens : null,
+        outputTokens: result.outputTokens > 0 ? result.outputTokens : null,
+        output: result.output
+      })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      log('text', `Deep clean failed: ${message}`)
+      await this.recordCompactionRun('deepClean', {
+        at: Date.now(),
+        durationMs: Date.now() - startedAt,
+        provider: null,
+        model: null,
+        inputTokens: null,
+        outputTokens: null,
+        output: `Failed: ${message}`
+      })
+    }
+  }
+
+  private startSelfImprovementSweep(): void {
+    this.stopSelfImprovementSweep()
+    this.selfImproveKickoff = setTimeout(() => void this.sweepMissedSelfImprovement(), 90_000)
+    this.selfImproveSweep = setInterval(() => void this.sweepMissedSelfImprovement(), 30 * 60_000)
+  }
+
+  private stopSelfImprovementSweep(): void {
+    if (this.selfImproveKickoff) clearTimeout(this.selfImproveKickoff)
+    if (this.selfImproveSweep) clearInterval(this.selfImproveSweep)
+    this.selfImproveKickoff = null
+    this.selfImproveSweep = null
+  }
+
+  private async sweepMissedSelfImprovement(): Promise<void> {
+    const cfg = this.reflectionConfig
+    let runs: CompactionRuns
+    try {
+      runs = await this.ensureCompactionRuns()
+    } catch {
+      return
+    }
+    const now = new Date()
+    {
+      const due = new Date(now)
+      due.setHours(cfg.hour, 0, 0, 0)
+      if (due.getTime() > now.getTime()) due.setDate(due.getDate() - 1)
+      if ((runs.reflection?.at ?? 0) < due.getTime()) this.enqueueReflection(null)
+    }
+    {
+      // Most recent 1st-of-month fire at (hour+1). Skip until reflection has
+      // ever produced something — auditing an empty memory buys nothing.
+      if (!runs.reflection && !runs.deepClean) return
+      const hour = (cfg.hour + 1) % 24
+      let due = new Date(now.getFullYear(), now.getMonth(), 1, hour, 0, 0, 0)
+      if (due.getTime() > now.getTime()) {
+        due = new Date(now.getFullYear(), now.getMonth() - 1, 1, hour, 0, 0, 0)
+      }
+      if ((runs.deepClean?.at ?? 0) < due.getTime()) this.enqueueDeepClean(null)
+    }
   }
 
   private scheduleIndex(filepath: string, action: 'index' | 'remove'): void {

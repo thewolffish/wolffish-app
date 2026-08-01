@@ -18,6 +18,7 @@ export type RecordSource =
   | 'episode'
   | 'knowledge'
   | 'consolidated'
+  | 'reflection'
   | 'conversation'
   | 'task'
   | 'feedback'
@@ -242,7 +243,9 @@ export function ingestTextFile(rel: string, raw: string, mtimeMs: number): Inges
       ? 'knowledge'
       : norm.startsWith('brain/hippocampus/consolidated/')
         ? 'consolidated'
-        : 'doc'
+        : norm.startsWith('brain/reflection/')
+          ? 'reflection'
+          : 'doc'
   return { records: ingestMarkdown(norm, raw, mtimeMs, source) }
 }
 

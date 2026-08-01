@@ -163,6 +163,17 @@ export type CorpusEvents = {
   'memory.episodeSaved': { date: string; section: string }
   'memory.consolidated': { week: string }
   'memory.knowledgeUpdated': { file: string; fact: string }
+  'memory.knowledgeRewritten': { file: string; bytes: number }
+
+  'reflection.reviewed': {
+    conversation: string
+    userScore: number | null
+    selfScore: number | null
+  }
+  'reflection.playbookUpdated': { day: string; bytes: number }
+  'reflection.deepCleaned': { changedFiles: string[] }
+
+  'conversation.rated': { conversation: string; score: number; source: string }
 
   'feedback.recorded': {
     action: string

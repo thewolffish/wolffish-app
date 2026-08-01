@@ -16,6 +16,7 @@ import {
   listConversations,
   loadConversation,
   mergeConversationOnto,
+  rateConversationTurn,
   updateConversation,
   type ConversationFile,
   type ConversationMessage,
@@ -143,6 +144,8 @@ import {
   getCompactionConfig,
   getComputerUseConfig,
   getGitHubConfig,
+  getReflectionConfig,
+  normalizeReflectionConfig,
   getGoogleConfig,
   getInAppConfig,
   getMemesConfig,
@@ -164,6 +167,7 @@ import {
   setBypassPermissions as persistBypassPermissions,
   setCompactionConfig as persistCompactionConfig,
   setComputerUseConfig as persistComputerUseConfig,
+  setReflectionConfig as persistReflectionConfig,
   setGitHubConfig as persistGitHubConfig,
   setGoogleConfig as persistGoogleConfig,
   setInAppConfig as persistInAppConfig,
@@ -1378,6 +1382,11 @@ app.whenReady().then(async () => {
   if (cfg?.compaction) {
     agent.brainstem.setCompactionConfig(cfg.compaction)
   }
+
+  // Reflection schedule + turn-scoring config. normalize merges partial
+  // stored values over the defaults, so a pre-feature config still yields a
+  // complete ReflectionConfig.
+  agent.brainstem.setReflectionConfig(normalizeReflectionConfig(cfg?.reflection))
 
   // Auto-launch: if the user has opted in (default true), register
   // Wolffish as a login item so the OS starts it on boot/login.
@@ -3003,6 +3012,45 @@ app.whenReady().then(async () => {
       const cfg = updated.compaction!
       agent.brainstem.setCompactionConfig(cfg)
       return cfg
+    }
+  )
+  ipcMain.handle('runtime:getReflectionConfig', async () => {
+    return getReflectionConfig()
+  })
+  ipcMain.handle(
+    'runtime:setReflectionConfig',
+    async (_e, patch: Partial<import('@main/workspace/workspace').ReflectionConfig>) => {
+      const updated = await persistReflectionConfig(patch)
+      const cfg = normalizeReflectionConfig(updated.reflection)
+      agent.brainstem.setReflectionConfig(cfg)
+      // The Chat page gates its rating bar on scoring.inapp; push the change.
+      broadcast('reflection:changed', {})
+      return cfg
+    }
+  )
+  ipcMain.handle('runtime:runReflectionNow', async () => {
+    return agent.brainstem.runReflectionNow()
+  })
+  ipcMain.handle('runtime:runDeepCleanNow', async () => {
+    return agent.brainstem.runDeepCleanNow()
+  })
+  ipcMain.handle(
+    'conversation:rate',
+    async (_e, payload: { conversationId: string; messageId: string | null; score: number }) => {
+      const rating = await rateConversationTurn(
+        payload.conversationId,
+        payload.messageId,
+        payload.score,
+        'inapp'
+      )
+      if (rating) {
+        agent.corpus.emit('conversation.rated', {
+          conversation: payload.conversationId,
+          score: rating.score,
+          source: 'inapp'
+        })
+      }
+      return rating
     }
   )
 

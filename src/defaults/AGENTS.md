@@ -182,7 +182,20 @@ brain/
 │   └── tasks/                 TASK-<id>.md (human transcript) + TASK-<id>-detail.log
 │                              (verbose). Written live, so a crash still leaves a trail.
 │
-├── basalganglia/          LEARNING. YYYY-MM-DD.md — daily outcome/feedback log.
+├── basalganglia/          TELEMETRY. YYYY-MM-DD.md — raw per-tool-call outcome log.
+│                          Indexed for recall + insula stats; the LEARNED lessons
+│                          live in reflection/ (below), not here.
+│
+├── reflection/            LEARNING.
+│   ├── playbook.md            THE distillate: what worked, what failed, what the
+│   │                          user likes/dislikes, task recipes. Rewritten (never
+│   │                          appended) after every reflection run; injected into
+│   │                          EVERY system prompt. playbook.md.bak = previous
+│   │                          version, the one-copy restore if a merge degrades it.
+│   ├── YYYY-MM-DD.md          per-conversation review blocks written by the nightly
+│   │                          reflection (user 0-10 scores + the model's own review).
+│   └── reviewed.json          which conversations were reviewed (+ scores) — the
+│                              nightly job's bookkeeping; 7-day rolling window.
 │
 ├── brainstem/             SCHEDULING.
 │   └── heartbeat.md           cron-like jobs; each `##` heading is one scheduled task.
@@ -287,7 +300,8 @@ place on disk. This is the mental model behind the folder layout.
 | **Broca** | Assemble & stream the final response to the UI | — (pure composer) |
 | **Amygdala** | Safety-gate every tool call (safe/confirm/block) | — (uses SKILL patterns) |
 | **Motor** | Execute tools, retry, log each step | `brain/motor/tasks/` |
-| **Basal ganglia** | Record outcomes, learn preferences | `brain/basalganglia/` |
+| **Basal ganglia** | Record raw tool outcomes (telemetry; recall + insula stats) | `brain/basalganglia/` |
+| **Reflection** | Nightly self-review of finished conversations (user 0-10 scores = ground truth) → playbook distillate in every prompt; monthly deep-reflection audit of playbook + knowledge | `brain/reflection/` |
 | **Hypothalamus** | Monitor vitals (context, tokens, RAM, disk) | — (samples runtime) |
 | **Brainstem** | Run cron jobs + watch files for the index | `brain/brainstem/heartbeat.md` |
 | **Corpus** | Typed event bus connecting every module | `brain/corpus/` (daily log) |
@@ -406,14 +420,22 @@ model runs and retries itself on transient failures (429/5xx/timeouts), or the
 turn fails honestly. Switching cloud↔local is a manual, explicit act via the
 chat switcher.
 
-**Three-tier memory.**
+**Three-tier memory (+ the learning tier).**
 - *Episodes* (`hippocampus/episodes/`) — appended every turn, zero-latency, no LLM.
-- *Consolidated* (`hippocampus/consolidated/`) — weekly LLM summaries, written by
-  nightly compaction (configured in Settings → Hippocampus → Compaction, not in
-  `heartbeat.md`).
-- *Knowledge* (`hippocampus/knowledge/`) — durable facts, promoted from episodes or
-  written by hand. The prefrontal pulls candidates from all three and the RAS keeps
-  only what scores high enough for the current message.
+- *Consolidated* (`hippocampus/consolidated/`) — daily compaction summaries collected
+  per week (configured in Settings → Knowledge → Compaction, not in `heartbeat.md`).
+- *Knowledge* (`hippocampus/knowledge/`) — durable facts about the user and their
+  world. The nightly compaction REWRITES these files as a curator (one `## Entity`
+  section per person/project/topic, merged and contradiction-free, never
+  append-only) — hand edits remain first-class and survive curation. Each rewrite
+  keeps the previous version as `<file>.md.bak`.
+- *Reflection* (`brain/reflection/`) — behavioural lessons, kept separate from facts:
+  the nightly reflection reviews finished conversations (the user's 0-10 turn scores
+  are ground truth; a bare-number reply on Telegram/WhatsApp is a score, and the
+  in-app chat shows a 0-10 bar after each turn), writes dated review blocks, and
+  rewrites `playbook.md` — the distillate injected into EVERY system prompt. A
+  monthly deep-reflection pass audits playbook + knowledge adversarially (Settings →
+  Knowledge → Reflection).
 
 **Safety (amygdala).** Every tool call is classified using the `danger_patterns` /
 `confirm_patterns` in each `SKILL.md`: *safe* runs immediately, *confirm* needs user
