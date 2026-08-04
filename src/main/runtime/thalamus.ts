@@ -1193,6 +1193,7 @@ export function contextWindowForModel(model: string): number {
   if (m.includes('minimax-m3')) return 1_000_000
   if (m.includes('minimax-m2')) return 200_000
   // Qwen Cloud
+  if (m.includes('qwen3.8')) return 1_000_000
   if (m.includes('qwen3.7-max') || m.includes('qwen3.7-plus')) return 1_000_000
   if (m.includes('qwen3.6')) return 1_000_000
   if (m.includes('qwen3.5-plus') || m.includes('qwen3.5-flash')) return 1_000_000
@@ -1258,8 +1259,9 @@ function maxOutputForModel(model: string): number {
   if (m.includes('opus-4') || m.includes('sonnet-4') || m.includes('haiku-4')) return 0
   if (m.includes('claude')) return 0
   if (/3\.[57]-(sonnet|haiku)/.test(m)) return 0
-  // DeepSeek
-  if (m.includes('deepseek-v4')) return 32_768
+  // DeepSeek — must match maxTokensFor in providers/deepseek.ts (65,536 for
+  // the v4 line; the API cap is 384K but we request 64K).
+  if (m.includes('deepseek-v4')) return 65_536
   // Xiaomi Mimo
   if (m.includes('mimo-v2.5-pro')) return 65_536
   if (m.includes('mimo')) return 32_768
@@ -1274,6 +1276,7 @@ function maxOutputForModel(model: string): number {
   if (m.includes('minimax-m3')) return 65_536
   if (m.includes('minimax-m2')) return 32_768
   // Qwen
+  if (m.includes('qwen3.8')) return 131_072
   if (m.includes('qwen3.7') || m.includes('qwen3.6') || m.includes('qwen3.5')) return 65_536
   if (m.includes('qwen3')) return 32_768
   if (m.includes('qwen-plus')) return 32_768

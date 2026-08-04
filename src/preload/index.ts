@@ -651,6 +651,15 @@ export type DataApi = {
 
 export type LaunchAtStartupStatus = { active: boolean }
 
+/** What a preferences:changed broadcast carries — only the fields that were saved. */
+export type PreferencesPatch = {
+  launchAtStartup?: boolean
+  bypassPermissions?: boolean
+  blockCredentials?: boolean
+  restrictPowerfulModels?: boolean
+  weekStartsOn?: WeekStartsOn
+}
+
 export type RuntimeApi = {
   setLaunchAtStartup: (value: boolean) => Promise<{ value: boolean; active: boolean }>
   getLaunchAtStartupStatus: () => Promise<LaunchAtStartupStatus>
@@ -662,6 +671,12 @@ export type RuntimeApi = {
   setUpdatesEnabled: (value: boolean) => Promise<{ value: boolean }>
   setWeekStartsOn: (value: WeekStartsOn) => Promise<{ value: WeekStartsOn }>
   setLastSettingsState: (patch: Record<string, string>) => Promise<void>
+  /** A preference saved anywhere — this window, another window. Payload is the patch. */
+  onPreferencesChanged: (listener: (patch: PreferencesPatch) => void) => () => void
+  /** A paired phone wrote settings over the tunnel — the applied patch rides along. */
+  onMobileSettingsChange: (
+    listener: (payload: { keys: string[]; settings?: Record<string, unknown> }) => void
+  ) => () => void
   getCompactionConfig: () => Promise<CompactionConfig>
   setCompactionConfig: (patch: Partial<CompactionConfig>) => Promise<CompactionConfig>
   getCompactionRuns: () => Promise<CompactionRuns>
@@ -1255,6 +1270,12 @@ export type CerebellumApi = {
   pickImport: (options?: { title?: string; filterName?: string }) => Promise<string | null>
   /** Delete a user-imported capability and nuke its folder. Refuses official ones. */
   deleteCapability: (name: string) => Promise<CapabilityDeleteResult>
+  /**
+   * A capability was toggled somewhere other than this window — the paired
+   * phone, the agent's skills plugin — and the panel should follow. Fires
+   * with the full refreshed list; returns the unsubscribe.
+   */
+  onCapabilitiesChanged: (callback: (capabilities: CapabilityEntry[]) => void) => () => void
 }
 
 export type VoiceApi = {
@@ -1284,6 +1305,9 @@ export type UploadFileMeta = {
 export type VariablesApi = {
   list: () => Promise<Variable[]>
   save: (variables: Variable[]) => Promise<{ ok: true }>
+  /** Fires on every save from any origin — this panel, another window, the
+   *  paired phone — with the array that now holds. Returns unsubscribe. */
+  onChanged: (listener: (payload: { variables: Variable[] }) => void) => () => void
 }
 
 /**
@@ -1315,6 +1339,86 @@ export type TelegramChannelStatus = {
 export type TelegramTestResult =
   | { ok: true }
   | { ok: false; kind: TelegramErrorKind; message?: string }
+
+/**
+ * Mobile channel — the tunnel to the Wolffish phone app.
+ *
+ * Unlike Telegram/WhatsApp there is no token to type: the desktop offers a
+ * pairing (a QR to scan, or a code to read out) and the phone claims it. The
+ * panel then renders live connection state, including the short key
+ * fingerprints both devices display so they can be compared at a glance.
+ */
+export type MobileTunnelState = {
+  status:
+    | 'idle'
+    | 'connecting'
+    | 'waiting-for-peer'
+    | 'handshaking'
+    | 'connected'
+    | 'reconnecting'
+    | 'error'
+  peerPresent: boolean
+  relayUrl: string
+  rendezvous: string | null
+  ownKey: string | null
+  peerKey: string | null
+  session: string | null
+  connectedAt: number | null
+  lastError: string | null
+  reconnects: number
+  framesSent: number
+  framesReceived: number
+  bytesSent: number
+  bytesReceived: number
+}
+
+export type MobileStatus = {
+  paired: boolean
+  pairing: {
+    method: 'qr' | 'code'
+    pairedAt: number
+    lastSeenAt: number | null
+    deviceName: string | null
+    /** How the phone describes itself. Null on a phone running an older build. */
+    platform: 'ios' | 'android' | null
+    model: string | null
+    osVersion: string | null
+    appVersion: string | null
+  } | null
+  tunnel: MobileTunnelState | null
+  offer: {
+    mode: 'qr' | 'code'
+    payload: string | null
+    code: string | null
+    expiresAt: number
+  } | null
+  storage: { available: boolean; backend: string }
+  verbose: boolean
+  /** Relay endpoint the tunnel dials — known before pairing, shown in the panel. */
+  relayUrl: string
+  /** What "reset to default" returns to, so the panel needn't hardcode it. */
+  defaultRelayUrl: string
+}
+
+export type MobileApi = {
+  status: () => Promise<MobileStatus>
+  /** Open a QR pairing — the payload is rendered as a QR by the panel. */
+  offerQr: () => Promise<MobileStatus>
+  /** Open a typed-code pairing, for a desktop the phone cannot see. */
+  offerCode: () => Promise<MobileStatus>
+  /** Drop the live link but keep the pairing — the phone reconnects itself. */
+  disconnect: () => Promise<MobileStatus>
+  /** Forget the phone and drop the keys. */
+  unpair: () => Promise<MobileStatus>
+  setVerbose: (verbose: boolean) => Promise<MobileStatus>
+  /**
+   * Point the tunnel at a different relay (null resets to the default).
+   * Rejects on a malformed URL. Changing relay drops any offer or pairing —
+   * both name the old relay — so the panel confirms first.
+   */
+  setRelayUrl: (url: string | null) => Promise<MobileStatus>
+  onStatusChange: (callback: (status: MobileStatus) => void) => () => void
+}
 
 export type TelegramApi = {
   getConfig: () => Promise<TelegramConfig>
@@ -1852,6 +1956,7 @@ export type WolffishApi = {
   variables: VariablesApi
   voice: VoiceApi
   upload: UploadApi
+  mobile: MobileApi
   telegram: TelegramApi
   whatsapp: WhatsAppApi
   inapp: InAppApi
@@ -2026,6 +2131,8 @@ const api: WolffishApi = {
     setUpdatesEnabled: (value) => ipcRenderer.invoke('runtime:setUpdatesEnabled', value),
     setWeekStartsOn: (value) => ipcRenderer.invoke('runtime:setWeekStartsOn', value),
     setLastSettingsState: (patch) => ipcRenderer.invoke('runtime:setLastSettingsState', patch),
+    onPreferencesChanged: (listener) => subscribe('preferences:changed', listener),
+    onMobileSettingsChange: (listener) => subscribe('settings:mobileChange', listener),
     getCompactionConfig: () => ipcRenderer.invoke('runtime:getCompactionConfig'),
     setCompactionConfig: (patch) => ipcRenderer.invoke('runtime:setCompactionConfig', patch),
     getCompactionRuns: () => ipcRenderer.invoke('runtime:getCompactionRuns'),
@@ -2049,11 +2156,13 @@ const api: WolffishApi = {
       ipcRenderer.invoke('cerebellum:toggleCapability', name, enabled),
     importCapability: (sourcePath) => ipcRenderer.invoke('cerebellum:importCapability', sourcePath),
     pickImport: (options) => ipcRenderer.invoke('cerebellum:pickImport', options),
-    deleteCapability: (name) => ipcRenderer.invoke('cerebellum:deleteCapability', name)
+    deleteCapability: (name) => ipcRenderer.invoke('cerebellum:deleteCapability', name),
+    onCapabilitiesChanged: (callback) => subscribe('cerebellum:capabilitiesChanged', callback)
   },
   variables: {
     list: () => ipcRenderer.invoke('variables:list'),
-    save: (variables) => ipcRenderer.invoke('variables:save', variables)
+    save: (variables) => ipcRenderer.invoke('variables:save', variables),
+    onChanged: (listener) => subscribe('variables:changed', listener)
   },
   voice: {
     readFile: (filePath) => ipcRenderer.invoke('voice:readFile', filePath),
@@ -2080,6 +2189,16 @@ const api: WolffishApi = {
     revealInFolder: (relativePath) => ipcRenderer.invoke('upload:revealInFolder', relativePath),
     getPathForFile: (file) => webUtils.getPathForFile(file),
     onCopyProgress: (listener) => subscribe('upload:copyProgress', listener)
+  },
+  mobile: {
+    status: () => ipcRenderer.invoke('mobile:status'),
+    offerQr: () => ipcRenderer.invoke('mobile:offerQr'),
+    offerCode: () => ipcRenderer.invoke('mobile:offerCode'),
+    disconnect: () => ipcRenderer.invoke('mobile:disconnect'),
+    unpair: () => ipcRenderer.invoke('mobile:unpair'),
+    setVerbose: (verbose) => ipcRenderer.invoke('mobile:setVerbose', verbose),
+    setRelayUrl: (url) => ipcRenderer.invoke('mobile:setRelayUrl', url),
+    onStatusChange: (callback) => subscribe('mobile:statusChange', callback)
   },
   telegram: {
     getConfig: () => ipcRenderer.invoke('telegram:getConfig'),

@@ -60,12 +60,18 @@ export function cloudModelSupportsVision(provider: string, model: string): boole
       // whole k2.5+/k3 line. Bare moonshot-v1 models are text-only (their
       // -vision-preview variants carry the name marker above).
       return /^kimi-k(2\.[5-9]|[3-9])/.test(m)
+    case 'qwen':
+      // qwen3.8-max is natively multimodal without a name marker — image
+      // parts verified live 2026-08-03 (16x16 probe answered; note DashScope
+      // 400s on images under 10px, which can masquerade as a modality
+      // reject). Older bare qwen3.x chat models are text-only; the vl/qvq/
+      // omni variants carry name markers.
+      return /^qwen3\.8/.test(m)
     case 'openrouter':
       return openrouterSupportsVision(m)
     default:
-      // qwen, minimax, mimo, and any provider added later: their
-      // multimodal models carry a name marker; bare chat models are
-      // text-only.
+      // minimax, mimo, and any provider added later: their multimodal
+      // models carry a name marker; bare chat models are text-only.
       return false
   }
 }

@@ -273,6 +273,44 @@ export async function saveUploadFromBuffer(
 }
 
 /**
+ * Adopt an already-staged file (a finished chunked upload from the phone) as
+ * a conversation upload. Same naming, collision and classification behavior
+ * as saveUploadFromBuffer, but the bytes move with a rename instead of being
+ * buffered — the staging area lives under the workspace root precisely so
+ * this stays a same-volume atomic move.
+ */
+export async function saveUploadFromFile(
+  conversationId: string,
+  stagedPath: string,
+  originalName: string,
+  mimeHint?: string
+): Promise<UploadedFileMetadata> {
+  const staged = await fs.stat(stagedPath)
+  if (!staged.isFile() || staged.size === 0) {
+    throw new Error('saveUploadFromFile: staged upload is empty')
+  }
+  const dir = conversationUploadsDir(conversationId)
+  await fs.mkdir(dir, { recursive: true })
+
+  const safeName = sanitizeFileName(originalName)
+  const finalName = await uniqueFilename(dir, safeName)
+  const destPath = path.join(dir, finalName)
+  await fs.rename(stagedPath, destPath)
+
+  const { type, mimeType } = classifyFile(finalName, mimeHint)
+  const root = workspaceRoot()
+  const relPath = path.relative(root, destPath)
+
+  return {
+    type,
+    filePath: relPath,
+    originalName: finalName,
+    mimeType,
+    sizeBytes: staged.size
+  }
+}
+
+/**
  * Strip path separators and trim to something safe for the filesystem.
  * Telegram document names come from the user's machine and may contain
  * slashes or null bytes on adversarial input. Empty or all-suspect

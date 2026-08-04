@@ -56,9 +56,18 @@ export function ReflectionPanel(): React.JSX.Element {
     // A reflection/deep-clean job can finish while the panel is open —
     // refresh the cards (both jobs report on the compaction:changed push).
     const off = window.api.runtime.onCompactionChanged(loadRuns)
+    // The paired phone edits the same config over the tunnel; that change
+    // lands here as reflection:changed, so an open panel re-pulls instead of
+    // showing pre-edit values until it is next remounted.
+    const offConfig = window.api.runtime.onReflectionChanged(() => {
+      void window.api.runtime.getReflectionConfig().then((cfg) => {
+        if (!cancelled) setConfig(cfg)
+      })
+    })
     return () => {
       cancelled = true
       off()
+      offConfig()
     }
   }, [])
 

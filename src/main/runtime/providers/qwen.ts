@@ -12,6 +12,7 @@ const QWEN_ENDPOINT = 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/ch
 
 function maxTokensFor(model: string): number {
   const m = model.toLowerCase()
+  if (m.includes('qwen3.8-max')) return 131072
   if (m.includes('qwen3.7-max')) return 65536
   if (m.includes('qwen3.7-plus')) return 65536
   if (m.includes('qwen3.6-max') || m.includes('qwen3.6-plus')) return 65536

@@ -48,6 +48,11 @@ export function CapabilitiesPanel(): React.JSX.Element {
     }
   }, [])
 
+  // Follow toggles made anywhere else — the paired phone, the agent's skills
+  // plugin. Main broadcasts the refreshed list on every capability write, so
+  // a flip on the phone moves this panel's switch the moment it lands.
+  useEffect(() => window.api.cerebellum.onCapabilitiesChanged(setCapabilities), [])
+
   const onResync = async (): Promise<void> => {
     setResyncing(true)
     try {

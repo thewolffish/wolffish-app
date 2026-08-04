@@ -2,7 +2,7 @@ import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn'
 import type { WeekStartsOn } from '@preload/index'
 import { useFlow } from '@providers/flow/useFlow'
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 export function WolffishPanel(): React.JSX.Element {
@@ -25,6 +25,21 @@ export function WolffishPanel(): React.JSX.Element {
     'launchAtStartup' | 'blockCredentials' | 'bypass' | 'restrictModels' | 'weekStart' | null
   >(null)
 
+  // Seed the four config-backed switches from a fresh value set. Reused by
+  // the mount fetch and by both change subscriptions below; launchAtStartup
+  // is deliberately absent everywhere — its switch reflects the OS login
+  // item, not the config mirror of it.
+  const seedFromPatch = useCallback((patch: Record<string, unknown>): void => {
+    if (typeof patch.blockCredentials === 'boolean') setBlockCredentials(patch.blockCredentials)
+    if (typeof patch.bypassPermissions === 'boolean') setBypass(patch.bypassPermissions)
+    if (typeof patch.restrictPowerfulModels === 'boolean') {
+      setRestrictModels(patch.restrictPowerfulModels)
+    }
+    if (patch.weekStartsOn === 0 || patch.weekStartsOn === 1) {
+      setWeekStartsOnState(patch.weekStartsOn)
+    }
+  }, [])
+
   useEffect(() => {
     let cancelled = false
     void window.api.runtime.getLaunchAtStartupStatus().then(({ active }) => {
@@ -32,10 +47,41 @@ export function WolffishPanel(): React.JSX.Element {
       setStartupActive(active)
       setLaunchAtStartupState(active)
     })
+    // The panel may have been opened after a phone or another window edited
+    // these settings — the useState initializers read the flow status from
+    // before that. Start from disk truth rather than the cache.
+    void window.api.workspace.getStatus().then((s) => {
+      if (cancelled || !s?.config) return
+      seedFromPatch({
+        blockCredentials: s.config.safety?.blockCredentials ?? false,
+        bypassPermissions: s.config.safety?.bypassPermissions ?? false,
+        restrictPowerfulModels: s.config.llm.restrictPowerfulModels ?? true,
+        weekStartsOn: s.config.weekStartsOn ?? 1
+      })
+    })
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [seedFromPatch])
+
+  // A paired phone edits these same settings over the tunnel, and another
+  // window can edit them too. Either save announces itself with the applied
+  // values; the switches follow, and the flow status refetches so every other
+  // consumer of the config sees the same truth.
+  useEffect(() => {
+    const onChange = (patch: Record<string, unknown>): void => {
+      seedFromPatch(patch)
+      void refreshStatus()
+    }
+    const offPrefs = window.api.runtime.onPreferencesChanged(onChange)
+    const offMobile = window.api.runtime.onMobileSettingsChange(({ settings }) =>
+      onChange(settings ?? {})
+    )
+    return () => {
+      offPrefs()
+      offMobile()
+    }
+  }, [refreshStatus, seedFromPatch])
 
   const onChangeLaunchAtStartup = async (next: boolean): Promise<void> => {
     if (savingKey !== null || next === launchAtStartup) return

@@ -38,6 +38,7 @@ import { McpPanel } from '@pages/settings/McpPanel'
 import { MemesPanel } from '@pages/settings/MemesPanel'
 import { NotionPanel } from '@pages/settings/NotionPanel'
 import { SpeechToTextPanel } from '@pages/settings/SpeechToTextPanel'
+import { MobilePanel } from '@pages/settings/MobilePanel'
 import { TelegramPanel } from '@pages/settings/TelegramPanel'
 import { TextToSpeechPanel } from '@pages/settings/TextToSpeechPanel'
 import { UpdatesPanel } from '@pages/settings/UpdatesPanel'
@@ -67,6 +68,7 @@ import {
   NeuralNetworkIcon,
   PaintBoardIcon,
   PuzzleIcon,
+  SmartPhone01Icon,
   SmileDizzyIcon,
   VolumeHighIcon,
   WhatsappIcon
@@ -544,6 +546,9 @@ export function Settings(): React.JSX.Element {
         <TabPanel active={active === 'services' && effectiveService === 'stt' && sttAvailable}>
           <SpeechToTextPanel />
         </TabPanel>
+        <TabPanel active={active === 'channels' && channel === 'mobile'}>
+          <MobilePanel />
+        </TabPanel>
         <TabPanel active={active === 'channels' && channel === 'telegram'}>
           <TelegramPanel />
         </TabPanel>
@@ -647,11 +652,12 @@ const PROVIDER_ICONS: Record<
   zai: ZaiLogo
 }
 
-type Channel = 'inapp' | 'telegram' | 'whatsapp'
-const CHANNELS: Channel[] = ['inapp', 'telegram', 'whatsapp']
+type Channel = 'inapp' | 'mobile' | 'telegram' | 'whatsapp'
+const CHANNELS: Channel[] = ['inapp', 'mobile', 'telegram', 'whatsapp']
 
 const CHANNEL_ICONS: Record<Channel, React.ComponentType<{ size?: number }>> = {
   inapp: ComputerIcon,
+  mobile: SmartPhone01Icon,
   telegram: TelegramLogo,
   whatsapp: WhatsappIcon
 }

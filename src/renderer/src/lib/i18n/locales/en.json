@@ -5,6 +5,7 @@
   },
   "common": {
     "back": "Back",
+    "cancel": "Cancel",
     "loading": "Loading…",
     "offline": "No network connection",
     "networkOffline": "No network connection detected",
@@ -466,7 +467,8 @@
       "tabs": {
         "inapp": "In-App",
         "telegram": "Telegram",
-        "whatsapp": "WhatsApp"
+        "whatsapp": "WhatsApp",
+        "mobile": "Mobile"
       }
     },
     "services": {
@@ -1447,6 +1449,86 @@
       "verifyingSubtitle": "Almost done — verifying your update",
       "installReady": "Install downloaded update",
       "updateAvailable": "Ready to install"
+    },
+    "mobile": {
+      "title": "Mobile",
+      "description": "Run Wolffish on your phone as a companion to this desktop — the same conversations, settings and usage, over an end-to-end encrypted tunnel.",
+      "notPaired": "No phone is paired yet. Start a pairing, then open Wolffish on your phone and connect.",
+      "qrTitle": "Pairing QR",
+      "qrDesc": "Generate a QR and scan it with your phone's camera. The secret travels screen to camera — it never crosses the network.",
+      "codeTitle": "Pairing code",
+      "codeDesc": "Generate a short code and type it on your phone — for when the camera can't see this screen.",
+      "codeDescCustomRelay": "Generate a short code and type it on your phone along with your relay's address — the code alone can't carry it. The QR does this for you.",
+      "generate": "Generate",
+      "scanHint": "Open Wolffish on your phone, tap Connect to Desktop, and scan this code.",
+      "codeHint": "Type this code into Wolffish on your phone. Case and dashes don't matter.",
+      "codeRelayHint": "Your phone must use the same relay — enter this address in the Relay card on its pairing screen:",
+      "expires": "Expires in about {{minutes}} min",
+      "newCode": "New code",
+      "qrAlt": "Pairing QR code",
+      "offerFailed": "Could not start pairing.",
+      "unknownDevice": "Phone",
+      "unpair": "Unpair",
+      "relay": "Relay",
+      "rendezvous": "Rendezvous",
+      "keyDesktop": "This desktop",
+      "keyPhone": "Phone",
+      "session": "Session",
+      "cipher": "Cipher",
+      "frames": "Frames",
+      "lastSeen": "Last seen",
+      "fingerprintHint": "Matching values on both devices mean nothing sits in between.",
+      "how": {
+        "title": "How it works",
+        "pairTitle": "Pair once",
+        "pairBody": "The QR or code carries a one-time secret. Each device keeps its own key and pins the other's — no account, no password.",
+        "e2eTitle": "Encrypted end to end",
+        "e2eBody": "Everything is sealed on your devices before it is sent (X25519 · ChaCha20-Poly1305). Only this desktop and your phone hold the keys.",
+        "relayTitle": "Forwarded by a blind relay",
+        "relayBody": "The relay only helps the two devices find each other and passes sealed bytes along. It cannot read, alter or replay them, and it stores nothing — no database, no logs, no accounts, no message history."
+      },
+      "openRelay": "Open in browser",
+      "relayConfig": {
+        "body": "Where the two devices meet to exchange sealed frames. Any deployment of the open-source relay works — run your own, point this at it, and the next pairing carries it to your phone.",
+        "inputLabel": "Relay URL",
+        "apply": "Use this relay",
+        "reset": "Reset to default",
+        "repo": "wolffish-relay on GitHub",
+        "confirmTitle": "Change the relay?",
+        "confirmBody": "This desktop and your phone will meet at:",
+        "confirmCompat": "The relay must be compatible with Wolffish — any deployment of the open-source relay works:",
+        "confirmUnpair": "Your phone is paired through the current relay and will be unpaired. Pair it again after the change.",
+        "confirmApply": "Change relay",
+        "invalid": "That doesn't look like a relay URL. Use wss://host, or paste your relay's https:// address."
+      },
+      "keyStorage": "Pairing keys are stored on this machine using {{backend}}.",
+      "verbose": "Task results",
+      "verboseHint": "Off keeps the phone's feed clean: assistant messages, file-bearing results and errors. On relays every tool call and activity. Connection logging is always on and is not affected by this.",
+      "status": {
+        "connected": "Connected",
+        "connecting": "Connecting",
+        "handshaking": "Securing the link",
+        "waiting-for-peer": "Waiting for the phone",
+        "reconnecting": "Reconnecting",
+        "error": "Not connected",
+        "idle": "Idle"
+      },
+      "toggle": {
+        "off": "Off",
+        "on": "On"
+      },
+      "device": "Device",
+      "pairedAt": "Paired",
+      "appVersion": "App version",
+      "method": "Paired by",
+      "methodValue": {
+        "qr": "QR",
+        "code": "Typed code"
+      },
+      "disconnect": "Disconnect",
+      "disconnectHint": "Cut the link loose. Your phone reconnects the next time it is opened.",
+      "unpairAction": "Unpair",
+      "unpairHint": "Forget this phone and drop its keys. Pairing again needs a new QR or code."
     }
   },
   "update": {

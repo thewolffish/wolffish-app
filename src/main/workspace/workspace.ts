@@ -1203,9 +1203,16 @@ export async function getReflectionConfig(): Promise<ReflectionConfig> {
   return normalizeReflectionConfig(cfg?.reflection)
 }
 
-export async function setReflectionConfig(
-  patch: Partial<ReflectionConfig>
-): Promise<WorkspaceConfig> {
+/**
+ * A partial reflection edit. Distinct from Partial<ReflectionConfig> only in
+ * `scoring`, which may itself be partial — the setter merges flag by flag, so
+ * a caller flipping one surface needn't know (or guess) the other two.
+ */
+export type ReflectionPatch = Partial<Omit<ReflectionConfig, 'scoring'>> & {
+  scoring?: Partial<ReflectionScoringConfig>
+}
+
+export async function setReflectionConfig(patch: ReflectionPatch): Promise<WorkspaceConfig> {
   return patchConfig((c) => {
     const current = normalizeReflectionConfig(c.reflection)
     return {

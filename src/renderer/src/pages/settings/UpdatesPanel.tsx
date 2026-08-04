@@ -45,7 +45,11 @@ export function UpdatesPanel(): React.JSX.Element {
   const updatesEnabled = status?.config?.updates?.enabled !== false
 
   const [appVersion, setAppVersion] = useState<string | null>(null)
-  const [autoUpdates, setAutoUpdates] = useState(updatesEnabled)
+  // The toggle renders desktop truth (flow status), not a mounted-once copy —
+  // a copy went stale the moment the phone flipped the switch. The override
+  // exists only between a click here and the refresh that confirms it.
+  const [pendingAuto, setPendingAuto] = useState<boolean | null>(null)
+  const autoUpdates = pendingAuto ?? updatesEnabled
   const [phase, setPhase] = useState<UpdatePhase>(cachedState.phase)
   const [updateVersion, setUpdateVersion] = useState<string | null>(cachedState.version)
   const [downloadPercent, setDownloadPercent] = useState(cachedState.percent)
@@ -76,6 +80,17 @@ export function UpdatesPanel(): React.JSX.Element {
     }
   }, [])
 
+  // A phone edit lands as settings:mobileChange — pull a fresh status so the
+  // derived value above snaps to what the phone just persisted. Filtered to
+  // this panel's key; every panel watches for its own.
+  useEffect(
+    () =>
+      window.api.runtime.onMobileSettingsChange(({ keys }) => {
+        if (keys.includes('updatesEnabled')) void refreshStatus()
+      }),
+    [refreshStatus]
+  )
+
   useEffect(() => {
     const unsubState = window.api.updater.onState((s) => {
       liveSeen.current = true
@@ -99,11 +114,14 @@ export function UpdatesPanel(): React.JSX.Element {
     async (next: boolean) => {
       if (saving || next === autoUpdates) return
       setSaving(true)
+      setPendingAuto(next)
       try {
         await window.api.runtime.setUpdatesEnabled(next)
-        setAutoUpdates(next)
         await refreshStatus()
       } finally {
+        // Back to derived truth: the refreshed status carries the new value,
+        // and a failed save snaps the toggle to what actually holds.
+        setPendingAuto(null)
         setSaving(false)
       }
     },

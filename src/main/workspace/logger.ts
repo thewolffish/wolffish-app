@@ -34,6 +34,15 @@ export const wlog = {
   info(tag: string, ...args: unknown[]): void {
     void write(fmt('INFO', tag, args))
   },
+  /**
+   * Detail a normal reader does not want but a diagnosis needs — per-frame
+   * activity, resolved values, the step-by-step of a handshake. Same file and
+   * same daily rotation as the rest; the level is what separates it, so a
+   * `grep -v DEBUG` gives back the ordinary story.
+   */
+  debug(tag: string, ...args: unknown[]): void {
+    void write(fmt('DEBUG', tag, args))
+  },
   warn(tag: string, ...args: unknown[]): void {
     void write(fmt('WARN', tag, args))
   },

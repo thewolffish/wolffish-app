@@ -63,9 +63,9 @@ export const PROVIDER_ORDER: ProviderId[] = [
  * from the chat composer's model picker.
  */
 export const DEFAULT_MODEL: Partial<Record<ProviderId, string>> = {
-  deepseek: 'deepseek-v4-pro',
+  deepseek: 'deepseek-v4-flash',
   zai: 'glm-5.2',
-  qwen: 'qwen3.7-max',
+  qwen: 'qwen3.8-max',
   kimi: 'kimi-k3',
   minimax: 'MiniMax-M3',
   mimo: 'mimo-v2.5-pro',
@@ -418,21 +418,21 @@ export const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
   ],
   deepseek: [
     {
-      name: 'deepseek-v4-pro',
-      context: '1M',
-      input: '$0.44',
-      output: '$0.87',
-      cached: '$0.01',
-      badges: ['frontier', 'reasoning'],
-      modes: ['none', 'high', 'max']
-    },
-    {
       name: 'deepseek-v4-flash',
       context: '1M',
       input: '$0.14',
       output: '$0.28',
       cached: '$0.003',
-      badges: ['fast', 'reasoning'],
+      badges: ['frontier', 'fast', 'reasoning'],
+      modes: ['none', 'high', 'max']
+    },
+    {
+      name: 'deepseek-v4-pro',
+      context: '1M',
+      input: '$0.44',
+      output: '$0.87',
+      cached: '$0.004',
+      badges: ['reasoning'],
       modes: ['none', 'high', 'max']
     }
   ],
@@ -656,12 +656,21 @@ export const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
   ],
   qwen: [
     {
+      name: 'qwen3.8-max',
+      context: '1M',
+      input: '$2.00',
+      output: '$6.00',
+      cached: '$0.25',
+      badges: ['frontier', 'vision', 'reasoning'],
+      modes: ['none', 'high', 'max']
+    },
+    {
       name: 'qwen3.7-max',
       context: '1M',
       input: '$2.50',
       output: '$7.50',
       cached: '$0.25',
-      badges: ['frontier', 'reasoning'],
+      badges: ['reasoning'],
       modes: ['none', 'high', 'max']
     },
     {

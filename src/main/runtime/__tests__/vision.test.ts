@@ -69,7 +69,10 @@ const CASES: Array<[provider: string, model: string, vision: boolean]> = [
   ['kimi', 'moonshot-v1-auto', false],
   ['kimi', 'moonshot-v1-8k-vision-preview', true],
   ['kimi', 'kimi-vl-a3b-thinking', true],
-  // qwen
+  // qwen — qwen3.8-max natively multimodal (verified live 2026-08-03);
+  // earlier bare qwen3.x lines stay text-only.
+  ['qwen', 'qwen3.8-max', true],
+  ['qwen', 'qwen3.7-max', false],
   ['qwen', 'qwen-max', false],
   ['qwen', 'qwen-plus', false],
   ['qwen', 'qwen2.5-vl-72b-instruct', true],

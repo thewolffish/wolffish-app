@@ -32,6 +32,12 @@ export type MobilePairing = {
   lastSeenAt: number | null
   /** Free-text label; the phone sends its device name at handshake. */
   deviceName: string | null
+  /** What the phone is, as it describes itself at handshake. All optional —
+   *  a phone on an older build sends only its name. */
+  platform?: 'ios' | 'android' | null
+  model?: string | null
+  osVersion?: string | null
+  appVersion?: string | null
 }
 
 export type MobileIdentity = {
@@ -43,6 +49,8 @@ export type MobileIdentity = {
 type StoredState = {
   identity: MobileIdentity
   pairing: MobilePairing | null
+  /** Power-user relay override; null/absent means the built-in default. */
+  relayUrl?: string | null
 }
 
 function stateFile(): string {
@@ -75,6 +83,14 @@ function open(raw: string): string | null {
 
 let cache: StoredState | null = null
 
+/**
+ * All writes pass through one chain. `write` is a plain whole-file
+ * fs.writeFile, and two of them racing interleave bytes — the connection
+ * storm proved it can happen hundreds of times a second, and a torn file
+ * here is the pairing itself. Reads stay unserialized: they hit the cache.
+ */
+let writeChain: Promise<void> = Promise.resolve()
+
 async function read(): Promise<StoredState | null> {
   if (cache) return cache
   try {
@@ -91,8 +107,14 @@ async function read(): Promise<StoredState | null> {
 async function write(state: StoredState): Promise<void> {
   cache = state
   const file = stateFile()
-  await fs.mkdir(path.dirname(file), { recursive: true })
-  await fs.writeFile(file, seal(JSON.stringify(state)), { mode: 0o600 })
+  const run = async (): Promise<void> => {
+    await fs.mkdir(path.dirname(file), { recursive: true })
+    await fs.writeFile(file, seal(JSON.stringify(state)), { mode: 0o600 })
+  }
+  const chained = writeChain.then(run, run)
+  // The chain must survive a failed write or every later write is skipped.
+  writeChain = chained.catch(() => undefined)
+  await chained
 }
 
 /** The desktop's own keypair, minted once and reused for every pairing. */
@@ -110,7 +132,8 @@ export async function loadIdentity(): Promise<Keypair> {
       privateKey: toBase64Url(keypair.privateKey),
       publicKey: toBase64Url(keypair.publicKey)
     },
-    pairing: state?.pairing ?? null
+    pairing: state?.pairing ?? null,
+    relayUrl: state?.relayUrl ?? null
   })
   return keypair
 }
@@ -125,7 +148,7 @@ export async function savePairing(pairing: MobilePairing): Promise<void> {
   await loadIdentity()
   const state = await read()
   if (!state) throw new Error('mobile identity unavailable')
-  await write({ identity: state.identity, pairing })
+  await write({ identity: state.identity, pairing, relayUrl: state.relayUrl ?? null })
 }
 
 export async function updatePairing(patch: Partial<MobilePairing>): Promise<MobilePairing | null> {
@@ -140,7 +163,22 @@ export async function updatePairing(patch: Partial<MobilePairing>): Promise<Mobi
 export async function clearPairing(): Promise<void> {
   const state = await read()
   if (!state) return
-  await write({ identity: state.identity, pairing: null })
+  await write({ identity: state.identity, pairing: null, relayUrl: state.relayUrl ?? null })
+}
+
+/** The stored relay override, or null when the default applies. */
+export async function loadRelayUrl(): Promise<string | null> {
+  return (await read())?.relayUrl ?? null
+}
+
+/** Persist (or clear, with null) the relay override. Survives unpairing. */
+export async function saveRelayUrl(url: string | null): Promise<void> {
+  // loadIdentity() mints and persists a keypair when none exists, so the
+  // override is never written into a key-less file.
+  await loadIdentity()
+  const state = await read()
+  if (!state) throw new Error('mobile identity unavailable')
+  await write({ identity: state.identity, pairing: state.pairing ?? null, relayUrl: url })
 }
 
 /** Rendezvous ID for the stored pairing, or null when nothing is paired. */

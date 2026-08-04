@@ -52,6 +52,24 @@ export type DailyUsage = {
   totalTokens: number
 }
 
+/** One model's ledger lines on one calendar day, summed. `entries` is the
+ *  line count — the unit the Usage panel calls "messages". */
+export type UsageModelDay = {
+  provider: string
+  model: string
+  inputTokens: number
+  outputTokens: number
+  cost: number
+  entries: number
+}
+
+/** One calendar day of the ledger, as served to the phone. */
+export type UsageDay = {
+  date: string
+  models: UsageModelDay[]
+  braveQueries: number
+}
+
 export type UsageOptions = {
   workspaceRoot?: string
   corpus?: Corpus
@@ -119,7 +137,14 @@ const OPENAI_PRICING: Record<string, ModelPricing> = {
 // https://api-docs.deepseek.com/quick_start/pricing
 // DeepSeek auto-caches at ~2% of input rate; no write premium.
 const DEEPSEEK_PRICING: Record<string, ModelPricing> = {
-  'deepseek-v4-pro': { input: 0.435 / 1e6, output: 0.87 / 1e6, cacheWrite: 1.0, cacheRead: 0.02 },
+  // v4-pro cache hit is $0.003625/M (not 2% of input like the rest of the
+  // lineup) — ratio taken from the live pricing page 2026-08-03.
+  'deepseek-v4-pro': {
+    input: 0.435 / 1e6,
+    output: 0.87 / 1e6,
+    cacheWrite: 1.0,
+    cacheRead: 0.003625 / 0.435
+  },
   'deepseek-v4-flash': { input: 0.14 / 1e6, output: 0.28 / 1e6, cacheWrite: 1.0, cacheRead: 0.02 },
   'deepseek-chat': { input: 0.27 / 1e6, output: 1.1 / 1e6, cacheWrite: 1.0, cacheRead: 0.02 },
   'deepseek-reasoner': { input: 0.55 / 1e6, output: 2.19 / 1e6, cacheWrite: 1.0, cacheRead: 0.02 }
@@ -183,6 +208,7 @@ const MINIMAX_PRICING: Record<string, ModelPricing> = {
 // https://help.aliyun.com/zh/model-studio/billing (DashScope international pricing)
 // Prices in USD per million tokens. Cache multiplier ≈ input discount fraction.
 const QWEN_PRICING: Record<string, ModelPricing> = {
+  'qwen3.8-max': { input: 2.0 / 1e6, output: 6.0 / 1e6, cacheWrite: 1.0, cacheRead: 0.25 / 2.0 },
   'qwen3.7-max': { input: 2.5 / 1e6, output: 7.5 / 1e6, cacheWrite: 1.0, cacheRead: 0.25 / 2.5 },
   'qwen3.7-plus': { input: 0.4 / 1e6, output: 1.6 / 1e6, cacheWrite: 1.0, cacheRead: 0.064 / 0.4 },
   'qwen3.6-max': { input: 1.3 / 1e6, output: 7.8 / 1e6, cacheWrite: 1.0, cacheRead: 0.1 },
@@ -527,6 +553,60 @@ export class Usage {
     }
     return [...byDay.entries()]
       .map(([date, totalTokens]) => ({ date, totalTokens }))
+      .sort((a, b) => a.date.localeCompare(b.date))
+  }
+
+  /**
+   * The whole ledger folded per (day × provider × model) — the rows the phone
+   * ships in its config snapshot and aggregates on device. Nothing is lost in
+   * the fold: every range this class answers is midnight-aligned, so day-level
+   * rows answer the same questions the per-line cache does, and the phone's
+   * Usage screen lands on the same numbers as this app's own panel.
+   *
+   * Day keys are the ledger's local-naive dates (`timestamp.slice(0, 10)`),
+   * the same slice every reader above uses — the two apps can never disagree
+   * about which day a turn belongs to.
+   */
+  async getDays(): Promise<UsageDay[]> {
+    await this.load()
+    const byDay = new Map<string, { models: Map<string, UsageModelDay>; braveQueries: number }>()
+    const dayFor = (date: string): { models: Map<string, UsageModelDay>; braveQueries: number } => {
+      let day = byDay.get(date)
+      if (!day) {
+        day = { models: new Map(), braveQueries: 0 }
+        byDay.set(date, day)
+      }
+      return day
+    }
+    for (const entry of this.cache) {
+      const day = dayFor(entry.timestamp.slice(0, 10))
+      const key = `${entry.provider} ${entry.model}`
+      let row = day.models.get(key)
+      if (!row) {
+        row = {
+          provider: entry.provider,
+          model: entry.model,
+          inputTokens: 0,
+          outputTokens: 0,
+          cost: 0,
+          entries: 0
+        }
+        day.models.set(key, row)
+      }
+      row.inputTokens += entry.inputTokens
+      row.outputTokens += entry.outputTokens
+      row.cost += entry.cost
+      row.entries += 1
+    }
+    for (const query of this.braveCache) {
+      dayFor(query.timestamp.slice(0, 10)).braveQueries += 1
+    }
+    return [...byDay.entries()]
+      .map(([date, day]) => ({
+        date,
+        models: [...day.models.values()],
+        braveQueries: day.braveQueries
+      }))
       .sort((a, b) => a.date.localeCompare(b.date))
   }
 

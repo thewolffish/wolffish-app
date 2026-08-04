@@ -6,6 +6,7 @@ import { turnRouter } from '@main/channels/channel'
 import { collectChannelStatus } from '@main/channels/status'
 import { ElectronChannel } from '@main/channels/electron/channel'
 import { ExtensionServer } from '@main/channels/extension/server'
+import { MobileChannel } from '@main/channels/mobile/channel'
 import { TelegramChannel } from '@main/channels/telegram/channel'
 import { TurnRunner, type ActiveRun } from '@main/channels/turn-runner'
 import { WhatsAppChannel } from '@main/channels/whatsapp/channel'
@@ -784,12 +785,21 @@ const turnRunner = new TurnRunner(agent)
 // Every turn's lifecycle (any channel) is broadcast so the renderer's
 // Conversations sidebar can show live status chips for in-app, WhatsApp,
 // Telegram runs alike.
-turnRunner.setLifecycleListener((ev) => broadcast('chat:turnState', ev))
+turnRunner.setLifecycleListener((ev) => {
+  broadcast('chat:turnState', ev)
+  // The phone is a second view of this app, not a channel being relayed to:
+  // a turn started anywhere — in-app, Telegram, WhatsApp, the phone itself —
+  // has to show up there as it happens, exactly as it does in the sidebar.
+  pushTurnToMobile(ev)
+})
 // Autonomous heartbeat/procedure runs never pass through the TurnRunner —
 // they end inside Agent.processAutonomous. Broadcast their terminal lifecycle
 // through the SAME chat:turnState event, so their sealed conversations get
 // the fresh success/danger chip tint in the rail exactly like a channel run.
-agent.setAutonomousLifecycleListener((ev) => broadcast('chat:turnState', ev))
+agent.setAutonomousLifecycleListener((ev) => {
+  broadcast('chat:turnState', ev)
+  pushTurnToMobile(ev)
+})
 // Relay conversation deletions to the renderer so the sidebar prunes its live
 // run-status — a channel-side /delete never touches the renderer otherwise.
 agent.corpus.on('conversation.deleted', ({ id }) => broadcast('conversation:deleted', { id }))
@@ -818,6 +828,257 @@ agent.corpus.on('index.reindexed', () => broadcast('conversation:changed', {}))
 const electronChannel = new ElectronChannel(agent, turnRunner)
 const telegramChannel = new TelegramChannel(agent, turnRunner, localProvider)
 const whatsappChannel = new WhatsAppChannel(agent, turnRunner, localProvider)
+
+/**
+ * The phone is a second view of this app, not a chat channel: it renders the
+ * conversation list, most settings and usage, so the channel serves a config
+ * snapshot and a metadata index rather than a message stream. Everything it
+ * pushes below keeps that view live without the phone polling.
+ */
+/** Assigned once the settings IPC scope defines it; see below. */
+let mobileSerializeCapabilities: () => Promise<
+  Array<{
+    name: string
+    description: string
+    enabled: boolean
+    official: boolean
+    core: boolean
+    hasPlugin: boolean
+    toolCount: number
+    requires: string[]
+  }>
+> = async () => []
+
+/**
+ * Assigned in the same scope. Throwing is the honest default: a toggle
+ * silently dropped would answer the phone with success and revert later,
+ * which is worse than an RPC error it can act on. Unreachable in practice —
+ * the tunnel only starts after the settings scope has run.
+ */
+let mobileSetCapabilityEnabled: (name: string, enabled: boolean) => Promise<boolean> = async () => {
+  throw new Error('capability toggle not ready')
+}
+
+/**
+ * The phone edited a setting. Every key maps onto the exact setter
+ * the desktop's own panel calls — same persistence, same cache resets — so a
+ * change is live for the agent immediately, no matter which screen made it.
+ *
+ * A whitelist, deliberately: the phone names flat keys from its own config
+ * surface, and anything unlisted throws — the phone treats the error as a
+ * refusal and refetches the snapshot, so an out-of-date app can never write
+ * somewhere unexpected. The extension PORT is deliberately absent: moving it
+ * restarts the local pairing server, which is the desktop's own act.
+ */
+async function applyMobileSettings(settings: Record<string, unknown>): Promise<void> {
+  const str = (value: unknown): string => (typeof value === 'string' ? value : String(value ?? ''))
+  const int = (value: unknown): number | null => {
+    const n = Math.round(Number(value))
+    return Number.isFinite(n) && n > 0 ? n : null
+  }
+  const applied: string[] = []
+  for (const [key, value] of Object.entries(settings)) {
+    switch (key) {
+      case 'braveEnabled':
+        await persistBraveConfig({ enabled: value === true })
+        braveService.resetCache()
+        break
+      case 'braveApiKey':
+        await persistBraveConfig({ apiKey: str(value) })
+        braveService.resetCache()
+        break
+      case 'imgflipUsername':
+      case 'imgflipPassword': {
+        const memes = await getMemesConfig()
+        await persistMemesConfig({
+          imgflip: {
+            username: key === 'imgflipUsername' ? str(value) : memes.imgflip.username,
+            password: key === 'imgflipPassword' ? str(value) : memes.imgflip.password
+          }
+        })
+        memesService.resetCache()
+        break
+      }
+      case 'giphyApiKey':
+        await persistMemesConfig({ giphy: { apiKey: str(value) } })
+        memesService.resetCache()
+        break
+      case 'memesEnabled':
+        // The memes switch is the capability itself — same path as the
+        // Capabilities screen, locked-core guard and panel refresh included.
+        await mobileSetCapabilityEnabled('memes', value === true)
+        break
+      case 'sttModel':
+        await persistSttConfig({ defaultModel: str(value) })
+        break
+      case 'ttsVoice':
+        await persistTtsConfig({ defaultVoice: str(value) })
+        break
+      case 'ttsSpeed':
+        await persistTtsConfig({ defaultSpeed: str(value) })
+        break
+      case 'screenshotMaxWidth': {
+        const width = int(value)
+        if (width) await persistComputerUseConfig({ screenshotMaxWidth: width })
+        break
+      }
+      case 'screenshotFormat':
+        await persistComputerUseConfig({ screenshotFormat: value === 'png' ? 'png' : 'jpeg' })
+        break
+      case 'browserScreenshotMaxWidth': {
+        const width = int(value)
+        if (width) await persistBrowserExtensionConfig({ screenshotMaxWidth: width })
+        break
+      }
+      case 'browserScreenshotFormat':
+        await persistBrowserExtensionConfig({ screenshotFormat: value === 'png' ? 'png' : 'jpeg' })
+        break
+      case 'browserScreenshotQuality': {
+        const quality = int(value)
+        if (quality) {
+          await persistBrowserExtensionConfig({ screenshotQuality: Math.min(100, quality) })
+        }
+        break
+      }
+      // Preferences — mirroring the runtime:* IPC handlers exactly: persist,
+      // then update the live runtime the same way a click in the panel does.
+      case 'restrictPowerfulModels':
+        await persistRestrictPowerfulModels(value === true)
+        break
+      case 'bypassPermissions':
+        await persistBypassPermissions(value === true)
+        agent.amygdala.setBypassPermissions(value === true)
+        break
+      case 'blockCredentials':
+        await persistBlockCredentials(value === true)
+        turnRunner.setBlockCredentials(value === true)
+        break
+      case 'updatesEnabled':
+        await patchConfig((c) => ({
+          ...c,
+          updates: { ...(c.updates ?? { enabled: true }), enabled: value === true }
+        }))
+        break
+      default:
+        throw new Error(`"${key}" is not editable from the phone`)
+    }
+    applied.push(key)
+  }
+  // One broadcast for the lot: the renderer hears it like any settings save,
+  // and the broadcast hook's config.changed push is the phone's confirmation.
+  // The applied values ride along so a listening panel can seed its controls
+  // straight from the payload instead of refetching first.
+  if (applied.length) broadcast('settings:mobileChange', { keys: applied, settings })
+}
+
+/**
+ * Persist a reflection patch and fan the change out — one path however the
+ * change arrives (settings IPC or the phone's tunnel RPC). The renderer
+ * broadcast keeps an open ReflectionPanel and the Chat rating bar current,
+ * and doubles (via the generic hook in broadcast()) as the config.changed
+ * push that tells the phone to refresh.
+ */
+async function applyReflectionPatch(
+  patch: import('@main/workspace/workspace').ReflectionPatch
+): Promise<import('@main/workspace/workspace').ReflectionConfig> {
+  const updated = await persistReflectionConfig(patch)
+  const cfg = normalizeReflectionConfig(updated.reflection)
+  agent.brainstem.setReflectionConfig(cfg)
+  broadcast('reflection:changed', {})
+  return cfg
+}
+
+/**
+ * Where this build keeps its own release notes — src/changelog in dev, the
+ * packaged resources copy in production. One resolver shared by the updater
+ * IPC and the phone's changelog RPC, so the two readers can never diverge.
+ */
+function changelogDir(): string {
+  return is.dev
+    ? join(app.getAppPath(), 'src', 'changelog')
+    : join(process.resourcesPath, 'changelog')
+}
+
+/** Months with notes, newest first — `YYYY-MM` directory names only. */
+async function listChangelogMonths(): Promise<string[]> {
+  const { readdir } = await import('node:fs/promises')
+  try {
+    const entries = await readdir(changelogDir(), { withFileTypes: true })
+    return entries
+      .filter((entry) => entry.isDirectory() && /^\d{4}-\d{2}$/.test(entry.name))
+      .map((entry) => entry.name)
+      .sort()
+      .reverse()
+  } catch {
+    return []
+  }
+}
+
+/** One month's notes in one language, English fallback — null when absent. */
+async function readChangelogMarkdown(month: string, locale?: string): Promise<string | null> {
+  const { readFile } = await import('node:fs/promises')
+  for (const lang of [locale ?? 'en', 'en']) {
+    try {
+      return await readFile(join(changelogDir(), month, `${lang}.md`), 'utf8')
+    } catch {
+      // try the next language
+    }
+  }
+  return null
+}
+
+const mobileChannel = new MobileChannel({
+  agent,
+  runner: turnRunner,
+  serializeCapabilities: () => mobileSerializeCapabilities(),
+  // The phone's reflection controls write through to the same config the
+  // settings panel edits; run-now rides the same brainstem queue. The wire
+  // patch may carry a PARTIAL scoring map; the workspace stores the full
+  // record, so the gaps are filled from the config on disk before persisting.
+  applyReflectionConfig: async (patch) => {
+    const scoring = patch.scoring
+      ? {
+          ...normalizeReflectionConfig((await readConfig())?.reflection).scoring,
+          ...patch.scoring
+        }
+      : undefined
+    return applyReflectionPatch({ ...patch, ...(scoring ? { scoring } : {}) })
+  },
+  runReflectionJob: async (kind) =>
+    kind === 'deepClean' ? agent.brainstem.runDeepCleanNow() : agent.brainstem.runReflectionNow(),
+  // The phone's capability toggle takes the exact same path as a click in
+  // this app's own settings panel — write, guards, broadcast and all.
+  applyCapability: (name, enabled) => mobileSetCapabilityEnabled(name, enabled),
+  applySettings: (settings) => applyMobileSettings(settings),
+  // Variables from the phone persist through the same save the panel's IPC
+  // uses, renderer broadcast included — one path, whoever wrote.
+  applyVariables: (variables) => saveVariablesEverywhere(variables),
+  // No range filter: the phone aggregates the whole ledger locally, exactly
+  // as the desktop Usage panel does. agent.usage folds the same per-line
+  // cache the panel reads, so the two screens can never disagree.
+  usageDays: () => agent.usage.getDays(),
+  dataAnalytics: () => getDataAnalytics(),
+  // Same probes the Ollama settings IPC uses — default endpoint, live answer.
+  ollamaRunning: () => detectOllama(),
+  ollamaModels: async () => (await listTags()).map((tag) => tag.name),
+  projects: () => listProjects(),
+  compactionRuns: () => agent.brainstem.getCompactionRuns(),
+  // This build's own release notes for the phone's What's-new page: the month
+  // list rides the snapshot, bodies are served one month at a time.
+  changelogMonths: () => listChangelogMonths(),
+  readChangelog: (month, locale) => readChangelogMarkdown(month, locale),
+  // Deliberately lazy: extensionServer is constructed a few statements below,
+  // and this closure only runs once a phone asks for a snapshot.
+  extensionStatus: async () => extensionServer.getStatus(),
+  onStatus: (status) => broadcast('mobile:statusChange', status),
+  // Connection logging is unconditional — a link that will not form is
+  // exactly when the record is needed, and it lands in the workspace log
+  // beside every other channel's, rotated per day like the rest.
+  log: (line) => wlog.info('mobile', line),
+  // The same file, one level down: served RPCs, pushes, per-frame counters.
+  // `grep -v DEBUG` on the day's log gives back the ordinary story.
+  debug: (line) => wlog.debug('mobile', line)
+})
 // Live-mirror in-flight channel turns into the in-app view: a Telegram/WhatsApp
 // run streams throttled assistant-message snapshots to the renderer so an open
 // conversation reflects it AS IT HAPPENS, instead of the whole transcript
@@ -835,6 +1096,39 @@ const mirrorMessageToRenderer = (conversationId: string, message: ConversationMe
     broadcast('conversation:messageMirror', { conversationId, message })
   } catch {
     // a broken renderer bridge must never affect the channel turn
+  }
+  try {
+    // The phone gets the same in-flight snapshot the renderer does, so a
+    // Telegram or WhatsApp run is visible there while it is still writing.
+    //
+    // Sent as a *snapshot*, not as an append: these arrive many times per
+    // turn, and treating each as a finished message would have the phone
+    // re-pull the whole conversation body on every throttle tick. The final
+    // state arrives once, through the turn's terminal lifecycle push.
+    const text = typeof message?.content === 'string' ? message.content : null
+    if (text !== null) mobileChannel.pushMessageSnapshot(conversationId, text)
+  } catch {
+    // and neither must a broken tunnel
+  }
+}
+
+/**
+ * Turn lifecycle → the phone. `started` lets it show the conversation as
+ * running; the terminal phases tell it the stored body is now behind, which
+ * is what makes a run started elsewhere land on the phone without the user
+ * doing anything.
+ */
+function pushTurnToMobile(ev: {
+  phase: string
+  conversationId: string | null
+  channel?: string
+}): void {
+  if (!ev.conversationId) return
+  try {
+    mobileChannel.pushTurnStatus(ev.conversationId, ev.phase, ev.channel ?? null)
+    if (ev.phase !== 'started') void pushConversationToMobile(ev.conversationId)
+  } catch {
+    // never let a dead tunnel disturb a turn
   }
 }
 telegramChannel.setMessageMirror(mirrorMessageToRenderer)
@@ -1248,10 +1542,99 @@ function broadcastThemeUpdate(): void {
   }
 }
 
+/**
+ * Push one conversation's metadata to the phone. Metadata only, matching the
+ * index: the phone fetches the body when the user opens it.
+ */
+async function pushConversationToMobile(id: string): Promise<void> {
+  try {
+    const all = await listConversations()
+    const meta = all.find((row) => row.id === id)
+    if (!meta) return
+    mobileChannel.pushConversationUpserted({
+      id: meta.id,
+      title: meta.title,
+      model: null,
+      channel: meta.channel ?? null,
+      icon: meta.icon ?? null,
+      projectId: meta.projectId ?? null,
+      sealed: false,
+      createdAt: meta.updatedAt,
+      updatedAt: meta.updatedAt,
+      messageCount: meta.messageCount,
+      stats: null,
+      summary: null
+    })
+  } catch {
+    // A push that cannot be built must never disturb the desktop's own save.
+  }
+}
+
+/**
+ * Renderer broadcasts that are NOT a change to desktop-owned configuration.
+ *
+ * A denylist, deliberately, not an allowlist: the phone mirrors the whole
+ * settings surface, and a setting added next month must reach it without
+ * anyone remembering to wire a push. Anything not named here is assumed to
+ * have moved config, which costs one cheap snapshot fetch and can never leave
+ * the phone stale. Named here are the high-frequency streams and the signals
+ * that already have their own targeted mobile push.
+ */
+const MOBILE_CONFIG_SILENT = new Set([
+  'app:closingPending',
+  'chat:turnState',
+  'conversation:changed',
+  'conversation:deleted',
+  'conversation:messageMirror',
+  'conversation:ratingChanged',
+  'conversation:summaryUpdated',
+  'diagnostics:progress',
+  'heartbeat:jobLog',
+  'mobile:statusChange',
+  'model:pullProgress',
+  'projects:copyProgress',
+  'reindex:progress'
+])
+
+/** Coalesces a burst of config broadcasts into one push. */
+let mobileConfigPushTimer: ReturnType<typeof setTimeout> | null = null
+
 function broadcast<T>(channel: string, payload: T): void {
   for (const w of BrowserWindow.getAllWindows()) {
     w.webContents.send(channel, payload)
   }
+  // Same signal, second audience. Saving a setting fires one of these on
+  // every path there is, so hooking here covers them all at once instead of
+  // one remembered push per handler.
+  if (!MOBILE_CONFIG_SILENT.has(channel)) {
+    if (mobileConfigPushTimer) clearTimeout(mobileConfigPushTimer)
+    mobileConfigPushTimer = setTimeout(() => {
+      mobileConfigPushTimer = null
+      // Guarded twice over: an unconnected phone means there is no work worth
+      // doing, and a throw escaping a timer callback takes the main process
+      // with it — this runs on every settings change, so it must be inert
+      // when anything about the tunnel is wrong.
+      try {
+        if (mobileChannel.hasPeer) mobileChannel.pushConfigChanged(channel)
+      } catch {
+        // a dead tunnel is not the settings save's problem
+      }
+    }, 300)
+  }
+}
+
+/**
+ * The one save path for variables, whatever the origin. The settings panel's
+ * IPC and the phone's tunnel RPC both land here, so a save persists once and
+ * every other surface hears about it in the same breath: open renderer panels
+ * through 'variables:changed', and the phone through the config.changed push
+ * broadcast() already schedules for any non-silent channel. Writes apply in
+ * arrival order under the config lock — last write wins, both screens
+ * converge on it.
+ */
+async function saveVariablesEverywhere(variables: Variable[]): Promise<void> {
+  await persistVariables(variables)
+  broadcast('variables:changed', { variables })
 }
 
 async function shutdownGracefully(): Promise<void> {
@@ -1496,11 +1879,16 @@ app.whenReady().then(async () => {
   ipcMain.handle('runtime:setBypassPermissions', async (_e, value: boolean) => {
     await persistBypassPermissions(value)
     agent.amygdala.setBypassPermissions(value)
+    // Announced like every other settings save: other windows re-seed, and
+    // the broadcast hook's config.changed push tells a paired phone now
+    // rather than on its next screen focus.
+    broadcast('preferences:changed', { bypassPermissions: value })
     return { value }
   })
   ipcMain.handle('runtime:setBlockCredentials', async (_e, value: boolean) => {
     await persistBlockCredentials(value)
     turnRunner.setBlockCredentials(value)
+    broadcast('preferences:changed', { blockCredentials: value })
     return { value }
   })
   ipcMain.handle('runtime:setLocalOnly', async (_e, value: boolean) => {
@@ -1510,6 +1898,7 @@ app.whenReady().then(async () => {
   })
   ipcMain.handle('runtime:setRestrictPowerfulModels', async (_e, value: boolean) => {
     await persistRestrictPowerfulModels(value)
+    broadcast('preferences:changed', { restrictPowerfulModels: value })
     return { value }
   })
   ipcMain.handle('runtime:setThinkingMode', async (_e, model: string, mode: string) => {
@@ -1520,6 +1909,7 @@ app.whenReady().then(async () => {
     app.setLoginItemSettings({ openAtLogin: value })
     await persistLaunchAtStartup(value)
     const { openAtLogin } = app.getLoginItemSettings()
+    broadcast('preferences:changed', { launchAtStartup: value })
     return { value, active: openAtLogin }
   })
 
@@ -1532,7 +1922,7 @@ app.whenReady().then(async () => {
     return getVariables()
   })
   ipcMain.handle('variables:save', async (_e, variables: Variable[]): Promise<{ ok: true }> => {
-    await persistVariables(variables)
+    await saveVariablesEverywhere(variables)
     return { ok: true }
   })
 
@@ -2312,6 +2702,8 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('data:getAnalytics', (): Promise<DataAnalytics> => getDataAnalytics())
 
+  // The mobile channel needs the same list; publish the closure so it can be
+  // called from outside this scope rather than reimplementing the mapping.
   const serializeCapabilities = async (): Promise<
     Array<{
       name: string
@@ -2346,6 +2738,78 @@ app.whenReady().then(async () => {
       }))
   }
 
+  mobileSerializeCapabilities = serializeCapabilities
+
+  /**
+   * The one implementation of "flip a capability". The settings IPC below,
+   * the skills plugin's host bridge and the paired phone all call this, so a
+   * toggle behaves identically whoever asked for it: the locked-core guard,
+   * the config write, the live cerebellum update, and one broadcast that
+   * refreshes every audience at once — this app's own panel directly, and the
+   * phone via the broadcast hook's config.changed push. Returns the enabled
+   * state that actually holds, which is how a refused write answers.
+   *
+   * The disabled set is computed inside patchConfig's lock, against the
+   * config actually on disk: two toggles racing (a click here while the phone
+   * flips something else) must merge, not overwrite each other.
+   */
+  const setCapabilityEnabled = async (name: string, enabled: boolean): Promise<boolean> => {
+    // Refused before anything persists: every caller toggles names it was
+    // just shown, so an unknown one is a stale screen, not a request.
+    if (!agent.cerebellum.getCapabilities().some((c) => c.name === name)) {
+      throw new Error(`unknown capability: ${name}`)
+    }
+    // Locked core capabilities can never be disabled — refuse the write so a
+    // stray call can't persist a disabled entry the runtime would ignore anyway.
+    if (!enabled && LOCKED_CAPABILITIES.has(name)) return true
+    const next = await patchConfig((c) => {
+      const disabled = new Set(c.disabledCapabilities ?? [])
+      if (enabled) disabled.delete(name)
+      else disabled.add(name)
+      return { ...c, disabledCapabilities: [...disabled] }
+    })
+    agent.cerebellum.setDisabled(next.disabledCapabilities ?? [])
+    broadcast('cerebellum:capabilitiesChanged', await serializeCapabilities())
+    return enabled
+  }
+
+  mobileSetCapabilityEnabled = setCapabilityEnabled
+
+  // ---------------------------------------------------------------- mobile
+  ipcMain.handle('mobile:status', () => mobileChannel.getStatus())
+  ipcMain.handle('mobile:offerQr', () => mobileChannel.offerQr())
+  ipcMain.handle('mobile:offerCode', () => mobileChannel.offerCode())
+  ipcMain.handle('mobile:disconnect', () => mobileChannel.disconnect())
+  ipcMain.handle('mobile:unpair', () => mobileChannel.unpair())
+  ipcMain.handle('mobile:setVerbose', (_event, verbose: boolean) => {
+    mobileChannel.setVerbose(Boolean(verbose))
+    return mobileChannel.getStatus()
+  })
+  ipcMain.handle('mobile:setRelayUrl', (_event, url: string | null) =>
+    mobileChannel.setRelayUrl(typeof url === 'string' ? url : null)
+  )
+
+  // Restore a stored pairing so a phone that was connected yesterday
+  // reconnects without anyone touching either device.
+  void mobileChannel.start().catch(() => undefined)
+
+  // Keep the phone's list live: the same corpus signals that refresh this
+  // app's own list are forwarded over the tunnel.
+  agent.corpus.on('conversation.changed', (event) => {
+    if (event?.conversationId) void pushConversationToMobile(event.conversationId)
+  })
+  agent.corpus.on('conversation.deleted', (event) => {
+    if (event?.id) mobileChannel.pushConversationDeleted(event.id)
+  })
+  agent.corpus.on('conversation.rated', () => mobileChannel.pushUsageChanged())
+  // Every recorded turn moves the ledger — from ANY channel, not just runs
+  // the phone can see. Without this the phone's Usage screen only advanced
+  // when a turn happened to be scored.
+  agent.corpus.on('usage.recorded', () => mobileChannel.pushUsageChanged())
+  // Brainstem runs rewrite the last-run records the phone's Knowledge screen
+  // shows; the generic broadcast hook never sees them (no renderer IPC fires).
+  agent.corpus.on('brainstem.jobCompleted', () => mobileChannel.pushConfigChanged('brainstem'))
+
   ipcMain.handle('cerebellum:listCapabilities', async () => {
     await agent.init()
     return serializeCapabilities()
@@ -2357,16 +2821,7 @@ app.whenReady().then(async () => {
   })
 
   ipcMain.handle('cerebellum:toggleCapability', async (_e, name: string, enabled: boolean) => {
-    // Locked core capabilities can never be disabled — refuse the write so a
-    // stray call can't persist a disabled entry the runtime would ignore anyway.
-    if (!enabled && LOCKED_CAPABILITIES.has(name)) return
-    const cfg = await readConfig()
-    const disabled = new Set(cfg?.disabledCapabilities ?? [])
-    if (enabled) disabled.delete(name)
-    else disabled.add(name)
-    const list = [...disabled]
-    await patchConfig((c) => ({ ...c, disabledCapabilities: list }))
-    agent.cerebellum.setDisabled(list)
+    await setCapabilityEnabled(name, enabled)
   })
 
   // Import a user-supplied capability (SKILL.md / folder / .zip) into
@@ -2459,13 +2914,7 @@ app.whenReady().then(async () => {
       }))
     },
     setCapabilityEnabled: async (name, enabled) => {
-      const cfg = await readConfig()
-      const disabled = new Set(cfg?.disabledCapabilities ?? [])
-      if (enabled) disabled.delete(name)
-      else disabled.add(name)
-      const list = [...disabled]
-      await patchConfig((c) => ({ ...c, disabledCapabilities: list }))
-      agent.cerebellum.setDisabled(list)
+      await setCapabilityEnabled(name, enabled)
     },
     deleteCapability: async (name) => {
       const cap = agent.cerebellum.getCapabilities().find((c) => c.name === name)
@@ -3011,6 +3460,7 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('runtime:setWeekStartsOn', async (_e, value: WeekStartsOn) => {
     await persistWeekStartsOn(value)
+    broadcast('preferences:changed', { weekStartsOn: value })
     return { value }
   })
   ipcMain.handle('runtime:getCompactionConfig', async () => {
@@ -3033,13 +3483,10 @@ app.whenReady().then(async () => {
   })
   ipcMain.handle(
     'runtime:setReflectionConfig',
-    async (_e, patch: Partial<import('@main/workspace/workspace').ReflectionConfig>) => {
-      const updated = await persistReflectionConfig(patch)
-      const cfg = normalizeReflectionConfig(updated.reflection)
-      agent.brainstem.setReflectionConfig(cfg)
-      // The Chat page gates its rating bar on scoring.inapp; push the change.
-      broadcast('reflection:changed', {})
-      return cfg
+    async (_e, patch: import('@main/workspace/workspace').ReflectionPatch) => {
+      // Shared with the phone's tunnel RPC — persist, reschedule, announce
+      // (the reflection:changed broadcast covers the Chat rating bar too).
+      return applyReflectionPatch(patch)
     }
   )
   ipcMain.handle('runtime:runReflectionNow', async () => {
@@ -3112,38 +3559,16 @@ app.whenReady().then(async () => {
     return true
   })
 
-  ipcMain.handle('updater:listChangelogMonths', async () => {
-    const { readdir } = await import('node:fs/promises')
-    const base = is.dev
-      ? join(app.getAppPath(), 'src', 'changelog')
-      : join(process.resourcesPath, 'changelog')
-    try {
-      const entries = await readdir(base, { withFileTypes: true })
-      return entries
-        .filter((e) => e.isDirectory() && /^\d{4}-\d{2}$/.test(e.name))
-        .map((e) => e.name)
-        .sort()
-        .reverse()
-    } catch {
-      return []
-    }
-  })
+  // Same readers the phone's changelog RPC uses (changelogDir and friends,
+  // beside applyMobileSettings). The renderer contract keeps '' for a month
+  // with no page — the Changelog screen renders that as its empty state.
+  ipcMain.handle('updater:listChangelogMonths', () => listChangelogMonths())
 
-  ipcMain.handle('updater:readChangelog', async (_event, month: string, locale?: string) => {
-    const { readFile } = await import('node:fs/promises')
-    const lang = locale ?? 'en'
-    const base = is.dev
-      ? join(app.getAppPath(), 'src', 'changelog')
-      : join(process.resourcesPath, 'changelog')
-    for (const l of [lang, 'en']) {
-      try {
-        return await readFile(join(base, month, `${l}.md`), 'utf8')
-      } catch {
-        // try next
-      }
-    }
-    return ''
-  })
+  ipcMain.handle(
+    'updater:readChangelog',
+    async (_event, month: string, locale?: string) =>
+      (await readChangelogMarkdown(month, locale)) ?? ''
+  )
 
   ipcMain.handle('workspace:getModelCatalog', () => MODEL_CATALOG)
 
@@ -3447,7 +3872,9 @@ app.whenReady().then(async () => {
       // partial list. Prefer the disk scan for the rebuild's duration
       // (~140ms per call, rare: schema bumps + explicit rebuilds only).
       if (agent.cortex.getReindexStatus()) return listConversations()
-      const rows = agent.cortex.listConversations({ limit: 500 })
+      // No window: this is the full Conversations list, and it has to agree
+      // with what the phone shows — the phone reads the same workspace.
+      const rows = agent.cortex.listConversations({ limit: Number.MAX_SAFE_INTEGER })
       if (rows.length > 0) {
         return rows.map((r) => ({
           id: r.id,

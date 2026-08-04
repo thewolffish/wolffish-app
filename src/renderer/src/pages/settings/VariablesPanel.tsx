@@ -1,6 +1,6 @@
 import { cn } from '@lib/utils/cn'
 import type { Variable } from '@preload/index'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Add01Icon, Delete02Icon, ViewIcon, ViewOffIcon } from 'hugeicons-react'
 
@@ -16,17 +16,40 @@ export function VariablesPanel(): React.JSX.Element {
   const [revealedIndices, setRevealedIndices] = useState<Set<number>>(new Set())
   const [editingIndex, setEditingIndex] = useState<number | null>(null)
   const [editingValue, setEditingValue] = useState('')
+  /** Name of the row being value-edited — lets an external update re-anchor
+   *  the edit after rows shift, without capturing stale state in the
+   *  subscription closure below. */
+  const editingNameRef = useRef<string | null>(null)
 
   useEffect(() => {
     let stale = false
+    let pushed = false
     window.api.variables.list().then((list) => {
-      if (!stale) {
+      // A change push that lands while list() is in flight is strictly newer
+      // than what list() read — the slow answer must not overwrite it.
+      if (!stale && !pushed) {
         setVariables(list)
         setLoaded(true)
       }
     })
+    // A save from anywhere else — another window, or the paired phone — lands
+    // here with the array that now holds. Apply it as-is (last write wins,
+    // same as the desktop's own saves), and re-anchor an in-progress value
+    // edit onto the row's new position; if the row is gone, the edit is over.
+    const unsubscribe = window.api.variables.onChanged(({ variables: next }) => {
+      pushed = true
+      setVariables(next)
+      setLoaded(true)
+      setEditingIndex((prev) => {
+        if (prev === null) return null
+        const name = editingNameRef.current
+        const at = name === null ? -1 : next.findIndex((v) => v.name === name)
+        return at === -1 ? null : at
+      })
+    })
     return () => {
       stale = true
+      unsubscribe()
     }
   }, [])
 
@@ -73,6 +96,7 @@ export function VariablesPanel(): React.JSX.Element {
   }
 
   const startEditValue = (index: number): void => {
+    editingNameRef.current = variables[index].name
     setEditingIndex(index)
     setEditingValue(variables[index].value)
   }

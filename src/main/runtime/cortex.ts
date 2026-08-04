@@ -628,7 +628,11 @@ export class Cortex {
       params.push(opts.before)
     }
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
-    params.push(Math.min(Math.max(opts.limit ?? 30, 1), 500))
+    // Ceiling, not a page size: callers that want a window pass one, and the
+    // conversations list wants all of them. Capping here silently truncated
+    // it at 500 — the desktop showed a short list while the phone, which
+    // reads from disk, showed every conversation there actually is.
+    params.push(Math.min(Math.max(opts.limit ?? 30, 1), 1_000_000))
     const rows = db
       .prepare(
         `SELECT id, title, channel, created_at, updated_at, message_count, size_bytes, sealed, project_id, icon, source_file
