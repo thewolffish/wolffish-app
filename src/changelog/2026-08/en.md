@@ -1,4 +1,30 @@
-## v1.0.234 — 2026-08-01 `Latest`
+## v1.0.235 — 2026-08-05 `Latest`
+
+### Wolffish, Now on Your Phone
+
+Wolffish runs on your machine — which has always meant being at your machine. A phone can now **pair with this desktop** and carry the same conversations, the same settings, the same usage with it. Pairing happens once: **scan a QR** with your camera, or **type a short code** when the camera can't see the screen — the secret travels screen to camera and **never crosses the network**. From then on the two devices talk **end to end encrypted** (X25519 · ChaCha20-Poly1305), sealed on your devices before anything is sent. What carries the bytes is a **blind relay**: it only helps the two find each other and passes sealed frames along — it **cannot read, alter or replay them**, and it stores nothing at all, no database, no logs, no accounts, no message history. Both devices show the same **fingerprints** so you can confirm at a glance that nothing sits in between, and the relay is **open source and self-hostable** — point this desktop at your own deployment and the next pairing carries that address to your phone. The link runs the other way too: with **phone notifications** on, the agent can reach you with its `notify_phone` tool when a run finishes, fails, or needs you — never automatically, always a deliberate call, and Off makes the tool refuse outright. A **Task results** switch decides whether your phone's feed relays every tool call or stays clean with just replies, files and errors.
+
+### Video Generation, Directed by Your Own Model
+
+Wolffish can now **make video**, and the interesting part is who writes the prompt. Ask for a clip in any conversation and **your current chat model directs it** — it rewrites your request into a full cinematic brief (subject, camera movement, lighting, mood) and chooses duration, resolution, aspect ratio, and which images serve as first frame, last frame or style reference. That rewriting is where most of the quality lives, so **a stronger chat model gets a better video from the identical request**; if a clip misses what you pictured, telling your model what to change usually beats rewording the original ask. Turn director mode off and your words go to the video model exactly as you wrote them. **MiniMax H3** does the rendering — text to video, image to video, first-and-last-frame transitions, or reference images, clips and audio for consistent subjects, motion and voice, **up to twelve media items in one request** — producing H.264 mp4 with a generated soundtrack, 24 fps, 768P or 2K, four to fifteen seconds. Because a render takes minutes rather than moments, a **task card appears in the chat** carrying the task id, live status and a progress estimate; it updates itself, you can **cancel from the card**, and the finished mp4 **downloads automatically and plays inline**. If a generation outlives its turn — the app restarts, or the model has moved on — Wolffish **finishes the job on its own**: it keeps polling, saves the video, updates the card, and delivers it to the channel the request came from, **compressing oversized clips** to fit Telegram or WhatsApp while keeping the original here at full quality. Attached media is checked and optimized for you, so nothing needs resizing by hand, and the composer's paperclip grows an **Attach media URL** option that hands MiniMax a link directly — the way around the size limit on large references. Videos are stored per conversation and deleted along with it, and the key lives in **Settings → Video**, kept deliberately separate from the MiniMax chat provider so rotating one never drags the other with it.
+
+### Zip Archives, Handled Where They Land
+
+Wolffish couldn't open a zip. Attach one and it came back an unrecognized file type; ask what was inside and there was no tool to ask with. A new **archive capability** closes both halves at once: the agent can **list what a zip contains**, **read a single file straight out of it** without unpacking the rest, **extract all of it or just the part you want**, and **pack files and folders into a new archive**. The composer now takes `.zip` as a **first-class attachment**, up to **512 MB**, so the archive arrives somewhere the tools can actually reach it.
+
+### A Settings Panel That Says Why It's Dark
+
+Every service page in Settings used to assume its capability was present and working; when one wasn't, the controls simply sat there doing nothing. Each panel now **checks for itself** and, when its capability is **missing, switched off, or failed to load**, says exactly which of the three it is — showing the underlying error when there is one — and offers a way straight through to the **Capabilities** page. The controls below go **visibly inert** rather than pretending to work.
+
+### Legends That Stay Off the Axis
+
+A chart legend long enough to **wrap onto a second row** used to spill over the x-axis labels underneath it. Wrapped rows now have their height **reserved in the plot's grid**, re-measured whenever the chart is resized or its data changes — so a legend gains room instead of taking someone else's.
+
+### Newer Defaults from DeepSeek and Qwen
+
+The model catalog picks up **deepseek-v4-flash** and **qwen3.8-max**, each becoming the default pick for its provider, with **deepseek-v4-pro** still listed alongside for the heavier reasoning work.
+
+## v1.0.234 — 2026-08-01
 
 ### Every Browser You Own, One Extension
 

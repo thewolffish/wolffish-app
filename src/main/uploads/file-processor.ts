@@ -13,7 +13,7 @@ export type ContentBlock =
 
 export type ProcessedAttachment = {
   originalName: string
-  fileType: 'image' | 'pdf' | 'document'
+  fileType: 'image' | 'pdf' | 'document' | 'archive'
   blocks: ContentBlock[]
 }
 
@@ -69,6 +69,9 @@ const DOCUMENT_EXTS = new Set([
   '.html',
   '.htm'
 ])
+// Zip only, matching the archive capability's own scope. Must stay in sync
+// with uploads.ts ARCHIVE_EXTS and validation.ts ALLOWED_ARCHIVE_EXTS.
+const ARCHIVE_EXTS = new Set(['.zip'])
 
 /**
  * Document mimetypes → the extension whose extractor handles them. Used as a
@@ -123,6 +126,10 @@ export async function processAttachmentAbsolute(
 
   if (DOCUMENT_EXTS.has(ext)) {
     return processDocument(abs, originalName, ext)
+  }
+
+  if (ARCHIVE_EXTS.has(ext) || mimeType === 'application/zip') {
+    return processArchive(abs, originalName)
   }
 
   // Extension-less document fallback: classifyFile preserves the sender's
@@ -357,6 +364,38 @@ function documentReferenceNote(
           `[File attached: ${originalName} — ${sizeLabel(sizeBytes)} — not loaded into context]\n` +
           `Path: ${absPath}\n` +
           `${preamble}${guidance}${tail}`
+      }
+    ]
+  }
+}
+
+/**
+ * An uploaded archive is the one attachment where the RIGHT first move is
+ * usually to ask. Nothing is unpacked (a zip can hold thousands of files and
+ * gigabytes, and extracting is a side effect on the user's disk), so the note
+ * names the archive tools and — crucially — tells the model to look before it
+ * acts and to ask when the user's message didn't say what they want done.
+ * Same 100% model-led contract as every other attachment: no content injected,
+ * every byte reachable through tools.
+ */
+async function processArchive(absPath: string, originalName: string): Promise<ProcessedAttachment> {
+  const stat = await fs.stat(absPath)
+  return {
+    originalName,
+    fileType: 'archive',
+    blocks: [
+      {
+        type: 'text',
+        text:
+          `[Archive attached: ${originalName} — ${sizeLabel(stat.size)} — nothing unpacked, no contents in context]\n` +
+          `Path: ${absPath}\n` +
+          `Work it with your archive tools — they need no shell and unpack nothing until you say so:\n` +
+          `- archive_list reads only the index (entry paths, sizes, layout) — cheap at any size, and the ONLY way to know what is in here\n` +
+          `- archive_read pulls one text file straight out of it, no extraction\n` +
+          `- archive_extract unpacks everything, or just the entries you name, to a folder\n` +
+          `Start with archive_list. Then: if the user's message already says what they want (unzip it, read the README, pull out the CSVs), do that. ` +
+          `If it does not — an archive dropped in with no instructions — do NOT extract by default: tell them in one line what is inside and ask what they want done with it.\n` +
+          NEVER_SKIP_NOTE
       }
     ]
   }

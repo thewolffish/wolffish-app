@@ -118,6 +118,8 @@ export function reasoningModesFor(
     // Binary via thinking.type; reasoning_effort IGNORED. Verified live: only
     // M3 honours thinking.type:disabled (off→0 reasoning). M2.x (M2/M2.1/M2.5/
     // M2.7 + highspeed) ALWAYS reason — disabled is ignored — so always-on [on].
+    // Video models (MiniMax-H3, Hailuo) fall through to [] on purpose: no
+    // chat, no thinking, no effort — the brain button renders "not supported".
     case 'minimax':
       if (/minimax-m[3-9]/i.test(model)) return ['off', 'on']
       if (/minimax-m/i.test(model)) return ['on']

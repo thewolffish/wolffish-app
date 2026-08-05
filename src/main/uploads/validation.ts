@@ -7,6 +7,7 @@ export const MAX_PDF_BYTES = 512 * 1024 * 1024 // 512 MB
 export const MAX_DOCUMENT_BYTES = 512 * 1024 * 1024 // 512 MB
 export const MAX_AUDIO_BYTES = 512 * 1024 * 1024 // 512 MB
 export const MAX_VIDEO_BYTES = 1024 * 1024 * 1024 // 1 GB
+export const MAX_ARCHIVE_BYTES = 512 * 1024 * 1024 // 512 MB
 
 const ALLOWED_IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp'])
 const ALLOWED_PDF_EXTS = new Set(['.pdf'])
@@ -25,8 +26,12 @@ const ALLOWED_DOCUMENT_EXTS = new Set([
 ])
 const ALLOWED_AUDIO_EXTS = new Set(['.mp3', '.wav', '.ogg', '.m4a', '.flac', '.webm'])
 const VIDEO_EXTS = new Set(['.mp4', '.mov', '.avi', '.mkv', '.m4v', '.wmv', '.flv'])
+// Zip only — the archive capability is zip-only, so accepting a .tar.gz here
+// would promise handling the tools don't have. Must stay in sync with
+// uploads.ts ARCHIVE_EXTS and file-processor.ts ARCHIVE_EXTS.
+const ALLOWED_ARCHIVE_EXTS = new Set(['.zip'])
 
-export type FileCategory = 'image' | 'pdf' | 'document' | 'audio' | 'video' | 'unknown'
+export type FileCategory = 'image' | 'pdf' | 'document' | 'audio' | 'video' | 'archive' | 'unknown'
 
 export type ValidationError =
   | { code: 'file_too_large'; maxBytes: number }
@@ -41,6 +46,7 @@ export function categorizeFile(fileName: string): FileCategory {
   if (ALLOWED_PDF_EXTS.has(ext)) return 'pdf'
   if (ALLOWED_DOCUMENT_EXTS.has(ext)) return 'document'
   if (ALLOWED_AUDIO_EXTS.has(ext)) return 'audio'
+  if (ALLOWED_ARCHIVE_EXTS.has(ext)) return 'archive'
   return 'unknown'
 }
 
@@ -56,6 +62,8 @@ export function getMaxBytesForCategory(category: FileCategory): number {
       return MAX_AUDIO_BYTES
     case 'video':
       return MAX_VIDEO_BYTES
+    case 'archive':
+      return MAX_ARCHIVE_BYTES
     default:
       return 0
   }

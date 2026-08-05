@@ -9,6 +9,7 @@ import type { ConversationChannel } from '@preload/index'
 const CHANNEL_ICON_KINDS: ReadonlySet<string> = new Set([
   'telegram',
   'whatsapp',
+  'mobile',
   'heartbeat',
   'procedure'
 ])

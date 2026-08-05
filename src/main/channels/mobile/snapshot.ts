@@ -222,6 +222,14 @@ export async function buildConfigSnapshot(sources: SnapshotSources): Promise<Con
       // The credential itself, not a mask: the phone's field EDITS it, and
       // both devices are the same person's — the tunnel is end-to-end sealed.
       braveApiKey: str(config.brave?.apiKey),
+      // Video generation (MiniMax H3): same shape as Brave — an enabled flag
+      // (the capability isn't switched off) plus the editable credential.
+      // Deliberately NOT the MiniMax chat provider's key (see VideoConfig).
+      videoEnabled: !disabledCapabilities.includes('video'),
+      videoApiKey: str(config.video?.apiKey),
+      // Absent-means-on, matching getVideoConfig: only an explicit false
+      // turns the director off.
+      videoDirector: config.video?.director !== false,
       // Memes has no enabled flag of its own — memegen works with zero
       // config — so "enabled" means the capability itself isn't switched off.
       memesEnabled: !disabledCapabilities.includes('memes'),

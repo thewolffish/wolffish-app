@@ -46,6 +46,11 @@ const DOCUMENT_EXTS = new Set([
   '.html',
   '.htm'
 ])
+// Archives ride the `other` bucket like documents, but are kept in their own
+// set: the archive capability is zip-only, and the file-processor gives them a
+// different reference note (list-then-ask, never auto-extract). Must stay in
+// sync with validation.ts ALLOWED_ARCHIVE_EXTS and file-processor.ts.
+const ARCHIVE_EXTS = new Set(['.zip'])
 
 const MIME_BY_EXT: Record<string, string> = {
   '.mp3': 'audio/mpeg',
@@ -99,6 +104,7 @@ export function classifyFile(
   if (PDF_EXTS.has(ext)) return { type: 'pdf', mimeType }
   if (DOCUMENT_EXTS.has(ext))
     return { type: 'other', mimeType: DOCUMENT_MIME_BY_EXT[ext] ?? mimeType }
+  if (ARCHIVE_EXTS.has(ext)) return { type: 'other', mimeType: 'application/zip' }
   return classifyByMime(mimeHint)
 }
 
@@ -142,7 +148,8 @@ export function isSupportedExtension(fileName: string): boolean {
     VIDEO_EXTS.has(ext) ||
     IMAGE_EXTS.has(ext) ||
     PDF_EXTS.has(ext) ||
-    DOCUMENT_EXTS.has(ext)
+    DOCUMENT_EXTS.has(ext) ||
+    ARCHIVE_EXTS.has(ext)
   )
 }
 

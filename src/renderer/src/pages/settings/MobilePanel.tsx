@@ -528,6 +528,55 @@ export function MobilePanel(): React.JSX.Element {
         </section>
 
         <section className="bg-surface border-border flex flex-col gap-5 rounded-2xl border p-6">
+          {/* Model-initiated push notifications — the notify_phone tool's
+              master switch. Off means the tool refuses before anything is
+              built or sent; nothing about this is automatic either way, the
+              model has to deliberately call the tool. */}
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex flex-col gap-1">
+              <span className="text-fg text-sm font-medium">
+                {t('settings.mobile.notifications')}
+              </span>
+              <p className="text-muted text-xs">{t('settings.mobile.notificationsHint')}</p>
+            </div>
+            {status === null ? (
+              <div
+                aria-hidden="true"
+                className="bg-border/30 h-7 w-[78px] shrink-0 animate-pulse rounded-lg"
+              />
+            ) : (
+              <div
+                role="tablist"
+                className="border-border bg-bg/40 inline-flex shrink-0 items-center rounded-lg border p-0.5"
+              >
+                {toggleOptions.map((opt) => {
+                  const active = opt.value === status.notificationsEnabled
+                  return (
+                    <button
+                      key={String(opt.value)}
+                      role="tab"
+                      type="button"
+                      aria-selected={active}
+                      disabled={busy || !loaded}
+                      onClick={() => {
+                        if (opt.value !== status.notificationsEnabled)
+                          void act(() => window.api.mobile.setNotifications(opt.value))
+                      }}
+                      className={cn(
+                        'rounded-md px-3 py-1 text-xs font-medium',
+                        'focus-visible:ring-accent focus-visible:ring-offset-bg focus-visible:ring-2 focus-visible:ring-offset-2',
+                        active
+                          ? 'bg-primary text-primary-fg shadow-sm'
+                          : 'text-muted hover:text-fg cursor-pointer'
+                      )}
+                    >
+                      {opt.label}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+          </div>
           {/* Verbose tunnel logging — off (default) keeps the app log quiet.
               On records every connection event, which is what you want while
               diagnosing a link and noise otherwise. Uses the same segmented

@@ -1,5 +1,6 @@
 import { validateTelegramHtml } from '@main/channels/telegram/format'
 import { MAX_CONSECUTIVE_REJECTS, RejectBudget } from '@main/channels/send-policy'
+import { compressVideoToLimit } from '@main/channels/video-compress'
 import type {
   Capability,
   SkillToolDescriptor,
@@ -68,6 +69,12 @@ type ToolDeps = {
    * is already bound there.
    */
   bindChatToSendingConversation?: (chatId: number) => Promise<void>
+  /**
+   * Make the bundled ffmpeg available (self-installs on first use), used to
+   * compress oversized videos under the bot API's 50 MB ceiling instead of
+   * refusing them. Idempotent and cheap after the first call.
+   */
+  ensureFfmpeg?: () => Promise<unknown>
 }
 
 /**
@@ -470,10 +477,25 @@ async function sendMedia(
   if (!stat.isFile()) return failure(`not a file: ${relativePath}`)
 
   const limit = kind === 'photo' && !isGif ? PHOTO_LIMIT : DOCUMENT_LIMIT
+  let compressedVideo: { mp4: Buffer; note: string } | null = null
   if (stat.size > limit) {
-    return failure(
-      `file too large: ${formatBytes(stat.size)} > ${formatBytes(limit)} (telegram bot limit for ${kind})`
-    )
+    // Videos get one rescue attempt: re-encode under the ceiling (the file on
+    // disk keeps full quality) instead of refusing outright. Everything else
+    // still fails fast with the clear size message.
+    if (kind === 'video') {
+      await deps.ensureFfmpeg?.()
+      const compressed = await compressVideoToLimit(abs, limit - 2 * 1024 * 1024)
+      if ('error' in compressed) {
+        return failure(
+          `file too large: ${formatBytes(stat.size)} > ${formatBytes(limit)} (telegram bot limit for ${kind}), and compression failed: ${compressed.error}. Tell the user the full-quality video is available in the app.`
+        )
+      }
+      compressedVideo = compressed
+    } else {
+      return failure(
+        `file too large: ${formatBytes(stat.size)} > ${formatBytes(limit)} (telegram bot limit for ${kind})`
+      )
+    }
   }
 
   const target = resolveTarget(deps, args.userId)
@@ -504,10 +526,14 @@ async function sendMedia(
   }
 
   let buffer: Buffer
-  try {
-    buffer = await fs.readFile(abs)
-  } catch (err) {
-    return failure(`read failed: ${errMessage(err)}`)
+  if (compressedVideo) {
+    buffer = compressedVideo.mp4
+  } else {
+    try {
+      buffer = await fs.readFile(abs)
+    } catch (err) {
+      return failure(`read failed: ${errMessage(err)}`)
+    }
   }
 
   const filename = path.basename(abs)
@@ -526,13 +552,16 @@ async function sendMedia(
     return bot.api.sendDocument(target.id, file, opts)
   }
 
+  const compressionNote = compressedVideo
+    ? `\nCompressed for Telegram (${compressedVideo.note}) — tell the user the original quality is available in the app.`
+    : ''
   let parseError = ''
   try {
     const result = await send(caption ? { caption, parse_mode: 'HTML' } : undefined)
     deps.trackOutgoing?.(target.id, result.message_id)
     rejectBudget.delivered(target.id)
     return success(
-      `Sent. message_id=${result.message_id} to=${target.id} kind=${kind}${despite || gate.note}`
+      `Sent. message_id=${result.message_id} to=${target.id} kind=${kind}${despite || gate.note}${compressionNote}`
     )
   } catch (err) {
     // Only a caption HTML-parse reject falls through, and only when a caption

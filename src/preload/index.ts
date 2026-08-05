@@ -1,7 +1,13 @@
-import type { Segment, SegmentTurnEndReason, ToolResultStatus } from '@main/runtime/broca'
+import type {
+  Segment,
+  SegmentTurnEndReason,
+  TaskSnapshot,
+  TaskStatus,
+  ToolResultStatus
+} from '@main/runtime/broca'
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 
-export type { Segment, SegmentTurnEndReason, ToolResultStatus }
+export type { Segment, SegmentTurnEndReason, TaskSnapshot, TaskStatus, ToolResultStatus }
 
 export type ThemeSource = 'system' | 'light' | 'dark'
 export type Locale = 'en' | 'ar'
@@ -319,6 +325,14 @@ export type MessageAttachment = {
   width?: number
   height?: number
   durationSeconds?: number
+  /**
+   * Reference-only attachment: a public media URL the user supplied instead
+   * of a file, for tools that take URLs directly (MiniMax H3 video
+   * generation — URLs bypass the API's 64 MB request-body cap). Nothing is
+   * downloaded: filePath is '' and sizeBytes 0; the attachment note carries
+   * the URL to the model. (Dual decl — see src/main/conversations.ts.)
+   */
+  remoteUrl?: string
 }
 
 export type ConversationMessage = {
@@ -344,7 +358,13 @@ export type ConversationMessage = {
   voiceLang?: string
 }
 
-export type ConversationChannel = 'electron' | 'telegram' | 'whatsapp' | 'heartbeat' | 'procedure'
+export type ConversationChannel =
+  | 'electron'
+  | 'telegram'
+  | 'whatsapp'
+  | 'mobile'
+  | 'heartbeat'
+  | 'procedure'
 
 export type TimelineEntry = {
   id: string
@@ -649,6 +669,54 @@ export type DataApi = {
   getAnalytics: () => Promise<DataAnalytics>
 }
 
+/** Which service's config changed — the panels re-seed from this. */
+export type ServicesChangedPayload = {
+  service: 'brave' | 'memes' | 'stt' | 'tts' | 'computerUse' | 'browserExtension' | 'video'
+}
+
+/** Video generation (MiniMax H3) service config — its own key, see VideoApi. */
+export type VideoConfig = {
+  apiKey: string
+  /**
+   * Director mode: ON, the chat model expands video requests into cinematic
+   * prompts (and shows the user what it sent); OFF, it forwards the user's
+   * prompt verbatim. A model directive only — nothing is enforced.
+   */
+  director: boolean
+}
+
+export type VideoServiceStatus = {
+  /** A key is saved. */
+  configured: boolean
+  /** The saved key was accepted by MiniMax (probe costs nothing). */
+  reachable: boolean
+  /** Human-readable detail: ready, the remedy, or the failure. */
+  detail: string
+}
+
+export type VideoApi = {
+  getConfig: () => Promise<VideoConfig>
+  /**
+   * Save the key. Deliberately independent of the MiniMax entry under
+   * Settings → Providers: MiniMax issues one credential that unlocks both
+   * APIs, but video generation is a service that must keep working when
+   * the chat brain changes provider, so the value is entered in both
+   * places rather than shared.
+   */
+  setConfig: (patch: Partial<VideoConfig>) => Promise<{ ok: true; config: VideoConfig }>
+  /** Validate the saved key against MiniMax without spending a generation. */
+  test: () => Promise<VideoServiceStatus>
+}
+
+export type ServicesApi = {
+  /**
+   * A service's config was saved — by this window, another window, or the
+   * paired phone over the tunnel. Payload names the service so a panel can
+   * ignore everyone else's changes.
+   */
+  onChanged: (listener: (payload: ServicesChangedPayload) => void) => () => void
+}
+
 export type LaunchAtStartupStatus = { active: boolean }
 
 /** What a preferences:changed broadcast carries — only the fields that were saved. */
@@ -870,6 +938,19 @@ export type ConversationSummaryUpdate = {
   summarizedThroughMessage: number
   /** Id of the first uncovered message — null while a transition file still lacks message ids. */
   summarizedThroughMessageId: string | null
+}
+
+export type TaskApi = {
+  /** Cancel a queued/running async generation task (the task card's stop). */
+  cancel: (taskId: string) => Promise<{ ok: boolean; error?: string }>
+  /**
+   * Fired on every async-task snapshot change (task:changed) — status
+   * transitions, artifact download — including after the owning turn ended.
+   * The renderer upserts the snapshot into the matching `task` segment and
+   * folds it into its in-memory conversation so the next whole-file save
+   * carries it (the rating-changed pattern).
+   */
+  onChanged: (listener: (snapshot: TaskSnapshot) => void) => () => void
 }
 
 export type ConversationApi = {
@@ -1394,6 +1475,8 @@ export type MobileStatus = {
   } | null
   storage: { available: boolean; backend: string }
   verbose: boolean
+  /** Whether the model's notify_phone tool may send push notifications. */
+  notificationsEnabled: boolean
   /** Relay endpoint the tunnel dials — known before pairing, shown in the panel. */
   relayUrl: string
   /** What "reset to default" returns to, so the panel needn't hardcode it. */
@@ -1411,6 +1494,8 @@ export type MobileApi = {
   /** Forget the phone and drop the keys. */
   unpair: () => Promise<MobileStatus>
   setVerbose: (verbose: boolean) => Promise<MobileStatus>
+  /** Allow or forbid the model's notify_phone push notifications. */
+  setNotifications: (enabled: boolean) => Promise<MobileStatus>
   /**
    * Point the tunnel at a different relay (null resets to the default).
    * Rejects on a malformed URL. Changing relay drops any offer or pairing —
@@ -1942,6 +2027,7 @@ export type WolffishApi = {
   provider: ProviderApi
   chat: ChatApi
   conversation: ConversationApi
+  task: TaskApi
   viewer: ViewerApi
   heartbeat: HeartbeatApi
   procedures: ProceduresApi
@@ -1950,6 +2036,8 @@ export type WolffishApi = {
   diagnostics: DiagnosticsApi
   app: AppApi
   data: DataApi
+  services: ServicesApi
+  video: VideoApi
   runtime: RuntimeApi
   usage: UsageApi
   cerebellum: CerebellumApi
@@ -2059,6 +2147,10 @@ const api: WolffishApi = {
     onMessageMirror: (listener) => subscribe('conversation:messageMirror', listener),
     onRatingChanged: (listener) => subscribe('conversation:ratingChanged', listener)
   },
+  task: {
+    cancel: (taskId) => ipcRenderer.invoke('task:cancel', { taskId }),
+    onChanged: (listener) => subscribe('task:changed', listener)
+  },
   viewer: {
     readTree: () => ipcRenderer.invoke('viewer:readTree'),
     readFile: (relativePath) => ipcRenderer.invoke('viewer:readFile', relativePath),
@@ -2118,6 +2210,14 @@ const api: WolffishApi = {
   },
   data: {
     getAnalytics: () => ipcRenderer.invoke('data:getAnalytics')
+  },
+  services: {
+    onChanged: (listener) => subscribe('services:changed', listener)
+  },
+  video: {
+    getConfig: () => ipcRenderer.invoke('video:getConfig'),
+    setConfig: (patch) => ipcRenderer.invoke('video:setConfig', patch),
+    test: () => ipcRenderer.invoke('video:test')
   },
   runtime: {
     setLaunchAtStartup: (value) => ipcRenderer.invoke('runtime:setLaunchAtStartup', value),
@@ -2197,6 +2297,7 @@ const api: WolffishApi = {
     disconnect: () => ipcRenderer.invoke('mobile:disconnect'),
     unpair: () => ipcRenderer.invoke('mobile:unpair'),
     setVerbose: (verbose) => ipcRenderer.invoke('mobile:setVerbose', verbose),
+    setNotifications: (enabled) => ipcRenderer.invoke('mobile:setNotifications', enabled),
     setRelayUrl: (url) => ipcRenderer.invoke('mobile:setRelayUrl', url),
     onStatusChange: (callback) => subscribe('mobile:statusChange', callback)
   },

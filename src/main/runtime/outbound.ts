@@ -90,6 +90,9 @@ export function formatRuntimeStatus(runtime: RuntimeContext, now: Date = new Dat
     // Channel-format notice (a prose block already delivered to the user's
     // phone carried raw markup) — same vehicle, same cache reason.
     (runtime.channelFormat ? `${runtime.channelFormat} ` : '') +
+    // Video-task landing notice (an async generation finished while the
+    // model was mid-task) — same vehicle, same cache reason.
+    (runtime.videoTasks ? `${runtime.videoTasks} ` : '') +
     `(Automated telemetry, not a user message — do not reply to it or summarize progress because of it. ` +
     `If the task is unfinished, keep calling tools: a response without tool calls ends the task; there is no next turn.)`
   )

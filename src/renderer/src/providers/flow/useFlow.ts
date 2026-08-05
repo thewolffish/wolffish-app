@@ -32,23 +32,6 @@ export type Screen =
 
 export type ChatRole = 'user' | 'assistant'
 
-export type TaskStepView = {
-  tool: string
-  args: Record<string, unknown>
-  status: 'running' | 'succeeded' | 'failed' | 'stopped'
-  output?: string
-  error?: string
-  attempt?: number
-}
-
-export type TaskCardState = {
-  taskId: string
-  description: string
-  status: 'running' | 'succeeded' | 'failed' | 'stopped'
-  steps: TaskStepView[]
-  expanded?: boolean
-}
-
 export type ApprovalCardState = {
   approvalId: string
   toolCallId: string

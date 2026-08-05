@@ -31,6 +31,12 @@ export function collectModelOptions(providers: CloudProviderConfig[]): ModelOpti
   for (const p of providers) {
     const ids = p.models && p.models.length > 0 ? p.models : p.model ? [p.model] : []
     for (const model of ids) {
+      // Generation-only models must never become the Brain via `/model`
+      // (this picker has no other filter): MiniMax video models (H3,
+      // Hailuo) chat through no completions endpoint — the `video`
+      // capability is their surface. Defensive: the provider fetch filter
+      // already keeps them out of `models`.
+      if (/^minimax-(h\d|hailuo)/i.test(model)) continue
       const key = `${p.id}/${model}`
       if (seen.has(key)) continue
       seen.add(key)

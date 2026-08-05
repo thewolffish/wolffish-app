@@ -150,6 +150,28 @@ async function main(): Promise<void> {
   )
   ok('pptx note: honest python/shell route', noteText(r10).includes('python-pptx'))
 
+  // --- Archives: never unpacked, and ask before acting -----------------
+  const zip = await write('project.zip', Buffer.from('PKzip-bytes-placeholder'))
+  const r14 = await processAttachmentAbsolute(zip, 'application/zip', 'project.zip', vision)
+  const r14text = noteText(r14)
+  ok('zip: NOT inlined (reference note only)', r14?.blocks[0]?.type === 'text')
+  ok('zip note: flags nothing unpacked', r14text.includes('nothing unpacked'))
+  ok(
+    'zip note: names the archive tools',
+    r14text.includes('archive_list') && r14text.includes('archive_extract')
+  )
+  ok('zip note: do-not-extract-by-default contract', r14text.includes('do NOT extract by default'))
+
+  // A .zip that arrives with no mimetype (channel media) must still route by
+  // extension, not fall through to "unsupported → invisible to the model".
+  const r15 = await processAttachmentAbsolute(
+    zip,
+    'application/octet-stream',
+    'project.zip',
+    vision
+  )
+  ok('zip by extension alone: still a note', noteText(r15).includes('archive_list'))
+
   // --- Images: pixels only on demand via image_view --------------------
   const sharp = (await import('sharp')).default
   const realPng = await write(

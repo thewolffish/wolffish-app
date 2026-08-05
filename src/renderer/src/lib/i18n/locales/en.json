@@ -481,7 +481,17 @@
         "google": "Google Workspace",
         "memes": "Memes",
         "computerUse": "Computer Use",
-        "browserExtension": "Browser Extension"
+        "browserExtension": "Browser Extension",
+        "video": "Video generation"
+      },
+      "gate": {
+        "missingTitle": "Capability not installed",
+        "missingBody": "The {{name}} capability is not installed in this copy of Wolffish, so these settings are disabled for now. Open the Capabilities page to review what is loaded, or reinstall the app to restore the built-in set.",
+        "offTitle": "Capability turned off",
+        "offBody": "The {{name}} capability is currently turned off, so these settings are disabled for now. Turn it back on from the Capabilities page and everything here comes back to life.",
+        "errorTitle": "Capability failed to load",
+        "errorBody": "The {{name}} capability hit a problem while loading, so these settings are disabled for now. The error is shown below, and the Capabilities page has the full picture.",
+        "openCapabilities": "Open Capabilities"
       },
       "engine": "Engine",
       "engineInstall": {
@@ -1227,6 +1237,68 @@
           "notSupportedLabel": "Not supported:",
           "notSupportedText": "Firefox and Safari do not support the debugger extension API. Debugger mode is Chromium-only."
         }
+      },
+      "video": {
+        "title": "Video generation",
+        "platform": "MiniMax platform",
+        "subtitle": "Generate video with MiniMax H3 from text, images, frames, or reference media.",
+        "apiKey": "MiniMax API key (video)",
+        "apiKeyPlaceholder": "sk-api-…",
+        "apiKeyHint": "The same MiniMax key you use elsewhere works here; it is stored separately on purpose — see below.",
+        "showKey": "Show key",
+        "hideKey": "Hide key",
+        "save": "Save",
+        "test": "Test connection",
+        "saveSuccess": "Video generation key saved",
+        "testSuccess": "Key accepted — video generation is ready",
+        "testFailure": "MiniMax rejected this key",
+        "status": {
+          "label": "Status",
+          "ready": "Ready",
+          "error": "Key rejected",
+          "disabled": "No key set"
+        },
+        "separateKey": {
+          "title": "Why this key is separate from the MiniMax chat provider",
+          "p1": "MiniMax issues one credential that unlocks both its chat models and its video API, so the value you paste here is the same string you may already have under Settings → Providers → MiniMax. The app deliberately does not copy one into the other, and you need to fill in both.",
+          "p2": "They are independent decisions. Video generation is a service — like Brave search or Giphy — not a property of whichever brain you are chatting with. If the keys were shared, switching your chat brain to another provider and clearing the MiniMax entry would silently break video generation, and rotating a key for one use would drag the other along with it."
+        },
+        "howItWorks": {
+          "title": "How it works",
+          "p1": "MiniMax H3 never appears in the model picker, because you never chat with it. It is a tool your current model calls. Generation is asynchronous — the API hands back a task id and renders for a few minutes — so the app manages that lifetime for you.",
+          "s1": "Ask for a video in any conversation. Your current model calls the video tool with a prompt it writes itself.",
+          "s2": "A task card appears in the chat with the task id, live status and a progress estimate. It updates itself; you can cancel from the card.",
+          "s3": "The finished mp4 is downloaded automatically and plays inline in the card.",
+          "s4": "Your model then delivers the file — in the app, or to Telegram / WhatsApp when the conversation came from there (oversized videos are compressed to fit, with the original kept here at full quality).",
+          "footer": "If a generation outlives its turn — the app restarts, or the model moved on — the app finishes the job on its own: it keeps polling, saves the video, updates the card, and sends it to the channel it came from."
+        },
+        "director": {
+          "title": "Your chat model is the director",
+          "p1": "The video model does not read your request. Your selected chat model does, and rewrites it into a full cinematic prompt — subject, camera movement, lighting, mood — then chooses duration, resolution, aspect ratio, and which images act as first frame, last frame or style reference. That rewriting is where most of the quality comes from.",
+          "youAsk": "You ask",
+          "askExample": "a 4 second video of gentle ocean waves rolling onto a beach at sunset",
+          "modelSends": "Your model sends",
+          "promptExample": "Gentle ocean waves rolling onto a sandy beach at sunset. Soft golden-orange light reflecting off the water, calm ripples of foam washing up the shore and receding. Slow, soothing motion, warm pastel sky with hints of pink and amber near the horizon, a few scattered clouds catching the last light. Cinematic, serene, photorealistic, gentle push-in camera barely moving.",
+          "b1": "It adds the creative detail you left out — light, texture, atmosphere, camera language — because sparse prompts produce flat, generic footage.",
+          "b2": "It picks the technical settings from context, and omits the aspect ratio when you supply an image so the video adopts the picture's own shape.",
+          "b3": "It names the task, waits for the render, and decides how to present the result to you.",
+          "footer": "A stronger chat model writes a better prompt and gets a better video from the identical request. If a clip misses what you pictured, telling your model what to change is usually more effective than rewording your original ask.",
+          "currentLabel": "Your current director",
+          "currentHint": "This is whichever model you chat with — switch it from the composer and the next video is directed by the new one.",
+          "noModel": "No model selected yet",
+          "on": "On",
+          "off": "Off",
+          "offHint": "Director mode is off — your request is sent to the video model exactly as you wrote it. The model still picks duration and resolution unless you specify them."
+        },
+        "capabilities": {
+          "title": "What H3 can do",
+          "p1": "One model, four input modes — combine them freely, up to twelve media items in a single request.",
+          "modes": "Text to video · image to video (first frame) · first-and-last frame transition · reference images, clips and audio for consistent subjects, motion and voice.",
+          "output": "H.264 mp4 with a generated soundtrack, 24 fps, 768P or 2K, 4 to 15 seconds. Rendering typically takes one to five minutes.",
+          "limits": "Media you attach is checked and optimized automatically — oversized images are downscaled, unusual video and audio formats are converted — so requests fit the API's limits without you resizing anything.",
+          "storage": "Videos are saved per conversation under generations/video in the workspace, and deleted with the conversation.",
+          "footer": "You can also attach a media URL from the composer's paperclip menu instead of a file; MiniMax fetches it directly, which sidesteps the request size limit for large references."
+        }
       }
     },
     "mcp": {
@@ -1502,6 +1574,8 @@
         "invalid": "That doesn't look like a relay URL. Use wss://host, or paste your relay's https:// address."
       },
       "keyStorage": "Pairing keys are stored on this machine using {{backend}}.",
+      "notifications": "Phone notifications",
+      "notificationsHint": "Lets the agent send a push notification to your paired phone with its notify_phone tool — when a run finishes, fails, or needs you. Nothing is ever sent automatically; the agent has to deliberately call the tool, and Off makes that tool refuse.",
       "verbose": "Task results",
       "verboseHint": "Off keeps the phone's feed clean: assistant messages, file-bearing results and errors. On relays every tool call and activity. Connection logging is always on and is not affected by this.",
       "status": {
@@ -1723,20 +1797,18 @@
     "procedures": "Procedures",
     "projects": "Projects",
     "task": {
-      "title": "Task",
+      "kind": {
+        "video": "Video"
+      },
       "status": {
+        "submitted": "Submitted",
+        "queued": "Queued",
         "running": "Running",
         "succeeded": "Done",
         "failed": "Failed",
-        "stopped": "Stopped"
+        "cancelled": "Cancelled"
       },
-      "stepStatus": {
-        "running": "running",
-        "succeeded": "succeeded",
-        "failed": "failed",
-        "stopped": "stopped"
-      },
-      "attempt": "(attempt {{n}})"
+      "cancel": "Cancel task"
     },
     "toolCard": {
       "status": {
@@ -1931,6 +2003,21 @@
         "cost": "Cost"
       },
       "tokens": "{{compact}} tok"
+    },
+    "attachMenu": {
+      "files": "Attach files",
+      "mediaUrl": "Attach media URL"
+    },
+    "urlAttach": {
+      "title": "Attach a media URL",
+      "placeholder": "https://example.com/clip.mp4",
+      "kind": {
+        "image": "Image",
+        "video": "Video",
+        "audio": "Audio"
+      },
+      "add": "Attach",
+      "chip": "URL"
     }
   },
   "workspace": {

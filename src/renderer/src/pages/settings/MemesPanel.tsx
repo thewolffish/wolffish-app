@@ -4,8 +4,10 @@ import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn'
 import type { MemesErrorKind, MemesStatus } from '@preload/index'
 import { EyeIcon, ViewOffIcon } from 'hugeicons-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
+import { CapabilityGateBody, CapabilityGateCard, useCapabilityGate } from './capabilityGate'
 
 const STATUS_DOT: Record<string, string> = {
   configured: 'bg-emerald-500',
@@ -16,6 +18,7 @@ const STATUS_DOT: Record<string, string> = {
 export function MemesPanel(): React.JSX.Element {
   const { t } = useTranslation()
   const toast = useToast()
+  const gate = useCapabilityGate('memes')
 
   const [giphyKey, setGiphyKey] = useState('')
   const [giphyKeyVisible, setGiphyKeyVisible] = useState(false)
@@ -41,6 +44,11 @@ export function MemesPanel(): React.JSX.Element {
   })
   const [busy, setBusy] = useState<'idle' | 'testingGiphy' | 'testingImgflip'>('idle')
 
+  // Per-field mid-edit flags for the remote-change listener below: a phone
+  // (or another window) save must never overwrite text the user is typing,
+  // and an event callback cannot read fresh state.
+  const dirtyRef = useRef({ giphy: false, imgflipUsername: false, imgflipPassword: false })
+
   useEffect(() => {
     let cancelled = false
     void (async () => {
@@ -54,11 +62,34 @@ export function MemesPanel(): React.JSX.Element {
       setSavedImgflipUsername(cfg.imgflip.username)
       setSavedImgflipPassword(cfg.imgflip.password)
       setStatus(live)
+      dirtyRef.current = { giphy: false, imgflipUsername: false, imgflipPassword: false }
     })()
     return () => {
       cancelled = true
     }
   }, [])
+
+  // Re-seed on a save made anywhere else; each input only when not mid-edit.
+  useEffect(
+    () =>
+      window.api.services.onChanged((payload) => {
+        if (payload.service !== 'memes') return
+        void (async () => {
+          const [cfg, live] = await Promise.all([
+            window.api.memes.getConfig(),
+            window.api.memes.status()
+          ])
+          setStatus(live)
+          setSavedGiphyKey(cfg.giphy.apiKey)
+          setSavedImgflipUsername(cfg.imgflip.username)
+          setSavedImgflipPassword(cfg.imgflip.password)
+          if (!dirtyRef.current.giphy) setGiphyKey(cfg.giphy.apiKey)
+          if (!dirtyRef.current.imgflipUsername) setImgflipUsername(cfg.imgflip.username)
+          if (!dirtyRef.current.imgflipPassword) setImgflipPassword(cfg.imgflip.password)
+        })()
+      }),
+    []
+  )
 
   const translateError = useCallback(
     (kind: MemesErrorKind, message?: string | null): string => {
@@ -85,6 +116,7 @@ export function MemesPanel(): React.JSX.Element {
         const response = await window.api.memes.setConfig({ giphy: { apiKey: giphyKey.trim() } })
         setStatus(response.status)
         setSavedGiphyKey(giphyKey.trim())
+        dirtyRef.current.giphy = false
         toast.show({ message: t('settings.services.memes.testGiphySuccess'), tone: 'success' })
       } else {
         toast.show({
@@ -122,6 +154,8 @@ export function MemesPanel(): React.JSX.Element {
         setStatus(response.status)
         setSavedImgflipUsername(imgflipUsername.trim())
         setSavedImgflipPassword(imgflipPassword.trim())
+        dirtyRef.current.imgflipUsername = false
+        dirtyRef.current.imgflipPassword = false
         toast.show({ message: t('settings.services.memes.testImgflipSuccess'), tone: 'success' })
       } else {
         toast.show({
@@ -159,222 +193,237 @@ export function MemesPanel(): React.JSX.Element {
           </p>
         </header>
 
-        {/* Memegen — always available */}
-        <section className="bg-surface border-border flex flex-col gap-4 rounded-2xl border p-6">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex flex-col gap-1">
-              <span className="text-fg text-sm font-medium">
-                {t('settings.services.memes.memegen.title')}
-              </span>
-              <p className="text-muted text-xs">
-                {t('settings.services.memes.memegen.description')}
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <span aria-hidden="true" className="h-2 w-2 rounded-full bg-emerald-500" />
-              <span className="text-fg text-sm">
-                {t('settings.services.memes.providerStatus.available')}
-              </span>
-            </div>
-          </div>
-        </section>
+        <CapabilityGateCard gate={gate} label={t('settings.services.tabs.memes')} />
 
-        {/* Giphy */}
-        <section className="bg-surface border-border flex flex-col gap-4 rounded-2xl border p-6">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex flex-col gap-1">
-              <span className="text-fg text-sm font-medium">
-                {t('settings.services.memes.giphy.title')}
-              </span>
-              <p className="text-muted text-xs">{t('settings.services.memes.giphy.description')}</p>
+        <CapabilityGateBody gate={gate}>
+          {/* Memegen — always available */}
+          <section className="bg-surface border-border flex flex-col gap-4 rounded-2xl border p-6">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex flex-col gap-1">
+                <span className="text-fg text-sm font-medium">
+                  {t('settings.services.memes.memegen.title')}
+                </span>
+                <p className="text-muted text-xs">
+                  {t('settings.services.memes.memegen.description')}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <span aria-hidden="true" className="h-2 w-2 rounded-full bg-emerald-500" />
+                <span className="text-fg text-sm">
+                  {t('settings.services.memes.providerStatus.available')}
+                </span>
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              <span
-                aria-hidden="true"
-                className={cn('h-2 w-2 rounded-full', STATUS_DOT[status.giphy])}
-              />
-              <span className="text-fg text-sm">{giphyStatusLabel}</span>
+          </section>
+
+          {/* Giphy */}
+          <section className="bg-surface border-border flex flex-col gap-4 rounded-2xl border p-6">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex flex-col gap-1">
+                <span className="text-fg text-sm font-medium">
+                  {t('settings.services.memes.giphy.title')}
+                </span>
+                <p className="text-muted text-xs">
+                  {t('settings.services.memes.giphy.description')}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <span
+                  aria-hidden="true"
+                  className={cn('h-2 w-2 rounded-full', STATUS_DOT[status.giphy])}
+                />
+                <span className="text-fg text-sm">{giphyStatusLabel}</span>
+              </div>
             </div>
-          </div>
 
-          {status.giphyError && (
-            <pre
-              className={cn(
-                'bg-bg/40 border-border rounded-md border px-3 py-2',
-                'text-xs whitespace-pre-wrap wrap-break-word font-mono text-rose-500'
-              )}
-            >
-              {status.giphyErrorKind
-                ? translateError(status.giphyErrorKind, status.giphyError)
-                : status.giphyError}
-            </pre>
-          )}
-
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor="giphy-api-key" className="text-muted text-sm font-medium">
-              {t('settings.services.memes.giphy.apiKeyLabel')}
-            </label>
-            <div className="relative w-full">
-              <Input
-                id="giphy-api-key"
-                type={giphyKeyVisible ? 'text' : 'password'}
-                value={giphyKey}
-                onChange={(e) => setGiphyKey(e.target.value)}
-                placeholder={t('settings.services.memes.giphy.apiKeyPlaceholder')}
-                autoComplete="off"
-                spellCheck={false}
-                className="pe-10 font-mono"
-              />
-              <button
-                type="button"
-                onClick={() => setGiphyKeyVisible((v) => !v)}
-                aria-label={t(
-                  giphyKeyVisible
-                    ? 'settings.services.memes.hideKey'
-                    : 'settings.services.memes.showKey'
-                )}
+            {status.giphyError && (
+              <pre
                 className={cn(
-                  'text-muted hover:text-fg absolute inset-e-2 top-1/2 -translate-y-1/2',
-                  'flex h-8 w-8 cursor-pointer items-center justify-center rounded-md',
-                  'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
+                  'bg-bg/40 border-border rounded-md border px-3 py-2',
+                  'text-xs whitespace-pre-wrap wrap-break-word font-mono text-rose-500'
                 )}
               >
-                {giphyKeyVisible ? <ViewOffIcon size={16} /> : <EyeIcon size={16} />}
-              </button>
+                {status.giphyErrorKind
+                  ? translateError(status.giphyErrorKind, status.giphyError)
+                  : status.giphyError}
+              </pre>
+            )}
+
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="giphy-api-key" className="text-muted text-sm font-medium">
+                {t('settings.services.memes.giphy.apiKeyLabel')}
+              </label>
+              <div className="relative w-full">
+                <Input
+                  id="giphy-api-key"
+                  type={giphyKeyVisible ? 'text' : 'password'}
+                  value={giphyKey}
+                  onChange={(e) => {
+                    dirtyRef.current.giphy = true
+                    setGiphyKey(e.target.value)
+                  }}
+                  placeholder={t('settings.services.memes.giphy.apiKeyPlaceholder')}
+                  autoComplete="off"
+                  spellCheck={false}
+                  className="pe-10 font-mono"
+                />
+                <button
+                  type="button"
+                  onClick={() => setGiphyKeyVisible((v) => !v)}
+                  aria-label={t(
+                    giphyKeyVisible
+                      ? 'settings.services.memes.hideKey'
+                      : 'settings.services.memes.showKey'
+                  )}
+                  className={cn(
+                    'text-muted hover:text-fg absolute inset-e-2 top-1/2 -translate-y-1/2',
+                    'flex h-8 w-8 cursor-pointer items-center justify-center rounded-md',
+                    'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
+                  )}
+                >
+                  {giphyKeyVisible ? <ViewOffIcon size={16} /> : <EyeIcon size={16} />}
+                </button>
+              </div>
+              <p className="text-muted text-xs">{t('settings.services.memes.giphy.hint')}</p>
             </div>
-            <p className="text-muted text-xs">{t('settings.services.memes.giphy.hint')}</p>
-          </div>
 
-          <div className="flex items-center justify-between gap-2">
-            <Button
-              type="button"
-              onClick={() => void handleTestGiphy()}
-              disabled={
-                busy !== 'idle' ||
-                giphyKey.trim().length === 0 ||
-                giphyKey.trim() === savedGiphyKey.trim()
-              }
-            >
-              {t('settings.services.memes.testConnection')}
-            </Button>
-            <a
-              href="https://developers.giphy.com/dashboard/?create=true"
-              target="_blank"
-              rel="noreferrer noopener"
-              className="text-accent text-xs hover:brightness-110"
-            >
-              {t('settings.services.memes.giphy.getKey')}
-            </a>
-          </div>
-        </section>
-
-        {/* Imgflip */}
-        <section className="bg-surface border-border flex flex-col gap-4 rounded-2xl border p-6">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex flex-col gap-1">
-              <span className="text-fg text-sm font-medium">
-                {t('settings.services.memes.imgflip.title')}
-              </span>
-              <p className="text-muted text-xs">
-                {t('settings.services.memes.imgflip.description')}
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <span
-                aria-hidden="true"
-                className={cn('h-2 w-2 rounded-full', STATUS_DOT[status.imgflip])}
-              />
-              <span className="text-fg text-sm">{imgflipStatusLabel}</span>
-            </div>
-          </div>
-
-          {status.imgflipError && (
-            <pre
-              className={cn(
-                'bg-bg/40 border-border rounded-md border px-3 py-2',
-                'text-xs whitespace-pre-wrap wrap-break-word font-mono text-rose-500'
-              )}
-            >
-              {status.imgflipErrorKind
-                ? translateError(status.imgflipErrorKind, status.imgflipError)
-                : status.imgflipError}
-            </pre>
-          )}
-
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor="imgflip-username" className="text-muted text-sm font-medium">
-              {t('settings.services.memes.imgflip.usernameLabel')}
-            </label>
-            <Input
-              id="imgflip-username"
-              type="text"
-              value={imgflipUsername}
-              onChange={(e) => setImgflipUsername(e.target.value)}
-              placeholder={t('settings.services.memes.imgflip.usernamePlaceholder')}
-              autoComplete="off"
-              spellCheck={false}
-            />
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor="imgflip-password" className="text-muted text-sm font-medium">
-              {t('settings.services.memes.imgflip.passwordLabel')}
-            </label>
-            <div className="relative w-full">
-              <Input
-                id="imgflip-password"
-                type={imgflipPasswordVisible ? 'text' : 'password'}
-                value={imgflipPassword}
-                onChange={(e) => setImgflipPassword(e.target.value)}
-                placeholder={t('settings.services.memes.imgflip.passwordPlaceholder')}
-                autoComplete="off"
-                spellCheck={false}
-                className="pe-10 font-mono"
-              />
-              <button
+            <div className="flex items-center justify-between gap-2">
+              <Button
                 type="button"
-                onClick={() => setImgflipPasswordVisible((v) => !v)}
-                aria-label={t(
-                  imgflipPasswordVisible
-                    ? 'settings.services.memes.hideKey'
-                    : 'settings.services.memes.showKey'
-                )}
+                onClick={() => void handleTestGiphy()}
+                disabled={
+                  busy !== 'idle' ||
+                  giphyKey.trim().length === 0 ||
+                  giphyKey.trim() === savedGiphyKey.trim()
+                }
+              >
+                {t('settings.services.memes.testConnection')}
+              </Button>
+              <a
+                href="https://developers.giphy.com/dashboard/?create=true"
+                target="_blank"
+                rel="noreferrer noopener"
+                className="text-accent text-xs hover:brightness-110"
+              >
+                {t('settings.services.memes.giphy.getKey')}
+              </a>
+            </div>
+          </section>
+
+          {/* Imgflip */}
+          <section className="bg-surface border-border flex flex-col gap-4 rounded-2xl border p-6">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex flex-col gap-1">
+                <span className="text-fg text-sm font-medium">
+                  {t('settings.services.memes.imgflip.title')}
+                </span>
+                <p className="text-muted text-xs">
+                  {t('settings.services.memes.imgflip.description')}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <span
+                  aria-hidden="true"
+                  className={cn('h-2 w-2 rounded-full', STATUS_DOT[status.imgflip])}
+                />
+                <span className="text-fg text-sm">{imgflipStatusLabel}</span>
+              </div>
+            </div>
+
+            {status.imgflipError && (
+              <pre
                 className={cn(
-                  'text-muted hover:text-fg absolute inset-e-2 top-1/2 -translate-y-1/2',
-                  'flex h-8 w-8 cursor-pointer items-center justify-center rounded-md',
-                  'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
+                  'bg-bg/40 border-border rounded-md border px-3 py-2',
+                  'text-xs whitespace-pre-wrap wrap-break-word font-mono text-rose-500'
                 )}
               >
-                {imgflipPasswordVisible ? <ViewOffIcon size={16} /> : <EyeIcon size={16} />}
-              </button>
-            </div>
-            <p className="text-muted text-xs">{t('settings.services.memes.imgflip.hint')}</p>
-          </div>
+                {status.imgflipErrorKind
+                  ? translateError(status.imgflipErrorKind, status.imgflipError)
+                  : status.imgflipError}
+              </pre>
+            )}
 
-          <div className="flex items-center justify-between gap-2">
-            <Button
-              type="button"
-              onClick={() => void handleTestImgflip()}
-              disabled={
-                busy !== 'idle' ||
-                !imgflipUsername.trim() ||
-                !imgflipPassword.trim() ||
-                (imgflipUsername.trim() === savedImgflipUsername.trim() &&
-                  imgflipPassword.trim() === savedImgflipPassword.trim())
-              }
-            >
-              {t('settings.services.memes.testConnection')}
-            </Button>
-            <a
-              href="https://imgflip.com/signup"
-              target="_blank"
-              rel="noreferrer noopener"
-              className="text-accent text-xs hover:brightness-110"
-            >
-              {t('settings.services.memes.imgflip.createAccount')}
-            </a>
-          </div>
-        </section>
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="imgflip-username" className="text-muted text-sm font-medium">
+                {t('settings.services.memes.imgflip.usernameLabel')}
+              </label>
+              <Input
+                id="imgflip-username"
+                type="text"
+                value={imgflipUsername}
+                onChange={(e) => {
+                  dirtyRef.current.imgflipUsername = true
+                  setImgflipUsername(e.target.value)
+                }}
+                placeholder={t('settings.services.memes.imgflip.usernamePlaceholder')}
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="imgflip-password" className="text-muted text-sm font-medium">
+                {t('settings.services.memes.imgflip.passwordLabel')}
+              </label>
+              <div className="relative w-full">
+                <Input
+                  id="imgflip-password"
+                  type={imgflipPasswordVisible ? 'text' : 'password'}
+                  value={imgflipPassword}
+                  onChange={(e) => {
+                    dirtyRef.current.imgflipPassword = true
+                    setImgflipPassword(e.target.value)
+                  }}
+                  placeholder={t('settings.services.memes.imgflip.passwordPlaceholder')}
+                  autoComplete="off"
+                  spellCheck={false}
+                  className="pe-10 font-mono"
+                />
+                <button
+                  type="button"
+                  onClick={() => setImgflipPasswordVisible((v) => !v)}
+                  aria-label={t(
+                    imgflipPasswordVisible
+                      ? 'settings.services.memes.hideKey'
+                      : 'settings.services.memes.showKey'
+                  )}
+                  className={cn(
+                    'text-muted hover:text-fg absolute inset-e-2 top-1/2 -translate-y-1/2',
+                    'flex h-8 w-8 cursor-pointer items-center justify-center rounded-md',
+                    'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
+                  )}
+                >
+                  {imgflipPasswordVisible ? <ViewOffIcon size={16} /> : <EyeIcon size={16} />}
+                </button>
+              </div>
+              <p className="text-muted text-xs">{t('settings.services.memes.imgflip.hint')}</p>
+            </div>
+
+            <div className="flex items-center justify-between gap-2">
+              <Button
+                type="button"
+                onClick={() => void handleTestImgflip()}
+                disabled={
+                  busy !== 'idle' ||
+                  !imgflipUsername.trim() ||
+                  !imgflipPassword.trim() ||
+                  (imgflipUsername.trim() === savedImgflipUsername.trim() &&
+                    imgflipPassword.trim() === savedImgflipPassword.trim())
+                }
+              >
+                {t('settings.services.memes.testConnection')}
+              </Button>
+              <a
+                href="https://imgflip.com/signup"
+                target="_blank"
+                rel="noreferrer noopener"
+                className="text-accent text-xs hover:brightness-110"
+              >
+                {t('settings.services.memes.imgflip.createAccount')}
+              </a>
+            </div>
+          </section>
+        </CapabilityGateBody>
       </div>
     </div>
   )

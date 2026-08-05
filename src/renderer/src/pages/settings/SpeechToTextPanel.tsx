@@ -3,6 +3,7 @@ import { cn } from '@lib/utils/cn'
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { CapabilityGateBody, CapabilityGateCard, useCapabilityGate } from './capabilityGate'
 import { EngineInstallCard } from './EngineInstallCard'
 import { useEngineInstall } from './useEngineInstall'
 
@@ -16,6 +17,7 @@ const DEFAULT_MODEL = 'base'
 
 export function SpeechToTextPanel(): React.JSX.Element {
   const { t } = useTranslation()
+  const gate = useCapabilityGate('speech-to-text')
   const engine = useEngineInstall('stt')
   const ready = engine.installed === true
   const [model, setModel] = useState(DEFAULT_MODEL)
@@ -34,6 +36,19 @@ export function SpeechToTextPanel(): React.JSX.Element {
       cancelled = true
     }
   }, [])
+
+  // The paired phone (or another window) can change the model too; re-seed
+  // when it does. The select saves on change, so there is no draft to guard.
+  useEffect(
+    () =>
+      window.api.services.onChanged((payload) => {
+        if (payload.service !== 'stt') return
+        void window.api.stt.getConfig().then((cfg) => {
+          if (cfg.defaultModel) setModel(cfg.defaultModel)
+        })
+      }),
+    []
+  )
 
   const onModelChange = (next: string): void => {
     setModel(next)
@@ -67,98 +82,109 @@ export function SpeechToTextPanel(): React.JSX.Element {
           </p>
         </header>
 
-        <EngineInstallCard
-          state={engine}
-          requirementKey="settings.services.stt.installRequirement"
-        />
+        <CapabilityGateCard gate={gate} label={t('settings.services.tabs.stt')} />
 
-        <section className="bg-surface border-border flex flex-col gap-5 rounded-2xl border p-6">
-          <div className="flex flex-col gap-1">
-            <span className="text-muted text-xs font-medium uppercase tracking-wider">
-              {t('settings.services.engine')}
-            </span>
-            <div className="flex items-center gap-2">
-              <span className="text-fg text-sm font-medium">
-                {t('settings.services.stt.engineName')}
-              </span>
-              <span className="bg-border/60 text-muted rounded-md px-1.5 py-0.5 text-[10px] font-medium">
-                {t('settings.services.stt.local')}
-              </span>
-            </div>
-            <p className="text-muted text-xs">{t('settings.services.stt.engineDescription')}</p>
-          </div>
+        <CapabilityGateBody gate={gate}>
+          <EngineInstallCard
+            state={engine}
+            requirementKey="settings.services.stt.installRequirement"
+          />
 
-          <div
-            className={cn(
-              'flex flex-col gap-5',
-              !ready && 'pointer-events-none select-none opacity-40'
-            )}
-            aria-disabled={!ready}
-          >
-            <div className="border-border/60 border-t" />
-
-            <div className="flex flex-col gap-2">
-              <Select<string>
-                label={t('settings.services.stt.model')}
-                value={model}
-                options={modelOptions}
-                onChange={onModelChange}
-              />
-              <p className="text-muted text-xs">
-                {t(`settings.services.stt.models.${selectedId}.description`)}
-              </p>
-            </div>
-
-            <div className="border-border/60 border-t" />
-
+          <section className="bg-surface border-border flex flex-col gap-5 rounded-2xl border p-6">
             <div className="flex flex-col gap-1">
-              <span className="text-muted text-sm font-medium">
-                {t('settings.services.stt.language')}
+              <span className="text-muted text-xs font-medium uppercase tracking-wider">
+                {t('settings.services.engine')}
               </span>
-              <p className="text-muted text-xs">{t('settings.services.stt.languageDescription')}</p>
-            </div>
-          </div>
-        </section>
-
-        <section className="bg-surface border-border flex flex-col gap-3 rounded-2xl border p-6">
-          <h2 className="text-fg text-sm font-medium">{t('settings.services.stt.modelsTitle')}</h2>
-          <div className="divide-border/40 divide-y">
-            {MODEL_IDS.map((id) => (
-              <div key={id} className="flex items-center justify-between py-2 first:pt-0 last:pb-0">
-                <div className="flex flex-col">
-                  <span className="text-fg text-sm font-medium capitalize">{id}</span>
-                  <span className="text-muted text-xs">
-                    {t(`settings.services.stt.models.${id}.description`)}
-                  </span>
-                </div>
-                <div className="flex flex-col items-end">
-                  <span className="text-fg text-xs">
-                    {t(`settings.services.stt.models.${id}.size`)}
-                  </span>
-                  <span className="text-muted text-xs">
-                    {t(`settings.services.stt.models.${id}.speed`)}
-                  </span>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <div className="border-border/60 mt-2 border-t pt-3">
-            <h2 className="text-fg text-sm font-medium">
-              {t('settings.services.stt.formatsTitle')}
-            </h2>
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {FORMATS.map((f) => (
-                <span
-                  key={f}
-                  className="bg-border/40 text-muted rounded-md px-2 py-0.5 text-xs font-medium"
-                >
-                  {f}
+              <div className="flex items-center gap-2">
+                <span className="text-fg text-sm font-medium">
+                  {t('settings.services.stt.engineName')}
                 </span>
+                <span className="bg-border/60 text-muted rounded-md px-1.5 py-0.5 text-[10px] font-medium">
+                  {t('settings.services.stt.local')}
+                </span>
+              </div>
+              <p className="text-muted text-xs">{t('settings.services.stt.engineDescription')}</p>
+            </div>
+
+            <div
+              className={cn(
+                'flex flex-col gap-5',
+                !ready && 'pointer-events-none select-none opacity-40'
+              )}
+              aria-disabled={!ready}
+            >
+              <div className="border-border/60 border-t" />
+
+              <div className="flex flex-col gap-2">
+                <Select<string>
+                  label={t('settings.services.stt.model')}
+                  value={model}
+                  options={modelOptions}
+                  onChange={onModelChange}
+                />
+                <p className="text-muted text-xs">
+                  {t(`settings.services.stt.models.${selectedId}.description`)}
+                </p>
+              </div>
+
+              <div className="border-border/60 border-t" />
+
+              <div className="flex flex-col gap-1">
+                <span className="text-muted text-sm font-medium">
+                  {t('settings.services.stt.language')}
+                </span>
+                <p className="text-muted text-xs">
+                  {t('settings.services.stt.languageDescription')}
+                </p>
+              </div>
+            </div>
+          </section>
+
+          <section className="bg-surface border-border flex flex-col gap-3 rounded-2xl border p-6">
+            <h2 className="text-fg text-sm font-medium">
+              {t('settings.services.stt.modelsTitle')}
+            </h2>
+            <div className="divide-border/40 divide-y">
+              {MODEL_IDS.map((id) => (
+                <div
+                  key={id}
+                  className="flex items-center justify-between py-2 first:pt-0 last:pb-0"
+                >
+                  <div className="flex flex-col">
+                    <span className="text-fg text-sm font-medium capitalize">{id}</span>
+                    <span className="text-muted text-xs">
+                      {t(`settings.services.stt.models.${id}.description`)}
+                    </span>
+                  </div>
+                  <div className="flex flex-col items-end">
+                    <span className="text-fg text-xs">
+                      {t(`settings.services.stt.models.${id}.size`)}
+                    </span>
+                    <span className="text-muted text-xs">
+                      {t(`settings.services.stt.models.${id}.speed`)}
+                    </span>
+                  </div>
+                </div>
               ))}
             </div>
-          </div>
-        </section>
+
+            <div className="border-border/60 mt-2 border-t pt-3">
+              <h2 className="text-fg text-sm font-medium">
+                {t('settings.services.stt.formatsTitle')}
+              </h2>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {FORMATS.map((f) => (
+                  <span
+                    key={f}
+                    className="bg-border/40 text-muted rounded-md px-2 py-0.5 text-xs font-medium"
+                  >
+                    {f}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </section>
+        </CapabilityGateBody>
       </div>
     </div>
   )

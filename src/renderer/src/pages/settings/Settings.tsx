@@ -36,6 +36,7 @@ import { prefetchGooglePanel } from '@pages/settings/googleSnapshot'
 import { InAppPanel } from '@pages/settings/InAppPanel'
 import { McpPanel } from '@pages/settings/McpPanel'
 import { MemesPanel } from '@pages/settings/MemesPanel'
+import { VideoPanel } from '@pages/settings/VideoPanel'
 import { NotionPanel } from '@pages/settings/NotionPanel'
 import { SpeechToTextPanel } from '@pages/settings/SpeechToTextPanel'
 import { MobilePanel } from '@pages/settings/MobilePanel'
@@ -50,6 +51,7 @@ import { useFlow } from '@providers/flow/useFlow'
 import { useLocale } from '@providers/locale/useLocale'
 import {
   AiMagicIcon,
+  Video01Icon,
   AnalyticsUpIcon,
   ArrowLeft02Icon,
   ArrowRight02Icon,
@@ -73,11 +75,12 @@ import {
   VolumeHighIcon,
   WhatsappIcon
 } from 'hugeicons-react'
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { IconType } from 'react-icons'
 
-import { consumeNextTab, type TabKey } from '@pages/settings/settingsNav'
+import { prefetchCapabilityGate } from '@pages/settings/capabilityGate'
+import { consumeNextTab, onTabRequest, type TabKey } from '@pages/settings/settingsNav'
 export type { TabKey } from '@pages/settings/settingsNav'
 
 type Tab = {
@@ -126,7 +129,10 @@ function restoreSnapshot(
         : 'ollama',
     channel:
       s?.channel && CHANNELS.includes(s.channel as Channel) ? (s.channel as Channel) : 'inapp',
-    service: s?.service ? (s.service as Service) : 'browserExtension',
+    service:
+      s?.service && SERVICES.includes(s.service as Service)
+        ? (s.service as Service)
+        : 'browserExtension',
     knowledgeTab:
       s?.knowledgeTab && KNOWLEDGE_TABS.includes(s.knowledgeTab as KnowledgeTab)
         ? (s.knowledgeTab as KnowledgeTab)
@@ -204,12 +210,6 @@ export function Settings(): React.JSX.Element {
     [snapshot]
   )
 
-  // The TTS and STT panels only make sense when their cerebellum
-  // capabilities are loaded — without the plugin folders, the saved
-  // config has no plugin to read it. Telegram is in-process and
-  // doesn't need a capability folder, so it's always visible.
-  // Probe the cerebellum once on mount and filter the Services
-  // sub-tabs to whatever's actually present.
   const [ollamaReachable, setOllamaReachable] = useState<boolean | null>(null)
 
   useEffect(() => {
@@ -222,59 +222,16 @@ export function Settings(): React.JSX.Element {
     }
   }, [])
 
-  const [loadedCapabilities, setLoadedCapabilities] = useState<Set<string> | null>(null)
-
-  useEffect(() => {
-    let cancelled = false
-    void window.api.cerebellum.listCapabilities().then((caps) => {
-      if (cancelled) return
-      const ok = caps.filter((c) => c.status === 'ok' && c.enabled).map((c) => c.name)
-      setLoadedCapabilities(new Set(ok))
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  // Warm up the Google Workspace snapshot the moment Settings opens, so
-  // by the time the user clicks the Google Workspace tab the data is
-  // already populated and the panel renders without a flash.
+  // Warm up the Google Workspace snapshot and the capability gate the
+  // moment Settings opens, so by the time the user clicks a Services tab
+  // the data is already populated and the panel renders without a flash.
   useEffect(() => {
     void prefetchGooglePanel().catch(() => {})
+    prefetchCapabilityGate()
   }, [])
 
-  const visibleServices = useMemo<Service[]>(() => {
-    const caps = loadedCapabilities
-    // Brave and Google are always visible — Brave only gates the
-    // web-search plugin, and Google depends on an external binary (gog)
-    // rather than a cerebellum capability folder.
-    if (!caps) return ['browserExtension', 'brave', 'google']
-    const out: Service[] = ['browserExtension', 'brave', 'google']
-    if (caps.has('memes')) out.push('memes')
-    if (caps.has('notion')) out.push('notion')
-    if (caps.has('github')) out.push('github')
-    if (caps.has('text-to-speech')) out.push('tts')
-    if (caps.has('speech-to-text')) out.push('stt')
-    if (caps.has('computer-use')) out.push('computerUse')
-    return out
-  }, [loadedCapabilities])
-
-  // Derive the effective sub-tab at render time. If the user's
-  // currently-selected service disappeared (capability got removed
-  // mid-session), pretend they're on the first available one
-  // without triggering an effect-driven setState.
-  const effectiveService: Service = visibleServices.includes(service)
-    ? service
-    : loadedCapabilities
-      ? (visibleServices[0] ?? 'brave')
-      : service
-
-  const ttsAvailable = visibleServices.includes('tts')
-  const sttAvailable = visibleServices.includes('stt')
-  const notionAvailable = visibleServices.includes('notion')
-  const githubAvailable = visibleServices.includes('github')
-  const memesAvailable = visibleServices.includes('memes')
-  const computerUseAvailable = visibleServices.includes('computerUse')
+  // Nested panels (capability gate cards) can ask to jump to another tab.
+  useEffect(() => onTabRequest(setActive), [setActive])
 
   return (
     <main className={cn('bg-bg flex h-full w-full', pageTopPadding)}>
@@ -406,8 +363,8 @@ export function Settings(): React.JSX.Element {
                   >
                     <div className="overflow-hidden">
                       <div className="flex flex-col gap-0.5 ps-7 pe-1 py-1">
-                        {visibleServices.map((s) => {
-                          const subActive = isActive && effectiveService === s
+                        {SERVICES.map((s) => {
+                          const subActive = isActive && service === s
                           const Icon = SERVICE_ICONS[s]
                           return (
                             <button
@@ -540,10 +497,10 @@ export function Settings(): React.JSX.Element {
         <TabPanel active={active === 'model' && provider === 'openrouter'}>
           <CloudProviderPanel provider="openrouter" />
         </TabPanel>
-        <TabPanel active={active === 'services' && effectiveService === 'tts' && ttsAvailable}>
+        <TabPanel active={active === 'services' && service === 'tts'}>
           <TextToSpeechPanel />
         </TabPanel>
-        <TabPanel active={active === 'services' && effectiveService === 'stt' && sttAvailable}>
+        <TabPanel active={active === 'services' && service === 'stt'}>
           <SpeechToTextPanel />
         </TabPanel>
         <TabPanel active={active === 'channels' && channel === 'mobile'}>
@@ -561,33 +518,28 @@ export function Settings(): React.JSX.Element {
         <TabPanel active={active === 'mcp'}>
           <McpPanel />
         </TabPanel>
-        <TabPanel active={active === 'services' && effectiveService === 'browserExtension'}>
+        <TabPanel active={active === 'services' && service === 'browserExtension'}>
           <BrowserExtensionPanel />
         </TabPanel>
-        <TabPanel active={active === 'services' && effectiveService === 'brave'}>
+        <TabPanel active={active === 'services' && service === 'brave'}>
           <BravePanel />
         </TabPanel>
-        <TabPanel active={active === 'services' && effectiveService === 'google'}>
+        <TabPanel active={active === 'services' && service === 'google'}>
           <GooglePanel />
         </TabPanel>
-        <TabPanel active={active === 'services' && effectiveService === 'memes' && memesAvailable}>
+        <TabPanel active={active === 'services' && service === 'memes'}>
           <MemesPanel />
         </TabPanel>
-        <TabPanel
-          active={active === 'services' && effectiveService === 'notion' && notionAvailable}
-        >
+        <TabPanel active={active === 'services' && service === 'video'}>
+          <VideoPanel />
+        </TabPanel>
+        <TabPanel active={active === 'services' && service === 'notion'}>
           <NotionPanel />
         </TabPanel>
-        <TabPanel
-          active={active === 'services' && effectiveService === 'github' && githubAvailable}
-        >
+        <TabPanel active={active === 'services' && service === 'github'}>
           <GitHubPanel />
         </TabPanel>
-        <TabPanel
-          active={
-            active === 'services' && effectiveService === 'computerUse' && computerUseAvailable
-          }
-        >
+        <TabPanel active={active === 'services' && service === 'computerUse'}>
           <ComputerUsePanel />
         </TabPanel>
       </div>
@@ -672,9 +624,25 @@ type Service =
   | 'github'
   | 'google'
   | 'memes'
+  | 'video'
   | 'tts'
   | 'stt'
   | 'computerUse'
+
+// Every service, always. Pages that depend on a cerebellum capability
+// gate themselves with an alert card instead of vanishing from the nav.
+const SERVICES: Service[] = [
+  'browserExtension',
+  'brave',
+  'google',
+  'memes',
+  'video',
+  'notion',
+  'github',
+  'tts',
+  'stt',
+  'computerUse'
+]
 
 const SERVICE_ICONS: Record<Service, React.ComponentType<{ size?: number }>> = {
   browserExtension: BrowserIcon,
@@ -683,6 +651,7 @@ const SERVICE_ICONS: Record<Service, React.ComponentType<{ size?: number }>> = {
   github: GithubIcon,
   google: GoogleLogo,
   memes: SmileDizzyIcon,
+  video: Video01Icon,
   tts: VolumeHighIcon,
   stt: Mic01Icon,
   computerUse: ComputerIcon

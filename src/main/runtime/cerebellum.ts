@@ -17,7 +17,8 @@ import type {
   McpTestResult
 } from '@main/runtime/mcp/types'
 import type { WorkflowEffort, WorkflowWaitOutcome } from '@main/runtime/workflow'
-import type { WorkflowAgentView } from '@main/runtime/broca'
+import type { TaskSnapshot, WorkflowAgentView } from '@main/runtime/broca'
+import type { VideoSubmitInput, VideoSubmitResult } from '@main/runtime/video-tasks'
 import { sudoSession, type SudoSession } from '@main/runtime/sudoSession'
 import type { ToolDefinition } from '@main/runtime/thalamus'
 import type { ToolCall } from '@main/runtime/wernicke'
@@ -521,6 +522,38 @@ export type McpHost = {
 }
 
 /**
+ * Async generation-task surface injected into the `video` capability's
+ * plugin via its init context (PluginContext.videoTasks). Implemented in
+ * the main process (index.ts) over the VideoTaskManager singleton, which
+ * owns the MiniMax H3 task lifecycle: media preparation, task creation,
+ * the 10s poll loop, artifact download, and the task-card snapshot flow.
+ * The host implementation stamps the active conversation/turn onto every
+ * submit, so the plugin never handles ids. Optional on PluginContext —
+ * every plugin other than `video` ignores it.
+ */
+export type VideoTasksHost = {
+  /**
+   * Is the service usable right now — key present and accepted? Called by
+   * `video_check` so the agent can confirm configuration before spending a
+   * generation, and report the exact remedy when it can't.
+   */
+  check: () => Promise<{ configured: boolean; reachable: boolean; detail: string }>
+  /** Validate + prepare media, create the task, start polling. */
+  submit: (input: VideoSubmitInput) => Promise<VideoSubmitResult>
+  /**
+   * Park until the task reaches a terminal state (artifact downloaded for
+   * successes). Null when the signal aborts first or the id is unknown.
+   */
+  awaitTask: (taskId: string, signal?: AbortSignal) => Promise<TaskSnapshot | null>
+  /** Cancel a queued/running task server-side. */
+  cancel: (taskId: string) => Promise<{ ok: boolean; error?: string }>
+  /** Snapshot of one task. */
+  get: (taskId: string) => TaskSnapshot | null
+  /** Every task belonging to the active conversation, oldest first. */
+  list: () => TaskSnapshot[]
+}
+
+/**
  * Retrieval surface injected into the `introspect` capability's plugin via
  * its init context (PluginContext.cortex). Implemented in the main process
  * (index.ts) over the live Cortex index + Hippocampus write path, so the
@@ -644,6 +677,13 @@ export type PluginContext = {
    */
   cortex?: CortexHost
   /**
+   * Async video-generation surface. Present only when the host wired one in
+   * via setVideoTasksHost — used by the `video` capability to submit, await,
+   * inspect, and cancel MiniMax H3 generation tasks. Undefined for every
+   * other plugin.
+   */
+  videoTasks?: VideoTasksHost
+  /**
    * Ask the user a multiple-choice question and block until they answer.
    * Used by the `ask` capability to pause the agent loop, render an
    * interactive question card in the chat, and resume with the user's
@@ -725,6 +765,11 @@ export const CORE_CAPABILITIES: ReadonlySet<string> = new Set([
   'system',
   'telegram',
   'whatsapp',
+  // The phone-notification tool (notify_phone), registered in-process by the
+  // mobile channel. Core for the same reason the other channel sends are:
+  // "notify me when this finishes" must not require a discovery hop, and the
+  // tool answers its own refusals (nothing paired, notifications off).
+  'phone',
   'electron',
   // The working-discipline loader: one tool (operating_manual) returning the
   // full manual. Core so its schema always ships — the agent must be able to
@@ -738,7 +783,12 @@ export const CORE_CAPABILITIES: ReadonlySet<string> = new Set([
   // before the manual halves the trigger rate (measured for operating-manual),
   // which is exactly the inconsistent-output failure these exist to fix.
   'pdf-design',
-  'dataviz'
+  'dataviz',
+  // Async video generation (MiniMax H3). Core so the schemas always ship:
+  // a video request must reach video_generate without a discovery hop, and
+  // the task-card protocol in the tool descriptions is what keeps the flow
+  // model-led. Missing API key degrades to a clear error naming Settings.
+  'video'
 ])
 
 /**
@@ -819,6 +869,7 @@ export class Cerebellum {
   private workflowHost?: WorkflowHost
   private mcpHost?: McpHost
   private cortexHost?: CortexHost
+  private videoTasksHost?: VideoTasksHost
   /**
    * Bumped every time the live tool surface changes — a reload (skills
    * added/edited/removed) or an enable/disable toggle. The agent loop pins
@@ -965,6 +1016,15 @@ export class Cerebellum {
    */
   setCortexHost(host: CortexHost): void {
     this.cortexHost = host
+  }
+
+  /**
+   * Wire the video-task host (implemented in the main process over the
+   * VideoTaskManager singleton) that the `video` capability's plugin
+   * receives in its init context. Set once at startup; survives reload().
+   */
+  setVideoTasksHost(host: VideoTasksHost): void {
+    this.videoTasksHost = host
   }
 
   isDisabled(name: string): boolean {
@@ -1926,6 +1986,7 @@ export class Cerebellum {
         workflow: this.workflowHost,
         mcp: this.mcpHost,
         cortex: this.cortexHost,
+        videoTasks: this.videoTasksHost,
         askUser: (input) => this.dispatchAskUser(input),
         getChannelStatus: () => this.channelStatusProvider?.() ?? []
       })

@@ -15,6 +15,8 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
 
+import { CapabilityGateBody, CapabilityGateCard, useCapabilityGate } from './capabilityGate'
+
 const PAT_URL = 'https://github.com/settings/personal-access-tokens'
 const TOKENS_URL = 'https://github.com/settings/tokens'
 
@@ -116,6 +118,7 @@ void loadConnections()
 export function GitHubPanel(): React.JSX.Element {
   const { t } = useTranslation()
   const toast = useToast()
+  const gate = useCapabilityGate('github')
 
   // Seed from the module cache so the panel paints connections immediately.
   const [rows, setRows] = useState<Row[]>(() => (cachedConnections ?? []).map(toRow))
@@ -422,63 +425,67 @@ export function GitHubPanel(): React.JSX.Element {
           </p>
         </header>
 
-        <section className="bg-surface border-border flex flex-col gap-4 rounded-2xl border p-6">
-          <div className="flex flex-col gap-1">
-            <h2 className="text-fg text-sm font-medium">
-              {t('settings.services.github.connections.title')}
-            </h2>
-            <p className="text-muted text-xs leading-relaxed">
-              {t('settings.services.github.connections.subtitle')}
+        <CapabilityGateCard gate={gate} label={t('settings.services.tabs.github')} />
+
+        <CapabilityGateBody gate={gate}>
+          <section className="bg-surface border-border flex flex-col gap-4 rounded-2xl border p-6">
+            <div className="flex flex-col gap-1">
+              <h2 className="text-fg text-sm font-medium">
+                {t('settings.services.github.connections.title')}
+              </h2>
+              <p className="text-muted text-xs leading-relaxed">
+                {t('settings.services.github.connections.subtitle')}
+              </p>
+            </div>
+
+            {ready && rows.length === 0 && (
+              <p className="text-muted bg-bg/40 border-border rounded-xl border border-dashed px-4 py-6 text-center text-sm">
+                {t('settings.services.github.connections.empty')}
+              </p>
+            )}
+
+            <div className="flex flex-col gap-4">
+              {rows.map((row, index) => (
+                <ConnectionCard
+                  key={row.id}
+                  row={row}
+                  index={index}
+                  labelError={labelError(row)}
+                  testErrorText={
+                    row.testError ? translateError(row.testError.kind, row.testError.message) : null
+                  }
+                  onLabel={(v) => patchRow(row.id, { label: v })}
+                  onToken={(v) => handleTokenChange(row.id, v)}
+                  onToggleToken={() => patchRow(row.id, { tokenVisible: !row.tokenVisible })}
+                  onTest={() => void handleTest(row.id)}
+                  onRemove={() => void handleRemove(row.id)}
+                />
+              ))}
+            </div>
+
+            <div className="flex items-center justify-between gap-2 pt-1">
+              <Button type="button" variant="outline" size="sm" onClick={handleAdd}>
+                <PlusSignIcon size={15} />
+                {t('settings.services.github.connections.add')}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => void handleSaveAll()}
+                disabled={!dirty || rows.some((r) => r.busy)}
+              >
+                {t('settings.services.github.save')}
+              </Button>
+            </div>
+
+            <p className="text-muted text-xs">
+              <Trans i18nKey="settings.services.github.testHint" components={TRANS_COMPONENTS} />
             </p>
-          </div>
+          </section>
 
-          {ready && rows.length === 0 && (
-            <p className="text-muted bg-bg/40 border-border rounded-xl border border-dashed px-4 py-6 text-center text-sm">
-              {t('settings.services.github.connections.empty')}
-            </p>
-          )}
-
-          <div className="flex flex-col gap-4">
-            {rows.map((row, index) => (
-              <ConnectionCard
-                key={row.id}
-                row={row}
-                index={index}
-                labelError={labelError(row)}
-                testErrorText={
-                  row.testError ? translateError(row.testError.kind, row.testError.message) : null
-                }
-                onLabel={(v) => patchRow(row.id, { label: v })}
-                onToken={(v) => handleTokenChange(row.id, v)}
-                onToggleToken={() => patchRow(row.id, { tokenVisible: !row.tokenVisible })}
-                onTest={() => void handleTest(row.id)}
-                onRemove={() => void handleRemove(row.id)}
-              />
-            ))}
-          </div>
-
-          <div className="flex items-center justify-between gap-2 pt-1">
-            <Button type="button" variant="outline" size="sm" onClick={handleAdd}>
-              <PlusSignIcon size={15} />
-              {t('settings.services.github.connections.add')}
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => void handleSaveAll()}
-              disabled={!dirty || rows.some((r) => r.busy)}
-            >
-              {t('settings.services.github.save')}
-            </Button>
-          </div>
-
-          <p className="text-muted text-xs">
-            <Trans i18nKey="settings.services.github.testHint" components={TRANS_COMPONENTS} />
-          </p>
-        </section>
-
-        <CapabilitiesSection />
-        <HowItWorksSection />
+          <CapabilitiesSection />
+          <HowItWorksSection />
+        </CapabilityGateBody>
       </div>
     </div>
   )

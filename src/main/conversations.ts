@@ -19,6 +19,14 @@ export type MessageAttachment = {
   width?: number
   height?: number
   durationSeconds?: number
+  /**
+   * Reference-only attachment: a public media URL the user supplied instead
+   * of a file, for tools that take URLs directly (MiniMax H3 video
+   * generation — URLs bypass the API's 64 MB request-body cap). Nothing is
+   * downloaded: filePath is '' and sizeBytes 0; the attachment note carries
+   * the URL to the model. (Dual decl — mirrored in src/preload/index.ts.)
+   */
+  remoteUrl?: string
 }
 
 export type ConversationMessage = {
@@ -84,7 +92,13 @@ export type ConversationMessage = {
  * with conversation files written before the field shipped — those
  * are treated as `electron` by default.
  */
-export type ConversationChannel = 'electron' | 'telegram' | 'whatsapp' | 'heartbeat' | 'procedure'
+export type ConversationChannel =
+  | 'electron'
+  | 'telegram'
+  | 'whatsapp'
+  | 'mobile'
+  | 'heartbeat'
+  | 'procedure'
 
 export type TimelineEntry = {
   id: string
@@ -701,7 +715,7 @@ export async function deleteConversation(id: string): Promise<void> {
   // unreadable is silently skipped.
   const dir = conversationDirName(id)
   const root = workspaceRoot()
-  for (const subroot of ['uploads', 'voice', 'speech']) {
+  for (const subroot of ['uploads', 'voice', 'speech', path.join('generations', 'video')]) {
     await fs.rm(path.join(root, subroot, dir), { recursive: true, force: true }).catch(() => {
       // best-effort
     })

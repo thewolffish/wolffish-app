@@ -4,7 +4,7 @@ import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn'
 import type { BraveErrorKind, BraveStatus } from '@preload/index'
 import { EyeIcon, LinkSquare02Icon, ViewOffIcon } from 'hugeicons-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
 
 const BRAVE_API_URL = 'https://api.search.brave.com'
@@ -51,6 +51,11 @@ export function BravePanel(): React.JSX.Element {
   const [busy, setBusy] = useState<'idle' | 'saving' | 'testing'>('idle')
   const [validation, setValidation] = useState<string | null>(null)
 
+  // True from the first keystroke that diverges the input until a save (or a
+  // seed) realigns it — the remote-change listener below must never overwrite
+  // a key mid-typing, and an event callback cannot read fresh state.
+  const apiKeyDirtyRef = useRef(false)
+
   useEffect(() => {
     let cancelled = false
     void (async () => {
@@ -62,11 +67,34 @@ export function BravePanel(): React.JSX.Element {
       setHasSavedKey(cfg.apiKey.length > 0)
       setStatus(live)
       setEnabled(cfg.enabled)
+      apiKeyDirtyRef.current = false
     })()
     return () => {
       cancelled = true
     }
   }, [])
+
+  // The paired phone (or another window) saved Brave settings: re-seed the
+  // toggle, status and saved-key markers; the input itself only when the user
+  // is not mid-edit.
+  useEffect(
+    () =>
+      window.api.services.onChanged((payload) => {
+        if (payload.service !== 'brave') return
+        void (async () => {
+          const [cfg, live] = await Promise.all([
+            window.api.brave.getConfig(),
+            window.api.brave.status()
+          ])
+          setEnabled(cfg.enabled)
+          setStatus(live)
+          setSavedApiKey(cfg.apiKey)
+          setHasSavedKey(cfg.apiKey.length > 0)
+          if (!apiKeyDirtyRef.current) setApiKey(cfg.apiKey)
+        })()
+      }),
+    []
+  )
 
   const handleToggle = useCallback(async (value: boolean) => {
     setEnabled(value)
@@ -99,6 +127,7 @@ export function BravePanel(): React.JSX.Element {
       setStatus(response.status)
       setHasSavedKey(true)
       setSavedApiKey(apiKey.trim())
+      apiKeyDirtyRef.current = false
       toast.show({ message: t('settings.services.brave.saveSuccess'), tone: 'success' })
     } finally {
       setBusy('idle')
@@ -123,6 +152,7 @@ export function BravePanel(): React.JSX.Element {
         setEnabled(true)
         setHasSavedKey(true)
         setSavedApiKey(apiKey.trim())
+        apiKeyDirtyRef.current = false
         toast.show({
           message: t('settings.services.brave.testSuccess', { count: result.resultsCount }),
           tone: 'success'
@@ -271,7 +301,10 @@ export function BravePanel(): React.JSX.Element {
                 id="brave-api-key"
                 type={keyVisible ? 'text' : 'password'}
                 value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
+                onChange={(e) => {
+                  apiKeyDirtyRef.current = true
+                  setApiKey(e.target.value)
+                }}
                 placeholder={t('settings.services.brave.apiKeyPlaceholder')}
                 autoComplete="off"
                 spellCheck={false}

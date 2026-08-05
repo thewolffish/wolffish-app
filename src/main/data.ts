@@ -81,15 +81,13 @@ export async function getDataAnalytics(): Promise<DataAnalytics> {
   const root = workspaceRoot()
   const brainDir = path.join(root, 'brain')
 
-  const [workspaceBytes, hippocampusBytes, corpusBytes, prefrontalBytes, disk] = await Promise.all(
-    [
-      dirSize(root),
-      dirSize(path.join(brainDir, 'hippocampus')),
-      dirSize(path.join(brainDir, 'corpus')),
-      dirSize(path.join(brainDir, 'prefrontal')),
-      diskSpace(root)
-    ]
-  )
+  const [workspaceBytes, hippocampusBytes, corpusBytes, prefrontalBytes, disk] = await Promise.all([
+    dirSize(root),
+    dirSize(path.join(brainDir, 'hippocampus')),
+    dirSize(path.join(brainDir, 'corpus')),
+    dirSize(path.join(brainDir, 'prefrontal')),
+    diskSpace(root)
+  ])
 
   // Sample only once the walks above have finished. Sampling alongside them
   // measured this function's own readdir/stat storm rather than the app: an

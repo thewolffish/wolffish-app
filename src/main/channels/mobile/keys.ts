@@ -38,6 +38,13 @@ export type MobilePairing = {
   model?: string | null
   osVersion?: string | null
   appVersion?: string | null
+  /**
+   * The phone's stable device id, learned from its hello. This is the ONLY
+   * routing identity the desktop ever stamps into a notify frame — the model
+   * never supplies it. Null until a phone new enough to send one connects;
+   * notifications are refused until then.
+   */
+  phoneId?: string | null
 }
 
 export type MobileIdentity = {

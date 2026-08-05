@@ -69,7 +69,9 @@ import {
   type AskUserRequest,
   type AskUserResponse
 } from '@main/runtime/cerebellum'
+import { compressVideoToLimit } from '@main/channels/video-compress'
 import {
+  upsertTaskSegment,
   upsertWorkflowSegment,
   WORKFLOW_TOOL_NAMES,
   type Segment,
@@ -513,7 +515,12 @@ export class WhatsAppChannel {
       readMessages: (jid, count) => this.readMessages(jid, count),
       ensureFfmpeg: () => this.agent.cerebellum.ensureSystemTool('ffmpeg'),
       confirmDelivery: (id) => this.confirmDelivery(id),
-      bindChatToSendingConversation: (jid) => this.bindChatToSendingConversation(jid)
+      bindChatToSendingConversation: (jid) => this.bindChatToSendingConversation(jid),
+      defaultJid: async () => {
+        const cfg = await getWhatsAppConfig()
+        const phone = cfg.allowedPhoneNumbers?.[0]?.replace(/[^0-9]/g, '')
+        return phone ? `${phone}@s.whatsapp.net` : null
+      }
     })
     this.agent.cerebellum.registerInProcessCapability(capability, plugin)
 
@@ -2468,13 +2475,33 @@ export class WhatsAppChannel {
     // bleed into the successor's transcript.
     if (segment.turnId !== active.turnId) return
 
-    // Workflow snapshots supersede each other — keep only the latest per run
-    // or a long workflow persists hundreds of full snapshots.
+    // Workflow/task snapshots supersede each other — keep only the latest
+    // per run/task or a long run persists hundreds of full snapshots.
     if (segment.kind === 'workflow') upsertWorkflowSegment(active.segments, segment)
+    else if (segment.kind === 'task') upsertTaskSegment(active.segments, segment)
     else active.segments.push(segment)
 
     if (segment.kind === 'workflow') {
       await this.renderWorkflowUpdate(jid, segment.snapshot)
+      return
+    }
+
+    if (segment.kind === 'task') {
+      // One compact heads-up when a video generation starts — WhatsApp has
+      // no task card AND no typing indicator, so without this line a
+      // multi-minute generation is absolute silence. 'submitted' occurs
+      // exactly once per task, so this can't double-send. Terminal delivery
+      // is the model's job (video_await → whatsapp_send_video), with the
+      // manager's fallback covering a dead turn.
+      if (segment.snapshot.status === 'submitted') {
+        const video = segment.snapshot.video
+        const mins = Math.max(1, Math.round(segment.snapshot.estimateSeconds / 60))
+        const facts = video ? ` (${video.resolution}, ${video.durationSeconds}s)` : ''
+        await this.safeSend(
+          jid,
+          `🎬 Generating video: ${segment.snapshot.title}${facts} — about ${mins} min. I'll send it here when it's ready.`
+        )
+      }
       return
     }
 
@@ -3244,7 +3271,7 @@ export class WhatsAppChannel {
     if (active?.sentFiles.has(resolved)) return
     try {
       await fs.access(resolved)
-      const buffer = await fs.readFile(resolved)
+      let buffer: Buffer = await fs.readFile(resolved)
       const ext = path.extname(resolved).toLowerCase()
       const VIDEO_MIME: Record<string, string> = {
         '.mp4': 'video/mp4',
@@ -3256,18 +3283,53 @@ export class WhatsAppChannel {
         '.flv': 'video/x-flv',
         '.webm': 'video/webm'
       }
-      const mimetype = VIDEO_MIME[ext] ?? 'video/mp4'
+      let mimetype = VIDEO_MIME[ext] ?? 'video/mp4'
+      // WhatsApp inline video degrades sharply past ~16 MB (the image/audio
+      // ceiling this channel already enforces elsewhere). Oversized videos
+      // are re-encoded to fit; if even that fails they ride as a document
+      // (100 MB ceiling) so the user still receives the file. The original
+      // on disk keeps full quality either way.
+      const WHATSAPP_VIDEO_LIMIT = 16 * 1024 * 1024
+      let caption: string | undefined
+      if (buffer.length > WHATSAPP_VIDEO_LIMIT) {
+        await this.agent.cerebellum.ensureSystemTool('ffmpeg')
+        const compressed = await compressVideoToLimit(resolved, WHATSAPP_VIDEO_LIMIT - 512 * 1024)
+        if ('error' in compressed) {
+          const sent = await this.sock.sendMessage(jid, {
+            document: buffer,
+            fileName: path.basename(resolved),
+            mimetype
+          })
+          if (sent?.key.id) this.sentIds.add(sent.key.id)
+          if (active) active.sentFiles.add(resolved)
+          await this.safeSend(
+            jid,
+            `⚖️ Sent as a file — the video is too large for inline WhatsApp playback and compression failed. Original quality is available in the app.`
+          )
+          return
+        }
+        buffer = compressed.mp4
+        mimetype = 'video/mp4'
+        caption = `⚖️ ${compressed.note} — original quality is available in the app.`
+      }
       const sent = await this.sock.sendMessage(jid, {
         video: buffer,
         mimetype,
-        fileName: path.basename(resolved)
+        fileName: path.basename(resolved),
+        ...(caption ? { caption } : {})
       })
       if (sent?.key.id) {
         this.sentIds.add(sent.key.id)
       }
       if (active) active.sentFiles.add(resolved)
-    } catch {
-      // best-effort
+    } catch (err) {
+      // A silent drop here means the user was promised a video and got
+      // nothing — say what happened instead.
+      const detail = err instanceof Error ? err.message : String(err)
+      await this.safeSend(
+        jid,
+        `🎬 Sending ${path.basename(resolved)} failed (${detail}). The video is available in the app.`
+      ).catch(() => undefined)
     }
   }
 

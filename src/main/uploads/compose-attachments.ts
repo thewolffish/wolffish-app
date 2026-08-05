@@ -22,6 +22,12 @@ export function composeAttachmentContext(
   if (attachments.length === 0) return text
   const root = workspaceRoot()
   const lines = attachments.map((a) => {
+    // URL reference (no local file): the model passes the URL itself to
+    // URL-capable tools (video_generate). KEEP IDENTICAL to the renderer
+    // twin in Chat.tsx composeHistoryContent.
+    if (a.remoteUrl) {
+      return `  - ${a.originalName} (type=${a.type}, mime=${a.mimeType}, url=${a.remoteUrl})`
+    }
     const ext = a.originalName.includes('.')
       ? a.originalName.slice(a.originalName.lastIndexOf('.'))
       : ''
@@ -29,7 +35,9 @@ export function composeAttachmentContext(
     return `  - ${a.originalName} (type=${a.type}, mime=${a.mimeType}, size=${a.sizeBytes}b, path=${abs}${ext ? `, ext=${ext}` : ''})`
   })
   const block = `<attachments>\nThe user attached ${attachments.length} file${attachments.length === 1 ? '' : 's'} to this message:\n${lines.join('\n')}\n</attachments>`
-  const hasVideo = attachments.some((a) => a.type === 'video')
+  // URL-only video references carry no local file to probe — the ffmpeg
+  // inspection instructions apply to on-disk uploads only.
+  const hasVideo = attachments.some((a) => a.type === 'video' && !a.remoteUrl)
   const videoPrompt = hasVideo
     ? `<video_instructions>\nOne or more attached files are videos. You cannot view or process video content directly. Instead, use ffmpeg via your shell tool to read the video metadata and inspect the file. Start by running: ffmpeg -hide_banner -i "<path>" for each video file — its stderr reports duration, resolution, codecs and streams. (If ffprobe is available it gives structured JSON: ffprobe -v quiet -print_format json -show_format -show_streams "<path>".) Use ffmpeg for any further video operations the user requests.\n</video_instructions>`
     : ''

@@ -60,9 +60,19 @@ import {
   CHUNK_SIZE,
   DEFAULT_RELAY_URL,
   Event,
+  PUSH_WIRE_VERSION,
   Rpc,
-  type ConversationMeta
+  type ConversationMeta,
+  type NotifyFrame,
+  type NotifyResultFrame
 } from '@main/tunnel/protocol'
+import {
+  MOBILE_CAPABILITY_NAME,
+  TTL_BY_PHASE,
+  buildMobileCapability,
+  mintNotificationId,
+  type NotifyPhoneRequest
+} from '@main/channels/mobile/tools'
 import {
   generateCode,
   encodePairingPayload,
@@ -75,11 +85,56 @@ import {
 import { Tunnel, type TunnelState } from '@main/tunnel/tunnel'
 import type { TurnRunner } from '@main/channels/turn-runner'
 import type { TurnSink } from '@main/channels/channel'
-import { upsertWorkflowSegment, type Segment } from '@main/runtime/broca'
+import { upsertTaskSegment, upsertWorkflowSegment, type Segment } from '@main/runtime/broca'
+import type { ApprovalDecision, ApprovalRequest } from '@main/runtime/amygdala'
+import type { AskUserAnswer, AskUserRequest, AskUserResponse } from '@main/runtime/cerebellum'
 import type { ChatHistoryMessage } from '@preload/index'
 import { randomBytes } from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
+
+/**
+ * Min gap between live mirror snapshots of an in-flight turn — the same budget
+ * the Electron/Telegram/WhatsApp mirrors use, for the same reason: a fast text
+ * stream must not emit (and make the phone re-render) per token.
+ */
+const MIRROR_THROTTLE_MS = 500
+
+/**
+ * How long a notify waits for the relay's notify_result before reporting the
+ * notification as dropped. The relay answers before it talks to Expo, so a
+ * healthy round trip is tens of milliseconds — this only fires against an
+ * unreachable relay or one that predates the push control plane.
+ */
+const NOTIFY_RESULT_TIMEOUT_MS = 10_000
+
+/**
+ * Ceiling on one mirrored message, well under the relay's 1 MiB record cap.
+ * Events are single frames — nothing chunks them — so an oversized push is not
+ * a slow push, it is a closed connection (CloseCode.MessageTooLarge). A turn
+ * that accumulates that much (a few large tool outputs) falls back to the bare
+ * nudge, and the phone reads the body from disk once the turn ends as it always
+ * could.
+ */
+const MIRROR_MAX_BYTES = 384 * 1024
+
+/**
+ * What a non-verbose phone is shown WHILE a turn runs: assistant prose,
+ * file-bearing results and errors, task cards — the clean feed the Mobile
+ * panel's "Task results / off" setting describes. Tool mechanics are held
+ * back from the live push, exactly as they were when this channel nudged
+ * instead of mirroring; the stored body the phone reads afterwards still
+ * carries everything, and its own verbose switch decides what to draw.
+ */
+function isCleanFeedSegment(segment: Segment): boolean {
+  return (
+    segment.kind === 'text' ||
+    segment.kind === 'tool_result' ||
+    segment.kind === 'task' ||
+    segment.kind === 'separator' ||
+    segment.kind === 'turn_end'
+  )
+}
 
 export type MobileStatus = {
   /** Nothing paired, or a phone is known. */
@@ -109,6 +164,8 @@ export type MobileStatus = {
   /** Which platform store protects the keys, for the privacy card. */
   storage: { available: boolean; backend: string }
   verbose: boolean
+  /** Whether the model's notify_phone tool may send push notifications. */
+  notificationsEnabled: boolean
   /** Relay endpoint the tunnel dials — known before pairing, shown in the panel. */
   relayUrl: string
   /** What "reset to default" returns to, so the panel needn't hardcode it. */
@@ -159,6 +216,13 @@ export type MobileChannelDeps = SnapshotSources & {
    * phone's What's-new desktop tab shows its empty state.
    */
   readChangelog?: (month: string, locale: string) => Promise<string | null>
+  /**
+   * Persisted switch for model-initiated phone notifications. Absent = the
+   * feature is always on (tests). Checked before anything else in the notify
+   * path, so "off" means no frame is even built.
+   */
+  loadNotificationsEnabled?: () => Promise<boolean>
+  saveNotificationsEnabled?: (enabled: boolean) => Promise<void>
   /** Broadcast to the renderer so the panel updates without polling. */
   onStatus?: (status: MobileStatus) => void
   /**
@@ -205,8 +269,36 @@ export class MobileChannel {
   private relayUrl: string
   /** Live turns the phone started, so it can abort them. */
   private readonly turns = new Map<string, { turnId: string; controller: AbortController }>()
+  /**
+   * Requests the agent has parked waiting on the phone, keyed by request id —
+   * approvals and ask-the-user cards, exactly as the Electron channel holds
+   * the renderer's. The turn is BLOCKED inside the pipeline until one of these
+   * resolves, so every exit path has to fire one: the phone's answer, the end
+   * of the turn, or the tunnel going away. None of them may be missed.
+   */
+  private readonly pendingApprovals = new Map<
+    string,
+    {
+      turnId: string
+      conversationId: string
+      resolve: (decision: ApprovalDecision) => void
+      /** The turn's accumulator map, so a decision reaches the saved record. */
+      approvals: AssistantAccumulator['approvals']
+    }
+  >()
+  private readonly pendingAsks = new Map<
+    string,
+    { turnId: string; conversationId: string; resolve: (response: AskUserResponse) => void }
+  >()
   /** Chunked uploads in flight, keyed by upload id. */
   private readonly uploads = new Map<string, PendingUpload>()
+  /** notify frames awaiting the relay's notify_result, by notificationId. */
+  private readonly pendingNotifies = new Map<
+    string,
+    { resolve: (result: NotifyResultFrame) => void; timer: ReturnType<typeof setTimeout> }
+  >()
+  /** Gate for the model's notify_phone tool. Restored from config at start. */
+  private notificationsEnabled = true
 
   constructor(private readonly deps: MobileChannelDeps) {
     this.relayUrl = deps.relayUrl ?? DEFAULT_RELAY_URL
@@ -219,6 +311,16 @@ export class MobileChannel {
     // The stored override must win before any tunnel dials out; deps.relayUrl
     // stays the programmatic default (tests), DEFAULT_RELAY_URL the shipped one.
     this.relayUrl = (await loadRelayUrl()) ?? this.deps.relayUrl ?? DEFAULT_RELAY_URL
+    this.notificationsEnabled = (await this.deps.loadNotificationsEnabled?.()) ?? true
+
+    // The notify_phone tool exists whether or not a phone is currently
+    // paired or reachable — the handler answers with a precise refusal
+    // instead, which the model can act on. Registration is idempotent.
+    const { capability, plugin } = buildMobileCapability({
+      notify: (request) => this.notifyPhone(request)
+    })
+    this.deps.agent.cerebellum.registerInProcessCapability(capability, plugin)
+
     this.pairing = await loadPairing()
     if (!this.pairing) {
       this.log('no pairing stored — waiting for one to be offered')
@@ -234,12 +336,129 @@ export class MobileChannel {
 
   async stop(): Promise<void> {
     this.log('channel stopping')
+    this.deps.agent.cerebellum.unregisterInProcessCapability(MOBILE_CAPABILITY_NAME)
+    for (const [id, pending] of this.pendingNotifies) {
+      clearTimeout(pending.timer)
+      pending.resolve({
+        v: 1,
+        type: 'notify_result',
+        notificationId: id,
+        route: 'dropped',
+        reason: 'channel stopped'
+      })
+    }
+    this.pendingNotifies.clear()
+    this.drainTurnRequests(null, 'channel stopped')
     this.clearOffer()
     await this.abortAllUploads()
     this.tunnel?.stop()
     this.tunnel = null
     this.tunnelState = null
     this.emitStatus()
+  }
+
+  // ---------------------------------------------------------- notifications
+
+  /**
+   * The whole notify path, model side down: the tool handler (tools.ts) has
+   * already validated and rate-limited the model's words; this stamps the
+   * routing identity the model must never control — the phoneId from the
+   * pairing record and a freshly minted ULID — derives the ttl from the
+   * phase, emits the frame over the EXISTING relay connection, and resolves
+   * with the relay's routing decision. Every refusal is a thrown Error with
+   * a message the model can read and act on.
+   */
+  async notifyPhone(request: NotifyPhoneRequest): Promise<NotifyResultFrame> {
+    if (!this.notificationsEnabled) {
+      throw new Error(
+        "phone notifications are disabled in this desktop's Settings → Mobile — do not retry"
+      )
+    }
+    const pairing = this.pairing
+    if (!pairing?.peerPublicKey) throw new Error('no phone paired')
+    if (!pairing.phoneId) {
+      throw new Error(
+        'the paired phone has not identified itself for notifications yet — it must connect ' +
+          'once on a build with notification support (update the mobile app), do not retry'
+      )
+    }
+    const tunnel = this.tunnel
+    if (!tunnel) throw new Error('the relay connection is not running')
+
+    const frame: NotifyFrame = {
+      v: PUSH_WIRE_VERSION,
+      type: 'notify',
+      notificationId: mintNotificationId(),
+      phoneId: pairing.phoneId,
+      runId: request.runId,
+      phase: request.phase,
+      title: request.title,
+      body: request.body,
+      urgency: request.urgency,
+      deeplink: request.deeplink,
+      ttl: TTL_BY_PHASE[request.phase],
+      ts: Date.now()
+    }
+
+    const result = new Promise<NotifyResultFrame>((resolve) => {
+      const timer = setTimeout(() => {
+        this.pendingNotifies.delete(frame.notificationId)
+        resolve({
+          v: 1,
+          type: 'notify_result',
+          notificationId: frame.notificationId,
+          route: 'dropped',
+          reason: 'the relay did not answer — it may be unreachable or predate notification support'
+        })
+      }, NOTIFY_RESULT_TIMEOUT_MS)
+      this.pendingNotifies.set(frame.notificationId, { resolve, timer })
+    })
+
+    try {
+      tunnel.sendControl(frame)
+    } catch {
+      const pending = this.pendingNotifies.get(frame.notificationId)
+      if (pending) {
+        clearTimeout(pending.timer)
+        this.pendingNotifies.delete(frame.notificationId)
+      }
+      throw new Error('the relay link is down right now — the notification was not sent')
+    }
+    this.debug(`notify ${frame.notificationId} sent (${frame.phase}, run ${frame.runId})`)
+
+    const answer = await result
+    this.log(
+      `notification ${frame.notificationId} → ${answer.route}` +
+        (answer.reason ? ` (${answer.reason})` : '')
+    )
+    return answer
+  }
+
+  /** The relay's answer to a notify — resolves the matching waiter. */
+  private onNotifyResult(raw: Record<string, unknown>): void {
+    const id = typeof raw.notificationId === 'string' ? raw.notificationId : null
+    if (!id) return
+    const pending = this.pendingNotifies.get(id)
+    if (!pending) return
+    this.pendingNotifies.delete(id)
+    clearTimeout(pending.timer)
+    const route = raw.route === 'inband' || raw.route === 'push' ? raw.route : 'dropped'
+    pending.resolve({
+      v: 1,
+      type: 'notify_result',
+      notificationId: id,
+      route,
+      ...(typeof raw.reason === 'string' ? { reason: raw.reason } : {})
+    })
+  }
+
+  /** Flip the persisted notifications gate; answers the updated status. */
+  async setNotificationsEnabled(enabled: boolean): Promise<MobileStatus> {
+    this.notificationsEnabled = enabled
+    await this.deps.saveNotificationsEnabled?.(enabled)
+    this.log(`model-initiated phone notifications ${enabled ? 'enabled' : 'disabled'}`)
+    this.emitStatus()
+    return this.getStatus()
   }
 
   /**
@@ -380,6 +599,7 @@ export class MobileChannel {
 
   /** Forget the phone entirely. */
   async unpair(): Promise<MobileStatus> {
+    this.drainTurnRequests(null, 'phone unpaired')
     this.clearOffer()
     this.tunnel?.stop()
     this.tunnel = null
@@ -444,10 +664,20 @@ export class MobileChannel {
       if (state.status === 'connected' && previous?.status !== 'connected') {
         void this.onConnected()
       }
+      // The phone is where every parked card lives. Lose the link and nobody
+      // can answer one — so anything still waiting fails closed here rather
+      // than holding its turn open until the app is opened again, which on a
+      // phone can be hours.
+      if (state.status !== 'connected' && previous?.status === 'connected') {
+        this.drainTurnRequests(null, 'phone disconnected')
+      }
       this.emitStatus()
     })
 
     this.registerHandlers(tunnel)
+    // The relay's answers to notify frames arrive as control records on the
+    // same socket the notify left on.
+    tunnel.onControl('notify_result', (frame) => this.onNotifyResult(frame))
     // Failures are already folded into tunnel state and retried with backoff;
     // surfacing them again here would double-report the same condition.
     void tunnel.start(mode).catch(() => undefined)
@@ -481,12 +711,21 @@ export class MobileChannel {
         typeof value === 'string' && value.trim() ? value.trim().slice(0, 120) : null
       const platform =
         params.platform === 'ios' || params.platform === 'android' ? params.platform : null
+      // The phone's stable device id — the ONLY identity notify frames are
+      // ever stamped with. Shape-validated (the wire is data, not policy)
+      // and stored in the pairing record; absent on older phone builds,
+      // which leaves notifications refused rather than misaddressed.
+      const phoneId =
+        typeof params.deviceId === 'string' && /^[A-Za-z0-9_.-]{8,128}$/.test(params.deviceId)
+          ? params.deviceId
+          : null
       const described = {
         deviceName: text(params.deviceName),
         platform,
         model: text(params.model),
         osVersion: text(params.osVersion),
-        appVersion: text(params.appVersion)
+        appVersion: text(params.appVersion),
+        phoneId
       }
       const patch = Object.fromEntries(
         Object.entries(described).filter(
@@ -662,6 +901,15 @@ export class MobileChannel {
           : undefined
       if (!text && attachments.length === 0) throw new Error('empty prompt')
       let conversationId = typeof params.conversationId === 'string' ? params.conversationId : null
+      // The phone shows the prompt from the moment it is typed and needs the
+      // stored copy to REPLACE that bubble rather than join it, which it can
+      // only do if both carry one id. So the phone mints it and this desktop
+      // saves under it. Validated to the shape mintMessageId produces — the
+      // wire is data, not policy — and simply minted here when absent, which
+      // is what a phone predating this field leaves.
+      const messageId = /^m_\d{1,17}_[0-9a-f]{6}$/.test(String(params.messageId ?? ''))
+        ? String(params.messageId)
+        : undefined
 
       if (!conversationId) {
         const created = createConversation(null)
@@ -669,16 +917,22 @@ export class MobileChannel {
         // it from the transcript once the turn runs.
         if (text) created.title = text.slice(0, 60)
         created.messages = []
+        // Where this conversation began, the same way a Telegram one is
+        // stamped. Both apps badge it from here, and it is the only record —
+        // the desktop cannot tell later which surface asked.
+        created.channel = 'mobile'
         await saveConversation(created)
         conversationId = created.id
       }
 
       const cid = conversationId
-      void this.continueSend(cid, text, attachments, voicePrompt, voiceLang).catch((error) => {
-        const message = error instanceof Error ? error.message : String(error)
-        this.log(`send from the phone failed in ${cid} — ${message}`)
-        this.pushTurnStatus(cid, 'error', message)
-      })
+      void this.continueSend(cid, text, attachments, voicePrompt, voiceLang, messageId).catch(
+        (error) => {
+          const message = error instanceof Error ? error.message : String(error)
+          this.log(`send from the phone failed in ${cid} — ${message}`)
+          this.pushTurnStatus(cid, 'error', message)
+        }
+      )
       return { conversationId: cid }
     })
 
@@ -687,8 +941,50 @@ export class MobileChannel {
       const live = this.turns.get(conversationId)
       live?.controller.abort()
       this.turns.delete(conversationId)
+      // An aborted turn takes its parked cards with it: the abort unwinds the
+      // pipeline, but the promise the pipeline is sitting on is held here.
+      if (live) this.drainTurnRequests(live.turnId, 'turn aborted from the phone')
       this.log(`abort requested for ${conversationId} — ${live ? 'stopped' : 'nothing running'}`)
       return { aborted: Boolean(live) }
+    })
+
+    /**
+     * The phone answered an ask-the-user card. `ok: false` means the id names
+     * nothing pending — the turn ended, or the link dropped and the request
+     * was already failed closed — which is how the phone learns to take a
+     * card down instead of leaving it interactive forever.
+     */
+    tunnel.onRpc(Rpc.askRespond, async (params) => {
+      const id = String(params.id ?? '')
+      const entry = this.pendingAsks.get(id)
+      if (!entry) {
+        this.log(`ask answer for ${id} arrived too late — nothing pending`)
+        return { ok: false }
+      }
+      const response = sanitizeAskResponse(params.response)
+      this.pendingAsks.delete(id)
+      this.log(`ask ${id} answered from the phone — ${response.kind}`)
+      entry.resolve(response)
+      return { ok: true }
+    })
+
+    /** The phone approved or denied a flagged tool call. */
+    tunnel.onRpc(Rpc.approvalRespond, async (params) => {
+      const id = String(params.id ?? '')
+      const entry = this.pendingApprovals.get(id)
+      if (!entry) {
+        this.log(`approval decision for ${id} arrived too late — nothing pending`)
+        return { ok: false }
+      }
+      // Anything that is not an explicit approval is a denial: the wire is
+      // data, and this gate only ever opens on the exact word.
+      const decision: ApprovalDecision = params.decision === 'approved' ? 'approved' : 'denied'
+      this.pendingApprovals.delete(id)
+      const stored = entry.approvals.get(id)
+      if (stored) stored.decision = decision
+      this.log(`approval ${id} ${decision} from the phone`)
+      entry.resolve(decision)
+      return { ok: true }
     })
 
     /**
@@ -774,6 +1070,9 @@ export class MobileChannel {
       if (!conversationId) {
         const created = createConversation(null)
         created.messages = []
+        // Same stamp as the send path: a conversation a phone's first upload
+        // brings into being started on the phone just as surely.
+        created.channel = 'mobile'
         await saveConversation(created)
         conversationId = created.id
       }
@@ -853,7 +1152,8 @@ export class MobileChannel {
     text: string,
     attachments: MessageAttachment[],
     voicePrompt: boolean,
-    voiceLangHint: string | undefined
+    voiceLangHint: string | undefined,
+    messageId?: string
   ): Promise<void> {
     let content = text
     let voiceLang = voiceLangHint
@@ -877,7 +1177,14 @@ export class MobileChannel {
         // The recording must survive its failed transcription: persist the
         // message (empty content, audio attached) so both transcripts keep
         // the voice note, then let the error reach the phone.
-        await this.persistUserMessage(conversationId, '', attachments, voicePrompt, voiceLang)
+        await this.persistUserMessage(
+          conversationId,
+          '',
+          attachments,
+          voicePrompt,
+          voiceLang,
+          messageId
+        )
         throw error
       }
     }
@@ -890,7 +1197,8 @@ export class MobileChannel {
       content,
       attachments,
       voicePrompt,
-      voiceLang
+      voiceLang,
+      messageId
     )
     // The local copy feeds the history build below; the persist above already
     // merged it onto the freshest disk state.
@@ -920,16 +1228,23 @@ export class MobileChannel {
    * concurrent writer (summarizer, another surface) must never be clobbered
    * by a stale copy. A null disk means the conversation was deleted out from
    * under us — the write is skipped rather than resurrecting the file.
+   *
+   * `id` comes from the phone when it sent one: it is already showing this
+   * message, and matching ids are what let its copy be replaced by this one
+   * rather than appear twice. Ids are scoped to a conversation and the phone
+   * mints in the same `m_<ts>_<rand>` shape, so adopting one is no different
+   * from minting it here.
    */
   private async persistUserMessage(
     conversationId: string,
     content: string,
     attachments: MessageAttachment[],
     voicePrompt: boolean,
-    voiceLang: string | undefined
+    voiceLang: string | undefined,
+    id?: string
   ): Promise<ConversationMessage> {
     const message: ConversationMessage = {
-      id: mintMessageId(),
+      id: id ?? mintMessageId(),
       role: 'user',
       content,
       timestamp: Date.now(),
@@ -1077,6 +1392,49 @@ export class MobileChannel {
         return disk
       }).catch(() => undefined)
     }
+    /**
+     * The live mirror of this turn, throttled — the same message this sink
+     * will persist, as it stands right now, under the id it will be saved
+     * with. Identical in kind to what the Electron/Telegram/WhatsApp mirrors
+     * send the phone, which is the point: a turn started ON the phone was the
+     * one case that pushed something else, and that something else was a bare
+     * `{turnId, kind}` nudge meaning "re-read the conversation". Mid-turn
+     * there is nothing to re-read — the assistant message is not on disk until
+     * persistTurn above — so the phone would fetch a transcript from BEFORE
+     * the turn and overwrite what it was showing. Sending the message itself
+     * costs the same push and needs no fetch at all.
+     */
+    let lastMirrorAt = 0
+    let mirrorTimer: NodeJS.Timeout | null = null
+    const emitMirror = (): void => {
+      // A trailing tick from a turn already released — finished, or preempted
+      // by a second send into the same conversation — must not push a stale
+      // snapshot over the message that replaced it.
+      if (this.turns.get(conversationId)?.turnId !== turnId) return
+      const message = buildAssistantMessage(
+        this.verbose ? acc : { ...acc, segments: acc.segments.filter(isCleanFeedSegment) }
+      )
+      if (!message) return
+      lastMirrorAt = Date.now()
+      this.pushMessageAppended(conversationId, message)
+    }
+    const scheduleMirror = (immediate: boolean): void => {
+      const sinceLast = Date.now() - lastMirrorAt
+      if (immediate || sinceLast >= MIRROR_THROTTLE_MS) {
+        if (mirrorTimer) {
+          clearTimeout(mirrorTimer)
+          mirrorTimer = null
+        }
+        emitMirror()
+        return
+      }
+      if (mirrorTimer) return
+      mirrorTimer = setTimeout(() => {
+        mirrorTimer = null
+        emitMirror()
+      }, MIRROR_THROTTLE_MS - sinceLast)
+      mirrorTimer.unref?.()
+    }
     return {
       channelId: 'mobile' as TurnSink['channelId'],
       turnId,
@@ -1086,27 +1444,118 @@ export class MobileChannel {
         // same rule every other channel's replay path follows. `worker` is
         // only present on the segment kinds that can carry it.
         if ('worker' in segment && segment.worker) return
-        // Persist everything the phone's replay will want, whatever the live
-        // verbose gating below decides to push right now. Workflow snapshots
-        // upsert by id — a stream of them is one card, not a card per tick.
+        // Everything the phone's replay will want, whatever the mirror below
+        // decides to push right now. Workflow/task snapshots upsert by id — a
+        // stream of them is one card, not a card per tick.
         if (segment.kind === 'workflow') upsertWorkflowSegment(acc.segments, segment)
+        else if (segment.kind === 'task') upsertTaskSegment(acc.segments, segment)
         else acc.segments.push(segment)
         if (segment.kind === 'turn_end') acc.stopReason = segment.stopReason
         if (segment.kind === 'text') {
           acc.assistantContent += segment.delta
+          // Text rides BOTH rails: the delta so the phone shows the answer
+          // arriving token by token, the throttled snapshot so it also gets
+          // the structure around it. The phone folds one into the other —
+          // a snapshot supersedes the deltas it already contains — so the two
+          // can never print the same words twice.
           this.pushMessageDelta(conversationId, segment.delta, seq++)
+          scheduleMirror(false)
           return
         }
-        // Tool calls and activity are relayed only when the feed is verbose,
-        // matching Telegram/WhatsApp: off keeps the phone's feed to assistant
-        // messages, file-bearing results and errors.
-        if (!this.verbose && segment.kind !== 'tool_result') return
-        this.pushMessageAppended(conversationId, { turnId, kind: segment.kind })
+        // A card flipping to running/succeeded should not wait out the text
+        // throttle, exactly as in the in-app mirror.
+        scheduleMirror(segment.kind === 'task')
       },
       onTurnEvent: () => undefined,
-      onApprovalRequest: async () => 'denied',
+      /**
+       * A flagged tool call, put to the phone as the card the desktop shows
+       * for the same request. The turn parks here until the phone answers,
+       * the turn ends, or the tunnel drops — `drainTurnRequests` owns the
+       * last two, and every one of them resolves this promise.
+       *
+       * The record goes into the accumulator whether or not it is ever
+       * answered, so the saved transcript carries the same approval card the
+       * in-app and Telegram histories do; the decision is back-filled where
+       * it is made.
+       */
+      onApprovalRequest: (req: ApprovalRequest & { id: string }) => {
+        return new Promise<ApprovalDecision>((resolve) => {
+          acc.approvals.set(req.id, {
+            approvalId: req.id,
+            toolCallId: req.toolCall.id,
+            tool: req.toolCall.name,
+            args: req.toolCall.args,
+            reason: req.reason,
+            level: req.level,
+            description: req.description
+          })
+          // Nothing on the other end can answer — fail closed exactly as this
+          // sink did before it could ask at all.
+          if (!this.tunnel?.connected) {
+            const stored = acc.approvals.get(req.id)
+            if (stored) stored.decision = 'denied'
+            this.log(`approval ${req.toolCall.name} denied — no phone connected`)
+            resolve('denied')
+            return
+          }
+          // Several requests can be parked at once — a turn can have more than
+          // one tool call in flight, and the phone anchors a card per tool
+          // call, so nothing here supersedes anything. Same as the Electron
+          // channel; the text channels collapse to one only because a chat
+          // thread has no way to show two.
+          this.pendingApprovals.set(req.id, {
+            turnId,
+            conversationId,
+            resolve,
+            approvals: acc.approvals
+          })
+          // The card anchors to its tool_call segment, so the phone must have
+          // that segment before the request arrives — flush the mirror rather
+          // than let it sit out the throttle.
+          scheduleMirror(true)
+          this.log(`approval requested from the phone — ${req.toolCall.name} (${req.level})`)
+          this.tunnel?.emit(Event.approvalRequest, {
+            conversationId,
+            turnId,
+            id: req.id,
+            toolCallId: req.toolCall.id,
+            tool: req.toolCall.name,
+            args: req.toolCall.args,
+            level: req.level,
+            reason: req.reason,
+            description: req.description
+          })
+        })
+      },
+      /**
+       * ask_user, put to the phone as the interactive question card. With no
+       * phone on the other end this resolves `unsupported` rather than
+       * `canceled` — the `ask` tool then degrades to posing the question as
+       * plain text, which is readable whenever the user next opens the app,
+       * where a cancel would just lose it.
+       */
+      onAskUserRequest: (req: AskUserRequest & { id: string }) => {
+        return new Promise<AskUserResponse>((resolve) => {
+          if (!this.tunnel?.connected) {
+            this.debug('ask_user degraded to text — no phone connected')
+            resolve({ kind: 'unsupported' })
+            return
+          }
+          this.pendingAsks.set(req.id, { turnId, conversationId, resolve })
+          scheduleMirror(true)
+          this.log(`ask_user put to the phone — ${req.questions.length} question(s)`)
+          this.tunnel?.emit(Event.askRequest, {
+            conversationId,
+            turnId,
+            id: req.id,
+            toolCallId: req.toolCallId,
+            questions: req.questions
+          })
+        })
+      },
       onDone: () => {
         this.turns.delete(conversationId)
+        this.drainTurnRequests(turnId, 'turn ended')
         this.log(`turn ${turnId} finished`)
         // Disk first, pushes second: the refresh push triggers the phone's
         // body refetch, and a refetch that outruns the save would hand back
@@ -1118,6 +1567,7 @@ export class MobileChannel {
       },
       onError: (error: string) => {
         this.turns.delete(conversationId)
+        this.drainTurnRequests(turnId, 'turn failed')
         this.log(`turn ${turnId} failed — ${error}`)
         // A failed turn still persists what streamed before it broke —
         // matching every other channel, and keeping both transcripts honest
@@ -1130,6 +1580,34 @@ export class MobileChannel {
       onCredentialBlocked: (type: string) => {
         this.pushTurnStatus(conversationId, 'error', `blocked: ${type}`)
       }
+    }
+  }
+
+  /**
+   * Resolve every request still parked on the phone — for one turn, or for
+   * all of them when `turnId` is null (the tunnel went away, the channel
+   * stopped). Fails closed, exactly like the Electron channel draining a
+   * closed window: approvals deny, asks cancel, and a denied approval is
+   * written into the turn's accumulator so the saved transcript records the
+   * outcome the agent actually got.
+   *
+   * The pipeline is BLOCKED on these promises. Anything that ends a turn or
+   * takes the phone away has to come through here, or the turn hangs forever.
+   */
+  private drainTurnRequests(turnId: string | null, reason: string): void {
+    for (const [id, entry] of this.pendingApprovals) {
+      if (turnId !== null && entry.turnId !== turnId) continue
+      this.pendingApprovals.delete(id)
+      const stored = entry.approvals.get(id)
+      if (stored && !stored.decision) stored.decision = 'denied'
+      this.log(`approval ${id} denied — ${reason}`)
+      entry.resolve('denied')
+    }
+    for (const [id, entry] of this.pendingAsks) {
+      if (turnId !== null && entry.turnId !== turnId) continue
+      this.pendingAsks.delete(id)
+      this.log(`ask ${id} canceled — ${reason}`)
+      entry.resolve({ kind: 'canceled' })
     }
   }
 
@@ -1166,8 +1644,33 @@ export class MobileChannel {
     this.tunnel?.emit(Event.messageDelta, { conversationId, text, replace: true })
   }
 
+  /**
+   * A message the phone should show, or — with no message — a bare nudge to
+   * re-read the conversation once nothing is being written into it.
+   *
+   * Oversized snapshots degrade to that nudge rather than being sent. An event
+   * is one frame with no chunking behind it, so a push past the relay's record
+   * cap does not arrive late, it closes the tunnel; the phone reading the body
+   * from disk a moment later is strictly better than that.
+   */
   pushMessageAppended(conversationId: string, message: unknown): void {
+    if (message !== undefined && !this.withinMirrorBudget(conversationId, message)) {
+      this.tunnel?.emit(Event.messageAppended, { conversationId })
+      return
+    }
     this.tunnel?.emit(Event.messageAppended, { conversationId, message })
+  }
+
+  private withinMirrorBudget(conversationId: string, message: unknown): boolean {
+    let size = 0
+    try {
+      size = Buffer.byteLength(JSON.stringify(message) ?? '')
+    } catch {
+      return false // unserializable is not sendable either
+    }
+    if (size <= MIRROR_MAX_BYTES) return true
+    this.debug(`mirror for ${conversationId} withheld — ${size} bytes over budget`)
+    return false
   }
 
   pushTurnStatus(conversationId: string, state: string, detail?: unknown): void {
@@ -1188,6 +1691,19 @@ export class MobileChannel {
   pushConfigChanged(section?: string): void {
     this.debug(`push config change (${section ?? 'all'})`)
     this.tunnel?.emit(Event.configChanged, { section: section ?? null, at: Date.now() })
+  }
+
+  /**
+   * Variables travel whole and immediately — the phone writes them straight
+   * into its store, no snapshot round trip, so an edit made here (or echoed
+   * back from there) is on its screen in the push's own latency. The
+   * debounced config.changed that follows every save still covers phones
+   * that predate this topic.
+   */
+  pushVariablesChanged(
+    variables: Array<{ name: string; value: string; sensitive: boolean }>
+  ): void {
+    this.tunnel?.emit(Event.variablesChanged, { variables, at: Date.now() })
   }
 
   pushUsageChanged(): void {
@@ -1215,6 +1731,7 @@ export class MobileChannel {
       offer: this.offer,
       storage: storageBackend(),
       verbose: this.verbose,
+      notificationsEnabled: this.notificationsEnabled,
       relayUrl: this.relayUrl,
       defaultRelayUrl: this.deps.relayUrl ?? DEFAULT_RELAY_URL
     }
@@ -1324,14 +1841,52 @@ function toWireConversation(file: ConversationFile): Record<string, unknown> {
       content: message.content,
       timestamp: message.timestamp,
       // Attachments and tool payloads travel verbatim; the phone's renderers
-      // already understand the desktop's shapes.
+      // already understand the desktop's shapes. Approvals and tool timings
+      // ride along for the same reason: they are what the approval card and
+      // the tool card's elapsed time are drawn from, and a transcript without
+      // them renders a decided approval as a bare tool call.
       payload: stripUndefined({
         attachments: (message as { attachments?: unknown }).attachments,
         segments: (message as { segments?: unknown }).segments,
+        approvals: (message as { approvals?: unknown }).approvals,
+        toolTimings: (message as { toolTimings?: unknown }).toolTimings,
         rating: (message as { rating?: unknown }).rating
       })
     }))
   }
+}
+
+/**
+ * Read an AskUserResponse off the wire. The `ask` plugin pairs answers with
+ * questions BY POSITION, so a malformed entry cannot simply be dropped — that
+ * would shift every answer after it onto the wrong question. Anything that is
+ * not a complete, well-formed answer list is therefore read as a cancel, which
+ * is the one outcome that cannot be misattributed.
+ */
+function sanitizeAskResponse(raw: unknown): AskUserResponse {
+  if (!raw || typeof raw !== 'object') return { kind: 'canceled' }
+  const value = raw as Record<string, unknown>
+  if (value.kind !== 'answered' || !Array.isArray(value.answers)) return { kind: 'canceled' }
+  const answers: AskUserAnswer[] = []
+  for (const item of value.answers) {
+    if (!item || typeof item !== 'object') return { kind: 'canceled' }
+    const answer = item as Record<string, unknown>
+    if (answer.kind === 'option') {
+      const index = answer.index
+      if (typeof index !== 'number' || !Number.isInteger(index) || index < 0) {
+        return { kind: 'canceled' }
+      }
+      answers.push({ kind: 'option', index })
+      continue
+    }
+    if (answer.kind === 'custom' && typeof answer.text === 'string' && answer.text.trim()) {
+      answers.push({ kind: 'custom', text: answer.text })
+      continue
+    }
+    return { kind: 'canceled' }
+  }
+  if (answers.length === 0) return { kind: 'canceled' }
+  return { kind: 'answered', answers }
 }
 
 function stripUndefined(value: Record<string, unknown>): Record<string, unknown> | undefined {

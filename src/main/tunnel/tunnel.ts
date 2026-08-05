@@ -109,6 +109,8 @@ export class Disconnected extends TunnelError {
 /** Handlers deal in already-parsed JSON; each side narrows its own params. */
 type RpcHandler = (params: Record<string, unknown>) => Promise<unknown> | unknown
 type EventHandler = (payload: unknown) => void
+/** Relay-authored control frames (push plane), dispatched by their `type`. */
+type ControlHandler = (frame: Record<string, unknown>) => void
 
 export type TunnelOptions = {
   role: TunnelRole
@@ -156,6 +158,7 @@ export class Tunnel {
   private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>()
   private rpcHandlers = new Map<string, RpcHandler>()
   private eventHandlers = new Map<string, EventHandler>()
+  private controlHandlers = new Map<string, ControlHandler>()
   private stateListeners = new Set<(state: TunnelState) => void>()
   private nextRpcId = 1
   private stopped = false
@@ -248,9 +251,12 @@ export class Tunnel {
     // resolves only when the connection DIES. Every caller that awaits
     // start() (pairing, the reconnect button) would hang precisely while
     // everything worked, holding its busy flag forever. Resolve at the first
-    // settle instead: connected, the first scheduled retry, or stop(). That
-    // is the moment the old single-session cycle returned at, and the
-    // contract callers were written against.
+    // settle instead: connected, the first scheduled retry, stop() — or
+    // parked, for the caller that chose to park. A null peerWaitMs makes
+    // waiting-for-peer the steady state, reached in seconds and held for as
+    // long as the peer is away; a caller awaiting arrival there would hang
+    // launch resume and busy flags for hours. Bounded waits keep the old
+    // contract — their timeout turns parking into a settle soon enough.
     const settled = new Promise<void>((resolve) => {
       let done = false
       const unsubscribe = this.onState((state) => {
@@ -259,7 +265,8 @@ export class Tunnel {
           this.stopped ||
           state.status === 'connected' ||
           state.status === 'reconnecting' ||
-          state.status === 'error'
+          state.status === 'error' ||
+          (state.status === 'waiting-for-peer' && this.options.peerWaitMs === null)
         ) {
           done = true
           // Deferred: onState replays synchronously inside subscription, so
@@ -284,7 +291,10 @@ export class Tunnel {
       // sides a window in which to miss each other. The guard is socket
       // identity: once this socket is replaced or closed, the loop is over.
       while (!this.stopped && this.ws === socket) {
-        await this.waitForPeer(this.options.peerWaitMs ?? 60_000)
+        // Not `??`: null means park indefinitely and must reach waitForPeer
+        // intact. Only an absent option falls back to the parameter's bounded
+        // default.
+        await this.waitForPeer(this.options.peerWaitMs)
         if (this.stopped || this.ws !== socket) return
         await this.performHandshake(mode)
         this.attempt = 0
@@ -651,6 +661,19 @@ export class Tunnel {
     const kind = record[0]
     const body = record.subarray(1)
 
+    if (kind === RecordType.CONTROL) {
+      // Relay-authored plaintext JSON (push control plane) — valid with or
+      // without a session, since it exists precisely for when the peer is
+      // away. Malformed control frames cost themselves, never the socket.
+      try {
+        const frame = JSON.parse(decoder.decode(body)) as Record<string, unknown>
+        if (frame && typeof frame.type === 'string') this.controlHandlers.get(frame.type)?.(frame)
+      } catch {
+        this.log('undecodable control frame — dropped')
+      }
+      return
+    }
+
     if (kind === RecordType.TRANSPORT) {
       if (!this.handshakeDone || !this.receiveCipher) return // straggler from a past session
       let plaintext: Uint8Array
@@ -772,6 +795,23 @@ export class Tunnel {
 
   onEvent(topic: EventTopic | '*', handler: EventHandler): void {
     this.eventHandlers.set(topic, handler)
+  }
+
+  /** Handle a relay-authored control frame of the given `type`. One handler
+   *  per type, replaced on re-registration — same contract as onEvent. */
+  onControl(type: string, handler: ControlHandler): void {
+    this.controlHandlers.set(type, handler)
+  }
+
+  /**
+   * Send a plaintext control frame TO THE RELAY (push registration, notify,
+   * ack). Control frames deliberately skip the session cipher — the relay
+   * must read them, and they must work while the peer is away — so nothing
+   * that belongs to the sealed data plane may ever travel through here.
+   * Requires only an open socket, not a completed handshake.
+   */
+  sendControl(frame: Record<string, unknown>): void {
+    this.sendRecord(encoder.encode(JSON.stringify(frame)), RecordType.CONTROL)
   }
 
   rpc<T = unknown>(

@@ -1094,5 +1094,10 @@ export function isModelDisabled(id: string): boolean {
   if (/tts|voiceclone|voicedesign/.test(id)) return true
   if (/^(gpt-5[\d.]*-(pro|codex)|o\d+-pro)/.test(id)) return true
   if (/(-image|-audio|lyria)/i.test(id)) return true
+  // MiniMax video models (H3, Hailuo): generation models, not chat brains —
+  // the `video` capability is their surface. The main-side fetch filter
+  // (isMiniMaxChatModel) already drops them; this is the defensive twin in
+  // case one ever lands in a stored models list.
+  if (/^minimax-(h\d|hailuo)/i.test(id)) return true
   return false
 }

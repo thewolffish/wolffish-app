@@ -24,6 +24,7 @@ import { BasalGanglia } from '@main/runtime/basalganglia'
 import { Brainstem } from '@main/runtime/brainstem'
 import {
   Broca,
+  upsertTaskSegment,
   upsertWorkflowSegment,
   WORKFLOW_TOOL_NAMES,
   type Segment,
@@ -40,6 +41,7 @@ import type { TurnLifecycleEvent } from '@main/channels/turn-runner'
 import { Cortex } from '@main/runtime/cortex'
 import { Device } from '@main/runtime/device'
 import { Hippocampus, type TurnToolCall } from '@main/runtime/hippocampus'
+import { videoTasks } from '@main/runtime/video-tasks'
 import { Hypothalamus } from '@main/runtime/hypothalamus'
 import { Insula } from '@main/runtime/insula'
 import { Motor } from '@main/runtime/motor'
@@ -711,9 +713,21 @@ export class Agent {
           }
         )
       : null
-    return this.cerebellum.runWithConversation(turn.conversationId ?? null, () =>
-      this.workflowCtx.run(workflow, () => this.runRespond(turn, workflow, broca))
+    // Video tasks born in this turn ride its broca as live task-card
+    // segments (the workflow-card pattern). Registered for the turn's whole
+    // life and removed in the finally so VideoTaskManager can tell "turn
+    // still streaming" (broca path) from "turn ended" (broadcast +
+    // conversation-file write-through + channel fallback delivery).
+    const unregisterVideoEmitter = videoTasks.registerTurnEmitter(turn.turnId, (snapshot) =>
+      broca.emitTask(turn.turnId, snapshot)
     )
+    try {
+      return await this.cerebellum.runWithConversation(turn.conversationId ?? null, () =>
+        this.workflowCtx.run(workflow, () => this.runRespond(turn, workflow, broca))
+      )
+    } finally {
+      unregisterVideoEmitter()
+    }
   }
 
   private async runRespond(
@@ -901,6 +915,12 @@ export class Agent {
         const channelNotices = turn.formatNotices?.() ?? []
         const channelFormatText = channelNotices.length > 0 ? channelNotices.join(' ') : undefined
 
+        // Async video-task landings the model has not consumed (it moved on
+        // instead of calling video_await). Rides the same volatile vehicle;
+        // drained once per iteration so a landing is announced exactly once.
+        const videoNotices = videoTasks.drainNotices(turn.conversationId ?? null)
+        const videoTasksText = videoNotices.length > 0 ? videoNotices.join(' ') : undefined
+
         // Escalate a SUBAGENT's runaway to its master (onNoProgress is wired only
         // for agent turns) so the master can manage it — cancel, steer, or keep
         // waiting. Once per worsening band; re-armed when the agent recovers
@@ -925,7 +945,8 @@ export class Agent {
           deliveredFiles: [...deliveredThisTurn],
           online,
           noProgress: noProgressText,
-          channelFormat: channelFormatText
+          channelFormat: channelFormatText,
+          videoTasks: videoTasksText
         }
 
         let systemPrompt: string
@@ -1057,14 +1078,16 @@ export class Agent {
               workingFoldersBlock ||
               !online ||
               noProgressText ||
-              channelFormatText)
+              channelFormatText ||
+              videoTasksText)
               ? formatRuntimeStatus({
                   iteration: iterationCount,
                   toolsCalled: totalToolCalls,
                   deliveredFiles: [...deliveredThisTurn],
                   online,
                   noProgress: noProgressText,
-                  channelFormat: channelFormatText
+                  channelFormat: channelFormatText,
+                  videoTasks: videoTasksText
                 }) + (workingFoldersBlock ? `\n${workingFoldersBlock}` : '')
               : undefined
         })
@@ -1786,9 +1809,11 @@ export class Agent {
       textAccum = ''
     }
     const sink: SegmentSink = (seg) => {
-      // Workflow snapshots supersede each other — keep only the latest per
-      // run in the sealed conversation, mirroring every other persist path.
+      // Workflow/task snapshots supersede each other — keep only the latest
+      // per run/task in the sealed conversation, mirroring every other
+      // persist path.
       if (seg.kind === 'workflow') upsertWorkflowSegment(segments, seg)
+      else if (seg.kind === 'task') upsertTaskSegment(segments, seg)
       else segments.push(seg)
       const listener = this.brainstem?.['listener']
       if (!listener?.onJobLog) return

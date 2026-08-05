@@ -57,7 +57,9 @@ import {
   type AskUserRequest,
   type AskUserResponse
 } from '@main/runtime/cerebellum'
+import { compressVideoToLimit } from '@main/channels/video-compress'
 import {
+  upsertTaskSegment,
   upsertWorkflowSegment,
   WORKFLOW_TOOL_NAMES,
   type Segment,
@@ -729,7 +731,8 @@ export class TelegramChannel {
       getBot: () => this.bot,
       getAllowedUserIds: () => this.allowedUserIds,
       trackOutgoing: (cid, mid) => this.trackMessageId(cid, mid),
-      bindChatToSendingConversation: (cid) => this.bindChatToSendingConversation(cid)
+      bindChatToSendingConversation: (cid) => this.bindChatToSendingConversation(cid),
+      ensureFfmpeg: () => this.agent.cerebellum.ensureSystemTool('ffmpeg')
     })
     this.agent.cerebellum.registerInProcessCapability(capability, plugin)
 
@@ -2752,13 +2755,33 @@ export class TelegramChannel {
     // assistant messages from this list (text + tool cards + chips),
     // so dropping any of them would degrade the history view —
     // tool calls would disappear, approvals would orphan, etc.
-    // Workflow snapshots supersede each other — keep only the latest
-    // per run or a long workflow persists hundreds of full snapshots.
+    // Workflow/task snapshots supersede each other — keep only the latest
+    // per run/task or a long run persists hundreds of full snapshots.
     if (segment.kind === 'workflow') upsertWorkflowSegment(active.segments, segment)
+    else if (segment.kind === 'task') upsertTaskSegment(active.segments, segment)
     else active.segments.push(segment)
 
     if (segment.kind === 'workflow') {
       await this.renderWorkflowUpdate(chatId, segment.snapshot)
+      return
+    }
+
+    if (segment.kind === 'task') {
+      // One compact heads-up when a video generation starts — the channel
+      // has no task card, so this is what tells the user a multi-minute job
+      // is underway. 'submitted' occurs exactly once per task, so this can't
+      // double-send. Terminal delivery is the model's job (video_await →
+      // telegram_send_video), with the manager's fallback covering a dead
+      // turn — announcing it here too would message every video twice.
+      if (segment.snapshot.status === 'submitted') {
+        const video = segment.snapshot.video
+        const mins = Math.max(1, Math.round(segment.snapshot.estimateSeconds / 60))
+        const facts = video ? ` (${video.resolution}, ${video.durationSeconds}s)` : ''
+        await this.sendPlain(
+          chatId,
+          `🎬 Generating video: ${segment.snapshot.title}${facts} — about ${mins} min. I'll send it here when it's ready.`
+        )
+      }
       return
     }
 
@@ -3054,12 +3077,40 @@ export class TelegramChannel {
     const active = this.activeByChat.get(chatId)
     if (active?.sentFiles.has(resolved)) return
     try {
-      const buffer = await fs.readFile(filePath)
-      const file = new InputFile(buffer, path.basename(filePath))
-      await this.bot.api.sendVideo(chatId, file)
+      // Telegram's bot API refuses uploads over 50 MB. A generated 2K video
+      // can approach that, so an oversized file is re-encoded to fit and
+      // sent with a note — the original quality stays available in the app.
+      // The original file on disk is never modified.
+      const TELEGRAM_VIDEO_LIMIT = 50 * 1024 * 1024
+      let buffer: Buffer = await fs.readFile(resolved)
+      let caption: string | undefined
+      if (buffer.length > TELEGRAM_VIDEO_LIMIT) {
+        await this.agent.cerebellum.ensureSystemTool('ffmpeg')
+        const compressed = await compressVideoToLimit(
+          resolved,
+          TELEGRAM_VIDEO_LIMIT - 2 * 1024 * 1024
+        )
+        if ('error' in compressed) {
+          await this.sendPlain(
+            chatId,
+            `🎬 ${path.basename(resolved)} is ${(buffer.length / 1024 / 1024).toFixed(0)} MB — too large for Telegram and compression failed (${compressed.error}). The full-quality video is in the app.`
+          )
+          return
+        }
+        buffer = compressed.mp4
+        caption = `⚖️ ${compressed.note} — original quality is available in the app.`
+      }
+      const file = new InputFile(buffer, path.basename(resolved))
+      await this.bot.api.sendVideo(chatId, file, caption ? { caption } : undefined)
       active?.sentFiles.add(resolved)
-    } catch {
-      // best-effort
+    } catch (err) {
+      // A silent drop here means the user was promised a video and got
+      // nothing — say what happened instead.
+      const detail = err instanceof Error ? err.message : String(err)
+      await this.sendPlain(
+        chatId,
+        `🎬 Sending ${path.basename(resolved)} failed (${detail}). The video is available in the app.`
+      ).catch(() => undefined)
     }
   }
 

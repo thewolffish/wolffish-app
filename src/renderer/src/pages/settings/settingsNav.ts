@@ -23,3 +23,23 @@ export function consumeNextTab(): TabKey | null {
   nextTab = null
   return t
 }
+
+type TabRequestListener = (tab: TabKey) => void
+let tabRequestListener: TabRequestListener | null = null
+
+/**
+ * A mounted Settings page follows tab jumps requested from nested panels
+ * (e.g. a capability gate card's "Open Capabilities" button). Returns the
+ * unsubscribe.
+ */
+export function onTabRequest(listener: TabRequestListener): () => void {
+  tabRequestListener = listener
+  return () => {
+    if (tabRequestListener === listener) tabRequestListener = null
+  }
+}
+
+export function requestSettingsTab(tab: TabKey): void {
+  if (tabRequestListener) tabRequestListener(tab)
+  else preselectSettingsTab(tab)
+}

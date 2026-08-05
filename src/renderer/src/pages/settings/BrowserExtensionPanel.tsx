@@ -139,6 +139,10 @@ export function BrowserExtensionPanel(): React.JSX.Element {
   const [displayBrowsers, setDisplayBrowsers] = useState<ExtensionBrowserInfo[]>([])
   const graceRef = useRef<Map<string, { info: ExtensionBrowserInfo; at: number }>>(new Map())
   const prevLiveRef = useRef<ExtensionBrowserInfo[]>([])
+  // True while the port field diverges from what's saved — a remote save
+  // (phone screenshot settings, another window's port move) re-seeds the
+  // config, but must not overwrite a port the user is mid-typing.
+  const portDirtyRef = useRef(false)
   const [everConnected, setEverConnected] = useState(false)
   const [debuggerGuideOpen, setDebuggerGuideOpen] = useState(false)
 
@@ -156,11 +160,24 @@ export function BrowserExtensionPanel(): React.JSX.Element {
       if (st.status === 'connected') setEverConnected(true)
       setExtensionPath(path)
       setPortInput(String(cfg.port))
+      portDirtyRef.current = false
     })()
     return () => {
       cancelled = true
     }
   }, [])
+
+  useEffect(
+    () =>
+      window.api.services.onChanged((payload) => {
+        if (payload.service !== 'browserExtension') return
+        void window.api.browserExtension.getConfig().then((cfg) => {
+          setConfig(cfg)
+          if (!portDirtyRef.current) setPortInput(String(cfg.port))
+        })
+      }),
+    []
+  )
 
   useEffect(() => {
     return window.api.browserExtension.onStatusChange((st) => {
@@ -218,6 +235,8 @@ export function BrowserExtensionPanel(): React.JSX.Element {
     try {
       const result = await window.api.browserExtension.setConfig({ port })
       setConfig(result.config)
+      setPortInput(String(result.config.port))
+      portDirtyRef.current = false
       toast.show({
         message: t('settings.services.browserExtension.saveSuccess'),
         tone: 'success'
@@ -523,7 +542,10 @@ export function BrowserExtensionPanel(): React.JSX.Element {
                 min={1}
                 max={65535}
                 value={portInput}
-                onChange={(e) => setPortInput(e.target.value)}
+                onChange={(e) => {
+                  portDirtyRef.current = true
+                  setPortInput(e.target.value)
+                }}
                 className={cn(
                   'border-border bg-bg text-fg h-10 min-w-0 flex-1 rounded-lg border px-3 text-sm font-mono',
                   'focus:ring-2 focus:ring-primary focus:border-primary focus:outline-none'

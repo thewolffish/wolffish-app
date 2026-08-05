@@ -100,6 +100,15 @@ export type RuntimeContext = {
    * nothing.
    */
   channelFormat?: string
+  /**
+   * Async video-task landing notice — VideoTaskManager reporting that a
+   * generation task reached a terminal state while the model was doing
+   * other work (it moved on instead of calling video_await), so the model
+   * can present the artifact or the failure. Drained once per iteration.
+   * Same vehicle and cache rationale as noProgress. Undefined renders
+   * nothing.
+   */
+  videoTasks?: string
 }
 
 const ALWAYS_INCLUDED: Array<{ category: ContextCategory; rel: string; tag: string }> = [
@@ -123,12 +132,13 @@ const DELEGATION_CAPABILITIES: ReadonlySet<string> = new Set(['workflow'])
 /**
  * Channel egress capabilities — the live messaging channels register their send
  * tools in-process under these names when connected (TELEGRAM_CAPABILITY_NAME /
- * WHATSAPP_CAPABILITY_NAME in src/main/channels/*\/tools.ts). Their sends hit
- * the channel API directly, so a worker holding them could message the user
- * out-of-band. Hard-coded here (not imported) to keep runtime decoupled from the
- * channel layer; the values are stable identifiers.
+ * WHATSAPP_CAPABILITY_NAME / MOBILE_CAPABILITY_NAME in
+ * src/main/channels/*\/tools.ts). Their sends hit the channel API directly, so
+ * a worker holding them could message the user out-of-band — `phone` even
+ * buzzes a pocket. Hard-coded here (not imported) to keep runtime decoupled
+ * from the channel layer; the values are stable identifiers.
  */
-const CHANNEL_CAPABILITIES: ReadonlySet<string> = new Set(['telegram', 'whatsapp'])
+const CHANNEL_CAPABILITIES: ReadonlySet<string> = new Set(['telegram', 'whatsapp', 'phone'])
 
 /**
  * Everything an agent role is denied on top of delegation: channel egress
@@ -174,6 +184,7 @@ You are talking with the user over WhatsApp: EVERY prose block you write — ful
 - Exception: to show an image inline you may embed ![description](wolffish-media://…) exactly as a tool result gave it to you — the channel replaces it with the actual image.
 - ask_user questions, option labels, and option descriptions are rendered by the channel's own question card — write them as plain text with no formatting markers.
 - Emojis render natively — use them naturally to aid scanning; a leading emoji on a *bold* line does a heading's job (✈️ *Flight details*).
+- Video generation on this channel: the channel already tells the user a task started, so after video_generate write at most one short line, call video_await, then deliver the mp4 with whatsapp_send_video (it compresses oversized videos on its own and notes that the original stays in the app) — never describe the video as a substitute for sending it.
 - This is a phone chat: keep replies short and scannable. Prefer a few tight lines over long structured documents.
 </channel>`,
   telegram: `<channel>
@@ -188,6 +199,7 @@ You are talking with the user over Telegram: EVERY prose block you write — ful
 - Exception: to show an image inline you may embed ![description](wolffish-media://…) exactly as a tool result gave it to you — the channel replaces it with the actual image.
 - ask_user questions, option labels, and option descriptions are rendered by the channel's own question card — write them as plain text with no HTML and no formatting markers.
 - Emojis render natively — use them naturally to aid scanning; a leading emoji on a <b>bold</b> line does a heading's job (✈️ <b>Flight details</b>).
+- Video generation on this channel: the channel already tells the user a task started, so after video_generate write at most one short line, call video_await, then deliver the mp4 with telegram_send_video (it compresses oversized videos on its own and notes that the original stays in the app) — never describe the video as a substitute for sending it.
 - This is a phone chat: keep replies short and scannable. Prefer a few tight lines over long structured documents.
 </channel>`
 }
@@ -270,9 +282,33 @@ export class Prefrontal {
       bundle.systemPrompt,
       await this.buildRoleBlock(role),
       opts?.localModel ? LOCAL_MODEL_PROMPT : '',
-      opts?.channel ? (CHANNEL_PROMPTS[opts.channel] ?? '') : ''
+      opts?.channel ? (CHANNEL_PROMPTS[opts.channel] ?? '') : '',
+      await this.buildVideoPromptingBlock()
     ].filter((b) => b && b.length > 0)
     return blocks.join('\n\n')
+  }
+
+  /**
+   * The video Director-mode directive — a pure instruction, honored by the
+   * model alone: the harness never rewrites, embellishes, or refuses a
+   * prompt in either mode. Read from config at prompt build (turn-stable,
+   * like the project overlay), so flipping the Settings toggle changes the
+   * NEXT turn's prompt; the rarity of a flip is what makes the cache cost
+   * acceptable. Empty when the video capability is disabled — no dead
+   * instructions for tools that don't ship.
+   */
+  private async buildVideoPromptingBlock(): Promise<string> {
+    if (this.cerebellum?.isDisabled('video')) return ''
+    const config = await readConfig().catch(() => null)
+    const director = config?.video?.director !== false
+    if (director) {
+      return `<video_prompting>
+Director mode is ON (a Settings toggle the user controls). When generating a video you are the DIRECTOR: expand the user's request into a full cinematic prompt — subject, action, camera movement, light, mood — before calling video_generate, and pick duration/resolution/ratio from context. Sparse prompts produce flat footage; your rewrite is where the quality comes from. AFTER submitting, show the user the optimized prompt you actually sent, as a short quoted block introduced naturally (e.g. "Directed as:") — they steer the next take by editing it. Never present the rewrite as the user's own words.
+</video_prompting>`
+    }
+    return `<video_prompting>
+Director mode is OFF (a Settings toggle the user controls). When generating a video, pass the user's request to video_generate VERBATIM as the prompt — no rewriting, no embellishment, no added camera or style language, even when you are sure it would look better. Trim only what is clearly not the prompt itself (e.g. "make a video of ..." framing). You still pick duration/resolution/ratio from explicit instructions or the defaults, and you may mention that Director mode is available if a result looks flat.
+</video_prompting>`
   }
 
   /**
@@ -732,6 +768,8 @@ function formatRuntimeBody(runtime: RuntimeContext | undefined): string {
     // Channel-format notice (prose delivered to a phone with raw markup) —
     // same vehicle, same reason.
     if (runtime.channelFormat) lines.push(`  ${runtime.channelFormat}`)
+    // Video-task landing notice — same vehicle, same reason.
+    if (runtime.videoTasks) lines.push(`  ${runtime.videoTasks}`)
   }
   return lines.join('\n')
 }

@@ -4,6 +4,7 @@ import { Loading03Icon, PauseIcon, PlayIcon } from 'hugeicons-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { CapabilityGateBody, CapabilityGateCard, useCapabilityGate } from './capabilityGate'
 import { EngineInstallCard } from './EngineInstallCard'
 import { useEngineInstall } from './useEngineInstall'
 
@@ -59,6 +60,7 @@ const SPEED_VALUES = new Set(SPEEDS.map((s) => s.value))
 
 export function TextToSpeechPanel(): React.JSX.Element {
   const { t } = useTranslation()
+  const gate = useCapabilityGate('text-to-speech')
   const engine = useEngineInstall('tts')
   const ready = engine.installed === true
   const [voice, setVoice] = useState(DEFAULT_VOICE)
@@ -89,6 +91,21 @@ export function TextToSpeechPanel(): React.JSX.Element {
       cancelled = true
     }
   }, [])
+
+  // The paired phone (or another window) can change these too; re-seed when
+  // one does, with the same known-value validation the mount hydrate applies.
+  // Both selects save on change, so there is no draft to guard.
+  useEffect(
+    () =>
+      window.api.services.onChanged((payload) => {
+        if (payload.service !== 'tts') return
+        void window.api.tts.getConfig().then((cfg) => {
+          if (cfg.defaultVoice && VOICE_IDS.has(cfg.defaultVoice)) setVoice(cfg.defaultVoice)
+          if (cfg.defaultSpeed && SPEED_VALUES.has(cfg.defaultSpeed)) setSpeed(cfg.defaultSpeed)
+        })
+      }),
+    []
+  )
 
   const onVoiceChange = (next: string): void => {
     setVoice(next)
@@ -192,105 +209,111 @@ export function TextToSpeechPanel(): React.JSX.Element {
           </p>
         </header>
 
-        <EngineInstallCard
-          state={engine}
-          requirementKey="settings.services.tts.installRequirement"
-        />
+        <CapabilityGateCard gate={gate} label={t('settings.services.tabs.tts')} />
 
-        <section className="bg-surface border-border flex flex-col gap-5 rounded-2xl border p-6">
-          <div className="flex flex-col gap-1">
-            <span className="text-muted text-xs font-medium uppercase tracking-wider">
-              {t('settings.services.engine')}
-            </span>
-            <div className="flex items-center gap-2">
-              <span className="text-fg text-sm font-medium">
-                {t('settings.services.tts.engineName')}
+        <CapabilityGateBody gate={gate}>
+          <EngineInstallCard
+            state={engine}
+            requirementKey="settings.services.tts.installRequirement"
+          />
+
+          <section className="bg-surface border-border flex flex-col gap-5 rounded-2xl border p-6">
+            <div className="flex flex-col gap-1">
+              <span className="text-muted text-xs font-medium uppercase tracking-wider">
+                {t('settings.services.engine')}
               </span>
-              <span className="bg-border/60 text-muted rounded-md px-1.5 py-0.5 text-[10px] font-medium">
-                {t('settings.services.tts.local')}
-              </span>
-              <span className="bg-border/60 text-muted rounded-md px-1.5 py-0.5 text-[10px] font-medium">
-                MP3
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="text-fg text-sm font-medium">
+                  {t('settings.services.tts.engineName')}
+                </span>
+                <span className="bg-border/60 text-muted rounded-md px-1.5 py-0.5 text-[10px] font-medium">
+                  {t('settings.services.tts.local')}
+                </span>
+                <span className="bg-border/60 text-muted rounded-md px-1.5 py-0.5 text-[10px] font-medium">
+                  MP3
+                </span>
+              </div>
+              <p className="text-muted text-xs">{t('settings.services.tts.engineDescription')}</p>
             </div>
-            <p className="text-muted text-xs">{t('settings.services.tts.engineDescription')}</p>
-          </div>
 
-          <div
-            className={cn(
-              'flex flex-col gap-5',
-              !ready && 'pointer-events-none select-none opacity-40'
-            )}
-            aria-disabled={!ready}
-          >
-            <div className="border-border/60 border-t" />
+            <div
+              className={cn(
+                'flex flex-col gap-5',
+                !ready && 'pointer-events-none select-none opacity-40'
+              )}
+              aria-disabled={!ready}
+            >
+              <div className="border-border/60 border-t" />
 
-            <div className="flex flex-col gap-3">
+              <div className="flex flex-col gap-3">
+                <Select<string>
+                  label={t('settings.services.tts.voice')}
+                  value={voice}
+                  options={voiceOptions}
+                  onChange={onVoiceChange}
+                />
+
+                <div className="flex flex-col gap-1.5">
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void togglePreview()}
+                      disabled={!ready || previewLoading}
+                      className={cn(
+                        'flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-full',
+                        'bg-primary text-primary-fg hover:brightness-110 disabled:cursor-default disabled:opacity-60',
+                        'focus-visible:ring-accent focus-visible:ring-offset-bg focus-visible:ring-2 focus-visible:ring-offset-2'
+                      )}
+                    >
+                      {previewLoading ? (
+                        <Loading03Icon size={14} className="animate-spin" />
+                      ) : previewing ? (
+                        <PauseIcon size={14} />
+                      ) : (
+                        <PlayIcon size={14} />
+                      )}
+                    </button>
+                    <span className="text-muted text-xs">
+                      {t('settings.services.tts.previewHint')}
+                    </span>
+                  </div>
+                  {previewError ? (
+                    <span className="text-xs text-amber-500">{previewError}</span>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="border-border/60 border-t" />
+
               <Select<string>
-                label={t('settings.services.tts.voice')}
-                value={voice}
-                options={voiceOptions}
-                onChange={onVoiceChange}
+                label={t('settings.services.tts.speed')}
+                value={speed}
+                options={speedOptions}
+                onChange={onSpeedChange}
               />
-
-              <div className="flex flex-col gap-1.5">
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => void togglePreview()}
-                    disabled={!ready || previewLoading}
-                    className={cn(
-                      'flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-full',
-                      'bg-primary text-primary-fg hover:brightness-110 disabled:cursor-default disabled:opacity-60',
-                      'focus-visible:ring-accent focus-visible:ring-offset-bg focus-visible:ring-2 focus-visible:ring-offset-2'
-                    )}
-                  >
-                    {previewLoading ? (
-                      <Loading03Icon size={14} className="animate-spin" />
-                    ) : previewing ? (
-                      <PauseIcon size={14} />
-                    ) : (
-                      <PlayIcon size={14} />
-                    )}
-                  </button>
-                  <span className="text-muted text-xs">
-                    {t('settings.services.tts.previewHint')}
-                  </span>
-                </div>
-                {previewError ? (
-                  <span className="text-xs text-amber-500">{previewError}</span>
-                ) : null}
-              </div>
             </div>
+          </section>
 
-            <div className="border-border/60 border-t" />
-
-            <Select<string>
-              label={t('settings.services.tts.speed')}
-              value={speed}
-              options={speedOptions}
-              onChange={onSpeedChange}
-            />
-          </div>
-        </section>
-
-        <section className="bg-surface border-border flex flex-col gap-3 rounded-2xl border p-6">
-          <h2 className="text-fg text-sm font-medium">{t('settings.services.tts.voicesTitle')}</h2>
-          <div className="divide-border/40 divide-y">
-            {VOICES.map((v) => (
-              <div
-                key={v.id}
-                className="flex items-center justify-between py-2 first:pt-0 last:pb-0"
-              >
-                <div className="flex flex-col">
-                  <span className="text-fg text-sm">{v.label}</span>
-                  <span className="text-muted text-xs">{v.lang}</span>
+          <section className="bg-surface border-border flex flex-col gap-3 rounded-2xl border p-6">
+            <h2 className="text-fg text-sm font-medium">
+              {t('settings.services.tts.voicesTitle')}
+            </h2>
+            <div className="divide-border/40 divide-y">
+              {VOICES.map((v) => (
+                <div
+                  key={v.id}
+                  className="flex items-center justify-between py-2 first:pt-0 last:pb-0"
+                >
+                  <div className="flex flex-col">
+                    <span className="text-fg text-sm">{v.label}</span>
+                    <span className="text-muted text-xs">{v.lang}</span>
+                  </div>
+                  <span className="text-muted text-xs capitalize">{v.gender}</span>
                 </div>
-                <span className="text-muted text-xs capitalize">{v.gender}</span>
-              </div>
-            ))}
-          </div>
-        </section>
+              ))}
+            </div>
+          </section>
+        </CapabilityGateBody>
       </div>
     </div>
   )

@@ -1,4 +1,5 @@
 import { MAX_CONSECUTIVE_REJECTS, RejectBudget } from '@main/channels/send-policy'
+import { compressVideoToLimit } from '@main/channels/video-compress'
 import { validateWhatsAppFormat } from '@main/channels/whatsapp/format'
 import { GIF_PLAYBACK_MAX_SECONDS, isGifMime, transcodeGifToMp4 } from '@main/channels/whatsapp/gif'
 import type {
@@ -51,6 +52,13 @@ type ToolDeps = {
    */
   ensureFfmpeg?: () => Promise<unknown>
   /**
+   * Default recipient (the first allowed number's JID) for tools that make
+   * `jid` optional — mirrors the Telegram tools' default-user behavior and
+   * lets framework fallbacks (a video task landing after its turn died)
+   * deliver without a reverse chat-binding lookup.
+   */
+  defaultJid?: () => Promise<string | null>
+  /**
    * Wait for WhatsApp's SERVER_ACK on a sent message id — 'acked' when the
    * server confirmed receipt, 'error' when the send was rejected, 'timeout'
    * when no ack arrived in time. Lets a send report honestly instead of
@@ -75,6 +83,7 @@ type ToolDeps = {
 const BINDS_CHAT = new Set([
   'whatsapp_send',
   'whatsapp_send_image',
+  'whatsapp_send_video',
   'whatsapp_send_document',
   'whatsapp_send_audio',
   'whatsapp_reply'
@@ -86,6 +95,12 @@ const BINDS_CHAT = new Set([
 const MAX_IMAGE_BYTES = 16 * 1024 * 1024
 const MAX_AUDIO_BYTES = 16 * 1024 * 1024
 const MAX_DOCUMENT_BYTES = 100 * 1024 * 1024
+/**
+ * Inline WhatsApp video degrades past ~16 MB; larger files are auto
+ * re-encoded to fit (video-compress.ts), falling back to a document send.
+ * The load cap is therefore the document ceiling, not the inline one.
+ */
+const MAX_VIDEO_INLINE_BYTES = 16 * 1024 * 1024
 
 const IMAGE_MIME: Record<string, string> = {
   '.png': 'image/png',
@@ -220,6 +235,44 @@ export function buildWhatsAppCapability(deps: ToolDeps): {
           type: 'string',
           description:
             'MIME type of the image. Inferred from the file extension when "path" is used.',
+          required: false
+        }
+      }
+    },
+    {
+      name: 'whatsapp_send_video',
+      description:
+        'Send a video to a WhatsApp JID. PREFERRED: pass "path" — a workspace-relative path to the video file (e.g. "generations/video/conv-x/video-123.mp4"). Videos over 16 MB are automatically compressed to fit WhatsApp inline playback (the original file keeps full quality; the result notes when compression happened); if compression cannot fit it, the video is delivered as a document instead. Returns the message ID.',
+      parameters: {
+        jid: {
+          type: 'string',
+          description:
+            'The recipient JID. Optional — defaults to the first allowed number (the primary user).',
+          required: false
+        },
+        path: {
+          type: 'string',
+          description:
+            'Workspace-relative path (or wolffish-media:// URL) to the video file. Preferred over videoBase64.',
+          required: false
+        },
+        videoBase64: {
+          type: 'string',
+          description:
+            'Base64-encoded video data. Only for in-memory bytes — if the video is a file on disk, use "path" instead.',
+          required: false
+        },
+        caption: {
+          type: 'string',
+          description:
+            'Optional caption shown beneath the video, delivered VERBATIM. WhatsApp formatting only (*bold*, _italic_) — never Markdown and never HTML (they arrive as literal text; a caption with either is rejected without sending). If the caption has any formatting, run whatsapp_check_format on it first.',
+          required: false
+        },
+        sendAsIs: SEND_AS_IS_PARAM,
+        mimetype: {
+          type: 'string',
+          description:
+            'MIME type of the video. Inferred from the file extension when "path" is used.',
           required: false
         }
       }
@@ -468,6 +521,8 @@ export function buildWhatsAppCapability(deps: ToolDeps): {
             return sendText(sock, args, track, confirm)
           case 'whatsapp_send_image':
             return sendImage(sock, args, track, confirm, deps.ensureFfmpeg)
+          case 'whatsapp_send_video':
+            return sendVideo(sock, args, track, confirm, deps.ensureFfmpeg, deps.defaultJid)
           case 'whatsapp_send_document':
             return sendDocument(sock, args, track, confirm)
           case 'whatsapp_send_audio':
@@ -734,6 +789,85 @@ async function sendImage(
     return final
   } catch (err) {
     return failure(`send image failed: ${errMessage(err)}`)
+  }
+}
+
+async function sendVideo(
+  sock: WASocket,
+  args: Record<string, unknown>,
+  track: (id: string) => void,
+  confirm?: ConfirmDelivery,
+  ensureFfmpeg?: () => Promise<unknown>,
+  defaultJid?: () => Promise<string | null>
+): Promise<ToolExecutionResult> {
+  let jid = stringArg(args.jid)
+  if (!jid && defaultJid) jid = await defaultJid().catch(() => null)
+  if (!jid) return failure('jid is required (no default recipient is configured)')
+  const media = await loadMedia(args, 'videoBase64', 'video')
+  if ('error' in media) return failure(media.error)
+  const caption = stringArg(args.caption) ?? undefined
+  const gate =
+    caption && !boolArg(args.sendAsIs)
+      ? formatGate(caption, 'caption')
+      : {
+          reject: null,
+          note: caption ? '\nFormat check skipped (sendAsIs) — caption delivered as written.' : ''
+        }
+  let despite = ''
+  if (gate.reject) {
+    if (!rejectBudget.exhausted(jid)) {
+      rejectBudget.reject(jid)
+      return gate.reject
+    }
+    despite = DELIVERED_DESPITE_NOTE
+  }
+
+  // Oversized for inline playback: re-encode to fit (the original file keeps
+  // full quality); if even that fails, deliver as a document so the user
+  // still receives it.
+  let buffer = media.buffer
+  let mimetype = media.mimetype
+  let compressionNote = ''
+  if (buffer.length > MAX_VIDEO_INLINE_BYTES) {
+    await ensureFfmpeg?.()
+    const compressed = await compressVideoToLimit(buffer, MAX_VIDEO_INLINE_BYTES - 512 * 1024)
+    if ('error' in compressed) {
+      try {
+        const result = await sock.sendMessage(jid, {
+          document: buffer,
+          fileName: media.basename ?? 'video.mp4',
+          mimetype,
+          caption
+        })
+        const final = withNote(
+          await finalizeSend('video', jid, result, track, confirm),
+          `${despite || gate.note}\nDelivered as a document — too large for inline playback and compression failed (${compressed.error}). The original quality stays available in the app.`
+        )
+        if (final.success) rejectBudget.delivered(jid)
+        return final
+      } catch (err) {
+        return failure(`send video failed: ${errMessage(err)}`)
+      }
+    }
+    buffer = compressed.mp4
+    mimetype = 'video/mp4'
+    compressionNote = `\nCompressed for WhatsApp (${compressed.note}) — tell the user the original quality is available in the app.`
+  }
+
+  try {
+    const result = await sock.sendMessage(jid, {
+      video: buffer,
+      caption,
+      mimetype
+    })
+    const final = withNote(
+      await finalizeSend('video', jid, result, track, confirm),
+      (despite || gate.note) + compressionNote
+    )
+    if (final.success) rejectBudget.delivered(jid)
+    return final
+  } catch (err) {
+    return failure(`send video failed: ${errMessage(err)}`)
   }
 }
 
@@ -1076,7 +1210,7 @@ function readChat(
   )
 }
 
-type MediaKind = 'image' | 'audio' | 'document'
+type MediaKind = 'image' | 'audio' | 'video' | 'document'
 type LoadedMedia = { buffer: Buffer; mimetype: string; basename: string | null }
 
 /**
@@ -1108,7 +1242,7 @@ async function loadMedia(
     }
     if (!stat.isFile()) return { error: `not a file: ${pathArg}` }
     const cap =
-      kind === 'document'
+      kind === 'document' || kind === 'video'
         ? MAX_DOCUMENT_BYTES
         : kind === 'audio'
           ? MAX_AUDIO_BYTES
@@ -1148,9 +1282,19 @@ function resolveWorkspaceMediaPath(input: string): string | null {
   return abs
 }
 
+const VIDEO_MIME: Record<string, string> = {
+  '.mp4': 'video/mp4',
+  '.mov': 'video/quicktime',
+  '.avi': 'video/x-msvideo',
+  '.mkv': 'video/x-matroska',
+  '.m4v': 'video/mp4',
+  '.webm': 'video/webm'
+}
+
 function mimeFor(kind: MediaKind, ext: string): string {
   if (kind === 'image') return IMAGE_MIME[ext] ?? 'image/jpeg'
   if (kind === 'audio') return AUDIO_MIME[ext] ?? 'audio/ogg; codecs=opus'
+  if (kind === 'video') return VIDEO_MIME[ext] ?? 'video/mp4'
   return DOCUMENT_MIME[ext] ?? 'application/octet-stream'
 }
 

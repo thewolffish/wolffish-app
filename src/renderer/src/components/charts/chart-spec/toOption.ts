@@ -111,12 +111,62 @@ function baseLegend(spec: ChartSpec, theme: ChartTheme): Obj {
   }
 }
 
-function baseGrid(hasLegend: boolean): Obj {
+/**
+ * Estimated rows the bottom legend wraps to at a plot width. ECharts wraps a
+ * horizontal legend at layout time, but the grid inset is fixed at option
+ * time — an unaccounted second row lands on the x-axis labels (seen at
+ * phone-card widths with three long series names). Text is estimated at
+ * fontSize 11 as ~7.5px per Latin glyph, ~11px otherwise — calibrated a
+ * touch wide against on-device wrapping, so a borderline row wraps in the
+ * estimate before it wraps on canvas; the overshoot costs one row of plot
+ * height, an underestimate recreates the overlap. Unknown width reports one
+ * row, the pre-existing inset.
+ */
+function legendRows(names: string[], width?: number): number {
+  if (!width || width <= 0 || names.length === 0) return 1
+  const usable = Math.max(width - 16, 40)
+  let rows = 1
+  let x = 0
+  for (const name of names) {
+    let text = 0
+    for (const ch of name) text += (ch.codePointAt(0) ?? 0) <= 0x2ff ? 7.5 : 11
+    const item = 14 + 5 + Math.ceil(text) // icon + icon-text gap + label
+    if (x === 0) x = item
+    else if (x + 16 + item <= usable)
+      x += 16 + item // itemGap between items
+    else {
+      rows += 1
+      x = item
+    }
+  }
+  return rows
+}
+
+const CARTESIAN_TYPES = new Set(['column', 'bar', 'line', 'area', 'scatter'])
+
+/**
+ * Rows this spec's bottom legend needs at this width — the resize boundary at
+ * which the grid inset (and so the whole option) must be rebuilt. Only
+ * cartesian charts inset a grid; every other type reports 1 so width changes
+ * never force a rebuild.
+ */
+export function chartLegendRows(spec: ChartSpec, width?: number): number {
+  if (!CARTESIAN_TYPES.has(spec.type)) return 1
+  const show = spec.legend ?? spec.series.length > 1
+  if (!show) return 1
+  return legendRows(
+    spec.series.map((series) => series.name),
+    width
+  )
+}
+
+function baseGrid(hasLegend: boolean, legendRowCount = 1): Obj {
   return {
     left: 8,
     right: 16,
     top: 14,
-    bottom: hasLegend ? 34 : 10,
+    // One row keeps the long-standing 34; each wrapped row adds its height.
+    bottom: hasLegend ? 10 + legendRowCount * 24 : 10,
     containLabel: true
   }
 }
@@ -211,7 +261,7 @@ function cartesianSeries(spec: ChartSpec, theme: ChartTheme): Obj[] {
   })
 }
 
-function cartesianOption(spec: ChartSpec, theme: ChartTheme): Obj {
+function cartesianOption(spec: ChartSpec, theme: ChartTheme, width?: number): Obj {
   const horizontal = spec.type === 'bar'
   const boundaryGap = spec.type === 'column' || spec.type === 'bar'
   const legend = baseLegend(spec, theme)
@@ -225,7 +275,7 @@ function cartesianOption(spec: ChartSpec, theme: ChartTheme): Obj {
     color: theme.palette,
     tooltip: baseTooltip(spec, theme, spec.type === 'scatter' ? 'item' : 'axis'),
     legend,
-    grid: baseGrid(legend.show === true),
+    grid: baseGrid(legend.show === true, chartLegendRows(spec, width)),
     xAxis,
     yAxis,
     series: cartesianSeries(spec, theme)
@@ -424,7 +474,7 @@ function funnelOption(spec: ChartSpec, theme: ChartTheme): Obj {
   }
 }
 
-export function chartSpecToOption(spec: ChartSpec, theme: ChartTheme): Obj {
+export function chartSpecToOption(spec: ChartSpec, theme: ChartTheme, width?: number): Obj {
   let option: Obj
   switch (spec.type) {
     case 'pie':
@@ -444,7 +494,7 @@ export function chartSpecToOption(spec: ChartSpec, theme: ChartTheme): Obj {
       option = funnelOption(spec, theme)
       break
     default:
-      option = cartesianOption(spec, theme)
+      option = cartesianOption(spec, theme, width)
   }
   option.textStyle = { fontFamily: theme.fontFamily }
   option.animationDuration = 400

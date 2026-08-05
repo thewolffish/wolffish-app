@@ -29,6 +29,7 @@ import { TurnFooter } from '@components/common/turn-footer/TurnFooter'
 import { TurnRating } from '@components/common/turn-rating/TurnRating'
 import { UpdateCard } from '@components/common/update-card/UpdateCard'
 import { VideoPlayer } from '@components/common/video-player/VideoPlayer'
+import { TaskCard } from '@components/common/task-card/TaskCard'
 import { WorkflowCard } from '@components/common/workflow-card/WorkflowCard'
 import { CodeEditor } from '@components/core/CodeEditor'
 import { CopyButton } from '@components/core/CopyButton'
@@ -41,8 +42,10 @@ import { cn } from '@lib/utils/cn'
 import { formatBytesL, formatCompact } from '@lib/utils/format'
 import { pageTopPadding } from '@lib/utils/platform'
 import {
+  upsertTaskSegment,
   upsertWorkflowSegment,
   WORKFLOW_TOOL_NAMES,
+  type TaskSnapshot,
   type WorkflowSnapshot
 } from '@main/runtime/broca'
 import {
@@ -53,6 +56,7 @@ import {
 import { preselectSettingsTab } from '@pages/settings/settingsNav'
 import type {
   AskUserResponse,
+  CapabilityEntry,
   ChatHistoryMessage,
   ConversationFile,
   ConversationRating,
@@ -250,6 +254,56 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
   // Switched from the composer's mode button; global, like the Brain.
   const chatMode = status?.config?.llm.mode === 'workflow' ? 'workflow' : 'single'
   const persistedThinkingModes = status?.config?.llm.thinkingModes
+
+  // Media-URL attachments have exactly ONE consumer: MiniMax H3 video
+  // generation, whose API takes public media URLs directly. Every other
+  // model reads a URL pasted into the message text just fine, so the extra
+  // control would be pure noise — the attach button stays the plain file
+  // picker it has always been unless the video capability can actually run
+  // (installed, enabled, healthy) AND the video service has its own key.
+  const [videoCapabilityReady, setVideoCapabilityReady] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    const apply = (caps: CapabilityEntry[]): void => {
+      if (cancelled) return
+      const entry = caps.find((c) => c.name === 'video')
+      setVideoCapabilityReady(Boolean(entry?.enabled) && entry?.status !== 'error')
+    }
+    void window.api.cerebellum
+      .listCapabilities()
+      .then(apply)
+      .catch(() => {})
+    const unsubscribe = window.api.cerebellum.onCapabilitiesChanged(apply)
+    return () => {
+      cancelled = true
+      unsubscribe()
+    }
+  }, [])
+  // The video service's OWN key — deliberately NOT the MiniMax chat
+  // provider's (see VideoConfig in workspace.ts). Re-read on the
+  // services:changed push so saving the key in Settings lights the menu up
+  // without a restart.
+  const [videoKeyConfigured, setVideoKeyConfigured] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    const refresh = (): void => {
+      void window.api.video
+        .getConfig()
+        .then((cfg) => {
+          if (!cancelled) setVideoKeyConfigured(cfg.apiKey.trim().length > 0)
+        })
+        .catch(() => {})
+    }
+    refresh()
+    const unsubscribe = window.api.services.onChanged((payload) => {
+      if (payload.service === 'video') refresh()
+    })
+    return () => {
+      cancelled = true
+      unsubscribe()
+    }
+  }, [])
+  const videoUrlAttachAvailable = videoCapabilityReady && videoKeyConfigured
 
   // Ordered reasoning modes this model honours (canonical scale). Drives the
   // brain button. Source of truth is reasoningModesFor — corrected to live
@@ -484,6 +538,10 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
    * them up if it ever becomes a problem.
    */
   const [pendingAttachments, setPendingAttachments] = useState<MessageAttachment[]>([])
+  // Attach-button menu (files vs media URL) — the URL option exists for
+  // video generation, so it only appears when the MiniMax key is configured.
+  const [attachMenuOpen, setAttachMenuOpen] = useState(false)
+  const [urlAttachOpen, setUrlAttachOpen] = useState(false)
   /**
    * Files currently being copied into the conversation's uploads folder.
    * Each gets a chip in the composer the instant it's picked/dropped —
@@ -1429,6 +1487,32 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
       }
     })
   }, [activeConversationId, foldRatings])
+
+  // Async-task snapshots (video generation) keep flowing AFTER the owning
+  // turn ends — poll transitions, artifact download. Fold each push into the
+  // matching `task` segment in both the reactive messages and the in-memory
+  // conversation copy, so the card updates live and the next whole-file save
+  // carries the new state (the rating-changed pattern). During streaming the
+  // same snapshot also arrives as a broca segment; both paths upsert by
+  // taskId, so double delivery is idempotent.
+  useEffect(() => {
+    if (!activeConversationId) return
+    const targetId = activeConversationId
+    return window.api.task.onChanged((snapshot) => {
+      if (snapshot.conversationId !== targetId || conversationIdRef.current !== targetId) return
+      setMessages((prev) => foldTaskSnapshot(prev, snapshot))
+      const conv = conversationRef.current
+      if (conv && conv.id === targetId) {
+        for (const message of conv.messages) {
+          for (const seg of message.segments ?? []) {
+            if (seg.kind === 'task' && seg.snapshot.taskId === snapshot.taskId) {
+              seg.snapshot = snapshot
+            }
+          }
+        }
+      }
+    })
+  }, [activeConversationId])
 
   const shouldPersistRef = useRef(false)
 
@@ -3079,21 +3163,71 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
               removeDisabled={busy}
             />
             {/* Attaching stays live mid-turn — staged files ride the next
-                queued prompt instead of the running one. */}
-            <button
-              type="button"
-              onClick={pickUploads}
-              title={t('chat.attachFile')}
-              aria-label={t('chat.attachFile')}
-              className={cn(
-                'flex h-[42.5px] w-10 shrink-0 items-center justify-center rounded-lg border',
-                'border-border bg-surface text-muted enabled:hover:text-fg enabled:hover:border-muted',
-                'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-                'cursor-pointer'
+                queued prompt instead of the running one. With video
+                generation configured (MiniMax key) the button opens a small
+                menu adding "media URL" — a reference-only attachment the
+                model passes straight to video_generate (URLs bypass the
+                API's 64 MB body cap). Without the key it stays the plain
+                file picker it always was. */}
+            <div className="relative shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  if (videoUrlAttachAvailable) setAttachMenuOpen((v) => !v)
+                  else void pickUploads()
+                }}
+                title={t('chat.attachFile')}
+                aria-label={t('chat.attachFile')}
+                className={cn(
+                  'flex h-[42.5px] w-10 shrink-0 items-center justify-center rounded-lg border',
+                  'border-border bg-surface text-muted enabled:hover:text-fg enabled:hover:border-muted',
+                  'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+                  'cursor-pointer'
+                )}
+              >
+                <Image02Icon size={18} />
+              </button>
+              {attachMenuOpen && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setAttachMenuOpen(false)} />
+                  {/* Sized to the longest label on one line — a wrapped menu
+                      item reads as two entries. */}
+                  <div className="border-border bg-surface absolute bottom-full end-0 z-50 mb-2 w-max min-w-56 rounded-lg border p-1 shadow-lg">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAttachMenuOpen(false)
+                        void pickUploads()
+                      }}
+                      className="text-fg hover:bg-bg flex w-full cursor-pointer items-center gap-2 whitespace-nowrap rounded-md px-2.5 py-1.5 text-start text-sm"
+                    >
+                      <Image02Icon size={15} className="text-muted shrink-0" />
+                      {t('chat.attachMenu.files')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAttachMenuOpen(false)
+                        setUrlAttachOpen(true)
+                      }}
+                      className="text-fg hover:bg-bg flex w-full cursor-pointer items-center gap-2 whitespace-nowrap rounded-md px-2.5 py-1.5 text-start text-sm"
+                    >
+                      <CloudUploadIcon size={15} className="text-muted shrink-0" />
+                      {t('chat.attachMenu.mediaUrl')}
+                    </button>
+                  </div>
+                </>
               )}
-            >
-              <Image02Icon size={18} />
-            </button>
+              {urlAttachOpen && (
+                <UrlAttachPopover
+                  onClose={() => setUrlAttachOpen(false)}
+                  onAdd={(attachment) => {
+                    setPendingAttachments((prev) => [...prev, attachment])
+                    setUrlAttachOpen(false)
+                  }}
+                />
+              )}
+            </div>
             {/* Recording stays live mid-turn, like attaching: the take is
                 queued instead of sent, and goes out when the turn ends. */}
             <button
@@ -4650,6 +4784,14 @@ function renderSegments(
       // conversations render identically.
       flushText()
       blocks.push(<WorkflowCard key={`wf-${seg.snapshot.workflowId}`} snapshot={seg.snapshot} />)
+    } else if (seg.kind === 'task') {
+      // The generic async-task card (video generation today): one
+      // deterministic card per task, upserted by taskId on append (live) and
+      // folded from task:changed pushes after the turn ends. Renders
+      // regardless of verbose — like the chart card, it is output FOR the
+      // user, not tool mechanics.
+      flushText()
+      blocks.push(<TaskCard key={`task-${seg.snapshot.taskId}`} snapshot={seg.snapshot} />)
     } else if (seg.kind === 'tool_call') {
       if (seg.worker) continue // LEGACY orchestrator-mode segments — see text branch
       flushText()
@@ -5053,6 +5195,144 @@ function renderSegments(
   return { blocks: <>{blocks}</>, empty: blocks.length === 0 }
 }
 
+/**
+ * Small popover for attaching a media URL (image/video/audio) instead of a
+ * file. Reference-only: nothing is downloaded — the URL rides the message's
+ * attachment note for the model to hand to URL-capable tools
+ * (video_generate). Kind is auto-detected from the extension and can be
+ * overridden with the chips.
+ */
+function UrlAttachPopover({
+  onClose,
+  onAdd
+}: {
+  onClose: () => void
+  onAdd: (attachment: MessageAttachment) => void
+}): React.JSX.Element {
+  const { t } = useTranslation()
+  const [value, setValue] = useState('')
+  const [kind, setKind] = useState<'image' | 'video' | 'audio' | null>(null)
+  const detected = detectUrlMediaKind(value)
+  const effectiveKind = kind ?? detected ?? 'image'
+  const valid = /^https?:\/\/\S+\.\S+/i.test(value.trim())
+
+  const submit = (): void => {
+    const url = value.trim()
+    if (!valid) return
+    const basename = urlBasename(url)
+    onAdd({
+      type: effectiveKind,
+      filePath: '',
+      originalName: basename,
+      mimeType: mimeForUrl(url, effectiveKind),
+      sizeBytes: 0,
+      remoteUrl: url
+    })
+  }
+
+  return (
+    <>
+      <div className="fixed inset-0 z-40" onClick={onClose} />
+      <div className="border-border bg-surface absolute bottom-full end-0 z-50 mb-2 w-80 rounded-lg border p-3 shadow-lg">
+        <div className="text-fg mb-2 text-xs font-medium">{t('chat.urlAttach.title')}</div>
+        <input
+          autoFocus
+          dir="ltr"
+          type="url"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') submit()
+            if (e.key === 'Escape') onClose()
+          }}
+          placeholder={t('chat.urlAttach.placeholder')}
+          className="border-border bg-bg text-fg placeholder:text-muted focus-visible:ring-accent w-full rounded-md border px-2.5 py-1.5 text-xs focus-visible:outline-none focus-visible:ring-2"
+        />
+        <div className="mt-2 flex items-center gap-1.5">
+          {(['image', 'video', 'audio'] as const).map((k) => (
+            <button
+              key={k}
+              type="button"
+              onClick={() => setKind(k)}
+              className={cn(
+                'cursor-pointer rounded-full border px-2 py-0.5 text-[10px] font-medium',
+                effectiveKind === k
+                  ? 'border-accent bg-accent/10 text-accent'
+                  : 'border-border text-muted hover:text-fg'
+              )}
+            >
+              {t(`chat.urlAttach.kind.${k}`)}
+            </button>
+          ))}
+          <button
+            type="button"
+            onClick={submit}
+            disabled={!valid}
+            className={cn(
+              'ms-auto rounded-md px-2.5 py-1 text-xs font-medium',
+              valid
+                ? 'bg-accent cursor-pointer text-white hover:opacity-90'
+                : 'bg-border text-muted cursor-not-allowed'
+            )}
+          >
+            {t('chat.urlAttach.add')}
+          </button>
+        </div>
+      </div>
+    </>
+  )
+}
+
+const URL_IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif', '.gif']
+const URL_VIDEO_EXTS = ['.mp4', '.mov', '.m4v', '.webm', '.mkv', '.avi']
+const URL_AUDIO_EXTS = ['.mp3', '.wav', '.m4a', '.aac', '.ogg', '.flac']
+
+function detectUrlMediaKind(url: string): 'image' | 'video' | 'audio' | null {
+  const clean = url.split(/[?#]/)[0].toLowerCase()
+  if (URL_IMAGE_EXTS.some((e) => clean.endsWith(e))) return 'image'
+  if (URL_VIDEO_EXTS.some((e) => clean.endsWith(e))) return 'video'
+  if (URL_AUDIO_EXTS.some((e) => clean.endsWith(e))) return 'audio'
+  return null
+}
+
+function urlBasename(url: string): string {
+  try {
+    const clean = new URL(url).pathname
+    const base = clean.split('/').filter(Boolean).pop()
+    if (base) return decodeURIComponent(base)
+  } catch {
+    // fall through
+  }
+  return url.replace(/^https?:\/\//i, '').slice(0, 48)
+}
+
+function mimeForUrl(url: string, kind: 'image' | 'video' | 'audio'): string {
+  const clean = url.split(/[?#]/)[0].toLowerCase()
+  const ext = clean.includes('.') ? clean.slice(clean.lastIndexOf('.')) : ''
+  const map: Record<string, string> = {
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.png': 'image/png',
+    '.webp': 'image/webp',
+    '.heic': 'image/heic',
+    '.heif': 'image/heif',
+    '.gif': 'image/gif',
+    '.mp4': 'video/mp4',
+    '.mov': 'video/quicktime',
+    '.m4v': 'video/mp4',
+    '.webm': 'video/webm',
+    '.mkv': 'video/x-matroska',
+    '.avi': 'video/x-msvideo',
+    '.mp3': 'audio/mp3',
+    '.wav': 'audio/wav',
+    '.m4a': 'audio/mp4',
+    '.aac': 'audio/aac',
+    '.ogg': 'audio/ogg',
+    '.flac': 'audio/flac'
+  }
+  return map[ext] ?? `${kind}/*`
+}
+
 function PendingAttachmentChip({
   attachment,
   onRemove
@@ -5071,11 +5351,15 @@ function PendingAttachmentChip({
       <span className="bg-primary/10 text-primary inline-flex h-5 items-center rounded px-1.5 text-[10px] font-medium uppercase tracking-wide">
         {attachment.type}
       </span>
-      <span className="truncate" title={attachment.originalName}>
+      <span
+        className="truncate"
+        dir={attachment.remoteUrl ? 'ltr' : undefined}
+        title={attachment.remoteUrl ?? attachment.originalName}
+      >
         {attachment.originalName}
       </span>
       <span className="text-muted shrink-0 tabular-nums text-[10px]">
-        {formatBytesL(attachment.sizeBytes, t)}
+        {attachment.remoteUrl ? t('chat.urlAttach.chip') : formatBytesL(attachment.sizeBytes, t)}
       </span>
       <button
         type="button"
@@ -5791,16 +6075,38 @@ function isUser(m: ChatMessage): m is Extract<ChatMessage, { role: 'user' }> {
   return (m.kind === undefined || m.kind === 'message') && m.role === 'user'
 }
 
+/**
+ * Fold a post-turn task-snapshot push into whichever message holds the
+ * matching `task` segment. No-op when the task isn't in this transcript
+ * (e.g. a push for another conversation raced the open).
+ */
+function foldTaskSnapshot(messages: ChatMessage[], snapshot: TaskSnapshot): ChatMessage[] {
+  return messages.map((m) => {
+    if (!isAssistant(m)) return m
+    if (!m.segments.some((s) => s.kind === 'task' && s.snapshot.taskId === snapshot.taskId)) {
+      return m
+    }
+    return {
+      ...m,
+      segments: m.segments.map((s) =>
+        s.kind === 'task' && s.snapshot.taskId === snapshot.taskId ? { ...s, snapshot } : s
+      )
+    }
+  })
+}
+
 function appendSegment(messages: ChatMessage[], segment: Segment): ChatMessage[] {
   const out = [...messages]
   for (let i = out.length - 1; i >= 0; i--) {
     const m = out[i]
     if (isAssistant(m) && m.status === 'streaming') {
-      // Workflow snapshots REPLACE their predecessor for the same run — the
-      // segment kind's documented contract (see broca.ts WorkflowSnapshot),
-      // not render-layer dedup. Everything else appends.
+      // Workflow and task snapshots REPLACE their predecessor for the same
+      // run/task — the segment kinds' documented contract (see broca.ts
+      // WorkflowSnapshot/TaskSnapshot), not render-layer dedup. Everything
+      // else appends.
       const nextSegments = [...m.segments]
       if (segment.kind === 'workflow') upsertWorkflowSegment(nextSegments, segment)
+      else if (segment.kind === 'task') upsertTaskSegment(nextSegments, segment)
       else nextSegments.push(segment)
       const next: AssistantMessage = { ...m, segments: nextSegments }
       if (segment.kind === 'turn_end') next.stopReason = segment.stopReason
@@ -6175,6 +6481,12 @@ function composeHistoryContent(
   if (text) parts.push(text)
   if (attachments.length > 0) {
     const lines = attachments.map((a) => {
+      // URL reference (no local file): the model passes the URL itself to
+      // URL-capable tools (video_generate). KEEP IDENTICAL to the main-side
+      // twin in compose-attachments.ts.
+      if (a.remoteUrl) {
+        return `  - ${a.originalName} (type=${a.type}, mime=${a.mimeType}, url=${a.remoteUrl})`
+      }
       const ext = a.originalName.includes('.')
         ? a.originalName.slice(a.originalName.lastIndexOf('.'))
         : ''
@@ -6184,7 +6496,9 @@ function composeHistoryContent(
     parts.push(
       `<attachments>\nThe user attached ${attachments.length} file${attachments.length === 1 ? '' : 's'} to this message:\n${lines.join('\n')}\n</attachments>`
     )
-    const hasVideo = attachments.some((a) => a.type === 'video')
+    // URL-only video references carry no local file to probe — the ffmpeg
+    // inspection instructions apply to on-disk uploads only.
+    const hasVideo = attachments.some((a) => a.type === 'video' && !a.remoteUrl)
     if (hasVideo) {
       parts.push(
         `<video_instructions>\nOne or more attached files are videos. You cannot view or process video content directly. Instead, use ffmpeg via your shell tool to read the video metadata and inspect the file. Start by running: ffmpeg -hide_banner -i "<path>" for each video file — its stderr reports duration, resolution, codecs and streams. (If ffprobe is available it gives structured JSON: ffprobe -v quiet -print_format json -show_format -show_streams "<path>".) Use ffmpeg for any further video operations the user requests.\n</video_instructions>`

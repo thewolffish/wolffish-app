@@ -1,11 +1,25 @@
-import type { TurnSink } from '@main/channels/channel'
+import {
+  buildAssistantMessage,
+  type AssistantAccumulator,
+  type MirrorMessageListener,
+  type TurnSink
+} from '@main/channels/channel'
 import type { TurnRunner, TurnSendOptions } from '@main/channels/turn-runner'
+import { mintMessageId } from '@main/conversations'
 import type { Agent } from '@main/runtime/agent'
 import type { ApprovalDecision, ApprovalRequest } from '@main/runtime/amygdala'
+import { upsertTaskSegment, upsertWorkflowSegment } from '@main/runtime/broca'
 import type { AskUserRequest, AskUserResponse } from '@main/runtime/cerebellum'
 import { turnScope, type CorpusEvents } from '@main/runtime/corpus'
 import type { ChatHistoryMessage } from '@preload/index'
 import type { WebContents } from 'electron'
+
+/**
+ * Min gap between live mirror snapshots of an in-flight in-app turn — same
+ * budget as the Telegram/WhatsApp mirrors, for the same reason: a fast text
+ * stream must not emit (and make the phone re-render) per token.
+ */
+const MIRROR_THROTTLE_MS = 500
 
 /**
  * The Electron renderer channel. Wraps the existing chat:* IPC surface —
@@ -41,6 +55,21 @@ export class ElectronChannel {
   >()
   /** conversationId → live turnId, for same-conversation preemption/cancel. */
   private readonly byConversation = new Map<string, string>()
+
+  /**
+   * Live out-of-window mirror for in-app turns — the missing quarter of the
+   * mirror matrix. Telegram/WhatsApp turns mirror INTO the renderer (and the
+   * phone); phone turns stream through the mobile channel's own sink; but an
+   * in-app turn only ever streamed to its renderer, so a paired phone showed
+   * nothing until the end-of-turn save landed. index.ts points this at the
+   * mobile channel; the renderer itself never consumes it (chat:segment is
+   * its live feed already).
+   */
+  private mirrorListener: MirrorMessageListener | null = null
+
+  setMessageMirror(listener: MirrorMessageListener | null): void {
+    this.mirrorListener = listener
+  }
 
   constructor(
     private readonly agent: Agent,
@@ -199,12 +228,68 @@ export class ElectronChannel {
         sender.send(channel, payload)
       }
     }
+    // Phone-mirror accumulator: the same message the renderer will persist at
+    // end of turn, built segment by segment with the SAME stable id, so the
+    // phone upserts by id and the mid-turn snapshot is replaced — never
+    // duplicated — by the saved message the post-turn refetch pulls.
+    const acc: AssistantAccumulator = {
+      assistantMessageId: mintMessageId(),
+      assistantTimestamp: Date.now(),
+      assistantContent: '',
+      segments: [],
+      approvals: new Map(),
+      toolTimings: new Map(),
+      stopReason: null
+    }
+    let lastMirrorAt = 0
+    let mirrorTimer: NodeJS.Timeout | null = null
+    const emitMirror = (): void => {
+      if (!this.mirrorListener || !conversationId) return
+      // A late trailing tick from an already-released turn must not push a
+      // stale snapshot over the persisted final message.
+      if (!this.turns.has(turnId)) return
+      const message = buildAssistantMessage(acc)
+      if (!message) return
+      lastMirrorAt = Date.now()
+      this.mirrorListener(conversationId, message)
+    }
+    const scheduleMirror = (immediate: boolean): void => {
+      if (!this.mirrorListener || !conversationId) return
+      const sinceLast = Date.now() - lastMirrorAt
+      if (immediate || sinceLast >= MIRROR_THROTTLE_MS) {
+        if (mirrorTimer) {
+          clearTimeout(mirrorTimer)
+          mirrorTimer = null
+        }
+        emitMirror()
+        return
+      }
+      if (mirrorTimer) return
+      mirrorTimer = setTimeout(() => {
+        mirrorTimer = null
+        emitMirror()
+      }, MIRROR_THROTTLE_MS - sinceLast)
+      mirrorTimer.unref?.()
+    }
     return {
       channelId: 'electron',
       turnId,
       conversationId,
       onSegment: (segment) => {
         safeSend('chat:segment', { ...segment, conversationId })
+        // Fold into the phone mirror with the same rules every other
+        // accumulator applies (worker segments never speak as the
+        // assistant; workflow/task snapshots upsert by id). Task snapshots
+        // flush immediately — a card flipping to running/succeeded should
+        // not wait out the text throttle.
+        if (!this.mirrorListener || !conversationId) return
+        if ('worker' in segment && segment.worker) return
+        if (segment.kind === 'workflow') upsertWorkflowSegment(acc.segments, segment)
+        else if (segment.kind === 'task') upsertTaskSegment(acc.segments, segment)
+        else acc.segments.push(segment)
+        if (segment.kind === 'turn_end') acc.stopReason = segment.stopReason
+        if (segment.kind === 'text') acc.assistantContent += segment.delta
+        scheduleMirror(segment.kind === 'task')
       },
       onTurnEvent: <E extends keyof CorpusEvents>(type: E, payload: CorpusEvents[E]): void => {
         if (type === 'task.created') {

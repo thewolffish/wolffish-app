@@ -114,6 +114,17 @@ export type InAppConfig = {
   verbose?: boolean
 }
 
+/**
+ * Mobile channel preferences that must survive restarts. `notifications`
+ * gates the model's notify_phone tool entirely: off means the tool refuses
+ * before any frame is built, and nothing reaches the relay or the phone.
+ * Default ON — the phone still shows nothing unless the model deliberately
+ * calls the tool, and the phone's own OS permission is the second gate.
+ */
+export type MobileChannelConfig = {
+  notifications?: boolean
+}
+
 export type BraveConfig = {
   enabled: boolean
   apiKey: string
@@ -218,6 +229,32 @@ export type MemesConfig = {
   giphy: {
     apiKey: string
   }
+}
+
+/**
+ * Video generation (MiniMax H3) credentials — deliberately its OWN key,
+ * never read from the MiniMax entry under llm.providers.
+ *
+ * MiniMax issues one credential that happens to unlock both the chat
+ * completions API and the video API, so the same string works in both
+ * fields. Sharing one stored value anyway would fuse two independent
+ * decisions: swapping the chat brain to another provider (and clearing
+ * that key) would silently kill video generation, and a key scoped or
+ * rotated for video would drag the chat models with it. Video generation
+ * is a service — like Brave or Giphy — not a property of whichever brain
+ * is selected, so it owns its credential and the user enters it here even
+ * when the value is identical.
+ */
+export type VideoConfig = {
+  apiKey: string
+  /**
+   * Director mode (default ON): the chat model expands a video request into
+   * a full cinematic prompt before calling video_generate and shows the
+   * user what it sent; OFF forwards the user's prompt verbatim. Purely an
+   * instruction to the model (a system-prompt directive) — the harness
+   * never rewrites or refuses a prompt either way.
+   */
+  director: boolean
 }
 
 export type UpdatesConfig = {
@@ -353,6 +390,9 @@ export type WorkspaceConfig = {
   // In-app (desktop) chat display preferences. Optional so legacy configs
   // migrate cleanly — when absent the feed defaults to clean (verbose off).
   inapp?: InAppConfig
+  // Mobile channel preferences. Optional so legacy configs migrate cleanly
+  // — when absent, model-initiated phone notifications default to ON.
+  mobile?: MobileChannelConfig
   // Brave Search API key + toggle. When enabled and a key is set, the
   // web-search plugin uses Brave first and falls back to DuckDuckGo on
   // failure. Optional so legacy configs migrate cleanly.
@@ -375,6 +415,10 @@ export type WorkspaceConfig = {
   // Memes capability provider credentials. Optional — memegen.link
   // works without any config, Imgflip and Giphy need credentials.
   memes?: MemesConfig
+  // Video generation (MiniMax H3) credentials — its own key, never mirrored
+  // from llm.providers. See VideoConfig for why the duplication is
+  // deliberate. Absent until the user configures the service.
+  video?: VideoConfig
   computerUse?: ComputerUseConfig
   browserExtension?: BrowserExtensionConfig
   compaction?: CompactionConfig
@@ -1360,6 +1404,27 @@ export async function setInAppConfig(patch: Partial<InAppConfig>): Promise<Works
   })
 }
 
+const EMPTY_MOBILE_CONFIG: MobileChannelConfig = {
+  notifications: true
+}
+
+export async function getMobileChannelConfig(): Promise<MobileChannelConfig> {
+  const config = await readConfig()
+  return { ...EMPTY_MOBILE_CONFIG, ...(config?.mobile ?? {}) }
+}
+
+export async function setMobileChannelConfig(
+  patch: Partial<MobileChannelConfig>
+): Promise<WorkspaceConfig> {
+  return patchConfig((c) => {
+    const current = { ...EMPTY_MOBILE_CONFIG, ...(c.mobile ?? {}) }
+    const next: MobileChannelConfig = {
+      notifications: patch.notifications ?? current.notifications
+    }
+    return { ...c, mobile: next }
+  })
+}
+
 const EMPTY_BRAVE_CONFIG: BraveConfig = {
   enabled: false,
   apiKey: ''
@@ -1566,6 +1631,32 @@ export async function getMemesConfig(): Promise<MemesConfig> {
       apiKey: stored.giphy?.apiKey ?? ''
     }
   }
+}
+
+export async function getVideoConfig(): Promise<VideoConfig> {
+  const config = await readConfig()
+  return {
+    apiKey: config?.video?.apiKey ?? '',
+    // Absent (configs from before the toggle shipped) means ON — the
+    // behavior every run had until now.
+    director: config?.video?.director !== false
+  }
+}
+
+export async function setVideoConfig(patch: Partial<VideoConfig>): Promise<WorkspaceConfig> {
+  return patchConfig((c) => {
+    const current: VideoConfig = {
+      apiKey: c.video?.apiKey ?? '',
+      director: c.video?.director !== false
+    }
+    return {
+      ...c,
+      video: {
+        apiKey: patch.apiKey ?? current.apiKey,
+        director: patch.director ?? current.director
+      }
+    }
+  })
 }
 
 export async function setMemesConfig(patch: Partial<MemesConfig>): Promise<WorkspaceConfig> {

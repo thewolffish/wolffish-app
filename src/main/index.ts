@@ -17,12 +17,16 @@ import {
   listConversations,
   loadConversation,
   mergeConversationOnto,
+  mintMessageId,
   rateConversationTurn,
   updateConversation,
   type ConversationFile,
   type ConversationMessage,
   type ConversationMeta
 } from '@main/conversations'
+import { turnScope } from '@main/runtime/corpus'
+import type { TaskSnapshot } from '@main/runtime/broca'
+import { checkVideoService, videoTasks } from '@main/runtime/video-tasks'
 import { getDataAnalytics, type DataAnalytics } from '@main/data'
 import {
   copyDiagnosticArchive,
@@ -150,6 +154,10 @@ import {
   getGoogleConfig,
   getInAppConfig,
   getMemesConfig,
+  getMobileChannelConfig,
+  setMobileChannelConfig as persistMobileChannelConfig,
+  getVideoConfig,
+  setVideoConfig,
   getNotionConfig,
   getStatus,
   getSttConfig,
@@ -200,6 +208,7 @@ import {
   type GoogleConfig,
   type InAppConfig,
   type MemesConfig,
+  type VideoConfig,
   type NotionConfig,
   type NotionConnection,
   type SttConfig,
@@ -903,6 +912,25 @@ async function applyMobileSettings(settings: Record<string, unknown>): Promise<v
         await persistMemesConfig({ giphy: { apiKey: str(value) } })
         memesService.resetCache()
         break
+      case 'videoApiKey':
+        // Video generation's own key (never the MiniMax chat provider's —
+        // see VideoConfig). The broadcast keeps an open desktop panel and
+        // the composer's URL-attach gate in sync with a phone-side save.
+        await setVideoConfig({ apiKey: str(value) })
+        broadcast('services:changed', { service: 'video' })
+        break
+      case 'videoDirector':
+        // Director mode is a model directive, not a harness behavior —
+        // persisting it is the whole job; the next turn's system prompt
+        // picks it up.
+        await setVideoConfig({ director: value === true })
+        broadcast('services:changed', { service: 'video' })
+        break
+      case 'videoEnabled':
+        // The video switch is the capability itself — same path as the
+        // Capabilities screen, locked-core guard and panel refresh included.
+        await mobileSetCapabilityEnabled('video', value === true)
+        break
       case 'memesEnabled':
         // The memes switch is the capability itself — same path as the
         // Capabilities screen, locked-core guard and panel refresh included.
@@ -969,6 +997,30 @@ async function applyMobileSettings(settings: Record<string, unknown>): Promise<v
   // The applied values ride along so a listening panel can seed its controls
   // straight from the payload instead of refetching first.
   if (applied.length) broadcast('settings:mobileChange', { keys: applied, settings })
+  // Plus the per-service announcements the service panels re-seed from — the
+  // same channel their own desktop-side saves fire, so a panel cannot tell
+  // (and needn't care) which device made the change.
+  for (const service of new Set(applied.map((key) => MOBILE_KEY_SERVICE[key]))) {
+    if (service) broadcast('services:changed', { service })
+  }
+}
+
+/** Which service panel each phone-editable key belongs to, for re-seeding. */
+const MOBILE_KEY_SERVICE: Record<string, string | undefined> = {
+  braveEnabled: 'brave',
+  braveApiKey: 'brave',
+  memesEnabled: 'memes',
+  imgflipUsername: 'memes',
+  imgflipPassword: 'memes',
+  giphyApiKey: 'memes',
+  sttModel: 'stt',
+  ttsVoice: 'tts',
+  ttsSpeed: 'tts',
+  screenshotMaxWidth: 'computerUse',
+  screenshotFormat: 'computerUse',
+  browserScreenshotMaxWidth: 'browserExtension',
+  browserScreenshotFormat: 'browserExtension',
+  browserScreenshotQuality: 'browserExtension'
 }
 
 /**
@@ -1070,6 +1122,12 @@ const mobileChannel = new MobileChannel({
   // Deliberately lazy: extensionServer is constructed a few statements below,
   // and this closure only runs once a phone asks for a snapshot.
   extensionStatus: async () => extensionServer.getStatus(),
+  // The model's notify_phone gate, persisted with the rest of the workspace
+  // config so "off" survives restarts.
+  loadNotificationsEnabled: async () => (await getMobileChannelConfig()).notifications !== false,
+  saveNotificationsEnabled: async (enabled) => {
+    await persistMobileChannelConfig({ notifications: enabled })
+  },
   onStatus: (status) => broadcast('mobile:statusChange', status),
   // Connection logging is unconditional — a link that will not form is
   // exactly when the record is needed, and it lands in the workspace log
@@ -1099,14 +1157,12 @@ const mirrorMessageToRenderer = (conversationId: string, message: ConversationMe
   }
   try {
     // The phone gets the same in-flight snapshot the renderer does, so a
-    // Telegram or WhatsApp run is visible there while it is still writing.
-    //
-    // Sent as a *snapshot*, not as an append: these arrive many times per
-    // turn, and treating each as a finished message would have the phone
-    // re-pull the whole conversation body on every throttle tick. The final
-    // state arrives once, through the turn's terminal lifecycle push.
-    const text = typeof message?.content === 'string' ? message.content : null
-    if (text !== null) mobileChannel.pushMessageSnapshot(conversationId, text)
+    // Telegram or WhatsApp run is visible there while it is still writing —
+    // as the FULL message (prose + segments, stable id), which the phone
+    // upserts into its cached body. Upsert, not refetch-per-tick: the
+    // payload IS the state, so tool and task cards render mid-turn and the
+    // end-of-turn save replaces the snapshot under the same id.
+    mobileChannel.pushMessageAppended(conversationId, message)
   } catch {
     // and neither must a broken tunnel
   }
@@ -1133,6 +1189,20 @@ function pushTurnToMobile(ev: {
 }
 telegramChannel.setMessageMirror(mirrorMessageToRenderer)
 whatsappChannel.setMessageMirror(mirrorMessageToRenderer)
+// In-app turns mirror the OTHER way: their renderer already streams
+// (chat:segment), so the snapshot goes only to the paired phone — as a FULL
+// message (prose + segments, stable id) the phone upserts into its cached
+// body. That is what makes a desktop-chat run, its task cards included,
+// appear on the phone while it is still writing instead of all at once at
+// the end-of-turn save. Text rides the same payload, so no message.delta
+// bubble is emitted for these turns — one rendering path, no duplicates.
+electronChannel.setMessageMirror((conversationId, message) => {
+  try {
+    mobileChannel.pushMessageAppended(conversationId, message)
+  } catch {
+    // a broken tunnel must never affect the in-app turn
+  }
+})
 const extensionServer = new ExtensionServer()
 
 // MCP server connections. Each connected server registers an in-process
@@ -1209,6 +1279,136 @@ agent.cerebellum.setChannelStatusProvider(() =>
     whatsapp: () => whatsappChannel.getStatus()
   })
 )
+// ── Video generation (MiniMax H3) ────────────────────────────────────────
+// Wire the async-task bridge the `video` capability's plugin receives in its
+// init context. VideoTaskManager owns the whole task lifetime (media prep,
+// task creation, 10s poll loop, artifact download); the host stamps the
+// active conversation/turn onto every submit so tasks land in the right
+// transcript and ride the right turn's segment stream.
+agent.cerebellum.setVideoTasksHost({
+  check: () => checkVideoService(),
+  submit: (input) =>
+    videoTasks.submit(
+      agent.cerebellum.getCurrentConversationId(),
+      turnScope.getStore()?.turnId ?? null,
+      input
+    ),
+  awaitTask: (taskId, signal) => videoTasks.awaitTask(taskId, signal),
+  cancel: (taskId) => videoTasks.cancel(taskId),
+  get: (taskId) => videoTasks.get(taskId),
+  list: () => videoTasks.listFor(agent.cerebellum.getCurrentConversationId())
+})
+// Every snapshot change reaches the renderer so an open conversation's task
+// card updates live even after its turn ended (the rating-flow pattern: the
+// renderer folds the push into its in-memory copy, so its next whole-file
+// save carries it). High-frequency-adjacent → MOBILE_CONFIG_SILENT below.
+videoTasks.onSnapshot((snapshot) => broadcast('task:changed', snapshot))
+// Terminal fallback: when a task outlives its turn (the model moved on, the
+// turn was cancelled, the app restarted), the manager still has to finish
+// the job — persist the final card state and get the artifact to a channel
+// user. While the owning turn is live this is a no-op: the model is the
+// delivery path (video_await → send_file / channel send tools).
+videoTasks.onTerminal((snapshot) => {
+  void deliverVideoTaskFallback(snapshot)
+})
+void videoTasks.init()
+
+async function deliverVideoTaskFallback(snapshot: TaskSnapshot): Promise<void> {
+  if (videoTasks.isOwningTurnLive(snapshot.taskId)) return
+  const conversationId = snapshot.conversationId
+  if (!conversationId) return
+  // 1. Write the terminal snapshot into the conversation file. No turn is
+  //    alive to persist segments, so without this a reopen would show the
+  //    card frozen mid-run. Replaces the existing task segment in place
+  //    (keeping its ids); if the turn died before any segment persisted,
+  //    a minimal assistant message carries the card instead.
+  await updateConversation(conversationId, (current) => {
+    if (!current) return null
+    let found = false
+    for (const message of current.messages) {
+      for (const seg of message.segments ?? []) {
+        if (seg.kind === 'task' && seg.snapshot.taskId === snapshot.taskId) {
+          seg.snapshot = snapshot
+          found = true
+        }
+      }
+    }
+    if (!found) {
+      current.messages.push({
+        id: mintMessageId(),
+        role: 'assistant',
+        content: '',
+        timestamp: Date.now(),
+        segments: [
+          {
+            kind: 'task',
+            turnId: `task_${snapshot.taskId}`,
+            segmentId: `task_${snapshot.taskId}`,
+            snapshot
+          }
+        ]
+      })
+    }
+    return current
+  }).catch(() => undefined)
+  broadcast('conversation:changed', { id: conversationId })
+  // The write-through above just refreshed the on-disk body — nudge the
+  // phone to re-read it so an open mobile conversation shows the finished
+  // task card (and its video) without waiting for a manual refresh.
+  if (mobileChannel.hasPeer) mobileChannel.pushMessageAppended(conversationId, undefined)
+
+  // 2. Channel delivery. In-app the card itself shows the video; Telegram/
+  //    WhatsApp users get the artifact (or the failure) pushed to them via
+  //    the channel send tools — the same post-turn path heartbeats use.
+  //    Cancelled tasks stay silent: the user asked for that.
+  const conversation = await loadConversation(conversationId).catch(() => null)
+  const channel = conversation?.channel
+  if (channel !== 'telegram' && channel !== 'whatsapp') return
+  // Single-user default recipient: telegram tools default on their own; the
+  // whatsapp tools need an explicit JID, so derive it from the first allowed
+  // number (a group-originated conversation falls back to the primary user).
+  const waJid =
+    channel === 'whatsapp'
+      ? await getWhatsAppConfig()
+          .then((cfg) => {
+            const phone = cfg.allowedPhoneNumbers?.[0]?.replace(/[^0-9]/g, '')
+            return phone ? `${phone}@s.whatsapp.net` : null
+          })
+          .catch(() => null)
+      : null
+  if (channel === 'whatsapp' && !waJid) return
+  const sendText = async (message: string): Promise<void> => {
+    const sendTool = channel === 'telegram' ? 'telegram_send' : 'whatsapp_send'
+    await agent.cerebellum
+      .executeTool(sendTool, channel === 'telegram' ? { message } : { jid: waJid, message })
+      .catch(() => undefined)
+  }
+  const title = snapshot.title
+  if (snapshot.status === 'succeeded' && snapshot.outputPath) {
+    const tool = channel === 'telegram' ? 'telegram_send_video' : 'whatsapp_send_video'
+    const args =
+      channel === 'telegram'
+        ? { path: snapshot.outputPath, caption: `🎬 ${title}` }
+        : { jid: waJid, path: snapshot.outputPath, caption: `🎬 ${title}` }
+    const result = await agent.cerebellum
+      .executeTool(tool, args as Record<string, unknown>)
+      .catch(() => ({ success: false as const, error: 'send failed' }))
+    if (result.success) {
+      // Tell the manager the artifact already reached the user, so the
+      // pending runtime-tail notice flips to "already delivered". Without
+      // this the model's next turn is told to present it and sends the same
+      // video a second time.
+      videoTasks.markDelivered(snapshot.taskId)
+    } else {
+      await sendText(
+        `🎬 ${title}: the video is ready — open the app to watch it (sending it here failed).`
+      )
+    }
+  } else if (snapshot.status === 'failed') {
+    await sendText(`🎬 ${title}: video generation failed — ${snapshot.error ?? 'unknown error'}`)
+  }
+}
+
 // Rolling prefix summarizer: fires after conversation persistence (channel
 // post-turn saves + the conversation:save IPC). The onUpdated push tells the
 // renderer to fold {summary, mark} into its in-memory conversation so its
@@ -1593,7 +1793,8 @@ const MOBILE_CONFIG_SILENT = new Set([
   'mobile:statusChange',
   'model:pullProgress',
   'projects:copyProgress',
-  'reindex:progress'
+  'reindex:progress',
+  'task:changed'
 ])
 
 /** Coalesces a burst of config broadcasts into one push. */
@@ -1635,6 +1836,14 @@ function broadcast<T>(channel: string, payload: T): void {
 async function saveVariablesEverywhere(variables: Variable[]): Promise<void> {
   await persistVariables(variables)
   broadcast('variables:changed', { variables })
+  // The phone gets the array itself, now — not just the debounced "something
+  // changed" hint broadcast() schedules. Same guard shape as that path: a
+  // push is best-effort and a dead tunnel is not the save's problem.
+  try {
+    if (mobileChannel.hasPeer) mobileChannel.pushVariablesChanged(variables)
+  } catch {
+    // nothing — config.changed still follows and the phone converges there
+  }
 }
 
 async function shutdownGracefully(): Promise<void> {
@@ -2131,6 +2340,9 @@ app.whenReady().then(async () => {
       const next = updated.brave ?? { enabled: false, apiKey: '' }
       // Reset cached error so the next status read reflects the new key.
       braveService.resetCache()
+      // Announce so every other audience — the phone (via the broadcast
+      // hook's config.changed) and other windows' panels — re-seeds live.
+      broadcast('services:changed', { service: 'brave' })
       return { ok: true as const, status: await braveService.getStatus(), config: next }
     }
   )
@@ -2193,6 +2405,25 @@ app.whenReady().then(async () => {
   // Memes — stateless service. The memes cerebellum plugin reads
   // config.json directly on every tool call. This module provides test
   // helpers and a status view for the settings panel.
+  // Video generation (MiniMax H3). Its own key by design — see VideoConfig
+  // in workspace.ts for why it is not shared with the MiniMax chat provider.
+  ipcMain.handle('video:getConfig', (): Promise<VideoConfig> => getVideoConfig())
+
+  ipcMain.handle(
+    'video:setConfig',
+    async (_e, patch: Partial<VideoConfig>): Promise<{ ok: true; config: VideoConfig }> => {
+      const updated = await setVideoConfig(patch)
+      broadcast('services:changed', { service: 'video' })
+      const config = updated.video ?? { apiKey: '', director: true }
+      return {
+        ok: true as const,
+        config: { apiKey: config.apiKey, director: config.director !== false }
+      }
+    }
+  )
+
+  ipcMain.handle('video:test', () => checkVideoService())
+
   ipcMain.handle('memes:getConfig', (): Promise<MemesConfig> => getMemesConfig())
 
   ipcMain.handle(
@@ -2207,6 +2438,7 @@ app.whenReady().then(async () => {
         giphy: { apiKey: '' }
       }
       memesService.resetCache()
+      broadcast('services:changed', { service: 'memes' })
       return { ok: true as const, status: await memesService.getStatus(), config: next }
     }
   )
@@ -2240,6 +2472,7 @@ app.whenReady().then(async () => {
         screenshotMaxWidth: 1280,
         screenshotFormat: 'jpeg' as const
       }
+      broadcast('services:changed', { service: 'computerUse' })
       return { ok: true as const, config: next }
     }
   )
@@ -2306,6 +2539,7 @@ app.whenReady().then(async () => {
         await extensionServer.stop()
         await extensionServer.start({ port: next.port })
       }
+      broadcast('services:changed', { service: 'browserExtension' })
       return { ok: true as const, config: next }
     }
   )
@@ -2520,6 +2754,7 @@ app.whenReady().then(async () => {
     'stt:setConfig',
     async (_e, patch: Partial<SttConfig>): Promise<{ ok: true; config: SttConfig }> => {
       const updated = await persistSttConfig(patch)
+      broadcast('services:changed', { service: 'stt' })
       return { ok: true as const, config: updated.stt ?? { defaultModel: '' } }
     }
   )
@@ -2589,6 +2824,7 @@ app.whenReady().then(async () => {
     'tts:setConfig',
     async (_e, patch: Partial<TtsConfig>): Promise<{ ok: true; config: TtsConfig }> => {
       const updated = await persistTtsConfig(patch)
+      broadcast('services:changed', { service: 'tts' })
       return {
         ok: true as const,
         config: updated.tts ?? { defaultVoice: '', defaultSpeed: '' }
@@ -2785,6 +3021,9 @@ app.whenReady().then(async () => {
     mobileChannel.setVerbose(Boolean(verbose))
     return mobileChannel.getStatus()
   })
+  ipcMain.handle('mobile:setNotifications', (_event, enabled: boolean) =>
+    mobileChannel.setNotificationsEnabled(Boolean(enabled))
+  )
   ipcMain.handle('mobile:setRelayUrl', (_event, url: string | null) =>
     mobileChannel.setRelayUrl(typeof url === 'string' ? url : null)
   )
@@ -3137,6 +3376,7 @@ app.whenReady().then(async () => {
             'pptx',
             'html',
             'htm',
+            'zip',
             'mp3',
             'wav',
             'ogg',
@@ -3448,6 +3688,11 @@ app.whenReady().then(async () => {
       ...c,
       updates: { ...(c.updates ?? { enabled: true }), enabled: value }
     }))
+    // Announced like the other preference setters: the broadcast hook's
+    // config.changed push is what moves the phone's mirror of this switch
+    // now, rather than on its next screen focus. Without it this was the one
+    // setting that synced phone→desktop but not desktop→phone.
+    broadcast('preferences:changed', { updatesEnabled: value })
     return { value }
   })
 
@@ -3494,6 +3739,13 @@ app.whenReady().then(async () => {
   })
   ipcMain.handle('runtime:runDeepCleanNow', async () => {
     return agent.brainstem.runDeepCleanNow()
+  })
+  // Task-card cancel button (generic async-generation tasks; video today).
+  // Mirrors what the model's video_cancel tool does — same manager, same
+  // server-side DELETE — so the user can stop a run without waiting on the
+  // model to notice.
+  ipcMain.handle('task:cancel', async (_e, payload: { taskId: string }) => {
+    return videoTasks.cancel(payload.taskId)
   })
   ipcMain.handle(
     'conversation:rate',
