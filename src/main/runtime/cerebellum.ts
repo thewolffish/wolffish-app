@@ -778,11 +778,13 @@ export const CORE_CAPABILITIES: ReadonlySet<string> = new Set([
   // testing). The manual BODY loads only when the tool is CALLED, so trivial
   // turns pay just this ~1 tool schema, never the manual text.
   'operating-manual',
-  // Same body-load pattern for the two design manuals. Document/PDF requests
-  // and chart requests are frequent and quality-critical; a discovery hop
-  // before the manual halves the trigger rate (measured for operating-manual),
-  // which is exactly the inconsistent-output failure these exist to fix.
+  // Same body-load pattern for the design manuals. Document/PDF requests,
+  // web-page requests, and chart requests are frequent and quality-critical;
+  // a discovery hop before the manual halves the trigger rate (measured for
+  // operating-manual), which is exactly the inconsistent-output failure
+  // these exist to fix.
   'pdf-design',
+  'web-design',
   'dataviz',
   // Async video generation (MiniMax H3). Core so the schemas always ship:
   // a video request must reach video_generate without a discovery hop, and
@@ -810,6 +812,7 @@ export const LOCKED_CAPABILITIES: ReadonlySet<string> = new Set([
   'introspect',
   'operating-manual',
   'pdf-design',
+  'web-design',
   'dataviz',
   'procedures',
   'secrets',

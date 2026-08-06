@@ -128,8 +128,26 @@ export const turnRouter = new TurnRouter()
  * end-of-turn disk save. index.ts wires this to a renderer broadcast; the
  * same `message` identity (stable id) lands on disk at end-of-turn, so the
  * renderer reconciles the two by id and never shows the assistant twice.
+ *
+ * `userMessage` is the PROMPT that started this turn, carried on every tick
+ * beside the answer. A mirror used to describe the assistant alone, which was
+ * fine for the renderer (it has the prompt in its own feed) and wrong for the
+ * phone: an in-app turn writes its user message to disk only at the fold, so
+ * a phone watching the conversation had the answer streaming in with no
+ * question above it for the whole turn — and a phone that PAIRS mid-turn has
+ * no other way to learn the prompt exists. Repeated on every snapshot rather
+ * than announced once, because a late-joining viewer only ever sees ticks.
+ * It carries the id the turn will persist under, so the receiver drops its
+ * copy the moment the stored transcript takes over.
+ *
+ * `message` is null for a prompt-only mirror — the tick emitted at turn start,
+ * before the assistant has written anything worth showing.
  */
-export type MirrorMessageListener = (conversationId: string, message: ConversationMessage) => void
+export type MirrorMessageListener = (
+  conversationId: string,
+  message: ConversationMessage | null,
+  userMessage?: ConversationMessage
+) => void
 
 /**
  * The per-turn assistant-message accumulator a channel builds up as segments

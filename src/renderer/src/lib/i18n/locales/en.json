@@ -1736,7 +1736,8 @@
     },
     "htmlViewer": {
       "preview": "Preview",
-      "source": "Source"
+      "source": "Source",
+      "openInBrowser": "Open in browser"
     },
     "audioPlayer": {
       "deleted": "Audio file was deleted or unavailable"
@@ -1905,9 +1906,6 @@
       "title": "Files",
       "fileCount": "{{count}} files"
     },
-    "logsFiles": {
-      "label": "Logs & files"
-    },
     "modeToggle": {
       "ariaLabel": "Provider mode",
       "local": "Local",
@@ -1934,6 +1932,7 @@
     },
     "reasoning": {
       "ariaLabel": "Reasoning mode",
+      "label": "Thinking",
       "off": "Thinking off — answers directly, no reasoning.",
       "on": "Thinking on — reasons before answering.",
       "high": "High effort — more thorough reasoning.",
@@ -1966,10 +1965,12 @@
     "modelPicker": {
       "search": "Search models",
       "noProviders": "Connect a provider API key in Settings first.",
-      "noResults": "No models match your search."
+      "noResults": "No models match your search.",
+      "noLocalModels": "No Ollama models installed yet."
     },
     "modePicker": {
       "ariaLabel": "Choose the chat mode",
+      "label": "Mode",
       "single": "Single",
       "singleDesc": "One model answers directly — everyday questions.",
       "workflow": "Workflow",
@@ -2003,21 +2004,6 @@
         "cost": "Cost"
       },
       "tokens": "{{compact}} tok"
-    },
-    "attachMenu": {
-      "files": "Attach files",
-      "mediaUrl": "Attach media URL"
-    },
-    "urlAttach": {
-      "title": "Attach a media URL",
-      "placeholder": "https://example.com/clip.mp4",
-      "kind": {
-        "image": "Image",
-        "video": "Video",
-        "audio": "Audio"
-      },
-      "add": "Attach",
-      "chip": "URL"
     }
   },
   "workspace": {
@@ -2292,7 +2278,7 @@
     "deleteCancel": "Cancel",
     "newChat": "New chat",
     "processing": "Processing…",
-    "diagnosticsActive": "Export this conversation from the chat screen",
+    "diagnosticsPending": "Not indexed yet — try again in a moment",
     "groups": {
       "today": "Today",
       "yesterday": "Yesterday",

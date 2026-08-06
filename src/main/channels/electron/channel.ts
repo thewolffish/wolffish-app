@@ -5,7 +5,7 @@ import {
   type TurnSink
 } from '@main/channels/channel'
 import type { TurnRunner, TurnSendOptions } from '@main/channels/turn-runner'
-import { mintMessageId } from '@main/conversations'
+import { mintMessageId, type ConversationMessage } from '@main/conversations'
 import type { Agent } from '@main/runtime/agent'
 import type { ApprovalDecision, ApprovalRequest } from '@main/runtime/amygdala'
 import { upsertTaskSegment, upsertWorkflowSegment } from '@main/runtime/broca'
@@ -20,6 +20,45 @@ import type { WebContents } from 'electron'
  * stream must not emit (and make the phone re-render) per token.
  */
 const MIRROR_THROTTLE_MS = 500
+
+/**
+ * The turn's prompt, recovered from the history the renderer sent, in the shape
+ * the renderer will persist it in.
+ *
+ * The wire copy is the LLM's copy, and it is dressed for the model: the current
+ * entry is `composeHistoryContent` output — the typed text with an
+ * `<attachments>`/`<video_instructions>` block joined on after a blank line —
+ * and a voice note wraps all of that in `<voice_note lang="…">`. None of that
+ * scaffolding was typed and none of it is saved, so it is undressed here; a
+ * mirror that showed it would put markup in a user's bubble.
+ *
+ * Null without an id. The receiver drops its live copy of the prompt when the
+ * stored transcript arrives carrying the same id; an id-less one would never be
+ * dropped and would sit under the answer forever, which is worse than the gap
+ * this closes. Null too when the last entry is not a user message, which is any
+ * resend shape this doesn't understand — no prompt is better than a wrong one.
+ */
+function promptFromHistory(
+  history: ChatHistoryMessage[],
+  userMessageId: string | undefined
+): ConversationMessage | null {
+  if (!userMessageId) return null
+  const last = history[history.length - 1]
+  if (!last || last.role !== 'user') return null
+  const voice = /^<voice_note[^>]*>\n/.exec(last.content)
+  const content = last.content
+    .slice(voice ? voice[0].length : 0)
+    .split('\n\n<attachments>')[0]
+    .trimEnd()
+  return {
+    id: userMessageId,
+    role: 'user',
+    content,
+    timestamp: Date.now(),
+    ...(last.attachments && last.attachments.length > 0 ? { attachments: last.attachments } : {}),
+    ...(voice ? { voicePrompt: true } : {})
+  }
+}
 
 /**
  * The Electron renderer channel. Wraps the existing chat:* IPC surface —
@@ -98,6 +137,11 @@ export class ElectronChannel {
       if (previousTurnId) this.turns.get(previousTurnId)?.controller.abort()
     }
 
+    // The prompt, for the mirror. An in-app turn keeps its user message in the
+    // renderer's feed and writes it to disk only at the fold, so this is the
+    // ONLY copy a second viewer can be shown while the turn runs.
+    const userMessage = promptFromHistory(payload.history, payload.userMessageId)
+
     const handle = this.runner.send({
       history: payload.history,
       conversationId,
@@ -106,8 +150,14 @@ export class ElectronChannel {
       projectId: payload.projectId,
       thinkingMode: (payload.thinkingMode as TurnSendOptions['thinkingMode']) ?? undefined,
       modeOverride: payload.modeOverride,
-      makeSink: ({ turnId, conversationId: cid }) => this.createSink(turnId, cid, sender)
+      makeSink: ({ turnId, conversationId: cid }) =>
+        this.createSink(turnId, cid, sender, userMessage)
     })
+
+    // The prompt goes out NOW, ahead of the first token: mirror ticks are
+    // driven by segments, and the wait for the first one is exactly the window
+    // in which a phone would show thinking words under no question at all.
+    if (conversationId && userMessage) this.mirrorListener?.(conversationId, null, userMessage)
 
     // Register at SEND time (not lane start) so a turn queued behind its
     // conversation's in-flight predecessor is cancelable immediately.
@@ -222,7 +272,12 @@ export class ElectronChannel {
     this.byConversation.clear()
   }
 
-  private createSink(turnId: string, conversationId: string | null, sender: WebContents): TurnSink {
+  private createSink(
+    turnId: string,
+    conversationId: string | null,
+    sender: WebContents,
+    userMessage: ConversationMessage | null
+  ): TurnSink {
     const safeSend = (channel: string, payload: unknown): void => {
       if (sender && !sender.isDestroyed()) {
         sender.send(channel, payload)
@@ -251,7 +306,10 @@ export class ElectronChannel {
       const message = buildAssistantMessage(acc)
       if (!message) return
       lastMirrorAt = Date.now()
-      this.mirrorListener(conversationId, message)
+      // The prompt rides every tick, not just the first: a phone that pairs
+      // (or opens this conversation) mid-turn sees only ticks, and the answer
+      // without the question is the whole bug this closes.
+      this.mirrorListener(conversationId, message, userMessage ?? undefined)
     }
     const scheduleMirror = (immediate: boolean): void => {
       if (!this.mirrorListener || !conversationId) return

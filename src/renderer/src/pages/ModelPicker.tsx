@@ -20,6 +20,7 @@ import {
   CpuIcon,
   FolderOpenIcon,
   HardDriveIcon,
+  Loading03Icon,
   RamMemoryIcon,
   Tick02Icon
 } from 'hugeicons-react'
@@ -158,6 +159,9 @@ export function ModelPicker(): React.JSX.Element {
   const [family, setFamily] = useState<ModelFamily>('gemma')
   const [selected, setSelected] = useState<string | null>(null)
   const [phase, setPhase] = useState<PullPhase>('idle')
+  // Persisting an already-downloaded model is a config write, not a transfer.
+  // It gets its own flag so it never borrows the download UI.
+  const [switching, setSwitching] = useState(false)
   const [statusKind, setStatusKind] = useState<StatusKind>('lookingUp')
   const [fakePercent, setFakePercent] = useState(0)
   const [progress, setProgress] = useState<{ completed: number | null; total: number | null }>({
@@ -215,7 +219,12 @@ export function ModelPicker(): React.JSX.Element {
   useEffect(() => {
     const offProgress = window.api.model.onPullProgress((event) => {
       if (event.modelName !== selected) return
-      if (event.status !== 'success' && phase !== 'pulling') setPhase('pulling')
+      // A progress event means main decided to pull after all — hand the UI
+      // over to the download card.
+      if (event.status !== 'success' && phase !== 'pulling') {
+        setSwitching(false)
+        setPhase('pulling')
+      }
 
       // Aggregate per-layer progress so the user sees one smooth bar instead
       // of N back-to-back 0→100% cycles. Each layer is keyed by its hash; we
@@ -281,6 +290,7 @@ export function ModelPicker(): React.JSX.Element {
     })
     const offDone = window.api.model.onPullDone((event) => {
       if (event.modelName !== selected) return
+      setSwitching(false)
       if (event.ok) {
         void refreshStatus().then(() => goTo('chat'))
       } else if (event.aborted) {
@@ -396,9 +406,13 @@ export function ModelPicker(): React.JSX.Element {
   const selectedFits = !!selectedEntry && fitsInRam(selectedEntry)
   const selectedFitsOnDisk = !selectedEntry || fitsOnDisk(selectedEntry)
   const alreadyHave = !!selected && isInstalled(selected)
+  // Anything that would move `selected` out from under an in-flight
+  // model:select is locked while one is running — the done/progress listeners
+  // key off `selected` and would stop matching.
+  const locked = phase === 'pulling' || switching
   const canInstall =
     !!selected &&
-    phase !== 'pulling' &&
+    !locked &&
     (online || alreadyHave) &&
     (selectedFits || alreadyHave) &&
     (selectedFitsOnDisk || alreadyHave)
@@ -413,18 +427,44 @@ export function ModelPicker(): React.JSX.Element {
     if (models.length > 0) setShowAvailable(true)
   }
 
+  // Three different actions sit behind the one primary button:
+  //   · model not downloaded    → pull it (download card + Cancel)
+  //   · downloaded, not current → persist the choice, then leave
+  //   · downloaded and current  → nothing to do; just leave
+  // Only the first is a transfer, so only the first gets the transfer UI.
+  const onPrimary = async (): Promise<void> => {
+    if (!selected) return
+    if (alreadyHave && selected === currentModel) {
+      // Config already names this model (a model is only ever stored with
+      // local.enabled true), so model:select would be a no-op round trip.
+      goTo('chat')
+      return
+    }
+    await onInstall()
+  }
+
   const onInstall = async (): Promise<void> => {
     if (!selected) return
-    setPhase('pulling')
-    setStatusKind('lookingUp')
+    // `installed` is Ollama's own tag list — the exact check main runs to
+    // decide whether a pull is needed. Predicting it here keeps the download
+    // card out of the picture when nothing is going to be downloaded; if the
+    // prediction is wrong, the first progress event promotes us to 'pulling'.
+    const needsDownload = !installed.some((tag) => tag.name === selected)
     setError(null)
-    setProgress({ completed: null, total: null })
-    setSpeedBps(null)
-    setEtaSeconds(null)
-    speedSampleRef.current = null
-    layersRef.current.clear()
+    if (!needsDownload) {
+      setSwitching(true)
+    } else {
+      setPhase('pulling')
+      setStatusKind('lookingUp')
+      setProgress({ completed: null, total: null })
+      setSpeedBps(null)
+      setEtaSeconds(null)
+      speedSampleRef.current = null
+      layersRef.current.clear()
+    }
     const result = await window.api.model.select(selected)
     if (!result.ok) {
+      setSwitching(false)
       if (result.aborted) {
         setPhase('idle')
         setStatusKind('lookingUp')
@@ -437,6 +477,10 @@ export function ModelPicker(): React.JSX.Element {
         setPhase('error')
         setError(localizeError(result.error, t))
       }
+    } else if (result.alreadyRunning) {
+      // We joined a pull already in flight — that call owns the pullDone
+      // broadcast, so nothing will arrive to clear this for us.
+      setSwitching(false)
     }
   }
 
@@ -485,7 +529,7 @@ export function ModelPicker(): React.JSX.Element {
             setFamily={switchFamily}
             catalog={catalog}
             t={t}
-            disabled={phase === 'pulling'}
+            disabled={locked}
             showAvailable={showAvailable}
             setShowAvailable={setShowAvailable}
             availableCount={availableModels.length}
@@ -504,7 +548,7 @@ export function ModelPicker(): React.JSX.Element {
                   model={model}
                   isSelected={selected === model.fullName}
                   isCurrent={model.fullName === currentModel}
-                  disabled={phase === 'pulling'}
+                  disabled={locked}
                   onSelect={() => setSelected(model.fullName)}
                   t={t}
                 />
@@ -529,7 +573,7 @@ export function ModelPicker(): React.JSX.Element {
                 const isCurrent = entry.ollamaName === currentModel
                 const installedAlready = isInstalled(entry.ollamaName)
                 const blocked = (!fits || !fitsDisk) && !installedAlready
-                const disabled = phase === 'pulling' || blocked
+                const disabled = locked || blocked
                 return (
                   <button
                     key={entry.ollamaName}
@@ -695,7 +739,7 @@ export function ModelPicker(): React.JSX.Element {
 
           {phase === 'idle' && (
             <div className="flex flex-col items-stretch gap-3">
-              <Button size="lg" disabled={!canInstall} onClick={() => void onInstall()}>
+              <Button size="lg" disabled={!canInstall} onClick={() => void onPrimary()}>
                 <span>
                   {selected && isInstalled(selected) && selected === currentModel
                     ? t('modelPicker.continue')
@@ -703,17 +747,25 @@ export function ModelPicker(): React.JSX.Element {
                       ? t('modelPicker.use')
                       : t('modelPicker.install')}
                 </span>
-                <ArrowIcon size={18} />
+                {switching ? (
+                  <Loading03Icon size={18} className="animate-spin" />
+                ) : (
+                  <ArrowIcon size={18} />
+                )}
               </Button>
               {currentModel && (
-                <Button size="lg" variant="ghost" onClick={() => goTo('chat')}>
+                <Button size="lg" variant="ghost" disabled={locked} onClick={() => goTo('chat')}>
                   {t('modelPicker.backToChat')}
                 </Button>
               )}
               <button
                 type="button"
+                disabled={locked}
                 onClick={() => goTo('ollama-setup', screen === 'settings' ? 'settings' : null)}
-                className="text-muted hover:text-fg cursor-pointer text-center text-xs"
+                className={cn(
+                  'text-muted text-center text-xs',
+                  locked ? 'cursor-not-allowed opacity-60' : 'hover:text-fg cursor-pointer'
+                )}
               >
                 {t('modelPicker.reinstallOllama')}
               </button>

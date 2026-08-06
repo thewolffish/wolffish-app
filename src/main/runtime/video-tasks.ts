@@ -366,7 +366,7 @@ export class VideoTaskManager {
 
     try {
       const pushImage = async (source: string, role: string): Promise<void> => {
-        const media = await prepareImage(source)
+        const media = await prepareImage(source, role)
         if (media.note) notes.push(`${role}: ${media.note}`)
         bodyBytes += media.bodyBytes
         content.push({ type: 'image_url', image_url: { url: media.url }, role })
@@ -875,6 +875,73 @@ function isHttpUrl(source: string): boolean {
   return /^https?:\/\//i.test(source)
 }
 
+/** Extensions that PROVE a URL's media kind. Used only to catch a URL sitting
+ *  in the wrong slot — never to accept one. */
+const URL_KIND_EXTS: Record<MediaKind, readonly string[]> = {
+  image: [
+    '.jpg',
+    '.jpeg',
+    '.png',
+    '.webp',
+    '.heic',
+    '.heif',
+    '.gif',
+    '.bmp',
+    '.tif',
+    '.tiff',
+    '.avif'
+  ],
+  video: ['.mp4', '.mov', '.m4v', '.webm', '.mkv', '.avi', '.flv', '.wmv', '.mpg', '.mpeg', '.3gp'],
+  audio: ['.mp3', '.wav', '.m4a', '.aac', '.ogg', '.oga', '.opus', '.flac', '.wma', '.aif', '.aiff']
+}
+
+type MediaKind = 'image' | 'video' | 'audio'
+
+/**
+ * Local files are validated by extension on the way in (an .mp3 handed to
+ * first_frame dies in prepareImage with a readable message); http URLs skip
+ * every check because there is nothing on disk to stat or probe. That gap is
+ * the one the model falls into: it reads URLs out of the user's message and
+ * has to decide which is the image, which the clip, which the audio. So when
+ * a URL's extension PROVES it is the wrong kind for the slot it landed in,
+ * fail here — before the API call — with the reassignment spelled out.
+ *
+ * Deliberately narrow: only a known extension that contradicts the slot is an
+ * error. Extensionless URLs (signed CDN links, share pages, ?format= params)
+ * pass straight through to MiniMax, which is the authority on what it can
+ * fetch.
+ */
+function assertUrlKind(source: string, kind: MediaKind, slot: string): void {
+  const clean = source.split(/[?#]/)[0].toLowerCase()
+  const dot = clean.lastIndexOf('.')
+  if (dot < 0 || dot < clean.lastIndexOf('/')) return
+  const ext = clean.slice(dot)
+  if (URL_KIND_EXTS[kind].includes(ext)) return
+  const actual = (Object.keys(URL_KIND_EXTS) as MediaKind[]).find((k) =>
+    URL_KIND_EXTS[k].includes(ext)
+  )
+  if (!actual) return
+  const slotFor: Record<MediaKind, string> = {
+    image: 'first_frame, last_frame or reference_images',
+    video: 'reference_videos',
+    audio: 'reference_audios'
+  }
+  const article = (k: MediaKind): string => (k === 'video' ? 'a' : 'an')
+  throw new Error(
+    `${urlLabel(source)} is ${article(actual)} ${actual} URL (${ext}) but was passed as ${slot}, which takes ${article(kind)} ${kind}. ` +
+      `Move it to ${slotFor[actual]}. If you are not sure what a URL the user gave you actually is, ask them before generating instead of guessing.`
+  )
+}
+
+/** Short display name for a URL — the filename when there is one, so signed
+ *  CDN links don't drown the error message. */
+function urlLabel(source: string): string {
+  const clean = source.split(/[?#]/)[0]
+  const base = clean.split('/').filter(Boolean).pop()
+  if (base && base.length <= 60) return base
+  return source.length <= 80 ? source : `${source.slice(0, 77)}…`
+}
+
 /** Data-URL byte cost: base64 inflates by 4/3 plus the mime prefix. */
 function dataUrl(mime: string, buffer: Buffer): { url: string; bodyBytes: number } {
   const b64 = buffer.toString('base64')
@@ -907,8 +974,11 @@ const IMAGE_EXT_MIME: Record<string, string> = {
   '.heif': 'image/heif'
 }
 
-async function prepareImage(source: string): Promise<PreparedMedia> {
-  if (isHttpUrl(source)) return { url: source, bodyBytes: 0 }
+async function prepareImage(source: string, slot = 'an image input'): Promise<PreparedMedia> {
+  if (isHttpUrl(source)) {
+    assertUrlKind(source, 'image', slot)
+    return { url: source, bodyBytes: 0 }
+  }
   const absPath = resolveLocalPath(source)
   const stat = await statOrThrow(absPath, 'image')
   const ext = path.extname(absPath).toLowerCase()
@@ -1018,7 +1088,10 @@ async function probeMedia(absPath: string): Promise<MediaProbe> {
 }
 
 async function prepareVideo(source: string): Promise<PreparedMedia> {
-  if (isHttpUrl(source)) return { url: source, bodyBytes: 0 }
+  if (isHttpUrl(source)) {
+    assertUrlKind(source, 'video', 'reference_videos')
+    return { url: source, bodyBytes: 0 }
+  }
   const absPath = resolveLocalPath(source)
   const stat = await statOrThrow(absPath, 'video')
   const probe = await probeMedia(absPath)
@@ -1095,7 +1168,10 @@ async function prepareVideo(source: string): Promise<PreparedMedia> {
 }
 
 async function prepareAudio(source: string): Promise<PreparedMedia> {
-  if (isHttpUrl(source)) return { url: source, bodyBytes: 0 }
+  if (isHttpUrl(source)) {
+    assertUrlKind(source, 'audio', 'reference_audios')
+    return { url: source, bodyBytes: 0 }
+  }
   const absPath = resolveLocalPath(source)
   const stat = await statOrThrow(absPath, 'audio')
   const probe = await probeMedia(absPath)

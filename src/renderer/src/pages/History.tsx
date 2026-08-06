@@ -250,6 +250,23 @@ export function History(): React.JSX.Element {
                       const processing = row.phase === 'processing'
                       const title = row.title
                       const sourceIcon = row.icon
+                      const diagnosticsDisabled = !row.indexed
+                      // Visibility and the disabled dim are ONE decision, not two
+                      // opacity utilities stacked in the class list: `cn` is plain
+                      // clsx, so a second `opacity-*` would be settled by stylesheet
+                      // order rather than by the order written here. The row that is
+                      // currently open keeps its actions on screen — it is already
+                      // pinned with its own surface, so the controls read as part of
+                      // that row instead of as hover chrome; every other row reveals
+                      // them on hover.
+                      const actionVisibility = (disabled: boolean): string =>
+                        disabled
+                          ? isActive
+                            ? 'opacity-40'
+                            : 'opacity-0 group-hover:opacity-40'
+                          : isActive
+                            ? 'opacity-100'
+                            : 'opacity-0 group-hover:opacity-100'
                       return (
                         <div
                           key={row.conversationId}
@@ -296,37 +313,41 @@ export function History(): React.JSX.Element {
                           {/* Row actions as one cluster — the row's own gap-3
                               would read as two unrelated controls, not a pair. */}
                           <div className="flex shrink-0 items-center gap-0.5">
-                            {/* Diagnostic export, disabled for the conversation
-                                that is currently open: the chat composer carries
-                                its own export button, and that live session is
-                                what persists the conversation — collecting it
-                                from here would read whatever the session had
-                                last flushed rather than what is on screen. A
-                                conversation merely PROCESSING in the background
-                                stays exportable; a run that has gone wrong is
-                                exactly when this gets pressed, and it only
-                                reads. Also off while the row is live-only
-                                (`!indexed`): that conversation isn't in the
-                                index — for an in-app first turn it isn't even on
-                                disk yet — so there is nothing to collect until
-                                the index catches up. */}
+                            {/* Diagnostic export — this is the ONLY export
+                                button in the app now (the chat composer used to
+                                carry a second one), so it stays live for the
+                                open conversation too. The collector reads the
+                                conversation off DISK, and an in-app transcript
+                                only lands there at turn boundaries, so pressing
+                                this mid-turn bundles a transcript ending at the
+                                previous turn — the corpus logs still cover the
+                                live turn, which is what a run that has gone
+                                wrong is usually read from. Background runs were
+                                always exportable on exactly that reasoning; the
+                                open conversation is no different. Off only
+                                while the row is live-only (`!indexed`): that
+                                conversation isn't in the index — for an in-app
+                                first turn it isn't even on disk yet — so there
+                                is nothing to collect until the index catches
+                                up. */}
                             <button
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation()
-                                if (!isActive && row.indexed)
-                                  setDiagnosticsTarget(row.conversationId)
+                                if (!diagnosticsDisabled) setDiagnosticsTarget(row.conversationId)
                               }}
-                              disabled={isActive || !row.indexed}
+                              disabled={diagnosticsDisabled}
                               aria-label={t('diagnostics.button')}
                               title={
-                                isActive ? t('history.diagnosticsActive') : t('diagnostics.button')
+                                diagnosticsDisabled
+                                  ? t('history.diagnosticsPending')
+                                  : t('diagnostics.button')
                               }
                               className={cn(
-                                'text-muted rounded-lg p-1.5 opacity-0',
-                                'group-hover:opacity-100',
-                                isActive || !row.indexed
-                                  ? 'cursor-not-allowed opacity-40'
+                                'text-muted rounded-lg p-1.5',
+                                actionVisibility(diagnosticsDisabled),
+                                diagnosticsDisabled
+                                  ? 'cursor-not-allowed'
                                   : 'cursor-pointer hover:text-fg',
                                 'focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-accent'
                               )}
@@ -343,10 +364,10 @@ export function History(): React.JSX.Element {
                               aria-label={t('history.delete')}
                               title={processing ? t('history.processing') : undefined}
                               className={cn(
-                                'text-muted rounded-lg p-1.5 opacity-0',
-                                'group-hover:opacity-100',
+                                'text-muted rounded-lg p-1.5',
+                                actionVisibility(processing),
                                 processing
-                                  ? 'cursor-not-allowed opacity-40'
+                                  ? 'cursor-not-allowed'
                                   : 'cursor-pointer hover:text-red-600 dark:hover:text-red-400',
                                 'focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-accent'
                               )}

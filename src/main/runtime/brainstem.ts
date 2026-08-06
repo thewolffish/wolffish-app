@@ -639,6 +639,8 @@ export class Brainstem {
     label: string
     body: string
     mode: 'single' | 'workflow' | null
+    /** The absolute moment a `once` job fires; null for every cron kind. */
+    runAt: number | null
   }> {
     return [...this.jobs.values()].map((j) => ({
       id: j.id,
@@ -646,7 +648,8 @@ export class Brainstem {
       cron: j.cron,
       label: j.label,
       body: j.body,
-      mode: j.mode ?? null
+      mode: j.mode ?? null,
+      runAt: j.runAt ?? null
     }))
   }
 

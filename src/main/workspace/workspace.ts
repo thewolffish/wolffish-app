@@ -120,9 +120,16 @@ export type InAppConfig = {
  * before any frame is built, and nothing reaches the relay or the phone.
  * Default ON — the phone still shows nothing unless the model deliberately
  * calls the tool, and the phone's own OS permission is the second gate.
+ *
+ * `verbose` is the same feed preference Telegram, WhatsApp and the in-app
+ * chat each carry: false (default) mirrors a clean feed to the phone (agent
+ * replies, file-bearing results, errors), true relays every tool call and
+ * activity card. Display-only — it never affects what is stored, and never
+ * affects connection logging, which is unconditional.
  */
 export type MobileChannelConfig = {
   notifications?: boolean
+  verbose?: boolean
 }
 
 export type BraveConfig = {
@@ -1405,7 +1412,8 @@ export async function setInAppConfig(patch: Partial<InAppConfig>): Promise<Works
 }
 
 const EMPTY_MOBILE_CONFIG: MobileChannelConfig = {
-  notifications: true
+  notifications: true,
+  verbose: false
 }
 
 export async function getMobileChannelConfig(): Promise<MobileChannelConfig> {
@@ -1419,7 +1427,8 @@ export async function setMobileChannelConfig(
   return patchConfig((c) => {
     const current = { ...EMPTY_MOBILE_CONFIG, ...(c.mobile ?? {}) }
     const next: MobileChannelConfig = {
-      notifications: patch.notifications ?? current.notifications
+      notifications: patch.notifications ?? current.notifications,
+      verbose: patch.verbose ?? current.verbose
     }
     return { ...c, mobile: next }
   })

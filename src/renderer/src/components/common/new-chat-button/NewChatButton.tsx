@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 /**
- * Composer New-chat button with a hover card (the ChatModeButton recipe:
+ * Composer New-chat button with a hover card (the ContextMeter recipe:
  * 150ms open / 200ms close timers, Escape + outside-click dismiss). Clicking
  * the button creates a plain no-project conversation, exactly as before;
  * hovering reveals the projects as cards — picking one starts the new

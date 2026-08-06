@@ -37,7 +37,12 @@ import { buildProjectOverlay } from '@main/projects'
 import { compactOverflow } from '@main/runtime/compactor'
 import { Corpus, turnScope, type CorpusEvent } from '@main/runtime/corpus'
 import { TurnStatsCollector } from '@main/channels/turn-stats'
-import type { TurnLifecycleEvent } from '@main/channels/turn-runner'
+import {
+  buildAssistantMessage,
+  type AssistantAccumulator,
+  type MirrorMessageListener
+} from '@main/channels/channel'
+import type { ActiveRun, TurnLifecycleEvent } from '@main/channels/turn-runner'
 import { Cortex } from '@main/runtime/cortex'
 import { Device } from '@main/runtime/device'
 import { Hippocampus, type TurnToolCall } from '@main/runtime/hippocampus'
@@ -135,6 +140,25 @@ const SMALL_WINDOW_BOOTSTRAP_TOOLS: ReadonlySet<string> = new Set([
  * metadata-only (the <attachments> text already carries each absolute path).
  */
 const ATTACHMENT_VERBATIM_WINDOW = 4
+
+/**
+ * Live-mirror cadence for an autonomous run's in-progress assistant message —
+ * the same 500ms every channel uses, so a heartbeat/procedure conversation
+ * open in the app fills in exactly like a Telegram one.
+ */
+const AUTONOMOUS_MIRROR_THROTTLE_MS = 500
+
+/**
+ * Durability cadence for the same message. The mirror only reaches open
+ * viewers; this is what puts the run's progress ON DISK while it is still
+ * running, so quitting (or a crash) mid-run leaves a resumable transcript
+ * instead of just the prompt. Much slower than the mirror on purpose: each
+ * save rewrites AND reindexes the whole conversation file (a long automation's
+ * transcript is not small) and pushes a list-changed to every surface, and the
+ * only thing the extra frequency buys is a few more seconds of a run that
+ * ended abnormally.
+ */
+const AUTONOMOUS_PERSIST_THROTTLE_MS = 30_000
 
 export type AgentOptions = {
   thalamus: Thalamus
@@ -345,11 +369,27 @@ export class Agent {
 
   // Lifecycle broadcast for AUTONOMOUS runs (heartbeat/procedure) — the same
   // TurnLifecycleEvent shape TurnRunner emits for channel turns, wired to the
-  // same chat:turnState broadcast in index.ts. Only TERMINAL phases are
-  // emitted: the sealed conversation reaches disk (and the rail) when the run
-  // ends, so there is no row to pulse mid-run — the Heartbeat page's run
-  // cards carry live progress instead.
+  // same chat:turnState broadcast in index.ts. 'started' rides it too now: the
+  // conversation is created and saved BEFORE the run begins (like every other
+  // conversation), so there IS a row to pulse mid-run, and the rail/chat show
+  // it processing exactly like a Telegram turn. The Heartbeat page's run cards
+  // keep their own live log on top of that.
   private autonomousLifecycle: ((ev: TurnLifecycleEvent) => void) | null = null
+
+  // Live-mirror sink for autonomous runs, pointed at the same
+  // conversation:messageMirror broadcast (+ phone push) the channels use. The
+  // run's in-progress assistant message is streamed under a STABLE id, so an
+  // open viewer watches it grow and the end-of-turn save replaces it in place.
+  private autonomousMirror: MirrorMessageListener | null = null
+
+  // Autonomous runs in flight, keyed by conversation id. They never pass
+  // through the TurnRunner, so this is their half of the two facts an outside
+  // observer needs: the cold-start snapshot (chat:activeRuns — a window opened
+  // mid-run) and a real abort handle (the in-app Stop button).
+  private readonly liveAutonomousRuns = new Map<
+    string,
+    { controller: AbortController; channel: string; title: string }
+  >()
 
   // Workflow mode. `mode` is the global chat setting (chat-page mode button).
   // The active master turn's agent registry rides on AsyncLocalStorage — NOT a
@@ -500,6 +540,43 @@ export class Agent {
   /** Wire the autonomous-run lifecycle broadcast (renderer status chips). */
   setAutonomousLifecycleListener(listener: ((ev: TurnLifecycleEvent) => void) | null): void {
     this.autonomousLifecycle = listener
+  }
+
+  /** Wire the autonomous-run live message mirror (renderer + phone). */
+  setAutonomousMessageMirror(listener: MirrorMessageListener | null): void {
+    this.autonomousMirror = listener
+  }
+
+  /**
+   * Snapshot of every autonomous run in flight, in the same shape TurnRunner
+   * reports channel runs — index.ts concatenates the two for chat:activeRuns.
+   * Without this, a window opened (or reopened from the tray) while an
+   * automation runs would render its conversation idle: 'started' is a
+   * broadcast, and this app keeps running with no window at all.
+   */
+  activeAutonomousRuns(): ActiveRun[] {
+    const out: ActiveRun[] = []
+    for (const [conversationId, run] of this.liveAutonomousRuns) {
+      out.push({ conversationId, channel: run.channel, title: run.title })
+    }
+    return out
+  }
+
+  /** True while an automation/procedure run owns this conversation. */
+  isAutonomousRunActive(conversationId: string): boolean {
+    return this.liveAutonomousRuns.has(conversationId)
+  }
+
+  /**
+   * Abort the autonomous run writing this conversation — what makes the
+   * in-app Stop button real for an automation the user is watching. Mirrors
+   * TurnRunner.cancelConversation, which never sees these runs.
+   */
+  cancelAutonomousRun(conversationId: string): boolean {
+    const run = this.liveAutonomousRuns.get(conversationId)
+    if (!run) return false
+    run.controller.abort()
+    return true
   }
 
   /**
@@ -1790,6 +1867,65 @@ export class Agent {
     }
 
     const turnId = `hb_${Date.now().toString(36)}`
+
+    // The prompt, minted ONCE. The conversation shell below, every mid-run
+    // progress save and the final persist all write this same message — a
+    // re-minted id would union into a second copy of the same prompt (the
+    // merge is id-keyed; see mergeConversationOnto).
+    const userMsg: ConversationMessage = {
+      id: mintMessageId(conv.createdAt),
+      role: 'user',
+      content: opts.instruction,
+      timestamp: conv.createdAt
+    }
+
+    // chat:turnState for this run — 'started' when the shell is on disk, a
+    // terminal phase after the final save, so the list refetch each broadcast
+    // triggers always finds the conversation. Guarded like TurnRunner's emit:
+    // a broken listener must never turn into a job failure.
+    const emitLifecycle = (
+      phase: 'started' | 'done' | 'canceled' | 'error',
+      error?: string
+    ): void => {
+      try {
+        this.autonomousLifecycle?.({
+          phase,
+          turnId,
+          conversationId: conv.id,
+          channel: conv.channel ?? 'heartbeat',
+          title: conv.title,
+          ...(error !== undefined ? { error } : {})
+        })
+      } catch {
+        // never let a listener failure surface as a run failure
+      }
+    }
+
+    // The conversation exists BEFORE the run does — title first, then the
+    // shell, then the turn: the same order every other conversation follows.
+    // This is what puts an automation in the rail the moment it starts, lets
+    // it be opened and watched live, and leaves something resumable behind if
+    // the app quits mid-run. Previously the file was written only when the run
+    // ENDED, so a run interrupted by a quit vanished without a trace.
+    conv.messages = [userMsg]
+    await saveConversation(conv).catch(() => undefined)
+
+    // This run's abort handle. An external signal (if the caller passed one)
+    // still aborts it; the controller adds the path the in-app Stop button
+    // needs, which has no other way to reach a run that never touches the
+    // TurnRunner.
+    const controller = new AbortController()
+    if (opts.signal) {
+      if (opts.signal.aborted) controller.abort()
+      else opts.signal.addEventListener('abort', () => controller.abort(), { once: true })
+    }
+    this.liveAutonomousRuns.set(conv.id, {
+      controller,
+      channel: conv.channel ?? 'heartbeat',
+      title: conv.title
+    })
+    emitLifecycle('started')
+
     const segments: import('@main/runtime/broca').Segment[] = []
     // Log entries carry the brainstem job id (matching the pool's
     // RunningJobInfo.id) so the renderer routes them to the right card when
@@ -1808,6 +1944,97 @@ export class Agent {
       })
       textAccum = ''
     }
+
+    // Live mirror of the in-progress answer — the same accumulator +
+    // stable-id contract the channels use, over the SAME segments array this
+    // run persists, so the snapshot a viewer watches grow and the message
+    // saved at the end are one message that gets replaced in place, never
+    // duplicated.
+    const acc: AssistantAccumulator = {
+      assistantMessageId: mintMessageId(),
+      assistantTimestamp: Date.now(),
+      assistantContent: '',
+      segments,
+      approvals: new Map(),
+      toolTimings: new Map(),
+      stopReason: null
+    }
+    let mirrorTimer: NodeJS.Timeout | null = null
+    let lastMirrorAt = 0
+    let lastPersistAt = Date.now()
+    /** In-flight progress save, if any — the final save waits on it. */
+    let progressWrite: Promise<void> | null = null
+    let finished = false
+    const pushMirror = (message: ConversationMessage): void => {
+      lastMirrorAt = Date.now()
+      try {
+        // The prompt rides every tick like it does for a channel turn: a phone
+        // that opens this conversation mid-run only ever sees ticks.
+        this.autonomousMirror?.(conv.id, message, userMsg)
+      } catch {
+        // a torn-down window or a dead tunnel must never wedge the run
+      }
+    }
+    /**
+     * Mid-run durability: put the answer-so-far ON DISK so quitting (or
+     * crashing) mid-run leaves a transcript that can be opened and continued,
+     * rather than a conversation holding only its prompt. Fire-and-forget, one
+     * at a time, on its own much slower cadence — every save reindexes the
+     * file and pushes a list-changed to every surface.
+     */
+    const persistProgress = (message: ConversationMessage): void => {
+      if (progressWrite || finished) return
+      lastPersistAt = Date.now()
+      progressWrite = saveConversation({
+        ...conv,
+        messages: [userMsg, message],
+        updatedAt: Date.now()
+      })
+        .catch(() => undefined)
+        .finally(() => {
+          progressWrite = null
+        })
+    }
+    const emitMirror = (): void => {
+      if (finished) return
+      const message = buildAssistantMessage(acc)
+      if (!message) return
+      pushMirror(message)
+      if (Date.now() - lastPersistAt >= AUTONOMOUS_PERSIST_THROTTLE_MS) persistProgress(message)
+    }
+    const scheduleMirror = (immediate: boolean): void => {
+      if (finished) return
+      const sinceLast = Date.now() - lastMirrorAt
+      if (immediate || sinceLast >= AUTONOMOUS_MIRROR_THROTTLE_MS) {
+        if (mirrorTimer) {
+          clearTimeout(mirrorTimer)
+          mirrorTimer = null
+        }
+        emitMirror()
+        return
+      }
+      if (mirrorTimer) return
+      mirrorTimer = setTimeout(() => {
+        mirrorTimer = null
+        emitMirror()
+      }, AUTONOMOUS_MIRROR_THROTTLE_MS - sinceLast)
+      mirrorTimer.unref?.()
+    }
+    /**
+     * Close the run out: stop every pending tick before the final save writes
+     * the real message, and drop the live registration so nothing reports this
+     * conversation as still running once the terminal broadcast goes out.
+     * Idempotent — the `finally` below calls it as a backstop.
+     */
+    const endRun = (): void => {
+      finished = true
+      if (mirrorTimer) {
+        clearTimeout(mirrorTimer)
+        mirrorTimer = null
+      }
+      this.liveAutonomousRuns.delete(conv.id)
+    }
+
     const sink: SegmentSink = (seg) => {
       // Workflow/task snapshots supersede each other — keep only the latest
       // per run/task in the sealed conversation, mirroring every other
@@ -1815,6 +2042,11 @@ export class Agent {
       if (seg.kind === 'workflow') upsertWorkflowSegment(segments, seg)
       else if (seg.kind === 'task') upsertTaskSegment(segments, seg)
       else segments.push(seg)
+      if (seg.kind === 'text') acc.assistantContent += seg.delta
+      if (seg.kind === 'turn_end') acc.stopReason = seg.stopReason
+      // Task snapshots flush immediately — a card flipping to running/succeeded
+      // should not wait out the text throttle.
+      scheduleMirror(seg.kind === 'task')
       const listener = this.brainstem?.['listener']
       if (!listener?.onJobLog) return
       if (seg.kind === 'text') {
@@ -1872,48 +2104,30 @@ export class Agent {
         .map((s) => s.delta)
         .join('')
       const now = Date.now()
-      const userMsg: ConversationMessage = {
-        id: mintMessageId(conv.createdAt),
-        role: 'user',
-        content: opts.instruction,
-        timestamp: conv.createdAt
-      }
-      const assistantMsg: ConversationMessage = {
-        id: mintMessageId(now),
-        role: 'assistant',
-        content: responseText,
-        timestamp: now,
-        segments,
-        stopReason
-      }
-      // A run that died before producing anything keeps just the instruction —
-      // an empty assistant bubble would render as noise.
-      conv.messages = segments.length > 0 ? [userMsg, assistantMsg] : [userMsg]
+      if (stopReason) acc.stopReason = stopReason
+      // One builder for the mirror and the save — the channel contract — so
+      // the message written here carries the id (and timestamp) the viewer is
+      // already showing, and replaces the snapshot instead of adding to it.
+      // Null means the run died before producing anything: it keeps just the
+      // instruction, since an empty assistant bubble would render as noise.
+      const assistantMsg = buildAssistantMessage(acc)
+      conv.messages = assistantMsg ? [userMsg, assistantMsg] : [userMsg]
       conv.updatedAt = now
       // Persist the context-meter stats so opening this heartbeat / procedure
       // conversation in-app shows real numbers. Skipped when the run never
       // reached the model (nothing consumed → a blank gauge is correct).
       if (statsCollector.hasData()) conv.stats = statsCollector.foldInto(null, now)
+      // A progress save still in flight would otherwise land after this one
+      // and rewrite the message with a stale snapshot — the merge is
+      // incoming-wins on a shared id — so let it finish first.
+      if (progressWrite) await progressWrite
       await saveConversation(conv).catch(() => undefined)
+      // Final snapshot to whoever is watching: the last throttled tick is up
+      // to 500ms stale and predates turn_end, and the disk-tail sync can't
+      // repair that (same id, same count). Same final mirror the channels emit
+      // at end of turn.
+      if (assistantMsg) pushMirror(assistantMsg)
       return responseText
-    }
-    // Terminal chat:turnState for this run — emitted AFTER the save, so the
-    // list refetch the broadcast triggers finds the conversation on disk.
-    // Guarded like TurnRunner's emit: a broken listener must never turn into
-    // a job failure.
-    const emitLifecycle = (phase: 'done' | 'canceled' | 'error', error?: string): void => {
-      try {
-        this.autonomousLifecycle?.({
-          phase,
-          turnId,
-          conversationId: conv.id,
-          channel: conv.channel ?? 'heartbeat',
-          title: conv.title,
-          ...(error !== undefined ? { error } : {})
-        })
-      } catch {
-        // never let a listener failure surface as a run failure
-      }
     }
 
     // Run inside a sealed autonomous turn scope so this background run's
@@ -1930,7 +2144,7 @@ export class Agent {
           history: [{ role: 'user', content: opts.instruction }],
           turnId,
           onSegment: sink,
-          signal: opts.signal,
+          signal: controller.signal,
           conversationId: conv.id,
           conversationTitle: conv.title,
           broca: localBroca,
@@ -1941,15 +2155,17 @@ export class Agent {
         })
       )
     } catch (err) {
+      endRun()
       flushText()
       await persistRun('end_turn')
       emitLifecycle(
-        opts.signal?.aborted ? 'canceled' : 'error',
+        controller.signal.aborted ? 'canceled' : 'error',
         err instanceof Error ? err.message : String(err)
       )
       throw err
     } finally {
       for (const off of statsOffs) off()
+      endRun()
     }
     flushText()
 

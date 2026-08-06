@@ -1,16 +1,16 @@
 var browserPolyfill$1 = { exports: {} }, browserPolyfill = browserPolyfill$1.exports, hasRequiredBrowserPolyfill;
 function requireBrowserPolyfill() {
   return hasRequiredBrowserPolyfill || (hasRequiredBrowserPolyfill = 1, (function(e, t) {
-    (function(s, n) {
-      n(e);
+    (function(s, a) {
+      a(e);
     })(typeof globalThis < "u" ? globalThis : typeof self < "u" ? self : browserPolyfill, function(s) {
       if (!(globalThis.chrome && globalThis.chrome.runtime && globalThis.chrome.runtime.id))
         throw new Error("This script should only be loaded in a browser extension.");
       if (globalThis.browser && globalThis.browser.runtime && globalThis.browser.runtime.id)
         s.exports = globalThis.browser;
       else {
-        const n = "The message port closed before a response was received.", o = (a) => {
-          const i = {
+        const a = "The message port closed before a response was received.", o = (n) => {
+          const r = {
             alarms: {
               clear: {
                 minArgs: 0,
@@ -682,9 +682,9 @@ function requireBrowserPolyfill() {
               }
             }
           };
-          if (Object.keys(i).length === 0)
+          if (Object.keys(r).length === 0)
             throw new Error("api-metadata.json has not been included in browser-polyfill");
-          class r extends WeakMap {
+          class i extends WeakMap {
             constructor(m, E = void 0) {
               super(E), this.createItem = m;
             }
@@ -693,35 +693,35 @@ function requireBrowserPolyfill() {
             }
           }
           const c = (u) => u && typeof u == "object" && typeof u.then == "function", d = (u, m) => (...E) => {
-            a.runtime.lastError ? u.reject(new Error(a.runtime.lastError.message)) : m.singleCallbackArg || E.length <= 1 && m.singleCallbackArg !== !1 ? u.resolve(E[0]) : u.resolve(E);
-          }, h = (u) => u == 1 ? "argument" : "arguments", l = (u, m) => function(A, ...S) {
-            if (S.length < m.minArgs)
-              throw new Error(`Expected at least ${m.minArgs} ${h(m.minArgs)} for ${u}(), got ${S.length}`);
-            if (S.length > m.maxArgs)
-              throw new Error(`Expected at most ${m.maxArgs} ${h(m.maxArgs)} for ${u}(), got ${S.length}`);
+            n.runtime.lastError ? u.reject(new Error(n.runtime.lastError.message)) : m.singleCallbackArg || E.length <= 1 && m.singleCallbackArg !== !1 ? u.resolve(E[0]) : u.resolve(E);
+          }, h = (u) => u == 1 ? "argument" : "arguments", l = (u, m) => function(A, ...R) {
+            if (R.length < m.minArgs)
+              throw new Error(`Expected at least ${m.minArgs} ${h(m.minArgs)} for ${u}(), got ${R.length}`);
+            if (R.length > m.maxArgs)
+              throw new Error(`Expected at most ${m.maxArgs} ${h(m.maxArgs)} for ${u}(), got ${R.length}`);
             return new Promise((C, y) => {
               if (m.fallbackToNoCallback)
                 try {
-                  A[u](...S, d({
+                  A[u](...R, d({
                     resolve: C,
                     reject: y
                   }, m));
                 } catch (w) {
-                  console.warn(`${u} API method doesn't seem to support the callback parameter, falling back to call it without a callback: `, w), A[u](...S), m.fallbackToNoCallback = !1, m.noCallback = !0, C();
+                  console.warn(`${u} API method doesn't seem to support the callback parameter, falling back to call it without a callback: `, w), A[u](...R), m.fallbackToNoCallback = !1, m.noCallback = !0, C();
                 }
-              else m.noCallback ? (A[u](...S), C()) : A[u](...S, d({
+              else m.noCallback ? (A[u](...R), C()) : A[u](...R, d({
                 resolve: C,
                 reject: y
               }, m));
             });
           }, g = (u, m, E) => new Proxy(m, {
-            apply(A, S, C) {
-              return E.call(S, u, ...C);
+            apply(A, R, C) {
+              return E.call(R, u, ...C);
             }
           });
           let p = Function.call.bind(Object.prototype.hasOwnProperty);
           const f = (u, m = {}, E = {}) => {
-            let A = /* @__PURE__ */ Object.create(null), S = {
+            let A = /* @__PURE__ */ Object.create(null), R = {
               has(y, w) {
                 return w in u || w in A;
               },
@@ -730,19 +730,19 @@ function requireBrowserPolyfill() {
                   return A[w];
                 if (!(w in u))
                   return;
-                let b = u[w];
-                if (typeof b == "function")
+                let _ = u[w];
+                if (typeof _ == "function")
                   if (typeof m[w] == "function")
-                    b = g(u, u[w], m[w]);
+                    _ = g(u, u[w], m[w]);
                   else if (p(E, w)) {
                     let B = l(w, E[w]);
-                    b = g(u, u[w], B);
+                    _ = g(u, u[w], B);
                   } else
-                    b = b.bind(u);
-                else if (typeof b == "object" && b !== null && (p(m, w) || p(E, w)))
-                  b = f(b, m[w], E[w]);
+                    _ = _.bind(u);
+                else if (typeof _ == "object" && _ !== null && (p(m, w) || p(E, w)))
+                  _ = f(_, m[w], E[w]);
                 else if (p(E, "*"))
-                  b = f(b, m[w], E["*"]);
+                  _ = f(_, m[w], E["*"]);
                 else
                   return Object.defineProperty(A, w, {
                     configurable: !0,
@@ -753,10 +753,10 @@ function requireBrowserPolyfill() {
                     set(B) {
                       u[w] = B;
                     }
-                  }), b;
-                return A[w] = b, b;
+                  }), _;
+                return A[w] = _, _;
               },
-              set(y, w, v, b) {
+              set(y, w, v, _) {
                 return w in A ? A[w] = v : u[w] = v, !0;
               },
               defineProperty(y, w, v) {
@@ -766,8 +766,8 @@ function requireBrowserPolyfill() {
                 return Reflect.deleteProperty(A, w);
               }
             }, C = Object.create(u);
-            return new Proxy(C, S);
-          }, _ = (u) => ({
+            return new Proxy(C, R);
+          }, S = (u) => ({
             addListener(m, E, ...A) {
               m.addListener(u.get(E), ...A);
             },
@@ -777,7 +777,7 @@ function requireBrowserPolyfill() {
             removeListener(m, E) {
               m.removeListener(u.get(E));
             }
-          }), W = new r((u) => typeof u != "function" ? u : function(E) {
+          }), W = new i((u) => typeof u != "function" ? u : function(E) {
             const A = f(E, {}, {
               getContent: {
                 minArgs: 0,
@@ -785,47 +785,47 @@ function requireBrowserPolyfill() {
               }
             });
             u(A);
-          }), R = new r((u) => typeof u != "function" ? u : function(E, A, S) {
-            let C = !1, y, w = new Promise((M) => {
-              y = function(T) {
-                C = !0, M(T);
+          }), b = new i((u) => typeof u != "function" ? u : function(E, A, R) {
+            let C = !1, y, w = new Promise((D) => {
+              y = function(O) {
+                C = !0, D(O);
               };
             }), v;
             try {
               v = u(E, A, y);
-            } catch (M) {
-              v = Promise.reject(M);
+            } catch (D) {
+              v = Promise.reject(D);
             }
-            const b = v !== !0 && c(v);
-            if (v !== !0 && !b && !C)
+            const _ = v !== !0 && c(v);
+            if (v !== !0 && !_ && !C)
               return !1;
-            const B = (M) => {
-              M.then((T) => {
-                S(T);
-              }, (T) => {
+            const B = (D) => {
+              D.then((O) => {
+                R(O);
+              }, (O) => {
                 let P;
-                T && (T instanceof Error || typeof T.message == "string") ? P = T.message : P = "An unexpected error occurred", S({
+                O && (O instanceof Error || typeof O.message == "string") ? P = O.message : P = "An unexpected error occurred", R({
                   __mozWebExtensionPolyfillReject__: !0,
                   message: P
                 });
-              }).catch((T) => {
-                console.error("Failed to send onMessage rejected reply", T);
+              }).catch((O) => {
+                console.error("Failed to send onMessage rejected reply", O);
               });
             };
-            return B(b ? v : w), !0;
+            return B(_ ? v : w), !0;
           }), I = ({
             reject: u,
             resolve: m
           }, E) => {
-            a.runtime.lastError ? a.runtime.lastError.message === n ? m() : u(new Error(a.runtime.lastError.message)) : E && E.__mozWebExtensionPolyfillReject__ ? u(new Error(E.message)) : m(E);
-          }, D = (u, m, E, ...A) => {
+            n.runtime.lastError ? n.runtime.lastError.message === a ? m() : u(new Error(n.runtime.lastError.message)) : E && E.__mozWebExtensionPolyfillReject__ ? u(new Error(E.message)) : m(E);
+          }, M = (u, m, E, ...A) => {
             if (A.length < m.minArgs)
               throw new Error(`Expected at least ${m.minArgs} ${h(m.minArgs)} for ${u}(), got ${A.length}`);
             if (A.length > m.maxArgs)
               throw new Error(`Expected at most ${m.maxArgs} ${h(m.maxArgs)} for ${u}(), got ${A.length}`);
-            return new Promise((S, C) => {
+            return new Promise((R, C) => {
               const y = I.bind(null, {
-                resolve: S,
+                resolve: R,
                 reject: C
               });
               A.push(y), E.sendMessage(...A);
@@ -833,24 +833,24 @@ function requireBrowserPolyfill() {
           }, x = {
             devtools: {
               network: {
-                onRequestFinished: _(W)
+                onRequestFinished: S(W)
               }
             },
             runtime: {
-              onMessage: _(R),
-              onMessageExternal: _(R),
-              sendMessage: D.bind(null, "sendMessage", {
+              onMessage: S(b),
+              onMessageExternal: S(b),
+              sendMessage: M.bind(null, "sendMessage", {
                 minArgs: 1,
                 maxArgs: 3
               })
             },
             tabs: {
-              sendMessage: D.bind(null, "sendMessage", {
+              sendMessage: M.bind(null, "sendMessage", {
                 minArgs: 2,
                 maxArgs: 3
               })
             }
-          }, O = {
+          }, T = {
             clear: {
               minArgs: 1,
               maxArgs: 1
@@ -864,17 +864,17 @@ function requireBrowserPolyfill() {
               maxArgs: 1
             }
           };
-          return i.privacy = {
+          return r.privacy = {
             network: {
-              "*": O
+              "*": T
             },
             services: {
-              "*": O
+              "*": T
             },
             websites: {
-              "*": O
+              "*": T
             }
-          }, f(a, x, i);
+          }, f(n, x, r);
         };
         s.exports = o(chrome);
       }
@@ -946,6 +946,8 @@ const DEFAULT_PORT = 23151, LOG_PREFIX = "[Wolffish]", HEARTBEAT_INTERVAL_MS = 1
   BROWSER_WAIT_FOR_NETWORK_IDLE: "browser_wait_for_network_idle",
   // Notifications
   BROWSER_NOTIFY: "browser_notify",
+  // Wolffish tab group — the label the model puts on its own workspace
+  BROWSER_SET_ACTIVITY: "browser_set_activity",
   // Debugger Mode
   DEBUGGER_ATTACH: "browser_debugger_attach",
   DEBUGGER_DETACH: "browser_debugger_detach",
@@ -1013,6 +1015,7 @@ const DEFAULT_PORT = 23151, LOG_PREFIX = "[Wolffish]", HEARTBEAT_INTERVAL_MS = 1
   WolffishCommands.BROWSER_WAIT,
   WolffishCommands.BROWSER_WAIT_FOR_NAVIGATION,
   WolffishCommands.BROWSER_NOTIFY,
+  WolffishCommands.BROWSER_SET_ACTIVITY,
   WolffishCommands.BROWSER_GET_URL,
   WolffishCommands.DEBUGGER_ATTACH,
   WolffishCommands.DEBUGGER_DETACH,
@@ -1029,13 +1032,13 @@ const DEFAULT_PORT = 23151, LOG_PREFIX = "[Wolffish]", HEARTBEAT_INTERVAL_MS = 1
   WolffishCommands.BROWSER_SCROLL,
   WolffishCommands.BROWSER_HOVER,
   WolffishCommands.BROWSER_KEYPRESS
-]), api$4 = globalThis.chrome ?? globalThis.browser, log = (...e) => {
+]), api$5 = globalThis.chrome ?? globalThis.browser, log = (...e) => {
   console.log(LOG_PREFIX, ...e);
 }, logError = (...e) => {
   console.error(LOG_PREFIX, ...e);
 }, isFirefox = () => typeof globalThis.browser < "u", sendToContentScript = async (e, t) => {
   var s;
-  return (s = api$4 == null ? void 0 : api$4.tabs) == null ? void 0 : s.sendMessage(e, t);
+  return (s = api$5 == null ? void 0 : api$5.tabs) == null ? void 0 : s.sendMessage(e, t);
 }, pingContentScript = async (e) => {
   var t;
   try {
@@ -1043,32 +1046,38 @@ const DEFAULT_PORT = 23151, LOG_PREFIX = "[Wolffish]", HEARTBEAT_INTERVAL_MS = 1
       source: "service-worker",
       target: "content-script",
       payload: { type: "ping" }
-    }, n = await Promise.race([
-      (t = api$4 == null ? void 0 : api$4.tabs) == null ? void 0 : t.sendMessage(e, s),
-      new Promise((o, a) => setTimeout(() => a(new Error("timeout")), CONTENT_SCRIPT_PING_TIMEOUT_MS))
+    }, a = await Promise.race([
+      (t = api$5 == null ? void 0 : api$5.tabs) == null ? void 0 : t.sendMessage(e, s),
+      new Promise((o, n) => setTimeout(() => n(new Error("timeout")), CONTENT_SCRIPT_PING_TIMEOUT_MS))
     ]);
-    return n && n.type === "pong";
+    return a && a.type === "pong";
   } catch {
     return !1;
   }
 }, ensureContentScriptInjected = async (e) => {
   var s;
-  await pingContentScript(e) || (await ((s = api$4 == null ? void 0 : api$4.scripting) == null ? void 0 : s.executeScript({
+  await pingContentScript(e) || (await ((s = api$5 == null ? void 0 : api$5.scripting) == null ? void 0 : s.executeScript({
     target: { tabId: e },
     files: ["content/all.iife.js"]
-  })), await new Promise((n, o) => {
-    var r, c;
-    const a = setTimeout(() => o(new Error("Content script injection timed out")), 5e3), i = (d) => {
+  })), await new Promise((a, o) => {
+    var i, c;
+    const n = setTimeout(() => o(new Error("Content script injection timed out")), 5e3), r = (d) => {
       var h, l;
-      (d == null ? void 0 : d.source) === "content-script" && "type" in d.payload && d.payload.type === "pong" && (clearTimeout(a), (l = (h = api$4 == null ? void 0 : api$4.runtime) == null ? void 0 : h.onMessage) == null || l.removeListener(i), n());
+      (d == null ? void 0 : d.source) === "content-script" && "type" in d.payload && d.payload.type === "pong" && (clearTimeout(n), (l = (h = api$5 == null ? void 0 : api$5.runtime) == null ? void 0 : h.onMessage) == null || l.removeListener(r), a());
     };
-    (c = (r = api$4 == null ? void 0 : api$4.runtime) == null ? void 0 : r.onMessage) == null || c.addListener(i);
+    (c = (i = api$5 == null ? void 0 : api$5.runtime) == null ? void 0 : i.onMessage) == null || c.addListener(r);
   }));
+};
+let tabFallback = null;
+const setTabFallback = (e) => {
+  tabFallback = e;
 }, resolveTabId = async (e) => {
-  var s, n;
-  if (e.tabId !== void 0 && await ((s = api$4 == null ? void 0 : api$4.tabs) == null ? void 0 : s.get(e.tabId).then(() => !0).catch(() => !1)))
+  var s, a;
+  if (e.tabId !== void 0 && await ((s = api$5 == null ? void 0 : api$5.tabs) == null ? void 0 : s.get(e.tabId).then(() => !0).catch(() => !1)))
     return e.tabId;
-  const t = await ((n = api$4 == null ? void 0 : api$4.tabs) == null ? void 0 : n.query({ active: !0, currentWindow: !0 }));
+  if (tabFallback)
+    return tabFallback();
+  const t = await ((a = api$5 == null ? void 0 : api$5.tabs) == null ? void 0 : a.query({ active: !0, currentWindow: !0 }));
   if (!(t != null && t.length))
     throw new Error("No active tab found");
   return t[0].id;
@@ -1082,44 +1091,44 @@ var SessionAccessLevelEnum;
   e.ExtensionPagesOnly = "TRUSTED_CONTEXTS", e.ExtensionPagesAndContentScripts = "TRUSTED_AND_UNTRUSTED_CONTEXTS";
 })(SessionAccessLevelEnum || (SessionAccessLevelEnum = {}));
 const chrome$1 = globalThis.chrome, updateCache = async (e, t) => {
-  const s = (o) => typeof o == "function", n = (o) => (
+  const s = (o) => typeof o == "function", a = (o) => (
     // Use ReturnType to infer the return type of the function and check if it's a Promise
     o instanceof Promise
   );
-  return s(e) ? (n(e), e(t)) : e;
+  return s(e) ? (a(e), e(t)) : e;
 };
 let globalSessionAccessLevelFlag = !1;
 const checkStoragePermission = (e) => {
   if (chrome$1 && !chrome$1.storage[e])
     throw new Error(`"storage" permission in manifest.ts: "storage ${e}" isn't defined`);
 }, createStorage = (e, t, s) => {
-  var _, W;
-  let n = null, o = !1, a = [];
-  const i = (s == null ? void 0 : s.storageEnum) ?? StorageEnum.Local, r = ((_ = s == null ? void 0 : s.serialization) == null ? void 0 : _.serialize) ?? ((R) => R), c = ((W = s == null ? void 0 : s.serialization) == null ? void 0 : W.deserialize) ?? ((R) => R);
-  globalSessionAccessLevelFlag === !1 && i === StorageEnum.Session && (s == null ? void 0 : s.sessionAccessForContentScripts) === !0 && (checkStoragePermission(i), chrome$1 == null || chrome$1.storage[i].setAccessLevel({
+  var S, W;
+  let a = null, o = !1, n = [];
+  const r = (s == null ? void 0 : s.storageEnum) ?? StorageEnum.Local, i = ((S = s == null ? void 0 : s.serialization) == null ? void 0 : S.serialize) ?? ((b) => b), c = ((W = s == null ? void 0 : s.serialization) == null ? void 0 : W.deserialize) ?? ((b) => b);
+  globalSessionAccessLevelFlag === !1 && r === StorageEnum.Session && (s == null ? void 0 : s.sessionAccessForContentScripts) === !0 && (checkStoragePermission(r), chrome$1 == null || chrome$1.storage[r].setAccessLevel({
     accessLevel: SessionAccessLevelEnum.ExtensionPagesAndContentScripts
-  }).catch((R) => {
-    console.error(R), console.error("Please call .setAccessLevel() into different context, like a background script.");
+  }).catch((b) => {
+    console.error(b), console.error("Please call .setAccessLevel() into different context, like a background script.");
   }), globalSessionAccessLevelFlag = !0);
   const d = async () => {
-    checkStoragePermission(i);
-    const R = await (chrome$1 == null ? void 0 : chrome$1.storage[i].get([e]));
-    return R ? c(R[e]) ?? t : t;
-  }, h = async (R) => {
-    o || (n = await d()), n = await updateCache(R, n), await (chrome$1 == null ? void 0 : chrome$1.storage[i].set({ [e]: r(n) })), p();
-  }, l = (R) => (a = [...a, R], () => {
-    a = a.filter((I) => I !== R);
-  }), g = () => n, p = () => {
-    a.forEach((R) => R());
-  }, f = async (R) => {
-    if (R[e] === void 0)
+    checkStoragePermission(r);
+    const b = await (chrome$1 == null ? void 0 : chrome$1.storage[r].get([e]));
+    return b ? c(b[e]) ?? t : t;
+  }, h = async (b) => {
+    o || (a = await d()), a = await updateCache(b, a), await (chrome$1 == null ? void 0 : chrome$1.storage[r].set({ [e]: i(a) })), p();
+  }, l = (b) => (n = [...n, b], () => {
+    n = n.filter((I) => I !== b);
+  }), g = () => a, p = () => {
+    n.forEach((b) => b());
+  }, f = async (b) => {
+    if (b[e] === void 0)
       return;
-    const I = c(R[e].newValue);
-    n !== I && (n = await updateCache(I, n), p());
+    const I = c(b[e].newValue);
+    a !== I && (a = await updateCache(I, a), p());
   };
-  return d().then((R) => {
-    n = R, o = !0, p();
-  }), chrome$1 == null || chrome$1.storage[i].onChanged.addListener(f), {
+  return d().then((b) => {
+    a = b, o = !0, p();
+  }), chrome$1 == null || chrome$1.storage[r].onChanged.addListener(f), {
     get: d,
     set: h,
     getSnapshot: g,
@@ -1130,15 +1139,15 @@ const checkStoragePermission = (e) => {
 }), wolffishConnectionStorage = {
   ...storage
 }, gaussianRandom = (e, t) => {
-  let s = 0, n = 0;
+  let s = 0, a = 0;
   for (; s === 0; ) s = Math.random();
-  for (; n === 0; ) n = Math.random();
-  const o = Math.sqrt(-2 * Math.log(s)) * Math.cos(2 * Math.PI * n);
+  for (; a === 0; ) a = Math.random();
+  const o = Math.sqrt(-2 * Math.log(s)) * Math.cos(2 * Math.PI * a);
   return Math.round(e + o * t);
 }, clamp = (e, t, s) => Math.max(t, Math.min(s, e)), gaussianDelay = (e, t, s) => {
-  const n = s ?? (e + t) / 2, o = (t - e) / 4;
-  return clamp(gaussianRandom(n, o), e, t);
-}, sleep = (e) => new Promise((t) => setTimeout(t, e)), api$3 = globalThis.chrome;
+  const a = s ?? (e + t) / 2, o = (t - e) / 4;
+  return clamp(gaussianRandom(a, o), e, t);
+}, sleep = (e) => new Promise((t) => setTimeout(t, e)), api$4 = globalThis.chrome;
 let attachedTabId = null, isAttached = !1;
 const resetState = () => {
   attachedTabId = null, isAttached = !1;
@@ -1148,50 +1157,50 @@ const resetState = () => {
 }), sendCDP$1 = async (e, t = {}) => {
   if (!isAttached || attachedTabId === null)
     throw new Error("Debugger not attached");
-  return api$3.debugger.sendCommand({ tabId: attachedTabId }, e, t);
-}, generateBezierPath = (e, t, s, n, o) => {
-  const a = e + (s - e) * 0.25 + (Math.random() - 0.5) * Math.abs(s - e) * 0.3, i = t + (n - t) * 0.25 + (Math.random() - 0.5) * Math.abs(n - t) * 0.3, r = e + (s - e) * 0.75 + (Math.random() - 0.5) * Math.abs(s - e) * 0.3, c = t + (n - t) * 0.75 + (Math.random() - 0.5) * Math.abs(n - t) * 0.3, d = [];
+  return api$4.debugger.sendCommand({ tabId: attachedTabId }, e, t);
+}, generateBezierPath = (e, t, s, a, o) => {
+  const n = e + (s - e) * 0.25 + (Math.random() - 0.5) * Math.abs(s - e) * 0.3, r = t + (a - t) * 0.25 + (Math.random() - 0.5) * Math.abs(a - t) * 0.3, i = e + (s - e) * 0.75 + (Math.random() - 0.5) * Math.abs(s - e) * 0.3, c = t + (a - t) * 0.75 + (Math.random() - 0.5) * Math.abs(a - t) * 0.3, d = [];
   for (let h = 1; h <= o; h++) {
-    const l = h / o, g = 1 - l, p = g * g * g * e + 3 * g * g * l * a + 3 * g * l * l * r + l * l * l * s, f = g * g * g * t + 3 * g * g * l * i + 3 * g * l * l * c + l * l * l * n;
+    const l = h / o, g = 1 - l, p = g * g * g * e + 3 * g * g * l * n + 3 * g * l * l * i + l * l * l * s, f = g * g * g * t + 3 * g * g * l * r + 3 * g * l * l * c + l * l * l * a;
     d.push({ x: Math.round(p), y: Math.round(f) });
   }
   return d;
 };
 let cursorX = 0, cursorY = 0;
 const getCursorPosition = () => ({ x: cursorX, y: cursorY }), BUTTON_MASK = { left: 1, right: 2, middle: 4 }, resolveElementCoords = async (e, t, s = {}) => {
-  var a;
-  const o = (a = (await api$3.scripting.executeScript({
+  var n;
+  const o = (n = (await api$4.scripting.executeScript({
     target: { tabId: e },
-    func: (i, r) => {
+    func: (r, i) => {
       const c = (p) => p.replace(/\s+/g, " ").trim().toLowerCase(), d = (p) => {
         if (p.offsetParent !== null) return !0;
         const f = getComputedStyle(p);
         return f.display !== "none" && f.visibility !== "hidden";
       };
       let h = null;
-      if (i.startsWith("text=")) {
-        const p = c(i.slice(5).replace(/^(["'])([\s\S]*)\1$/, "$2"));
+      if (r.startsWith("text=")) {
+        const p = c(r.slice(5).replace(/^(["'])([\s\S]*)\1$/, "$2"));
         if (p) {
-          const f = /* @__PURE__ */ new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE"]), _ = [], W = [], R = document.body ? Array.from(document.body.getElementsByTagName("*")) : [];
-          for (const x of R) {
-            const O = x;
-            if (f.has(O.tagName)) continue;
-            const u = c(O.textContent ?? "");
-            !u || u.length > p.length + 200 || (u === p ? _.push(O) : u.includes(p) && W.push(O));
+          const f = /* @__PURE__ */ new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE"]), S = [], W = [], b = document.body ? Array.from(document.body.getElementsByTagName("*")) : [];
+          for (const x of b) {
+            const T = x;
+            if (f.has(T.tagName)) continue;
+            const u = c(T.textContent ?? "");
+            !u || u.length > p.length + 200 || (u === p ? S.push(T) : u.includes(p) && W.push(T));
           }
-          const I = _.length > 0 ? _ : W;
-          h = I.filter((x) => !I.some((O) => O !== x && x.contains(O))).find(d) ?? null;
+          const I = S.length > 0 ? S : W;
+          h = I.filter((x) => !I.some((T) => T !== x && x.contains(T))).find(d) ?? null;
         }
       } else
         try {
-          h = document.querySelector(i);
+          h = document.querySelector(r);
         } catch {
           return {
-            error: `selector syntax is incorrect: '${i}' is not valid CSS. Use a CSS selector, or text=<visible text> to target by text.`
+            error: `selector syntax is incorrect: '${r}' is not valid CSS. Use a CSS selector, or text=<visible text> to target by text.`
           };
         }
       if (!h) return null;
-      r && h.scrollIntoView({ behavior: "smooth", block: "center" });
+      i && h.scrollIntoView({ behavior: "smooth", block: "center" });
       const l = h.getBoundingClientRect(), g = h.closest("a");
       return {
         x: Math.round(l.left + l.width / 2),
@@ -1201,7 +1210,7 @@ const getCursorPosition = () => ({ x: cursorX, y: cursorY }), BUTTON_MASK = { le
     },
     args: [t, s.scroll ?? !1],
     world: "MAIN"
-  }))[0]) == null ? void 0 : a.result;
+  }))[0]) == null ? void 0 : n.result;
   if (o && "error" in o) throw new Error(o.error);
   if (!o) throw new Error(`Element not found: ${t}`);
   return o;
@@ -1211,59 +1220,59 @@ const getCursorPosition = () => ({ x: cursorX, y: cursorY }), BUTTON_MASK = { le
     return { x: t.x, y: t.y, href: null };
   throw new Error("Provide either a selector or x/y coordinates");
 }, cdpMove = async (e, t, s = !1) => {
-  const n = gaussianDelay(10, 20), o = generateBezierPath(cursorX, cursorY, e, t, n);
-  for (const a of o)
+  const a = gaussianDelay(10, 20), o = generateBezierPath(cursorX, cursorY, e, t, a);
+  for (const n of o)
     await sendCDP$1("Input.dispatchMouseEvent", {
       type: "mouseMoved",
-      x: a.x,
-      y: a.y,
+      x: n.x,
+      y: n.y,
       ...s ? { button: "left", buttons: 1 } : {}
     }), await sleep(gaussianDelay(5, 15));
   cursorX = e, cursorY = t;
-}, cdpPress = (e, t, s, n = 1) => sendCDP$1("Input.dispatchMouseEvent", {
+}, cdpPress = (e, t, s, a = 1) => sendCDP$1("Input.dispatchMouseEvent", {
   type: "mousePressed",
   x: e,
   y: t,
   button: s,
   buttons: BUTTON_MASK[s] ?? 1,
-  clickCount: n
-}), cdpRelease = (e, t, s, n = 1) => sendCDP$1("Input.dispatchMouseEvent", {
+  clickCount: a
+}), cdpRelease = (e, t, s, a = 1) => sendCDP$1("Input.dispatchMouseEvent", {
   type: "mouseReleased",
   x: e,
   y: t,
   button: s,
   buttons: 0,
-  clickCount: n
-}), fallbackMouse = async (e, t, s, n, o) => {
-  await api$3.scripting.executeScript({
+  clickCount: a
+}), fallbackMouse = async (e, t, s, a, o) => {
+  await api$4.scripting.executeScript({
     target: { tabId: e },
-    func: (a, i, r, c) => {
-      const d = c === "right" ? 2 : c === "middle" ? 1 : 0, h = document.elementFromPoint(a, i) ?? document.body, l = (g) => {
+    func: (n, r, i, c) => {
+      const d = c === "right" ? 2 : c === "middle" ? 1 : 0, h = document.elementFromPoint(n, r) ?? document.body, l = (g) => {
         h.dispatchEvent(
           new MouseEvent(g, {
             bubbles: !0,
             cancelable: !0,
-            clientX: a,
-            clientY: i,
+            clientX: n,
+            clientY: r,
             button: d,
             view: window
           })
         );
       };
-      if (r === "down") return l("mousedown");
-      if (r === "up") return l("mouseup");
-      if (r === "contextmenu")
+      if (i === "down") return l("mousedown");
+      if (i === "up") return l("mouseup");
+      if (i === "contextmenu")
         return l("mousedown"), l("mouseup"), l("contextmenu");
-      l("mousedown"), l("mouseup"), l("click"), r === "dblclick" && (l("mousedown"), l("mouseup"), l("click"), l("dblclick"));
+      l("mousedown"), l("mouseup"), l("click"), i === "dblclick" && (l("mousedown"), l("mouseup"), l("click"), l("dblclick"));
     },
-    args: [t, s, n, o],
+    args: [t, s, a, o],
     world: "MAIN"
   });
 };
-api$3.debugger.onDetach.addListener((e, t) => {
+api$4.debugger.onDetach.addListener((e, t) => {
   e.tabId === attachedTabId && (log(`Debugger detached from tab ${e.tabId}: ${t}`), resetState());
 });
-api$3.tabs.onRemoved.addListener((e) => {
+api$4.tabs.onRemoved.addListener((e) => {
   e === attachedTabId && (log(`Attached tab ${e} was closed`), resetState());
 });
 const handleDebuggerAttach = async (e) => {
@@ -1272,23 +1281,23 @@ const handleDebuggerAttach = async (e) => {
     return { success: !0, tabId: t };
   if (isAttached && attachedTabId !== null) {
     try {
-      await api$3.debugger.detach({ tabId: attachedTabId });
+      await api$4.debugger.detach({ tabId: attachedTabId });
     } catch {
     }
     resetState();
   }
   try {
-    return await api$3.debugger.attach({ tabId: t }, "1.3"), attachedTabId = t, isAttached = !0, log(`Debugger attached to tab ${t}`), { success: !0, tabId: t };
+    return await api$4.debugger.attach({ tabId: t }, "1.3"), attachedTabId = t, isAttached = !0, log(`Debugger attached to tab ${t}`), { success: !0, tabId: t };
   } catch (s) {
     resetState();
-    const n = s instanceof Error ? s.message : String(s);
-    throw n.includes("Cannot access") || n.includes("chrome://") || n.includes("chrome-extension://") ? new Error("Cannot attach debugger to restricted page (chrome://, chrome-extension://, etc.)") : n.includes("Another debugger") ? new Error("Cannot attach debugger: DevTools or another debugger is already attached to this tab") : new Error(`Failed to attach debugger: ${n}`);
+    const a = s instanceof Error ? s.message : String(s);
+    throw a.includes("Cannot access") || a.includes("chrome://") || a.includes("chrome-extension://") ? new Error("Cannot attach debugger to restricted page (chrome://, chrome-extension://, etc.)") : a.includes("Another debugger") ? new Error("Cannot attach debugger: DevTools or another debugger is already attached to this tab") : new Error(`Failed to attach debugger: ${a}`);
   }
 }, handleDebuggerDetach = async () => {
   if (!isAttached || attachedTabId === null)
     return { success: !0 };
   try {
-    await api$3.debugger.detach({ tabId: attachedTabId });
+    await api$4.debugger.detach({ tabId: attachedTabId });
   } catch {
   }
   return log(`Debugger detached from tab ${attachedTabId}`), resetState(), { success: !0 };
@@ -1296,83 +1305,83 @@ const handleDebuggerAttach = async (e) => {
   attached: isAttached,
   tabId: attachedTabId
 }), handleCDPClick = async (e) => {
-  const { selector: t } = e, s = attachedTabId, n = await resolveElementCoords(s, t, { scroll: !0 });
+  const { selector: t } = e, s = attachedTabId, a = await resolveElementCoords(s, t, { scroll: !0 });
   await sleep(gaussianDelay(50, 150));
-  const o = gaussianDelay(10, 20), a = generateBezierPath(cursorX, cursorY, n.x, n.y, o);
-  for (const i of a)
+  const o = gaussianDelay(10, 20), n = generateBezierPath(cursorX, cursorY, a.x, a.y, o);
+  for (const r of n)
     await sendCDP$1("Input.dispatchMouseEvent", {
       type: "mouseMoved",
-      x: i.x,
-      y: i.y
+      x: r.x,
+      y: r.y
     }), await sleep(gaussianDelay(5, 15));
-  return cursorX = n.x, cursorY = n.y, await sendCDP$1("Input.dispatchMouseEvent", {
+  return cursorX = a.x, cursorY = a.y, await sendCDP$1("Input.dispatchMouseEvent", {
     type: "mousePressed",
-    x: n.x,
-    y: n.y,
+    x: a.x,
+    y: a.y,
     button: "left",
     clickCount: 1
   }), await sleep(gaussianDelay(30, 80)), await sendCDP$1("Input.dispatchMouseEvent", {
     type: "mouseReleased",
-    x: n.x,
-    y: n.y,
+    x: a.x,
+    y: a.y,
     button: "left",
     clickCount: 1
-  }), n.href && (await sleep(200), await api$3.scripting.executeScript({
+  }), a.href && (await sleep(200), await api$4.scripting.executeScript({
     target: { tabId: s },
-    func: (i) => {
-      let r = null;
+    func: (r) => {
+      let i = null;
       try {
-        r = document.querySelector(i);
+        i = document.querySelector(r);
       } catch {
-        r = null;
+        i = null;
       }
-      const c = r == null ? void 0 : r.closest("a");
+      const c = i == null ? void 0 : i.closest("a");
       c && c.click();
     },
     args: [t],
     world: "MAIN"
   })), { success: !0, elementFound: !0 };
 }, handleCDPType = async (e) => {
-  const { selector: t, text: s, clearFirst: n } = e, o = attachedTabId;
-  await api$3.scripting.executeScript({
+  const { selector: t, text: s, clearFirst: a } = e, o = attachedTabId;
+  await api$4.scripting.executeScript({
     target: { tabId: o },
-    func: (a, i) => {
-      const r = document.querySelector(a);
-      if (!r) throw new Error(`Element not found: ${a}`);
-      r.focus(), i && (r.tagName === "INPUT" || r.tagName === "TEXTAREA" ? (r.value = "", r.dispatchEvent(new Event("input", { bubbles: !0 }))) : r.isContentEditable && (document.execCommand("selectAll", !1), document.execCommand("delete", !1)));
+    func: (n, r) => {
+      const i = document.querySelector(n);
+      if (!i) throw new Error(`Element not found: ${n}`);
+      i.focus(), r && (i.tagName === "INPUT" || i.tagName === "TEXTAREA" ? (i.value = "", i.dispatchEvent(new Event("input", { bubbles: !0 }))) : i.isContentEditable && (document.execCommand("selectAll", !1), document.execCommand("delete", !1)));
     },
-    args: [t, n ?? !1],
+    args: [t, a ?? !1],
     world: "MAIN"
   });
-  for (const a of s) {
-    const i = a.charCodeAt(0), r = a, c = a.length === 1 && a >= "a" && a <= "z" ? `Key${a.toUpperCase()}` : a.length === 1 && a >= "A" && a <= "Z" ? `Key${a}` : a.length === 1 && a >= "0" && a <= "9" ? `Digit${a}` : a === " " ? "Space" : "";
+  for (const n of s) {
+    const r = n.charCodeAt(0), i = n, c = n.length === 1 && n >= "a" && n <= "z" ? `Key${n.toUpperCase()}` : n.length === 1 && n >= "A" && n <= "Z" ? `Key${n}` : n.length === 1 && n >= "0" && n <= "9" ? `Digit${n}` : n === " " ? "Space" : "";
     await sendCDP$1("Input.dispatchKeyEvent", {
       type: "keyDown",
-      key: r,
+      key: i,
       code: c,
-      windowsVirtualKeyCode: i,
-      nativeVirtualKeyCode: i
+      windowsVirtualKeyCode: r,
+      nativeVirtualKeyCode: r
     }), await sendCDP$1("Input.dispatchKeyEvent", {
       type: "char",
-      text: a,
-      key: r,
+      text: n,
+      key: i,
       code: c,
-      windowsVirtualKeyCode: i,
-      nativeVirtualKeyCode: i
+      windowsVirtualKeyCode: r,
+      nativeVirtualKeyCode: r
     }), await sendCDP$1("Input.dispatchKeyEvent", {
       type: "keyUp",
-      key: r,
+      key: i,
       code: c,
-      windowsVirtualKeyCode: i,
-      nativeVirtualKeyCode: i
+      windowsVirtualKeyCode: r,
+      nativeVirtualKeyCode: r
     }), await sleep(gaussianDelay(40, 120, 70));
   }
   return { success: !0 };
 }, handleCDPScroll = async (e) => {
   var c;
-  const { direction: t, amount: s, selector: n } = e;
-  if (n) {
-    const d = attachedTabId, l = (c = (await api$3.scripting.executeScript({
+  const { direction: t, amount: s, selector: a } = e;
+  if (a) {
+    const d = attachedTabId, l = (c = (await api$4.scripting.executeScript({
       target: { tabId: d },
       func: (g) => {
         const p = document.querySelector(g);
@@ -1380,7 +1389,7 @@ const handleDebuggerAttach = async (e) => {
         const f = p.getBoundingClientRect();
         return { x: Math.round(f.left + f.width / 2), y: Math.round(f.top + f.height / 2) };
       },
-      args: [n],
+      args: [a],
       world: "MAIN"
     }))[0]) == null ? void 0 : c.result;
     if (l)
@@ -1392,28 +1401,28 @@ const handleDebuggerAttach = async (e) => {
         deltaY: 0
       }), { success: !0 };
   }
-  const o = s ?? 300, a = {
+  const o = s ?? 300, n = {
     up: [0, -o],
     down: [0, o],
     left: [-o, 0],
     right: [o, 0]
-  }, [i, r] = a[t] ?? [0, 0];
+  }, [r, i] = n[t] ?? [0, 0];
   return await sendCDP$1("Input.dispatchMouseEvent", {
     type: "mouseWheel",
     x: cursorX || 400,
     y: cursorY || 400,
-    deltaX: i,
-    deltaY: r
+    deltaX: r,
+    deltaY: i
   }), await sleep(gaussianDelay(50, 150)), { success: !0 };
 }, handleCDPHover = async (e) => {
-  const { selector: t } = e, n = await resolveElementCoords(attachedTabId, t, { scroll: !0 });
-  return await sleep(100), await cdpMove(n.x, n.y), { success: !0 };
+  const { selector: t } = e, a = await resolveElementCoords(attachedTabId, t, { scroll: !0 });
+  return await sleep(100), await cdpMove(a.x, a.y), { success: !0 };
 }, handleCDPKeypress = async (e) => {
-  const { key: t, modifiers: s } = e, n = s ?? [], o = { alt: 1, ctrl: 2, meta: 4, shift: 8 };
-  let a = 0;
-  for (const h of n)
-    a |= o[h] ?? 0;
-  const r = {
+  const { key: t, modifiers: s } = e, a = s ?? [], o = { alt: 1, ctrl: 2, meta: 4, shift: 8 };
+  let n = 0;
+  for (const h of a)
+    n |= o[h] ?? 0;
+  const i = {
     Enter: { code: "Enter", keyCode: 13 },
     Tab: { code: "Tab", keyCode: 9 },
     Escape: { code: "Escape", keyCode: 27 },
@@ -1428,14 +1437,14 @@ const handleDebuggerAttach = async (e) => {
     PageUp: { code: "PageUp", keyCode: 33 },
     PageDown: { code: "PageDown", keyCode: 34 },
     Space: { code: "Space", keyCode: 32 }
-  }[t], c = (r == null ? void 0 : r.code) ?? (t.length === 1 ? `Key${t.toUpperCase()}` : t), d = (r == null ? void 0 : r.keyCode) ?? t.charCodeAt(0);
+  }[t], c = (i == null ? void 0 : i.code) ?? (t.length === 1 ? `Key${t.toUpperCase()}` : t), d = (i == null ? void 0 : i.keyCode) ?? t.charCodeAt(0);
   return await sendCDP$1("Input.dispatchKeyEvent", {
     type: "keyDown",
     key: t,
     code: c,
     windowsVirtualKeyCode: d,
     nativeVirtualKeyCode: d,
-    modifiers: a
+    modifiers: n
   }), t.length === 1 && await sendCDP$1("Input.dispatchKeyEvent", {
     type: "char",
     text: t,
@@ -1443,84 +1452,84 @@ const handleDebuggerAttach = async (e) => {
     code: c,
     windowsVirtualKeyCode: d,
     nativeVirtualKeyCode: d,
-    modifiers: a
+    modifiers: n
   }), await sendCDP$1("Input.dispatchKeyEvent", {
     type: "keyUp",
     key: t,
     code: c,
     windowsVirtualKeyCode: d,
     nativeVirtualKeyCode: d,
-    modifiers: a
+    modifiers: n
   }), { success: !0 };
 }, handleMouseMove = async (e) => {
   const { x: t, y: s } = e;
   if (!isAttached)
     return cursorX = t, cursorY = s, { success: !0 };
-  const n = gaussianDelay(10, 20), o = generateBezierPath(cursorX, cursorY, t, s, n);
-  for (const a of o)
+  const a = gaussianDelay(10, 20), o = generateBezierPath(cursorX, cursorY, t, s, a);
+  for (const n of o)
     await sendCDP$1("Input.dispatchMouseEvent", {
       type: "mouseMoved",
-      x: a.x,
-      y: a.y
+      x: n.x,
+      y: n.y
     }), await sleep(gaussianDelay(5, 15));
   return cursorX = t, cursorY = s, { success: !0 };
 }, handleMouseClick = async (e) => {
-  const t = e, s = t.button ?? "left", n = t.double ?? !1;
+  const t = e, s = t.button ?? "left", a = t.double ?? !1;
   if (isAttached && attachedTabId !== null) {
     const { x: c, y: d } = await resolveTarget(attachedTabId, t, { scroll: !0 });
-    return await sleep(gaussianDelay(50, 150)), await cdpMove(c, d), await cdpPress(c, d, s, 1), await sleep(gaussianDelay(30, 80)), await cdpRelease(c, d, s, 1), n && (await sleep(gaussianDelay(40, 90)), await cdpPress(c, d, s, 2), await sleep(gaussianDelay(30, 80)), await cdpRelease(c, d, s, 2)), { success: !0, x: c, y: d, trusted: !0 };
+    return await sleep(gaussianDelay(50, 150)), await cdpMove(c, d), await cdpPress(c, d, s, 1), await sleep(gaussianDelay(30, 80)), await cdpRelease(c, d, s, 1), a && (await sleep(gaussianDelay(40, 90)), await cdpPress(c, d, s, 2), await sleep(gaussianDelay(30, 80)), await cdpRelease(c, d, s, 2)), { success: !0, x: c, y: d, trusted: !0 };
   }
-  const o = await resolveTabId(t), { x: a, y: i } = await resolveTarget(o, t, { scroll: !0 });
-  return await fallbackMouse(o, a, i, s === "right" ? "contextmenu" : n ? "dblclick" : "click", s), { success: !0, x: a, y: i, trusted: !1 };
+  const o = await resolveTabId(t), { x: n, y: r } = await resolveTarget(o, t, { scroll: !0 });
+  return await fallbackMouse(o, n, r, s === "right" ? "contextmenu" : a ? "dblclick" : "click", s), { success: !0, x: n, y: r, trusted: !1 };
 }, handleMouseDown = async (e) => {
   const t = e, s = t.button ?? "left";
   if (isAttached && attachedTabId !== null) {
-    const { x: i, y: r } = await resolveTarget(attachedTabId, t, { scroll: !0 });
-    return await cdpMove(i, r), await cdpPress(i, r, s, 1), { success: !0, x: i, y: r, trusted: !0 };
+    const { x: r, y: i } = await resolveTarget(attachedTabId, t, { scroll: !0 });
+    return await cdpMove(r, i), await cdpPress(r, i, s, 1), { success: !0, x: r, y: i, trusted: !0 };
   }
-  const n = await resolveTabId(t), { x: o, y: a } = await resolveTarget(n, t, { scroll: !0 });
-  return await fallbackMouse(n, o, a, "down", s), { success: !0, x: o, y: a, trusted: !1 };
+  const a = await resolveTabId(t), { x: o, y: n } = await resolveTarget(a, t, { scroll: !0 });
+  return await fallbackMouse(a, o, n, "down", s), { success: !0, x: o, y: n, trusted: !1 };
 }, handleMouseUp = async (e) => {
   const t = e, s = t.button ?? "left";
   if (isAttached && attachedTabId !== null) {
-    const { x: i, y: r } = await resolveTarget(attachedTabId, t, { scroll: !1 });
-    return await cdpRelease(i, r, s, 1), { success: !0, x: i, y: r, trusted: !0 };
+    const { x: r, y: i } = await resolveTarget(attachedTabId, t, { scroll: !1 });
+    return await cdpRelease(r, i, s, 1), { success: !0, x: r, y: i, trusted: !0 };
   }
-  const n = await resolveTabId(t), { x: o, y: a } = await resolveTarget(n, t, { scroll: !1 });
-  return await fallbackMouse(n, o, a, "up", s), { success: !0, x: o, y: a, trusted: !1 };
+  const a = await resolveTabId(t), { x: o, y: n } = await resolveTarget(a, t, { scroll: !1 });
+  return await fallbackMouse(a, o, n, "up", s), { success: !0, x: o, y: n, trusted: !1 };
 }, handleMouseDrag = async (e) => {
-  const t = e, s = async (i, r, c, d) => {
-    if (r) return resolveElementCoords(i, r, { scroll: !0 });
+  const t = e, s = async (r, i, c, d) => {
+    if (i) return resolveElementCoords(r, i, { scroll: !0 });
     if (typeof c == "number" && typeof d == "number") return { x: c, y: d };
     throw new Error("Drag requires sourceSelector/targetSelector or startX/startY and endX/endY");
   };
   if (isAttached && attachedTabId !== null) {
-    const i = attachedTabId, r = await s(i, t.sourceSelector, t.startX, t.startY), c = await s(i, t.targetSelector, t.endX, t.endY);
-    return await cdpMove(r.x, r.y), await cdpPress(r.x, r.y, "left", 1), await sleep(gaussianDelay(60, 140)), await cdpMove(c.x, c.y, !0), await sleep(gaussianDelay(60, 140)), await cdpRelease(c.x, c.y, "left", 1), { success: !0, x: c.x, y: c.y, trusted: !0 };
+    const r = attachedTabId, i = await s(r, t.sourceSelector, t.startX, t.startY), c = await s(r, t.targetSelector, t.endX, t.endY);
+    return await cdpMove(i.x, i.y), await cdpPress(i.x, i.y, "left", 1), await sleep(gaussianDelay(60, 140)), await cdpMove(c.x, c.y, !0), await sleep(gaussianDelay(60, 140)), await cdpRelease(c.x, c.y, "left", 1), { success: !0, x: c.x, y: c.y, trusted: !0 };
   }
-  const n = await resolveTabId(t), o = await s(n, t.sourceSelector, t.startX, t.startY), a = await s(n, t.targetSelector, t.endX, t.endY);
-  return await api$3.scripting.executeScript({
-    target: { tabId: n },
-    func: (i, r, c, d) => {
-      const h = document.elementFromPoint(i, r) ?? document.body, l = document.elementFromPoint(c, d) ?? document.body, g = (p, f, _, W) => {
+  const a = await resolveTabId(t), o = await s(a, t.sourceSelector, t.startX, t.startY), n = await s(a, t.targetSelector, t.endX, t.endY);
+  return await api$4.scripting.executeScript({
+    target: { tabId: a },
+    func: (r, i, c, d) => {
+      const h = document.elementFromPoint(r, i) ?? document.body, l = document.elementFromPoint(c, d) ?? document.body, g = (p, f, S, W) => {
         W.dispatchEvent(
-          new MouseEvent(p, { bubbles: !0, cancelable: !0, clientX: f, clientY: _, button: 0, view: window })
+          new MouseEvent(p, { bubbles: !0, cancelable: !0, clientX: f, clientY: S, button: 0, view: window })
         );
       };
-      g("mousedown", i, r, h), g("mousemove", Math.round((i + c) / 2), Math.round((r + d) / 2), l), g("mousemove", c, d, l), g("mouseup", c, d, l);
+      g("mousedown", r, i, h), g("mousemove", Math.round((r + c) / 2), Math.round((i + d) / 2), l), g("mousemove", c, d, l), g("mouseup", c, d, l);
     },
-    args: [o.x, o.y, a.x, a.y],
+    args: [o.x, o.y, n.x, n.y],
     world: "MAIN"
-  }), { success: !0, x: a.x, y: a.y, trusted: !1 };
-}, api$2 = globalThis.chrome, sendCDP = async (e, t, s = {}) => api$2.debugger.sendCommand({ tabId: e }, t, s), findInertElement = async (e) => {
+  }), { success: !0, x: n.x, y: n.y, trusted: !1 };
+}, api$3 = globalThis.chrome, sendCDP = async (e, t, s = {}) => api$3.debugger.sendCommand({ tabId: e }, t, s), findInertElement = async (e) => {
   var s;
-  return (s = (await api$2.scripting.executeScript({
+  return (s = (await api$3.scripting.executeScript({
     target: { tabId: e },
     func: () => {
-      const n = /* @__PURE__ */ new Set(["A", "BUTTON", "INPUT", "SELECT", "TEXTAREA", "LABEL", "DETAILS", "SUMMARY"]), o = [], a = document.querySelectorAll("div, span, p, section, article, li, td, th, h1, h2, h3, h4, h5, h6");
-      for (let i = 0; i < a.length && o.length < 30; i++) {
-        const r = a[i], c = r.getBoundingClientRect();
-        c.width < 10 || c.height < 10 || c.top < 0 || c.left < 0 || c.bottom > window.innerHeight || c.right > window.innerWidth || n.has(r.tagName) || r.closest("a, button, input, select, textarea, label") || r.getAttribute("role") === "button" || r.getAttribute("role") === "link" || r.onclick || r.getAttribute("onclick") || o.push({
+      const a = /* @__PURE__ */ new Set(["A", "BUTTON", "INPUT", "SELECT", "TEXTAREA", "LABEL", "DETAILS", "SUMMARY"]), o = [], n = document.querySelectorAll("div, span, p, section, article, li, td, th, h1, h2, h3, h4, h5, h6");
+      for (let r = 0; r < n.length && o.length < 30; r++) {
+        const i = n[r], c = i.getBoundingClientRect();
+        c.width < 10 || c.height < 10 || c.top < 0 || c.left < 0 || c.bottom > window.innerHeight || c.right > window.innerWidth || a.has(i.tagName) || i.closest("a, button, input, select, textarea, label") || i.getAttribute("role") === "button" || i.getAttribute("role") === "link" || i.onclick || i.getAttribute("onclick") || o.push({
           x: Math.round(c.left + c.width / 2),
           y: Math.round(c.top + c.height / 2)
         });
@@ -1538,29 +1547,29 @@ const handleDebuggerAttach = async (e) => {
 }, actionMicroScroll = {
   name: "micro_scroll",
   execute: async (e) => {
-    const { attached: t } = getDebuggerState(), s = gaussianDelay(20, 60), n = Math.random() > 0.5 ? 1 : -1, o = performance.now();
+    const { attached: t } = getDebuggerState(), s = gaussianDelay(20, 60), a = Math.random() > 0.5 ? 1 : -1, o = performance.now();
     if (t) {
-      const a = getCursorPosition();
+      const n = getCursorPosition();
       await sendCDP(e, "Input.dispatchMouseEvent", {
         type: "mouseWheel",
-        x: a.x || 400,
-        y: a.y || 400,
+        x: n.x || 400,
+        y: n.y || 400,
         deltaX: 0,
-        deltaY: s * n
+        deltaY: s * a
       }), await sleep(gaussianDelay(200, 500)), Math.random() > 0.4 && await sendCDP(e, "Input.dispatchMouseEvent", {
         type: "mouseWheel",
-        x: a.x || 400,
-        y: a.y || 400,
+        x: n.x || 400,
+        y: n.y || 400,
         deltaX: 0,
-        deltaY: -s * n
+        deltaY: -s * a
       });
     } else
-      await api$2.scripting.executeScript({
+      await api$3.scripting.executeScript({
         target: { tabId: e },
-        func: (a, i) => {
-          window.scrollBy({ left: 0, top: a * i, behavior: "smooth" });
+        func: (n, r) => {
+          window.scrollBy({ left: 0, top: n * r, behavior: "smooth" });
         },
-        args: [s, n],
+        args: [s, a],
         world: "MAIN"
       }), await sleep(gaussianDelay(200, 500));
     return Math.round(performance.now() - o);
@@ -1580,23 +1589,23 @@ const handleDebuggerAttach = async (e) => {
 }, actionVariableScroll = {
   name: "variable_scroll",
   execute: async (e) => {
-    const { attached: t } = getDebuggerState(), s = performance.now(), n = gaussianDelay(2, 4);
-    for (let o = 0; o < n; o++) {
-      const a = gaussianDelay(15, 40);
+    const { attached: t } = getDebuggerState(), s = performance.now(), a = gaussianDelay(2, 4);
+    for (let o = 0; o < a; o++) {
+      const n = gaussianDelay(15, 40);
       if (t) {
-        const i = getCursorPosition();
+        const r = getCursorPosition();
         await sendCDP(e, "Input.dispatchMouseEvent", {
           type: "mouseWheel",
-          x: i.x || 400,
-          y: i.y || 400,
+          x: r.x || 400,
+          y: r.y || 400,
           deltaX: 0,
-          deltaY: a
+          deltaY: n
         });
       } else
-        await api$2.scripting.executeScript({
+        await api$3.scripting.executeScript({
           target: { tabId: e },
-          func: (i) => window.scrollBy({ left: 0, top: i, behavior: "smooth" }),
-          args: [a],
+          func: (r) => window.scrollBy({ left: 0, top: r, behavior: "smooth" }),
+          args: [n],
           world: "MAIN"
         });
       await sleep(gaussianDelay(100, 300));
@@ -1606,7 +1615,7 @@ const handleDebuggerAttach = async (e) => {
 }, actionScrollBounce = {
   name: "scroll_bounce",
   execute: async (e) => {
-    const { attached: t } = getDebuggerState(), s = performance.now(), n = gaussianDelay(80, 200);
+    const { attached: t } = getDebuggerState(), s = performance.now(), a = gaussianDelay(80, 200);
     if (t) {
       const o = getCursorPosition();
       await sendCDP(e, "Input.dispatchMouseEvent", {
@@ -1614,24 +1623,24 @@ const handleDebuggerAttach = async (e) => {
         x: o.x || 400,
         y: o.y || 400,
         deltaX: 0,
-        deltaY: n
+        deltaY: a
       }), await sleep(gaussianDelay(500, 1200)), await sendCDP(e, "Input.dispatchMouseEvent", {
         type: "mouseWheel",
         x: o.x || 400,
         y: o.y || 400,
         deltaX: 0,
-        deltaY: -n
+        deltaY: -a
       });
     } else
-      await api$2.scripting.executeScript({
+      await api$3.scripting.executeScript({
         target: { tabId: e },
         func: (o) => window.scrollBy({ left: 0, top: o, behavior: "smooth" }),
-        args: [n],
+        args: [a],
         world: "MAIN"
-      }), await sleep(gaussianDelay(500, 1200)), await api$2.scripting.executeScript({
+      }), await sleep(gaussianDelay(500, 1200)), await api$3.scripting.executeScript({
         target: { tabId: e },
         func: (o) => window.scrollBy({ left: 0, top: -o, behavior: "smooth" }),
-        args: [n],
+        args: [a],
         world: "MAIN"
       });
     return await sleep(gaussianDelay(200, 400)), Math.round(performance.now() - s);
@@ -1642,9 +1651,9 @@ const handleDebuggerAttach = async (e) => {
     const { attached: t } = getDebuggerState(), s = performance.now();
     if (!t)
       return await sleep(gaussianDelay(1e3, 2e3)), Math.round(performance.now() - s);
-    const n = getCursorPosition(), o = gaussianDelay(3, 6);
-    for (let a = 0; a < o; a++) {
-      const i = gaussianDelay(-5, 5), r = gaussianDelay(-5, 5), c = Math.max(0, n.x + i), d = Math.max(0, n.y + r);
+    const a = getCursorPosition(), o = gaussianDelay(3, 6);
+    for (let n = 0; n < o; n++) {
+      const r = gaussianDelay(-5, 5), i = gaussianDelay(-5, 5), c = Math.max(0, a.x + r), d = Math.max(0, a.y + i);
       await sendCDP(e, "Input.dispatchMouseEvent", {
         type: "mouseMoved",
         x: c,
@@ -1673,26 +1682,26 @@ const handleDebuggerAttach = async (e) => {
     actionLongPause
   ]
 }, handleHumanize = async (e) => {
-  const t = e.intensity ?? "moderate", s = await resolveTabId(e), n = POOLS[t], o = n[Math.floor(Math.random() * n.length)];
+  const t = e.intensity ?? "moderate", s = await resolveTabId(e), a = POOLS[t], o = a[Math.floor(Math.random() * a.length)];
   log(`Humanize (${t}): executing ${o.name}`);
-  const a = await o.execute(s);
-  return log(`Humanize: ${o.name} completed in ${a}ms`), { action: o.name, duration_ms: a };
-}, api$1 = globalThis.chrome, INSTANCE_ID_KEY = "wf:instance-id", detectOS = (e, t) => {
-  var n;
-  const s = ((n = e.userAgentData) == null ? void 0 : n.platform) ?? "";
+  const n = await o.execute(s);
+  return log(`Humanize: ${o.name} completed in ${n}ms`), { action: o.name, duration_ms: n };
+}, api$2 = globalThis.chrome, INSTANCE_ID_KEY = "wf:instance-id", detectOS = (e, t) => {
+  var a;
+  const s = ((a = e.userAgentData) == null ? void 0 : a.platform) ?? "";
   return /mac/i.test(s) || /Mac OS X/.test(t) ? "macOS" : /win/i.test(s) || /Windows NT/.test(t) ? "Windows" : /CrOS/.test(t) ? "ChromeOS" : /android/i.test(s) || /Android/.test(t) ? "Android" : /linux/i.test(s) || /Linux/.test(t) ? "Linux" : s || "";
 }, uaVersion = (e, t) => {
   const s = e.match(new RegExp(`${t}/([\\d.]+)`));
   return (s == null ? void 0 : s[1]) ?? "";
 }, detectBrand = async (e, t) => {
-  var a, i, r, c, d;
+  var n, r, i, c, d;
   try {
-    const h = globalThis.browser, l = await ((i = (a = h == null ? void 0 : h.runtime) == null ? void 0 : a.getBrowserInfo) == null ? void 0 : i.call(a));
+    const h = globalThis.browser, l = await ((r = (n = h == null ? void 0 : h.runtime) == null ? void 0 : n.getBrowserInfo) == null ? void 0 : r.call(n));
     if (l != null && l.name)
       return { browser: l.name.toLowerCase(), browserName: l.name, browserVersion: l.version };
   } catch {
   }
-  const s = ((r = e.userAgentData) == null ? void 0 : r.brands) ?? [], n = (h) => s.find((l) => l.brand.toLowerCase().includes(h)), o = [
+  const s = ((i = e.userAgentData) == null ? void 0 : i.brands) ?? [], a = (h) => s.find((l) => l.brand.toLowerCase().includes(h)), o = [
     { needle: "microsoft edge", slug: "edge", name: "Microsoft Edge" },
     { needle: "opera", slug: "opera", name: "Opera" },
     { needle: "brave", slug: "brave", name: "Brave" },
@@ -1700,7 +1709,7 @@ const handleDebuggerAttach = async (e) => {
     { needle: "google chrome", slug: "chrome", name: "Google Chrome" }
   ];
   for (const { needle: h, slug: l, name: g } of o) {
-    const p = n(h);
+    const p = a(h);
     if (p) return { browser: l, browserName: g, browserVersion: p.version || uaVersion(t, "Chrome") };
   }
   try {
@@ -1708,24 +1717,24 @@ const handleDebuggerAttach = async (e) => {
       return { browser: "brave", browserName: "Brave", browserVersion: uaVersion(t, "Chrome") };
   } catch {
   }
-  return /Edg\//.test(t) ? { browser: "edge", browserName: "Microsoft Edge", browserVersion: uaVersion(t, "Edg") } : /OPR\//.test(t) ? { browser: "opera", browserName: "Opera", browserVersion: uaVersion(t, "OPR") } : /Firefox\//.test(t) ? { browser: "firefox", browserName: "Firefox", browserVersion: uaVersion(t, "Firefox") } : n("chromium") || /Chrome\//.test(t) ? { browser: "chromium", browserName: "Chromium", browserVersion: uaVersion(t, "Chrome") } : { browser: "browser", browserName: "Browser", browserVersion: "" };
+  return /Edg\//.test(t) ? { browser: "edge", browserName: "Microsoft Edge", browserVersion: uaVersion(t, "Edg") } : /OPR\//.test(t) ? { browser: "opera", browserName: "Opera", browserVersion: uaVersion(t, "OPR") } : /Firefox\//.test(t) ? { browser: "firefox", browserName: "Firefox", browserVersion: uaVersion(t, "Firefox") } : a("chromium") || /Chrome\//.test(t) ? { browser: "chromium", browserName: "Chromium", browserVersion: uaVersion(t, "Chrome") } : { browser: "browser", browserName: "Browser", browserVersion: "" };
 }, getProfileEmail = async () => {
   var e;
   try {
-    const t = api$1 == null ? void 0 : api$1.identity, s = await ((e = t == null ? void 0 : t.getProfileUserInfo) == null ? void 0 : e.call(t, { accountStatus: "ANY" }));
+    const t = api$2 == null ? void 0 : api$2.identity, s = await ((e = t == null ? void 0 : t.getProfileUserInfo) == null ? void 0 : e.call(t, { accountStatus: "ANY" }));
     return (s == null ? void 0 : s.email) ?? "";
   } catch {
     return "";
   }
 }, getInstanceId = async () => {
   try {
-    const s = (await api$1.storage.local.get([INSTANCE_ID_KEY]))[INSTANCE_ID_KEY];
+    const s = (await api$2.storage.local.get([INSTANCE_ID_KEY]))[INSTANCE_ID_KEY];
     if (typeof s == "string" && s) return s;
   } catch {
   }
   const e = crypto.randomUUID();
   try {
-    await api$1.storage.local.set({ [INSTANCE_ID_KEY]: e });
+    await api$2.storage.local.set({ [INSTANCE_ID_KEY]: e });
   } catch {
   }
   return e;
@@ -1733,13 +1742,83 @@ const handleDebuggerAttach = async (e) => {
 let cached = null;
 const getBrowserIdentity = async () => {
   if (cached) return cached;
-  const e = navigator, t = e.userAgent ?? "", [s, n, o] = await Promise.all([
+  const e = navigator, t = e.userAgent ?? "", [s, a, o] = await Promise.all([
     getInstanceId(),
     detectBrand(e, t),
     getProfileEmail()
   ]);
-  return cached = { instanceId: s, ...n, os: detectOS(e, t), profileEmail: o }, cached;
+  return cached = { instanceId: s, ...a, os: detectOS(e, t), profileEmail: o }, cached;
+}, api$1 = globalThis.chrome, WOLFFISH_GROUP_TITLE = "Wolffish", WOLFFISH_GROUP_COLOR = "blue", KEY_GROUP_ID = "wf:group-id", KEY_TAB_ID = "wf:tab-id", KEY_LABEL = "wf:group-label", stateArea = () => api$1.storage.session ?? api$1.storage.local, readState = async (e) => {
+  try {
+    const t = await stateArea().get(e);
+    return (t == null ? void 0 : t[e]) ?? null;
+  } catch {
+    return null;
+  }
+}, writeState = async (e, t) => {
+  try {
+    await stateArea().set({ [e]: t });
+  } catch {
+  }
+}, clearState = async (e) => {
+  try {
+    await stateArea().remove(e);
+  } catch {
+  }
+}, formatLabel = (e) => {
+  const t = ((e == null ? void 0 : e.emoji) ?? "").trim(), s = ((e == null ? void 0 : e.text) ?? "").trim();
+  return t && s ? `${t} ${s}` : t || s || WOLFFISH_GROUP_TITLE;
+}, liveGroupId = async () => {
+  if (!api$1.tabGroups) return null;
+  const e = await readState(KEY_GROUP_ID);
+  return typeof e != "number" ? null : await api$1.tabGroups.get(e).then(() => !0).catch(() => !1) ? e : (await clearState(KEY_GROUP_ID), null);
+}, paintGroup = async (e) => {
+  if (!api$1.tabGroups) return;
+  const t = await readState(KEY_LABEL);
+  try {
+    await api$1.tabGroups.update(e, { title: formatLabel(t), color: WOLFFISH_GROUP_COLOR });
+  } catch {
+  }
+}, groupTab = async (e) => {
+  if (!api$1.tabGroups || !api$1.tabs.group) return null;
+  const t = await liveGroupId();
+  if (t !== null)
+    try {
+      return await api$1.tabs.group({ groupId: t, tabIds: [e] }), await paintGroup(t), t;
+    } catch {
+      await clearState(KEY_GROUP_ID);
+    }
+  try {
+    const s = await api$1.tabs.get(e), a = await api$1.tabs.group({ tabIds: [e], createProperties: { windowId: s.windowId } });
+    return await writeState(KEY_GROUP_ID, a), await paintGroup(a), a;
+  } catch (s) {
+    return log("tab groups unavailable:", s instanceof Error ? s.message : String(s)), null;
+  }
+}, getWorkspaceGroupId = () => liveGroupId(), isWorkspaceTab = async (e) => {
+  const t = await liveGroupId();
+  return t !== null && e.groupId === t;
+}, getWorkspaceTabId = async () => {
+  const e = await readState(KEY_TAB_ID);
+  return typeof e != "number" ? null : await api$1.tabs.get(e).then(() => !0).catch(() => !1) ? e : (await clearState(KEY_TAB_ID), null);
+}, adoptTab = async (e) => {
+  await writeState(KEY_TAB_ID, e), await groupTab(e);
+}, openWorkspaceTab = async (e, t = !0) => {
+  const a = (await api$1.tabs.create({ url: e || "about:blank", active: t })).id;
+  return await adoptTab(a), a;
+}, ensureWorkspaceTab = async () => {
+  const e = await getWorkspaceTabId();
+  return e !== null ? e : openWorkspaceTab();
+}, rememberWorkspaceTab = async (e) => {
+  const t = await api$1.tabs.get(e).catch(() => null);
+  return !t || !await isWorkspaceTab(t) ? !1 : (await writeState(KEY_TAB_ID, e), !0);
+}, setActivity = async (e) => {
+  var a, o;
+  const t = { emoji: ((a = e.emoji) == null ? void 0 : a.trim()) || void 0, text: ((o = e.text) == null ? void 0 : o.trim()) || void 0 };
+  await writeState(KEY_LABEL, t);
+  const s = await liveGroupId();
+  return s !== null && await paintGroup(s), { title: formatLabel(t), applied: s !== null };
 }, api = globalThis.chrome;
+setTabFallback(ensureWorkspaceTab);
 let connectionStatus = "disconnected", connectionPort = DEFAULT_PORT;
 const RECONNECT_ALARM = "wolffish-reconnect";
 let ws = null, heartbeatTimer = null;
@@ -1794,31 +1873,31 @@ const connectWebSocket = async (e) => {
   };
 }, sendToServer = (e) => {
   (ws == null ? void 0 : ws.readyState) === WebSocket.OPEN && ws.send(JSON.stringify(e));
-}, waitForTabSettled = (e, t, s) => new Promise((n) => {
+}, waitForTabSettled = (e, t, s) => new Promise((a) => {
   var g, p;
-  let o = !1, a = !1;
-  const i = () => {
-    var f, _;
-    clearTimeout(l), clearInterval(h), (_ = (f = api.webNavigation) == null ? void 0 : f.onCompleted) == null || _.removeListener(d);
-  }, r = (f) => {
-    o || (o = !0, i(), n(f));
+  let o = !1, n = !1;
+  const r = () => {
+    var f, S;
+    clearTimeout(l), clearInterval(h), (S = (f = api.webNavigation) == null ? void 0 : f.onCompleted) == null || S.removeListener(d);
+  }, i = (f) => {
+    o || (o = !0, r(), a(f));
   }, c = async () => {
     const f = await api.tabs.get(e).catch(() => null);
-    f && ((f.status === "loading" || f.url && f.url !== t) && (a = !0), f.status === "complete" && a && r(f));
+    f && ((f.status === "loading" || f.url && f.url !== t) && (n = !0), f.status === "complete" && n && i(f));
   }, d = (f) => {
-    f.tabId === e && f.frameId === 0 && (a = !0, c());
+    f.tabId === e && f.frameId === 0 && (n = !0, c());
   };
   (p = (g = api.webNavigation) == null ? void 0 : g.onCompleted) == null || p.addListener(d);
   const h = setInterval(() => void c(), 100), l = setTimeout(() => {
-    api.tabs.get(e).then(r).catch(() => r(null));
+    api.tabs.get(e).then(i).catch(() => i(null));
   }, s);
 }), handleNavigate = async (e) => {
-  const { url: t, waitUntil: s } = e, n = await resolveTabId(e), o = await api.tabs.get(n).catch(() => null), a = (o == null ? void 0 : o.url) ?? "";
-  await api.tabs.update(n, { url: t });
-  const r = await waitForTabSettled(n, a, COMMAND_TIMEOUT_MS) ?? await api.tabs.get(n).catch(() => null);
-  if (s && (!r || r.status !== "complete"))
+  const { url: t, waitUntil: s, newTab: a } = e, o = a ? await openWorkspaceTab() : await resolveTabId(e), n = await api.tabs.get(o).catch(() => null), r = (n == null ? void 0 : n.url) ?? "";
+  await api.tabs.update(o, { url: t });
+  const c = await waitForTabSettled(o, r, COMMAND_TIMEOUT_MS) ?? await api.tabs.get(o).catch(() => null);
+  if (s && (!c || c.status !== "complete"))
     throw new Error(`Navigation timed out waiting for '${s}'`);
-  return { url: (r == null ? void 0 : r.url) || t, title: (r == null ? void 0 : r.title) || "", tabId: n };
+  return { url: (c == null ? void 0 : c.url) || t, title: (c == null ? void 0 : c.title) || "", tabId: o };
 }, handleBack = async (e) => {
   const t = await resolveTabId(e);
   return await api.scripting.executeScript({
@@ -1835,37 +1914,39 @@ const connectWebSocket = async (e) => {
   const { hard: t } = e, s = await resolveTabId(e);
   return await api.tabs.reload(s, { bypassCache: t ?? !1 }), { success: !0 };
 }, handleTabsList = async (e) => {
-  const { windowId: t } = e, s = t !== void 0 ? { windowId: t } : {};
+  const { windowId: t } = e, s = t !== void 0 ? { windowId: t } : {}, a = await api.tabs.query(s), o = await getWorkspaceGroupId();
   return {
-    tabs: (await api.tabs.query(s)).map((o) => ({
-      id: o.id,
-      url: o.url || "",
-      title: o.title || "",
-      active: o.active,
-      pinned: o.pinned,
-      windowId: o.windowId
+    tabs: a.map((n) => ({
+      id: n.id,
+      url: n.url || "",
+      title: n.title || "",
+      active: n.active,
+      pinned: n.pinned,
+      windowId: n.windowId,
+      groupId: n.groupId,
+      wolffish: o !== null && n.groupId === o
     }))
   };
 }, handleTabOpen = async (e) => {
-  const { url: t, active: s } = e, n = await api.tabs.create({ url: t, active: s ?? !0 });
+  const { url: t, active: s } = e, a = await openWorkspaceTab(t, s ?? !0), o = await api.tabs.get(a).catch(() => null);
   return {
-    tabId: n.id,
-    url: n.pendingUrl || n.url || t || ""
+    tabId: a,
+    url: (o == null ? void 0 : o.pendingUrl) || (o == null ? void 0 : o.url) || t || ""
   };
 }, handleTabClose = async (e) => {
   const { tabId: t } = e;
   return await api.tabs.remove(t), { success: !0 };
 }, handleTabSwitch = async (e) => {
   const { tabId: t } = e;
-  return await api.tabs.update(t, { active: !0 }), { success: !0 };
+  return await api.tabs.update(t, { active: !0 }), await rememberWorkspaceTab(t), { success: !0 };
 }, handleTabDuplicate = async (e) => {
   const { tabId: t } = e, s = await api.tabs.duplicate(t);
   if (!s)
     throw new Error(`Failed to duplicate tab ${t}`);
-  return { tabId: s.id };
+  return await adoptTab(s.id), { tabId: s.id };
 }, handleTabMove = async (e) => {
-  const { tabId: t, index: s, windowId: n } = e, o = { index: s };
-  return n !== void 0 && (o.windowId = n), await api.tabs.move(t, o), { success: !0 };
+  const { tabId: t, index: s, windowId: a } = e, o = { index: s };
+  return a !== void 0 && (o.windowId = a), await api.tabs.move(t, o), { success: !0 };
 }, handleWindowsList = async () => ({
   windows: (await api.windows.getAll({ populate: !0 })).map((t) => {
     var s;
@@ -1878,17 +1959,20 @@ const connectWebSocket = async (e) => {
     };
   })
 }), handleWindowOpen = async (e) => {
-  const { url: t, incognito: s, width: n, height: o } = e, a = {};
-  return t !== void 0 && (a.url = t), s !== void 0 && (a.incognito = s), n !== void 0 && (a.width = n), o !== void 0 && (a.height = o), { windowId: (await api.windows.create(a)).id };
+  var i, c;
+  const { url: t, incognito: s, width: a, height: o } = e, n = {};
+  t !== void 0 && (n.url = t), s !== void 0 && (n.incognito = s), a !== void 0 && (n.width = a), o !== void 0 && (n.height = o);
+  const r = await api.windows.create(n);
+  return { windowId: r.id, tabId: (c = (i = r.tabs) == null ? void 0 : i[0]) == null ? void 0 : c.id };
 }, handleWindowClose = async (e) => {
   const { windowId: t } = e;
   return await api.windows.remove(t), { success: !0 };
 }, handleWindowResize = async (e) => {
-  const { windowId: t, width: s, height: n, left: o, top: a, state: i } = e, r = {};
-  return s !== void 0 && (r.width = s), n !== void 0 && (r.height = n), o !== void 0 && (r.left = o), a !== void 0 && (r.top = a), i !== void 0 && (r.state = i), await api.windows.update(t, r), { success: !0 };
+  const { windowId: t, width: s, height: a, left: o, top: n, state: r } = e, i = {};
+  return s !== void 0 && (i.width = s), a !== void 0 && (i.height = a), o !== void 0 && (i.left = o), n !== void 0 && (i.top = n), r !== void 0 && (i.state = r), await api.windows.update(t, i), { success: !0 };
 }, handleScreenshot = async (e) => {
-  const { format: t, quality: s, fullPage: n, selector: o } = e;
-  if (o || n) {
+  const { format: t, quality: s, fullPage: a, selector: o } = e;
+  if (o || a) {
     const l = await resolveTabId(e);
     return await ensureContentScriptInjected(l), (await sendToContentScript(l, {
       source: "service-worker",
@@ -1900,11 +1984,14 @@ const connectWebSocket = async (e) => {
       }
     })).data;
   }
-  const a = t === "jpeg" ? "jpeg" : "png", i = { format: a };
-  a === "jpeg" && s !== void 0 && (i.quality = s);
-  const r = await api.tabs.captureVisibleTab(null, i), c = await resolveTabId(e), d = await api.tabs.get(c), h = await api.windows.get(d.windowId);
+  const n = t === "jpeg" ? "jpeg" : "png", r = { format: n };
+  n === "jpeg" && s !== void 0 && (r.quality = s);
+  const i = await resolveTabId(e);
+  let c = await api.tabs.get(i);
+  c.active || (await api.tabs.update(i, { active: !0 }), await new Promise((l) => setTimeout(l, 150)), c = await api.tabs.get(i));
+  const d = await api.tabs.captureVisibleTab(c.windowId, r), h = await api.windows.get(c.windowId);
   return {
-    image: r,
+    image: d,
     width: h.width || 0,
     height: h.height || 0
   };
@@ -1920,27 +2007,27 @@ const connectWebSocket = async (e) => {
     });
   }
 }, handleCookiesGet = async (e) => {
-  const { domain: t, name: s } = e, n = { domain: t };
-  return s !== void 0 && (n.name = s), {
-    cookies: (await api.cookies.getAll(n)).map((a) => ({
-      name: a.name,
-      value: a.value,
-      domain: a.domain,
-      path: a.path,
-      expires: a.expirationDate || -1,
-      httpOnly: a.httpOnly,
-      secure: a.secure
+  const { domain: t, name: s } = e, a = { domain: t };
+  return s !== void 0 && (a.name = s), {
+    cookies: (await api.cookies.getAll(a)).map((n) => ({
+      name: n.name,
+      value: n.value,
+      domain: n.domain,
+      path: n.path,
+      expires: n.expirationDate || -1,
+      httpOnly: n.httpOnly,
+      secure: n.secure
     }))
   };
 }, handleCookiesSet = async (e) => {
-  const { url: t, name: s, value: n, domain: o, path: a, expires: i, httpOnly: r, secure: c } = e, d = { url: t, name: s, value: n };
-  return o !== void 0 && (d.domain = o), a !== void 0 && (d.path = a), i !== void 0 && (d.expirationDate = i), r !== void 0 && (d.httpOnly = r), c !== void 0 && (d.secure = c), await api.cookies.set(d), { success: !0 };
+  const { url: t, name: s, value: a, domain: o, path: n, expires: r, httpOnly: i, secure: c } = e, d = { url: t, name: s, value: a };
+  return o !== void 0 && (d.domain = o), n !== void 0 && (d.path = n), r !== void 0 && (d.expirationDate = r), i !== void 0 && (d.httpOnly = i), c !== void 0 && (d.secure = c), await api.cookies.set(d), { success: !0 };
 }, handleCookiesRemove = async (e) => {
   const { url: t, name: s } = e;
   return await api.cookies.remove({ url: t, name: s }), { success: !0 };
 }, handleDownload = async (e) => {
-  const { url: t, filename: s } = e, n = { url: t };
-  return s !== void 0 && (n.filename = s), { downloadId: await api.downloads.download(n) };
+  const { url: t, filename: s } = e, a = { url: t };
+  return s !== void 0 && (a.filename = s), { downloadId: await api.downloads.download(a) };
 }, handleExecuteJs = async (params) => {
   var e;
   const { code, world } = params, tabId = await resolveTabId(params), results = await api.scripting.executeScript({
@@ -1951,52 +2038,55 @@ const connectWebSocket = async (e) => {
   });
   return { result: (e = results[0]) == null ? void 0 : e.result };
 }, handleWaitForNavigation = async (e) => {
-  const { timeout: t } = e, s = await resolveTabId(e), n = t ?? COMMAND_TIMEOUT_MS, o = await api.tabs.get(s).then((a) => a.url || "").catch(() => "");
-  return new Promise((a) => {
-    let i = !1;
-    const r = (l, g) => {
-      i || (i = !0, clearTimeout(c), api.webNavigation.onCompleted.removeListener(d), api.tabs.onUpdated.removeListener(h), a({ url: l, title: g }));
+  const { timeout: t } = e, s = await resolveTabId(e), a = t ?? COMMAND_TIMEOUT_MS, o = await api.tabs.get(s).then((n) => n.url || "").catch(() => "");
+  return new Promise((n) => {
+    let r = !1;
+    const i = (l, g) => {
+      r || (r = !0, clearTimeout(c), api.webNavigation.onCompleted.removeListener(d), api.tabs.onUpdated.removeListener(h), n({ url: l, title: g }));
     }, c = setTimeout(() => {
-      api.tabs.get(s).then((l) => r(l.url || "", l.title || "")).catch(() => r(o, ""));
-    }, n), d = (l) => {
-      l.tabId === s && l.frameId === 0 && api.tabs.get(s).then((g) => r(g.url || l.url, g.title || "")).catch(() => r(l.url, ""));
+      api.tabs.get(s).then((l) => i(l.url || "", l.title || "")).catch(() => i(o, ""));
+    }, a), d = (l) => {
+      l.tabId === s && l.frameId === 0 && api.tabs.get(s).then((g) => i(g.url || l.url, g.title || "")).catch(() => i(l.url, ""));
     }, h = (l, g) => {
-      l === s && g.url && g.url !== o && api.tabs.get(s).then((p) => r(p.url || g.url, p.title || "")).catch(() => r(g.url, ""));
+      l === s && g.url && g.url !== o && api.tabs.get(s).then((p) => i(p.url || g.url, p.title || "")).catch(() => i(g.url, ""));
     };
     api.webNavigation.onCompleted.addListener(d), api.tabs.onUpdated.addListener(h);
   });
 }, handleWait = async (e) => {
-  const t = e, s = t.timeout_ms ?? t.timeout ?? t.ms, n = t.type ?? (t.selector ? "selector" : "timeout");
-  if (n === "navigation")
+  const t = e, s = t.timeout_ms ?? t.timeout ?? t.ms, a = t.type ?? (t.selector ? "selector" : "timeout");
+  if (a === "navigation")
     return handleWaitForNavigation({ timeout: s, tabId: t.tabId });
-  if (n === "selector" || n === "network_idle") {
-    if (n === "selector" && !t.selector)
+  if (a === "selector" || a === "network_idle") {
+    if (a === "selector" && !t.selector)
       throw new Error("selector is required for type=selector");
-    const i = await resolveTabId(t);
-    await ensureContentScriptInjected(i);
-    const r = {
+    const r = await resolveTabId(t);
+    await ensureContentScriptInjected(r);
+    const i = {
       id: generateId(),
-      type: n === "selector" ? WolffishCommands.BROWSER_WAIT_FOR : WolffishCommands.BROWSER_WAIT_FOR_NETWORK_IDLE,
-      params: n === "selector" ? { selector: t.selector, timeout: s, visible: t.visible, tabId: i } : { timeout: s, tabId: i }
-    }, c = await sendToContentScript(i, {
+      type: a === "selector" ? WolffishCommands.BROWSER_WAIT_FOR : WolffishCommands.BROWSER_WAIT_FOR_NETWORK_IDLE,
+      params: a === "selector" ? { selector: t.selector, timeout: s, visible: t.visible, tabId: r } : { timeout: s, tabId: r }
+    }, c = await sendToContentScript(r, {
       source: "service-worker",
       target: "content-script",
-      payload: r
+      payload: i
     });
     if (!(c != null && c.success))
-      throw new Error((c == null ? void 0 : c.error) ?? `${n} wait failed`);
+      throw new Error((c == null ? void 0 : c.error) ?? `${a} wait failed`);
     return c.data;
   }
-  const o = Number(s), a = Number.isFinite(o) && o > 0 ? o : 0;
-  return await new Promise((i) => setTimeout(i, a)), { waited: a };
+  const o = Number(s), n = Number.isFinite(o) && o > 0 ? o : 0;
+  return await new Promise((r) => setTimeout(r, n)), { waited: n };
 }, handleNotify = async (e) => {
-  const { title: t, message: s, iconUrl: n } = e;
+  const { title: t, message: s, iconUrl: a } = e;
   return { notificationId: await api.notifications.create("", {
     type: "basic",
     title: t,
     message: s,
-    iconUrl: n || api.runtime.getURL("icon-128.png")
+    iconUrl: a || api.runtime.getURL("icon-128.png")
   }) };
+}, handleSetActivity = async (e) => {
+  const { emoji: t, text: s } = e;
+  return setActivity({ emoji: t, text: s });
 }, handleGetUrl = async (e) => {
   const t = await resolveTabId(e), s = await api.tabs.get(t);
   return { url: s.url || "", title: s.title || "" };
@@ -2025,6 +2115,7 @@ const connectWebSocket = async (e) => {
   [WolffishCommands.BROWSER_WAIT]: handleWait,
   [WolffishCommands.BROWSER_WAIT_FOR_NAVIGATION]: handleWaitForNavigation,
   [WolffishCommands.BROWSER_NOTIFY]: handleNotify,
+  [WolffishCommands.BROWSER_SET_ACTIVITY]: handleSetActivity,
   [WolffishCommands.BROWSER_GET_URL]: handleGetUrl,
   [WolffishCommands.DEBUGGER_ATTACH]: handleDebuggerAttach,
   [WolffishCommands.DEBUGGER_DETACH]: handleDebuggerDetach,
@@ -2052,24 +2143,24 @@ const connectWebSocket = async (e) => {
       if (!s)
         t = makeErrorResponse(e.id, `No handler for command: ${e.type}`);
       else {
-        const n = await withTimeout(s(e.params));
-        t = makeResponse(e.id, n);
+        const a = await withTimeout(s(e.params));
+        t = makeResponse(e.id, a);
       }
     } else if (CONTENT_SCRIPT_COMMANDS.has(e.type)) {
       if (getDebuggerState().attached && DEBUGGER_ROUTABLE_COMMANDS.has(e.type)) {
-        const a = CDP_HANDLERS[e.type];
-        if (a)
+        const n = CDP_HANDLERS[e.type];
+        if (n)
           try {
-            const i = await withTimeout(a(e.params));
-            t = makeResponse(e.id, i), log("→", e.type, "success (CDP)"), sendResponseToServer(t);
+            const r = await withTimeout(n(e.params));
+            t = makeResponse(e.id, r), log("→", e.type, "success (CDP)"), sendResponseToServer(t);
             return;
-          } catch (i) {
-            log("CDP fallback:", e.type, i instanceof Error ? i.message : String(i));
+          } catch (r) {
+            log("CDP fallback:", e.type, r instanceof Error ? r.message : String(r));
           }
       }
-      const n = await resolveTabId(e.params);
-      await ensureContentScriptInjected(n), t = await withTimeout(
-        sendToContentScript(n, {
+      const a = await resolveTabId(e.params);
+      await ensureContentScriptInjected(a), t = await withTimeout(
+        sendToContentScript(a, {
           source: "service-worker",
           target: "content-script",
           payload: e
@@ -2079,8 +2170,8 @@ const connectWebSocket = async (e) => {
       t = makeErrorResponse(e.id, `Unknown command: ${e.type}`);
     log("→", e.type, t.success ? "success" : t.error), sendResponseToServer(t);
   } catch (t) {
-    const s = t instanceof Error ? t.message : String(t), n = makeErrorResponse(e.id, s);
-    log("→", e.type, "error:", n.error), sendResponseToServer(n);
+    const s = t instanceof Error ? t.message : String(t), a = makeErrorResponse(e.id, s);
+    log("→", e.type, "error:", a.error), sendResponseToServer(a);
   }
 }, CACHE_MAX_CONVERSATIONS = 50, CACHE_MAX_EVENTS = 500, cache = {
   saveConversations(e) {
@@ -2100,8 +2191,8 @@ const connectWebSocket = async (e) => {
   async loadAll() {
     try {
       const e = await api.storage.local.get(["wf:conversations", "wf:active"]), t = e["wf:conversations"] ?? [], s = e["wf:active"] ?? null;
-      let n = [];
-      return s && (n = (await api.storage.local.get([`wf:events:${s}`]))[`wf:events:${s}`] ?? []), { conversations: t, active: s, events: n };
+      let a = [];
+      return s && (a = (await api.storage.local.get([`wf:events:${s}`]))[`wf:events:${s}`] ?? []), { conversations: t, active: s, events: a };
     } catch {
       return { conversations: [], active: null, events: [] };
     }
@@ -2153,8 +2244,8 @@ const handleWolffishEvent = (e) => {
 };
 api.runtime.onMessage.addListener((e, t, s) => {
   if (e.type === "get_connection_status") {
-    const n = ws && ws.readyState === WebSocket.OPEN ? "connected" : ws && ws.readyState === WebSocket.CONNECTING ? "connecting" : "disconnected";
-    return n !== connectionStatus && (connectionStatus = n), s({ status: connectionStatus, port: connectionPort }), !0;
+    const a = ws && ws.readyState === WebSocket.OPEN ? "connected" : ws && ws.readyState === WebSocket.CONNECTING ? "connecting" : "disconnected";
+    return a !== connectionStatus && (connectionStatus = a), s({ status: connectionStatus, port: connectionPort }), !0;
   }
   if (e.type === "get_events")
     return sendToServer({ type: "get_conversations" }), cachedConversations.length > 0 || activeConversationId ? s({
@@ -2162,8 +2253,8 @@ api.runtime.onMessage.addListener((e, t, s) => {
       conversations: cachedConversations,
       activeConversation: activeConversationId,
       activeConversationTitle
-    }) : cache.loadAll().then((n) => {
-      cachedConversations = n.conversations, activeConversationId = n.active, cachedEvents = n.events, s({
+    }) : cache.loadAll().then((a) => {
+      cachedConversations = a.conversations, activeConversationId = a.active, cachedEvents = a.events, s({
         events: cachedEvents,
         conversations: cachedConversations,
         activeConversation: activeConversationId,
@@ -2172,9 +2263,9 @@ api.runtime.onMessage.addListener((e, t, s) => {
       });
     }), !0;
   if (e.type === "get_conversation_events" && e.conversationId) {
-    const n = e.conversationId;
-    return sendToServer({ type: "get_conversation_events", conversationId: n }), cache.loadEvents(n).then((o) => {
-      cachedEvents = o, api.runtime.sendMessage({ payload: { event: "conversation_events", data: { conversationId: n, events: o } } }).catch(() => {
+    const a = e.conversationId;
+    return sendToServer({ type: "get_conversation_events", conversationId: a }), cache.loadEvents(a).then((o) => {
+      cachedEvents = o, api.runtime.sendMessage({ payload: { event: "conversation_events", data: { conversationId: a, events: o } } }).catch(() => {
       }), s({ events: o });
     }), !0;
   }

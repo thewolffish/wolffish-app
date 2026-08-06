@@ -21,6 +21,7 @@
  * not error anywhere; it renders a silent default on the phone forever.
  */
 import type { Agent } from '@main/runtime/agent'
+import { readViewerFile } from '@main/viewer'
 import { readConfig } from '@main/workspace/workspace'
 import { app } from 'electron'
 
@@ -113,6 +114,79 @@ async function attempt<T>(fn: (() => Promise<T>) | undefined): Promise<T | undef
 
 const THINKING_MODES = new Set(['off', 'on', 'high', 'max'])
 
+/**
+ * The three hand-written documents that shape the agent — the desktop's Soul,
+ * User and Agents pages (pages/Soul.tsx, User.tsx, Agents.tsx), which are all
+ * one MarkdownEditorPage over one workspace file.
+ *
+ * Declared once, here, because BOTH directions index into it: the snapshot
+ * below reads these paths, and applyMobileSettings (index.ts) writes them from
+ * the `<key>Markdown` config keys the phone sends. A path typo split across
+ * two files would read one document and write another.
+ *
+ * The runtime only ever READS them (prefrontal.ts assembles them into the
+ * system prompt) and the launch migrations deliberately skip them ("custom
+ * agent instructions belong in brain/prefrontal/agents.md, which we never
+ * overwrite"), so the desktop's editor and the phone are the only writers —
+ * which is what lets a broadcast on each write be a complete change signal.
+ */
+export const CUSTOMIZATION_DOCS = {
+  soul: 'brain/identity/soul.md',
+  user: 'brain/identity/user.md',
+  agents: 'brain/prefrontal/agents.md'
+} as const
+
+export type CustomizationDoc = keyof typeof CUSTOMIZATION_DOCS
+
+/**
+ * How much of one document may ride the wire.
+ *
+ * Whole snapshots and whole config writes are single RPC frames, and the relay
+ * drops any record over 1 MiB. Without a ceiling here one oversized soul.md
+ * would not merely degrade the Customization screen — it would break EVERY
+ * settings screen, because they all render the one snapshot it rides in.
+ *
+ * 64 KiB is ~12x the largest bundled default (soul.md, 5.5 KB) and roughly ten
+ * thousand words, while leaving the rest of a real snapshot — capabilities and
+ * the model catalog at ~9 KB each, a usage ledger that grows for years — a
+ * budget that cannot be squeezed by what someone typed into an identity file.
+ */
+export const CUSTOMIZATION_MAX_BYTES = 64 * 1024
+
+/**
+ * The three documents as the phone renders them.
+ *
+ * A missing or unreadable file is '' — the same "nothing written yet" the
+ * desktop's own editor shows — while a file too large to send is OMITTED and
+ * named in `oversized`. The distinction is load-bearing: the phone must never
+ * be handed a truncated document it could save back over the real one, so an
+ * oversized doc gets no text at all and the screen turns read-only.
+ */
+async function readCustomizationDocs(): Promise<{
+  soul?: string
+  user?: string
+  agents?: string
+  oversized?: string[]
+}> {
+  const docs: Record<string, string> = {}
+  const oversized: string[] = []
+  await Promise.all(
+    (Object.keys(CUSTOMIZATION_DOCS) as CustomizationDoc[]).map(async (doc) => {
+      let text: string
+      try {
+        text = await readViewerFile(CUSTOMIZATION_DOCS[doc])
+      } catch {
+        // Never written, or unreadable — an empty editor, not a broken screen.
+        docs[doc] = ''
+        return
+      }
+      if (Buffer.byteLength(text, 'utf8') > CUSTOMIZATION_MAX_BYTES) oversized.push(doc)
+      else docs[doc] = text
+    })
+  )
+  return { ...docs, ...(oversized.length ? { oversized: oversized.sort() } : {}) }
+}
+
 export async function buildConfigSnapshot(sources: SnapshotSources): Promise<ConfigSnapshot> {
   const config = ((await readConfig()) ?? {}) as Cfg
   const capabilities = await sources.serializeCapabilities().catch(() => [])
@@ -122,6 +196,7 @@ export async function buildConfigSnapshot(sources: SnapshotSources): Promise<Con
   const local = (llm.local ?? {}) as Cfg
   const telegram = (config.telegram ?? {}) as Cfg
   const whatsapp = (config.whatsapp ?? {}) as Cfg
+  const mobile = (config.mobile ?? {}) as Cfg
   const google = (config.google ?? {}) as Cfg
   const stt = (config.stt ?? {}) as Cfg
   const tts = (config.tts ?? {}) as Cfg
@@ -155,6 +230,10 @@ export async function buildConfigSnapshot(sources: SnapshotSources): Promise<Con
     attempt(sources.extensionStatus),
     attempt(sources.changelogMonths)
   ])
+
+  // Not an `attempt`: the reader already answers '' per unreadable document,
+  // so there is no failure mode that should cost the section as a whole.
+  const customization = await readCustomizationDocs()
 
   // Per-model thinking mode for the current Brain. Absent unless the user has
   // actually chosen one for this model — the phone falls back to its default
@@ -193,6 +272,12 @@ export async function buildConfigSnapshot(sources: SnapshotSources): Promise<Con
         value: str(variable?.value),
         sensitive: bool(variable?.sensitive)
       })),
+
+    // Soul, User and Agents — the markdown the phone's Customization screen
+    // edits, verbatim. Full text rather than a size or a preview: the screen
+    // shows the document and writes it back, and a half-loaded document is a
+    // document that cannot be edited safely.
+    customization,
 
     services: {
       google: {
@@ -273,6 +358,14 @@ export async function buildConfigSnapshot(sources: SnapshotSources): Promise<Con
 
     channels: {
       inapp: { verbose: bool(config.inapp?.verbose) },
+      // The phone's own channel — the two settings the Mobile panel here
+      // carries, so the phone can render and edit them rather than being the
+      // one device that cannot see what it is set to. Notifications default
+      // ON (MobileChannelConfig), the feed defaults clean.
+      mobile: {
+        notifications: bool(mobile.notifications, true),
+        verbose: bool(mobile.verbose)
+      },
       telegram: {
         enabled: bool(telegram.enabled),
         // Stored as number[]; the phone renders one comma-joined line.

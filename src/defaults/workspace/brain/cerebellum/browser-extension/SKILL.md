@@ -1,6 +1,6 @@
 ---
 name: browser-extension
-description: Control the user's connected browsers (Chrome, Edge, Brave, Firefox — several at once) via the Wolffish extension — navigate pages, click elements, fill forms, take screenshots, read content, manage tabs, and execute JavaScript in the user's real browser session.
+description: Open, read and drive any web page in the user's real browser — logins, paywalls and JS-heavy sites included. Reaches what web_fetch cannot, and acts as well as reads — navigate, click, fill forms, screenshot, scrape, manage tabs, run JavaScript. Chrome, Edge, Brave, Firefox, several at once.
 triggers:
   - browser
   - extension
@@ -89,7 +89,7 @@ requires:
 tools:
   # Navigation
   - name: ext_navigate
-    description: Navigate to a URL in the active tab of the connected browser.
+    description: Navigate to a URL in the Wolffish tab. Wolffish works in its own tab group, created on first use — the user's own tabs are never navigated away.
     parameters:
       url:
         type: string
@@ -98,6 +98,14 @@ tools:
         type: string
         description: When to consider navigation done.
         enum: [load, domcontentloaded]
+        required: false
+      newTab:
+        type: boolean
+        description: Open a fresh tab in the Wolffish group instead of reusing the current one. Use it when starting a new task or a new site.
+        required: false
+      tabId:
+        type: number
+        description: Target tab. Default the current Wolffish tab.
         required: false
   - name: ext_back
     description: Navigate back in browser history.
@@ -346,14 +354,14 @@ tools:
         required: false
   # Tab Management
   - name: ext_tabs_list
-    description: List all open tabs with id, url, title, active state.
+    description: List all open tabs with id, url, title, active state, and a wolffish flag that is true for tabs in the Wolffish tab group and false for the user's own tabs.
     parameters:
       windowId:
         type: number
         description: Filter to a specific window. Default all windows.
         required: false
   - name: ext_tab_open
-    description: Open a new tab, optionally with a URL.
+    description: Open a new tab inside the Wolffish tab group and make it the current target, optionally with a URL.
     parameters:
       url:
         type: string
@@ -399,7 +407,7 @@ tools:
     description: List all open browser windows.
     parameters: {}
   - name: ext_window_open
-    description: Open a new browser window.
+    description: Open a new browser window. Its tab sits outside the Wolffish tab group, so address it with the returned tabId. Prefer ext_tab_open unless a separate window is really needed.
     parameters:
       url:
         type: string
@@ -862,6 +870,30 @@ tools:
         type: number
         description: Target tab.
         required: false
+  # Wolffish tab group
+  - name: ext_set_activity
+    description: Set the label on the Wolffish tab group — an emoji plus a few words for what you are doing right now. Call with no arguments to reset it to plain Wolffish.
+    parameters:
+      emoji:
+        type: string
+        description: A single emoji for the current activity.
+        required: false
+      text:
+        type: string
+        description: A few words describing the activity. Keep it under about 24 characters — tab groups are narrow.
+        required: false
+  # Starting a browser
+  - name: ext_launch_browser
+    description: Start a browser on the user's machine so the Wolffish extension can connect. Use it when no browser is connected. Opens the default browser, or the first supported one installed, then waits for the extension to come online. Works on macOS, Windows and Linux.
+    parameters:
+      browser:
+        type: string
+        description: Launch this browser specifically. One of chrome, edge, brave, arc, vivaldi, opera, chromium, firefox. Omit to use the user's default browser.
+        required: false
+      wait_ms:
+        type: number
+        description: How long to wait for the extension to connect, in milliseconds. Default 30000, 0 to return immediately.
+        required: false
   # Multi-browser
   - name: ext_browsers
     description: List the browsers currently connected through the Wolffish extension — name, version, OS, signed-in profile email, and the selection key for ext_use_browser. Two profiles of the same browser are two entries told apart by profile email. With one browser connected every ext_* tool targets it automatically.
@@ -888,7 +920,7 @@ confirm_patterns:
     reason: Modifying browser cookies
   - pattern: 'ext_navigate\s.*(?:bank|paypal|venmo|stripe\.com|checkout|payment)'
     reason: Navigating to a financial or payment site
-version: 1.5.1
+version: 1.7.0
 ---
 
 # Browser Extension
@@ -921,9 +953,45 @@ Selectors are standard CSS: `#id`, `.class`, `input[name="email"]`, `div.contain
 - For large/complex pages (LinkedIn, Gmail, etc.), target a specific container with the `selector` param instead of reading the whole page — e.g. `selector: "main"` or `selector: ".content"`.
 - Modern sites lazy-load content as you scroll. If a section is empty, scroll down with `ext_scroll` then read again.
 
-## Tab Management
+## When this is the right tool (and when it isn't)
 
-Don't navigate away from the user's current tab. If the task involves looking something up, researching, or visiting a different site — open a new tab with `ext_tab_open` instead of using `ext_navigate` on the active tab. The user may be in the middle of something. Use `ext_navigate` only when the user explicitly asks to go somewhere, or when you're already in a tab you opened yourself. For multi-step work across different sites, open each in its own tab and switch between them with `ext_tab_switch`.
+This capability is the strongest way to reach the web, not the cheapest. Prefer it whenever reach or reliability matters:
+
+- The task names a **specific site**, or needs one that is logged-in, paid-for, paywalled, or behind a consent/bot wall — the user's own session is already authenticated here.
+- The page is **JS-rendered** (most modern apps), infinite-scrolls, or hides content behind a click. `web_fetch` returns an empty shell for these; you see the page as the user does.
+- The work is **more than reading** — filling a form, posting, downloading, checking out, clicking through a flow.
+- A `web_fetch` already came back thin, boilerplate, or paywalled. Don't retry the fetch; come here.
+- The task spans **several pages** — the per-page cost of a fetch-then-fail cycle overtakes opening the browser once.
+
+Hand back to `web_search` when the question is genuinely a single lookup and a snippet answers it, or when you need to discover *which* URL to open before opening it. Search first, then open the result here, is a good pattern — better than opening a search engine in the browser and reading its results page.
+
+If nothing is connected, `ext_launch_browser` starts the user's browser. If it can't, say so plainly and fall back to `web_search` / `web_fetch` rather than stalling the task.
+
+## Your own tab group
+
+You work in a **Wolffish tab group**, never in the user's tabs. The first command that needs a page creates a fresh tab, coloured blue and labelled `Wolffish`, and every later command lands there by default. The user's own tabs are never navigated, clicked, or typed into.
+
+- **Never reuse an open tab.** There is nothing to opt into — the default target is always your own tab. Start a new task or a new site in a *fresh* one with `ext_navigate {url, newTab: true}` or `ext_tab_open {url}` rather than reusing the tab from an unrelated task.
+- **Working across sites**: open each in its own tab (they all join the group) and move between them with `ext_tab_switch`.
+- **Reading the user's page**: only when they ask for it ("what's on this page?"). Call `ext_tabs_list`, find the entry with `wolffish: false` and `active: true`, and pass its `tabId` explicitly. An explicit `tabId` always wins over the default. Never *act* on a user tab — read it, then do the work in your own.
+- If the user closes your tab or the whole group, the next command quietly creates a new one.
+
+## Saying what you're doing
+
+The tab group's name is yours to write, and it is the only thing the user sees while you work. Keep it honest and current with `ext_set_activity`.
+
+- Set it **as you start**: `ext_set_activity {emoji: "🔎", text: "Comparing flights"}` → the group reads `🔎 Comparing flights`.
+- **Update it whenever the task changes** — a new site, a new phase, filling a form vs reading results. A stale label is worse than none.
+- Pick the emoji and wording yourself; there is no fixed vocabulary. Short is better — tab groups show roughly 24 characters. `📖 Reading docs`, `🛒 Checking out`, `✍️ Writing reply`, `📸 Capturing page`.
+- **Reset when you're done**: `ext_set_activity` with no arguments puts it back to plain `Wolffish`.
+- It's cosmetic — a browser without tab-group support just skips it, and it never fails a task.
+
+## When no browser is connected
+
+If `ext_*` tools report that the extension is not connected, the browser is probably not running. Call **`ext_launch_browser`** — it starts the user's default browser (or a named one), waits for the extension to connect, and reports back. Then carry on with the task.
+
+- Launch first, ask second: this is a normal recovery step, not something to check in about.
+- If it launches but the extension never connects, the extension isn't installed in that browser — say so, and offer to try another with `ext_launch_browser {browser: "chrome"}`.
 
 ## Screenshots
 

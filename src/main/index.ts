@@ -7,6 +7,11 @@ import { collectChannelStatus } from '@main/channels/status'
 import { ElectronChannel } from '@main/channels/electron/channel'
 import { ExtensionServer } from '@main/channels/extension/server'
 import { MobileChannel } from '@main/channels/mobile/channel'
+import {
+  CUSTOMIZATION_DOCS,
+  CUSTOMIZATION_MAX_BYTES,
+  type CustomizationDoc
+} from '@main/channels/mobile/snapshot'
 import { TelegramChannel } from '@main/channels/telegram/channel'
 import { TurnRunner, type ActiveRun } from '@main/channels/turn-runner'
 import { WhatsAppChannel } from '@main/channels/whatsapp/channel'
@@ -22,7 +27,9 @@ import {
   updateConversation,
   type ConversationFile,
   type ConversationMessage,
-  type ConversationMeta
+  type ConversationMeta,
+  type ConversationRating,
+  type ConversationRatingSource
 } from '@main/conversations'
 import { turnScope } from '@main/runtime/corpus'
 import type { TaskSnapshot } from '@main/runtime/broca'
@@ -31,6 +38,7 @@ import { getDataAnalytics, type DataAnalytics } from '@main/data'
 import {
   copyDiagnosticArchive,
   exportConversationDiagnostics,
+  type DiagnosticProgress,
   type DiagnosticResult
 } from '@main/diagnostics'
 import { githubService, type GitHubStatus, type GitHubTestResult } from '@main/github'
@@ -829,6 +837,35 @@ agent.corpus.on('conversation.rated', ({ conversation, messageId, score, at, sou
     rating: { messageId, score, at, source }
   })
 )
+
+/**
+ * Record one turn score, from whichever surface cast it — the in-app bar's
+ * IPC, the phone's rate RPC. Write first, announce second, and only when the
+ * write actually landed: the corpus event is what moves every OTHER open
+ * surface (this app's rating bar, the phone's), so announcing a vote the file
+ * refused would paint a score nothing holds.
+ *
+ * Channels keep their own emit at their own call sites (they resolve the
+ * target message differently — a bare-number reply scores the newest turn),
+ * but land on this same writer underneath.
+ */
+async function recordTurnRating(
+  conversationId: string,
+  messageId: string | null,
+  score: number,
+  source: ConversationRatingSource
+): Promise<ConversationRating | null> {
+  const rating = await rateConversationTurn(conversationId, messageId, score, source)
+  if (!rating) return null
+  agent.corpus.emit('conversation.rated', {
+    conversation: conversationId,
+    messageId: rating.messageId,
+    score: rating.score,
+    at: rating.at,
+    source
+  })
+  return rating
+}
 // Full rebuilds + the startup catch-up index via indexWalkedSync directly, so
 // no conversation.indexed fires while they run — a list fetched mid-rebuild
 // can be partial (see the getReindexStatus guard in conversation:list). Push
@@ -968,6 +1005,28 @@ async function applyMobileSettings(settings: Record<string, unknown>): Promise<v
         }
         break
       }
+      // Customization — the three hand-written documents behind the desktop's
+      // Soul, User and Agents pages. Written through writeViewerFile, which is
+      // the exact call those pages' Save button makes, so a save from the phone
+      // and a save from here are one act with one atomic write.
+      case 'soulMarkdown':
+      case 'userMarkdown':
+      case 'agentsMarkdown': {
+        const doc = key.slice(0, -'Markdown'.length) as CustomizationDoc
+        const text = str(value)
+        // The phone enforces the same ceiling before sending; this is the side
+        // that owns the file, so it refuses rather than trusting the sender.
+        // Throwing IS the answer — the phone treats a rejected configSet as a
+        // refusal, refetches the snapshot and puts the document back.
+        if (Buffer.byteLength(text, 'utf8') > CUSTOMIZATION_MAX_BYTES) {
+          throw new Error(`${CUSTOMIZATION_DOCS[doc]} is too large to write from the phone`)
+        }
+        await writeViewerFile(CUSTOMIZATION_DOCS[doc], text)
+        // Same announcement this app's own editor makes below, so an open
+        // Soul/User/Agents page adopts the phone's save live.
+        broadcast('customization:changed', { doc, path: CUSTOMIZATION_DOCS[doc] })
+        break
+      }
       // Preferences — mirroring the runtime:* IPC handlers exactly: persist,
       // then update the live runtime the same way a click in the panel does.
       case 'restrictPowerfulModels':
@@ -987,6 +1046,18 @@ async function applyMobileSettings(settings: Record<string, unknown>): Promise<v
           updates: { ...(c.updates ?? { enabled: true }), enabled: value === true }
         }))
         break
+      // The phone's own two channel settings, edited from the phone. Routed
+      // through the channel's setters rather than the config writer, because
+      // each does more than persist: notifications registers or withdraws the
+      // model's notify_phone tool, and both emit the status the desktop's
+      // Mobile panel is listening to — so a flip made on the phone moves that
+      // panel's segmented control in the same breath.
+      case 'mobileNotifications':
+        await mobileChannel.setNotificationsEnabled(value === true)
+        break
+      case 'mobileVerbose':
+        await mobileChannel.setVerbose(value === true)
+        break
       default:
         throw new Error(`"${key}" is not editable from the phone`)
     }
@@ -1003,6 +1074,23 @@ async function applyMobileSettings(settings: Record<string, unknown>): Promise<v
   for (const service of new Set(applied.map((key) => MOBILE_KEY_SERVICE[key]))) {
     if (service) broadcast('services:changed', { service })
   }
+}
+
+/**
+ * Which customization document a workspace-relative path names, or null for
+ * every other file. Windows separators and a leading `./` are normalized away
+ * because the caller is a UI path, not a canonical one — the same tolerance
+ * resolveScoped applies before touching disk.
+ */
+function customizationDocFor(relativePath: string): CustomizationDoc | null {
+  const normalized = String(relativePath ?? '')
+    .replace(/\\/g, '/')
+    .replace(/^\.?\/+/, '')
+  return (
+    (Object.keys(CUSTOMIZATION_DOCS) as CustomizationDoc[]).find(
+      (doc) => CUSTOMIZATION_DOCS[doc] === normalized
+    ) ?? null
+  )
 }
 
 /** Which service panel each phone-editable key belongs to, for re-seeding. */
@@ -1098,6 +1186,11 @@ const mobileChannel = new MobileChannel({
   },
   runReflectionJob: async (kind) =>
     kind === 'deepClean' ? agent.brainstem.runDeepCleanNow() : agent.brainstem.runReflectionNow(),
+  // A vote cast on the phone is a vote cast in this app: same writer, same
+  // corpus announcement, so it lands on an open desktop chat's rating bar in
+  // the announcement's own latency. Only the recorded `source` differs.
+  rateTurn: (conversationId, messageId, score) =>
+    recordTurnRating(conversationId, messageId, score, 'mobile'),
   // The phone's capability toggle takes the exact same path as a click in
   // this app's own settings panel — write, guards, broadcast and all.
   applyCapability: (name, enabled) => mobileSetCapabilityEnabled(name, enabled),
@@ -1128,7 +1221,18 @@ const mobileChannel = new MobileChannel({
   saveNotificationsEnabled: async (enabled) => {
     await persistMobileChannelConfig({ notifications: enabled })
   },
+  // The phone's feed preference, persisted beside it. Both keys ride the
+  // config snapshot to the phone and come back through applyMobileSettings,
+  // so the two devices edit one value rather than two drifting copies.
+  loadVerbose: async () => (await getMobileChannelConfig()).verbose === true,
+  saveVerbose: async (verbose) => {
+    await persistMobileChannelConfig({ verbose })
+  },
   onStatus: (status) => broadcast('mobile:statusChange', status),
+  // A project re-file made on the phone is a write to this app's own
+  // conversation file, so the rail, History and the Projects page re-read on
+  // the very signal a re-file made here fires.
+  onConversationChanged: (id) => broadcast('conversation:changed', { id }),
   // Connection logging is unconditional — a link that will not form is
   // exactly when the record is needed, and it lands in the workspace log
   // beside every other channel's, rotated per day like the rest.
@@ -1144,14 +1248,21 @@ const mobileChannel = new MobileChannel({
 // id matches the message the same turn later persists, so the renderer upserts
 // by id (never a duplicate). Payload-targeted (unlike the id-less
 // conversation:changed) so the renderer only touches the named conversation.
-const mirrorMessageToRenderer = (conversationId: string, message: ConversationMessage): void => {
+const mirrorMessageToRenderer = (
+  conversationId: string,
+  message: ConversationMessage | null,
+  userMessage?: ConversationMessage
+): void => {
   // Best-effort UI mirror. The channel invokes this from inside the turn's
   // render chain (which also drives the outbound bot sends + the persist), so
   // a throw here — e.g. webContents.send on a window torn down mid-send — must
   // never propagate back and wedge the turn. Same contract as the turn
   // lifecycle listener.
   try {
-    broadcast('conversation:messageMirror', { conversationId, message })
+    // The renderer reads its prompt off disk (channel turns persist the user
+    // message before running), so only the assistant half concerns it, and a
+    // prompt-only tick has nothing for it at all.
+    if (message) broadcast('conversation:messageMirror', { conversationId, message })
   } catch {
     // a broken renderer bridge must never affect the channel turn
   }
@@ -1162,7 +1273,11 @@ const mirrorMessageToRenderer = (conversationId: string, message: ConversationMe
     // upserts into its cached body. Upsert, not refetch-per-tick: the
     // payload IS the state, so tool and task cards render mid-turn and the
     // end-of-turn save replaces the snapshot under the same id.
-    mobileChannel.pushMessageAppended(conversationId, message)
+    //
+    // The prompt rides along. It IS on disk for a channel turn, but the phone
+    // deliberately does not re-read the body mid-turn, so without this the
+    // Telegram message being answered is invisible there until the turn ends.
+    mobileChannel.pushMessageAppended(conversationId, message ?? undefined, userMessage)
   } catch {
     // and neither must a broken tunnel
   }
@@ -1189,6 +1304,11 @@ function pushTurnToMobile(ev: {
 }
 telegramChannel.setMessageMirror(mirrorMessageToRenderer)
 whatsappChannel.setMessageMirror(mirrorMessageToRenderer)
+// Automations and procedures mirror the same way. Their conversation is
+// created and saved BEFORE the run starts, so it can be opened while it works
+// — and this is what makes that feed fill in live instead of sitting on the
+// prompt until the run ends.
+agent.setAutonomousMessageMirror(mirrorMessageToRenderer)
 // In-app turns mirror the OTHER way: their renderer already streams
 // (chat:segment), so the snapshot goes only to the paired phone — as a FULL
 // message (prose + segments, stable id) the phone upserts into its cached
@@ -1196,9 +1316,13 @@ whatsappChannel.setMessageMirror(mirrorMessageToRenderer)
 // appear on the phone while it is still writing instead of all at once at
 // the end-of-turn save. Text rides the same payload, so no message.delta
 // bubble is emitted for these turns — one rendering path, no duplicates.
-electronChannel.setMessageMirror((conversationId, message) => {
+electronChannel.setMessageMirror((conversationId, message, userMessage) => {
   try {
-    mobileChannel.pushMessageAppended(conversationId, message)
+    // `message` is null on the prompt-only tick this channel emits at send,
+    // which reaches the phone as a nudge carrying the user message — the one
+    // copy of an in-app prompt that exists anywhere but the renderer's feed
+    // until the turn folds to disk.
+    mobileChannel.pushMessageAppended(conversationId, message ?? undefined, userMessage)
   } catch {
     // a broken tunnel must never affect the in-app turn
   }
@@ -1821,6 +1945,25 @@ function broadcast<T>(channel: string, payload: T): void {
         // a dead tunnel is not the settings save's problem
       }
     }, 300)
+  }
+}
+
+/**
+ * Tell the phone its own two channel settings moved.
+ *
+ * Needed because `mobile:statusChange` — the broadcast those setters fire — is
+ * on the silent list above, and must stay there: the same payload carries the
+ * live tunnel frame counters, so pushing on it would turn a settings hook into
+ * a per-frame heartbeat. This is the narrow, deliberate exception: called from
+ * the two IPC handlers that actually change a setting, never from the status
+ * stream. Best-effort, like every other push — a dead tunnel is not a settings
+ * save's problem, and the reconcile on reconnect settles it either way.
+ */
+function pushMobileChannelConfig(): void {
+  try {
+    if (mobileChannel.hasPeer) mobileChannel.pushConfigChanged('channels')
+  } catch {
+    // nothing — the phone re-pulls the snapshot when the link comes back
   }
 }
 
@@ -3017,13 +3160,22 @@ app.whenReady().then(async () => {
   ipcMain.handle('mobile:offerCode', () => mobileChannel.offerCode())
   ipcMain.handle('mobile:disconnect', () => mobileChannel.disconnect())
   ipcMain.handle('mobile:unpair', () => mobileChannel.unpair())
-  ipcMain.handle('mobile:setVerbose', (_event, verbose: boolean) => {
-    mobileChannel.setVerbose(Boolean(verbose))
-    return mobileChannel.getStatus()
+  // Both of these settings live on two screens — this panel and the phone's
+  // own Channels page — so each one tells the other side. The phone's writes
+  // come back through applyMobileSettings and are announced by the broadcast
+  // there; a change made HERE needs the push spelled out, because
+  // mobile:statusChange is (rightly) on the silent list: it also carries the
+  // per-frame tunnel counters, and pushing on those would be a heartbeat.
+  ipcMain.handle('mobile:setVerbose', async (_event, verbose: boolean) => {
+    const status = await mobileChannel.setVerbose(Boolean(verbose))
+    pushMobileChannelConfig()
+    return status
   })
-  ipcMain.handle('mobile:setNotifications', (_event, enabled: boolean) =>
-    mobileChannel.setNotificationsEnabled(Boolean(enabled))
-  )
+  ipcMain.handle('mobile:setNotifications', async (_event, enabled: boolean) => {
+    const status = await mobileChannel.setNotificationsEnabled(Boolean(enabled))
+    pushMobileChannelConfig()
+    return status
+  })
   ipcMain.handle('mobile:setRelayUrl', (_event, url: string | null) =>
     mobileChannel.setRelayUrl(typeof url === 'string' ? url : null)
   )
@@ -3040,7 +3192,15 @@ app.whenReady().then(async () => {
   agent.corpus.on('conversation.deleted', (event) => {
     if (event?.id) mobileChannel.pushConversationDeleted(event.id)
   })
-  agent.corpus.on('conversation.rated', () => mobileChannel.pushUsageChanged())
+  // A score cast anywhere reaches the phone's rating bar the way it reaches
+  // this app's — one targeted push carrying the rating itself. Nothing else
+  // announces it: a ratings-only write reindexes nothing and moves no
+  // updated_at, so neither the list push nor the phone's staleness check
+  // would ever describe it.
+  agent.corpus.on('conversation.rated', ({ conversation, messageId, score, at, source }) => {
+    mobileChannel.pushTurnScored(conversation, { messageId, score, at, source })
+    mobileChannel.pushUsageChanged()
+  })
   // Every recorded turn moves the ledger — from ANY channel, not just runs
   // the phone can see. Without this the phone's Usage screen only advanced
   // when a turn happened to be scored.
@@ -3750,22 +3910,7 @@ app.whenReady().then(async () => {
   ipcMain.handle(
     'conversation:rate',
     async (_e, payload: { conversationId: string; messageId: string | null; score: number }) => {
-      const rating = await rateConversationTurn(
-        payload.conversationId,
-        payload.messageId,
-        payload.score,
-        'inapp'
-      )
-      if (rating) {
-        agent.corpus.emit('conversation.rated', {
-          conversation: payload.conversationId,
-          messageId: rating.messageId,
-          score: rating.score,
-          at: rating.at,
-          source: 'inapp'
-        })
-      }
-      return rating
+      return recordTurnRating(payload.conversationId, payload.messageId, payload.score, 'inapp')
     }
   )
 
@@ -3833,8 +3978,18 @@ app.whenReady().then(async () => {
   )
   ipcMain.handle(
     'viewer:writeFile',
-    (_e, relativePath: string, content: string): Promise<void> =>
-      writeViewerFile(relativePath, content)
+    async (_e, relativePath: string, content: string): Promise<void> => {
+      await writeViewerFile(relativePath, content)
+      // Saving Soul, User or Agents — from their own pages or from the
+      // Workspace file tree — is a change a paired phone mirrors. The
+      // announcement reaches other windows directly and the phone through
+      // broadcast()'s generic config.changed hook, which is why there is no
+      // second push to remember here. Scoped to the three: every other
+      // workspace file is desktop-only, and announcing those would make the
+      // phone refetch a snapshot that cannot have moved.
+      const doc = customizationDocFor(relativePath)
+      if (doc) broadcast('customization:changed', { doc, path: CUSTOMIZATION_DOCS[doc] })
+    }
   )
   ipcMain.handle(
     'viewer:hasDefault',
@@ -3908,20 +4063,34 @@ app.whenReady().then(async () => {
     onJobStarted: (info) => broadcast('heartbeat:jobStarted', info),
     onJobEnded: (payload) => broadcast('heartbeat:jobEnded', payload),
     onJobLog: (entry) => broadcast('heartbeat:jobLog', entry),
-    onRunsChanged: (snapshot) => broadcast('heartbeat:runsChanged', snapshot),
+    onRunsChanged: (snapshot) => {
+      broadcast('heartbeat:runsChanged', snapshot)
+      // The phone's Automations cards gate their play button on the same pool,
+      // so the two screens agree about what is already running.
+      if (mobileChannel.hasPeer) mobileChannel.pushAutomationRuns(snapshot)
+    },
     onCompactionRun: () => broadcast('compaction:changed', {})
   })
   // Every scheduler reload = the heartbeat file changed (any writer: card
   // editor, markdown save, the agent's automation_* tools, once-job
   // self-deletes). Push it so an open Automations page re-fetches jobs and
   // edit stamps instead of showing them stale until re-entry.
-  agent.corpus.on('brainstem.schedulerReloaded', () => broadcast('heartbeat:changed', {}))
+  agent.corpus.on('brainstem.schedulerReloaded', () => {
+    broadcast('heartbeat:changed', {})
+    if (mobileChannel.hasPeer) mobileChannel.pushAutomationsChanged()
+  })
 
   // Procedures — saved prompts the user runs on demand from the Procedures page.
   // Plain CRUD over a JSON file. The store pushes procedures:changed on every
   // committed write, so a page left open re-fetches when the agent's
   // procedure_* tools mutate it outside any renderer action.
-  setProceduresChangedListener(() => broadcast('procedures:changed', {}))
+  setProceduresChangedListener(() => {
+    broadcast('procedures:changed', {})
+    // Fires on EVERY committed write — this app's page, the agent's
+    // procedure_* tools, or the phone's own editor echoing back. The phone
+    // re-lists on it exactly as an open page here re-fetches.
+    if (mobileChannel.hasPeer) mobileChannel.pushProceduresChanged()
+  })
   ipcMain.handle('procedures:list', () => listProcedures())
   ipcMain.handle(
     'procedures:create',
@@ -3958,7 +4127,16 @@ app.whenReady().then(async () => {
   // Projects — same inert-data shape as procedures (flat JSON list, same
   // projects:changed push); the file picker runs main-side because only main
   // has dialog.
-  setProjectsChangedListener(() => broadcast('projects:changed', {}))
+  setProjectsChangedListener(() => {
+    broadcast('projects:changed', {})
+    if (mobileChannel.hasPeer) {
+      mobileChannel.pushProjectsChanged()
+      // Projects also ride the config snapshot — the phone's chat project
+      // picker reads them from there — so the section that mirrors it has to
+      // be refreshed too, not just the Projects screen.
+      mobileChannel.pushConfigChanged('projects')
+    }
+  })
   ipcMain.handle('projects:list', () => listProjects())
   ipcMain.handle(
     'projects:create',
@@ -4005,9 +4183,28 @@ app.whenReady().then(async () => {
   // app update (and on launch). On a large workspace that takes a while, so we
   // surface a blocking overlay with live progress, mirroring the heartbeat one.
   ipcMain.handle('reindex:getStatus', () => agent.cortex.getReindexStatus())
-  agent.corpus.on('index.reindexStarted', (p) => broadcast('reindex:started', p))
-  agent.corpus.on('index.reindexProgress', (p) => broadcast('reindex:progress', p))
-  agent.corpus.on('index.reindexed', (p) => broadcast('reindex:ended', p))
+  // The phone gets the same three edges as a card in its overlay stack rather
+  // than a takeover — a phone that cannot be used at all while an index
+  // rebuilds is a phone that looks broken. Each one re-reads the cortex instead
+  // of translating its own payload, so the wire carries the same object the
+  // desktop's own overlay renders, and the end fires `null`, which is what
+  // retires the card. The channel throttles the progress ticks; start and end
+  // go through unthrottled.
+  const mirrorReindex = (): void => {
+    if (mobileChannel.hasPeer) mobileChannel.pushReindexStatus(agent.cortex.getReindexStatus())
+  }
+  agent.corpus.on('index.reindexStarted', (p) => {
+    broadcast('reindex:started', p)
+    mirrorReindex()
+  })
+  agent.corpus.on('index.reindexProgress', (p) => {
+    broadcast('reindex:progress', p)
+    mirrorReindex()
+  })
+  agent.corpus.on('index.reindexed', (p) => {
+    broadcast('reindex:ended', p)
+    mirrorReindex()
+  })
 
   // Per-conversation diagnostic export — bundles everything relevant to one
   // conversation into a zip under workspace/diagnostics/ for the developer.
@@ -4021,65 +4218,83 @@ app.whenReady().then(async () => {
   // card for a run that is still going and about to succeed. Same conversation
   // means the same bundle either way; a DIFFERENT conversation is a real
   // conflict and still gets told so.
+  //
+  // The guard is shared with the PHONE, which asks for the same bundle over
+  // the tunnel (Rpc.diagnosticsExport). One collector, one archive, whichever
+  // screen pressed the button: two of these running at once would read the
+  // same log files and write into the same folder, and the second would only
+  // slow the first down.
   let diagnosticsRunning: { conversationId: string; run: Promise<DiagnosticResult> } | null = null
-  ipcMain.handle(
-    'diagnostics:export',
-    async (_e, payload: { conversationId: string }): Promise<DiagnosticResult> => {
-      if (diagnosticsRunning) {
-        if (diagnosticsRunning.conversationId === payload.conversationId) {
-          return await diagnosticsRunning.run
-        }
-        return {
-          ok: false,
-          error: 'another diagnostic export is already running',
-          conversationId: payload.conversationId,
-          conversationTitle: '',
-          fileName: '',
-          zipPath: '',
-          relativePath: '',
-          sizeBytes: 0,
-          fileCount: 0,
-          durationMs: 0,
-          modelOpinion: false,
-          groups: [],
-          warnings: []
-        }
+  const runDiagnosticExport = async (
+    conversationId: string,
+    /** Where progress goes for THIS caller, on top of the renderer broadcast. */
+    onProgress?: (progress: DiagnosticProgress) => void
+  ): Promise<DiagnosticResult> => {
+    if (diagnosticsRunning) {
+      if (diagnosticsRunning.conversationId === conversationId) {
+        return await diagnosticsRunning.run
       }
-      const run = (async (): Promise<DiagnosticResult> => {
-        const config = await readConfig()
-        const provider = agent.thalamus.getActiveProvider()
-        // Cloud-only, by design: the opinion is a lean side-call and a local
-        // model is the one case where "quick" isn't true. No model at all and
-        // it's skipped outright.
-        const cloud = provider !== null && provider !== 'local'
-        return await exportConversationDiagnostics({
-          conversationId: payload.conversationId,
-          env: {
-            appVersion: app.getVersion(),
-            packaged: app.isPackaged,
-            provider,
-            model: agent.thalamus.getActiveModel(),
-            chatMode: config?.llm.mode ?? 'single',
-            locale: config?.locale ?? null
-          },
-          llm: cloud ? agent.thalamus : null,
-          toolCapability: (tool) => agent.cerebellum.getToolCapability(tool),
-          capabilities: agent.cerebellum
-            .getCapabilities()
-            .map((c) => ({ name: c.name, dir: c.dir })),
-          onProgress: (p) => broadcast('diagnostics:progress', p)
-        })
-      })()
-      // Published before the first await inside `run` can yield, so a caller
-      // arriving mid-run always finds it.
-      diagnosticsRunning = { conversationId: payload.conversationId, run }
-      try {
-        return await run
-      } finally {
-        diagnosticsRunning = null
+      return {
+        ok: false,
+        error: 'another diagnostic export is already running',
+        conversationId,
+        conversationTitle: '',
+        fileName: '',
+        zipPath: '',
+        relativePath: '',
+        sizeBytes: 0,
+        fileCount: 0,
+        durationMs: 0,
+        modelOpinion: false,
+        groups: [],
+        warnings: []
       }
     }
+    const run = (async (): Promise<DiagnosticResult> => {
+      const config = await readConfig()
+      const provider = agent.thalamus.getActiveProvider()
+      // Cloud-only, by design: the opinion is a lean side-call and a local
+      // model is the one case where "quick" isn't true. No model at all and
+      // it's skipped outright.
+      const cloud = provider !== null && provider !== 'local'
+      return await exportConversationDiagnostics({
+        conversationId,
+        env: {
+          appVersion: app.getVersion(),
+          packaged: app.isPackaged,
+          provider,
+          model: agent.thalamus.getActiveModel(),
+          chatMode: config?.llm.mode ?? 'single',
+          locale: config?.locale ?? null
+        },
+        llm: cloud ? agent.thalamus : null,
+        toolCapability: (tool) => agent.cerebellum.getToolCapability(tool),
+        capabilities: agent.cerebellum.getCapabilities().map((c) => ({ name: c.name, dir: c.dir })),
+        // The renderer always hears it — its overlay may be open for the same
+        // conversation — and the caller that asked hears it too.
+        onProgress: (p) => {
+          broadcast('diagnostics:progress', p)
+          onProgress?.(p)
+        }
+      })
+    })()
+    // Published before the first await inside `run` can yield, so a caller
+    // arriving mid-run always finds it.
+    diagnosticsRunning = { conversationId, run }
+    try {
+      return await run
+    } finally {
+      diagnosticsRunning = null
+    }
+  }
+  ipcMain.handle(
+    'diagnostics:export',
+    async (_e, payload: { conversationId: string }): Promise<DiagnosticResult> =>
+      await runDiagnosticExport(payload.conversationId)
   )
+  // The phone's button, through the same runner. Registered on the channel so
+  // the tunnel's handler table stays in one place.
+  mobileChannel.setDiagnosticExporter(runDiagnosticExport)
 
   // "Save a copy" on the confirmation card — the archive already lives in the
   // workspace; this only duplicates it wherever the user points.
@@ -4173,8 +4388,9 @@ app.whenReady().then(async () => {
     // Deleting a conversation whose turn is still running would race the
     // end-of-turn persist and resurrect the file (or strand a live stream
     // with no home). The sidebar disables delete for processing rows; this
-    // is the authoritative backstop.
-    if (turnRunner.isConversationActive(id)) {
+    // is the authoritative backstop. Automation/procedure runs now own a real
+    // conversation for their whole lifetime, so they need the same guard.
+    if (turnRunner.isConversationActive(id) || agent.isAutonomousRunActive(id)) {
       return { ok: false }
     }
     await deleteConversation(id)
@@ -4515,7 +4731,10 @@ app.whenReady().then(async () => {
     // the runner. Without this the Stop button on a mirrored channel run
     // would be a dead control.
     if (!result.canceled && conversationId) {
-      return { canceled: turnRunner.cancelConversation(conversationId) }
+      if (turnRunner.cancelConversation(conversationId)) return { canceled: true }
+      // Last stop: an automation/procedure run, which never enters the runner
+      // — the agent owns those controllers.
+      return { canceled: agent.cancelAutonomousRun(conversationId) }
     }
     return result
   })
@@ -4524,7 +4743,13 @@ app.whenReady().then(async () => {
   // channel. chat:turnState only broadcasts transitions, so a window opened
   // (or reopened from the tray) mid-run has no way to learn about it —
   // this is how the renderer seeds its live run state.
-  ipcMain.handle('chat:activeRuns', (): ActiveRun[] => turnRunner.activeRuns())
+  ipcMain.handle('chat:activeRuns', (): ActiveRun[] => [
+    ...turnRunner.activeRuns(),
+    // Autonomous runs (automations, procedures) bypass the runner entirely,
+    // so they carry their own registry — without them a window opened while an
+    // automation works would render its conversation idle and editable.
+    ...agent.activeAutonomousRuns()
+  ])
 
   ipcMain.handle(
     'chat:approvalRespond',

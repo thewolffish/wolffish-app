@@ -1732,7 +1732,8 @@
     },
     "htmlViewer": {
       "preview": "معاينة",
-      "source": "المصدر"
+      "source": "المصدر",
+      "openInBrowser": "فتح في المتصفح"
     },
     "audioPlayer": {
       "deleted": "ملف الصوت محذوف أو غير متاح"
@@ -1901,9 +1902,6 @@
       "title": "الملفات",
       "fileCount": "{{count}} ملفات"
     },
-    "logsFiles": {
-      "label": "السجلات والملفات"
-    },
     "modeToggle": {
       "ariaLabel": "وضع المزوّد",
       "local": "محلي",
@@ -1930,6 +1928,7 @@
     },
     "reasoning": {
       "ariaLabel": "وضع الاستدلال",
+      "label": "التفكير",
       "off": "التفكير متوقف — يجيب مباشرة دون استدلال.",
       "on": "التفكير مُفعّل — يفكر قبل الإجابة.",
       "high": "جهد عالٍ — استدلال أكثر شمولاً.",
@@ -2219,10 +2218,12 @@
     "modelPicker": {
       "search": "ابحث عن نموذج",
       "noProviders": "اربط مفتاح مزوّد أولًا من الإعدادات.",
-      "noResults": "لا توجد نماذج مطابقة لبحثك."
+      "noResults": "لا توجد نماذج مطابقة لبحثك.",
+      "noLocalModels": "لا توجد نماذج أولاما مثبّتة بعد."
     },
     "modePicker": {
       "ariaLabel": "اختر وضع المحادثة",
+      "label": "الوضع",
       "single": "فردي",
       "singleDesc": "نموذج واحد يجيب عليك مباشرة — الأنسب للأسئلة اليومية.",
       "workflow": "سير عمل",
@@ -2256,21 +2257,6 @@
         "cost": "التكلفة"
       },
       "tokens": "{{compact}} رمز"
-    },
-    "attachMenu": {
-      "files": "إرفاق ملفات",
-      "mediaUrl": "إرفاق رابط وسائط"
-    },
-    "urlAttach": {
-      "title": "إرفاق رابط وسائط",
-      "placeholder": "https://example.com/clip.mp4",
-      "kind": {
-        "image": "صورة",
-        "video": "فيديو",
-        "audio": "صوت"
-      },
-      "add": "إرفاق",
-      "chip": "رابط"
     }
   },
   "workspace": {
@@ -2545,7 +2531,7 @@
     "deleteCancel": "إلغاء",
     "newChat": "محادثة جديدة",
     "processing": "قيد المعالجة…",
-    "diagnosticsActive": "صدّر هذه المحادثة من شاشة الدردشة",
+    "diagnosticsPending": "لم تُفهرَس بعد — أعد المحاولة بعد لحظات",
     "groups": {
       "today": "اليوم",
       "yesterday": "أمس",

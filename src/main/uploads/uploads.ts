@@ -323,7 +323,7 @@ export async function saveUploadFromFile(
  * slashes or null bytes on adversarial input. Empty or all-suspect
  * names fall back to a generic placeholder.
  */
-function sanitizeFileName(name: string): string {
+export function sanitizeFileName(name: string): string {
   const trimmed = (name ?? '').trim()
   if (!trimmed) return 'upload.bin'
   const stripped = trimmed.replace(/[/\\]/g, '_').replace(/\0/g, '_')

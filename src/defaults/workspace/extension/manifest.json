@@ -8,13 +8,14 @@
       "strict_min_version": "109.0"
     }
   },
-  "version": "0.1.54",
+  "version": "0.1.55",
   "description": "__MSG_extensionDescription__",
   "host_permissions": [
     "<all_urls>"
   ],
   "permissions": [
     "tabs",
+    "tabGroups",
     "activeTab",
     "alarms",
     "scripting",

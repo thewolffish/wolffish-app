@@ -25,7 +25,7 @@ tools:
     description: "Confirm video generation is configured and the API key works — costs nothing and spends no credits. Call this FIRST when a video request is the start of a conversation, when a previous generation failed on credentials, or any time you are unsure the service is set up; a generation attempt against an unconfigured service wastes a turn and confuses the user. Reports exactly what to tell them when something is missing."
     parameters: {}
   - name: video_generate
-    description: "Start a MiniMax H3 video generation task. ASYNC: returns a task id immediately and a live task card appears in chat on its own — do NOT restate the card's contents; add at most one short sentence, then call video_await to collect the result (typical 1.5–5 min). Media inputs are local file paths (absolute, ~/ or workspace-relative) or public https URLs; files are auto-validated and auto-optimized (downscale/transcode) to fit API limits, URLs pass through untouched. Generated videos include an AI soundtrack. Costs real API credits per run — one task per user request unless they ask for variants."
+    description: "Start a MiniMax H3 video generation task. ASYNC: returns a task id immediately and a live task card appears in chat on its own — do NOT restate the card's contents; add at most one short sentence, then call video_await to collect the result (typical 1.5–5 min). YOU place the media, nothing else does it for you: read every file path and https URL out of the user's message and pass each one in the parameter that matches what it IS (still image → first_frame, last_frame or reference_images; video clip → reference_videos; sound → reference_audios) and what they said it is FOR. Never leave a media URL sitting in the prompt text, and never guess a slot — when you cannot tell whether a link is an image, a clip or audio (no file extension, a share or page link, an unexplained role), call ask_user offering exactly those choices and generate only after they answer. Media inputs are local file paths (absolute, ~/ or workspace-relative) or public https URLs; files are auto-validated and auto-optimized (downscale/transcode) to fit API limits, URLs pass through untouched. Generated videos include an AI soundtrack. Costs real API credits per run — one task per user request unless they ask for variants."
     parameters:
       prompt:
         type: string
@@ -58,23 +58,23 @@ tools:
         required: false
       first_frame:
         type: string
-        description: "Image the video starts from (path or https URL). JPG/PNG/WEBP/HEIC, each side 256-5760px, aspect between 2:5 and 5:2."
+        description: "STILL IMAGE the video starts from (path or https URL) — never a clip or an audio link. JPG/PNG/WEBP/HEIC, each side 256-5760px, aspect between 2:5 and 5:2."
         required: false
       last_frame:
         type: string
-        description: "Image the video ends on (path or https URL). Combine with first_frame for a bookend transition."
+        description: "STILL IMAGE the video ends on (path or https URL). Combine with first_frame for a bookend transition."
         required: false
       reference_images:
         type: array
-        description: "Up to 9 images (paths or https URLs) whose subject/style the video should keep consistent."
+        description: "Up to 9 STILL IMAGES (paths or https URLs) whose subject/style the video should keep consistent."
         required: false
       reference_videos:
         type: array
-        description: "Up to 3 video clips (paths or https URLs) whose motion/behavior to reference. Each 2-15s, 15s combined max; oversized or non-H.264 files are transcoded automatically."
+        description: "Up to 3 VIDEO clips (paths or https URLs) whose motion/behavior to reference. Each 2-15s, 15s combined max; oversized or non-H.264 files are transcoded automatically."
         required: false
       reference_audios:
         type: array
-        description: "Up to 3 audio clips (paths or https URLs) for voice/music reference. Each 2-15s; wav/mp3 pass through, anything else is converted."
+        description: "Up to 3 AUDIO clips (paths or https URLs) for voice/music reference. Each 2-15s; wav/mp3 pass through, anything else is converted."
         required: false
   - name: video_await
     description: "Wait for a video task to finish — the normal next call right after video_generate (blocks 1.5–5 min; that is expected, do not poll video_status in a loop instead). On success the mp4 is already saved locally and the result gives its absolute path: DELIVER it immediately — in-app call send_file with that path; on Telegram use telegram_send_video; on WhatsApp use whatsapp_send_video (channel tools auto-compress oversized files and note that the original stays in the app). On failure the result says exactly why — fix the inputs before any retry."
@@ -119,6 +119,64 @@ One model, four modes, all through `video_generate`:
 Output: H.264 mp4 with an AI-generated soundtrack, 24 fps, 768P (≈1344×768)
 or 2K (≈2560×1440), 4–15 s. Saved automatically under
 `generations/video/conv-<conversation>/` in the workspace — never re-download it.
+
+## Placing the user's media (you do this, not the UI)
+
+There is no picker that tells the app which link is the first frame and which
+is the voice reference. **The user writes a message; you read the media out of
+it and put every item in the right parameter.** Do this before anything else in
+a video turn:
+
+1. **Collect** every media reference in the request — attached files (their
+   absolute paths come in the `<attachments>` note), https URLs written in the
+   prose, and paths named earlier in the conversation that they are pointing
+   back at ("use the logo from before").
+2. **Classify each one** by what it IS. Extension first (`.png` → image,
+   `.mp4` → video, `.mp3`/`.wav` → audio), then the sentence around it —
+   "start on this", "her voice", "match this camera move". An attachment's
+   `type=` field settles it outright.
+3. **Assign by what it is FOR**, which the wording tells you:
+
+   | They said | Parameter |
+   | --- | --- |
+   | start on / open with / from this photo | `first_frame` |
+   | end on / land on / finish with | `last_frame` |
+   | keep this character / this style / this product | `reference_images` |
+   | move like this / this camera work / this action | `reference_videos` |
+   | this voice / this music / sing this | `reference_audios` |
+
+   An image with no stated role and no other image present is the
+   `first_frame`; several unroled images are `reference_images`.
+4. **Never** paste a media URL into `prompt`. The prompt describes the scene in
+   words; media travels in its own parameter. A link left in the prompt is read
+   as prose, not fetched.
+
+### When you cannot tell, ask — do not guess
+
+Extensionless links are common (signed CDN links, `?format=` params, share
+pages) and a wrong slot fails the whole request. If a link's kind or its role
+is genuinely unclear, stop and call `ask_user` **before** `video_generate`:
+
+```
+ask_user({ questions: [{
+  question: "What is https://cdn.example.com/a8f3c2?",
+  details: "The link has no file extension, so I cannot tell what it holds. It decides where it goes in the video request.",
+  options: [
+    { label: "An image", description: "Used as the opening frame" },
+    { label: "A video clip", description: "Referenced for motion and camera work" },
+    { label: "An audio clip", description: "Referenced for voice or music" }
+  ]
+}] })
+```
+
+Bundle several unclear items into ONE `ask_user` call (one question each), then
+generate once with everything placed. Asking costs a few seconds; a mis-slotted
+input costs a failed run and real credits.
+
+The tools defend the same line: a URL whose extension proves the wrong kind
+(an `.mp3` handed to `first_frame`) is rejected before the API call, with the
+correct parameter named. Extensionless URLs are passed through untouched — which
+is exactly why the ask above is yours to make, not the tool's.
 
 ## The task flow (follow exactly)
 

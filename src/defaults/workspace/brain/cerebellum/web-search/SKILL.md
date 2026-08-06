@@ -94,7 +94,7 @@ requires:
   - node
 tools:
   - name: web_search
-    description: Search the web for information. Returns titles, snippets, and URLs.
+    description: Search the web. Returns titles, snippets and URLs — never a page. Fast, and each query spends the user's money, so use it to settle one fact or to find which URL to open. To actually read or work with a site, prefer the browser-extension capability.
     parameters:
       query:
         type: string
@@ -104,7 +104,7 @@ tools:
         required: false
         description: Maximum number of results to return (default 5, max 10)
   - name: web_fetch
-    description: Fetch and read the full text content of a web page. Use after web_search to read a specific result in detail.
+    description: One plain HTTP GET of a URL, returned as text. Instant and free, but it sees only what the server sends — JS-rendered pages come back empty, and paywalls, logins, consent walls and bot checks defeat it. When that happens, or when the page needs a click or scroll, switch to the browser-extension capability rather than retrying.
     parameters:
       url:
         type: string
@@ -147,6 +147,18 @@ confirm_patterns:
 - `web_search` — search the web, returns titles + snippets + URLs
 - `web_fetch` — fetch and read full page content from a URL
 
+## Search is one of three routes — pick deliberately
+
+These two tools are not the only way to reach the web, and often not the best one. The third is the **browser extension** (`tool_activate("browser-extension")`), which drives the user's real browser.
+
+| | reaches | costs |
+|---|---|---|
+| `web_search` | an index — snippets, never a page | real money per query; very fast |
+| `web_fetch` | whatever a server returns to a bare GET | free, instant; blind to JS, paywalls, logins, bot checks |
+| browser extension | essentially any page the user can open, and can click/scroll/fill | more tokens, more seconds; needs a connected browser |
+
+**Lean toward the browser** whenever the task names a specific site, needs a logged-in or paid-for page, needs interaction, spans more than a page or two, or when a fetch came back thin. Two failed fetches cost more than opening the browser would have. Nothing here is a rule — weigh it yourself; these are the trade-offs to weigh.
+
 ## When to use web_search
 
 Use `web_search` when the user:
@@ -165,6 +177,8 @@ Use `web_fetch` after `web_search` when:
 - The user explicitly asks you to read or visit a specific URL
 
 Fetch the most relevant 1–2 URLs, not all of them. Never fetch more than 3 pages in one conversation turn.
+
+**Read what comes back before trusting it.** A page that returns a few hundred characters, a cookie banner, "enable JavaScript", a login form, or a subscribe wall did not actually load — it just failed quietly with a 200. Don't re-fetch it and don't answer from the fragment: that page is a job for the browser extension, which renders it as the user's own browser would. The same goes for any site you already know is JS-rendered or gated.
 
 ## When NOT to search
 

@@ -3,7 +3,9 @@
 You are about to produce a document a person will read and judge. This manual is the
 difference between a designed document and a rendered webpage. Follow it whenever you
 author a PDF, report, brief, proposal, guide, summary, one-pager, or any styled
-document — unless the user or an automation prompt already specifies the design.
+document — unless the user or an automation prompt already specifies the design. A
+live page meant to be read in a browser rather than printed — an info site, a
+scrollable handbook — is `web_design`'s job; this manual governs paged output.
 
 **Precedence — read this first.**
 1. **Explicit instructions win.** If the user or the automation/procedure prompt

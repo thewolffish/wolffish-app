@@ -8,7 +8,7 @@ import { useFlow } from '@providers/flow/useFlow'
 import { useLocale } from '@providers/locale/useLocale'
 import { useTheme } from '@providers/theme/useTheme'
 import { ArrowLeft02Icon, ArrowRight02Icon, FloppyDiskIcon, Refresh01Icon } from 'hugeicons-react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 type MarkdownEditorPageProps = {
@@ -75,6 +75,43 @@ export function MarkdownEditorPage({
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [handleSave])
+
+  /**
+   * Someone else wrote this file — another window, or the paired phone's
+   * Customization screen. Adopt it silently so the two devices never sit on
+   * different text, but ONLY while this editor is clean: an unsaved draft is
+   * work in progress, and replacing it under the cursor would lose keystrokes
+   * that exist nowhere else. A dirty editor keeps its draft, and its Save then
+   * wins on both screens the way the last write always does.
+   *
+   * The dirty check reads a ref rather than state so the subscription survives
+   * every keystroke — resubscribing per character would drop the notification
+   * that arrives between the unsubscribe and the next attach.
+   */
+  const liveRef = useRef({ content, originalContent })
+  useEffect(() => {
+    liveRef.current = { content, originalContent }
+  }, [content, originalContent])
+
+  useEffect(
+    () =>
+      window.api.viewer.onCustomizationChanged((payload) => {
+        if (payload?.path !== filePath) return
+        const { content: current, originalContent: original } = liveRef.current
+        if (current !== original) return
+        window.api.viewer
+          .readFile(filePath)
+          .then((raw) => {
+            // Re-checked on arrival: typing may have started while the read
+            // was in flight, and this is a courtesy refresh, not a demand.
+            if (liveRef.current.content !== liveRef.current.originalContent) return
+            setContent(raw)
+            setOriginalContent(raw)
+          })
+          .catch(() => {})
+      }),
+    [filePath]
+  )
 
   const handleRefresh = useCallback(async (): Promise<void> => {
     try {

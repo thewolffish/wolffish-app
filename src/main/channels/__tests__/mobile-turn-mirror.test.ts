@@ -195,7 +195,7 @@ async function run(): Promise<void> {
   )
 
   // ... and included once the Mobile panel's switch is on.
-  channel.setVerbose(true)
+  await channel.setVerbose(true)
   pushes.length = 0
   turn.onSegment({
     kind: 'tool_result',
@@ -245,6 +245,110 @@ async function run(): Promise<void> {
     'an oversized mirror degrades to a nudge instead of being sent',
     guarded !== undefined && guarded.payload.message === undefined
   )
+
+  // ------------------------------------------------------------- the prompt
+  // The half that was missing. A turn run on the desktop keeps its user
+  // message in the renderer's feed and writes it to disk only at the fold, so
+  // the mirror is the only thing that can put it on a phone before the turn
+  // ends — and a phone that pairs mid-turn sees nothing but mirror ticks.
+  const PROMPT = { id: 'm_9_ccccc1', role: 'user', content: 'make me a pdf', timestamp: 9 }
+
+  pushes.length = 0
+  channel.pushMessageAppended(
+    'conv-x',
+    { id: 'm_1_aaaaaa', role: 'assistant', content: 'working' },
+    PROMPT
+  )
+  const withPrompt = appended().at(-1)
+  ok(
+    'a mirror carries the prompt beside the answer',
+    (withPrompt?.payload.userMessage as { id?: string } | undefined)?.id === PROMPT.id,
+    JSON.stringify(withPrompt?.payload.userMessage)
+  )
+
+  pushes.length = 0
+  channel.pushMessageAppended(
+    'conv-x',
+    { id: 'm_1_aaaaaa', role: 'assistant', content: 'x'.repeat(512 * 1024) },
+    PROMPT
+  )
+  const degraded = appended().at(-1)
+  ok(
+    'an oversized mirror still carries the prompt with its nudge',
+    degraded?.payload.message === undefined &&
+      (degraded?.payload.userMessage as { id?: string } | undefined)?.id === PROMPT.id,
+    JSON.stringify(degraded?.payload)
+  )
+
+  pushes.length = 0
+  channel.pushMessageAppended('conv-x', undefined, PROMPT)
+  const promptOnly = appended().at(-1)
+  ok(
+    'a prompt-only tick is a nudge plus the prompt',
+    promptOnly?.payload.message === undefined &&
+      (promptOnly?.payload.userMessage as { id?: string } | undefined)?.id === PROMPT.id
+  )
+
+  pushes.length = 0
+  channel.pushMessageAppended('conv-x', undefined)
+  ok(
+    'a bare nudge stays bare — no empty prompt field on the wire',
+    appended().at(-1) !== undefined && !('userMessage' in (appended().at(-1)?.payload ?? {}))
+  )
+
+  // ------------------------------------------- what the in-app channel mirrors
+  // The renderer sends the LLM's copy of the prompt: the typed text dressed in
+  // an <attachments> block, and for a voice note wrapped again in <voice_note>.
+  // What reaches the phone has to be what the fold will save, or the bubble
+  // shows markup for the length of the turn and then silently changes.
+  const { ElectronChannel } = await import('@main/channels/electron/channel')
+  type MirrorCall = { message: unknown; userMessage?: { content?: string; voicePrompt?: boolean } }
+  const inAppMirrors: MirrorCall[] = []
+  const inApp = new ElectronChannel(
+    {} as never,
+    {
+      send: () => ({ turnId: 'turn_e', controller: new AbortController(), done: Promise.resolve() })
+    } as never
+  )
+  inApp.setMessageMirror((_id, message, userMessage) => inAppMirrors.push({ message, userMessage }))
+
+  const inAppSend = (content: string): MirrorCall | undefined => {
+    inAppMirrors.length = 0
+    inApp.send({} as never, {
+      history: [{ role: 'user', content }],
+      conversationId: 'conv-e',
+      userMessageId: 'm_9_ccccc1'
+    })
+    return inAppMirrors.at(-1)
+  }
+
+  const plain = inAppSend('make me a pdf')
+  ok(
+    'the prompt is mirrored at send, before a single token',
+    plain?.message === null && plain?.userMessage?.content === 'make me a pdf',
+    JSON.stringify(plain)
+  )
+
+  const dressed = inAppSend(
+    'here is the file\n\n<attachments>\nThe user attached 1 file to this message:\n  - a.pdf (type=file)\n</attachments>'
+  )
+  ok(
+    'the model-facing attachment block is stripped back off',
+    dressed?.userMessage?.content === 'here is the file',
+    JSON.stringify(dressed?.userMessage?.content)
+  )
+
+  const spoken = inAppSend('<voice_note lang="en">\nread me the plan')
+  ok(
+    'a voice note mirrors its transcript, not its wrapper',
+    spoken?.userMessage?.content === 'read me the plan' &&
+      spoken?.userMessage?.voicePrompt === true,
+    JSON.stringify(spoken?.userMessage)
+  )
+
+  inAppMirrors.length = 0
+  inApp.send({} as never, { history: [{ role: 'user', content: 'x' }], conversationId: 'conv-e' })
+  ok('no id, no mirrored prompt — an undroppable row is worse than none', inAppMirrors.length === 0)
 
   console.log(`${passed} passed, ${failed} failed`)
   if (failed > 0) process.exitCode = 1

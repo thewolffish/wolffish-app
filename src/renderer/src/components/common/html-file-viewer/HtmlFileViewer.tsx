@@ -66,6 +66,15 @@ export function HtmlFileViewer({
     })
   }, [filePath])
 
+  // Hand the .html to the OS, which opens it in the default browser — the live
+  // page from its real location, so relative assets resolve and page scripts
+  // run (neither of which the sandboxed in-card preview can do).
+  const openExternal = useCallback(() => {
+    window.api.upload.openExternal(filePath).catch(() => {
+      // best-effort
+    })
+  }, [filePath])
+
   if (text === null) {
     return (
       <FileCard
@@ -87,6 +96,7 @@ export function HtmlFileViewer({
       sizeBytes={resolvedSize || undefined}
       onDownload={download}
       onReveal={revealInFolder}
+      onOpenExternal={openExternal}
     />
   )
 }

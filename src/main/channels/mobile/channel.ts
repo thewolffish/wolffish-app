@@ -45,8 +45,28 @@ import {
   updateConversation,
   type ConversationFile,
   type ConversationMessage,
+  type ConversationRating,
   type MessageAttachment
 } from '@main/conversations'
+import {
+  createProcedure,
+  deleteProcedure,
+  listProcedures,
+  updateProcedure,
+  type Procedure
+} from '@main/procedures'
+import {
+  adoptUploadedProjectFile,
+  createProject,
+  deleteProject,
+  getProject,
+  listProjects,
+  updateProject,
+  type Project,
+  type ProjectFileRef
+} from '@main/projects'
+import { nextCronMs } from '@main/runtime/cronNext'
+import type { QueuedJobInfo, RunningJobInfo } from '@main/runtime/brainstem'
 import { composeAttachmentContext } from '@main/uploads/compose-attachments'
 import {
   classifyFile,
@@ -55,6 +75,7 @@ import {
   statUpload,
   uploadExists
 } from '@main/uploads/uploads'
+import { readViewerFile, writeViewerFile } from '@main/viewer'
 import { workspaceRoot } from '@main/workspace/root'
 import {
   CHUNK_SIZE,
@@ -62,9 +83,19 @@ import {
   Event,
   PUSH_WIRE_VERSION,
   Rpc,
+  type AutomationJob,
+  type AutomationRun,
+  type AutomationRuns,
   type ConversationMeta,
+  type ConversationRating as WireRating,
+  type DiagnosticProgress,
+  type DiagnosticResult,
   type NotifyFrame,
-  type NotifyResultFrame
+  type NotifyResultFrame,
+  type OverlaySeed,
+  type ReindexStatus,
+  type SyncProcedure,
+  type SyncProject
 } from '@main/tunnel/protocol'
 import {
   MOBILE_CAPABILITY_NAME,
@@ -193,6 +224,19 @@ export type MobileChannelDeps = SnapshotSources & {
     kind: 'reflection' | 'deepClean'
   ) => Promise<'running' | 'queued' | 'coalesced'>
   /**
+   * Record a phone-cast turn score, through the very path the in-app rating
+   * bar's IPC takes: the same RMW write on the conversation file and the same
+   * corpus announcement, so a vote from the phone reaches an open desktop
+   * chat exactly as one cast there does. Resolves to the applied rating, or
+   * null when there was nothing to score. Absent = this host does not accept
+   * phone votes.
+   */
+  rateTurn?: (
+    conversationId: string,
+    messageId: string | null,
+    score: number
+  ) => Promise<ConversationRating | null>
+  /**
    * Apply a phone-edited settings patch through the same setters the
    * desktop's own panels use. Whitelisted inside; throws on unknown keys.
    * Absent = phone settings stay a read-only mirror.
@@ -223,8 +267,22 @@ export type MobileChannelDeps = SnapshotSources & {
    */
   loadNotificationsEnabled?: () => Promise<boolean>
   saveNotificationsEnabled?: (enabled: boolean) => Promise<void>
+  /**
+   * Persisted feed preference — see setVerbose. Stored beside notifications
+   * so the phone's feed reads the same on the next launch as it did on this
+   * one. Absent = clean feed, never remembered (tests).
+   */
+  loadVerbose?: () => Promise<boolean>
+  saveVerbose?: (verbose: boolean) => Promise<void>
   /** Broadcast to the renderer so the panel updates without polling. */
   onStatus?: (status: MobileStatus) => void
+  /**
+   * One conversation's stored metadata changed because the PHONE wrote it —
+   * today only a project re-file. Announced so this app's own rail, History and
+   * Projects pages re-read, exactly as they do for a re-file made here. Absent
+   * = no renderer to tell (tests).
+   */
+  onConversationChanged?: (conversationId: string) => void
   /**
    * Relay logging. Always on and always per-day, in the workspace log beside
    * every other channel: the desktop is the source of truth for what the
@@ -246,8 +304,36 @@ const UPLOAD_IDLE_MS = 10 * 60_000
  *  (a voice note is ~1 MB/min); exists so a runaway client stays bounded. */
 const MAX_UPLOAD_BYTES = 512 * 1024 * 1024
 
+/** The scheduler's source file, workspace-relative — the desktop's own path. */
+const HEARTBEAT_PATH = 'brain/brainstem/heartbeat.md'
+
+/**
+ * Ceilings on phone-authored text. Every one is far above anything a person
+ * types on a phone and exists for the same reason MAX_UPLOAD_BYTES does: these
+ * values are written into workspace files the agent reads back as instructions,
+ * so a runaway client must stay bounded rather than grow one unboundedly.
+ */
+const ID_MAX = 128
+const ICON_MAX = 16
+const TITLE_MAX = 200
+const INSTRUCTIONS_MAX = 100_000
+const PROMPT_MAX = 100_000
+const HEARTBEAT_MAX = 1_000_000
+/**
+ * Floor between two reindex progress ticks on the wire. The rebuild indexes in
+ * batches of eight files and emits on each, which on a real workspace is far
+ * faster than a phone can repaint one line of text — and far faster than anyone
+ * can read it.
+ */
+const REINDEX_PUSH_THROTTLE_MS = 1_000
+
 type PendingUpload = {
-  conversationId: string
+  /**
+   * Where the committed bytes land. Decided once, at begin, and never read
+   * before then: the transfer itself (ordering, idle sweep, size ceiling) is
+   * identical for both destinations, so only the commit branches.
+   */
+  target: { kind: 'conversation'; conversationId: string } | { kind: 'project'; projectId: string }
   name: string
   mimeType: string | null
   /** Size the phone declared at begin — commit refuses any other total. */
@@ -292,6 +378,13 @@ export class MobileChannel {
   >()
   /** Chunked uploads in flight, keyed by upload id. */
   private readonly uploads = new Map<string, PendingUpload>()
+  /**
+   * When the last reindex tick went out, so the throttle has something to
+   * measure against. Zero means "no rebuild is being reported" — which is both
+   * the resting state and the flag that makes the next tick an unthrottled
+   * start edge.
+   */
+  private lastReindexPush = 0
   /** notify frames awaiting the relay's notify_result, by notificationId. */
   private readonly pendingNotifies = new Map<
     string,
@@ -299,29 +392,57 @@ export class MobileChannel {
   >()
   /** Gate for the model's notify_phone tool. Restored from config at start. */
   private notificationsEnabled = true
+  /** The built capability pair, made once and re-registered as needed. */
+  private phoneCapability: ReturnType<typeof buildMobileCapability> | null = null
+  /** Whether notify_phone is currently registered with the cerebellum. */
+  private phoneCapabilityRegistered = false
+  /** Set while the channel is stopped, so status churn can't re-register. */
+  private channelStopped = false
+  /**
+   * The diagnostic-export runner, injected from main because it owns the
+   * single-flight guard the desktop's own button runs behind. Absent until
+   * main wires it, which is also what makes the RPC honest on an older build:
+   * the phone is told this desktop cannot export rather than being left to
+   * wait on a promise nobody will settle.
+   */
+  private diagnosticExporter:
+    | ((
+        conversationId: string,
+        onProgress: (progress: DiagnosticProgress) => void
+      ) => Promise<DiagnosticResult>)
+    | null = null
 
   constructor(private readonly deps: MobileChannelDeps) {
     this.relayUrl = deps.relayUrl ?? DEFAULT_RELAY_URL
+  }
+
+  /** Wire the collector main owns — see `diagnosticExporter`. */
+  setDiagnosticExporter(
+    exporter: (
+      conversationId: string,
+      onProgress: (progress: DiagnosticProgress) => void
+    ) => Promise<DiagnosticResult>
+  ): void {
+    this.diagnosticExporter = exporter
   }
 
   // -------------------------------------------------------------- lifecycle
 
   /** Restore a stored pairing and start listening. Safe to call on every boot. */
   async start(): Promise<void> {
+    this.channelStopped = false
     // The stored override must win before any tunnel dials out; deps.relayUrl
     // stays the programmatic default (tests), DEFAULT_RELAY_URL the shipped one.
     this.relayUrl = (await loadRelayUrl()) ?? this.deps.relayUrl ?? DEFAULT_RELAY_URL
     this.notificationsEnabled = (await this.deps.loadNotificationsEnabled?.()) ?? true
-
-    // The notify_phone tool exists whether or not a phone is currently
-    // paired or reachable — the handler answers with a precise refusal
-    // instead, which the model can act on. Registration is idempotent.
-    const { capability, plugin } = buildMobileCapability({
-      notify: (request) => this.notifyPhone(request)
-    })
-    this.deps.agent.cerebellum.registerInProcessCapability(capability, plugin)
+    this.verbose = (await this.deps.loadVerbose?.()) ?? false
 
     this.pairing = await loadPairing()
+    // The notify_phone tool's presence IS the availability signal — see
+    // syncPhoneCapability. A stored pairing that already carries a phoneId
+    // registers it right here, before any tunnel forms: push works against
+    // an away phone, so the tool must not wait for a live connection.
+    this.syncPhoneCapability()
     if (!this.pairing) {
       this.log('no pairing stored — waiting for one to be offered')
       this.emitStatus()
@@ -336,7 +457,8 @@ export class MobileChannel {
 
   async stop(): Promise<void> {
     this.log('channel stopping')
-    this.deps.agent.cerebellum.unregisterInProcessCapability(MOBILE_CAPABILITY_NAME)
+    this.channelStopped = true
+    this.syncPhoneCapability()
     for (const [id, pending] of this.pendingNotifies) {
       clearTimeout(pending.timer)
       pending.resolve({
@@ -358,6 +480,38 @@ export class MobileChannel {
   }
 
   // ---------------------------------------------------------- notifications
+
+  /**
+   * Keep the notify_phone tool's EXISTENCE in step with deliverability: the
+   * capability is registered exactly while a phone is paired, has identified
+   * itself (phoneId), and the user allows notifications. Presence in the
+   * model's capability index is therefore the cheap availability check — the
+   * model never has to probe, and a send can never be attempted into a void.
+   * A parked (backgrounded) phone stays deliverable on purpose: reaching an
+   * away phone via push is the feature. Runs off every emitStatus, so any
+   * state change — pairing formed or dropped, phoneId learned at hello, the
+   * settings toggle — converges the registration without dedicated wiring.
+   */
+  private syncPhoneCapability(): void {
+    const deliverable =
+      !this.channelStopped &&
+      Boolean(this.pairing?.peerPublicKey && this.pairing.phoneId && this.notificationsEnabled)
+    if (deliverable === this.phoneCapabilityRegistered) return
+    if (deliverable) {
+      this.phoneCapability ??= buildMobileCapability({
+        notify: (request) => this.notifyPhone(request)
+      })
+      this.deps.agent.cerebellum.registerInProcessCapability(
+        this.phoneCapability.capability,
+        this.phoneCapability.plugin
+      )
+      this.log('notify_phone exposed — phone identified and notifications allowed')
+    } else {
+      this.deps.agent.cerebellum.unregisterInProcessCapability(MOBILE_CAPABILITY_NAME)
+      this.log('notify_phone withdrawn — unpaired, unidentified phone, or notifications off')
+    }
+    this.phoneCapabilityRegistered = deliverable
+  }
 
   /**
    * The whole notify path, model side down: the tool handler (tools.ts) has
@@ -466,10 +620,17 @@ export class MobileChannel {
    * same switch on Telegram, WhatsApp and the in-app feed. Off (default) sends
    * a clean feed: assistant messages, file-bearing results and errors only.
    * Display-only — it never affects what is stored, and never affects logging.
+   *
+   * Persisted, like the notifications gate beside it: this switch is edited
+   * from two devices, and one that forgot itself on restart would have the
+   * phone and the panel disagreeing about a setting neither of them changed.
    */
-  setVerbose(verbose: boolean): void {
+  async setVerbose(verbose: boolean): Promise<MobileStatus> {
     this.verbose = verbose
+    await this.deps.saveVerbose?.(verbose)
+    this.log(`phone feed ${verbose ? 'relays every tool call' : 'kept clean'}`)
     this.emitStatus()
+    return this.getStatus()
   }
 
   /**
@@ -841,6 +1002,37 @@ export class MobileChannel {
       return { rows, total: all.length, at: Date.now(), ...(ids ? { ids } : {}) }
     })
 
+    /**
+     * File a conversation under a project. The phone cannot do this locally:
+     * every turn's project overlay is built from the `projectId` on THIS side's
+     * conversation file, so a binding written only to the phone's database
+     * would show project chrome over turns that never received the project's
+     * instructions.
+     */
+    tunnel.onRpc(Rpc.conversationProject, async (params) => {
+      const conversationId = String(params.conversationId ?? '')
+      if (!conversationId) throw new Error('conversationProject needs a conversationId')
+      const requested = wireText(params.projectId, ID_MAX) || null
+      // An unknown project unfiles rather than dangles. buildProjectOverlay
+      // returns an empty overlay for a missing id, so a dangling binding is
+      // precisely the silent case above — a stale phone screen must not create
+      // one, and answering with what actually holds lets it correct itself.
+      const projectId = requested && (await getProject(requested)) ? requested : null
+      let found = false
+      await updateConversation(conversationId, (current) => {
+        if (!current) return null
+        found = true
+        current.projectId = projectId ?? undefined
+        return current
+      })
+      if (!found) throw new Error(`unknown conversation ${conversationId}`)
+      this.log(`conversation ${conversationId} filed under project ${projectId ?? 'none'}`)
+      // The desktop's own list re-reads on this, so an open Projects page and
+      // the conversations rail both follow a re-file made on the phone.
+      this.deps.onConversationChanged?.(conversationId)
+      return { ok: true, projectId }
+    })
+
     /** One conversation, fetched when the phone opens it. */
     tunnel.onRpc(Rpc.conversationBody, async (params) => {
       const id = String(params.id ?? '')
@@ -921,6 +1113,14 @@ export class MobileChannel {
         // stamped. Both apps badge it from here, and it is the only record —
         // the desktop cannot tell later which surface asked.
         created.channel = 'mobile'
+        // A first message sent from inside a project files the conversation
+        // under it AT CREATION, not afterwards: the very turn this send starts
+        // reads projectId off this file to build its overlay, so a re-file a
+        // moment later would give the project's instructions to every turn
+        // except the first. An unknown id is dropped rather than dangled — see
+        // Rpc.conversationProject for why a dangling one is the silent case.
+        const projectId = wireText(params.projectId, ID_MAX) || null
+        if (projectId && (await getProject(projectId))) created.projectId = projectId
         await saveConversation(created)
         conversationId = created.id
       }
@@ -988,6 +1188,31 @@ export class MobileChannel {
     })
 
     /**
+     * The phone scored a completed turn. The wire is data: a score outside
+     * 0-10 is clamped by the writer, and a `messageId` naming a message this
+     * file no longer holds answers `{ rating: null }` rather than guessing —
+     * the phone takes its optimistic segment back down on exactly that answer.
+     * Null messageId keeps the channel-vote meaning ("the newest assistant
+     * message"), which is what a phone that voted from a stale screen needs.
+     */
+    tunnel.onRpc(Rpc.rateTurn, async (params) => {
+      const rate = this.deps.rateTurn
+      if (!rate) throw new Error('turn scoring not served here')
+      const conversationId = String(params.conversationId ?? '')
+      if (!conversationId) throw new Error('rate: no conversation')
+      const score = Number(params.score)
+      if (!Number.isFinite(score)) throw new Error(`rate: not a score: ${String(params.score)}`)
+      const messageId = typeof params.messageId === 'string' ? params.messageId : null
+      const rating = await rate(conversationId, messageId, score)
+      this.log(
+        rating
+          ? `turn scored ${rating.score}/10 from the phone (${conversationId})`
+          : `turn score from the phone had nothing to land on (${conversationId})`
+      )
+      return { rating }
+    })
+
+    /**
      * The phone edits the reflection schedule/scoring. The wire shape is
      * data, not policy: every field is re-derived here and anything malformed
      * costs itself rather than the whole patch. The answer is the desktop's
@@ -1012,6 +1237,160 @@ export class MobileChannel {
       const result = await run(kind)
       this.log(`${kind} run requested from the phone — ${result}`)
       return { result }
+    })
+
+    // ---------------------------------------------------------- projects
+    //
+    // Straight through to the store the desktop's own Projects page edits —
+    // same functions, same mutation tail, same changed-listener. That is what
+    // makes a phone edit land on an open desktop page (and vice versa) rather
+    // than the two screens keeping separate copies of one JSON file.
+
+    tunnel.onRpc(Rpc.projectsList, async () => {
+      const projects = await listProjects()
+      this.debug(`served ${projects.length} project(s)`)
+      return { projects: projects.map(toWireProject) }
+    })
+
+    tunnel.onRpc(Rpc.projectCreate, async (params) => {
+      const project = await createProject({
+        title: wireText(params.title, TITLE_MAX) ?? '',
+        icon: wireText(params.icon, ICON_MAX),
+        instructions: wireText(params.instructions, INSTRUCTIONS_MAX)
+      })
+      this.log(`project created from the phone — ${project.id}`)
+      return { project: toWireProject(project) }
+    })
+
+    tunnel.onRpc(Rpc.projectUpdate, async (params) => {
+      const id = String(params.id ?? '')
+      if (!id) throw new Error('projectUpdate needs an id')
+      // A `files` array is a whole-list replace and the desktop deletes the
+      // copies it owns for everything dropped, so it is only ever honoured as
+      // a real array — an absent field must leave the list alone, and reading
+      // a malformed one as `[]` would delete every attached file.
+      const files = Array.isArray(params.files)
+        ? await this.resolveProjectFiles(id, params.files as unknown[])
+        : undefined
+      const project = await updateProject({
+        id,
+        title: wireText(params.title, TITLE_MAX),
+        icon: wireText(params.icon, ICON_MAX),
+        instructions: wireText(params.instructions, INSTRUCTIONS_MAX),
+        ...(files ? { files } : {})
+      })
+      this.debug(`project ${id} updated from the phone`)
+      return { project: toWireProject(project) }
+    })
+
+    tunnel.onRpc(Rpc.projectDelete, async (params) => {
+      const id = String(params.id ?? '')
+      if (!id) throw new Error('projectDelete needs an id')
+      await deleteProject(id)
+      this.log(`project ${id} deleted from the phone`)
+      return { ok: true }
+    })
+
+    // -------------------------------------------------------- procedures
+
+    tunnel.onRpc(Rpc.proceduresList, async () => {
+      const procedures = await listProcedures()
+      this.debug(`served ${procedures.length} procedure(s)`)
+      return { procedures: procedures.map(toWireProcedure) }
+    })
+
+    tunnel.onRpc(Rpc.procedureCreate, async (params) => {
+      const procedure = await createProcedure({
+        title: wireText(params.title, TITLE_MAX) ?? '',
+        prompt: wireText(params.prompt, PROMPT_MAX) ?? '',
+        mode: wireMode(params.mode),
+        icon: wireText(params.icon, ICON_MAX),
+        projectId: wireText(params.projectId, ID_MAX)
+      })
+      this.log(`procedure created from the phone — ${procedure.id}`)
+      return { procedure: toWireProcedure(procedure) }
+    })
+
+    tunnel.onRpc(Rpc.procedureUpdate, async (params) => {
+      const id = String(params.id ?? '')
+      if (!id) throw new Error('procedureUpdate needs an id')
+      const procedure = await updateProcedure({
+        id,
+        title: wireText(params.title, TITLE_MAX),
+        prompt: wireText(params.prompt, PROMPT_MAX),
+        mode: wireMode(params.mode),
+        icon: wireText(params.icon, ICON_MAX),
+        // '' unbinds, exactly as the desktop's setter reads it — so this one
+        // passes an empty string through rather than treating it as absent.
+        projectId: wireText(params.projectId, ID_MAX)
+      })
+      this.debug(`procedure ${id} updated from the phone`)
+      return { procedure: toWireProcedure(procedure) }
+    })
+
+    tunnel.onRpc(Rpc.procedureDelete, async (params) => {
+      const id = String(params.id ?? '')
+      if (!id) throw new Error('procedureDelete needs an id')
+      await deleteProcedure(id)
+      this.log(`procedure ${id} deleted from the phone`)
+      return { ok: true }
+    })
+
+    // ------------------------------------------------------- automations
+
+    tunnel.onRpc(Rpc.automationsRead, async () => {
+      const [markdown, stamps] = await Promise.all([
+        readViewerFile(HEARTBEAT_PATH).catch(() => ''),
+        this.deps.agent.brainstem.getHeartbeatEditStamps().catch(() => ({}))
+      ])
+      const jobs = this.activeAutomationJobs()
+      this.debug(`served heartbeat.md (${markdown.length} chars, ${jobs.length} active job(s))`)
+      return { markdown, jobs, stamps, runs: this.automationRuns() }
+    })
+
+    /**
+     * Whole-file write — the same shape the desktop's markdown view and card
+     * editor both use, because the scheduler's unit of truth is the file. The
+     * atomic writer means a reader never sees a torn file, and the watcher
+     * reloads the scheduler for both screens off the same change.
+     */
+    tunnel.onRpc(Rpc.automationsWrite, async (params) => {
+      const markdown = wireText(params.markdown, HEARTBEAT_MAX)
+      if (markdown === undefined) throw new Error('automationsWrite needs markdown')
+      await writeViewerFile(HEARTBEAT_PATH, markdown)
+      this.log(`heartbeat.md written from the phone (${markdown.length} chars)`)
+      return { ok: true }
+    })
+
+    tunnel.onRpc(Rpc.automationRun, async (params) => {
+      const label = String(params.label ?? '')
+      if (!label) throw new Error('automationRun needs a label')
+      const result = this.deps.agent.brainstem.runJobNow(label)
+      this.log(
+        `automation "${label}" run requested from the phone — ` +
+          (result.started ? 'started' : result.ok ? 'queued' : `refused: ${result.error}`)
+      )
+      return result
+    })
+
+    /**
+     * The overlay stack's seed, taken once per connection.
+     *
+     * Both halves of it are push-only — the run pool announces itself when it
+     * moves, the reindex when it starts and stops — so a phone that connects
+     * mid-run has already missed the announcement and would show nothing until
+     * whatever is running ended. This is the one read that closes that window.
+     */
+    tunnel.onRpc(Rpc.overlaysRead, async () => {
+      const seed: OverlaySeed = {
+        runs: this.automationRuns(),
+        reindex: this.deps.agent.cortex.getReindexStatus()
+      }
+      this.debug(
+        `served overlay seed (${seed.runs.running.length} running, ` +
+          `${seed.runs.queued.length} queued, reindex ${seed.reindex ? 'active' : 'idle'})`
+      )
+      return seed
     })
 
     /**
@@ -1049,12 +1428,46 @@ export class MobileChannel {
     })
 
     /**
+     * The phone's Debug button — the same per-conversation bundle the desktop's
+     * own History page collects, through the same runner and the same
+     * single-flight guard (see setDiagnosticExporter).
+     *
+     * Only the RESULT crosses the tunnel. The archive itself stays where it was
+     * written, under `diagnostics/` in the workspace, and the phone pulls it
+     * down the ordinary fileStat/fileRead path — a zip is exactly the kind of
+     * thing the chunked transfer exists for, and inlining megabytes into one
+     * RPC answer would blow the relay's record cap.
+     *
+     * Progress is pushed as it happens and is advisory: it makes the bar move,
+     * and a phone that misses every tick still gets a complete result here.
+     */
+    tunnel.onRpc(Rpc.diagnosticsExport, async (params) => {
+      const conversationId = String(params.conversationId ?? '')
+      if (!conversationId) throw new Error('diagnosticsExport needs a conversationId')
+      if (!this.diagnosticExporter) throw new Error('this desktop cannot export diagnostics')
+      this.debug(`diagnostic export requested for ${conversationId}`)
+      const result = await this.diagnosticExporter(conversationId, (progress) => {
+        this.tunnel?.emit(Event.diagnosticsProgress, progress)
+      })
+      this.debug(
+        result.ok
+          ? `diagnostic export ready: ${result.fileName} (${result.sizeBytes} bytes)`
+          : `diagnostic export failed: ${result.error}`
+      )
+      return result as unknown as Record<string, unknown>
+    })
+
+    /**
      * Chunked upload from the phone: begin stakes out a staging file (and a
      * conversation, when the message that will carry the file is the first),
      * chunks append strictly in order, commit adopts the staged bytes as a
      * normal conversation upload and answers with the metadata the message
      * should carry — the desktop picks the final name, so a collision renames
      * here exactly as it would for a file dropped on the composer.
+     *
+     * A `projectId` instead points the commit at that project's file list, for
+     * the phone's project Add-files. The transfer is byte-identical either way;
+     * see the PendingUpload target.
      */
     tunnel.onRpc(Rpc.uploadBegin, async (params) => {
       const name = String(params.name ?? '').trim()
@@ -1063,18 +1476,31 @@ export class MobileChannel {
       if (expected <= 0 || expected > MAX_UPLOAD_BYTES) {
         throw new Error(`upload size out of range: ${expected}`)
       }
-      let conversationId =
-        typeof params.conversationId === 'string' && params.conversationId
-          ? params.conversationId
-          : null
-      if (!conversationId) {
-        const created = createConversation(null)
-        created.messages = []
-        // Same stamp as the send path: a conversation a phone's first upload
-        // brings into being started on the phone just as surely.
-        created.channel = 'mobile'
-        await saveConversation(created)
-        conversationId = created.id
+      const projectId =
+        typeof params.projectId === 'string' && params.projectId ? params.projectId : null
+      let target: PendingUpload['target']
+      if (projectId) {
+        // Verified BEFORE a byte moves: a whole video uploaded against a
+        // project deleted on the desktop meanwhile would fail at commit, after
+        // the minute of transfer, with nowhere for the bytes to go.
+        const project = await getProject(projectId)
+        if (!project) throw new Error(`project not found: ${projectId}`)
+        target = { kind: 'project', projectId }
+      } else {
+        let conversationId =
+          typeof params.conversationId === 'string' && params.conversationId
+            ? params.conversationId
+            : null
+        if (!conversationId) {
+          const created = createConversation(null)
+          created.messages = []
+          // Same stamp as the send path: a conversation a phone's first upload
+          // brings into being started on the phone just as surely.
+          created.channel = 'mobile'
+          await saveConversation(created)
+          conversationId = created.id
+        }
+        target = { kind: 'conversation', conversationId }
       }
 
       const uploadId = toHex(new Uint8Array(randomBytes(16)))
@@ -1083,7 +1509,7 @@ export class MobileChannel {
       const stagedPath = path.join(stagingDir, uploadId)
       const handle = await fs.open(stagedPath, 'w')
       const upload: PendingUpload = {
-        conversationId,
+        target,
         name,
         mimeType: typeof params.mimeType === 'string' ? params.mimeType : null,
         expected,
@@ -1093,8 +1519,18 @@ export class MobileChannel {
         idleTimer: setTimeout(() => void this.abortUpload(uploadId, 'idle'), UPLOAD_IDLE_MS)
       }
       this.uploads.set(uploadId, upload)
-      this.debug(`upload ${uploadId} begun — ${name}, ${expected} bytes, conv ${conversationId}`)
-      return { uploadId, conversationId }
+      this.debug(
+        `upload ${uploadId} begun — ${name}, ${expected} bytes, ` +
+          (target.kind === 'project'
+            ? `project ${target.projectId}`
+            : `conv ${target.conversationId}`)
+      )
+      return {
+        uploadId,
+        ...(target.kind === 'project'
+          ? { projectId: target.projectId }
+          : { conversationId: target.conversationId })
+      }
     })
 
     tunnel.onRpc(Rpc.uploadChunk, async (params) => {
@@ -1131,15 +1567,111 @@ export class MobileChannel {
         await fs.rm(upload.stagedPath, { force: true }).catch(() => undefined)
         throw new Error(`upload incomplete: ${upload.received} of ${upload.expected} bytes`)
       }
+      if (upload.target.kind === 'project') {
+        // Adopted into uploads/project-<id>/ and attached in one serialized
+        // write, so the answer already describes the stored project — the
+        // phone renders that, never its own optimism.
+        const { project, file } = await adoptUploadedProjectFile(
+          upload.target.projectId,
+          upload.stagedPath,
+          upload.name
+        )
+        this.log(`project file added from the phone — ${file.name}`)
+        return {
+          ...this.projectFileMetadata(file, upload),
+          projectId: upload.target.projectId,
+          project: toWireProject(project)
+        }
+      }
       const metadata = await saveUploadFromFile(
-        upload.conversationId,
+        upload.target.conversationId,
         upload.stagedPath,
         upload.name,
         upload.mimeType ?? undefined
       )
       this.debug(`upload ${uploadId} committed — ${metadata.filePath}`)
-      return { ...metadata, conversationId: upload.conversationId }
+      return { ...metadata, conversationId: upload.target.conversationId }
     })
+  }
+
+  /**
+   * The phone's project file list, reduced to refs the project ACTUALLY holds.
+   *
+   * The phone only ever removes files here — adding goes through the upload
+   * path — so this write is a subset filter, and stating it as one is what
+   * makes it safe: a wire path is matched against the stored refs rather than
+   * resolved into one. Nothing else can be attached (an absolute path the
+   * agent would then be told to read), and nothing else can be deleted (a
+   * mismatched path would drop a file the phone meant to keep, since
+   * updateProject removes the copies it owns for everything not in the list).
+   */
+  private async resolveProjectFiles(id: string, wire: unknown[]): Promise<ProjectFileRef[]> {
+    const project = await getProject(id)
+    if (!project) throw new Error(`project not found: ${id}`)
+    const root = workspaceRoot()
+    const byWirePath = new Map(
+      project.files.map((file) => [
+        file.path.startsWith(root + path.sep) ? path.relative(root, file.path) : file.path,
+        file
+      ])
+    )
+    const kept: ProjectFileRef[] = []
+    const seen = new Set<string>()
+    for (const entry of wire) {
+      const wirePath = (entry as { path?: unknown } | null)?.path
+      if (typeof wirePath !== 'string') continue
+      const file = byWirePath.get(wirePath)
+      if (!file || seen.has(file.path)) continue
+      seen.add(file.path)
+      kept.push(file)
+    }
+    return kept
+  }
+
+  /** The scheduler's live view: the cron and the next fire, in THIS zone. */
+  private activeAutomationJobs(): AutomationJob[] {
+    const now = Date.now()
+    return this.deps.agent.brainstem.getActiveJobs().map((job) => ({
+      id: job.id,
+      label: job.label,
+      type: job.type,
+      cron: job.cron,
+      // A `once` job's moment is absolute and already registered; everything
+      // else resolves from its cron. Served rather than computed on the phone:
+      // these fire against this machine's clock and zone.
+      nextRunMs: job.runAt ?? (job.cron ? nextCronMs(job.cron, now) : null),
+      mode: job.mode
+    }))
+  }
+
+  /**
+   * The run pool, minus procedure runs. They share the pool but are not
+   * automations, so they never gate an automation's play button — the same
+   * filter the desktop's own cards apply.
+   */
+  private automationRuns(): AutomationRuns {
+    const brainstem = this.deps.agent.brainstem
+    return toWireRuns({ running: brainstem.getRunningJobs(), queued: brainstem.getQueuedJobs() })
+  }
+
+  /**
+   * The attachment-shaped metadata a committed PROJECT upload answers with, so
+   * the phone can file the bytes it just sent under the desktop's chosen path
+   * (a cache hit instead of an immediate re-download) exactly as it does for a
+   * conversation upload.
+   */
+  private projectFileMetadata(
+    file: ProjectFileRef,
+    upload: PendingUpload
+  ): { type: string; filePath: string; originalName: string; mimeType: string; sizeBytes: number } {
+    const { type, mimeType } = classifyFile(file.name, upload.mimeType ?? undefined)
+    return {
+      type,
+      filePath: path.relative(workspaceRoot(), file.path),
+      originalName: file.name,
+      mimeType,
+      sizeBytes: upload.expected
+    }
   }
 
   /**
@@ -1652,13 +2184,20 @@ export class MobileChannel {
    * is one frame with no chunking behind it, so a push past the relay's record
    * cap does not arrive late, it closes the tunnel; the phone reading the body
    * from disk a moment later is strictly better than that.
+   *
+   * `userMessage` — the prompt this turn is answering — travels on BOTH paths.
+   * It is a couple of hundred bytes and it is the half of the exchange the
+   * phone cannot get anywhere else while the turn runs, so it must not be
+   * dropped along with an assistant snapshot that outgrew the budget: those
+   * are exactly the long turns where the gap is most visible.
    */
-  pushMessageAppended(conversationId: string, message: unknown): void {
+  pushMessageAppended(conversationId: string, message: unknown, userMessage?: unknown): void {
+    const prompt = userMessage === undefined ? {} : { userMessage }
     if (message !== undefined && !this.withinMirrorBudget(conversationId, message)) {
-      this.tunnel?.emit(Event.messageAppended, { conversationId })
+      this.tunnel?.emit(Event.messageAppended, { conversationId, ...prompt })
       return
     }
-    this.tunnel?.emit(Event.messageAppended, { conversationId, message })
+    this.tunnel?.emit(Event.messageAppended, { conversationId, message, ...prompt })
   }
 
   private withinMirrorBudget(conversationId: string, message: unknown): boolean {
@@ -1683,8 +2222,15 @@ export class MobileChannel {
     return this.tunnel?.connected ?? false
   }
 
-  pushTurnScored(conversationId: string, score: unknown): void {
-    this.tunnel?.emit(Event.turnScored, { conversationId, score })
+  /**
+   * A turn was scored, wherever the vote came from — this app's rating bar, a
+   * bare-number Telegram/WhatsApp reply, or the phone itself. The whole rating
+   * travels, so the phone applies it rather than refetching a body: a
+   * ratings-only write bumps no updated_at, so no other push describes it and
+   * the phone's staleness check would never ask.
+   */
+  pushTurnScored(conversationId: string, rating: WireRating): void {
+    this.tunnel?.emit(Event.turnScored, { conversationId, rating })
   }
 
   /** Any settings change — the phone refreshes the affected screen. */
@@ -1708,6 +2254,53 @@ export class MobileChannel {
 
   pushUsageChanged(): void {
     this.tunnel?.emit(Event.usageChanged, { at: Date.now() })
+  }
+
+  /**
+   * `brain/projects.json` changed, whoever wrote it. Payload-free: the phone
+   * re-lists, exactly as an open desktop Projects page re-fetches on the same
+   * signal. Fired from the store's own changed-listener, so a write made ON the
+   * phone echoes back here too — which is what confirms it landed.
+   */
+  pushProjectsChanged(): void {
+    this.tunnel?.emit(Event.projectsChanged, { at: Date.now() })
+  }
+
+  /** `brain/procedures.json` changed — same contract as projects. */
+  pushProceduresChanged(): void {
+    this.tunnel?.emit(Event.proceduresChanged, { at: Date.now() })
+  }
+
+  /** The scheduler reloaded: heartbeat.md changed, whatever wrote it. */
+  pushAutomationsChanged(): void {
+    this.tunnel?.emit(Event.automationsChanged, { at: Date.now() })
+  }
+
+  /**
+   * The run pool moved. Carries its payload — this fires several times per run
+   * and a fetch per tick would be pure overhead — with procedure runs stripped,
+   * since they share the pool but never gate an automation card.
+   */
+  pushAutomationRuns(snapshot: { running: RunningJobInfo[]; queued: QueuedJobInfo[] }): void {
+    this.tunnel?.emit(Event.automationRunsChanged, toWireRuns(snapshot))
+  }
+
+  /**
+   * The memory index started, moved, or finished rebuilding — null when it is
+   * over, which is what retires the phone's card.
+   *
+   * Throttled, unlike the run pool: progress ticks once per batch of eight
+   * files, so a large workspace would otherwise spend the tunnel on a number
+   * that changes faster than anyone can read it. Start and finish are never
+   * throttled — those are the two edges the card appears and disappears on, and
+   * dropping either would leave a card that never showed or never left.
+   */
+  pushReindexStatus(status: ReindexStatus | null): void {
+    const now = Date.now()
+    const isEdge = status === null || this.lastReindexPush === 0
+    if (!isEdge && now - this.lastReindexPush < REINDEX_PUSH_THROTTLE_MS) return
+    this.lastReindexPush = status === null ? 0 : now
+    this.tunnel?.emit(Event.reindexChanged, { status })
   }
 
   // ----------------------------------------------------------------- status
@@ -1738,6 +2331,10 @@ export class MobileChannel {
   }
 
   private emitStatus(): void {
+    // Every state change flows through here, which makes it the one place
+    // the notify_phone tool's registration is kept honest — pairing formed
+    // or dropped, phoneId learned at hello, the settings toggle.
+    this.syncPhoneCapability()
     this.deps.onStatus?.(this.getStatus())
   }
 
@@ -1835,6 +2432,10 @@ function toWireConversation(file: ConversationFile): Record<string, unknown> {
     createdAt: file.createdAt,
     updatedAt: file.updatedAt,
     stats: (file as { stats?: unknown }).stats ?? null,
+    // Every score this conversation carries, so an opened chat shows them at
+    // once. They ride the body rather than the index because that is where
+    // the message ids they key on are: the index is metadata alone.
+    ratings: file.ratings ?? [],
     messages: (file.messages ?? []).map((message) => ({
       id: message.id,
       role: message.role,
@@ -1844,16 +2445,124 @@ function toWireConversation(file: ConversationFile): Record<string, unknown> {
       // already understand the desktop's shapes. Approvals and tool timings
       // ride along for the same reason: they are what the approval card and
       // the tool card's elapsed time are drawn from, and a transcript without
-      // them renders a decided approval as a bare tool call.
+      // them renders a decided approval as a bare tool call. voicePrompt is
+      // here for the same reason: it is how the phone knows this message's
+      // content is a transcript of the audio right under it, and so must not
+      // be printed as a bubble. Without it the stored copy landing at the end
+      // of a turn would put the transcript back under the player that the
+      // live copy correctly kept out.
       payload: stripUndefined({
         attachments: (message as { attachments?: unknown }).attachments,
         segments: (message as { segments?: unknown }).segments,
         approvals: (message as { approvals?: unknown }).approvals,
         toolTimings: (message as { toolTimings?: unknown }).toolTimings,
-        rating: (message as { rating?: unknown }).rating
+        voicePrompt: (message as { voicePrompt?: unknown }).voicePrompt
       })
     }))
   }
+}
+
+/**
+ * Desktop project → wire project. The one transformation is the file path:
+ * stored absolute, served workspace-relative, because that is the form the
+ * phone's file cache resolves and an absolute path would only leak the home
+ * directory. Legacy refs from outside the workspace (pre-copy-on-attach, which
+ * importOutsideProjectFiles migrates at launch) keep their absolute path —
+ * path.relative would produce a `..` escape the phone's cache refuses, so the
+ * file simply reads as unavailable there rather than as some other file.
+ */
+function toWireProject(project: Project): SyncProject {
+  const root = workspaceRoot()
+  return {
+    id: project.id,
+    title: project.title,
+    icon: project.icon,
+    instructions: project.instructions,
+    files: project.files.map((file) => ({
+      path: file.path.startsWith(root + path.sep) ? path.relative(root, file.path) : file.path,
+      name: file.name
+    })),
+    createdAt: project.createdAt,
+    updatedAt: project.updatedAt
+  }
+}
+
+/** Desktop procedure → wire procedure; optionals become explicit nulls. */
+function toWireProcedure(procedure: Procedure): SyncProcedure {
+  return {
+    id: procedure.id,
+    title: procedure.title,
+    prompt: procedure.prompt,
+    mode: procedure.mode ?? null,
+    icon: procedure.icon ?? '',
+    projectId: procedure.projectId ?? null,
+    createdAt: procedure.createdAt,
+    updatedAt: procedure.updatedAt
+  }
+}
+
+/**
+ * Which overlay family a brainstem job belongs to, from its id.
+ *
+ * The brainstem registers its own built-ins as `compaction-daily`,
+ * `compaction-weekly`, `reflection-nightly` and `reflection-deepclean`;
+ * everything else in the pool came from a heading in heartbeat.md, which is an
+ * automation. Those ids are the scheduler's naming and nothing outside this
+ * process should have to know them, so the split is resolved here and travels
+ * as `kind` rather than being re-derived on the phone.
+ */
+function overlayKind(id: string): AutomationRun['kind'] {
+  if (id.startsWith('compaction-')) return 'compaction'
+  if (id.startsWith('reflection-')) return 'reflection'
+  return 'automation'
+}
+
+/**
+ * The run pool as the phone reads it.
+ *
+ * Procedure runs are dropped — they share the pool but are not automations, so
+ * they gate no play button and belong on no overlay card, the same filter the
+ * desktop's own cards apply. What survives is widened with everything a card
+ * draws: `body` (the prompt — an i18n key for the built-ins, see OverlayKind),
+ * `startedAt` for the elapsed clock, and the run's own mode.
+ */
+function toWireRuns(snapshot: {
+  running: RunningJobInfo[]
+  queued: QueuedJobInfo[]
+}): AutomationRuns {
+  const mine = <T extends { id: string }>(rows: T[]): T[] =>
+    rows.filter((row) => !row.id.startsWith('procedure:'))
+  return {
+    running: mine(snapshot.running).map((row) => ({
+      id: row.id,
+      label: row.label,
+      body: row.body,
+      kind: overlayKind(row.id),
+      startedAt: row.startedAt,
+      mode: row.mode ?? null
+    })),
+    queued: mine(snapshot.queued).map((row) => ({
+      id: row.id,
+      label: row.label,
+      kind: overlayKind(row.id),
+      queuedAt: row.queuedAt
+    }))
+  }
+}
+
+/**
+ * Read a string off the wire, trimmed and bounded. Every phone-authored field
+ * below goes through here — the wire is data, not policy, and these values are
+ * written into a workspace file the agent reads back as instructions.
+ */
+function wireText(value: unknown, max: number): string | undefined {
+  if (typeof value !== 'string') return undefined
+  return value.slice(0, max)
+}
+
+/** The two chat modes, or undefined — which means "leave it alone". */
+function wireMode(value: unknown): 'single' | 'workflow' | undefined {
+  return value === 'single' || value === 'workflow' ? value : undefined
 }
 
 /**

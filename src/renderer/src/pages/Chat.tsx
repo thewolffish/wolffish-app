@@ -1,11 +1,8 @@
 import { ApprovalCard } from '@components/common/approval-card/ApprovalCard'
 import { AttachmentList } from '@components/common/attachment-list/AttachmentList'
 import { AudioPlayer } from '@components/common/audio-player/AudioPlayer'
-import { BrainButton } from '@components/common/brain-button/BrainButton'
-import { ChatModeButton } from '@components/common/chat-mode-button/ChatModeButton'
 import { CompactionCard } from '@components/common/compaction-card/CompactionCard'
 import { ContextMeter, type SideSpend } from '@components/common/context-meter/ContextMeter'
-import { DiagnosticExportOverlay } from '@components/common/diagnostic-export-overlay/DiagnosticExportOverlay'
 import { DocxViewer } from '@components/common/docx-viewer/DocxViewer'
 import { ChartCard } from '@components/common/chart-card/ChartCard'
 import { FileCard } from '@components/common/file-card/FileCard'
@@ -56,7 +53,6 @@ import {
 import { preselectSettingsTab } from '@pages/settings/settingsNav'
 import type {
   AskUserResponse,
-  CapabilityEntry,
   ChatHistoryMessage,
   ConversationFile,
   ConversationRating,
@@ -86,19 +82,15 @@ import {
   ArrowExpandIcon,
   ArrowUp02Icon,
   BubbleChatIcon,
-  Bug01Icon,
   CancelCircleIcon,
   Clock01Icon,
   CloudUploadIcon,
-  ComputerTerminal01Icon,
   Delete02Icon,
   Download01Icon,
   FileEditIcon,
-  Files01Icon,
   Folder01Icon,
   HeartCheckIcon,
   Image02Icon,
-  ListViewIcon,
   Mic01Icon,
   PauseIcon,
   PlayIcon,
@@ -254,56 +246,6 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
   // Switched from the composer's mode button; global, like the Brain.
   const chatMode = status?.config?.llm.mode === 'workflow' ? 'workflow' : 'single'
   const persistedThinkingModes = status?.config?.llm.thinkingModes
-
-  // Media-URL attachments have exactly ONE consumer: MiniMax H3 video
-  // generation, whose API takes public media URLs directly. Every other
-  // model reads a URL pasted into the message text just fine, so the extra
-  // control would be pure noise — the attach button stays the plain file
-  // picker it has always been unless the video capability can actually run
-  // (installed, enabled, healthy) AND the video service has its own key.
-  const [videoCapabilityReady, setVideoCapabilityReady] = useState(false)
-  useEffect(() => {
-    let cancelled = false
-    const apply = (caps: CapabilityEntry[]): void => {
-      if (cancelled) return
-      const entry = caps.find((c) => c.name === 'video')
-      setVideoCapabilityReady(Boolean(entry?.enabled) && entry?.status !== 'error')
-    }
-    void window.api.cerebellum
-      .listCapabilities()
-      .then(apply)
-      .catch(() => {})
-    const unsubscribe = window.api.cerebellum.onCapabilitiesChanged(apply)
-    return () => {
-      cancelled = true
-      unsubscribe()
-    }
-  }, [])
-  // The video service's OWN key — deliberately NOT the MiniMax chat
-  // provider's (see VideoConfig in workspace.ts). Re-read on the
-  // services:changed push so saving the key in Settings lights the menu up
-  // without a restart.
-  const [videoKeyConfigured, setVideoKeyConfigured] = useState(false)
-  useEffect(() => {
-    let cancelled = false
-    const refresh = (): void => {
-      void window.api.video
-        .getConfig()
-        .then((cfg) => {
-          if (!cancelled) setVideoKeyConfigured(cfg.apiKey.trim().length > 0)
-        })
-        .catch(() => {})
-    }
-    refresh()
-    const unsubscribe = window.api.services.onChanged((payload) => {
-      if (payload.service === 'video') refresh()
-    })
-    return () => {
-      cancelled = true
-      unsubscribe()
-    }
-  }, [])
-  const videoUrlAttachAvailable = videoCapabilityReady && videoKeyConfigured
 
   // Ordered reasoning modes this model honours (canonical scale). Drives the
   // brain button. Source of truth is reasoningModesFor — corrected to live
@@ -538,10 +480,6 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
    * them up if it ever becomes a problem.
    */
   const [pendingAttachments, setPendingAttachments] = useState<MessageAttachment[]>([])
-  // Attach-button menu (files vs media URL) — the URL option exists for
-  // video generation, so it only appears when the MiniMax key is configured.
-  const [attachMenuOpen, setAttachMenuOpen] = useState(false)
-  const [urlAttachOpen, setUrlAttachOpen] = useState(false)
   /**
    * Files currently being copied into the conversation's uploads folder.
    * Each gets a chip in the composer the instant it's picked/dropped —
@@ -2596,13 +2534,6 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     [messages, inAppVerbose]
   )
 
-  // Diagnostic export — per conversation, so it needs a persisted conversation
-  // to bundle. Deliberately NOT gated on `busy`: a turn that has gone wrong is
-  // exactly when this gets pressed, and the export only reads (the turn keeps
-  // streaming behind the overlay and this Chat stays mounted to persist it).
-  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false)
-  const canExportDiagnostics = activeConversationId !== null && messages.length > 0
-
   const exportChatPdf = useCallback(async () => {
     if (exportingPdf || busy || !hasExportableContent(messages, inAppVerbose)) return
     setExportingPdf(true)
@@ -3012,7 +2943,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
         )}
         <div className="relative flex w-full items-end gap-1">
           {/* Full-width composer, three zones. START: session/config controls
-                (new chat, cloud/local, reasoning, meter, logs). MIDDLE: the
+                (new chat, meter, cloud/local + model). MIDDLE: the
                 textarea — it lives in the trailing group but takes `order-first`
                 there, so it renders between the two button clusters and grows
                 (flex-1) to fill the gap, giving the row breathing room. END:
@@ -3052,37 +2983,6 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                 />
               )}
             </div>
-            <ModelSwitch
-              localOnly={localOnly}
-              localModel={currentModel}
-              providers={cloudProviders}
-              brain={brain}
-              disabled={savingMode || busy}
-              onModeChange={onModeChange}
-              onSelectModel={async (sel) => {
-                await window.api.provider.setBrain(sel)
-                await refreshStatus()
-              }}
-            />
-            {recPhase === 'idle' && (
-              <BrainButton
-                modes={reasoningModes}
-                value={thinkingMode}
-                onSelect={setThinkingMode}
-                disabled={savingMode || busy}
-              />
-            )}
-            {recPhase === 'idle' && (
-              <ChatModeButton
-                mode={chatMode}
-                disabled={savingMode || busy}
-                onSelect={async (mode) => {
-                  if (mode === chatMode) return
-                  await window.api.provider.setMode(mode)
-                  await refreshStatus()
-                }}
-              />
-            )}
             {recPhase === 'idle' && (
               <ContextMeter
                 used={contextTokens ?? 0}
@@ -3108,13 +3008,43 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                   convStats?.lastTurn?.provider ??
                   (localOnly ? 'local' : activeCloudProvider)
                 }
+                logsCount={timelineEventCount}
+                filesCount={conversationFiles.length}
+                onOpenTimeline={() => setTimelineOpen(true)}
+                onOpenFiles={() => setFilesOpen(true)}
               />
             )}
-            <LogsFilesButton
-              logsCount={timelineEventCount}
-              filesCount={conversationFiles.length}
-              onOpenTimeline={() => setTimelineOpen(true)}
-              onOpenFiles={() => setFilesOpen(true)}
+            {/* Reasoning effort and chat mode ride INSIDE this card's chip
+                rows now (two rows above the model search) — one panel for
+                every model knob instead of three composer pills. */}
+            <ModelSwitch
+              localOnly={localOnly}
+              localModel={currentModel}
+              providers={cloudProviders}
+              brain={brain}
+              disabled={savingMode || busy}
+              reasoningModes={reasoningModes}
+              reasoningMode={thinkingMode}
+              chatMode={chatMode}
+              showControls={recPhase === 'idle'}
+              onModeChange={onModeChange}
+              onSelectModel={async (sel) => {
+                await window.api.provider.setBrain(sel)
+                await refreshStatus()
+              }}
+              onSelectLocalModel={async (model) => {
+                // Every model the card offers is already installed, so this
+                // is the no-pull branch of model:select — it just writes the
+                // choice and re-points the local provider.
+                await window.api.model.select(model)
+                await refreshStatus()
+              }}
+              onSelectReasoning={setThinkingMode}
+              onSelectChatMode={async (mode) => {
+                if (mode === chatMode) return
+                await window.api.provider.setMode(mode)
+                await refreshStatus()
+              }}
             />
           </div>
           <div className="flex min-w-0 flex-1 items-end gap-1">
@@ -3134,24 +3064,6 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
             >
               <Download01Icon size={18} />
             </button>
-            {/* Diagnostic export — bundles this conversation's logs, prompts,
-                tasks and context into a zip for the developer. */}
-            <button
-              type="button"
-              onClick={() => setDiagnosticsOpen(true)}
-              disabled={!canExportDiagnostics || diagnosticsOpen}
-              title={t('diagnostics.button')}
-              aria-label={t('diagnostics.button')}
-              className={cn(
-                'flex h-[42.5px] w-10 shrink-0 items-center justify-center rounded-lg border',
-                'border-border bg-surface text-muted enabled:hover:text-fg enabled:hover:border-muted',
-                'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-                'disabled:cursor-not-allowed disabled:opacity-50',
-                canExportDiagnostics && !diagnosticsOpen && 'cursor-pointer'
-              )}
-            >
-              <Bug01Icon size={18} />
-            </button>
             {/* Picking a folder stays live mid-turn — it rides the next queued
                 prompt, same as an attachment. Removing is locked while the turn
                 runs so the agent can't lose a folder it's working in. */}
@@ -3163,71 +3075,21 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
               removeDisabled={busy}
             />
             {/* Attaching stays live mid-turn — staged files ride the next
-                queued prompt instead of the running one. With video
-                generation configured (MiniMax key) the button opens a small
-                menu adding "media URL" — a reference-only attachment the
-                model passes straight to video_generate (URLs bypass the
-                API's 64 MB body cap). Without the key it stays the plain
-                file picker it always was. */}
-            <div className="relative shrink-0">
-              <button
-                type="button"
-                onClick={() => {
-                  if (videoUrlAttachAvailable) setAttachMenuOpen((v) => !v)
-                  else void pickUploads()
-                }}
-                title={t('chat.attachFile')}
-                aria-label={t('chat.attachFile')}
-                className={cn(
-                  'flex h-[42.5px] w-10 shrink-0 items-center justify-center rounded-lg border',
-                  'border-border bg-surface text-muted enabled:hover:text-fg enabled:hover:border-muted',
-                  'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-                  'cursor-pointer'
-                )}
-              >
-                <Image02Icon size={18} />
-              </button>
-              {attachMenuOpen && (
-                <>
-                  <div className="fixed inset-0 z-40" onClick={() => setAttachMenuOpen(false)} />
-                  {/* Sized to the longest label on one line — a wrapped menu
-                      item reads as two entries. */}
-                  <div className="border-border bg-surface absolute bottom-full end-0 z-50 mb-2 w-max min-w-56 rounded-lg border p-1 shadow-lg">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setAttachMenuOpen(false)
-                        void pickUploads()
-                      }}
-                      className="text-fg hover:bg-bg flex w-full cursor-pointer items-center gap-2 whitespace-nowrap rounded-md px-2.5 py-1.5 text-start text-sm"
-                    >
-                      <Image02Icon size={15} className="text-muted shrink-0" />
-                      {t('chat.attachMenu.files')}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setAttachMenuOpen(false)
-                        setUrlAttachOpen(true)
-                      }}
-                      className="text-fg hover:bg-bg flex w-full cursor-pointer items-center gap-2 whitespace-nowrap rounded-md px-2.5 py-1.5 text-start text-sm"
-                    >
-                      <CloudUploadIcon size={15} className="text-muted shrink-0" />
-                      {t('chat.attachMenu.mediaUrl')}
-                    </button>
-                  </div>
-                </>
+                queued prompt instead of the running one. */}
+            <button
+              type="button"
+              onClick={pickUploads}
+              title={t('chat.attachFile')}
+              aria-label={t('chat.attachFile')}
+              className={cn(
+                'flex h-[42.5px] w-10 shrink-0 items-center justify-center rounded-lg border',
+                'border-border bg-surface text-muted enabled:hover:text-fg enabled:hover:border-muted',
+                'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+                'cursor-pointer'
               )}
-              {urlAttachOpen && (
-                <UrlAttachPopover
-                  onClose={() => setUrlAttachOpen(false)}
-                  onAdd={(attachment) => {
-                    setPendingAttachments((prev) => [...prev, attachment])
-                    setUrlAttachOpen(false)
-                  }}
-                />
-              )}
-            </div>
+            >
+              <Image02Icon size={18} />
+            </button>
             {/* Recording stays live mid-turn, like attaching: the take is
                 queued instead of sent, and goes out when the turn ends. */}
             <button
@@ -3422,12 +3284,6 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
       {/* Gated on visibility: these portal to <body>, so without this they would
           escape the hidden wrapper and paint over another screen (or another
           session's view). */}
-      {visible && diagnosticsOpen && activeConversationId && (
-        <DiagnosticExportOverlay
-          conversationId={activeConversationId}
-          onClose={() => setDiagnosticsOpen(false)}
-        />
-      )}
       {visible &&
         timelineOpen &&
         createPortal(
@@ -3898,146 +3754,6 @@ function WorkingFolderButton({
   )
 }
 
-// Composer button replacing the old floating logs/files badge. A bordered
-// card (like the meter) that on hover/click reveals "View Logs" and "View
-// Files" rows with counts; clicking an enabled row opens its dialog. Always
-// rendered: rows with no events / files still show, displaying a 0 badge and
-// disabled (not clickable) so the control keeps a stable shape everywhere —
-// including channel-owned conversations that may have one without the other.
-function LogsFilesButton({
-  logsCount,
-  filesCount,
-  onOpenTimeline,
-  onOpenFiles
-}: {
-  logsCount: number
-  filesCount: number
-  onOpenTimeline: () => void
-  onOpenFiles: () => void
-}): React.JSX.Element {
-  const { t } = useTranslation()
-  const [open, setOpen] = useState(false)
-  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const rootRef = useRef<HTMLSpanElement>(null)
-
-  useEffect(() => {
-    if (!open) return
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') setOpen(false)
-    }
-    const onDown = (e: MouseEvent): void => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener('keydown', onKey)
-    document.addEventListener('mousedown', onDown)
-    return () => {
-      document.removeEventListener('keydown', onKey)
-      document.removeEventListener('mousedown', onDown)
-    }
-  }, [open])
-
-  useEffect(() => {
-    return () => {
-      if (hoverTimer.current) clearTimeout(hoverTimer.current)
-    }
-  }, [])
-
-  const onEnter = (): void => {
-    if (hoverTimer.current) clearTimeout(hoverTimer.current)
-    hoverTimer.current = setTimeout(() => setOpen(true), 150)
-  }
-  const onLeave = (): void => {
-    if (hoverTimer.current) clearTimeout(hoverTimer.current)
-    hoverTimer.current = setTimeout(() => setOpen(false), 200)
-  }
-
-  const badge = (n: number, muted: boolean): React.JSX.Element => (
-    <span
-      className={cn(
-        'inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full border px-1 text-[10px] font-semibold tabular-nums',
-        muted ? 'bg-bg border-border/60 text-muted/40' : 'bg-bg border-border text-fg'
-      )}
-    >
-      {n}
-    </span>
-  )
-
-  const row = (
-    disabled: boolean,
-    onOpen: () => void,
-    icon: React.JSX.Element,
-    label: string,
-    count: number
-  ): React.JSX.Element => (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={() => {
-        if (disabled) return
-        onOpen()
-        setOpen(false)
-      }}
-      className={cn(
-        'flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs',
-        disabled ? 'text-muted/40 cursor-not-allowed' : 'text-fg hover:bg-border/40 cursor-pointer'
-      )}
-    >
-      {icon}
-      <span className="flex-1 text-start">{label}</span>
-      {badge(count, disabled)}
-    </button>
-  )
-
-  const logsDisabled = logsCount === 0
-  const filesDisabled = filesCount === 0
-
-  return (
-    <span
-      ref={rootRef}
-      className="relative inline-flex shrink-0"
-      onMouseEnter={onEnter}
-      onMouseLeave={onLeave}
-    >
-      <button
-        type="button"
-        aria-label={t('chat.logsFiles.label')}
-        title={t('chat.logsFiles.label')}
-        aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
-        onFocus={onEnter}
-        onBlur={onLeave}
-        className="border-border bg-surface text-muted enabled:hover:text-fg enabled:hover:border-muted flex h-[42.5px] w-10 shrink-0 cursor-pointer items-center justify-center rounded-lg border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
-      >
-        <ListViewIcon size={18} />
-      </button>
-      {open && (
-        <div className="border-border bg-surface absolute bottom-full inset-s-0 z-50 mb-2 w-44 rounded-xl border p-1 shadow-xl">
-          {row(
-            logsDisabled,
-            onOpenTimeline,
-            <ComputerTerminal01Icon
-              size={15}
-              className={cn('shrink-0', logsDisabled ? 'text-muted/40' : 'text-muted')}
-            />,
-            t('chat.timeline.viewLogs'),
-            logsCount
-          )}
-          {row(
-            filesDisabled,
-            onOpenFiles,
-            <Files01Icon
-              size={15}
-              className={cn('shrink-0', filesDisabled ? 'text-muted/40' : 'text-muted')}
-            />,
-            t('chat.files.viewFiles'),
-            filesCount
-          )}
-        </div>
-      )}
-    </span>
-  )
-}
-
 function TimelineList({
   entries,
   locale
@@ -4441,6 +4157,7 @@ const ChatItem = memo(
           content={message.content}
           attachments={message.attachments}
           transcribing={message.transcribing}
+          voicePrompt={message.voicePrompt}
           timestamp={message.timestamp}
           t={t}
         />
@@ -4485,16 +4202,22 @@ function UserBubble({
   content,
   attachments,
   transcribing,
+  voicePrompt,
   timestamp,
   t
 }: {
   content: string
   attachments?: MessageAttachment[]
   transcribing?: boolean
+  voicePrompt?: boolean
   timestamp?: number
   t: (k: string, opts?: Record<string, unknown>) => string
 }): React.JSX.Element {
-  const hasContent = content.length > 0
+  // A voice note's own player IS the prompt on screen. The transcript is still
+  // what `content` stores — history, titling and export all read it, and the
+  // model still receives it as `<voice_note>` — but printing it back under the
+  // player only repeats what the user just said out loud.
+  const hasContent = content.length > 0 && !voicePrompt
   const hasAttachments = !!attachments && attachments.length > 0
   const timeLabel = useRelativeTime(timestamp)
   const showFooter = !transcribing && hasContent
@@ -5195,144 +4918,6 @@ function renderSegments(
   return { blocks: <>{blocks}</>, empty: blocks.length === 0 }
 }
 
-/**
- * Small popover for attaching a media URL (image/video/audio) instead of a
- * file. Reference-only: nothing is downloaded — the URL rides the message's
- * attachment note for the model to hand to URL-capable tools
- * (video_generate). Kind is auto-detected from the extension and can be
- * overridden with the chips.
- */
-function UrlAttachPopover({
-  onClose,
-  onAdd
-}: {
-  onClose: () => void
-  onAdd: (attachment: MessageAttachment) => void
-}): React.JSX.Element {
-  const { t } = useTranslation()
-  const [value, setValue] = useState('')
-  const [kind, setKind] = useState<'image' | 'video' | 'audio' | null>(null)
-  const detected = detectUrlMediaKind(value)
-  const effectiveKind = kind ?? detected ?? 'image'
-  const valid = /^https?:\/\/\S+\.\S+/i.test(value.trim())
-
-  const submit = (): void => {
-    const url = value.trim()
-    if (!valid) return
-    const basename = urlBasename(url)
-    onAdd({
-      type: effectiveKind,
-      filePath: '',
-      originalName: basename,
-      mimeType: mimeForUrl(url, effectiveKind),
-      sizeBytes: 0,
-      remoteUrl: url
-    })
-  }
-
-  return (
-    <>
-      <div className="fixed inset-0 z-40" onClick={onClose} />
-      <div className="border-border bg-surface absolute bottom-full end-0 z-50 mb-2 w-80 rounded-lg border p-3 shadow-lg">
-        <div className="text-fg mb-2 text-xs font-medium">{t('chat.urlAttach.title')}</div>
-        <input
-          autoFocus
-          dir="ltr"
-          type="url"
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') submit()
-            if (e.key === 'Escape') onClose()
-          }}
-          placeholder={t('chat.urlAttach.placeholder')}
-          className="border-border bg-bg text-fg placeholder:text-muted focus-visible:ring-accent w-full rounded-md border px-2.5 py-1.5 text-xs focus-visible:outline-none focus-visible:ring-2"
-        />
-        <div className="mt-2 flex items-center gap-1.5">
-          {(['image', 'video', 'audio'] as const).map((k) => (
-            <button
-              key={k}
-              type="button"
-              onClick={() => setKind(k)}
-              className={cn(
-                'cursor-pointer rounded-full border px-2 py-0.5 text-[10px] font-medium',
-                effectiveKind === k
-                  ? 'border-accent bg-accent/10 text-accent'
-                  : 'border-border text-muted hover:text-fg'
-              )}
-            >
-              {t(`chat.urlAttach.kind.${k}`)}
-            </button>
-          ))}
-          <button
-            type="button"
-            onClick={submit}
-            disabled={!valid}
-            className={cn(
-              'ms-auto rounded-md px-2.5 py-1 text-xs font-medium',
-              valid
-                ? 'bg-accent cursor-pointer text-white hover:opacity-90'
-                : 'bg-border text-muted cursor-not-allowed'
-            )}
-          >
-            {t('chat.urlAttach.add')}
-          </button>
-        </div>
-      </div>
-    </>
-  )
-}
-
-const URL_IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif', '.gif']
-const URL_VIDEO_EXTS = ['.mp4', '.mov', '.m4v', '.webm', '.mkv', '.avi']
-const URL_AUDIO_EXTS = ['.mp3', '.wav', '.m4a', '.aac', '.ogg', '.flac']
-
-function detectUrlMediaKind(url: string): 'image' | 'video' | 'audio' | null {
-  const clean = url.split(/[?#]/)[0].toLowerCase()
-  if (URL_IMAGE_EXTS.some((e) => clean.endsWith(e))) return 'image'
-  if (URL_VIDEO_EXTS.some((e) => clean.endsWith(e))) return 'video'
-  if (URL_AUDIO_EXTS.some((e) => clean.endsWith(e))) return 'audio'
-  return null
-}
-
-function urlBasename(url: string): string {
-  try {
-    const clean = new URL(url).pathname
-    const base = clean.split('/').filter(Boolean).pop()
-    if (base) return decodeURIComponent(base)
-  } catch {
-    // fall through
-  }
-  return url.replace(/^https?:\/\//i, '').slice(0, 48)
-}
-
-function mimeForUrl(url: string, kind: 'image' | 'video' | 'audio'): string {
-  const clean = url.split(/[?#]/)[0].toLowerCase()
-  const ext = clean.includes('.') ? clean.slice(clean.lastIndexOf('.')) : ''
-  const map: Record<string, string> = {
-    '.jpg': 'image/jpeg',
-    '.jpeg': 'image/jpeg',
-    '.png': 'image/png',
-    '.webp': 'image/webp',
-    '.heic': 'image/heic',
-    '.heif': 'image/heif',
-    '.gif': 'image/gif',
-    '.mp4': 'video/mp4',
-    '.mov': 'video/quicktime',
-    '.m4v': 'video/mp4',
-    '.webm': 'video/webm',
-    '.mkv': 'video/x-matroska',
-    '.avi': 'video/x-msvideo',
-    '.mp3': 'audio/mp3',
-    '.wav': 'audio/wav',
-    '.m4a': 'audio/mp4',
-    '.aac': 'audio/aac',
-    '.ogg': 'audio/ogg',
-    '.flac': 'audio/flac'
-  }
-  return map[ext] ?? `${kind}/*`
-}
-
 function PendingAttachmentChip({
   attachment,
   onRemove
@@ -5351,15 +4936,11 @@ function PendingAttachmentChip({
       <span className="bg-primary/10 text-primary inline-flex h-5 items-center rounded px-1.5 text-[10px] font-medium uppercase tracking-wide">
         {attachment.type}
       </span>
-      <span
-        className="truncate"
-        dir={attachment.remoteUrl ? 'ltr' : undefined}
-        title={attachment.remoteUrl ?? attachment.originalName}
-      >
+      <span className="truncate" title={attachment.originalName}>
         {attachment.originalName}
       </span>
       <span className="text-muted shrink-0 tabular-nums text-[10px]">
-        {attachment.remoteUrl ? t('chat.urlAttach.chip') : formatBytesL(attachment.sizeBytes, t)}
+        {formatBytesL(attachment.sizeBytes, t)}
       </span>
       <button
         type="button"
@@ -6481,12 +6062,6 @@ function composeHistoryContent(
   if (text) parts.push(text)
   if (attachments.length > 0) {
     const lines = attachments.map((a) => {
-      // URL reference (no local file): the model passes the URL itself to
-      // URL-capable tools (video_generate). KEEP IDENTICAL to the main-side
-      // twin in compose-attachments.ts.
-      if (a.remoteUrl) {
-        return `  - ${a.originalName} (type=${a.type}, mime=${a.mimeType}, url=${a.remoteUrl})`
-      }
       const ext = a.originalName.includes('.')
         ? a.originalName.slice(a.originalName.lastIndexOf('.'))
         : ''
@@ -6496,9 +6071,7 @@ function composeHistoryContent(
     parts.push(
       `<attachments>\nThe user attached ${attachments.length} file${attachments.length === 1 ? '' : 's'} to this message:\n${lines.join('\n')}\n</attachments>`
     )
-    // URL-only video references carry no local file to probe — the ffmpeg
-    // inspection instructions apply to on-disk uploads only.
-    const hasVideo = attachments.some((a) => a.type === 'video' && !a.remoteUrl)
+    const hasVideo = attachments.some((a) => a.type === 'video')
     if (hasVideo) {
       parts.push(
         `<video_instructions>\nOne or more attached files are videos. You cannot view or process video content directly. Instead, use ffmpeg via your shell tool to read the video metadata and inspect the file. Start by running: ffmpeg -hide_banner -i "<path>" for each video file — its stderr reports duration, resolution, codecs and streams. (If ffprobe is available it gives structured JSON: ffprobe -v quiet -print_format json -show_format -show_streams "<path>".) Use ffmpeg for any further video operations the user requests.\n</video_instructions>`

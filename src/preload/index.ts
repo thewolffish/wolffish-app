@@ -325,14 +325,6 @@ export type MessageAttachment = {
   width?: number
   height?: number
   durationSeconds?: number
-  /**
-   * Reference-only attachment: a public media URL the user supplied instead
-   * of a file, for tools that take URLs directly (MiniMax H3 video
-   * generation — URLs bypass the API's 64 MB request-body cap). Nothing is
-   * downloaded: filePath is '' and sizeBytes 0; the attachment note carries
-   * the URL to the model. (Dual decl — see src/main/conversations.ts.)
-   */
-  remoteUrl?: string
 }
 
 export type ConversationMessage = {
@@ -454,7 +446,7 @@ export type ConversationFile = {
   ratings?: ConversationRating[]
 }
 
-export type ConversationRatingSource = 'inapp' | 'telegram' | 'whatsapp'
+export type ConversationRatingSource = 'inapp' | 'telegram' | 'whatsapp' | 'mobile'
 
 /** A user's 0-10 score for one completed turn (dual decl — see src/main/conversations.ts). */
 export type ConversationRating = {
@@ -1082,6 +1074,14 @@ export type ViewerApi = {
   download: (relativePath: string) => Promise<{ ok: boolean }>
   revealInFolder: (relativePath: string) => Promise<{ ok: boolean }>
   resync: () => Promise<ViewerTreeNode[]>
+  /**
+   * One of the three customization documents (soul / user / agents) was
+   * written — by this window, another window, or the paired phone. Carries the
+   * workspace-relative path so a listener can ignore documents it is not
+   * showing. Fires only for those three: every other workspace file has a
+   * single editor and nothing to reconcile with.
+   */
+  onCustomizationChanged: (listener: (payload: { doc: string; path: string }) => void) => () => void
 }
 
 export type HeartbeatJobView = {
@@ -2162,7 +2162,8 @@ const api: WolffishApi = {
     stat: (relativePath) => ipcRenderer.invoke('viewer:stat', relativePath),
     download: (relativePath) => ipcRenderer.invoke('viewer:download', relativePath),
     revealInFolder: (relativePath) => ipcRenderer.invoke('viewer:revealInFolder', relativePath),
-    resync: () => ipcRenderer.invoke('viewer:resync')
+    resync: () => ipcRenderer.invoke('viewer:resync'),
+    onCustomizationChanged: (listener) => subscribe('customization:changed', listener)
   },
   heartbeat: {
     getJobs: () => ipcRenderer.invoke('heartbeat:getJobs'),

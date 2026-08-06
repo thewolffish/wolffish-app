@@ -192,15 +192,58 @@ async function run(): Promise<void> {
     )
   }
 
+  // -------------------------------------------- deeplinks are model-led only
+
+  {
+    const sent: NotifyPhoneRequest[] = []
+    const { plugin } = buildMobileCapability({
+      notify: async (request) => {
+        sent.push(request)
+        return {
+          v: 1,
+          type: 'notify_result',
+          notificationId: mintNotificationId(),
+          route: 'push'
+        }
+      }
+    })
+
+    // 100% model-led: even inside a turn with a conversation, an omitted
+    // deeplink stays null — a tap just opens the app. The harness never
+    // invents a destination the model didn't name.
+    await turnScope.run(
+      { turnId: 'turn_dl_1', conversationId: 'conv-2026-08-05_10-00-00', autonomous: false },
+      () => plugin.execute('notify_phone', { title: 't', body: 'b', phase: 'completed' })
+    )
+    ok('omitted deeplink stays null — no auto destination', sent[0]?.deeplink === null)
+
+    // A deeplink the model names explicitly passes through untouched.
+    await turnScope.run(
+      { turnId: 'turn_dl_2', conversationId: 'conv-2026-08-05_10-00-00', autonomous: false },
+      () =>
+        plugin.execute('notify_phone', {
+          title: 't',
+          body: 'b',
+          phase: 'completed',
+          deeplink: 'wolffish://chat?id=conv-2026-08-05_10-00-00'
+        })
+    )
+    ok(
+      'explicit conversation deeplink passes through',
+      sent[1]?.deeplink === 'wolffish://chat?id=conv-2026-08-05_10-00-00'
+    )
+  }
+
   // ------------------------------------------------------------ channel layer
 
   {
     const registered: string[] = []
+    const unregistered: string[] = []
     const channel = new MobileChannel({
       agent: {
         cerebellum: {
           registerInProcessCapability: (cap: { name: string }) => registered.push(cap.name),
-          unregisterInProcessCapability: () => undefined
+          unregisterInProcessCapability: (name: string) => unregistered.push(name)
         }
       } as never,
       runner: { send: () => ({ turnId: 't', controller: new AbortController() }) } as never,
@@ -208,12 +251,15 @@ async function run(): Promise<void> {
       loadNotificationsEnabled: async () => true
     } as never)
     await channel.start()
-    ok('starting the channel registers the phone capability', registered.includes('phone'))
+    // Presence of the tool IS the availability signal: nothing is paired in
+    // this sandbox, so the capability must NOT be registered.
+    ok('no pairing → notify_phone not exposed', !registered.includes('phone'))
 
     type ChannelInternals = {
       pairing: Record<string, unknown> | null
       tunnel: { sendControl: (frame: Record<string, unknown>) => void } | null
       onNotifyResult: (raw: Record<string, unknown>) => void
+      syncPhoneCapability: () => void
     }
     const internals = channel as unknown as ChannelInternals
 
@@ -226,11 +272,11 @@ async function run(): Promise<void> {
       runId: 'turn_abc'
     }
 
-    // No pairing at all → a clear refusal.
+    // No pairing at all → a clear refusal (defense in depth below the gate).
     const unpaired = await channel.notifyPhone(request).catch((error: Error) => error)
     ok('unpaired refusal', unpaired instanceof Error && unpaired.message.includes('no phone'))
 
-    // Paired, but the phone predates deviceId → refused, never misaddressed.
+    // Paired, but the phone predates deviceId → still hidden, still refused.
     internals.pairing = {
       secret: 'AAAA',
       peerPublicKey: 'ab'.repeat(32),
@@ -239,11 +285,16 @@ async function run(): Promise<void> {
       lastSeenAt: null,
       deviceName: 'Test phone'
     }
+    internals.syncPhoneCapability()
+    ok('paired without phoneId → still not exposed', !registered.includes('phone'))
     const noId = await channel.notifyPhone(request).catch((error: Error) => error)
     ok('missing phoneId refusal', noId instanceof Error && noId.message.includes('identified'))
 
-    // Fully paired: the emitted frame carries harness-stamped identity.
+    // The phone identifies itself (hello carries deviceId) → the tool appears.
     internals.pairing.phoneId = 'phone-device-123456'
+    internals.syncPhoneCapability()
+    ok('phoneId learned → notify_phone exposed', registered.includes('phone'))
+
     const wire: Record<string, unknown>[] = []
     internals.tunnel = {
       sendControl: (frame) => {
@@ -271,13 +322,19 @@ async function run(): Promise<void> {
     ok('runId travels with the frame', sentFrame.runId === 'turn_abc')
     ok('result id matches the frame id', result.notificationId === sentFrame.notificationId)
 
-    // The user switch kills the path before any frame is built.
+    // The user switch both withdraws the tool and kills the direct path.
     await channel.setNotificationsEnabled(false)
+    ok('toggle off → notify_phone withdrawn', unregistered.includes('phone'))
     const off = await channel.notifyPhone(request).catch((error: Error) => error)
     ok(
       'disabled setting refuses before sending',
       off instanceof Error && off.message.includes('disabled') && wire.length === 1
     )
+
+    // Toggling back on restores the tool without a restart.
+    const before = registered.length
+    await channel.setNotificationsEnabled(true)
+    ok('toggle on → notify_phone re-exposed', registered.length === before + 1)
   }
 
   console.log(`${passed} passed, ${failed} failed`)

@@ -90,12 +90,6 @@ export function AttachmentList({
 /** Dispatch one attachment to its type-appropriate viewer (no key — the caller
  *  owns keying so the same dispatch serves both the list and grid variants). */
 function renderViewer(att: MessageAttachment, exists: boolean): React.JSX.Element {
-  // Reference-only URL attachment (video-generation input): there are no
-  // local bytes to play or preview — render a link card that opens the URL
-  // in the browser (window.open routes through shell.openExternal).
-  if (att.remoteUrl) {
-    return <UrlAttachmentCard attachment={att} />
-  }
   if (att.type === 'audio') {
     return (
       <AudioPlayer
@@ -230,31 +224,4 @@ function useExistenceMap(attachments: MessageAttachment[]): Record<string, boole
   }, [attachments.map((a) => a.filePath).join('|')])
 
   return map
-}
-
-/**
- * Link card for a reference-only URL attachment (no local bytes). Opens the
- * URL externally on click; shows the type chip + name, mirroring the
- * pending-chip look so history and composer agree.
- */
-function UrlAttachmentCard({ attachment }: { attachment: MessageAttachment }): React.JSX.Element {
-  return (
-    <button
-      type="button"
-      onClick={() => window.open(attachment.remoteUrl ?? '', '_blank')}
-      title={attachment.remoteUrl}
-      className={cn(
-        'border-border bg-surface text-fg flex max-w-xs cursor-pointer items-center gap-2 self-start',
-        'rounded-lg border px-2.5 py-1.5 text-xs hover:border-muted focus-visible:ring-2 focus-visible:ring-accent'
-      )}
-    >
-      <span className="bg-primary/10 text-primary inline-flex h-5 items-center rounded px-1.5 text-[10px] font-medium uppercase tracking-wide">
-        {attachment.type}
-      </span>
-      <span dir="ltr" className="truncate">
-        {attachment.originalName}
-      </span>
-      <span className="text-muted shrink-0 text-[10px] uppercase">URL</span>
-    </button>
-  )
 }

@@ -19,14 +19,6 @@ export type MessageAttachment = {
   width?: number
   height?: number
   durationSeconds?: number
-  /**
-   * Reference-only attachment: a public media URL the user supplied instead
-   * of a file, for tools that take URLs directly (MiniMax H3 video
-   * generation — URLs bypass the API's 64 MB request-body cap). Nothing is
-   * downloaded: filePath is '' and sizeBytes 0; the attachment note carries
-   * the URL to the model. (Dual decl — mirrored in src/preload/index.ts.)
-   */
-  remoteUrl?: string
 }
 
 export type ConversationMessage = {
@@ -108,7 +100,7 @@ export type TimelineEntry = {
   detail?: string
 }
 
-export type ConversationRatingSource = 'inapp' | 'telegram' | 'whatsapp'
+export type ConversationRatingSource = 'inapp' | 'telegram' | 'whatsapp' | 'mobile'
 
 /**
  * A user's 0-10 score for one completed turn, keyed by the turn's assistant

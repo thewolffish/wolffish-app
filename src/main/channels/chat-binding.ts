@@ -44,12 +44,13 @@ export type BindResult =
  * map and restart the idle clock on a chat nobody actually moved.
  *
  * Deliberately does NOT require the conversation to exist on disk yet. An
- * automation's conversation lives in memory for the whole run and is only
- * written when the run ends (Agent.processAutonomous), so a heartbeat calling
- * telegram_send mid-run — the case this whole feature exists for — has no file
- * to find. Nothing needs the guard either: a map entry pointing at an id that
- * never materializes self-heals, because loadOrCreateConversation falls through
- * to a fresh conversation when the id won't load.
+ * automation writes its conversation shell before the run starts
+ * (Agent.processAutonomous), so the file is normally there — but binding must
+ * not depend on that: the write is best-effort, and an in-app turn's user
+ * message still reaches disk only at the fold. Nothing needs the guard either:
+ * a map entry pointing at an id that never materializes self-heals, because
+ * loadOrCreateConversation falls through to a fresh conversation when the id
+ * won't load.
  */
 export async function bindChatToConversation(
   conversationId: string | null | undefined,

@@ -1,6 +1,10 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
+import { execFile, spawn } from 'node:child_process'
+import { promisify } from 'node:util'
+
+const execFileP = promisify(execFile)
 
 let sharp = null
 let getConversationId = () => null
@@ -40,8 +44,250 @@ function toCommand(toolName) {
 
 let workspaceRoot = ''
 
+// ─── Launching a browser ────────────────────────────────────────────────────
+// The extension can only connect from a running browser, so when nothing is
+// connected the recovery is to start one. Everything below is best-effort and
+// per-platform: detect the user's default browser, fall back to the first
+// supported one that is actually installed, launch it detached, then wait for
+// the extension to call home.
+
+const BROWSERS = [
+  {
+    slug: 'chrome',
+    name: 'Google Chrome',
+    darwin: { app: 'Google Chrome', bundleId: 'com.google.chrome' },
+    win32: { exes: ['Google\\Chrome\\Application\\chrome.exe'], progIds: ['chromehtml'] },
+    linux: { bins: ['google-chrome', 'google-chrome-stable'], desktops: ['google-chrome.desktop'] }
+  },
+  {
+    slug: 'edge',
+    name: 'Microsoft Edge',
+    darwin: { app: 'Microsoft Edge', bundleId: 'com.microsoft.edgemac' },
+    win32: { exes: ['Microsoft\\Edge\\Application\\msedge.exe'], progIds: ['msedgehtm', 'msedgedhtml'] },
+    linux: { bins: ['microsoft-edge', 'microsoft-edge-stable'], desktops: ['microsoft-edge.desktop'] }
+  },
+  {
+    slug: 'brave',
+    name: 'Brave',
+    darwin: { app: 'Brave Browser', bundleId: 'com.brave.browser' },
+    win32: { exes: ['BraveSoftware\\Brave-Browser\\Application\\brave.exe'], progIds: ['bravehtml'] },
+    linux: { bins: ['brave-browser', 'brave'], desktops: ['brave-browser.desktop', 'brave.desktop'] }
+  },
+  {
+    slug: 'arc',
+    name: 'Arc',
+    darwin: { app: 'Arc', bundleId: 'company.thebrowser.browser' },
+    win32: { exes: ['Arc\\app\\Arc.exe'], progIds: ['archtml'] },
+    linux: null
+  },
+  {
+    slug: 'vivaldi',
+    name: 'Vivaldi',
+    darwin: { app: 'Vivaldi', bundleId: 'com.vivaldi.vivaldi' },
+    win32: { exes: ['Vivaldi\\Application\\vivaldi.exe'], progIds: ['vivaldihtm'] },
+    linux: { bins: ['vivaldi', 'vivaldi-stable'], desktops: ['vivaldi-stable.desktop'] }
+  },
+  {
+    slug: 'opera',
+    name: 'Opera',
+    darwin: { app: 'Opera', bundleId: 'com.operasoftware.opera' },
+    win32: { exes: ['Opera\\launcher.exe'], progIds: ['operastable'] },
+    linux: { bins: ['opera'], desktops: ['opera.desktop'] }
+  },
+  {
+    slug: 'chromium',
+    name: 'Chromium',
+    darwin: { app: 'Chromium', bundleId: 'org.chromium.chromium' },
+    win32: { exes: ['Chromium\\Application\\chrome.exe'], progIds: ['chromiumhtm'] },
+    linux: { bins: ['chromium', 'chromium-browser'], desktops: ['chromium.desktop', 'chromium-browser.desktop'] }
+  },
+  {
+    slug: 'firefox',
+    name: 'Firefox',
+    darwin: { app: 'Firefox', bundleId: 'org.mozilla.firefox' },
+    win32: { exes: ['Mozilla Firefox\\firefox.exe'], progIds: ['firefoxurl'] },
+    linux: { bins: ['firefox', 'firefox-esr'], desktops: ['firefox.desktop', 'firefox-esr.desktop'] }
+  }
+]
+
+async function exists(p) {
+  try {
+    await fs.access(p)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Where this browser is installed on this machine, or null. */
+async function findInstall(entry) {
+  const platform = os.platform()
+
+  if (platform === 'darwin') {
+    if (!entry.darwin) return null
+    for (const dir of ['/Applications', path.join(os.homedir(), 'Applications')]) {
+      const app = path.join(dir, `${entry.darwin.app}.app`)
+      if (await exists(app)) return app
+    }
+    return null
+  }
+
+  if (platform === 'win32') {
+    if (!entry.win32) return null
+    const roots = [
+      process.env['ProgramFiles'],
+      process.env['ProgramFiles(x86)'],
+      process.env['LOCALAPPDATA'],
+      process.env['LOCALAPPDATA'] ? path.join(process.env['LOCALAPPDATA'], 'Programs') : null
+    ].filter(Boolean)
+    for (const root of roots) {
+      for (const rel of entry.win32.exes) {
+        const exe = path.join(root, rel)
+        if (await exists(exe)) return exe
+      }
+    }
+    return null
+  }
+
+  if (!entry.linux) return null
+  for (const bin of entry.linux.bins) {
+    try {
+      const { stdout } = await execFileP('which', [bin])
+      const resolved = stdout.trim()
+      if (resolved) return resolved
+    } catch {
+      // not on PATH
+    }
+  }
+  return null
+}
+
+/** The OS's registered https handler, in whatever id the platform speaks. */
+async function detectDefaultBrowserId() {
+  const platform = os.platform()
+  try {
+    if (platform === 'darwin') {
+      const { stdout } = await execFileP('defaults', [
+        'read',
+        'com.apple.LaunchServices/com.apple.launchservices.secure'
+      ])
+      for (const block of stdout.split('}')) {
+        if (!/LSHandlerURLScheme\s*=\s*https\s*;/.test(block)) continue
+        const match = block.match(/LSHandlerRoleAll\s*=\s*"?([^";]+)"?\s*;/)
+        if (match) return match[1].trim().toLowerCase()
+      }
+      return null
+    }
+    if (platform === 'win32') {
+      const { stdout } = await execFileP('reg', [
+        'query',
+        'HKCU\\Software\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\https\\UserChoice',
+        '/v',
+        'ProgId'
+      ])
+      const match = stdout.match(/ProgId\s+REG_SZ\s+(\S+)/i)
+      return match ? match[1].trim().toLowerCase() : null
+    }
+    const { stdout } = await execFileP('xdg-settings', ['get', 'default-web-browser'])
+    return stdout.trim().toLowerCase() || null
+  } catch {
+    return null
+  }
+}
+
+function matchesDefaultId(entry, defaultId) {
+  if (!defaultId) return false
+  const platform = os.platform()
+  if (platform === 'darwin') return entry.darwin?.bundleId === defaultId
+  if (platform === 'win32') return (entry.win32?.progIds ?? []).includes(defaultId)
+  return (entry.linux?.desktops ?? []).includes(defaultId)
+}
+
+async function launchInstall(installPath) {
+  if (os.platform() === 'darwin') {
+    await execFileP('open', ['-a', installPath])
+    return
+  }
+  const child = spawn(installPath, [], { detached: true, stdio: 'ignore' })
+  child.unref()
+}
+
+async function waitForExtension(timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    try {
+      if (getBridge()?.isConnected?.()) return true
+    } catch {
+      // bridge appears only once the extension server is up
+    }
+  }
+  return false
+}
+
+async function launchBrowser(args) {
+  const requested = String(args?.browser ?? '').trim().toLowerCase()
+  const waitMs = Number.isFinite(args?.wait_ms) ? Math.max(0, Math.min(120000, args.wait_ms)) : 30000
+
+  if (!requested && getBridge()?.isConnected?.()) {
+    return {
+      success: true,
+      output: 'A browser is already connected through the Wolffish extension — nothing to launch.'
+    }
+  }
+
+  const candidates = requested
+    ? BROWSERS.filter((b) => b.slug === requested || b.name.toLowerCase().includes(requested))
+    : BROWSERS
+  if (candidates.length === 0) {
+    return {
+      success: false,
+      error: `Unknown browser "${args?.browser}". Known: ${BROWSERS.map((b) => b.slug).join(', ')}.`
+    }
+  }
+
+  const installed = []
+  for (const entry of candidates) {
+    const install = await findInstall(entry)
+    if (install) installed.push({ entry, install })
+  }
+  if (installed.length === 0) {
+    return {
+      success: false,
+      error: requested
+        ? `${candidates[0].name} does not appear to be installed on this ${os.platform()} machine.`
+        : `No supported browser found on this ${os.platform()} machine (looked for ${BROWSERS.map((b) => b.name).join(', ')}).`
+    }
+  }
+
+  // Prefer the user's own default browser; otherwise the first supported one
+  // that exists, in the order listed above.
+  const defaultId = requested ? null : await detectDefaultBrowserId()
+  const chosen = installed.find(({ entry }) => matchesDefaultId(entry, defaultId)) ?? installed[0]
+  const wasDefault = matchesDefaultId(chosen.entry, defaultId)
+
+  try {
+    await launchInstall(chosen.install)
+  } catch (err) {
+    return { success: false, error: `Failed to launch ${chosen.entry.name}: ${err?.message || String(err)}` }
+  }
+
+  const label = `${chosen.entry.name}${wasDefault ? ' (your default browser)' : ''}`
+  if (waitMs === 0) {
+    return { success: true, output: `Launched ${label}. Not waiting for the extension to connect.` }
+  }
+
+  const connected = await waitForExtension(waitMs)
+  return {
+    success: true,
+    output: connected
+      ? `Launched ${label} and the Wolffish extension connected. Browser tools are ready.`
+      : `Launched ${label}, but the Wolffish extension has not connected within ${Math.round(waitMs / 1000)}s. It may not be installed in this browser, or it may still be starting — check ext_browsers, or ask the user to install the extension.`
+  }
+}
+
 const toolDefinitions = [
-  { name: 'ext_navigate', description: 'Navigate to a URL in the active tab of the connected browser.', parameters: { type: 'object', properties: { url: { type: 'string' }, waitUntil: { type: 'string' } }, required: ['url'] } },
+  { name: 'ext_navigate', description: 'Navigate to a URL in the Wolffish tab (created inside the Wolffish tab group on first use — the user\'s own tabs are never touched). Pass newTab: true to start the task in a fresh Wolffish tab.', parameters: { type: 'object', properties: { url: { type: 'string' }, waitUntil: { type: 'string' }, newTab: { type: 'boolean' }, tabId: { type: 'number' } }, required: ['url'] } },
   { name: 'ext_back', description: 'Navigate back in browser history.', parameters: { type: 'object', properties: { tabId: { type: 'number' } }, required: [] } },
   { name: 'ext_forward', description: 'Navigate forward in browser history.', parameters: { type: 'object', properties: { tabId: { type: 'number' } }, required: [] } },
   { name: 'ext_reload', description: 'Reload the current page.', parameters: { type: 'object', properties: { hard: { type: 'boolean' }, tabId: { type: 'number' } }, required: [] } },
@@ -62,14 +308,14 @@ const toolDefinitions = [
   { name: 'ext_get_value', description: 'Read form field value.', parameters: { type: 'object', properties: { selector: { type: 'string' }, tabId: { type: 'number' } }, required: ['selector'] } },
   { name: 'ext_get_url', description: 'Get current URL and title.', parameters: { type: 'object', properties: { tabId: { type: 'number' } }, required: [] } },
   { name: 'ext_get_page_info', description: 'Get page metadata, links, headings, forms.', parameters: { type: 'object', properties: { tabId: { type: 'number' } }, required: [] } },
-  { name: 'ext_tabs_list', description: 'List all open tabs.', parameters: { type: 'object', properties: { windowId: { type: 'number' } }, required: [] } },
-  { name: 'ext_tab_open', description: 'Open a new tab.', parameters: { type: 'object', properties: { url: { type: 'string' }, active: { type: 'boolean' } }, required: [] } },
+  { name: 'ext_tabs_list', description: 'List all open tabs. Each entry reports wolffish: true for tabs in the Wolffish tab group (yours to drive) and false for the user\'s own tabs.', parameters: { type: 'object', properties: { windowId: { type: 'number' } }, required: [] } },
+  { name: 'ext_tab_open', description: 'Open a new tab inside the Wolffish tab group and make it the current target.', parameters: { type: 'object', properties: { url: { type: 'string' }, active: { type: 'boolean' } }, required: [] } },
   { name: 'ext_tab_close', description: 'Close a tab.', parameters: { type: 'object', properties: { tabId: { type: 'number' } }, required: ['tabId'] } },
   { name: 'ext_tab_switch', description: 'Switch to a tab.', parameters: { type: 'object', properties: { tabId: { type: 'number' } }, required: ['tabId'] } },
   { name: 'ext_tab_duplicate', description: 'Duplicate a tab.', parameters: { type: 'object', properties: { tabId: { type: 'number' } }, required: ['tabId'] } },
   { name: 'ext_tab_move', description: 'Move a tab.', parameters: { type: 'object', properties: { tabId: { type: 'number' }, index: { type: 'number' }, windowId: { type: 'number' } }, required: ['tabId', 'index'] } },
   { name: 'ext_windows_list', description: 'List all windows.', parameters: { type: 'object', properties: {}, required: [] } },
-  { name: 'ext_window_open', description: 'Open a new window.', parameters: { type: 'object', properties: { url: { type: 'string' }, incognito: { type: 'boolean' }, width: { type: 'number' }, height: { type: 'number' } }, required: [] } },
+  { name: 'ext_window_open', description: 'Open a new browser window. Its tab sits outside the Wolffish tab group, so use the returned tabId to address it — prefer ext_tab_open unless a separate window is really needed.', parameters: { type: 'object', properties: { url: { type: 'string' }, incognito: { type: 'boolean' }, width: { type: 'number' }, height: { type: 'number' } }, required: [] } },
   { name: 'ext_window_close', description: 'Close a window.', parameters: { type: 'object', properties: { windowId: { type: 'number' } }, required: ['windowId'] } },
   { name: 'ext_window_resize', description: 'Resize or reposition a window.', parameters: { type: 'object', properties: { windowId: { type: 'number' }, width: { type: 'number' }, height: { type: 'number' }, left: { type: 'number' }, top: { type: 'number' }, state: { type: 'string' } }, required: ['windowId'] } },
   { name: 'ext_screenshot', description: 'Screenshot the page or an element.', parameters: { type: 'object', properties: { format: { type: 'string' }, quality: { type: 'number' }, fullPage: { type: 'boolean' }, selector: { type: 'string' }, tabId: { type: 'number' } }, required: [] } },
@@ -100,6 +346,8 @@ const toolDefinitions = [
   { name: 'ext_get_interactive_elements', description: 'List visible interactive elements (links, buttons, inputs, role=button, etc.) with center coordinates, rect, text label, and attributes — the map for clicking and moving through a web app.', parameters: { type: 'object', properties: { selector: { type: 'string' }, limit: { type: 'number' }, tabId: { type: 'number' } }, required: [] } },
   { name: 'ext_humanize', description: 'Inject a random human micro-action between real actions.', parameters: { type: 'object', properties: { intensity: { type: 'string' }, tabId: { type: 'number' } }, required: [] } },
   { name: 'ext_browsers', description: 'List the browsers currently connected through the Wolffish extension (name, version, signed-in profile email, selection key). Two profiles of the same browser are two separate entries — the profile email tells them apart. With one browser connected every ext_* tool targets it automatically; with several, pick one per conversation via ext_use_browser.', parameters: { type: 'object', properties: {}, required: [] } },
+  { name: 'ext_set_activity', description: 'Set the label on the Wolffish tab group — an emoji plus a few words for what you are doing right now (e.g. emoji "🔎", text "Comparing flights"). You control this completely: set it when you start browsing and update it whenever the task changes. Call it with no arguments to reset the group back to plain "Wolffish".', parameters: { type: 'object', properties: { emoji: { type: 'string', description: 'A single emoji for the current activity.' }, text: { type: 'string', description: 'A few words describing the activity. Keep it under about 24 characters — tab groups are narrow.' } }, required: [] } },
+  { name: 'ext_launch_browser', description: 'Start a browser on the user\'s machine so the Wolffish extension can connect. Use this when no browser is connected (ext_* tools report "not connected") — it opens the default browser, or the first supported one installed, and waits for the extension to come online. Works on macOS, Windows and Linux.', parameters: { type: 'object', properties: { browser: { type: 'string', description: 'Optional: launch this browser specifically (chrome, edge, brave, arc, vivaldi, opera, chromium, firefox). Omit to use the user\'s default browser.' }, wait_ms: { type: 'number', description: 'How long to wait for the extension to connect, in milliseconds. Default 30000, 0 to return immediately.' } }, required: [] } },
   { name: 'ext_use_browser', description: 'Choose which connected browser this conversation drives (e.g. "chrome", "edge", "brave", "firefox", or a profile email fragment like "work@"). Required before other ext_* tools when several browsers are connected. Pick it yourself when the user named a browser or context makes it obvious; otherwise ask the user first. Tabs, cookies and logins are separate per browser.', parameters: { type: 'object', properties: { browser: { type: 'string', description: 'Selection key, slug, name, or profile-email fragment of a connected browser (see ext_browsers).' } }, required: ['browser'] } }
 ]
 
@@ -115,17 +363,27 @@ const plugin = {
   },
 
   async execute(toolName, args) {
+    // Launching a browser is the one tool that exists *because* nothing is
+    // connected, so it runs ahead of the connection guard.
+    if (toolName === 'ext_launch_browser') {
+      try {
+        return await launchBrowser(args ?? {})
+      } catch (err) {
+        return { success: false, error: err?.message || String(err) }
+      }
+    }
+
     const bridge = getBridge()
     if (!bridge) {
       return {
         success: false,
-        error: 'Browser extension is not connected. Install and connect the Wolffish browser extension to use ext_* tools.'
+        error: 'Browser extension is not connected. Install and connect the Wolffish browser extension to use ext_* tools, or call ext_launch_browser to start a browser.'
       }
     }
     if (!bridge.isConnected()) {
       return {
         success: false,
-        error: 'Browser extension is not connected. The extension may have disconnected — check the side panel.'
+        error: 'Browser extension is not connected. The browser may be closed — call ext_launch_browser to start one, or check the side panel.'
       }
     }
 

@@ -138,7 +138,7 @@ export function buildMobileCapability(deps: ToolDeps): {
     {
       name: 'notify_phone',
       description:
-        "Send a push notification to the user's paired phone. Use this when a run completes, fails, or needs the user's input or approval, or when the user has explicitly asked to be notified about something. Do not use it for routine progress updates or narration — the user's phone should buzz only for things worth interrupting them for. If no phone is paired, this tool will return an error; do not retry. Limits: one notification per phase per run, at most 5 per run.",
+        "Send a push notification to the user's paired phone — their lock screen, their pocket. This tool being available already means a phone is paired and notifications are allowed; every send is still YOUR deliberate call. Use it when something earns the interruption: a long or background run finished with a result worth seeing (a scheduled automation's daily digest especially — end it with one 'completed' notification), a failure or something unexpected the user would want to know now, you are blocked on their input or approval ('needs_input' — send it the moment you block; it expires in minutes), or they explicitly asked to be told. Never for routine progress, per-action narration, or a turn the user is actively watching. A notification COMPLEMENTS your conversation reply, never replaces any part of it: it is not shown in the conversation, so the reply must stand complete on its own and never lean on the notification. Write it warm and concrete: the outcome, not the ceremony ('AI news is ready — 7 stories, 2 worth your time' beats 'Task completed'). Where a tap lands is YOUR choice too: no deeplink just opens the app; pass one to open the run's conversation or a settings screen. Limits enforced: one per phase per run, 5 per run; a refusal or a dropped result is final — never retry.",
       parameters: {
         title: {
           type: 'string',
@@ -166,7 +166,7 @@ export function buildMobileCapability(deps: ToolDeps): {
         },
         deeplink: {
           type: 'string',
-          description: `Optional ${DEEPLINK_SCHEME} link the notification opens when tapped (e.g. a conversation). Must start with ${DEEPLINK_SCHEME} — any other scheme is rejected.`,
+          description: `Where a tap on the notification takes the user, inside the mobile app. Omitted, a tap simply opens the app — nothing navigates that you did not choose. To point the tap somewhere, pass it explicitly: ${DEEPLINK_SCHEME}chat?id=<conversationId> opens that conversation (use the id of the conversation the run belongs to — conversation_list can find it), ${DEEPLINK_SCHEME}history the conversations list, ${DEEPLINK_SCHEME}settings or ${DEEPLINK_SCHEME}settings/<page> an app screen (pages: model, appearance, preferences, channels, capabilities, knowledge, mcp, services, variables, usage, updates, relay, data, changelog). Any non-${DEEPLINK_SCHEME} scheme is rejected.`,
           required: false
         }
       }
@@ -181,7 +181,7 @@ export function buildMobileCapability(deps: ToolDeps): {
     name: MOBILE_CAPABILITY_NAME,
     dir: '<in-process>',
     description:
-      "Reach the user's paired phone. notify_phone sends a push notification for moments worth interrupting the user for: a run finishing or failing, a question that blocks you, or something they explicitly asked to be told about. The phone deduplicates and the desktop rate-limits, so call it once per moment — never in a retry loop.",
+      "Reach the user's paired phone. notify_phone sends a push notification for moments worth interrupting the user for: a run finishing with something worth seeing (daily automations end their digest with one), a failure or a genuinely unexpected finding, a question that blocks you while they are away, or anything they explicitly asked to be told about. Taps can deep-link back into the app — to a conversation or a settings screen — when the model passes a wolffish:// deeplink; without one a tap just opens the app. The phone deduplicates and the desktop rate-limits, so call it once per moment — never in a retry loop. This capability is only present while a phone is paired and notifications are allowed.",
     triggers: { keywords: ['notify', 'phone', 'push notification', 'ping me', 'alert me'] },
     tools,
     body: '',
@@ -225,6 +225,14 @@ async function notifyPhone(
     ? (args.urgency as NotifyUrgency)
     : 'normal'
 
+  // The run identity comes from the harness's own async context — never from
+  // the model — and it is what the rate limits and the relay's audit trail
+  // key on. Turns and background automations both carry one.
+  const runId = turnScope.getStore()?.turnId ?? 'untracked'
+
+  // Navigation is 100% the model's choice: no deeplink means a tap simply
+  // opens the app. The harness validates the scheme and nothing else — it
+  // never invents a destination the model didn't name.
   let deeplink: string | null = null
   if (args.deeplink !== undefined && args.deeplink !== null && args.deeplink !== '') {
     if (!isAllowedDeeplink(args.deeplink)) {
@@ -236,11 +244,6 @@ async function notifyPhone(
     }
     deeplink = args.deeplink
   }
-
-  // The run identity comes from the harness's own async context — never from
-  // the model — and it is what the rate limits and the relay's audit trail
-  // key on. Turns and background automations both carry one.
-  const runId = turnScope.getStore()?.turnId ?? 'untracked'
 
   const budget = budgets.get(runId) ?? { total: 0, phases: new Set<NotifyPhase>() }
   if (budget.total >= MAX_PER_RUN) {

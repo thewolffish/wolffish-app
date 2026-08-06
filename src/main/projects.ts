@@ -4,6 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { diskWriter } from '@main/io/diskWriter'
 import { copyFileWithProgress } from '@main/uploads/copy-progress'
+import { sanitizeFileName } from '@main/uploads/uploads'
 import { workspaceRoot } from '@main/workspace/root'
 
 /**
@@ -291,6 +292,48 @@ export function attachFilesToProject(
       await saveProjects(projects)
     }
     return { project, added, skipped, missing }
+  })
+}
+
+/**
+ * Adopt an already-staged file as a project file — the phone's Add-files, whose
+ * bytes arrive over the tunnel instead of from a path on this machine.
+ *
+ * The same destination, naming and ownership as attachFilesToProject: the file
+ * lands in `uploads/project-<id>/` under a name THIS side picks (collisions
+ * rename Finder-style), so detaching later deletes a copy we own. Only the
+ * first step differs — a rename of the staged bytes rather than a copy of a
+ * source that stays put — which is exactly what saveUploadFromFile does for a
+ * conversation upload, and why both go through one sanitizer.
+ *
+ * Serialized on the same mutation tail as every other write here, so a commit
+ * landing next to a debounced instructions save cannot fork the base list.
+ */
+export function adoptUploadedProjectFile(
+  id: string,
+  stagedPath: string,
+  originalName: string
+): Promise<{ project: Project; file: ProjectFileRef }> {
+  return serialize(async () => {
+    const staged = await fs.stat(stagedPath)
+    if (!staged.isFile() || staged.size === 0) {
+      throw new Error('adoptUploadedProjectFile: staged upload is empty')
+    }
+    const projects = await loadProjects()
+    const project = projects.find((p) => p.id === id)
+    if (!project) throw new Error(`project not found: ${id}`)
+
+    const dir = projectUploadsDir(id)
+    await fs.mkdir(dir, { recursive: true })
+    const finalName = await uniqueFilename(dir, sanitizeFileName(originalName))
+    const dest = path.join(dir, finalName)
+    await fs.rename(stagedPath, dest)
+
+    const file: ProjectFileRef = { path: dest, name: finalName }
+    project.files = [...project.files, file]
+    project.updatedAt = Date.now()
+    await saveProjects(projects)
+    return { project, file }
   })
 }
 

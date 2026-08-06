@@ -73,6 +73,7 @@ const COMMAND_EVENT_MAP: Record<string, ExtensionEventType> = {
   browser_window_open: 'tab',
   browser_window_close: 'tab',
   browser_window_resize: 'tab',
+  browser_set_activity: 'tab',
   browser_execute_js: 'script',
   browser_cookies_get: 'cookie',
   browser_cookies_set: 'cookie',
@@ -185,6 +186,8 @@ function buildTitle(commandType: string, params: Record<string, unknown>): strin
       return 'Wrote clipboard'
     case 'browser_notify':
       return `Notified: ${params.title ?? 'notification'}`
+    case 'browser_set_activity':
+      return `Tab group: ${[params.emoji, params.text].filter(Boolean).join(' ') || 'Wolffish'}`
     case 'browser_debugger_attach':
       return `Debugger attached to tab #${params.tabId ?? ''}`
     case 'browser_debugger_detach':

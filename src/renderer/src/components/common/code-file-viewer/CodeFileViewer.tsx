@@ -10,7 +10,8 @@ import {
   Download01Icon,
   EyeIcon,
   File01Icon,
-  FolderOpenIcon
+  FolderOpenIcon,
+  LinkSquare02Icon
 } from 'hugeicons-react'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -76,7 +77,8 @@ export function CodeFileViewer({
   sizeBytes,
   htmlPreview = false,
   onDownload,
-  onReveal
+  onReveal,
+  onOpenExternal
 }: {
   content: string
   fileName: string
@@ -95,6 +97,11 @@ export function CodeFileViewer({
   onDownload?: () => void
   /** When set, a "reveal in folder" button appears in the footer (attachment cards). */
   onReveal?: () => void
+  /**
+   * When set, an "open externally" button appears — for HTML cards this hands
+   * the file to the OS, which opens it in the default browser.
+   */
+  onOpenExternal?: () => void
 }): React.JSX.Element {
   const { t } = useTranslation()
   const [sheetOpen, setSheetOpen] = useState(false)
@@ -208,7 +215,9 @@ export function CodeFileViewer({
       {view === 'preview' ? <CodeIcon size={14} /> : <EyeIcon size={14} />}
     </button>
   ) : null
-  const copyButton = (
+  // Website cards drop copy: what the card shows is a rendered page, not source
+  // worth putting on the clipboard — open/download/reveal cover what's useful.
+  const copyButton = htmlPreview ? null : (
     <CopyButton
       text={content}
       variant="inline"
@@ -216,6 +225,19 @@ export function CodeFileViewer({
       className="text-muted hover:text-fg"
     />
   )
+  // Hands the file to the OS. For an .html file that means the default browser
+  // — the live page, scripts and all, which the sandboxed preview can't run.
+  const openExternalButton = onOpenExternal ? (
+    <button
+      type="button"
+      onClick={onOpenExternal}
+      title={t(htmlPreview ? 'chat.htmlViewer.openInBrowser' : 'chat.pdfViewer.openExternal')}
+      aria-label={t(htmlPreview ? 'chat.htmlViewer.openInBrowser' : 'chat.pdfViewer.openExternal')}
+      className={cn(iconButton)}
+    >
+      <LinkSquare02Icon size={14} />
+    </button>
+  ) : null
   const downloadButton = onDownload ? (
     <button
       type="button"
@@ -237,10 +259,10 @@ export function CodeFileViewer({
     </button>
   ) : null
 
-  // Expanded sheet header: copy · download · open (close is appended by
-  // ExpandedSheet). The card footer renders the same controls mirrored —
-  // open · download · copy · expand — so the row reads identically from the
-  // card's trailing edge.
+  // Expanded sheet header: copy · download · reveal · open externally (close is
+  // appended by ExpandedSheet). The card footer renders the same controls
+  // mirrored — open externally · reveal · download · copy · expand — so the row
+  // reads identically from the card's trailing edge.
   // For HTML, the sheet leads with a Source⇄Preview toggle so the user can
   // flip between the rendered page and the highlighted markup.
   const sheetViewToggle = htmlPreview ? (
@@ -270,6 +292,7 @@ export function CodeFileViewer({
       {copyButton}
       {downloadButton}
       {revealButton}
+      {openExternalButton}
     </>
   )
 
@@ -308,6 +331,7 @@ export function CodeFileViewer({
           {sizeBytes != null ? ` · ${formatBytesL(sizeBytes, t)}` : ''}
         </span>
         {previewToggleButton}
+        {openExternalButton}
         {revealButton}
         {downloadButton}
         {copyButton}

@@ -256,6 +256,13 @@ type ActiveTurn = {
    */
   assistantMessageId: string
   assistantTimestamp: number
+  /**
+   * The prompt this turn is answering, carried on every mirror snapshot. It is
+   * already on disk here — but the phone does not re-read a conversation body
+   * while a turn writes into it, so this is the only copy that reaches a phone
+   * watching the run before it ends.
+   */
+  userMessage: ConversationMessage
   /** Wall-clock of the last mirror snapshot emitted — backs the throttle. */
   lastMirrorAt: number
   /** Trailing-edge throttle timer for the mirror; cleared at end-of-turn. */
@@ -432,7 +439,7 @@ export class WhatsAppChannel {
       const message = buildAssistantMessage(current)
       if (!message) return
       current.lastMirrorAt = Date.now()
-      this.mirrorListener(conversationId, message)
+      this.mirrorListener(conversationId, message, current.userMessage)
     }
     const sinceLast = Date.now() - active.lastMirrorAt
     if (sinceLast >= MIRROR_THROTTLE_MS) {
@@ -1765,7 +1772,13 @@ export class WhatsAppChannel {
     // reaches every conversation: the turn may belong to the app or another
     // chat entirely. deleteConversation is called directly here, so the IPC
     // handler's guard is not in the path and this has to be its own.
-    if (this.runner.isConversationActive(conversationId)) {
+    // An automation/procedure run owns a real conversation for its whole
+    // lifetime now (it is listed here while it runs), and those runs never
+    // enter the TurnRunner — so they need their own check.
+    if (
+      this.runner.isConversationActive(conversationId) ||
+      this.agent.isAutonomousRunActive(conversationId)
+    ) {
       await this.safeSend(jid, 'That conversation is busy right now — try again once it finishes.')
       return
     }
@@ -2160,6 +2173,7 @@ export class WhatsAppChannel {
           stopReason: null,
           assistantMessageId: mintMessageId(assistantTimestamp),
           assistantTimestamp,
+          userMessage,
           lastMirrorAt: 0,
           mirrorTimer: null,
           taskId: null,

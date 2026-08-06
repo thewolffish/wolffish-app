@@ -217,8 +217,10 @@ function RunCard({
   const { t } = useTranslation()
   const logBoxRef = useRef<HTMLSpanElement>(null)
 
-  // Pin the card's feed to the newest entry. scrollTop (not scrollIntoView) so
-  // a card floating over an arbitrary screen can never scroll that screen.
+  // Pin the card's feed to the newest entry — the card shows exactly one line,
+  // so this is what makes the feed readable at all. scrollTop (not
+  // scrollIntoView) so a card floating over an arbitrary screen can never
+  // scroll that screen.
   useEffect(() => {
     const el = logBoxRef.current
     if (el) el.scrollTop = el.scrollHeight
@@ -249,25 +251,37 @@ function RunCard({
           {t(mode === 'workflow' ? 'chat.modePicker.workflow' : 'chat.modePicker.single')}
         </span>
       </span>
-      <span
-        ref={logBoxRef}
-        className="bg-bg/60 border-border block max-h-28 w-full overflow-y-auto rounded-lg border px-2.5 py-1.5 font-mono text-[10px] leading-relaxed"
-      >
-        {logs.length === 0 ? (
-          <span className="text-muted/50 flex items-center gap-2">
-            <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-emerald-500" />
-            {t('heartbeat.overlay.waiting')}
-          </span>
-        ) : (
-          logs.map((entry, i) => (
-            <span
-              key={`${entry.timestamp}-${i}`}
-              className={cn('block truncate', i === logs.length - 1 ? 'text-fg' : 'text-muted/40')}
-            >
-              {entry.summary}
+      {/* One line tall, still the same scrollable feed. The padding and border
+          live on the outer box while the inner strip — exactly one 16px line —
+          is the scroller, so scrolling to the end lands on the newest entry
+          alone instead of leaving a sliver of the previous one above it (the
+          box's own bottom padding would otherwise eat into the view).
+          overscroll-contain keeps a flick at either end from scrolling the
+          screen behind this floating card. */}
+      <span className="bg-bg/60 border-border block w-full rounded-lg border px-2.5 py-1.5">
+        <span
+          ref={logBoxRef}
+          className="block h-4 w-full overflow-y-auto overscroll-contain font-mono text-[10px] leading-[16px]"
+        >
+          {logs.length === 0 ? (
+            <span className="text-muted/50 flex items-center gap-2">
+              <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-emerald-500" />
+              {t('heartbeat.overlay.waiting')}
             </span>
-          ))
-        )}
+          ) : (
+            logs.map((entry, i) => (
+              <span
+                key={`${entry.timestamp}-${i}`}
+                className={cn(
+                  'block truncate',
+                  i === logs.length - 1 ? 'text-fg' : 'text-muted/40'
+                )}
+              >
+                {entry.summary}
+              </span>
+            ))
+          )}
+        </span>
       </span>
     </button>
   )
