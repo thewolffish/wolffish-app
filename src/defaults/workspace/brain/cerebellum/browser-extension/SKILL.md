@@ -872,7 +872,7 @@ tools:
         required: false
   # Wolffish tab group
   - name: ext_set_activity
-    description: Set the label on the Wolffish tab group — an emoji plus a few words for what you are doing right now. Call with no arguments to reset it to plain Wolffish.
+    description: Label the Wolffish tab group with an emoji and a few words for what you are doing — the only thing the user sees while you work. Leave the default Wolffish for one-off basics like opening a page or a single lookup. Set a label for anything that is a real task — several steps, more than one page, or more than a moment — so it is clear what their browser is doing. Update it as the work moves between phases; call with no arguments to reset.
     parameters:
       emoji:
         type: string
@@ -920,7 +920,7 @@ confirm_patterns:
     reason: Modifying browser cookies
   - pattern: 'ext_navigate\s.*(?:bank|paypal|venmo|stripe\.com|checkout|payment)'
     reason: Navigating to a financial or payment site
-version: 1.7.0
+version: 1.7.1
 ---
 
 # Browser Extension
@@ -978,10 +978,11 @@ You work in a **Wolffish tab group**, never in the user's tabs. The first comman
 
 ## Saying what you're doing
 
-The tab group's name is yours to write, and it is the only thing the user sees while you work. Keep it honest and current with `ext_set_activity`.
+The tab group's name is yours to write, and it is the only thing the user sees while you work. Judge how much it needs to say:
 
-- Set it **as you start**: `ext_set_activity {emoji: "🔎", text: "Comparing flights"}` → the group reads `🔎 Comparing flights`.
-- **Update it whenever the task changes** — a new site, a new phase, filling a form vs reading results. A stale label is worse than none.
+- **One-off basics don't need a label.** Opening a page, a single lookup, one quick read — plain `Wolffish` already says everything useful. Don't ceremonially label trivial work.
+- **A real task does.** Anything spanning several steps, more than one page, or more than a moment: set it as you start — `ext_set_activity {emoji: "🔎", text: "Comparing flights"}` → the group reads `🔎 Comparing flights`. Otherwise the user is watching their browser move with no idea what it's doing, which is the whole problem this solves.
+- **Keep it current.** Update it when the work moves on — a new site, a new phase, filling a form vs reading results. A stale label is worse than none.
 - Pick the emoji and wording yourself; there is no fixed vocabulary. Short is better — tab groups show roughly 24 characters. `📖 Reading docs`, `🛒 Checking out`, `✍️ Writing reply`, `📸 Capturing page`.
 - **Reset when you're done**: `ext_set_activity` with no arguments puts it back to plain `Wolffish`.
 - It's cosmetic — a browser without tab-group support just skips it, and it never fails a task.

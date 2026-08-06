@@ -960,7 +960,7 @@ const DEFAULT_PORT = 23151, LOG_PREFIX = "[Wolffish]", HEARTBEAT_INTERVAL_MS = 1
   BROWSER_MOUSE_DRAG: "browser_mouse_drag",
   // Coordinate ↔ DOM bridging (read-only)
   BROWSER_ELEMENT_FROM_POINT: "browser_element_from_point",
-  BROWSER_INTERACTIVE_ELEMENTS: "browser_interactive_elements",
+  BROWSER_GET_INTERACTIVE_ELEMENTS: "browser_get_interactive_elements",
   // Humanize
   HUMANIZE: "browser_humanize"
 }, CONTENT_SCRIPT_COMMANDS = /* @__PURE__ */ new Set([
@@ -987,7 +987,7 @@ const DEFAULT_PORT = 23151, LOG_PREFIX = "[Wolffish]", HEARTBEAT_INTERVAL_MS = 1
   WolffishCommands.BROWSER_WAIT_FOR,
   WolffishCommands.BROWSER_WAIT_FOR_NETWORK_IDLE,
   WolffishCommands.BROWSER_ELEMENT_FROM_POINT,
-  WolffishCommands.BROWSER_INTERACTIVE_ELEMENTS
+  WolffishCommands.BROWSER_GET_INTERACTIVE_ELEMENTS
 ]), SERVICE_WORKER_COMMANDS = /* @__PURE__ */ new Set([
   WolffishCommands.BROWSER_NAVIGATE,
   WolffishCommands.BROWSER_BACK,
