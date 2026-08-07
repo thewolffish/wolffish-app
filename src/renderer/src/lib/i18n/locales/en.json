@@ -1533,7 +1533,7 @@
       "codeDescCustomRelay": "Generate a short code and type it on your phone along with your relay's address — the code alone can't carry it. The QR does this for you.",
       "generate": "Generate",
       "scanHint": "Open Wolffish on your phone, tap Connect to Desktop, and scan this code.",
-      "codeHint": "Type this code into Wolffish on your phone. Case and dashes don't matter.",
+      "codeHint": "Type this code on your phone — case and dashes don't matter.",
       "codeRelayHint": "Your phone must use the same relay — enter this address in the Relay card on its pairing screen:",
       "expires": "Expires in about {{minutes}} min",
       "newCode": "New code",
