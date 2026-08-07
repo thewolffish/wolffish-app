@@ -1,11 +1,11 @@
 {
   "extensionName": {
     "description": "Extension name",
-    "message": "وولف فيش"
+    "message": "وولفيش"
   },
   "extensionDescription": {
     "description": "Extension description",
-    "message": "إمكانية المتصفح لوكيل وولف فيش الذكي"
+    "message": "إمكانية المتصفح لوكيل وولفيش الذكي"
   },
   "bidiDir": { "message": "rtl" },
   "locale": { "message": "ar" },
@@ -46,7 +46,7 @@
   "noConversations": { "message": "لا توجد محادثات بعد" },
   "eventsCount": { "message": "$1 أحداث", "placeholders": { "1": { "content": "$1" } } },
   "emptyConnected": { "message": "جاهز — ستظهر الأحداث هنا أثناء تصفح الوكيل" },
-  "emptyDisconnected": { "message": "شغّل وولف فيش للبدء بالتحكم بالمتصفح" },
+  "emptyDisconnected": { "message": "شغّل وولفيش للبدء بالتحكم بالمتصفح" },
   "displayErrorDetailsInfo": { "message": "تفاصيل الخطأ:" },
   "displayErrorUnknownErrorInfo": { "message": "خطأ غير معروف" },
   "displayErrorReset": { "message": "إعادة المحاولة" }

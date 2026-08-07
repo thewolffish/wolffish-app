@@ -18,7 +18,7 @@ The prompt is the whole point of an automation, a procedure or a project, and it
 
 ### The Arabic That Was Still English
 
-Eighteen strings had no Arabic at all, so on an Arabic screen they quietly fell back to English — and they were not scattered ones. The entire **Debugger Mode** card in the browser-extension settings was English top to bottom, explanation, tip and caveat alike; so was **every message the updater shows when an update fails**, which is precisely the moment you least want to be reading a second language. Five browser actions were missing too. All of them are translated now, and the two locales are back in **exact parity** — every key English has, Arabic has.
+Eighteen strings had no Arabic at all, so on an Arabic screen they quietly fell back to English — and they were not scattered ones. The entire **Debugger Mode** card in the browser-extension settings was English top to bottom, explanation, tip and caveat alike; so was **every message the updater shows when an update fails**, which is precisely the moment you least want to be reading a second language. Five browser actions were missing too. All of them are translated now, and the two locales are back in **exact parity** — every key English has, Arabic has. The name itself is settled too: Arabic had been writing it two ways, **وولف فيش** in thirty older places and **وولفيش** in the newer ones, occasionally both within one screen of text. It is **وولفيش** everywhere now — the app, the tray, the browser extension, the administrator-password prompt and the back changelogs alike. The Latin **Wolffish** stays only where it is a literal name you will meet somewhere else, such as the browser tab group that is actually called that.
 
 ## v1.0.238 — 2026-08-07
 

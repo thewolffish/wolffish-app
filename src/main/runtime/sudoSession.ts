@@ -102,7 +102,7 @@ type DialogStrings = {
   cancel: string
 }
 
-// Arabic renders the brand as "وولف فيش" — matches the app's existing ar.json
+// Arabic renders the brand as "وولفيش" — matches the app's existing ar.json
 // convention (which never uses the Latin "Wolffish").
 const STRINGS: Record<'en' | 'ar', DialogStrings> = {
   en: {
@@ -114,9 +114,9 @@ const STRINGS: Record<'en' | 'ar', DialogStrings> = {
     cancel: 'Cancel'
   },
   ar: {
-    title: 'وولف فيش',
-    prompt: 'يحتاج وولف فيش إلى كلمة مرور المسؤول لتنفيذ أمر يتطلب صلاحيات إدارية.',
-    installHomebrew: 'يحتاج وولف فيش إلى صلاحيات المسؤول لتثبيت هوم برو على جهاز ماك.',
+    title: 'وولفيش',
+    prompt: 'يحتاج وولفيش إلى كلمة مرور المسؤول لتنفيذ أمر يتطلب صلاحيات إدارية.',
+    installHomebrew: 'يحتاج وولفيش إلى صلاحيات المسؤول لتثبيت هوم برو على جهاز ماك.',
     retry: 'كلمة المرور غير صحيحة. يرجى المحاولة مرة أخرى.',
     authorize: 'تخويل',
     cancel: 'إلغاء'

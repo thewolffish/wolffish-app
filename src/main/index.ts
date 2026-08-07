@@ -1777,7 +1777,7 @@ function createTray(locale: Locale = 'en'): void {
     // left-click).
     const contextMenu = Menu.buildFromTemplate([
       {
-        label: isAr ? 'إظهار وولف فيش' : 'Show Wolffish',
+        label: isAr ? 'إظهار وولفيش' : 'Show Wolffish',
         click: () => restoreMainWindow()
       },
       { type: 'separator' },

@@ -16,7 +16,7 @@ type TrayMenuState = { locale: Locale; dark: boolean }
 
 const LABELS: Record<Locale, Record<TrayAction, string>> = {
   en: { show: 'Show Wolffish', quit: 'Quit' },
-  ar: { show: 'إظهار وولف فيش', quit: 'إغلاق' }
+  ar: { show: 'إظهار وولفيش', quit: 'إغلاق' }
 }
 
 // Monochrome glyphs that inherit the item's text color via `currentColor`.
