@@ -740,7 +740,18 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
   }, [])
 
   // The bar targets the last completed assistant message of an idle chat
-  // that has a persisted conversation to attach the score to.
+  // that has a persisted conversation to attach the score to — and only for
+  // as long as that turn has NO score. Once a score is in the bar retires:
+  // an already-answered strip sitting over the composer until the next turn
+  // reads as nagging, and re-voting on the turn you just rated is not worth
+  // the standing prompt.
+  //
+  // The unscored check is `turnRatings`, which is the file's ratings[] as
+  // this surface sees it — folded in on load, on the conversation:changed
+  // sync, and on the conversation:ratingChanged push. So the bar retires for
+  // a vote cast on ANY surface, not just this one: this bar's own optimistic
+  // write, the phone's rate RPC, a bare-number Telegram or WhatsApp reply.
+  // One source of truth, one condition.
   const lastFeedMessage = messages[messages.length - 1]
   const ratableMessage =
     scoringEnabled &&
@@ -748,10 +759,10 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     activeConversationId !== null &&
     lastFeedMessage &&
     isAssistant(lastFeedMessage) &&
-    lastFeedMessage.status !== 'streaming'
+    lastFeedMessage.status !== 'streaming' &&
+    turnRatings[lastFeedMessage.id] === undefined
       ? lastFeedMessage
       : null
-  const ratableScore = ratableMessage ? (turnRatings[ratableMessage.id] ?? null) : null
   const rateTurn = useCallback((messageId: string, score: number): void => {
     const conv = conversationRef.current
     if (!conv) return
@@ -2905,13 +2916,12 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
           <div className="pointer-events-none absolute inset-x-0 bottom-full flex flex-col gap-2 px-4 pb-2">
             {/* Turn score bar — an idle chat's last completed turn is
                 rateable 0-10. Mutually exclusive with queued prompts in
-                practice (those only exist while busy). */}
+                practice (those only exist while busy). Always unscored: a
+                turn that has a score has no bar (see ratableMessage), so
+                the click both records the vote and dismisses the strip. */}
             {ratableMessage !== null && (
               <div className="pointer-events-auto mx-auto">
-                <TurnRating
-                  score={ratableScore}
-                  onRate={(score) => rateTurn(ratableMessage.id, score)}
-                />
+                <TurnRating score={null} onRate={(score) => rateTurn(ratableMessage.id, score)} />
               </div>
             )}
             {/* Queued prompts live HERE, above the composer — never in the

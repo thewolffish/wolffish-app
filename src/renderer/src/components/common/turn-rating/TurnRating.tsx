@@ -3,12 +3,13 @@ import { useTranslation } from 'react-i18next'
 
 /**
  * The in-app turn score bar — an NPS-style 0-10 strip shown under a
- * completed turn (above the composer). One click records the score; the
- * chosen segment stays highlighted and can be re-clicked to change the
- * vote. Entirely optional: unrated turns are fine, the nightly reflection
- * simply reviews them without a user signal. Channel chats have their own
- * equivalent (a bare-number reply), so this renders for the in-app surface
- * only, gated by Settings → Knowledge → Reflection.
+ * completed turn (above the composer). One click records the score and the
+ * strip retires: a turn that has a score has no bar, so `score` arrives null
+ * in practice and the highlighted state is the caller's to use if it ever
+ * shows a scored turn again. Entirely optional: unrated turns are fine, the
+ * nightly reflection simply reviews them without a user signal. Channel chats
+ * have their own equivalent (a bare-number reply), so this renders for the
+ * in-app surface only, gated by Settings → Knowledge → Reflection.
  */
 export function TurnRating({
   score,

@@ -1,4 +1,10 @@
-## v1.0.237 — 2026-08-07 `Latest`
+## v1.0.238 — 2026-08-07 `Latest`
+
+### A Rating Bar That Knows When It's Done
+
+The 0-10 strip above the composer asked you to score a turn, and then went on asking. You gave it a number, the segment lit up, and **the bar stayed exactly where it was** until the next turn came along — an answered question still sitting over the composer, which reads far less like a record of your vote than like a request you have already met. It **retires the moment the turn has a score** now: one click, the vote is in, the strip is gone. And because a score is a fact about the turn rather than about the device that cast it, the bar goes away **wherever the vote came from** — this window, your phone, or a bare number typed into Telegram or WhatsApp. Score a turn from your phone and the desktop chat you have open **stops asking in the same moment**, without waiting for anything to reload. One deliberate trade comes with it: the bar is no longer where you go to change a vote, because a strip that lingers to allow second thoughts is precisely the strip that was in the way.
+
+## v1.0.237 — 2026-08-07
 
 ### A Notification That Opens What It's About
 
