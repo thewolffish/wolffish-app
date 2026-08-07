@@ -3,8 +3,11 @@ import {
   NOTIFY_PHASES,
   NOTIFY_TITLE_MAX,
   NOTIFY_URGENCIES,
+  DEEPLINK_ROUTES,
   DEEPLINK_SCHEME,
+  buildDeeplink,
   isAllowedDeeplink,
+  parseDeeplink,
   type NotifyPhase,
   type NotifyResultFrame,
   type NotifyUrgency
@@ -45,12 +48,33 @@ export const TTL_BY_PHASE: Record<NotifyPhase, number> = {
   info: 900
 }
 
+/**
+ * The one conversation id the model never has to look up: the run's own.
+ *
+ * A foreground turn does not otherwise know the id of the conversation it is
+ * answering in, and a background run's conversation is minted after the model
+ * was prompted — so asking the model to spell one out is asking it to guess,
+ * and a guessed id opens someone else's transcript on the user's phone. The
+ * harness substitutes it from the turn scope instead: the same place runId
+ * comes from, and equally not the model's to choose.
+ */
+const CURRENT_CONVERSATION = 'current'
+
 /** At most one notification per phase per run… */
 const MAX_PER_RUN_PER_PHASE = 1
 /** …and never more than this many per run, whatever the phases. */
 const MAX_PER_RUN = 5
 /** Bounded memory for the per-run counters. */
 const MAX_TRACKED_RUNS = 64
+
+/** The settings pages, named as a deeplink spells them. Derived from the route
+ *  table so what the model is told can never drift from what is accepted. */
+const SETTINGS_PAGES = DEEPLINK_ROUTES.filter((route) => route.startsWith('settings/'))
+  .map((route) => route.slice('settings/'.length))
+  .join(', ')
+
+/** Every destination, spelled out — the refusal that teaches. */
+const EVERY_TARGET = DEEPLINK_ROUTES.map((route) => `${DEEPLINK_SCHEME}${route}`).join(', ')
 
 export type NotifyPhoneRequest = {
   title: string
@@ -137,8 +161,7 @@ export function buildMobileCapability(deps: ToolDeps): {
   const tools: SkillToolDescriptor[] = [
     {
       name: 'notify_phone',
-      description:
-        "Send a push notification to the user's paired phone — their lock screen, their pocket. This tool being available already means a phone is paired and notifications are allowed; every send is still YOUR deliberate call. Use it when something earns the interruption: a long or background run finished with a result worth seeing (a scheduled automation's daily digest especially — end it with one 'completed' notification), a failure or something unexpected the user would want to know now, you are blocked on their input or approval ('needs_input' — send it the moment you block; it expires in minutes), or they explicitly asked to be told. Never for routine progress, per-action narration, or a turn the user is actively watching. A notification COMPLEMENTS your conversation reply, never replaces any part of it: it is not shown in the conversation, so the reply must stand complete on its own and never lean on the notification. Write it warm and concrete: the outcome, not the ceremony ('AI news is ready — 7 stories, 2 worth your time' beats 'Task completed'). Where a tap lands is YOUR choice too: no deeplink just opens the app; pass one to open the run's conversation or a settings screen. Limits enforced: one per phase per run, 5 per run; a refusal or a dropped result is final — never retry.",
+      description: `Send a push notification to the user's paired phone — their lock screen, their pocket. This tool being available already means a phone is paired and notifications are allowed; every send is still YOUR deliberate call. Use it when something earns the interruption: a long or background run finished with a result worth seeing (a scheduled automation's daily digest especially — end it with one 'completed' notification), a failure or something unexpected the user would want to know now, you are blocked on their input or approval ('needs_input' — send it the moment you block; it expires in minutes), or they explicitly asked to be told. Never for routine progress, per-action narration, or a turn the user is actively watching. A notification COMPLEMENTS your conversation reply, never replaces any part of it: it is not shown in the conversation, so the reply must stand complete on its own and never lean on the notification. Write it warm and concrete: the outcome, not the ceremony ('AI news is ready — 7 stories, 2 worth your time' beats 'Task completed'). Where the tap LANDS is yours to choose and almost always worth choosing: deeplink "${DEEPLINK_SCHEME}chat?id=${CURRENT_CONVERSATION}" opens this run's own conversation, which is where the thing you are announcing actually is — pass it whenever there is something to read, and leave deeplink out only when there is genuinely nothing to look at (the deeplink parameter lists every screen you can send them to). Limits enforced: one per phase per run, 5 per run; a rate-limit refusal or a dropped delivery is final — never retry it.`,
       parameters: {
         title: {
           type: 'string',
@@ -166,7 +189,7 @@ export function buildMobileCapability(deps: ToolDeps): {
         },
         deeplink: {
           type: 'string',
-          description: `Where a tap on the notification takes the user, inside the mobile app. Omitted, a tap simply opens the app — nothing navigates that you did not choose. To point the tap somewhere, pass it explicitly: ${DEEPLINK_SCHEME}chat?id=<conversationId> opens that conversation (use the id of the conversation the run belongs to — conversation_list can find it), ${DEEPLINK_SCHEME}history the conversations list, ${DEEPLINK_SCHEME}settings or ${DEEPLINK_SCHEME}settings/<page> an app screen (pages: model, appearance, preferences, channels, capabilities, knowledge, mcp, services, variables, usage, updates, relay, data, changelog). Any non-${DEEPLINK_SCHEME} scheme is rejected.`,
+          description: `Which screen of the mobile app the tap opens. Omitted, a tap just opens the app wherever the user left it — nothing navigates that you did not choose, so pass this whenever the notification is ABOUT something they can look at. Conversations: ${DEEPLINK_SCHEME}chat?id=${CURRENT_CONVERSATION} opens this run's own conversation and is the one you want almost every time — always prefer it to spelling an id out, since you do not reliably know your own conversation id; ${DEEPLINK_SCHEME}chat?id=<conversationId> opens a DIFFERENT conversation by its exact id from conversation_list; ${DEEPLINK_SCHEME}chat with no id opens a new empty chat; ${DEEPLINK_SCHEME}history is the list of all conversations. App screens: ${DEEPLINK_SCHEME}settings, or ${DEEPLINK_SCHEME}settings/<page> where <page> is exactly one of ${SETTINGS_PAGES} — e.g. ${DEEPLINK_SCHEME}settings/automations for a scheduled run's own schedule, ${DEEPLINK_SCHEME}settings/usage for spend, ${DEEPLINK_SCHEME}settings/services for a provider key that needs attention. Nothing else exists: another scheme, a page not in that list, or an invented path is refused with the full list of what does — nothing was sent and no budget was spent, so fix the link and call once more.`,
           required: false
         }
       }
@@ -180,8 +203,7 @@ export function buildMobileCapability(deps: ToolDeps): {
   const capability: Capability = {
     name: MOBILE_CAPABILITY_NAME,
     dir: '<in-process>',
-    description:
-      "Reach the user's paired phone. notify_phone sends a push notification for moments worth interrupting the user for: a run finishing with something worth seeing (daily automations end their digest with one), a failure or a genuinely unexpected finding, a question that blocks you while they are away, or anything they explicitly asked to be told about. Taps can deep-link back into the app — to a conversation or a settings screen — when the model passes a wolffish:// deeplink; without one a tap just opens the app. The phone deduplicates and the desktop rate-limits, so call it once per moment — never in a retry loop. This capability is only present while a phone is paired and notifications are allowed.",
+    description: `Reach the user's paired phone. notify_phone sends a push notification for moments worth interrupting the user for: a run finishing with something worth seeing (daily automations end their digest with one), a failure or a genuinely unexpected finding, a question that blocks you while they are away, or anything they explicitly asked to be told about. The tap itself navigates wherever the model says: deeplink "${DEEPLINK_SCHEME}chat?id=${CURRENT_CONVERSATION}" opens the run's own conversation, and every other screen the app has — history, settings and each settings page — can be named the same way; without a deeplink a tap just opens the app. The phone deduplicates and the desktop rate-limits, so call it once per moment — never in a retry loop. This capability is only present while a phone is paired and notifications are allowed.`,
     triggers: { keywords: ['notify', 'phone', 'push notification', 'ping me', 'alert me'] },
     tools,
     body: '',
@@ -228,11 +250,16 @@ async function notifyPhone(
   // The run identity comes from the harness's own async context — never from
   // the model — and it is what the rate limits and the relay's audit trail
   // key on. Turns and background automations both carry one.
-  const runId = turnScope.getStore()?.turnId ?? 'untracked'
+  const scope = turnScope.getStore()
+  const runId = scope?.turnId ?? 'untracked'
 
-  // Navigation is 100% the model's choice: no deeplink means a tap simply
-  // opens the app. The harness validates the scheme and nothing else — it
-  // never invents a destination the model didn't name.
+  // WHERE a tap lands stays 100% the model's choice — no deeplink still means
+  // a tap simply opens the app, and nothing here invents a destination. What
+  // the harness does own is whether that choice is REACHABLE: a link naming a
+  // screen the app does not have used to travel all the way to the phone and
+  // quietly dump the user on the home screen, which reads exactly like the
+  // notification not working. Refusing it here instead puts the correction in
+  // front of the model that can still fix it, in the call that got it wrong.
   let deeplink: string | null = null
   if (args.deeplink !== undefined && args.deeplink !== null && args.deeplink !== '') {
     if (!isAllowedDeeplink(args.deeplink)) {
@@ -242,7 +269,33 @@ async function notifyPhone(
         ).slice(0, 80)}`
       )
     }
-    deeplink = args.deeplink
+    const target = parseDeeplink(args.deeplink)
+    if (!target) {
+      return failure(
+        `invalid argument: deeplink "${args.deeplink.slice(0, 80)}" is not a screen the phone ` +
+          `has. Valid targets: ${EVERY_TARGET} — and chat takes ?id=${CURRENT_CONVERSATION} ` +
+          "(this run's own conversation) or ?id=<conversationId> from conversation_list. " +
+          'Nothing was sent; correct the link and call once more, or omit deeplink to just ' +
+          'open the app.'
+      )
+    }
+    // The one substitution the harness makes, and it is an identity — the same
+    // turn scope runId comes from, not a destination of its own choosing.
+    if (target.route === 'chat' && target.conversationId === CURRENT_CONVERSATION) {
+      const conversationId = scope?.conversationId ?? null
+      if (!conversationId) {
+        return failure(
+          `invalid argument: deeplink asked for ?id=${CURRENT_CONVERSATION}, but this run has no ` +
+            'conversation of its own to open. Pass an explicit conversation id from ' +
+            'conversation_list, point somewhere else, or omit deeplink. Nothing was sent.'
+        )
+      }
+      deeplink = buildDeeplink({ route: 'chat', conversationId })
+    } else {
+      // Rebuilt rather than passed through: one canonical shape on the wire is
+      // what keeps a phone that parses it naively landing in the right place.
+      deeplink = buildDeeplink(target)
+    }
   }
 
   const budget = budgets.get(runId) ?? { total: 0, phases: new Set<NotifyPhase>() }

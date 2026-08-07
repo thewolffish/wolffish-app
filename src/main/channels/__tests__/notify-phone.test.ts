@@ -98,14 +98,32 @@ async function run(): Promise<void> {
       !badLink.success && (badLink.error ?? '').includes('wolffish://') && sent.length === 0
     )
 
+    // A link inside the scheme but naming a screen the app does not have is
+    // refused too — it would otherwise reach the phone and dump the user on
+    // the home screen, which is indistinguishable from a broken notification.
+    // The refusal has to teach: it lists what does exist.
+    const noSuchPage = await plugin.execute('notify_phone', {
+      title: 't',
+      body: 'b',
+      deeplink: 'wolffish://runs/1'
+    })
+    ok(
+      'unknown screen refused with the list of real ones',
+      !noSuchPage.success &&
+        (noSuchPage.error ?? '').includes('wolffish://settings/automations') &&
+        sent.length === 0
+    )
+
     // Model text is sanitized: newlines/controls stripped from the title,
     // both fields clamped to the wire limits, enums fall back to defaults.
+    // The deeplink is normalized to one canonical shape on the way out —
+    // extra slashes and unknown query parameters do not travel.
     const messy = await plugin.execute('notify_phone', {
       title: '  line one\nline two\x07  ' + 'x'.repeat(80),
       body: 'keep\nthe\nnewlines ' + 'y'.repeat(300),
       phase: 'not-a-phase',
       urgency: 'shout',
-      deeplink: 'wolffish://runs/1'
+      deeplink: 'wolffish:///settings/usage/?from=notify'
     })
     ok('sanitized send succeeds', messy.success === true && sent.length === 1)
     const frame = sent[0]
@@ -115,7 +133,7 @@ async function run(): Promise<void> {
     ok('body clamped to 180', frame.body.length <= 180)
     ok('unknown phase defaults to info', frame.phase === 'info')
     ok('unknown urgency defaults to normal', frame.urgency === 'normal')
-    ok('valid deeplink passes through', frame.deeplink === 'wolffish://runs/1')
+    ok('sloppy deeplink normalized', frame.deeplink === 'wolffish://settings/usage')
     ok('runId stamped from harness scope, not the model', frame.runId === 'untracked')
 
     // Rate limits inside one run: 1 per phase, 5 per run, loud errors.
@@ -225,13 +243,60 @@ async function run(): Promise<void> {
           title: 't',
           body: 'b',
           phase: 'completed',
-          deeplink: 'wolffish://chat?id=conv-2026-08-05_10-00-00'
+          deeplink: 'wolffish://chat?id=2026-08-05_10-00-00'
         })
     )
     ok(
       'explicit conversation deeplink passes through',
-      sent[1]?.deeplink === 'wolffish://chat?id=conv-2026-08-05_10-00-00'
+      sent[1]?.deeplink === 'wolffish://chat?id=2026-08-05_10-00-00'
     )
+
+    // …and `current` is the one thing the harness fills in: the id comes from
+    // the turn scope, exactly like runId, because the model does not reliably
+    // know which conversation it is running in and a guess opens the wrong
+    // transcript on someone's phone.
+    await turnScope.run(
+      { turnId: 'turn_dl_3', conversationId: '2026-08-05_10-00-00', autonomous: false },
+      () =>
+        plugin.execute('notify_phone', {
+          title: 't',
+          body: 'b',
+          phase: 'completed',
+          deeplink: 'wolffish://chat?id=current'
+        })
+    )
+    ok(
+      'id=current resolves to the run own conversation',
+      sent[2]?.deeplink === 'wolffish://chat?id=2026-08-05_10-00-00'
+    )
+
+    // No conversation in scope: refused rather than sending the literal word
+    // `current`, which the phone would open as a conversation that isn't one.
+    const orphan = await turnScope.run(
+      { turnId: 'turn_dl_4', conversationId: null, autonomous: true },
+      () =>
+        plugin.execute('notify_phone', {
+          title: 't',
+          body: 'b',
+          phase: 'completed',
+          deeplink: 'wolffish://chat?id=current'
+        })
+    )
+    ok('id=current with no conversation in scope is refused', !orphan.success && sent.length === 3)
+
+    // An id that could not be a conversation id (a title, a sentence) never
+    // becomes a link — the phone would open a chat that never fills in.
+    const titleAsId = await turnScope.run(
+      { turnId: 'turn_dl_5', conversationId: '2026-08-05_10-00-00', autonomous: false },
+      () =>
+        plugin.execute('notify_phone', {
+          title: 't',
+          body: 'b',
+          phase: 'started',
+          deeplink: 'wolffish://chat?id=my%20morning%20digest'
+        })
+    )
+    ok('a non-id conversation reference is refused', !titleAsId.success && sent.length === 3)
   }
 
   // ------------------------------------------------------------ channel layer

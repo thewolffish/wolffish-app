@@ -1,4 +1,18 @@
-## v1.0.236 — 2026-08-06 `Latest`
+## v1.0.237 — 2026-08-07 `Latest`
+
+### A Notification That Opens What It's About
+
+A push notification could always take you somewhere when you tapped it, but the agent had to name the destination by id — and a run does not reliably know the id of the conversation it is answering in. So it either went looking for it or guessed, and **a guessed id opens someone else's transcript** on your phone; or it left the destination out altogether, and the tap merely opened the app wherever you had left it, leaving you to go find the thing you had just been told about. It can now simply ask for **this run's own conversation**, and the desktop fills the id in from the run itself — the same place the run's identity already comes from, never the model's guess — so a tap lands on the reply the notification is about. A link naming a screen the app does not have is **refused before anything is sent**, together with the list of screens that do exist, instead of traveling all the way to the phone to quietly drop you on the home screen — which looks exactly like a notification that doesn't work. And the destinations now cover **every screen your phone actually has**, Projects, Automations, Procedures and Customization included, read from the app's own route table so what the agent is told can no longer drift from what the phone can open.
+
+### A Tab Group Label Worth Reading
+
+The Wolffish tab group was told to announce itself for everything, including opening a single page — where the plain **Wolffish** name already said all there was to say, and a written label was ceremony rather than information. Labeling is a judgement now rather than a ritual: **a one-off lookup keeps the plain name**, and **a real task — several steps, more than one page, more than a moment — carries an emoji and a few words**, updated as the work moves from one phase to the next. You still see what your browser is doing when it matters, without a label on every trivial thing.
+
+### Arabic That Reads in One Script
+
+Four Arabic strings still spelled the brand in Latin letters mid-sentence — the capability gate, the memory rebuild overlay, the diagnostics overlay, and the name an untitled conversation carries into a PDF export — so the eye crossed from one script to the other and back inside a single line. They read **وولفيش** now, and the prose runs in one script throughout. The pairing screen's code hint also lost a sentence it never needed, in **both languages**.
+
+## v1.0.236 — 2026-08-06
 
 ### The Phone Catches Up With the Desktop
 
