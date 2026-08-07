@@ -16,6 +16,10 @@ A project could carry files, and a conversation could be pointed at working fold
 
 The prompt is the whole point of an automation, a procedure or a project, and it had the least room of anything on the screen: an editor tall enough to write in pushed the files and folders below it out of view, and one short enough to keep them in view was a slot rather than a page. Each of the three now shows **the first few lines** of what is written and **opens a full-height editor when you click it** — with a button beside it saying so, for anyone who doesn't think to click a block of text. Escape closes just the editor and leaves the dialog where it was, and **nothing changes about saving**: the same draft, the same autosave.
 
+### The Arabic That Was Still English
+
+Eighteen strings had no Arabic at all, so on an Arabic screen they quietly fell back to English — and they were not scattered ones. The entire **Debugger Mode** card in the browser-extension settings was English top to bottom, explanation, tip and caveat alike; so was **every message the updater shows when an update fails**, which is precisely the moment you least want to be reading a second language. Five browser actions were missing too. All of them are translated now, and the two locales are back in **exact parity** — every key English has, Arabic has.
+
 ## v1.0.238 — 2026-08-07
 
 ### A Rating Bar That Knows When It's Done
