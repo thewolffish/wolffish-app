@@ -33,6 +33,7 @@ import { DataPanel } from '@pages/settings/DataPanel'
 import { GitHubPanel } from '@pages/settings/GitHubPanel'
 import { GooglePanel } from '@pages/settings/GooglePanel'
 import { prefetchGooglePanel } from '@pages/settings/googleSnapshot'
+import { CliPanel } from '@pages/settings/CliPanel'
 import { InAppPanel } from '@pages/settings/InAppPanel'
 import { McpPanel } from '@pages/settings/McpPanel'
 import { MemesPanel } from '@pages/settings/MemesPanel'
@@ -61,6 +62,7 @@ import {
   BubbleChatIcon,
   CloudIcon,
   ComputerIcon,
+  ComputerTerminal01Icon,
   Database02Icon,
   DnaIcon,
   GithubIcon,
@@ -515,6 +517,9 @@ export function Settings(): React.JSX.Element {
         <TabPanel active={active === 'channels' && channel === 'inapp'}>
           <InAppPanel />
         </TabPanel>
+        <TabPanel active={active === 'channels' && channel === 'cli'}>
+          <CliPanel />
+        </TabPanel>
         <TabPanel active={active === 'mcp'}>
           <McpPanel />
         </TabPanel>
@@ -604,11 +609,12 @@ const PROVIDER_ICONS: Record<
   zai: ZaiLogo
 }
 
-type Channel = 'inapp' | 'mobile' | 'telegram' | 'whatsapp'
-const CHANNELS: Channel[] = ['inapp', 'mobile', 'telegram', 'whatsapp']
+type Channel = 'inapp' | 'cli' | 'mobile' | 'telegram' | 'whatsapp'
+const CHANNELS: Channel[] = ['inapp', 'cli', 'mobile', 'telegram', 'whatsapp']
 
 const CHANNEL_ICONS: Record<Channel, React.ComponentType<{ size?: number }>> = {
   inapp: ComputerIcon,
+  cli: ComputerTerminal01Icon,
   mobile: SmartPhone01Icon,
   telegram: TelegramLogo,
   whatsapp: WhatsappIcon

@@ -8,6 +8,7 @@ import type { Project, ProjectCopyProgress, ProjectFileRef } from '@preload/inde
 import { useTheme } from '@providers/theme/useTheme'
 import { Add01Icon, Copy01Icon, Delete02Icon } from 'hugeicons-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 
 /**
@@ -18,6 +19,12 @@ function splitFileName(name: string): { base: string; ext: string } {
   const dot = name.lastIndexOf('.')
   if (dot <= 0 || dot === name.length - 1) return { base: name, ext: '' }
   return { base: name.slice(0, dot), ext: name.slice(dot) }
+}
+
+/** Last path segment, for either separator — these are absolute OS paths. */
+function folderBaseName(filePath: string): string {
+  const parts = filePath.split(/[\\/]/).filter(Boolean)
+  return parts[parts.length - 1] ?? filePath
 }
 
 const fieldClass = cn(
@@ -81,7 +88,14 @@ function ProjectDialogBody({
   const [draftIcon, setDraftIcon] = useState(project.icon)
   const [draftInstructions, setDraftInstructions] = useState(project.instructions)
   const [files, setFiles] = useState<ProjectFileRef[]>(project.files)
+  const [dirs, setDirs] = useState<string[]>(project.directories ?? [])
+  const [addingDirs, setAddingDirs] = useState(false)
   const [emojiOpen, setEmojiOpen] = useState(false)
+  // The instructions are edited in a full-screen sheet rather than inline: the
+  // dialog shows four lines and clicking opens the editor. Autosave is
+  // unchanged — the sheet writes into the same draft state, so an edit made in
+  // it is committed by the same debounce and reflected on close.
+  const [instructionsExpanded, setInstructionsExpanded] = useState(false)
   // The required-title error stays hidden until the user edits SOMETHING —
   // a fresh project opens with an empty title, and scolding before any input
   // is noise. Any edit arms it (not just title edits): with an empty title
@@ -127,6 +141,7 @@ function ProjectDialogBody({
   }, [project, draftTitle, draftIcon, draftInstructions, persist])
 
   const close = useCallback(() => {
+    setInstructionsExpanded(false)
     if (project && draftTitle.trim() !== '') {
       const saved = savedRef.current
       if (
@@ -152,6 +167,32 @@ function ProjectDialogBody({
     },
     [project, onChanged, t, toast]
   )
+
+  const persistDirs = useCallback(
+    (next: string[]) => {
+      if (!project) return
+      setTouched(true)
+      setDirs(next)
+      void window.api.projects
+        .update({ id: project.id, directories: next })
+        .then(onChanged)
+        .catch(() => toast.show({ tone: 'error', message: t('projects.saveError') }))
+    },
+    [project, onChanged, t, toast]
+  )
+
+  const addDirs = useCallback(() => {
+    if (addingDirs) return
+    setAddingDirs(true)
+    void window.api.paths
+      .pickDirectories()
+      .then((picked) => {
+        if (!picked) return
+        persistDirs([...dirs, ...picked.filter((p) => !dirs.includes(p))])
+      })
+      .catch(() => toast.show({ tone: 'error', message: t('projects.saveError') }))
+      .finally(() => setAddingDirs(false))
+  }, [addingDirs, dirs, persistDirs, t, toast])
 
   // A pickFiles() call is in flight — the whole time, including while the
   // native picker is open. Adding and removing lock: both write the same
@@ -200,6 +241,18 @@ function ProjectDialogBody({
     : 0
   const locked = busy || adding
 
+  // Escape closes only what is stacked on top. The dialog's own `dismissable`
+  // gate stops Modal from handling it while the sheet is open, so this is the
+  // sheet's only way out by keyboard.
+  useEffect(() => {
+    if (!instructionsExpanded) return
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setInstructionsExpanded(false)
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [instructionsExpanded])
+
   const copyInstructions = useCallback(() => {
     void navigator.clipboard
       .writeText(draftInstructions)
@@ -211,6 +264,9 @@ function ProjectDialogBody({
     <Modal
       open={project !== null}
       onClose={close}
+      // While the expanded editor is stacked on top, Escape/backdrop must only
+      // close that — not both dialogs at once.
+      dismissable={!instructionsExpanded}
       title={t('projects.editTitle')}
       className="max-w-xl"
       footer={
@@ -291,39 +347,62 @@ function ProjectDialogBody({
           </div>
         </div>
 
-        <span className="text-muted text-xs font-medium">{t('projects.instructions')}</span>
-        {/* Same CodeMirror surface override as the procedures editor so the
-            instructions block matches the card code block. Copy floats ON
-            the block (top corner) and reveals on hover, like code blocks
-            everywhere else — parked over the first line, it would otherwise
-            sit on top of the text the whole time you're writing. */}
-        <div className="group/prompt border-border relative h-[220px] overflow-hidden rounded-lg border [&_.cm-editor]:bg-bg!">
+        <div className="flex items-center justify-between">
+          <span className="text-muted text-xs font-medium">{t('projects.instructions')}</span>
           <button
             type="button"
             onClick={copyInstructions}
             aria-label={t('projects.copy')}
             title={t('projects.copy')}
-            className={cn(
-              'text-muted hover:text-fg bg-surface/90 border-border absolute end-2 top-2 z-10 flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border',
-              'opacity-0 group-hover/prompt:opacity-100 focus-visible:opacity-100'
-            )}
+            className="text-muted hover:text-fg flex h-6 w-6 cursor-pointer items-center justify-center rounded-md"
           >
-            <Copy01Icon size={14} />
+            <Copy01Icon size={13} />
           </button>
-          <CodeEditor
-            value={draftInstructions}
-            language="markdown"
-            isDark={isDark}
-            onChange={(value) => {
-              setTouched(true)
-              setDraftInstructions(value)
-            }}
-            placeholder={t('projects.instructionsPlaceholder')}
-            className="h-full"
-            spellcheck
-            readOnly={busy}
-          />
         </div>
+        {/* Four lines of the instructions, in the card's own code block. With
+            files and folders below it, an inline editor tall enough to write in
+            pushed everything else off screen — clicking opens the full-height
+            editor below instead, exactly as the Automations and Procedures
+            editors do. */}
+        <button
+          type="button"
+          onClick={() => !busy && setInstructionsExpanded(true)}
+          disabled={busy}
+          title={t('projects.expandInstructions')}
+          className={cn(
+            'bg-bg border-border block w-full rounded-lg border px-3 py-2 text-start',
+            busy
+              ? 'cursor-not-allowed opacity-60'
+              : 'hover:border-muted cursor-pointer focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none'
+          )}
+        >
+          {draftInstructions.trim() ? (
+            <pre
+              dir="auto"
+              className="text-muted line-clamp-4 font-mono text-xs leading-relaxed wrap-break-word whitespace-pre-wrap"
+            >
+              {draftInstructions}
+            </pre>
+          ) : (
+            <span className="text-muted/60 font-mono text-xs italic">
+              {t('projects.instructionsPlaceholder')}
+            </span>
+          )}
+        </button>
+        {/* The same secondary action the phone offers under its preview. The
+              block above is still the primary target — this is the affordance
+              that says so, for anyone who does not think to click a code block. */}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setInstructionsExpanded(true)}
+          disabled={busy}
+          className="self-start"
+        >
+          {draftInstructions.trim()
+            ? t('projects.editInstructions')
+            : t('projects.addInstructions')}
+        </Button>
 
         <div className="flex items-center justify-between">
           <span className="text-muted text-xs font-medium">
@@ -413,8 +492,94 @@ function ProjectDialogBody({
             })}
           </ul>
         )}
+        {/* Working folders: references, never copies. Every turn inside the
+            project gets a fresh listing of each one, through the same channel
+            chat's own folder picker uses. */}
+        <div className="flex items-center justify-between">
+          <span className="text-muted text-xs font-medium">
+            {t('projects.folders', { count: dirs.length })}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={addDirs}
+            disabled={locked || addingDirs}
+            className="flex items-center gap-1"
+          >
+            <Add01Icon size={13} />
+            <span>{t('projects.addFolders')}</span>
+          </Button>
+        </div>
+        {dirs.length > 0 && (
+          <ul className={cn(fileCardClass, 'flex max-h-40 flex-col gap-1.5 overflow-y-auto')}>
+            {dirs.map((dir) => (
+              <li key={dir} dir="ltr" className="flex flex-col gap-0.5 px-1.5 py-0.5">
+                <span title={dir} className="text-fg truncate text-xs">
+                  {folderBaseName(dir)}
+                </span>
+                <div className="flex items-center gap-1">
+                  {/* The full path, in a code block — the same treatment the
+                      composer's working-folder card gives it. */}
+                  <code
+                    title={dir}
+                    className="border-border bg-surface text-muted block min-w-0 flex-1 truncate rounded border px-1 py-0.5 font-mono text-[10px]"
+                  >
+                    {dir}
+                  </code>
+                  <button
+                    type="button"
+                    onClick={() => persistDirs(dirs.filter((d) => d !== dir))}
+                    disabled={locked}
+                    aria-label={t('projects.removeFolder')}
+                    title={t('projects.removeFolder')}
+                    className={cn(
+                      'text-muted flex h-6 w-6 shrink-0 items-center justify-center rounded-md',
+                      locked
+                        ? 'cursor-not-allowed opacity-40'
+                        : 'cursor-pointer hover:text-rose-500'
+                    )}
+                  >
+                    <Delete02Icon size={13} />
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
         <p className="text-muted text-xs">{t('projects.autosaveHint')}</p>
       </div>
+
+      {/* The expanded instructions editor — the composer's own expand dialog,
+          over the same draft state, so what is typed here autosaves on the
+          dialog's debounce and the preview above reflects it on close. */}
+      {instructionsExpanded &&
+        createPortal(
+          <div
+            role="presentation"
+            onClick={() => setInstructionsExpanded(false)}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="border-border bg-surface flex h-[80vh] w-[80vw] flex-col overflow-hidden rounded-2xl border shadow-xl"
+            >
+              <CodeEditor
+                value={draftInstructions}
+                language="markdown"
+                isDark={isDark}
+                onChange={(value) => {
+                  setTouched(true)
+                  setDraftInstructions(value)
+                }}
+                placeholder={t('projects.instructionsPlaceholder')}
+                className="min-h-0 flex-1 overflow-auto"
+                spellcheck
+                readOnly={busy}
+              />
+            </div>
+          </div>,
+          document.body
+        )}
     </Modal>
   )
 }

@@ -74,8 +74,13 @@ Hard rule: **uninstall must be `rm -rf ~/.wolffish/`**. Every byte the app write
 - `~/.wolffish/workspace/` — user data (config.json + brain/ folders)
 - `~/.wolffish/runtime/` — Chromium state (cookies, localStorage, GPU cache, ...) via `app.setPath('userData', ...)`
 - `~/.wolffish/logs/` — via `app.setAppLogsPath(...)`
+- `~/.wolffish/bin/` — every managed binary: `gog`, `ffmpeg`, the voice engines, and the `wolffish` CLI shim. One directory on every platform, and one PATH entry that covers all of them (`google.ts:ensureInUserPath` writes it).
 
 Do not write outside this tree. Do not introduce keytar / electron-store / safeStorage / OS keychains. The Snap target in `electron-builder.yml` is the one known exception (Snap confines writes to `~/snap/`); flag it before shipping a Snap.
+
+**When a location is a free choice, it is `~/.wolffish/`.** Convention is not a reason to leave the tree: the CLI shim briefly lived in `~/.local/bin` because that is the XDG norm and "already on PATH" — but it is *not* in macOS's default PATH (`/etc/paths` lists only `/usr/local/bin` and the system dirs), so the convenience was imaginary on one platform and the file survived `rm -rf ~/.wolffish` on all of them.
+
+The exception is a location the OS *owns*, where a file elsewhere would simply never be read. Those are unavoidable, and today they are exactly the autostart registrations — `~/Library/LaunchAgents/`, `~/.config/systemd/user/`, `~/.config/autostart/`, the Windows registry PATH entry, Task Scheduler. Each is written only on an explicit user action, each is removed by its own uninstall path, and `src/main/autostart/` is the only place any of them appear. Adding a new one needs the same justification: a service manager that reads nowhere else.
 
 Workspace init runs **only when `~/.wolffish/workspace/` does not exist** — see `workspace/workspace.ts:ensureWorkspace`. Never overwrite an existing workspace.
 

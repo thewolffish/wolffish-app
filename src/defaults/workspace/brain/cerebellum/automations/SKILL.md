@@ -27,7 +27,7 @@ triggers:
   - do this every
 tools:
   - name: automation_list
-    description: List every configured automation — its schedule, the plain-English timing, the instruction it runs, and whether it's valid and currently running.
+    description: List every configured automation — its schedule, the plain-English timing, the instruction it runs, any files and working folders attached to it, and whether it's valid and currently running.
     parameters: {}
   - name: automation_create
     description: Create a new automation that runs on a schedule. Provide the schedule and the instruction to run.
@@ -101,10 +101,30 @@ hand-edit the file (though it's there if you want to read it).
 
 An entry's body may START with setting-marker lines the user configured from
 the Automations page — `mode: single|workflow`, `project: <id>` (the run gets
-that project's context and its conversation registers under the project), and
-`icon: <emoji>` (the card/badge emoji). They are settings, not instruction
-text. The `automation_*` tools preserve them automatically; if you ever edit
-the file directly, keep them in place.
+that project's context and its conversation registers under the project),
+`icon: <emoji>` (the card/badge emoji), and the repeatable `file: <path>` /
+`dir: <path>`. They are settings, not instruction text. The `automation_*`
+tools preserve them automatically; if you ever edit the file directly, keep
+them in place.
+
+**Files and working folders (`file:` / `dir:`).** These are what the user
+attached to an automation from the Automations page — the automation's own
+reference material, exactly like a project's files:
+
+- `file: <path>` — a file COPIED into the workspace when it was attached, so it
+  can't move out from under the run. When the automation fires, the run is told
+  the name, size and path of each one and **reads them with its own tools** —
+  the content is never pasted into the prompt. Attach and detach happen in the
+  app, not here; `automation_list` shows what an automation carries.
+- `dir: <path>` — a working folder. Each fire gets a **fresh listing** of its
+  top level, the same way a working folder picked in chat does, so the run sees
+  the folder as it is at that moment. This is where an automation that produces
+  or consumes files should work.
+
+When you write an instruction for an automation that has these, write it
+against them: say "the attached report", "the folder", and let the run look.
+Don't restate a file's contents into the prompt — it would go stale the moment
+the file changed, which is the whole reason the attachment exists.
 
 ## One-time vs recurring — YOU decide
 

@@ -9,7 +9,12 @@ import { useToast } from '@components/core/toast/useToast'
 import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
 import { pageTopPadding } from '@lib/utils/platform'
-import type { HeartbeatJobView, HeartbeatRunsSnapshot, Project } from '@preload/index'
+import type {
+  AutomationCopyProgress,
+  HeartbeatJobView,
+  HeartbeatRunsSnapshot,
+  Project
+} from '@preload/index'
 import { useFlow } from '@providers/flow/useFlow'
 import { useLocale } from '@providers/locale/useLocale'
 import { useTheme } from '@providers/theme/useTheme'
@@ -17,9 +22,11 @@ import {
   Add01Icon,
   ArrowLeft02Icon,
   ArrowRight02Icon,
+  Attachment01Icon,
   Delete02Icon,
   Edit02Icon,
   FloppyDiskIcon,
+  Folder01Icon,
   GridViewIcon,
   HelpCircleIcon,
   InformationCircleIcon,
@@ -28,6 +35,7 @@ import {
   SourceCodeIcon
 } from 'hugeicons-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 
 const HEARTBEAT_PATH = 'brain/brainstem/heartbeat.md'
@@ -321,6 +329,31 @@ const iconButtonClass = cn(
   'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
 )
 
+// The copy-progress card and the attached-files list share one shell and hold
+// rows of one fixed height, so the block claims its space the moment a copy
+// starts and keeps it when progress gives way to the finished file row —
+// the project dialog's contract, because it is the same block.
+const fileCardClass = 'border-border bg-bg rounded-lg border p-1.5'
+/** h-8 — the remove button's h-6 plus the row's former py-1, top and bottom. */
+const fileRowHeight = 'h-8'
+const fileRowClass = cn(fileRowHeight, 'flex items-center gap-2 rounded-md px-1.5')
+
+/** Last path segment, for either separator — these are absolute OS paths. */
+function fileBaseName(filePath: string): string {
+  const parts = filePath.split(/[\\/]/).filter(Boolean)
+  return parts[parts.length - 1] ?? filePath
+}
+
+/**
+ * Middle truncation that keeps the extension visible: the base name gets the
+ * CSS ellipsis while ".pdf" stays pinned — "quarterly-report-fin….pdf".
+ */
+function splitFileName(name: string): { base: string; ext: string } {
+  const dot = name.lastIndexOf('.')
+  if (dot <= 0 || dot === name.length - 1) return { base: name, ext: '' }
+  return { base: name.slice(0, dot), ext: name.slice(dot) }
+}
+
 type SidebarJob = {
   label: string
   type: string
@@ -338,19 +371,26 @@ type SidebarJob = {
   project: string | null
   /** The job's `icon: <emoji>` marker; null ⇒ the page default. */
   icon: string | null
+  /** Attached files (`file: …` markers) — copies inside the workspace. */
+  files: string[]
+  /** Working directories (`dir: …` markers) — references to real folders. */
+  dirs: string[]
 }
 
 /**
  * Per-job setting markers — the LEADING non-empty body lines, `mode: …` /
- * `project: …` / `icon: …` in any order (blank lines allowed between them).
- * Mirrors the engine's splitMarkers (brainstem.ts) and the automations
- * plugin: parsed here so DISABLED jobs (which never reach heartbeat:getJobs)
- * show theirs too, and stripped from the preview so a marker never reads as
- * instruction text.
+ * `project: …` / `icon: …` / the repeatable `file: …` and `dir: …`, in any
+ * order (blank lines allowed between them). Mirrors the engine's splitMarkers
+ * (brainstem.ts), the automations plugin and the phone's port: parsed here so
+ * DISABLED jobs (which never reach heartbeat:getJobs) show theirs too, and
+ * stripped from the preview so a marker never reads as instruction text.
  */
 const MODE_MARKER_RE = /^mode:\s*(single|workflow)\s*$/i
 const PROJECT_MARKER_RE = /^project:\s*(\S+)\s*$/i
 const ICON_MARKER_RE = /^icon:\s*(\S+)\s*$/i
+// Paths, so these take the whole line (spaces and all) rather than one token.
+const FILE_MARKER_RE = /^file:\s*(.+?)\s*$/i
+const DIR_MARKER_RE = /^dir:\s*(.+?)\s*$/i
 
 /**
  * Drop leading setting-marker lines (and the blanks between them) from a
@@ -369,7 +409,9 @@ function stripLeadingSettings(text: string): string {
       line === '' ||
       MODE_MARKER_RE.test(line) ||
       PROJECT_MARKER_RE.test(line) ||
-      ICON_MARKER_RE.test(line)
+      ICON_MARKER_RE.test(line) ||
+      FILE_MARKER_RE.test(line) ||
+      DIR_MARKER_RE.test(line)
     ) {
       i++
       continue
@@ -420,6 +462,8 @@ function parseSidebarJobs(
     let modeLineIndex: number | null = null
     let project: string | null = null
     let icon: string | null = null
+    const files: string[] = []
+    const dirs: string[] = []
     let sawContent = false
 
     for (let j = i + 1; j < lines.length; j++) {
@@ -464,6 +508,18 @@ function parseSidebarJobs(
           if (!isBlock) endIdx = j
           continue
         }
+        const f = line.match(FILE_MARKER_RE)
+        if (f) {
+          files.push(f[1])
+          if (!isBlock) endIdx = j
+          continue
+        }
+        const d = line.match(DIR_MARKER_RE)
+        if (d) {
+          dirs.push(d[1])
+          if (!isBlock) endIdx = j
+          continue
+        }
         sawContent = true
       }
       bodyLines.push(lines[j])
@@ -495,7 +551,9 @@ function parseSidebarJobs(
       mode,
       modeLineIndex,
       project,
-      icon
+      icon,
+      files,
+      dirs
     })
   }
 
@@ -538,8 +596,26 @@ export function Heartbeat(): React.JSX.Element {
   const [draftPrompt, setDraftPrompt] = useState('')
   const [draftIcon, setDraftIcon] = useState('')
   const [draftProjectId, setDraftProjectId] = useState('')
+  // The automation's own attachments: files copied into the workspace, and
+  // references to folders it works in. Both persist as marker lines, so they
+  // ride the very same autosave the rest of the draft does.
+  const [draftFiles, setDraftFiles] = useState<string[]>([])
+  const [draftDirs, setDraftDirs] = useState<string[]>([])
+  // A pickFiles() call is in flight — the whole time, including while the
+  // native picker is open. Adding and removing lock together: both write the
+  // same list, and a second picker over the first is just a race.
+  const [addingFiles, setAddingFiles] = useState(false)
+  const [addingDirs, setAddingDirs] = useState(false)
+  // Copy ticks from main. Non-null only once bytes are actually moving, so the
+  // bar appears when the picker closes rather than behind it.
+  const [copy, setCopy] = useState<AutomationCopyProgress | null>(null)
   const [emojiOpen, setEmojiOpen] = useState(false)
   const [guideOpen, setGuideOpen] = useState(false)
+  // The prompt is edited in a full-screen sheet rather than inline: the dialog
+  // shows four lines of it and clicking opens the editor. Autosave is unchanged
+  // — the sheet writes into the same draft state, so an edit made in it is
+  // committed by the same debounce and reflected in the preview on close.
+  const [promptExpanded, setPromptExpanded] = useState(false)
   // The persisted block's identity. The ref is what the async save chain
   // reads; the state mirror is the same label for render-time checks (the
   // duplicate guard), where reading a ref is off-limits.
@@ -552,11 +628,16 @@ export function Heartbeat(): React.JSX.Element {
     prompt: string
     icon: string
     projectId: string
+    /** The file/dir lists, joined — cheap value identity for the dirty check. */
+    files: string
+    dirs: string
   }>({
     schedule: '',
     prompt: '',
     icon: '',
-    projectId: ''
+    projectId: '',
+    files: '',
+    dirs: ''
   })
   // Serializes card saves so a close-time flush can't splice against a file
   // snapshot an in-flight autosave is about to replace.
@@ -943,13 +1024,24 @@ export function Heartbeat(): React.JSX.Element {
   const openCreate = useCallback((): void => {
     boundRef.current = null
     setBoundLabel(null)
-    savedDraftRef.current = { schedule: '', prompt: '', icon: '', projectId: '' }
+    savedDraftRef.current = {
+      schedule: '',
+      prompt: '',
+      icon: '',
+      projectId: '',
+      files: '',
+      dirs: ''
+    }
     setEditorJob(null)
     applyDraftSchedule(chipSchedule('daily'))
     setDraftPrompt('')
     setDraftIcon('')
     setDraftProjectId('')
+    setDraftFiles([])
+    setDraftDirs([])
     setEmojiOpen(false)
+    setPromptExpanded(false)
+    setCopy(null)
     setEditorOpen(true)
   }, [applyDraftSchedule])
 
@@ -959,32 +1051,60 @@ export function Heartbeat(): React.JSX.Element {
       const projectId = job.project ?? ''
       boundRef.current = { label: job.label, active: job.active }
       setBoundLabel(job.label)
-      savedDraftRef.current = { schedule: job.label, prompt: job.body, icon, projectId }
+      savedDraftRef.current = {
+        schedule: job.label,
+        prompt: job.body,
+        icon,
+        projectId,
+        files: job.files.join('\n'),
+        dirs: job.dirs.join('\n')
+      }
       setEditorJob(job)
       applyDraftSchedule(job.label)
       setDraftPrompt(job.body)
       setDraftIcon(icon)
       setDraftProjectId(projectId)
+      setDraftFiles(job.files)
+      setDraftDirs(job.dirs)
       setEmojiOpen(false)
+      setPromptExpanded(false)
+      setCopy(null)
       setEditorOpen(true)
     },
     [applyDraftSchedule]
   )
 
   const persistDraft = useCallback(
-    (schedule: string, prompt: string, icon: string, projectId: string): void => {
-      savedDraftRef.current = { schedule, prompt, icon, projectId }
-      saveChainRef.current = saveChainRef.current.then(async () => {
+    (
+      schedule: string,
+      prompt: string,
+      icon: string,
+      projectId: string,
+      files: string[],
+      dirs: string[]
+    ): Promise<boolean> => {
+      savedDraftRef.current = {
+        schedule,
+        prompt,
+        icon,
+        projectId,
+        files: files.join('\n'),
+        dirs: dirs.join('\n')
+      }
+      const write = saveChainRef.current.then(async () => {
         const current = contentRef.current
         const promptLines = stripLeadingSettings(prompt).split('\n')
         const bound = boundRef.current
         // Marker lines the dialog owns. The icon is always written (every
         // automation carries an emoji — default ❤️); the project marker only
         // when bound. The mode marker is preserved from the existing block.
+        // Files and directories are repeatable, one line each.
         const settingLines = (mode: 'single' | 'workflow' | null): string[] => [
           ...(mode ? [`mode: ${mode}`] : []),
           ...(projectId ? [`project: ${projectId}`] : []),
-          `icon: ${icon || DEFAULT_AUTOMATION_ICON}`
+          `icon: ${icon || DEFAULT_AUTOMATION_ICON}`,
+          ...files.map((f) => `file: ${f}`),
+          ...dirs.map((d) => `dir: ${d}`)
         ]
 
         // Re-locate the bound block in the CURRENT text — indices captured at
@@ -1038,7 +1158,7 @@ export function Heartbeat(): React.JSX.Element {
           setJobs(jobList)
         } catch {
           toast.show({ tone: 'error', message: t('workspace.saveError') })
-          return
+          return false
         }
         // Optimistic stamp — the store's reload diff confirms moments later
         // (via heartbeat:changed) with the file-mtime truth.
@@ -1048,7 +1168,17 @@ export function Heartbeat(): React.JSX.Element {
           next[schedule] = Date.now()
           return next
         })
+        return true
       })
+      // The chain itself must stay a plain void promise (its next link only
+      // waits on ordering); the boolean goes to the caller, which is how a
+      // detach knows the marker actually left the file before it deletes the
+      // copy that marker pointed at.
+      saveChainRef.current = write.then(
+        () => undefined,
+        () => undefined
+      )
+      return write.catch(() => false)
     },
     [applyContent, t, toast]
   )
@@ -1064,12 +1194,22 @@ export function Heartbeat(): React.JSX.Element {
       draftScheduleTrimmed === savedDraftRef.current.schedule &&
       draftPrompt === savedDraftRef.current.prompt &&
       draftIcon === savedDraftRef.current.icon &&
-      draftProjectId === savedDraftRef.current.projectId
+      draftProjectId === savedDraftRef.current.projectId &&
+      draftFiles.join('\n') === savedDraftRef.current.files &&
+      draftDirs.join('\n') === savedDraftRef.current.dirs
     ) {
       return
     }
     const handle = setTimeout(
-      () => persistDraft(draftScheduleTrimmed, draftPrompt, draftIcon, draftProjectId),
+      () =>
+        void persistDraft(
+          draftScheduleTrimmed,
+          draftPrompt,
+          draftIcon,
+          draftProjectId,
+          draftFiles,
+          draftDirs
+        ),
       600
     )
     return () => clearTimeout(handle)
@@ -1079,37 +1219,141 @@ export function Heartbeat(): React.JSX.Element {
     draftPrompt,
     draftIcon,
     draftProjectId,
+    draftFiles,
+    draftDirs,
     draftParsed,
     isDuplicateSchedule,
     persistDraft
   ])
 
+  /** The draft is in a state the file can hold — the autosave gate, reused. */
+  const draftSaveable = draftParsed !== null && !isDuplicateSchedule && draftPrompt.trim() !== ''
+
   const closeEditor = useCallback((): void => {
     setEditorOpen(false)
     setEmojiOpen(false)
     setGuideOpen(false)
+    setPromptExpanded(false)
     // Flush any edit the debounce hasn't dispatched yet.
     const saved = savedDraftRef.current
     if (
-      draftParsed !== null &&
-      !isDuplicateSchedule &&
-      draftPrompt.trim() !== '' &&
+      draftSaveable &&
       (draftScheduleTrimmed !== saved.schedule ||
         draftPrompt !== saved.prompt ||
         draftIcon !== saved.icon ||
-        draftProjectId !== saved.projectId)
+        draftProjectId !== saved.projectId ||
+        draftFiles.join('\n') !== saved.files ||
+        draftDirs.join('\n') !== saved.dirs)
     ) {
-      persistDraft(draftScheduleTrimmed, draftPrompt, draftIcon, draftProjectId)
+      void persistDraft(
+        draftScheduleTrimmed,
+        draftPrompt,
+        draftIcon,
+        draftProjectId,
+        draftFiles,
+        draftDirs
+      )
     }
   }, [
     draftScheduleTrimmed,
     draftPrompt,
     draftIcon,
     draftProjectId,
-    draftParsed,
-    isDuplicateSchedule,
+    draftFiles,
+    draftDirs,
+    draftSaveable,
     persistDraft
   ])
+
+  // Copy ticks are a broadcast — subscribed only for the duration of OUR add,
+  // so a bar can never be left behind by someone else's copy.
+  useEffect(() => {
+    if (!addingFiles) return
+    return window.api.automationFiles.onCopyProgress(setCopy)
+  }, [addingFiles])
+
+  const addDraftFiles = useCallback((): void => {
+    if (addingFiles) return
+    // Pick + copy happen main-side in one step (the files are copied into this
+    // automation's uploads dir); the markers are ours to write, and the
+    // autosave below does that as soon as the list changes.
+    setAddingFiles(true)
+    void window.api.automationFiles
+      .pickFiles(draftFiles)
+      .then((result) => {
+        if (!result) return
+        const added = result.added.map((f) => f.path)
+        if (added.length > 0) setDraftFiles((prev) => [...prev, ...added])
+      })
+      .catch(() => toast.show({ tone: 'error', message: t('workspace.saveError') }))
+      .finally(() => {
+        setAddingFiles(false)
+        setCopy(null)
+      })
+  }, [addingFiles, draftFiles, t, toast])
+
+  const removeDraftFile = useCallback(
+    (filePath: string): void => {
+      const next = draftFiles.filter((f) => f !== filePath)
+      setDraftFiles(next)
+      // Delete the copy only once the marker is provably gone from the file.
+      // An unsaveable draft (no schedule yet, empty prompt) writes nothing, so
+      // deleting here would strand a marker pointing at nothing; the
+      // scheduler's own reconcile sweep collects it later instead.
+      if (!draftSaveable) return
+      void persistDraft(
+        draftScheduleTrimmed,
+        draftPrompt,
+        draftIcon,
+        draftProjectId,
+        next,
+        draftDirs
+      ).then((ok) => {
+        if (ok) void window.api.automationFiles.removeFile(filePath)
+      })
+    },
+    [
+      draftFiles,
+      draftDirs,
+      draftSaveable,
+      draftScheduleTrimmed,
+      draftPrompt,
+      draftIcon,
+      draftProjectId,
+      persistDraft
+    ]
+  )
+
+  const copyPercent = copy
+    ? copy.totalBytes > 0
+      ? Math.min(100, Math.round((copy.copiedBytes / copy.totalBytes) * 100))
+      : 100
+    : 0
+
+  // Escape closes only what is stacked on top. The dialog's own `dismissable`
+  // gate stops Modal from handling it while the prompt sheet is open, so this
+  // is the sheet's only way out by keyboard.
+  useEffect(() => {
+    if (!promptExpanded) return
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setPromptExpanded(false)
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [promptExpanded])
+
+  const addDraftDirs = useCallback((): void => {
+    if (addingDirs) return
+    setAddingDirs(true)
+    void window.api.paths
+      .pickDirectories()
+      .then((picked) => {
+        if (!picked) return
+        setDraftDirs((prev) => [...prev, ...picked.filter((p) => !prev.includes(p))])
+      })
+      .catch(() => toast.show({ tone: 'error', message: t('workspace.saveError') }))
+      .finally(() => setAddingDirs(false))
+  }, [addingDirs, t, toast])
 
   const jobMetaLine = useCallback(
     (job: SidebarJob): string => {
@@ -1366,6 +1610,39 @@ export function Heartbeat(): React.JSX.Element {
                       ) : (
                         <p className="text-muted text-xs italic">{t('heartbeat.promptEmpty')}</p>
                       )}
+                      {/* What this automation carries into every run. On the
+                          card, not just in the editor: the paths are the part
+                          of an automation you cannot infer from its prompt.
+                          Read-only here — detaching lives in the editor. */}
+                      {(job.files.length > 0 || job.dirs.length > 0) && (
+                        <div dir="ltr" className="flex flex-wrap items-center gap-1.5">
+                          {/* Transparent, not `bg-bg`: these sit ON the card,
+                              so they take its surface rather than punching a
+                              darker well into it. Local to this card by
+                              design — code blocks elsewhere in the app keep
+                              their own recessed background. */}
+                          {job.files.map((file) => (
+                            <span
+                              key={file}
+                              title={file}
+                              className="border-border text-muted inline-flex h-5 max-w-full items-center gap-1 truncate rounded-md border bg-transparent px-1.5 text-[10px] leading-none"
+                            >
+                              <Attachment01Icon size={10} className="shrink-0" />
+                              <span className="truncate">{fileBaseName(file)}</span>
+                            </span>
+                          ))}
+                          {job.dirs.map((dir) => (
+                            <code
+                              key={dir}
+                              title={dir}
+                              className="border-border text-muted inline-flex h-5 max-w-full items-center gap-1 truncate rounded-md border bg-transparent px-1.5 font-mono text-[10px] leading-none"
+                            >
+                              <Folder01Icon size={10} className="shrink-0" />
+                              <span className="truncate">{dir}</span>
+                            </code>
+                          ))}
+                        </div>
+                      )}
                     </li>
                   )
                 })}
@@ -1433,9 +1710,9 @@ export function Heartbeat(): React.JSX.Element {
       <Modal
         open={editorOpen}
         onClose={closeEditor}
-        // While the guide is stacked on top, Escape/backdrop must only close
-        // the guide — not both dialogs at once.
-        dismissable={!guideOpen}
+        // While the guide or the expanded prompt editor is stacked on top,
+        // Escape/backdrop must only close that — not both dialogs at once.
+        dismissable={!guideOpen && !promptExpanded}
         title={editorJob ? t('heartbeat.editor.editTitle') : t('heartbeat.editor.createTitle')}
         className="max-w-xl"
         footer={
@@ -1578,23 +1855,214 @@ export function Heartbeat(): React.JSX.Element {
             ]}
           />
 
-          <span className="text-muted text-xs font-medium">{t('heartbeat.editor.prompt')}</span>
-          {/* Same CodeMirror surface override as the procedures editor so the
-              prompt field matches the card code block. */}
-          <div className="border-border h-[260px] overflow-hidden rounded-lg border [&_.cm-editor]:bg-bg!">
-            <CodeEditor
-              value={draftPrompt}
-              language="markdown"
-              isDark={isDark}
-              onChange={setDraftPrompt}
-              placeholder={t('heartbeat.editor.promptPlaceholder')}
-              className="h-full"
-              spellcheck
-            />
+          {/* Files: copied INTO the workspace on attach, exactly like a
+              project's, so the automation can never dangle on a moved
+              original. The run gets the list, never the content. */}
+          <div className="flex items-center justify-between">
+            <span className="text-muted text-xs font-medium">
+              {t('heartbeat.editor.files', { count: draftFiles.length })}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={addDraftFiles}
+              disabled={addingFiles}
+              className="flex items-center gap-1"
+            >
+              <Add01Icon size={13} />
+              <span>{t('heartbeat.editor.addFiles')}</span>
+            </Button>
           </div>
+          {/* Copying a large file into the workspace is not instant — real
+              bytes, batch-wide, from the main-side copy. */}
+          {copy && (
+            <div className={fileCardClass}>
+              <div className={cn(fileRowHeight, 'flex flex-col justify-center gap-1 px-1.5')}>
+                <div className="text-muted flex items-center gap-2 text-xs">
+                  <span dir="ltr" title={copy.name} className="min-w-0 flex-1 truncate">
+                    {copy.name}
+                  </span>
+                  {copy.total > 1 && (
+                    <span className="shrink-0 tabular-nums">
+                      {t('projects.copyingCount', { index: copy.index, total: copy.total })}
+                    </span>
+                  )}
+                  <span className="shrink-0 tabular-nums">{copyPercent}%</span>
+                </div>
+                <div
+                  role="progressbar"
+                  aria-label={t('projects.copyingFiles')}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={copyPercent}
+                  className="bg-border h-1 w-full overflow-hidden rounded-full"
+                >
+                  <div
+                    className="bg-primary h-full rounded-full transition-[width] duration-150"
+                    style={{ width: `${copyPercent}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+          {draftFiles.length > 0 && (
+            <ul className={cn(fileCardClass, 'flex max-h-36 flex-col gap-0.5 overflow-y-auto')}>
+              {draftFiles.map((filePath) => {
+                const { base, ext } = splitFileName(fileBaseName(filePath))
+                return (
+                  <li key={filePath} className={cn('group shrink-0', fileRowClass)}>
+                    {/* dir=ltr pins filename order (and the pinned extension)
+                        even in the RTL locale — paths are LTR text. */}
+                    <span
+                      title={filePath}
+                      dir="ltr"
+                      className="text-fg flex min-w-0 flex-1 items-baseline text-xs"
+                    >
+                      <span className="truncate">{base}</span>
+                      {ext && <span className="shrink-0">{ext}</span>}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => removeDraftFile(filePath)}
+                      disabled={addingFiles}
+                      aria-label={t('heartbeat.editor.removeFile')}
+                      title={t('heartbeat.editor.removeFile')}
+                      className={cn(
+                        'text-muted flex h-6 w-6 shrink-0 items-center justify-center rounded-md',
+                        addingFiles
+                          ? 'cursor-not-allowed opacity-40'
+                          : 'cursor-pointer hover:text-rose-500'
+                      )}
+                    >
+                      <Delete02Icon size={13} />
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+
+          {/* Working directories: references, never copies. They ride the run
+              through the same channel as chat's folder picker, so the model
+              sees a fresh listing of each one on every iteration. */}
+          <div className="flex items-center justify-between">
+            <span className="text-muted text-xs font-medium">
+              {t('heartbeat.editor.folders', { count: draftDirs.length })}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={addDraftDirs}
+              disabled={addingDirs}
+              className="flex items-center gap-1"
+            >
+              <Add01Icon size={13} />
+              <span>{t('heartbeat.editor.addFolders')}</span>
+            </Button>
+          </div>
+          {draftDirs.length > 0 && (
+            <ul className={cn(fileCardClass, 'flex max-h-40 flex-col gap-1.5 overflow-y-auto')}>
+              {draftDirs.map((dir) => (
+                <li key={dir} dir="ltr" className="flex flex-col gap-0.5 px-1.5 py-0.5">
+                  <span title={dir} className="text-fg truncate text-xs">
+                    {fileBaseName(dir)}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    {/* The full path, in a code block — the same treatment the
+                        composer's working-folder card gives it. */}
+                    <code
+                      title={dir}
+                      className="border-border bg-surface text-muted block min-w-0 flex-1 truncate rounded border px-1 py-0.5 font-mono text-[10px]"
+                    >
+                      {dir}
+                    </code>
+                    <button
+                      type="button"
+                      onClick={() => setDraftDirs((prev) => prev.filter((d) => d !== dir))}
+                      aria-label={t('heartbeat.editor.removeFolder')}
+                      title={t('heartbeat.editor.removeFolder')}
+                      className="text-muted flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md hover:text-rose-500"
+                    >
+                      <Delete02Icon size={13} />
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <span className="text-muted text-xs font-medium">{t('heartbeat.editor.prompt')}</span>
+          {/* Four lines of the prompt, in the card's own code block. The
+              prompt is the longest thing in this dialog by far, and an inline
+              editor tall enough to write in pushed everything else off screen
+              — clicking opens the full-height editor below instead. */}
+          <button
+            type="button"
+            onClick={() => setPromptExpanded(true)}
+            title={t('heartbeat.editor.expandPrompt')}
+            className={cn(
+              'bg-bg border-border block w-full cursor-pointer rounded-lg border px-3 py-2 text-start',
+              'hover:border-muted focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none'
+            )}
+          >
+            {draftPrompt.trim() ? (
+              <pre
+                dir="auto"
+                className="text-muted line-clamp-4 font-mono text-xs leading-relaxed wrap-break-word whitespace-pre-wrap"
+              >
+                {draftPrompt}
+              </pre>
+            ) : (
+              <span className="text-muted/60 font-mono text-xs italic">
+                {t('heartbeat.editor.promptPlaceholder')}
+              </span>
+            )}
+          </button>
+          {/* The same secondary action the phone offers under its preview. The
+                block above is still the primary target — this is the affordance
+                that says so, for anyone who does not think to click a code block. */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setPromptExpanded(true)}
+            className="self-start"
+          >
+            {draftPrompt.trim()
+              ? t('heartbeat.editor.editPrompt')
+              : t('heartbeat.editor.addPrompt')}
+          </Button>
           <p className="text-muted text-xs">{t('heartbeat.editor.autosaveHint')}</p>
         </div>
       </Modal>
+
+      {/* The expanded prompt editor — the composer's own expand dialog, over
+          the same draft state, so what is typed here autosaves on the dialog's
+          debounce and the preview above reflects it the moment this closes. */}
+      {editorOpen &&
+        promptExpanded &&
+        createPortal(
+          <div
+            role="presentation"
+            onClick={() => setPromptExpanded(false)}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="border-border bg-surface flex h-[80vh] w-[80vw] flex-col overflow-hidden rounded-2xl border shadow-xl"
+            >
+              <CodeEditor
+                value={draftPrompt}
+                language="markdown"
+                isDark={isDark}
+                onChange={setDraftPrompt}
+                placeholder={t('heartbeat.editor.promptPlaceholder')}
+                className="min-h-0 flex-1 overflow-auto"
+                spellcheck
+              />
+            </div>
+          </div>,
+          document.body
+        )}
 
       <Modal
         open={guideOpen}

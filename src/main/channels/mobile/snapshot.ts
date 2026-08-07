@@ -74,6 +74,12 @@ export type SnapshotSources = {
    * first. The list alone — bodies are served one at a time by
    * Rpc.changelogRead, because the full set is hundreds of KB. */
   changelogMonths?: () => Promise<string[]>
+  /**
+   * Whether autostart is ACTUALLY registered with the OS right now. Optional
+   * because it shells out (systemctl / launchctl / schtasks) and a snapshot
+   * must never fail on it — absent simply omits the field.
+   */
+  launchAtStartupActive?: () => Promise<boolean>
 }
 
 const str = (value: unknown, fallback = ''): string =>
@@ -190,6 +196,7 @@ async function readCustomizationDocs(): Promise<{
 export async function buildConfigSnapshot(sources: SnapshotSources): Promise<ConfigSnapshot> {
   const config = ((await readConfig()) ?? {}) as Cfg
   const capabilities = await sources.serializeCapabilities().catch(() => [])
+  const launchAtStartupActive = await attempt(sources.launchAtStartupActive)
 
   const llm = (config.llm ?? {}) as Cfg
   const brain = (llm.brain ?? {}) as Cfg
@@ -358,6 +365,13 @@ export async function buildConfigSnapshot(sources: SnapshotSources): Promise<Con
 
     channels: {
       inapp: { verbose: bool(config.inapp?.verbose) },
+      // The terminal channel. `runMode` is what decides which autostart
+      // registration this machine gets, so it belongs beside the setting it
+      // explains rather than hidden in config.json.
+      cli: {
+        verbose: bool(config.cli?.verbose),
+        runMode: config.cli?.runMode === 'headless' ? 'headless' : 'gui'
+      },
       // The phone's own channel — the two settings the Mobile panel here
       // carries, so the phone can render and edit them rather than being the
       // one device that cannot see what it is set to. Notifications default
@@ -428,6 +442,17 @@ export async function buildConfigSnapshot(sources: SnapshotSources): Promise<Con
 
     preferences: {
       launchAtStartup: bool(config.launchAtStartup, true),
+      // What is ACTUALLY registered with the OS, which is not the same
+      // question as what the user asked for. They disagree whenever the
+      // registration failed or was never possible — the state Linux was
+      // silently in for as long as the app used Electron's login-item API
+      // there. Surfaced so a settings row can say "On · Inactive" instead of
+      // claiming success. Undefined when the caller didn't supply the probe.
+      ...(launchAtStartupActive === undefined
+        ? {}
+        : { launchAtStartupActive: launchAtStartupActive }),
+      theme: str(config.theme, 'system'),
+      locale: str(config.locale, 'en'),
       bypassPermissions: bool(safety.bypassPermissions),
       blockCredentials: bool(safety.blockCredentials, true),
       weekStartsOn: config.weekStartsOn === 0 ? 0 : 1,
@@ -499,6 +524,11 @@ export async function buildConfigSnapshot(sources: SnapshotSources): Promise<Con
         path: str(file?.path),
         name: str(file?.name)
       })),
+      // Absolute desktop paths, verbatim — the phone shows them and cannot
+      // resolve them, which is the point of showing the whole path.
+      directories: (Array.isArray(project?.directories) ? project.directories : []).map((dir) =>
+        str(dir)
+      ),
       createdAt: int(project?.createdAt, 0),
       updatedAt: int(project?.updatedAt, 0)
     }))

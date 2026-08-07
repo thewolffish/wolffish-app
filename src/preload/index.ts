@@ -150,6 +150,64 @@ export type InAppApi = {
   onConfigChange: (callback: (config: InAppConfig) => void) => () => void
 }
 
+/** Mirrors main's CliConfig (dual decl — see the channel-config convention). */
+export type CliConfig = {
+  verbose?: boolean
+  runMode?: 'gui' | 'headless'
+}
+
+/**
+ * Whether the shell can find `wolffish`. Every field answers a different
+ * failure the user would otherwise only meet as "command not found":
+ * the shim missing, its folder absent from PATH, or another binary of the
+ * same name winning (on Linux the package's own /usr/bin symlink to the GUI).
+ */
+export type CliPathStatus = {
+  installed: boolean
+  target: string
+  resolved: string | null
+  needsPathEntry: boolean
+  profileHint: string | null
+  shadowedBy: string | null
+  error: string | null
+}
+
+export type AutostartInfo = {
+  active: boolean
+  mechanism: string
+  location: string | null
+  warning: string | null
+  mode: 'gui' | 'headless'
+}
+
+/**
+ * What each run mode WOULD register on this machine. Lets the picker label the
+ * two choices with the real mechanism rather than generic words, and flag a
+ * host with no desktop session, where a login item can never fire.
+ */
+export type AutostartMechanisms = {
+  gui: string
+  headless: string
+  current: string
+  headlessHost: boolean
+}
+
+export type CliApi = {
+  getConfig: () => Promise<CliConfig>
+  setConfig: (patch: Partial<CliConfig>) => Promise<{ ok: true; config: CliConfig }>
+  onConfigChange: (callback: (config: CliConfig) => void) => () => void
+  pathStatus: () => Promise<CliPathStatus>
+  installPath: () => Promise<CliPathStatus>
+  uninstallPath: () => Promise<CliPathStatus>
+  onPathChange: (callback: (status: CliPathStatus) => void) => () => void
+  serviceStatus: () => Promise<AutostartInfo>
+  serviceInstall: (mode?: 'gui' | 'headless') => Promise<AutostartInfo>
+  serviceUninstall: () => Promise<AutostartInfo>
+  serviceSetMode: (mode: 'gui' | 'headless') => Promise<AutostartInfo>
+  serviceMechanism: () => Promise<AutostartMechanisms>
+  entryPath: () => Promise<{ execPath: string; entry: string }>
+}
+
 // MCP connection views. Mirrors src/main/runtime/mcp/types.ts (the
 // preload re-declares main types by convention) — keep both in sync.
 export type McpTransportKind = 'stdio' | 'http'
@@ -429,6 +487,8 @@ export type ConversationFile = {
   icon?: string
   sealed?: boolean
   workingFolder?: string[] | null
+  /** Reference files for every turn — seeded by a procedure's Play (dual decl — see src/main/conversations.ts). */
+  contextFiles?: string[] | null
   /** Legacy meter snapshot — superseded by `stats.meter`, still read as a fallback. */
   contextMeter?: { contextTokens: number; contextBudget: number } | null
   stats?: ConversationStats | null
@@ -890,6 +950,12 @@ export type ChatApi = {
     userMessageId?: string
     /** Active working-folder paths — the agent injects fresh listings into the outbound volatile tail. */
     workingFolders?: string[]
+    /**
+     * Reference files this conversation's turns are told about (name, size,
+     * path) and read with their own tools — never injected. Seeded by a
+     * procedure's Play from that procedure's own attachments.
+     */
+    contextFiles?: string[]
     thinkingMode?: ThinkingMode
     /** Per-turn chat-mode override (procedure Play honors the procedure's stamp). */
     modeOverride?: 'single' | 'workflow'
@@ -1150,6 +1216,75 @@ export type HeartbeatApi = {
   onRunsChanged: (listener: (snapshot: HeartbeatRunsSnapshot) => void) => () => void
 }
 
+/** One attached automation file (dual decl — see src/main/automations/files.ts). */
+export type AutomationFileRef = {
+  /** Absolute path inside the workspace — attaching COPIES the source in. */
+  path: string
+  name: string
+}
+
+/**
+ * Live ticks while picked files are copied into the automation's uploads dir.
+ * `copiedBytes`/`totalBytes` span the whole batch (dual decl — see
+ * AttachFilesProgress in src/main/automations/files.ts).
+ */
+export type AutomationCopyProgress = {
+  /** 1-based position of the file being copied. */
+  index: number
+  total: number
+  name: string
+  copiedBytes: number
+  totalBytes: number
+}
+
+export type AutomationAttachResult = {
+  added: AutomationFileRef[]
+  /** Sources already attached under that name — not copied again. */
+  skipped: string[]
+  /** Sources that don't exist on disk. */
+  missing: string[]
+}
+
+/**
+ * The disk half of an automation's files and working directories. The LISTS
+ * themselves live as `file:`/`dir:` marker lines in heartbeat.md and are
+ * written by whoever edits that file — these calls only do what needs main:
+ * the native pickers, the copy into the workspace, and deleting a copy we own.
+ */
+export type AutomationFilesApi = {
+  /**
+   * Native multi-select picker that COPIES the chosen files into this
+   * automation's uploads dir. `existing` is its current file list, so the copy
+   * lands in the dir it already owns. Returns null on cancel; the caller
+   * writes the returned refs out as `file:` markers.
+   */
+  pickFiles: (existing: string[]) => Promise<AutomationAttachResult | null>
+  /** Delete an attached file's copy. A path outside our uploads dir is left alone. */
+  removeFile: (path: string) => Promise<{ ok: true }>
+  /**
+   * Copy progress for an in-flight pickFiles(). The FIRST tick means the
+   * picker closed and bytes are moving — nothing fires while the user is
+   * still browsing.
+   */
+  onCopyProgress: (listener: (progress: AutomationCopyProgress) => void) => () => void
+}
+
+/** One attached procedure file (dual decl — see src/main/procedures.ts). */
+export type ProcedureFileRef = {
+  /** Absolute path inside the workspace — attaching COPIES the source into uploads/procedure-<id>/. */
+  path: string
+  name: string
+}
+
+/**
+ * Native path pickers that belong to no one feature — automations and
+ * procedures both point runs at folders, and only main has `dialog`.
+ */
+export type PathsApi = {
+  /** Native multi-select folder picker. Returns null on cancel. */
+  pickDirectories: () => Promise<string[] | null>
+}
+
 export type Procedure = {
   id: string
   title: string
@@ -1160,8 +1295,27 @@ export type Procedure = {
   icon?: string
   /** Project binding — runs get the project overlay and register under it. */
   projectId?: string
+  /** Copied-in reference files every run is told about (never injected). */
+  files?: ProcedureFileRef[]
+  /** Working folders every run gets a fresh listing of. References, not copies. */
+  directories?: string[]
   createdAt: number
   updatedAt: number
+}
+
+/**
+ * Live ticks while picked files are copied into the procedure's uploads dir.
+ * `copiedBytes`/`totalBytes` span the whole batch (dual decl — see
+ * AttachFilesProgress in src/main/uploads/owned-copies.ts).
+ */
+export type ProcedureCopyProgress = {
+  procedureId: string
+  /** 1-based position of the file being copied. */
+  index: number
+  total: number
+  name: string
+  copiedBytes: number
+  totalBytes: number
 }
 
 export type ProceduresApi = {
@@ -1180,10 +1334,26 @@ export type ProceduresApi = {
     mode?: 'single' | 'workflow'
     icon?: string
     projectId?: string
+    /** Whole-list replace — detached copies WE own are deleted from disk. */
+    files?: ProcedureFileRef[]
+    /** Whole-list replace. References only, so nothing is deleted. */
+    directories?: string[]
   }) => Promise<Procedure>
   delete: (id: string) => Promise<{ ok: true }>
+  /**
+   * Native multi-select picker that COPIES the chosen files into the
+   * procedure's uploads dir and attaches them. Returns the updated procedure,
+   * or null on cancel.
+   */
+  pickFiles: (procedureId: string) => Promise<Procedure | null>
   /** The store changed (any writer, incl. the agent's tools) — re-fetch the list. */
   onChanged: (listener: () => void) => () => void
+  /**
+   * Copy progress for an in-flight pickFiles(). The FIRST tick means the
+   * picker closed and bytes are moving — nothing fires while the user is
+   * still browsing.
+   */
+  onCopyProgress: (listener: (progress: ProcedureCopyProgress) => void) => () => void
 }
 
 export type ProjectFileRef = {
@@ -1199,6 +1369,8 @@ export type Project = {
   icon: string
   instructions: string
   files: ProjectFileRef[]
+  /** Working folders every turn in the project gets a fresh listing of. */
+  directories?: string[]
   createdAt: number
   updatedAt: number
 }
@@ -1227,6 +1399,8 @@ export type ProjectsApi = {
     icon?: string
     instructions?: string
     files?: ProjectFileRef[]
+    /** Whole-list replace. References only, so nothing is deleted. */
+    directories?: string[]
   }) => Promise<Project>
   delete: (id: string) => Promise<{ ok: true }>
   /**
@@ -2030,6 +2204,8 @@ export type WolffishApi = {
   task: TaskApi
   viewer: ViewerApi
   heartbeat: HeartbeatApi
+  automationFiles: AutomationFilesApi
+  paths: PathsApi
   procedures: ProceduresApi
   projects: ProjectsApi
   reindex: ReindexApi
@@ -2048,6 +2224,7 @@ export type WolffishApi = {
   telegram: TelegramApi
   whatsapp: WhatsAppApi
   inapp: InAppApi
+  cli: CliApi
   mcp: McpApi
   brave: BraveApi
   notion: NotionApi
@@ -2177,12 +2354,22 @@ const api: WolffishApi = {
     onJobLog: (listener) => subscribe('heartbeat:jobLog', listener),
     onRunsChanged: (listener) => subscribe('heartbeat:runsChanged', listener)
   },
+  paths: {
+    pickDirectories: () => ipcRenderer.invoke('paths:pickDirectories')
+  },
+  automationFiles: {
+    pickFiles: (existing) => ipcRenderer.invoke('automations:pickFiles', existing),
+    removeFile: (path) => ipcRenderer.invoke('automations:removeFile', path),
+    onCopyProgress: (listener) => subscribe('automations:copyProgress', listener)
+  },
   procedures: {
     list: () => ipcRenderer.invoke('procedures:list'),
     create: (payload) => ipcRenderer.invoke('procedures:create', payload),
     update: (payload) => ipcRenderer.invoke('procedures:update', payload),
     delete: (id) => ipcRenderer.invoke('procedures:delete', id),
-    onChanged: (listener) => subscribe('procedures:changed', listener)
+    pickFiles: (procedureId) => ipcRenderer.invoke('procedures:pickFiles', procedureId),
+    onChanged: (listener) => subscribe('procedures:changed', listener),
+    onCopyProgress: (listener) => subscribe('procedures:copyProgress', listener)
   },
   projects: {
     list: () => ipcRenderer.invoke('projects:list'),
@@ -2322,6 +2509,21 @@ const api: WolffishApi = {
     getConfig: () => ipcRenderer.invoke('inapp:getConfig'),
     setConfig: (patch) => ipcRenderer.invoke('inapp:setConfig', patch),
     onConfigChange: (callback) => subscribe('inapp:configChange', callback)
+  },
+  cli: {
+    getConfig: () => ipcRenderer.invoke('cli:getConfig'),
+    setConfig: (patch) => ipcRenderer.invoke('cli:setConfig', patch),
+    onConfigChange: (callback) => subscribe('cli:configChange', callback),
+    pathStatus: () => ipcRenderer.invoke('cli:pathStatus'),
+    installPath: () => ipcRenderer.invoke('cli:installPath'),
+    uninstallPath: () => ipcRenderer.invoke('cli:uninstallPath'),
+    onPathChange: (callback) => subscribe('cli:pathChanged', callback),
+    serviceStatus: () => ipcRenderer.invoke('service:status'),
+    serviceInstall: (mode) => ipcRenderer.invoke('service:install', mode),
+    serviceUninstall: () => ipcRenderer.invoke('service:uninstall'),
+    serviceSetMode: (mode) => ipcRenderer.invoke('service:setMode', mode),
+    serviceMechanism: () => ipcRenderer.invoke('service:mechanism'),
+    entryPath: () => ipcRenderer.invoke('cli:entryPath')
   },
   mcp: {
     list: () => ipcRenderer.invoke('mcp:list'),

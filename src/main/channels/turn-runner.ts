@@ -55,6 +55,13 @@ export type TurnSendOptions = {
    * never into persisted/user content, so history stays byte-stable.
    */
   workingFolders?: string[]
+  /**
+   * Reference files for this turn — a procedure's attachments, carried on the
+   * conversation the Play button created. Listed to the model (name, size,
+   * path), never injected. Only procedures put files here, which is why the
+   * overlay below names them as such.
+   */
+  contextFiles?: string[]
   /** Project this turn's conversation runs inside — its context overlays the system prompt. */
   projectId?: string | null
   thinkingMode?: 'off' | 'on' | 'high' | 'max'
@@ -470,6 +477,8 @@ export class TurnRunner {
             conversationTitle: title,
             channel: opts.channel,
             workingFolders: opts.workingFolders,
+            contextFiles: opts.contextFiles,
+            contextFilesOwner: 'procedure',
             projectId: opts.projectId,
             signal: controller.signal,
             onSegment: (segment) => sink.onSegment(segment),

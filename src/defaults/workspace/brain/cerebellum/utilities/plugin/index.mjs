@@ -14,9 +14,14 @@ import { copyFile, mkdir, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import path from 'node:path'
 
-// Bot upload APIs cap around 50 MB; bigger files can't be delivered over
-// WhatsApp/Telegram, so we refuse rather than fail mid-upload.
-const MAX_SURFACE_BYTES = 50 * 1024 * 1024
+// No size ceiling here on purpose. This tool is CHANNEL-BLIND — it emits a
+// marker and the surface the user is actually on decides what to do with it —
+// so a bot API's 50 MB upload limit does not belong at this layer: it made the
+// in-app chat and the CLI, which upload nothing and read the file straight off
+// local disk, refuse files they could have delivered instantly. Telegram and
+// WhatsApp enforce their own limits at the point of upload (they stat before
+// reading, and Telegram re-encodes oversized video), which is the only place
+// the limit is real.
 
 // Type buckets mirror the channel + renderer extractors so the
 // `[wolffish-output: <path> (<type>)]` marker we emit is recognized and
@@ -97,13 +102,6 @@ async function sendFile(args) {
   }
   if (!st.isFile()) return { success: false, error: `not a file: ${input}` }
   if (st.size === 0) return { success: false, error: `file is empty: ${input}` }
-  if (st.size > MAX_SURFACE_BYTES) {
-    const mb = (st.size / 1024 / 1024).toFixed(1)
-    return {
-      success: false,
-      error: `file too large to deliver: ${mb} MB exceeds the 50 MB channel limit. It remains saved at ${input} — tell the user where to find it.`
-    }
-  }
 
   let markerPath = input
   try {
@@ -170,7 +168,7 @@ const toolDefinitions = [
   {
     name: 'send_file',
     description:
-      'Deliver a file to the user as a downloadable attachment in the current conversation (in-app chat, WhatsApp, or Telegram). Works for any file type. THE ONLY WAY a file reaches the user — no tool auto-delivers its output. Up to 50 MB.',
+      'Deliver a file to the user as a downloadable attachment in the current conversation (in-app chat, CLI, WhatsApp, or Telegram). Works for any file type. THE ONLY WAY a file reaches the user — no tool auto-delivers its output. In-app and CLI have no size limit; WhatsApp and Telegram enforce their own upload ceilings and say so if a file is too big to send there.',
     parameters: {
       type: 'object',
       properties: {

@@ -116,6 +116,26 @@ triggered automation uses**:
   it's running, and move on. If they later ask how it went, point them to the
   conversation in history.
 
+## Files and working folders
+
+A procedure can carry its own reference material, attached by the user in the
+app (Procedures page, or the phone's Procedures screen). `procedure_list` shows
+what each one carries:
+
+- **Files** are COPIED into the workspace when attached, so a procedure can't
+  dangle on a moved original. Every run — `procedure_run` and the Play button
+  alike — is told each file's name, size and path, and **reads them with its own
+  tools**. The content is never pasted into the prompt.
+- **Working folders** are references, not copies. Each run gets a **fresh
+  listing** of every one, the same way a working folder picked in chat does — so
+  the run sees the folder as it is at that moment. This is where a procedure
+  that produces or consumes files should work.
+
+Write a procedure's prompt AGAINST them: say "the attached spreadsheet", "the
+folder", and let the run look. Don't restate a file's contents into the prompt —
+it would go stale the moment the file changed, which is the whole reason the
+attachment exists. Attaching and detaching happen in the app, not from here.
+
 ## The tools
 
 - `procedure_list` — see every procedure: number, title, prompt preview.

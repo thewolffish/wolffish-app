@@ -3144,13 +3144,36 @@ export class WhatsAppChannel {
     }
   }
 
+  /**
+   * Existence + size in one stat, ahead of the read. Replaces a bare
+   * `fs.access` that only answered the first question: the 50 MB ceiling used
+   * to sit in the send_file tool, so nothing on this side had to think about
+   * size. That cap is gone (it was Telegram's number applied to every surface,
+   * including the in-app chat and the CLI, which upload nothing), so the guard
+   * that keeps a multi-GB file out of memory has to be here — at the one place
+   * that actually uploads.
+   */
+  private async guardUploadSize(jid: string, filePath: string): Promise<boolean> {
+    try {
+      const stat = await fs.stat(filePath)
+      if (stat.size <= MAX_WHATSAPP_MEDIA_BYTES) return true
+      await this.safeSend(
+        jid,
+        `📎 ${path.basename(filePath)} is ${formatBytes(stat.size)} — over WhatsApp's ${formatBytes(MAX_WHATSAPP_MEDIA_BYTES)} limit. It is saved at ${filePath}.`
+      )
+      return false
+    } catch {
+      return false
+    }
+  }
+
   private async sendImageFile(jid: string, filePath: string): Promise<void> {
     if (!this.sock) return
     const resolved = path.resolve(filePath)
     const active = this.activeByJid.get(jid)
     if (active?.sentFiles.has(resolved)) return
     try {
-      await fs.access(resolved)
+      if (!(await this.guardUploadSize(jid, resolved))) return
       const buffer = await fs.readFile(resolved)
       const ext = path.extname(resolved).toLowerCase()
       // Animated GIFs can't ride as an imageMessage (WhatsApp drops them) — send
@@ -3215,7 +3238,7 @@ export class WhatsAppChannel {
     const active = this.activeByJid.get(jid)
     if (active?.sentFiles.has(resolved)) return
     try {
-      await fs.access(resolved)
+      if (!(await this.guardUploadSize(jid, resolved))) return
       const buffer = await fs.readFile(resolved)
       const ext = path.extname(resolved).toLowerCase()
       const MIME: Record<string, string> = {
@@ -3249,7 +3272,7 @@ export class WhatsAppChannel {
     const active = this.activeByJid.get(jid)
     if (active?.sentFiles.has(resolved)) return
     try {
-      await fs.access(resolved)
+      if (!(await this.guardUploadSize(jid, resolved))) return
       const buffer = await fs.readFile(resolved)
       const ext = path.extname(resolved).toLowerCase()
       const AUDIO_MIME: Record<string, string> = {
@@ -3284,7 +3307,7 @@ export class WhatsAppChannel {
     const active = this.activeByJid.get(jid)
     if (active?.sentFiles.has(resolved)) return
     try {
-      await fs.access(resolved)
+      if (!(await this.guardUploadSize(jid, resolved))) return
       let buffer: Buffer = await fs.readFile(resolved)
       const ext = path.extname(resolved).toLowerCase()
       const VIDEO_MIME: Record<string, string> = {

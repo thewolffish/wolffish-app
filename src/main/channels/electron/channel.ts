@@ -124,6 +124,7 @@ export class ElectronChannel {
       /** Feed id of this turn's user message — the titler shell stamps it (see TurnSendOptions). */
       userMessageId?: string
       workingFolders?: string[]
+      contextFiles?: string[]
       thinkingMode?: string
       modeOverride?: 'single' | 'workflow'
       projectId?: string | null
@@ -147,6 +148,7 @@ export class ElectronChannel {
       conversationId,
       userMessageId: payload.userMessageId,
       workingFolders: payload.workingFolders,
+      contextFiles: payload.contextFiles,
       projectId: payload.projectId,
       thinkingMode: (payload.thinkingMode as TurnSendOptions['thinkingMode']) ?? undefined,
       modeOverride: payload.modeOverride,

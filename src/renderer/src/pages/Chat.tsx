@@ -472,6 +472,17 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     [activeConversationId, storedFolders]
   )
   /**
+   * Reference files this conversation's turns are told about — seeded by a
+   * procedure's Play from that procedure's attachments and persisted on the
+   * conversation, so every follow-up turn here still knows what it can read.
+   * Model-led: the paths go out, the bytes never do.
+   */
+  const [storedContextFiles, setStoredContextFiles] = useState<string[]>([])
+  const contextFiles = useMemo(
+    () => (activeConversationId ? storedContextFiles : []),
+    [activeConversationId, storedContextFiles]
+  )
+  /**
    * Files the user has staged but not yet sent. Each entry holds the
    * already-saved metadata returned from upload:saveFile so the file is
    * on disk the moment it's picked — sending later just attaches the
@@ -1269,6 +1280,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
         const raw = conv.workingFolder
         const folders = Array.isArray(raw) ? raw : typeof raw === 'string' ? [raw] : []
         setStoredFolders(folders)
+        setStoredContextFiles(Array.isArray(conv.contextFiles) ? conv.contextFiles : [])
         // Channel-owned and legacy conversations never stored a timeline — the
         // log is derived from their messages for display. Seed the live
         // timeline from that derivation so continuing one in-app EXTENDS the
@@ -1938,7 +1950,17 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     async (
       content: string,
       attachments: MessageAttachment[] = [],
-      opts?: { modeOverride?: 'single' | 'workflow' }
+      opts?: {
+        modeOverride?: 'single' | 'workflow'
+        /**
+         * Procedure Play only. The conversation's folders and reference files
+         * are seeded in the same tick this send fires, and React state does
+         * not update inside a closure that has already been created — so the
+         * run's own lists ride the call rather than being read back.
+         */
+        workingFolders?: string[]
+        contextFiles?: string[]
+      }
     ) => {
       const trimmed = content.trim()
       // Allow attachment-only messages: a file with no caption is still a
@@ -2028,7 +2050,8 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
           // SAME id, so our end-of-turn save reconciles with the shell
           // instead of duplicating it.
           userMessageId: userMessage.id,
-          workingFolders,
+          workingFolders: opts?.workingFolders ?? workingFolders,
+          contextFiles: opts?.contextFiles ?? contextFiles,
           thinkingMode: thinkingMode as import('@preload/index').ThinkingMode,
           projectId: descriptor.projectId ?? undefined,
           // Per-call only (procedure Play): a lingering state-based override
@@ -2071,6 +2094,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
       ensureConversationId,
       status?.rootPath,
       workingFolders,
+      contextFiles,
       thinkingMode,
       scrollToBottom,
       markSending,
@@ -2135,9 +2159,30 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     // without nulling it a remounted Chat would re-execute the procedure —
     // duplicate autonomous runs with real side effects.
     consumeProcedure(sessionKey)
-    const { prompt, mode } = procedure
-    void sendContent(prompt, [], mode ? { modeOverride: mode } : undefined)
-  }, [descriptor.procedure, busy, sendContent, consumeProcedure, sessionKey])
+    const { prompt, mode, files = [], directories = [] } = procedure
+    // The procedure's attachments become THIS conversation's: the folders show
+    // up in the composer's picker and the files ride every turn's overlay, so a
+    // follow-up question typed here still has both. Written to disk before the
+    // send so a reload of the conversation keeps them.
+    setStoredFolders(directories)
+    setStoredContextFiles(files)
+    void (async () => {
+      if (files.length > 0 || directories.length > 0) {
+        await ensureConversationId()
+        const conv = conversationRef.current
+        if (conv) {
+          conv.workingFolder = directories.length > 0 ? directories : null
+          conv.contextFiles = files.length > 0 ? files : null
+          await window.api.conversation.save(conv).catch(() => undefined)
+        }
+      }
+      await sendContent(prompt, [], {
+        ...(mode ? { modeOverride: mode } : {}),
+        workingFolders: directories,
+        contextFiles: files
+      })
+    })()
+  }, [descriptor.procedure, busy, sendContent, consumeProcedure, sessionKey, ensureConversationId])
 
   /**
    * Send one voice take: upload the audio, drop it in the feed with a
@@ -2281,6 +2326,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
           // message, and it must carry the feed's id to reconcile later.
           userMessageId: userMsgId,
           workingFolders,
+          contextFiles,
           thinkingMode: thinkingMode as import('@preload/index').ThinkingMode,
           projectId: descriptor.projectId ?? undefined
         })
@@ -2319,6 +2365,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
       sessionKey,
       status,
       workingFolders,
+      contextFiles,
       thinkingMode,
       scrollToBottom
     ]

@@ -39,5 +39,15 @@ export default defineConfig(
       ...eslintPluginReactRefresh.configs.vite.rules
     }
   },
+  {
+    // The CLI client is plain ESM JavaScript, not TypeScript: it is read
+    // straight off disk and run under ELECTRON_RUN_AS_NODE, with no build
+    // step to strip annotations. Only the TypeScript-shaped rules are off —
+    // everything else (unused vars, correctness, prettier) still applies.
+    files: ['src/cli/**/*.mjs'],
+    rules: {
+      '@typescript-eslint/explicit-function-return-type': 'off'
+    }
+  },
   eslintConfigPrettier
 )

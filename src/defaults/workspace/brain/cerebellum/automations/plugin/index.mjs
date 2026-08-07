@@ -148,6 +148,10 @@ async function listAutomations() {
     lines.push(`${b.index}. **${b.label}** — ${timing}${runningTag}${modeTag}`)
     if (valid && preview.cron) lines.push(`   cron: \`${preview.cron}\``)
     lines.push(`   ${oneLine(b.body) || '(no instruction)'}`)
+    // Attached files and working folders are part of what this automation IS —
+    // the run sees both, so a list that hid them would misdescribe the job.
+    for (const file of b.files ?? []) lines.push(`   file: \`${file}\``)
+    for (const dir of b.dirs ?? []) lines.push(`   working folder: \`${dir}\``)
     if (job) lines.push(`   ${formatLastRun(job)}`)
     lines.push('')
   }
@@ -269,7 +273,16 @@ async function editAutomation(args) {
     raw,
     target.block,
     heading,
-    composeBody({ mode, project: target.block.project, icon: target.block.icon }, body)
+    composeBody(
+      {
+        mode,
+        project: target.block.project,
+        icon: target.block.icon,
+        files: target.block.files,
+        dirs: target.block.dirs
+      },
+      body
+    )
   )
   const result = await automations.writeHeartbeat(next)
   if (!result.ok) {
@@ -440,7 +453,7 @@ function parseActiveBlocks(raw) {
       .replace(/^---+\s*$/gm, '')
       .replace(/\n{3,}/g, '\n\n')
       .trim()
-    const { body, mode, project, icon } = splitMarkers(rawBody)
+    const { body, mode, project, icon, files, dirs } = splitMarkers(rawBody)
     blocks.push({
       index: i + 1,
       label: h.label,
@@ -448,6 +461,8 @@ function parseActiveBlocks(raw) {
       mode,
       project,
       icon,
+      files,
+      dirs,
       headingStart: h.headingStart,
       end
     })
@@ -483,17 +498,24 @@ function tidyOutsideComments(raw) {
  * keep the three parsers in sync. Bodies exposed by parseActiveBlocks are
  * always CLEAN (markers split off), so label+body matching against live
  * jobs stays symmetric, and edits COMPOSE the markers back so a plugin
- * rewrite never drops a job's project binding or icon.
+ * rewrite never drops a job's project binding, icon, attached files or
+ * working directories.
  */
 const MODE_MARKER_RE = /^mode:\s*(single|workflow)\s*$/i
 const PROJECT_MARKER_RE = /^project:\s*(\S+)\s*$/i
 const ICON_MARKER_RE = /^icon:\s*(\S+)\s*$/i
+// Attached files and working directories — REPEATABLE, and their value is a
+// whole path (spaces and all), so these take the rest of the line.
+const FILE_MARKER_RE = /^file:\s*(.+?)\s*$/i
+const DIR_MARKER_RE = /^dir:\s*(.+?)\s*$/i
 
 function splitMarkers(body) {
   const lines = body.split('\n')
   let mode = null
   let project = null
   let icon = null
+  const files = []
+  const dirs = []
   let i = 0
   while (i < lines.length) {
     const line = lines[i].trim()
@@ -519,9 +541,21 @@ function splitMarkers(body) {
       i++
       continue
     }
+    const f = FILE_MARKER_RE.exec(line)
+    if (f) {
+      files.push(f[1])
+      i++
+      continue
+    }
+    const d = DIR_MARKER_RE.exec(line)
+    if (d) {
+      dirs.push(d[1])
+      i++
+      continue
+    }
     break
   }
-  return { body: lines.slice(i).join('\n').trim(), mode, project, icon }
+  return { body: lines.slice(i).join('\n').trim(), mode, project, icon, files, dirs }
 }
 
 function composeBody(markers, body) {
@@ -529,6 +563,8 @@ function composeBody(markers, body) {
   if (markers.mode) lines.push(`mode: ${markers.mode}`)
   if (markers.project) lines.push(`project: ${markers.project}`)
   if (markers.icon) lines.push(`icon: ${markers.icon}`)
+  for (const file of markers.files ?? []) lines.push(`file: ${file}`)
+  for (const dir of markers.dirs ?? []) lines.push(`dir: ${dir}`)
   return lines.length > 0 ? `${lines.join('\n')}\n\n${body.trim()}` : body.trim()
 }
 

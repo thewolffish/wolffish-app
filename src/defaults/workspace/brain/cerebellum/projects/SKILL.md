@@ -120,5 +120,9 @@ list — content is read on demand with pdf/file/image tools, never injected).
   first (search the disk with your tools); `project_add_files` refuses paths that don't exist.
 - Attaching COPIES the file into the project's workspace folder — the project owns its copy,
   so later edits to the user's original are NOT reflected; re-attach to refresh a stale copy.
+- A project can also carry WORKING FOLDERS (`project_view` shows them). Those are references,
+  not copies: every turn inside the project gets a FRESH listing of each one, so the folder is
+  seen as it is right now. Do the project's file work in them, and treat paths the user
+  mentions as relative to them unless they say otherwise. They are attached in the app.
 - Deleting is destructive and approval-gated; conversations survive a delete but lose the
   project context going forward.

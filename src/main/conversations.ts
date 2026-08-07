@@ -89,6 +89,7 @@ export type ConversationChannel =
   | 'telegram'
   | 'whatsapp'
   | 'mobile'
+  | 'cli'
   | 'heartbeat'
   | 'procedure'
 
@@ -176,6 +177,13 @@ export type ConversationFile = {
   icon?: string
   sealed?: boolean
   workingFolder?: string[] | null
+  /**
+   * Reference files this conversation's turns are told about (name, size,
+   * path) and read with their own tools — never injected. Seeded by a
+   * procedure's Play button from the procedure's own attachments, so a run
+   * started in chat sees exactly what a detached run of it would.
+   */
+  contextFiles?: string[] | null
   /** Legacy meter snapshot — superseded by `stats.meter`, still read as a fallback. */
   contextMeter?: { contextTokens: number; contextBudget: number } | null
   stats?: ConversationStats | null

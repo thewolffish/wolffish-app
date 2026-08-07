@@ -188,6 +188,15 @@ const BUSY_REPLY_TIMEOUT_MS = 8000
 const TELEGRAM_DOWNLOAD_LIMIT = 20 * 1024 * 1024
 
 /**
+ * Telegram bot API limits uploads to 50 MB. This is a TELEGRAM constraint, so
+ * it lives here rather than in the send_file tool, where it used to apply to
+ * the in-app chat and the CLI as well — neither of which uploads anything.
+ * Video gets a compression pass at the same number (sendVideoFile); every
+ * other type is refused with its path, since re-encoding a PDF is not a thing.
+ */
+const TELEGRAM_UPLOAD_LIMIT = 50 * 1024 * 1024
+
+/**
  * Telegram clears the "typing…" indicator ~5s after the last
  * sendChatAction. Re-fire every 4s while a turn is live so the
  * indicator stays visible the whole time agent.respond is working,
@@ -3034,11 +3043,36 @@ export class TelegramChannel {
     }
   }
 
+  /**
+   * Refuse an upload Telegram would reject anyway, WITHOUT reading it first.
+   *
+   * The 50 MB ceiling used to live in the send_file tool, which meant the
+   * in-app chat and the CLI — neither of which has any such limit — inherited
+   * a bot API's constraint. It belongs here, where the limit actually is. But
+   * moving it also removed the thing that was keeping `fs.readFile` below
+   * from being handed a 2 GB file: nothing else checked. So the size check is
+   * a stat, ahead of the read, and the user is told where the file still is.
+   */
+  private async guardUploadSize(chatId: number, filePath: string): Promise<boolean> {
+    try {
+      const stat = await fs.stat(filePath)
+      if (stat.size <= TELEGRAM_UPLOAD_LIMIT) return true
+      await this.sendPlain(
+        chatId,
+        `📎 ${path.basename(filePath)} is ${formatBytes(stat.size)} — over Telegram's ${formatBytes(TELEGRAM_UPLOAD_LIMIT)} upload limit. It is saved at ${filePath}.`
+      )
+      return false
+    } catch {
+      return false
+    }
+  }
+
   private async sendImageFile(chatId: number, filePath: string): Promise<void> {
     if (!this.bot) return
     const resolved = path.resolve(filePath)
     const active = this.activeByChat.get(chatId)
     if (active?.sentFiles.has(resolved)) return
+    if (!(await this.guardUploadSize(chatId, resolved))) return
     try {
       const buffer = await fs.readFile(filePath)
       const file = new InputFile(buffer, path.basename(filePath))
@@ -3059,6 +3093,7 @@ export class TelegramChannel {
     const resolved = path.resolve(filePath)
     const active = this.activeByChat.get(chatId)
     if (active?.sentFiles.has(resolved)) return
+    if (!(await this.guardUploadSize(chatId, resolved))) return
     try {
       const buffer = await fs.readFile(filePath)
       const file = new InputFile(buffer, path.basename(filePath))
@@ -3075,6 +3110,7 @@ export class TelegramChannel {
     const resolved = path.resolve(filePath)
     const active = this.activeByChat.get(chatId)
     if (active?.sentFiles.has(resolved)) return
+    if (!(await this.guardUploadSize(chatId, resolved))) return
     try {
       const buffer = await fs.readFile(filePath)
       const file = new InputFile(buffer, path.basename(filePath))
@@ -3095,24 +3131,31 @@ export class TelegramChannel {
       // can approach that, so an oversized file is re-encoded to fit and
       // sent with a note — the original quality stays available in the app.
       // The original file on disk is never modified.
-      const TELEGRAM_VIDEO_LIMIT = 50 * 1024 * 1024
-      let buffer: Buffer = await fs.readFile(resolved)
+      // Stat first: an oversized video is COMPRESSED rather than refused, and
+      // the compressor works from the path — reading the original into memory
+      // just to measure it would be the one case where a multi-GB file did
+      // land in RAM. (The send_file tool no longer caps at 50 MB; that limit
+      // is Telegram's and now lives entirely on this side.)
+      const original = await fs.stat(resolved)
+      let buffer: Buffer
       let caption: string | undefined
-      if (buffer.length > TELEGRAM_VIDEO_LIMIT) {
+      if (original.size > TELEGRAM_UPLOAD_LIMIT) {
         await this.agent.cerebellum.ensureSystemTool('ffmpeg')
         const compressed = await compressVideoToLimit(
           resolved,
-          TELEGRAM_VIDEO_LIMIT - 2 * 1024 * 1024
+          TELEGRAM_UPLOAD_LIMIT - 2 * 1024 * 1024
         )
         if ('error' in compressed) {
           await this.sendPlain(
             chatId,
-            `🎬 ${path.basename(resolved)} is ${(buffer.length / 1024 / 1024).toFixed(0)} MB — too large for Telegram and compression failed (${compressed.error}). The full-quality video is in the app.`
+            `🎬 ${path.basename(resolved)} is ${(original.size / 1024 / 1024).toFixed(0)} MB — too large for Telegram and compression failed (${compressed.error}). The full-quality video is in the app.`
           )
           return
         }
         buffer = compressed.mp4
         caption = `⚖️ ${compressed.note} — original quality is available in the app.`
+      } else {
+        buffer = await fs.readFile(resolved)
       }
       const file = new InputFile(buffer, path.basename(resolved))
       await this.bot.api.sendVideo(chatId, file, caption ? { caption } : undefined)

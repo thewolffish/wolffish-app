@@ -1,7 +1,8 @@
 import { is } from '@electron-toolkit/utils'
 import { wlog } from '@main/workspace/logger'
 import { patchConfig, readConfig } from '@main/workspace/workspace'
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow } from 'electron'
+import { handle } from '@main/ipc-registry'
 import { autoUpdater, type UpdateDownloadedEvent, type UpdateInfo } from 'electron-updater'
 
 const RELEASES_URL = 'https://releases.wolffi.sh'
@@ -147,7 +148,7 @@ function clearVerifyWatchdog(): void {
 }
 
 export function initUpdater(): void {
-  ipcMain.handle('updater:check', async () => {
+  handle('updater:check', async () => {
     if (is.dev) return { ok: true, version: null }
     // Never disturb an in-flight or finished download. Re-running the check
     // would re-emit update-available and snap the UI back to 0% while
@@ -174,9 +175,9 @@ export function initUpdater(): void {
     }
   })
 
-  ipcMain.handle('updater:getVersion', () => app.getVersion())
-  ipcMain.handle('updater:getReady', () => lastReady)
-  ipcMain.handle('updater:getState', () => state)
+  handle('updater:getVersion', () => app.getVersion())
+  handle('updater:getReady', () => lastReady)
+  handle('updater:getState', () => state)
 
   if (is.dev) return
 

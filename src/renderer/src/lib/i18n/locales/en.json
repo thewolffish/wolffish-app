@@ -468,7 +468,96 @@
         "inapp": "In-App",
         "telegram": "Telegram",
         "whatsapp": "WhatsApp",
-        "mobile": "Mobile"
+        "mobile": "Mobile",
+        "cli": "CLI"
+      },
+      "cli": {
+        "title": "CLI",
+        "subtitle": "Wolffish in a terminal. The same agent, the same settings, the same conversations — no window needed, which is what lets it run on a server you reach over SSH.",
+        "tabLabel": "CLI",
+        "verbose": {
+          "label": "Verbose task results",
+          "description": "Off (default) prints a clean feed: what the agent says, the files it delivers, and anything that failed. On adds the model chip and every tool call and result, the same way the in-app verbose toggle does."
+        },
+        "path": {
+          "title": "The wolffish command",
+          "installed": "Ready",
+          "missing": "Not on your PATH",
+          "checking": "Checking…",
+          "install": "Install command",
+          "reinstall": "Reinstall",
+          "installed_at": "Installed at",
+          "resolves": "Your shell runs",
+          "shadowed": "Another program named \"wolffish\" comes first on your PATH — this is usually the desktop app itself, linked by the package manager. Running the command will open the app instead of the terminal session. Move {{dir}} ahead of it, or remove the other link.",
+          "needsEntry": "The command is installed, but its folder is not on your PATH, so the shell cannot find it yet. Add this line, then open a new terminal:",
+          "failed": "Could not install the command: {{error}}",
+          "hint": "Wolffish writes this automatically on every launch, so it stays pointed at the current version after an update.",
+          "verify": "Check any time with",
+          "nothing": "nothing",
+          "toast": {
+            "installed": "Command installed",
+            "needsPath": "Installed — add its folder to your PATH",
+            "shadowed": "Installed, but another wolffish runs first",
+            "failed": "Could not install the command"
+          }
+        },
+        "service": {
+          "title": "Start on its own",
+          "description": "Wolffish registers itself with the operating system so it comes back after a restart — automations fire, channels answer, and the terminal attaches whenever you want one. This is the same setting as Launch at startup; changing it here changes it there.",
+          "registered": "Registered with the OS",
+          "notRegistered": "Not registered",
+          "location": "Location",
+          "managedByOs": "managed by the OS",
+          "modeLabel": "Start it as",
+          "mode": {
+            "gui": {
+              "label": "Login item",
+              "description": "Starts when you log in, and opens the window. Needs a desktop session, so it never fires on a server."
+            },
+            "headless": {
+              "label": "Background service",
+              "description": "Starts with the machine, with no session and no window. This is what a server wants, and what the terminal attaches to."
+            }
+          },
+          "headlessHostHint": "This machine has no desktop session, so a login item will never fire here. Choose the background service.",
+          "sameAsPreferences": "This is the same switch, so changing it here changes it there. What this card adds is the choice of mechanism, which only matters when you run without a window.",
+          "openSetting": "Open {{tab}}",
+          "confirm": {
+            "title": "Run as a background service?",
+            "body": "A background service is registered to stay running: if you quit Wolffish, the system starts it again within a few seconds. That is what a server wants — automations keep firing and channels keep answering with nobody logged in — but on a machine you use directly it means the app will not stay closed.",
+            "reversible": "You can switch back to a login item, or turn autostart off entirely, from this same card at any time.",
+            "accept": "Register as a service",
+            "cancel": "Keep the login item"
+          }
+        },
+        "guide": {
+          "title": "How it works",
+          "daemon": {
+            "title": "The terminal is a view, not the app",
+            "body": "Wolffish runs as a background process. The command attaches to it and detaches when you leave — close the terminal, or lose the SSH connection, and the agent keeps working. Come back and it reattaches to whatever is still running."
+          },
+          "files": {
+            "title": "Files are paths, both ways",
+            "body": "Attach with a path; a delivered file prints its own path, ready to open or copy. Nothing is uploaded or encoded, because the terminal and the agent share one filesystem."
+          },
+          "settings": {
+            "title": "Every setting on this screen",
+            "body": "The command reads and writes the same settings these panels do, through the same code. Anything you can change here you can change there, with the same label and description."
+          },
+          "approvals": {
+            "title": "Approvals wait for you",
+            "body": "A tool call that needs approval pauses and asks in the terminal. If you disconnect first, it waits — you can answer when you come back, or from your phone."
+          }
+        },
+        "commands": {
+          "title": "Commands",
+          "chat": "Chat",
+          "conversations": "Conversations",
+          "settings": "Settings",
+          "workspace": "Workspace",
+          "machine": "Machine",
+          "examples": "Examples"
+        }
       }
     },
     "services": {
@@ -2157,6 +2246,13 @@
       "duplicate": "Another automation already uses this exact schedule — change the time by a minute.",
       "pastOnce": "This time is already in the past.",
       "cronUnknown": "Couldn’t compute the next run for this cron expression — double-check it.",
+      "files": "Files ({{count}})",
+      "addFiles": "Add files",
+      "removeFile": "Remove file",
+      "folders": "Working folders ({{count}})",
+      "addFolders": "Add folders",
+      "removeFolder": "Remove folder",
+      "expandPrompt": "Click to edit the prompt",
       "prompt": "Prompt",
       "promptPlaceholder": "Write the prompt to run…",
       "autosaveHint": "Saved automatically once the schedule and prompt are valid.",
@@ -2167,7 +2263,9 @@
         "daily": "Every day",
         "weekly": "Every week",
         "monthly": "Every month"
-      }
+      },
+      "editPrompt": "Edit the prompt",
+      "addPrompt": "Write the prompt"
     },
     "guide": {
       "title": "Setting automation times",
@@ -2204,6 +2302,7 @@
     "titleRequired": "A title is required",
     "instructions": "Instructions",
     "instructionsPlaceholder": "Write the instructions every conversation in this project starts from…",
+    "expandInstructions": "Click to edit the instructions",
     "noInstructions": "No instructions yet.",
     "copy": "Copy instructions",
     "copied": "Instructions copied",
@@ -2225,6 +2324,9 @@
     "addFiles": "Add files",
     "copyingFiles": "Copying files into Wolffish",
     "copyingCount": "File {{index}} of {{total}}",
+    "folders": "Working folders ({{count}})",
+    "addFolders": "Add folders",
+    "removeFolder": "Remove folder",
     "removeFile": "Remove file",
     "newConversation": "New conversation",
     "exit": "Close project",
@@ -2236,7 +2338,9 @@
     "deleteConfirm": "Delete",
     "deleteCancel": "Cancel",
     "deleteSuccess": "Project deleted",
-    "saveError": "Something went wrong"
+    "saveError": "Something went wrong",
+    "editInstructions": "Edit the instructions",
+    "addInstructions": "Write the instructions"
   },
   "procedures": {
     "title": "Procedures",
@@ -2255,6 +2359,14 @@
     "projectNone": "No project",
     "projectIcon": "Uses the project’s icon",
     "titleRequired": "A title is required",
+    "prompt": "Prompt",
+    "expandPrompt": "Click to edit the prompt",
+    "files": "Files ({{count}})",
+    "addFiles": "Add files",
+    "removeFile": "Remove file",
+    "folders": "Working folders ({{count}})",
+    "addFolders": "Add folders",
+    "removeFolder": "Remove folder",
     "promptPlaceholder": "Write the prompt to run…",
     "autosaveHint": "Changes save automatically.",
     "done": "Done",
@@ -2266,14 +2378,16 @@
     "deleteSuccess": "Procedure deleted",
     "saveError": "Something went wrong",
     "runFailed": "Procedure run failed",
-    "modeAria": "Run mode"
+    "modeAria": "Run mode",
+    "editPrompt": "Edit the prompt",
+    "addPrompt": "Write the prompt"
   },
   "history": {
     "loading": "Loading conversations…",
     "empty": "No conversations yet.",
     "delete": "Delete",
     "deleteTitle": "Delete this conversation?",
-    "deleteWarning": "This conversation will be permanently deleted. This cannot be undone.",
+    "deleteWarning": "This can't be undone.",
     "deleteConfirm": "Delete",
     "deleteCancel": "Cancel",
     "newChat": "New chat",

@@ -23,10 +23,12 @@ import {
   Add01Icon,
   ArrowLeft02Icon,
   ArrowRight02Icon,
+  Attachment01Icon,
   BubbleChatIcon,
   Delete01Icon,
   Delete02Icon,
-  Edit02Icon
+  Edit02Icon,
+  Folder01Icon
 } from 'hugeicons-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -391,6 +393,39 @@ export function Projects(): React.JSX.Element {
                         </pre>
                       ) : (
                         <p className="text-muted text-xs italic">{t('projects.noInstructions')}</p>
+                      )}
+                      {/* What this project carries into every conversation in
+                          it. On the card, not just in the dialog: the paths are
+                          the part of a project you cannot infer from its
+                          instructions. Read-only — attaching lives in the
+                          dialog. Same row the Automations and Procedures cards
+                          draw. */}
+                      {(project.files.length > 0 || (project.directories?.length ?? 0) > 0) && (
+                        <div dir="ltr" className="flex flex-wrap items-center gap-1.5">
+                          {/* Transparent, not `bg-bg`: these sit ON the card, so
+                              they take its surface rather than punching a darker
+                              well into it. */}
+                          {project.files.map((file) => (
+                            <span
+                              key={file.path}
+                              title={file.path}
+                              className="border-border text-muted inline-flex h-5 max-w-full items-center gap-1 truncate rounded-md border bg-transparent px-1.5 text-[10px] leading-none"
+                            >
+                              <Attachment01Icon size={10} className="shrink-0" />
+                              <span className="truncate">{file.name}</span>
+                            </span>
+                          ))}
+                          {(project.directories ?? []).map((dir) => (
+                            <code
+                              key={dir}
+                              title={dir}
+                              className="border-border text-muted inline-flex h-5 max-w-full items-center gap-1 truncate rounded-md border bg-transparent px-1.5 font-mono text-[10px] leading-none"
+                            >
+                              <Folder01Icon size={10} className="shrink-0" />
+                              <span className="truncate">{dir}</span>
+                            </code>
+                          ))}
+                        </div>
                       )}
                     </div>
                   </li>

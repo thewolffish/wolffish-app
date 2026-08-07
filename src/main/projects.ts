@@ -35,6 +35,14 @@ export type Project = {
   icon: string
   instructions: string
   files: ProjectFileRef[]
+  /**
+   * Working directories every turn inside this project operates in.
+   * References, never copies: each turn gets a FRESH shallow listing of every
+   * one (the same channel the chat composer's folder picker uses), so the
+   * model sees the folder as it is now rather than as it was when the project
+   * was set up. Absent on rows saved before the field shipped.
+   */
+  directories?: string[]
   createdAt: number
   updatedAt: number
 }
@@ -122,6 +130,8 @@ export function updateProject(payload: {
   icon?: string
   instructions?: string
   files?: ProjectFileRef[]
+  /** Whole-list replace. References only, so nothing is deleted from disk. */
+  directories?: string[]
 }): Promise<Project> {
   return serialize(async () => {
     const projects = await loadProjects()
@@ -143,6 +153,7 @@ export function updateProject(payload: {
       }
       project.files = payload.files
     }
+    if (payload.directories !== undefined) project.directories = payload.directories
     project.updatedAt = Date.now()
     await saveProjects(projects)
     return project
@@ -418,6 +429,30 @@ export async function buildProjectOverlay(projectId: string | null): Promise<str
       'Never guess or claim knowledge of file contents you have not read or searched this conversation.'
     )
   }
+  if ((project.directories?.length ?? 0) > 0) {
+    // Named, not listed: the CONTENTS ride the volatile tail (see
+    // projectWorkingFolders below and renderWorkingFolders in Agent.ts), which
+    // re-reads them every iteration. A listing pinned here would go stale
+    // inside a single turn the moment the run wrote a file.
+    lines.push(
+      `Working folders for this project — assume paths the user mentions are relative to these, and do this project's file work in them:`
+    )
+    for (const dir of project.directories ?? []) lines.push(`- ${dir}`)
+  }
   lines.push('</project>')
   return `\n\n${lines.join('\n')}`
+}
+
+/**
+ * A project's working directories, for the turn's `workingFolders`.
+ *
+ * Resolved main-side at turn assembly rather than stamped on the conversation,
+ * so every surface gets them for free — in-app chat, a channel turn, an
+ * automation or procedure bound to the project — and editing the project moves
+ * them for conversations already running inside it.
+ */
+export async function projectWorkingFolders(projectId: string | null): Promise<string[]> {
+  if (!projectId) return []
+  const project = await getProject(projectId).catch(() => null)
+  return project?.directories ?? []
 }

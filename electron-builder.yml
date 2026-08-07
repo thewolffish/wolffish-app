@@ -21,6 +21,14 @@ extraResources:
       - '!**/.wolffish-installed'
   - from: src/changelog
     to: changelog
+  # The CLI client runs under ELECTRON_RUN_AS_NODE from the shipped binary —
+  # plain ESM, no build step, so it ships as source.
+  - from: src/cli
+    to: cli
+  # Read by the main process to describe settings to the CLI in the user's
+  # locale (see workspace/localesPath).
+  - from: src/renderer/src/lib/i18n/locales
+    to: locales
 win:
   executableName: wolffish
   icon: resources/icons-win/icons/icon.ico

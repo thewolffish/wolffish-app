@@ -1,0 +1,313 @@
+/**
+ * Turn the agent's segment stream into terminal output.
+ *
+ * This is the CLI's answer to the chat feed. Every card the desktop renders
+ * has a line-shaped equivalent here, and the SAME visibility rule applies:
+ * with `verbose` off (the default on every channel) the feed is agent prose,
+ * delivered files and errors — nothing else. Verbose adds the model chip and
+ * every tool call, result, and activity line.
+ *
+ * The card ↔ line mapping, so it stays honest as either side changes:
+ *
+ *   chat card              CLI equivalent
+ *   ─────────────────────  ────────────────────────────────────────────────
+ *   assistant markdown     prose, streamed, lightly styled
+ *   tool call/result       ⏺ name  args  → outcome            (verbose)
+ *   active model chip      ⏺ provider/model                    (verbose)
+ *   file card (send_file)  ◆ name  size  path
+ *   chart card             ◆ name  spec + a note that it renders in the app
+ *   path card (show_path)  ▸ path  (folder|file)
+ *   approval card          ▲ blocking prompt: approve / deny / always
+ *   ask-user card          ? numbered questions, one prompt each
+ *   task card              a live status line, replaced in place by taskId
+ *   workflow card          agent roster + phase, replaced in place
+ *   compaction card        one line: N results, tokens saved, duration
+ *   reasoning card         dim, collapsed to a count unless verbose
+ *   turn footer            model · tokens · duration            (verbose)
+ */
+import { c, icon, out, shortPath, wrapText, bytes, width } from './ui.mjs'
+
+const OUTPUT_MARKER =
+  /\[wolffish-output:\s*([^\]]+?)\s+\((image|audio|video|document|file|chart)\)\]/g
+const PATH_MARKER = /\[wolffish-path:\s*([^\]]+?)\s+\((folder|file)\)\]/g
+
+/**
+ * Tool results that are purely a delivery marker carry no other information,
+ * so the file line replaces the result line rather than following it — the
+ * same rule the chat feed uses to avoid showing a card and its raw text.
+ */
+function extractDeliveries(output) {
+  const files = []
+  const paths = []
+  if (typeof output !== 'string' || output.length === 0) return { files, paths, rest: '' }
+  let rest = output
+  OUTPUT_MARKER.lastIndex = 0
+  for (const match of output.matchAll(OUTPUT_MARKER)) {
+    files.push({ path: match[1].trim(), kind: match[2] })
+    rest = rest.replace(match[0], '')
+  }
+  PATH_MARKER.lastIndex = 0
+  for (const match of output.matchAll(PATH_MARKER)) {
+    paths.push({ path: match[1].trim(), kind: match[2] })
+    rest = rest.replace(match[0], '')
+  }
+  return { files, paths, rest: rest.trim() }
+}
+
+/** Compact one-line summary of tool arguments — never the whole payload. */
+function summarizeArgs(args) {
+  if (!args || typeof args !== 'object') return ''
+  const parts = []
+  for (const [key, value] of Object.entries(args)) {
+    if (value === undefined || value === null) continue
+    let text
+    if (typeof value === 'string') text = value
+    else if (typeof value === 'number' || typeof value === 'boolean') text = String(value)
+    else if (Array.isArray(value)) text = `[${value.length}]`
+    else text = '{…}'
+    text = text.replace(/\s+/g, ' ').trim()
+    const room = Math.max(24, Math.floor(width() / 2))
+    if (text.length > room) text = text.slice(0, room - 1) + '…'
+    parts.push(parts.length === 0 && Object.keys(args).length === 1 ? text : `${key}=${text}`)
+    if (parts.length >= 3) break
+  }
+  return parts.join(' ')
+}
+
+export class TurnRenderer {
+  constructor({ verbose = false } = {}) {
+    this.verbose = verbose
+    this.toolNames = new Map()
+    this.toolStartedAt = new Map()
+    // Task and workflow segments are SNAPSHOTS keyed by id — the app replaces
+    // the card in place. A terminal can't repaint scrollback, so the id is
+    // tracked and only meaningful transitions print, instead of one line per
+    // tick (a video task alone emits dozens).
+    this.taskState = new Map()
+    this.workflowState = new Map()
+    this.deliveredThisTurn = new Set()
+    this.atLineStart = true
+    this.sawProse = false
+    this.files = []
+  }
+
+  setVerbose(verbose) {
+    this.verbose = verbose
+  }
+
+  /** Files delivered this turn, so the REPL can offer /open and /save by index. */
+  deliveries() {
+    return this.files
+  }
+
+  #line(text = '') {
+    if (!this.atLineStart) {
+      out()
+      this.atLineStart = true
+    }
+    out(text)
+  }
+
+  #prose(delta) {
+    process.stdout.write(delta)
+    this.atLineStart = delta.endsWith('\n')
+    this.sawProse = true
+  }
+
+  segment(segment) {
+    switch (segment.kind) {
+      case 'text':
+        this.#prose(segment.delta)
+        return
+      case 'active_model':
+        if (!this.verbose) return
+        this.#line(`${icon.dot()} ${c.gray(`${segment.provider}/${segment.model}`)}`)
+        return
+      case 'tool_call':
+        this.toolNames.set(segment.toolCallId, segment.name)
+        this.toolStartedAt.set(segment.toolCallId, Date.now())
+        if (!this.verbose) return
+        this.#line(
+          `${icon.tool()} ${c.bold(segment.name)} ${c.gray(summarizeArgs(segment.args))}`.trimEnd()
+        )
+        return
+      case 'tool_result':
+        this.#toolResult(segment)
+        return
+      case 'task':
+        this.#task(segment.snapshot)
+        return
+      case 'workflow':
+        this.#workflow(segment.snapshot)
+        return
+      case 'compaction_started':
+        if (!this.verbose) return
+        this.#line(
+          c.gray(
+            `  compacting ${segment.targetsCount} tool results (${segment.tokenCount} tokens in context)`
+          )
+        )
+        return
+      case 'compaction':
+        if (!this.verbose) return
+        this.#line(
+          c.gray(
+            `  compacted ${segment.targetsCount} results · saved ${segment.tokensSaved} tokens · ${Math.round(segment.durationMs)}ms`
+          )
+        )
+        return
+      case 'turn_end':
+        this.#turnEnd(segment)
+        return
+      case 'separator':
+        if (this.verbose) this.#line(c.gray('  ─'))
+        return
+      default:
+        return
+    }
+  }
+
+  #toolResult(segment) {
+    const name = this.toolNames.get(segment.toolCallId) ?? 'tool'
+    const { files, paths, rest } = extractDeliveries(segment.output)
+
+    // File and location deliveries print in EVERY mode. They are the model's
+    // deliberate act of handing something over, which is exactly the thing a
+    // clean feed must never swallow.
+    for (const file of files) {
+      if (this.deliveredThisTurn.has(file.path)) continue
+      this.deliveredThisTurn.add(file.path)
+      this.files.push(file)
+      const index = this.files.length
+      this.#line(
+        `${icon.file()} ${c.bold(basename(file.path))}  ${c.gray(shortPath(file.path))}` +
+          (file.kind === 'chart' ? c.gray('  (chart — renders in the app and on the phone)') : '')
+      )
+      this.#line(
+        c.gray(`   ${index}. open with /open ${index}   copy out with /save ${index} <dest>`)
+      )
+    }
+    for (const entry of paths) {
+      this.#line(`${icon.arrow()} ${c.bold(shortPath(entry.path))} ${c.gray(`(${entry.kind})`)}`)
+    }
+
+    const failed = segment.status === 'failed'
+    if (failed) {
+      // Errors are never hidden. A clean feed still has to say when something
+      // went wrong, or the turn reads as a success that produced nothing.
+      const detail = (segment.error || rest || '').split('\n')[0].slice(0, 240)
+      this.#line(`${icon.fail()} ${c.bold(name)} ${c.red(detail || 'failed')}`)
+      return
+    }
+
+    if (!this.verbose) return
+    if (files.length > 0 || paths.length > 0) return
+
+    const started = this.toolStartedAt.get(segment.toolCallId)
+    const took = started ? `${Date.now() - started}ms` : ''
+    const preview = (rest || '').split('\n')[0].slice(0, Math.max(30, width() - 24))
+    const suffix = rest && rest.length > preview.length ? '…' : ''
+    this.#line(
+      `  ${icon.ok()} ${c.gray(`${preview}${suffix}`)}${took ? c.gray(`  ${took}`) : ''}`.trimEnd()
+    )
+  }
+
+  #task(snapshot) {
+    if (!snapshot || typeof snapshot !== 'object') return
+    const id = snapshot.taskId ?? snapshot.id ?? 'task'
+    const status = snapshot.status ?? 'running'
+    if (this.taskState.get(id) === status) return
+    this.taskState.set(id, status)
+    const label = snapshot.title ?? snapshot.kind ?? 'task'
+    const mark =
+      status === 'succeeded' ? icon.ok() : status === 'failed' ? icon.fail() : icon.tool()
+    // Task cards are one of the two things a clean feed keeps beyond prose and
+    // files: they represent minutes of background work, and silence for that
+    // long reads as a hang.
+    this.#line(`${mark} ${c.bold(label)} ${c.gray(status)}`)
+  }
+
+  #workflow(snapshot) {
+    if (!snapshot || typeof snapshot !== 'object') return
+    const id = snapshot.workflowId ?? 'workflow'
+    const agents = Array.isArray(snapshot.agents) ? snapshot.agents : []
+    const done = agents.filter((a) => a.status === 'succeeded' || a.status === 'failed').length
+    const key = `${snapshot.phase ?? ''}:${done}/${agents.length}`
+    if (this.workflowState.get(id) === key) return
+    this.workflowState.set(id, key)
+    const phase = snapshot.phase ? ` ${c.gray(snapshot.phase)}` : ''
+    this.#line(`${icon.tool()} ${c.bold('workflow')}${phase} ${c.gray(`${done}/${agents.length}`)}`)
+  }
+
+  #turnEnd(segment) {
+    if (segment.reasoningContent && !this.verbose) {
+      const words = String(segment.reasoningContent).split(/\s+/).length
+      this.#line(c.gray(`  (thought for ~${words} words)`))
+    } else if (segment.reasoningContent && this.verbose) {
+      this.#line(c.gray(wrapText(String(segment.reasoningContent), 2)))
+    }
+    if (segment.stopReason === 'canceled') {
+      this.#line(c.yellow('  stopped'))
+    }
+    if (!this.atLineStart) out()
+    this.atLineStart = true
+  }
+
+  /** Turn-level events (token counts, errors) — verbose only, except errors. */
+  turnEvent(type, payload) {
+    if (type === 'turn.usage' && this.verbose) {
+      const inTok = payload?.inputTokens ?? payload?.promptTokens
+      const outTok = payload?.outputTokens ?? payload?.completionTokens
+      if (inTok || outTok) {
+        this.#line(c.gray(`  ${inTok ?? '?'} in · ${outTok ?? '?'} out`))
+      }
+      return
+    }
+    if (type === 'safety.blocked') {
+      this.#line(`${icon.gate()} ${c.yellow(`blocked: ${payload?.tool ?? 'tool'}`)}`)
+    }
+  }
+
+  error(message) {
+    this.#line(`${icon.fail()} ${c.red(message)}`)
+  }
+
+  /** Reset per-turn state; delivered files persist for /open in the session. */
+  endTurn() {
+    this.toolNames.clear()
+    this.toolStartedAt.clear()
+    this.taskState.clear()
+    this.workflowState.clear()
+    this.deliveredThisTurn.clear()
+    this.sawProse = false
+  }
+}
+
+export function basename(p) {
+  const cleaned = String(p).replace(/[/\\]+$/, '')
+  const cut = Math.max(cleaned.lastIndexOf('/'), cleaned.lastIndexOf('\\'))
+  return cut >= 0 ? cleaned.slice(cut + 1) : cleaned
+}
+
+/** Render a stored conversation message — used by `wolffish show`. */
+export function renderStoredMessage(message, { verbose = false } = {}) {
+  if (message.role === 'user') {
+    out()
+    out(c.blue('› ') + c.bold(message.content || ''))
+    for (const attachment of message.attachments ?? []) {
+      out(c.gray(`  ${icon.file()} ${attachment.originalName} ${bytes(attachment.sizeBytes)}`))
+    }
+    return
+  }
+  out()
+  const renderer = new TurnRenderer({ verbose })
+  if (message.segments?.length) {
+    for (const segment of message.segments) renderer.segment(segment)
+    if (!message.segments.some((s) => s.kind === 'text') && message.content) {
+      out(message.content)
+    }
+  } else if (message.content) {
+    out(message.content)
+  }
+  out()
+}

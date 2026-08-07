@@ -1,6 +1,7 @@
 process.noDeprecation = true
 
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
+import { attachFilesToAutomation, removeAutomationFile } from '@main/automations/files'
 import { braveService, type BraveStatus, type BraveTestResult } from '@main/brave'
 import { turnRouter } from '@main/channels/channel'
 import { collectChannelStatus } from '@main/channels/status'
@@ -64,16 +65,29 @@ import {
   type GoogleStatus,
   type GoogleUpdateResult
 } from '@main/google'
+import { CliChannel } from '@main/channels/cli/channel'
+import { CliServer } from '@main/channels/cli/server'
+import { registerCliIpc, type AutostartFacts } from '@main/channels/cli/ipc'
+import { cliEntryPath, cliPathStatus, installCliPath } from '@main/autostart/cli-path'
+import {
+  autostartStatus,
+  installAutostart,
+  uninstallAutostart,
+  type AutostartMode
+} from '@main/autostart/autostart'
+import { handle, ipcHandlers } from '@main/ipc-registry'
 import { acquireLock, releaseLockSync } from '@main/lockfile'
 import { memesService, type MemesStatus, type MemesTestResult } from '@main/memes'
 import { notionService, type NotionStatus, type NotionTestResult } from '@main/notion'
 import { configureSummarizer, queueConversationSummarization } from '@main/conversation-summarizer'
 import {
+  attachFilesToProcedure,
   createProcedure,
   deleteProcedure,
   listProcedures,
   setProceduresChangedListener,
-  updateProcedure
+  updateProcedure,
+  type ProcedureFileRef
 } from '@main/procedures'
 import {
   attachFilesToProject,
@@ -159,6 +173,7 @@ import {
   getGitHubConfig,
   getReflectionConfig,
   normalizeReflectionConfig,
+  getCliConfig,
   getGoogleConfig,
   getInAppConfig,
   getMemesConfig,
@@ -256,6 +271,19 @@ import { isAbsolute, join } from 'node:path'
 const WOLFFISH_ROOT = join(os.homedir(), '.wolffish')
 app.setPath('userData', join(WOLFFISH_ROOT, 'runtime'))
 app.setAppLogsPath(join(WOLFFISH_ROOT, 'logs'))
+
+/**
+ * Headless: boot the whole agent — channels, automations, MCP, the CLI socket
+ * — and never create a window or a tray. This is what a VPS runs under
+ * systemd, and what the `wolffish` command attaches to.
+ *
+ * Only the window and tray are skipped. Everything else is deliberately the
+ * same code path, because a headless mode that boots differently is a second
+ * app to keep working; this one is the same app with its face turned off.
+ * `window-all-closed` was already a no-op (the tray app stays resident), so
+ * nothing had to change for the process to survive with zero windows.
+ */
+const IS_HEADLESS = process.argv.includes('--headless') || process.env.WOLFFISH_HEADLESS === '1'
 
 // Resolve a path the assistant mentioned in chat (which may start with ~) to an
 // absolute path. Returns null for anything that isn't a real absolute/home path
@@ -874,6 +902,14 @@ agent.corpus.on('index.reindexed', () => broadcast('conversation:changed', {}))
 const electronChannel = new ElectronChannel(agent, turnRunner)
 const telegramChannel = new TelegramChannel(agent, turnRunner, localProvider)
 const whatsappChannel = new WhatsAppChannel(agent, turnRunner, localProvider)
+// The terminal. Same pipeline, same TurnRunner, no window — which is also
+// what makes a VPS install possible: nothing here needs one.
+const cliChannel = new CliChannel(agent, turnRunner)
+const cliServer = new CliServer({
+  handlers: ipcHandlers,
+  channel: cliChannel,
+  version: app.getVersion()
+})
 
 /**
  * The phone is a second view of this app, not a chat channel: it renders the
@@ -1212,6 +1248,9 @@ const mobileChannel = new MobileChannel({
   // list rides the snapshot, bodies are served one month at a time.
   changelogMonths: () => listChangelogMonths(),
   readChangelog: (month, locale) => readChangelogMarkdown(month, locale),
+  // What the OS has ACTUALLY registered, not the stored intent — the two
+  // disagree whenever a registration failed, which on Linux used to be always.
+  launchAtStartupActive: async () => (await readAutostartStatus()).active,
   // Deliberately lazy: extensionServer is constructed a few statements below,
   // and this closure only runs once a phone asks for a snapshot.
   extensionStatus: async () => extensionServer.getStatus(),
@@ -1304,6 +1343,10 @@ function pushTurnToMobile(ev: {
 }
 telegramChannel.setMessageMirror(mirrorMessageToRenderer)
 whatsappChannel.setMessageMirror(mirrorMessageToRenderer)
+// A terminal turn mirrors exactly like a Telegram one: it persists its user
+// message before running, so both the app window and the phone can follow a
+// CLI run live instead of learning about it at the fold.
+cliChannel.setMessageMirror(mirrorMessageToRenderer)
 // Automations and procedures mirror the same way. Their conversation is
 // created and saved BEFORE the run starts, so it can be opened while it works
 // — and this is what makes that feed fill in live instead of sitting on the
@@ -1906,6 +1949,8 @@ async function pushConversationToMobile(id: string): Promise<void> {
  */
 const MOBILE_CONFIG_SILENT = new Set([
   'app:closingPending',
+  'automations:copyProgress',
+  'procedures:copyProgress',
   'chat:turnState',
   'conversation:changed',
   'conversation:deleted',
@@ -1921,6 +1966,124 @@ const MOBILE_CONFIG_SILENT = new Set([
   'task:changed'
 ])
 
+/**
+ * Autostart, dispatched by platform and run mode.
+ *
+ * A GUI install on macOS/Windows keeps using Electron's login item — that path
+ * works and there is no reason to replace it. Everything else goes through the
+ * autostart module, because `setLoginItemSettings` is `@platform darwin,win32`
+ * and has never done anything at all on Linux: the app shipped a toggle there
+ * that wrote a preference and registered nothing. `active` below is what is
+ * REGISTERED, never what was asked for, which is what makes that visible.
+ */
+async function currentRunMode(): Promise<AutostartMode> {
+  const cfg = await getCliConfig().catch(() => ({}) as { runMode?: 'gui' | 'headless' })
+  return cfg.runMode === 'headless' ? 'headless' : 'gui'
+}
+
+function usesElectronLoginItem(mode: AutostartMode): boolean {
+  return mode === 'gui' && (process.platform === 'darwin' || process.platform === 'win32')
+}
+
+/**
+ * Turn autostart on or off. THE one writer — the Wolffish tab's toggle and the
+ * CLI panel's Register button both land here, and it moves both halves
+ * together: the stored intent, then the OS registration. Splitting them (one
+ * screen writing the preference, another writing the unit) is how the two end
+ * up disagreeing, and nothing surfaces the disagreement until a reboot.
+ */
+async function setAutostart(value: boolean): Promise<AutostartFacts> {
+  await persistLaunchAtStartup(value)
+  const mode = await currentRunMode()
+  if (usesElectronLoginItem(mode)) {
+    app.setLoginItemSettings({ openAtLogin: value })
+    return {
+      active: app.getLoginItemSettings().openAtLogin,
+      mechanism: 'loginItem',
+      warning: null,
+      location: null
+    }
+  }
+  const status = value
+    ? await installAutostart(mode, app.getPath('exe'))
+    : await uninstallAutostart(mode)
+  return {
+    active: status.active,
+    mechanism: status.mechanism,
+    warning: status.warning,
+    location: status.location
+  }
+}
+
+/**
+ * Re-register autostart only if the OS has lost it. Called once at boot for an
+ * install whose stored preference is an explicit yes.
+ *
+ * Deliberately NOT `setAutostart(true)`: that would rewrite the preference on
+ * every launch (a disk write for a value that never changed) and re-run the
+ * installer's shell-outs — `systemctl enable`, `launchctl bootstrap` — even
+ * when nothing is wrong. Reading the status first makes the healthy path free.
+ */
+async function reassertAutostart(): Promise<void> {
+  const current = await readAutostartStatus()
+  if (current.active) return
+  const repaired = await setAutostart(true)
+  wlog.info(
+    '[autostart]',
+    repaired.active
+      ? `re-registered via ${repaired.mechanism}`
+      : `could not re-register via ${repaired.mechanism}${repaired.warning ? ` — ${repaired.warning}` : ''}`
+  )
+}
+
+async function readAutostartStatus(): Promise<AutostartFacts> {
+  const mode = await currentRunMode()
+  if (usesElectronLoginItem(mode)) {
+    return {
+      active: app.getLoginItemSettings().openAtLogin,
+      mechanism: 'loginItem',
+      warning: null,
+      location: null
+    }
+  }
+  const status = await autostartStatus(mode)
+  return {
+    active: status.active,
+    mechanism: status.mechanism,
+    warning: status.warning,
+    location: status.location
+  }
+}
+
+/** Everything `wolffish status` prints that isn't a config value. */
+async function buildCliStatus(): Promise<Record<string, unknown>> {
+  const [workspace, autostart, cliPath] = await Promise.all([
+    getStatus().catch(() => null),
+    readAutostartStatus().catch(() => null),
+    cliPathStatus().catch(() => null)
+  ])
+  return {
+    version: app.getVersion(),
+    platform: process.platform,
+    headless: IS_HEADLESS,
+    workspace,
+    autostart,
+    path: cliPath,
+    channels: collectChannelStatus({
+      telegram: () => telegramChannel.getStatus(),
+      whatsapp: () => whatsappChannel.getStatus()
+    }),
+    mobile: mobileChannel.getStatus(),
+    extension: extensionServer.getStatus(),
+    activeRuns: [...turnRunner.activeRuns(), ...agent.activeAutonomousRuns()]
+  }
+}
+
+/** The CLI's read side — the phone's snapshot, plus the live autostart probe. */
+function buildCliSnapshot(): Promise<Record<string, unknown>> {
+  return mobileChannel.buildSnapshot()
+}
+
 /** Coalesces a burst of config broadcasts into one push. */
 let mobileConfigPushTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -1928,6 +2091,11 @@ function broadcast<T>(channel: string, payload: T): void {
   for (const w of BrowserWindow.getAllWindows()) {
     w.webContents.send(channel, payload)
   }
+  // Third audience, same signal, same reason: an attached terminal is another
+  // open surface, and a setting saved from the app (or the phone, or a
+  // channel command) has to land there too. Hooking the chokepoint is what
+  // makes that true for every broadcast there is, including ones added later.
+  cliServer.pushBroadcast(channel, payload)
   // Same signal, second audience. Saving a setting fires one of these on
   // every path there is, so hooking here covers them all at once instead of
   // one remembered push per handler.
@@ -2135,16 +2303,31 @@ app.whenReady().then(async () => {
   // complete ReflectionConfig.
   agent.brainstem.setReflectionConfig(normalizeReflectionConfig(cfg?.reflection))
 
-  // Auto-launch: if the user has opted in (default true), register
-  // Wolffish as a login item so the OS starts it on boot/login.
-  // Uses Electron's built-in app.setLoginItemSettings which handles
-  // macOS (SMAppService / Launch Services), Windows (registry), and
-  // Linux (XDG autostart .desktop file).
-  // Skip in dev mode — registering the dev binary as a login item
-  // causes the Electron debug menu to appear on restart instead of
-  // the production app.
-  if (!is.dev && cfg?.launchAtStartup !== false) {
-    app.setLoginItemSettings({ openAtLogin: true })
+  // Auto-launch: REPAIR a registration the user already asked for — never
+  // create one they didn't.
+  //
+  // `=== true`, not `!== false`: only an explicit yes counts. (In practice
+  // these are the same test, since defaultConfig() has always written the key
+  // — but the intent should be readable without knowing that.)
+  //
+  // Repair, because a registration can go missing without the preference
+  // changing: the app moved between folders, macOS reset its login items, a
+  // cleanup tool deleted the .desktop entry, an update changed the binary
+  // path. Without this, the toggle keeps saying On while nothing is
+  // registered — the exact silent-lie the active-vs-intent split exists to
+  // expose. It re-registers only when the OS says nothing is there, so a
+  // healthy install pays one status read and no shell-outs.
+  //
+  // Through the dispatcher, not app.setLoginItemSettings directly: that call
+  // does nothing on Linux, and on a headless install it would register a
+  // login item over the service unit that is the real mechanism there.
+  //
+  // Skipped in dev — registering the dev binary as a login item brings the
+  // Electron debug menu back on restart instead of the production app.
+  if (!is.dev && cfg?.launchAtStartup === true) {
+    void reassertAutostart().catch((err) =>
+      wlog.warn('[autostart]', `re-assert failed: ${err instanceof Error ? err.message : err}`)
+    )
   }
 
   if (cfg?.telegram?.enabled) {
@@ -2196,29 +2379,29 @@ app.whenReady().then(async () => {
   // main-process 'context-menu' event handed it the misspelled word + suggestions.
   // replaceMisspelling swaps the word currently selected by the right-click; it's a
   // native edit command, so undo works and controlled React inputs re-sync via input.
-  ipcMain.handle('spellcheck:replace', (e, word: string) => {
+  handle('spellcheck:replace', (e, word: string) => {
     e.sender.replaceMisspelling(word)
   })
-  ipcMain.handle('spellcheck:addToDictionary', (e, word: string) => {
+  handle('spellcheck:addToDictionary', (e, word: string) => {
     // Persists to the app's custom dictionary (and the OS dictionary on macOS/
     // Windows). The default session is persistent, so this is never a no-op here.
     e.sender.session.addWordToSpellCheckerDictionary(word)
   })
 
   // Theme
-  ipcMain.handle('theme:get', () => currentThemeState())
-  ipcMain.handle('theme:set', async (_e, source: ThemeSource) => {
+  handle('theme:get', () => currentThemeState())
+  handle('theme:set', async (_e, source: ThemeSource) => {
     nativeTheme.themeSource = source
     await persistTheme(source)
     return currentThemeState()
   })
 
   // Locale
-  ipcMain.handle('locale:get', async (): Promise<Locale> => {
+  handle('locale:get', async (): Promise<Locale> => {
     const config = await readConfig()
     return config?.locale ?? 'en'
   })
-  ipcMain.handle('locale:set', async (_e, locale: Locale) => {
+  handle('locale:set', async (_e, locale: Locale) => {
     await persistLocale(locale)
     turnRunner.setLocale(locale)
     sudoSession.setLocale(locale)
@@ -2228,7 +2411,7 @@ app.whenReady().then(async () => {
   // Runtime — Wolffish-specific toggles. Persist to config.json and
   // mirror into the live amygdala / thalamus instances so the change
   // takes effect on the next turn without a restart.
-  ipcMain.handle('runtime:setBypassPermissions', async (_e, value: boolean) => {
+  handle('runtime:setBypassPermissions', async (_e, value: boolean) => {
     await persistBypassPermissions(value)
     agent.amygdala.setBypassPermissions(value)
     // Announced like every other settings save: other windows re-seed, and
@@ -2237,43 +2420,41 @@ app.whenReady().then(async () => {
     broadcast('preferences:changed', { bypassPermissions: value })
     return { value }
   })
-  ipcMain.handle('runtime:setBlockCredentials', async (_e, value: boolean) => {
+  handle('runtime:setBlockCredentials', async (_e, value: boolean) => {
     await persistBlockCredentials(value)
     turnRunner.setBlockCredentials(value)
     broadcast('preferences:changed', { blockCredentials: value })
     return { value }
   })
-  ipcMain.handle('runtime:setLocalOnly', async (_e, value: boolean) => {
+  handle('runtime:setLocalOnly', async (_e, value: boolean) => {
     await persistLocalOnly(value)
     thalamus.setLocalOnly(value)
     return { value }
   })
-  ipcMain.handle('runtime:setRestrictPowerfulModels', async (_e, value: boolean) => {
+  handle('runtime:setRestrictPowerfulModels', async (_e, value: boolean) => {
     await persistRestrictPowerfulModels(value)
     broadcast('preferences:changed', { restrictPowerfulModels: value })
     return { value }
   })
-  ipcMain.handle('runtime:setThinkingMode', async (_e, model: string, mode: string) => {
+  handle('runtime:setThinkingMode', async (_e, model: string, mode: string) => {
     await persistThinkingMode(model, mode)
   })
 
-  ipcMain.handle('runtime:setLaunchAtStartup', async (_e, value: boolean) => {
-    app.setLoginItemSettings({ openAtLogin: value })
-    await persistLaunchAtStartup(value)
-    const { openAtLogin } = app.getLoginItemSettings()
+  handle('runtime:setLaunchAtStartup', async (_e, value: boolean) => {
+    const status = await setAutostart(value)
     broadcast('preferences:changed', { launchAtStartup: value })
-    return { value, active: openAtLogin }
+    // `active` is what the OS actually registered, which is NOT always what
+    // was asked for — the panel renders both so a failed registration reads as
+    // "On · Inactive" instead of a success.
+    return { value, active: status.active, mechanism: status.mechanism, warning: status.warning }
   })
 
-  ipcMain.handle('runtime:getLaunchAtStartupStatus', () => {
-    const { openAtLogin } = app.getLoginItemSettings()
-    return { active: openAtLogin }
-  })
+  handle('runtime:getLaunchAtStartupStatus', () => readAutostartStatus())
 
-  ipcMain.handle('variables:list', async (): Promise<Variable[]> => {
+  handle('variables:list', async (): Promise<Variable[]> => {
     return getVariables()
   })
-  ipcMain.handle('variables:save', async (_e, variables: Variable[]): Promise<{ ok: true }> => {
+  handle('variables:save', async (_e, variables: Variable[]): Promise<{ ok: true }> => {
     await saveVariablesEverywhere(variables)
     return { ok: true }
   })
@@ -2283,9 +2464,9 @@ app.whenReady().then(async () => {
   // (not inside the channel) so the IPC handler can return the new
   // status synchronously — a UI that flips the toggle wants the chip
   // to update without polling.
-  ipcMain.handle('telegram:getConfig', (): Promise<TelegramConfig> => getTelegramConfig())
+  handle('telegram:getConfig', (): Promise<TelegramConfig> => getTelegramConfig())
 
-  ipcMain.handle(
+  handle(
     'telegram:setConfig',
     async (
       _e,
@@ -2323,7 +2504,7 @@ app.whenReady().then(async () => {
     }
   )
 
-  ipcMain.handle(
+  handle(
     'telegram:status',
     (): ReturnType<TelegramChannel['getStatus']> => telegramChannel.getStatus()
   )
@@ -2340,7 +2521,7 @@ app.whenReady().then(async () => {
     }
   })
 
-  ipcMain.handle(
+  handle(
     'telegram:sendTestMessage',
     (_e, payload: { token: string; userId: number }): Promise<{ ok: boolean; error?: string }> =>
       telegramChannel.sendTestMessage(payload.token, payload.userId)
@@ -2349,9 +2530,9 @@ app.whenReady().then(async () => {
   // WhatsApp channel — Baileys-based WhatsApp Web client. Persistent
   // WebSocket that registers/unregisters tools with the cerebellum as
   // the connection comes up and goes down.
-  ipcMain.handle('whatsapp:getConfig', (): Promise<WhatsAppConfig> => getWhatsAppConfig())
+  handle('whatsapp:getConfig', (): Promise<WhatsAppConfig> => getWhatsAppConfig())
 
-  ipcMain.handle(
+  handle(
     'whatsapp:setConfig',
     async (
       _e,
@@ -2385,12 +2566,12 @@ app.whenReady().then(async () => {
     }
   )
 
-  ipcMain.handle(
+  handle(
     'whatsapp:status',
     (): ReturnType<WhatsAppChannel['getStatus']> => whatsappChannel.getStatus()
   )
 
-  ipcMain.handle('whatsapp:logout', async (): Promise<void> => {
+  handle('whatsapp:logout', async (): Promise<void> => {
     await whatsappChannel.logout()
     await persistWhatsAppConfig({ enabled: false })
     BrowserWindow.getAllWindows().forEach((w) =>
@@ -2398,7 +2579,7 @@ app.whenReady().then(async () => {
     )
   })
 
-  ipcMain.handle('whatsapp:requestQr', (): void => {
+  handle('whatsapp:requestQr', (): void => {
     whatsappChannel.requestQr()
     BrowserWindow.getAllWindows().forEach((w) =>
       w.webContents.send('whatsapp:statusChange', whatsappChannel.getStatus())
@@ -2435,9 +2616,9 @@ app.whenReady().then(async () => {
   // no restart. After a write we broadcast the new config so an open chat
   // window re-renders its feed immediately, the same way the channel panels
   // react to status changes.
-  ipcMain.handle('inapp:getConfig', (): Promise<InAppConfig> => getInAppConfig())
+  handle('inapp:getConfig', (): Promise<InAppConfig> => getInAppConfig())
 
-  ipcMain.handle(
+  handle(
     'inapp:setConfig',
     async (_e, patch: Partial<InAppConfig>): Promise<{ ok: true; config: InAppConfig }> => {
       const updated = await persistInAppConfig(patch)
@@ -2450,30 +2631,28 @@ app.whenReady().then(async () => {
   // MCP server connections. All lifecycle mechanics live in McpManager;
   // these handlers are thin passthroughs. Status flows to the renderer
   // via the 'mcp:statusChange' broadcast wired at manager construction.
-  ipcMain.handle('mcp:list', () => mcpManager.snapshot())
+  handle('mcp:list', () => mcpManager.snapshot())
 
-  ipcMain.handle('mcp:add', (_e, input: McpAddInput) => mcpManager.add(input))
+  handle('mcp:add', (_e, input: McpAddInput) => mcpManager.add(input))
 
-  ipcMain.handle('mcp:remove', (_e, id: string) => mcpManager.remove(id))
+  handle('mcp:remove', (_e, id: string) => mcpManager.remove(id))
 
-  ipcMain.handle('mcp:setEnabled', (_e, id: string, enabled: boolean) =>
-    mcpManager.setEnabled(id, enabled)
-  )
+  handle('mcp:setEnabled', (_e, id: string, enabled: boolean) => mcpManager.setEnabled(id, enabled))
 
-  ipcMain.handle('mcp:setHeaders', (_e, id: string, headers: McpHeader[]) =>
+  handle('mcp:setHeaders', (_e, id: string, headers: McpHeader[]) =>
     mcpManager.setHeaders(id, headers)
   )
 
-  ipcMain.handle('mcp:test', (_e, id: string) => mcpManager.test(id))
+  handle('mcp:test', (_e, id: string) => mcpManager.test(id))
 
-  ipcMain.handle('mcp:authorize', (_e, id: string) => mcpManager.authorize(id))
+  handle('mcp:authorize', (_e, id: string) => mcpManager.authorize(id))
 
   // Brave Search — stateless service. The web-search cerebellum plugin
   // reads the persisted config and uses Brave as the primary provider
   // when enabled. No long-poll, no in-process server: just a key + flag.
-  ipcMain.handle('brave:getConfig', (): Promise<BraveConfig> => getBraveConfig())
+  handle('brave:getConfig', (): Promise<BraveConfig> => getBraveConfig())
 
-  ipcMain.handle(
+  handle(
     'brave:setConfig',
     async (
       _e,
@@ -2490,9 +2669,9 @@ app.whenReady().then(async () => {
     }
   )
 
-  ipcMain.handle('brave:status', (): Promise<BraveStatus> => braveService.getStatus())
+  handle('brave:status', (): Promise<BraveStatus> => braveService.getStatus())
 
-  ipcMain.handle(
+  handle(
     'brave:test',
     (_e, apiKey: string): Promise<BraveTestResult> => braveService.testKey(apiKey)
   )
@@ -2500,9 +2679,9 @@ app.whenReady().then(async () => {
   // Notion — stateless service. The notion cerebellum plugin reads the
   // persisted config and uses the integration token for API calls. No
   // long-poll, no in-process server: just a token.
-  ipcMain.handle('notion:getConfig', (): Promise<NotionConfig> => getNotionConfig())
+  handle('notion:getConfig', (): Promise<NotionConfig> => getNotionConfig())
 
-  ipcMain.handle(
+  handle(
     'notion:setConfig',
     async (
       _e,
@@ -2514,9 +2693,9 @@ app.whenReady().then(async () => {
     }
   )
 
-  ipcMain.handle('notion:status', (): Promise<NotionStatus> => notionService.getStatus())
+  handle('notion:status', (): Promise<NotionStatus> => notionService.getStatus())
 
-  ipcMain.handle(
+  handle(
     'notion:test',
     (_e, token: string): Promise<NotionTestResult> => notionService.testToken(token)
   )
@@ -2524,9 +2703,9 @@ app.whenReady().then(async () => {
   // GitHub — stateless service. The github cerebellum plugin reads the
   // persisted config and uses the PAT for API calls. No daemon, no
   // in-process server: just a token.
-  ipcMain.handle('github:getConfig', (): Promise<GitHubConfig> => getGitHubConfig())
+  handle('github:getConfig', (): Promise<GitHubConfig> => getGitHubConfig())
 
-  ipcMain.handle(
+  handle(
     'github:setConfig',
     async (
       _e,
@@ -2538,9 +2717,9 @@ app.whenReady().then(async () => {
     }
   )
 
-  ipcMain.handle('github:status', (): Promise<GitHubStatus> => githubService.getStatus())
+  handle('github:status', (): Promise<GitHubStatus> => githubService.getStatus())
 
-  ipcMain.handle(
+  handle(
     'github:test',
     (_e, token: string): Promise<GitHubTestResult> => githubService.testToken(token)
   )
@@ -2550,9 +2729,9 @@ app.whenReady().then(async () => {
   // helpers and a status view for the settings panel.
   // Video generation (MiniMax H3). Its own key by design — see VideoConfig
   // in workspace.ts for why it is not shared with the MiniMax chat provider.
-  ipcMain.handle('video:getConfig', (): Promise<VideoConfig> => getVideoConfig())
+  handle('video:getConfig', (): Promise<VideoConfig> => getVideoConfig())
 
-  ipcMain.handle(
+  handle(
     'video:setConfig',
     async (_e, patch: Partial<VideoConfig>): Promise<{ ok: true; config: VideoConfig }> => {
       const updated = await setVideoConfig(patch)
@@ -2565,11 +2744,11 @@ app.whenReady().then(async () => {
     }
   )
 
-  ipcMain.handle('video:test', () => checkVideoService())
+  handle('video:test', () => checkVideoService())
 
-  ipcMain.handle('memes:getConfig', (): Promise<MemesConfig> => getMemesConfig())
+  handle('memes:getConfig', (): Promise<MemesConfig> => getMemesConfig())
 
-  ipcMain.handle(
+  handle(
     'memes:setConfig',
     async (
       _e,
@@ -2586,14 +2765,14 @@ app.whenReady().then(async () => {
     }
   )
 
-  ipcMain.handle('memes:status', (): Promise<MemesStatus> => memesService.getStatus())
+  handle('memes:status', (): Promise<MemesStatus> => memesService.getStatus())
 
-  ipcMain.handle(
+  handle(
     'memes:testGiphy',
     (_e, apiKey: string): Promise<MemesTestResult> => memesService.testGiphy(apiKey)
   )
 
-  ipcMain.handle(
+  handle(
     'memes:testImgflip',
     (_e, payload: { username: string; password: string }): Promise<MemesTestResult> =>
       memesService.testImgflip(payload.username, payload.password)
@@ -2601,9 +2780,9 @@ app.whenReady().then(async () => {
 
   // Computer Use — desktop automation. Plugin reads config.json directly;
   // these handlers let the settings panel read/write the config.
-  ipcMain.handle('computerUse:getConfig', (): Promise<ComputerUseConfig> => getComputerUseConfig())
+  handle('computerUse:getConfig', (): Promise<ComputerUseConfig> => getComputerUseConfig())
 
-  ipcMain.handle(
+  handle(
     'computerUse:setConfig',
     async (
       _e,
@@ -2620,7 +2799,7 @@ app.whenReady().then(async () => {
     }
   )
 
-  ipcMain.handle(
+  handle(
     'computerUse:checkPermissions',
     (): {
       platform: string
@@ -2664,12 +2843,12 @@ app.whenReady().then(async () => {
   )
 
   // Browser Extension — WebSocket server for the Wolffish browser extension.
-  ipcMain.handle(
+  handle(
     'browserExtension:getConfig',
     (): Promise<BrowserExtensionConfig> => getBrowserExtensionConfig()
   )
 
-  ipcMain.handle(
+  handle(
     'browserExtension:setConfig',
     async (
       _e,
@@ -2687,26 +2866,26 @@ app.whenReady().then(async () => {
     }
   )
 
-  ipcMain.handle('browserExtension:status', () => extensionServer.getStatus())
+  handle('browserExtension:status', () => extensionServer.getStatus())
 
-  ipcMain.handle('browserExtension:openExtensionFolder', () => {
+  handle('browserExtension:openExtensionFolder', () => {
     shell.showItemInFolder(extensionFolderPath())
   })
 
-  ipcMain.handle('browserExtension:getExtensionPath', () => {
+  handle('browserExtension:getExtensionPath', () => {
     return extensionFolderPath()
   })
 
-  ipcMain.handle('browserExtension:updateExtension', async (_e, target?: string | null) => {
+  handle('browserExtension:updateExtension', async (_e, target?: string | null) => {
     await extensionServer.requestReload(target ?? null)
     return { ok: true }
   })
 
-  ipcMain.handle('browserExtension:testConnection', (_e, target?: string | null) =>
+  handle('browserExtension:testConnection', (_e, target?: string | null) =>
     extensionServer.runTestScenario(target ?? null)
   )
 
-  ipcMain.handle('browserExtension:openExtensionsPage', () => {
+  handle('browserExtension:openExtensionsPage', () => {
     const url = 'chrome://extensions'
     if (process.platform === 'darwin') {
       const browsers = ['Google Chrome', 'Brave Browser', 'Chromium']
@@ -2738,9 +2917,9 @@ app.whenReady().then(async () => {
   // Google Workspace (gogcli) — credential storage and OAuth are
   // delegated to the gog binary. We only persist safe public metadata
   // (client_id, project_id, account email) in config.json.
-  ipcMain.handle('google:getConfig', (): Promise<GoogleConfig> => getGoogleConfig())
+  handle('google:getConfig', (): Promise<GoogleConfig> => getGoogleConfig())
 
-  ipcMain.handle(
+  handle(
     'google:setConfig',
     async (
       _e,
@@ -2759,12 +2938,9 @@ app.whenReady().then(async () => {
     }
   )
 
-  ipcMain.handle('google:status', (): Promise<GoogleStatus> => googleService.getStatus())
+  handle('google:status', (): Promise<GoogleStatus> => googleService.getStatus())
 
-  ipcMain.handle(
-    'google:checkBinary',
-    (): Promise<GoogleBinaryStatus> => googleService.checkBinary()
-  )
+  handle('google:checkBinary', (): Promise<GoogleBinaryStatus> => googleService.checkBinary())
 
   // Broadcast setup/update progress as a full {stage, percent} state to ALL
   // windows (not just the invoking sender), so a panel remounted after the user
@@ -2775,8 +2951,8 @@ app.whenReady().then(async () => {
       w.webContents.send('google:setupState', payload)
     }
   }
-  ipcMain.handle('google:getSetupState', (): GoogleSetupState => googleService.getSetupState())
-  ipcMain.handle('google:setup', async (): Promise<GoogleSetupResult> => {
+  handle('google:getSetupState', (): GoogleSetupState => googleService.getSetupState())
+  handle('google:setup', async (): Promise<GoogleSetupResult> => {
     const result = await googleService.setup((percent) =>
       broadcastGoogleSetupState({ stage: 'setup', percent })
     )
@@ -2784,7 +2960,7 @@ app.whenReady().then(async () => {
     return result
   })
 
-  ipcMain.handle('google:update', async (): Promise<GoogleUpdateResult> => {
+  handle('google:update', async (): Promise<GoogleUpdateResult> => {
     const result = await googleService.update((percent) =>
       broadcastGoogleSetupState({ stage: 'updating', percent })
     )
@@ -2792,7 +2968,7 @@ app.whenReady().then(async () => {
     return result
   })
 
-  ipcMain.handle(
+  handle(
     'google:uploadCredentials',
     async (_e, jsonContent: string): Promise<GoogleCredentialsResult> => {
       const result = await googleService.uploadCredentials(jsonContent)
@@ -2807,7 +2983,7 @@ app.whenReady().then(async () => {
     }
   )
 
-  ipcMain.handle('google:authAdd', async (event, email: string): Promise<GoogleAuthResult> => {
+  handle('google:authAdd', async (event, email: string): Promise<GoogleAuthResult> => {
     // Capture the auth list before the OAuth flow so we can detect which
     // email gogcli actually stored — Google's OAuth returns the user's
     // real email, which often differs from whatever the user typed.
@@ -2825,16 +3001,16 @@ app.whenReady().then(async () => {
     return result
   })
 
-  ipcMain.handle('google:listAccounts', (): Promise<string[]> => googleService.listAccounts())
+  handle('google:listAccounts', (): Promise<string[]> => googleService.listAccounts())
 
-  ipcMain.handle(
+  handle(
     'google:checkAccounts',
     (): Promise<Record<string, boolean>> => googleService.checkAccounts()
   )
 
-  ipcMain.handle('google:cancelAuth', (): boolean => googleService.cancelAuth())
+  handle('google:cancelAuth', (): boolean => googleService.cancelAuth())
 
-  ipcMain.handle(
+  handle(
     'google:deleteCredentials',
     async (): Promise<{ ok: true } | { ok: false; message: string }> => {
       const result = await googleService.deleteCredentials()
@@ -2851,7 +3027,7 @@ app.whenReady().then(async () => {
     }
   )
 
-  ipcMain.handle(
+  handle(
     'google:removeAccount',
     async (
       _e,
@@ -2877,7 +3053,7 @@ app.whenReady().then(async () => {
   // optional in config.json: an empty string means "use the plugin's
   // own default," which is what every existing config will have until
   // the user touches the panel.
-  ipcMain.handle('mic:checkAccess', (): 'granted' | 'denied' | 'not-determined' | 'restricted' => {
+  handle('mic:checkAccess', (): 'granted' | 'denied' | 'not-determined' | 'restricted' => {
     if (process.platform === 'darwin' || process.platform === 'win32') {
       const status = systemPreferences.getMediaAccessStatus('microphone')
       return status === 'unknown' ? 'granted' : status
@@ -2885,15 +3061,15 @@ app.whenReady().then(async () => {
     return 'granted'
   })
 
-  ipcMain.handle('mic:requestAccess', async (): Promise<boolean> => {
+  handle('mic:requestAccess', async (): Promise<boolean> => {
     if (process.platform === 'darwin') {
       return systemPreferences.askForMediaAccess('microphone')
     }
     return true
   })
 
-  ipcMain.handle('stt:getConfig', (): Promise<SttConfig> => getSttConfig())
-  ipcMain.handle(
+  handle('stt:getConfig', (): Promise<SttConfig> => getSttConfig())
+  handle(
     'stt:setConfig',
     async (_e, patch: Partial<SttConfig>): Promise<{ ok: true; config: SttConfig }> => {
       const updated = await persistSttConfig(patch)
@@ -2901,7 +3077,7 @@ app.whenReady().then(async () => {
       return { ok: true as const, config: updated.stt ?? { defaultModel: '' } }
     }
   )
-  ipcMain.handle(
+  handle(
     'stt:transcribe',
     async (
       _e,
@@ -2962,8 +3138,8 @@ app.whenReady().then(async () => {
     }
   )
 
-  ipcMain.handle('tts:getConfig', (): Promise<TtsConfig> => getTtsConfig())
-  ipcMain.handle(
+  handle('tts:getConfig', (): Promise<TtsConfig> => getTtsConfig())
+  handle(
     'tts:setConfig',
     async (_e, patch: Partial<TtsConfig>): Promise<{ ok: true; config: TtsConfig }> => {
       const updated = await persistTtsConfig(patch)
@@ -2979,9 +3155,9 @@ app.whenReady().then(async () => {
   // can install Kokoro (TTS) / faster-whisper (STT) on demand with a progress
   // bar — and so the panels can gate voice/model selection until ready. Install
   // is idempotent and converges with the plugins' lazy first-use install.
-  ipcMain.handle('tts:installStatus', (): Promise<EngineStatus> => ttsStatus())
-  ipcMain.handle('tts:getInstallState', (): EngineRuntimeState => getTtsInstallState())
-  ipcMain.handle('stt:getInstallState', (): EngineRuntimeState => getSttInstallState())
+  handle('tts:installStatus', (): Promise<EngineStatus> => ttsStatus())
+  handle('tts:getInstallState', (): EngineRuntimeState => getTtsInstallState())
+  handle('stt:getInstallState', (): EngineRuntimeState => getSttInstallState())
   // Progress (and the terminal 'done') is BROADCAST to every window, not just
   // the invoking sender. A panel that remounted mid-install — or a renderer that
   // fully reloaded (its original sender is now dead) — must still receive live
@@ -2994,7 +3170,7 @@ app.whenReady().then(async () => {
       w.webContents.send(channel, payload)
     }
   }
-  ipcMain.handle('tts:install', async (): Promise<EngineInstallResult> => {
+  handle('tts:install', async (): Promise<EngineInstallResult> => {
     const res = await installTts(
       (p: EngineInstallProgress) => broadcastEngineProgress('tts:installProgress', p),
       { ensureFfmpeg: () => agent.cerebellum.ensureSystemTool('ffmpeg').then(() => undefined) }
@@ -3002,8 +3178,8 @@ app.whenReady().then(async () => {
     broadcastEngineProgress('tts:installProgress', { phase: 'done', percent: 100 })
     return res
   })
-  ipcMain.handle('stt:installStatus', (): Promise<EngineStatus> => sttStatus())
-  ipcMain.handle('stt:install', async (): Promise<EngineInstallResult> => {
+  handle('stt:installStatus', (): Promise<EngineStatus> => sttStatus())
+  handle('stt:install', async (): Promise<EngineInstallResult> => {
     const res = await installStt((p: EngineInstallProgress) =>
       broadcastEngineProgress('stt:installProgress', p)
     )
@@ -3014,7 +3190,7 @@ app.whenReady().then(async () => {
   // Real Kokoro preview for the TTS panel: synthesize a short sample with the
   // selected voice/speed and hand back the audio file path for the renderer to
   // play. Gated in the UI behind an installed engine, so this is fast.
-  ipcMain.handle(
+  handle(
     'tts:preview',
     async (
       _e,
@@ -3050,16 +3226,16 @@ app.whenReady().then(async () => {
   nativeTheme.on('updated', () => broadcastThemeUpdate())
 
   // System
-  ipcMain.handle('system:getInfo', (): Promise<SystemInfo> => detectSystem())
+  handle('system:getInfo', (): Promise<SystemInfo> => detectSystem())
 
   // Workspace
-  ipcMain.handle('workspace:getStatus', (): Promise<WorkspaceStatus> => getStatus())
-  ipcMain.handle('workspace:completeOnboarding', () => markOnboardingComplete())
+  handle('workspace:getStatus', (): Promise<WorkspaceStatus> => getStatus())
+  handle('workspace:completeOnboarding', () => markOnboardingComplete())
 
   // Wipe all data on disk but preserve API keys, model selection, locale,
   // theme, and runtime toggles. The relaunch ensures no stale handles
   // (cortex.db, brainstem watcher, corpus flush timer) survive the wipe.
-  ipcMain.handle('app:factoryReset', async () => {
+  handle('app:factoryReset', async () => {
     activePull?.abort()
     electronChannel.abort()
     telegramChannel.abort()
@@ -3079,7 +3255,7 @@ app.whenReady().then(async () => {
     app.exit(0)
   })
 
-  ipcMain.handle('data:getAnalytics', (): Promise<DataAnalytics> => getDataAnalytics())
+  handle('data:getAnalytics', (): Promise<DataAnalytics> => getDataAnalytics())
 
   // The mobile channel needs the same list; publish the closure so it can be
   // called from outside this scope rather than reimplementing the mapping.
@@ -3155,28 +3331,28 @@ app.whenReady().then(async () => {
   mobileSetCapabilityEnabled = setCapabilityEnabled
 
   // ---------------------------------------------------------------- mobile
-  ipcMain.handle('mobile:status', () => mobileChannel.getStatus())
-  ipcMain.handle('mobile:offerQr', () => mobileChannel.offerQr())
-  ipcMain.handle('mobile:offerCode', () => mobileChannel.offerCode())
-  ipcMain.handle('mobile:disconnect', () => mobileChannel.disconnect())
-  ipcMain.handle('mobile:unpair', () => mobileChannel.unpair())
+  handle('mobile:status', () => mobileChannel.getStatus())
+  handle('mobile:offerQr', () => mobileChannel.offerQr())
+  handle('mobile:offerCode', () => mobileChannel.offerCode())
+  handle('mobile:disconnect', () => mobileChannel.disconnect())
+  handle('mobile:unpair', () => mobileChannel.unpair())
   // Both of these settings live on two screens — this panel and the phone's
   // own Channels page — so each one tells the other side. The phone's writes
   // come back through applyMobileSettings and are announced by the broadcast
   // there; a change made HERE needs the push spelled out, because
   // mobile:statusChange is (rightly) on the silent list: it also carries the
   // per-frame tunnel counters, and pushing on those would be a heartbeat.
-  ipcMain.handle('mobile:setVerbose', async (_event, verbose: boolean) => {
+  handle('mobile:setVerbose', async (_event, verbose: boolean) => {
     const status = await mobileChannel.setVerbose(Boolean(verbose))
     pushMobileChannelConfig()
     return status
   })
-  ipcMain.handle('mobile:setNotifications', async (_event, enabled: boolean) => {
+  handle('mobile:setNotifications', async (_event, enabled: boolean) => {
     const status = await mobileChannel.setNotificationsEnabled(Boolean(enabled))
     pushMobileChannelConfig()
     return status
   })
-  ipcMain.handle('mobile:setRelayUrl', (_event, url: string | null) =>
+  handle('mobile:setRelayUrl', (_event, url: string | null) =>
     mobileChannel.setRelayUrl(typeof url === 'string' ? url : null)
   )
 
@@ -3209,17 +3385,17 @@ app.whenReady().then(async () => {
   // shows; the generic broadcast hook never sees them (no renderer IPC fires).
   agent.corpus.on('brainstem.jobCompleted', () => mobileChannel.pushConfigChanged('brainstem'))
 
-  ipcMain.handle('cerebellum:listCapabilities', async () => {
+  handle('cerebellum:listCapabilities', async () => {
     await agent.init()
     return serializeCapabilities()
   })
 
-  ipcMain.handle('cerebellum:reload', async () => {
+  handle('cerebellum:reload', async () => {
     await agent.cerebellum.reload()
     return serializeCapabilities()
   })
 
-  ipcMain.handle('cerebellum:toggleCapability', async (_e, name: string, enabled: boolean) => {
+  handle('cerebellum:toggleCapability', async (_e, name: string, enabled: boolean) => {
     await setCapabilityEnabled(name, enabled)
   })
 
@@ -3227,7 +3403,7 @@ app.whenReady().then(async () => {
   // brain/cerebellum/. Validation + staging + copy all happen in the
   // importCapability module; on success the renderer calls cerebellum:reload
   // to pick up the new folder and refresh the list.
-  ipcMain.handle('cerebellum:importCapability', async (_e, sourcePath: string) => {
+  handle('cerebellum:importCapability', async (_e, sourcePath: string) => {
     await agent.init()
     const existingNames = new Set(agent.cerebellum.getCapabilities().map((c) => c.name))
     return importCapability({
@@ -3240,7 +3416,7 @@ app.whenReady().then(async () => {
   // Native picker for the import dropzone's "browse" affordance. On macOS the
   // dialog accepts a file (SKILL.md/.zip) or a folder; on Windows only files
   // (folders still arrive via drag-and-drop). Returns null when canceled.
-  ipcMain.handle(
+  handle(
     'cerebellum:pickImport',
     async (_e, options?: { title?: string; filterName?: string }): Promise<string | null> => {
       const mainWin = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
@@ -3262,7 +3438,7 @@ app.whenReady().then(async () => {
   // click can't wipe a core feature. A path-containment guard ensures we only
   // ever remove a direct child of brain/cerebellum/, never a folder reached
   // through a crafted path. Returns the refreshed list on success.
-  ipcMain.handle('cerebellum:deleteCapability', async (_e, name: string) => {
+  handle('cerebellum:deleteCapability', async (_e, name: string) => {
     await agent.init()
     const cap = agent.cerebellum.getCapabilities().find((c) => c.name === name)
     if (!cap) return { ok: false as const, error: `Capability "${name}" not found.` }
@@ -3461,7 +3637,11 @@ app.whenReady().then(async () => {
         `procedure:${proc.id}`,
         proc.mode ?? null,
         proc.icon || '📋',
-        proc.projectId ?? null
+        proc.projectId ?? null,
+        // A detached run gets exactly what a Play run gets: the attached files
+        // as a model-led list, and a fresh listing of every working folder.
+        (proc.files ?? []).map((f) => f.path),
+        proc.directories ?? []
       )
     }
   })
@@ -3469,11 +3649,11 @@ app.whenReady().then(async () => {
   // Voice — read TTS-generated audio files for the renderer's AudioPlayer
   // (source="voice"), download via save dialog, and check existence for
   // past conversations.
-  ipcMain.handle('voice:readFile', async (_e, filePath: string): Promise<Buffer> => {
+  handle('voice:readFile', async (_e, filePath: string): Promise<Buffer> => {
     const { readFile } = await import('node:fs/promises')
     return readFile(filePath)
   })
-  ipcMain.handle('voice:download', async (_e, filePath: string): Promise<{ ok: boolean }> => {
+  handle('voice:download', async (_e, filePath: string): Promise<{ ok: boolean }> => {
     const { basename } = await import('node:path')
     const { readFile } = await import('node:fs/promises')
     const mainWin = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
@@ -3488,12 +3668,12 @@ app.whenReady().then(async () => {
     await writeFile(result.filePath, data)
     return { ok: true }
   })
-  ipcMain.handle('voice:revealInFolder', (_e, filePath: string): { ok: boolean } => {
+  handle('voice:revealInFolder', (_e, filePath: string): { ok: boolean } => {
     if (!filePath) return { ok: false }
     shell.showItemInFolder(filePath)
     return { ok: true }
   })
-  ipcMain.handle('voice:exists', async (_e, filePath: string): Promise<boolean> => {
+  handle('voice:exists', async (_e, filePath: string): Promise<boolean> => {
     const { access, constants } = await import('node:fs/promises')
     try {
       await access(filePath, constants.F_OK)
@@ -3509,7 +3689,7 @@ app.whenReady().then(async () => {
   // workspace root so the same conversation file plays back identically
   // when the workspace is moved (rare, but the cost of doing it right is
   // zero).
-  ipcMain.handle('upload:pickFile', async (): Promise<string[]> => {
+  handle('upload:pickFile', async (): Promise<string[]> => {
     const mainWin = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
     if (!mainWin) return []
     const result = await dialog.showOpenDialog(mainWin, {
@@ -3579,7 +3759,7 @@ app.whenReady().then(async () => {
     return result.filePaths
   })
 
-  ipcMain.handle('upload:pickFolder', async (): Promise<string | null> => {
+  handle('upload:pickFolder', async (): Promise<string | null> => {
     const mainWin = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
     if (!mainWin) return null
     const result = await dialog.showOpenDialog(mainWin, {
@@ -3590,7 +3770,7 @@ app.whenReady().then(async () => {
     return result.filePaths[0]
   })
 
-  ipcMain.handle(
+  handle(
     'upload:saveFile',
     async (
       _e,
@@ -3619,7 +3799,7 @@ app.whenReady().then(async () => {
     }
   )
 
-  ipcMain.handle(
+  handle(
     'upload:saveBuffer',
     async (
       _e,
@@ -3642,15 +3822,15 @@ app.whenReady().then(async () => {
     }
   )
 
-  ipcMain.handle('upload:readFile', async (_e, relativePath: string): Promise<Buffer> => {
+  handle('upload:readFile', async (_e, relativePath: string): Promise<Buffer> => {
     return readUpload(relativePath)
   })
 
-  ipcMain.handle('upload:exists', async (_e, relativePath: string): Promise<boolean> => {
+  handle('upload:exists', async (_e, relativePath: string): Promise<boolean> => {
     return uploadExists(relativePath)
   })
 
-  ipcMain.handle(
+  handle(
     'upload:getMetadata',
     async (
       _e,
@@ -3663,11 +3843,11 @@ app.whenReady().then(async () => {
     }
   )
 
-  ipcMain.handle('upload:isSupported', (_e, fileName: string): boolean => {
+  handle('upload:isSupported', (_e, fileName: string): boolean => {
     return isSupportedExtension(fileName) || categorizeFile(fileName) !== 'unknown'
   })
 
-  ipcMain.handle(
+  handle(
     'upload:validate',
     (
       _e,
@@ -3687,7 +3867,7 @@ app.whenReady().then(async () => {
     }
   )
 
-  ipcMain.handle(
+  handle(
     'upload:openExternal',
     async (_e, relativePath: string): Promise<{ ok: boolean; error?: string }> => {
       const abs = resolveUploadPath(relativePath)
@@ -3706,7 +3886,7 @@ app.whenReady().then(async () => {
   // whether to show a card (and which kind). Resolves a leading ~. Not
   // workspace-scoped: assistant-referenced paths live anywhere on the user's
   // own machine, and this only reads existence/type, never contents.
-  ipcMain.handle(
+  handle(
     'upload:statPath',
     async (_e, p: string): Promise<{ exists: boolean; isDirectory: boolean }> => {
       const abs = resolveDevicePath(p)
@@ -3726,7 +3906,7 @@ app.whenReady().then(async () => {
   // leading ~. Not workspace-scoped — working folders are arbitrary absolute
   // paths the user picked. Directories sort first, then alphabetical; the entry
   // count is capped so a huge directory can't blow up the prompt.
-  ipcMain.handle(
+  handle(
     'upload:listFolder',
     async (
       _e,
@@ -3771,28 +3951,25 @@ app.whenReady().then(async () => {
   // Reveal a path in the OS file manager: a directory opens directly, a file is
   // revealed in its parent folder (selected), like "Reveal in Finder". Resolves
   // a leading ~. Intentionally not workspace-scoped — see statPath.
-  ipcMain.handle(
-    'upload:revealPath',
-    async (_e, p: string): Promise<{ ok: boolean; error?: string }> => {
-      const abs = resolveDevicePath(p)
-      if (!abs) return { ok: false, error: 'invalid path' }
-      try {
-        const { stat } = await import('node:fs/promises')
-        const st = await stat(abs)
-        if (st.isDirectory()) {
-          const error = await shell.openPath(abs)
-          if (error) return { ok: false, error }
-        } else {
-          shell.showItemInFolder(abs)
-        }
-        return { ok: true }
-      } catch (err) {
-        return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  handle('upload:revealPath', async (_e, p: string): Promise<{ ok: boolean; error?: string }> => {
+    const abs = resolveDevicePath(p)
+    if (!abs) return { ok: false, error: 'invalid path' }
+    try {
+      const { stat } = await import('node:fs/promises')
+      const st = await stat(abs)
+      if (st.isDirectory()) {
+        const error = await shell.openPath(abs)
+        if (error) return { ok: false, error }
+      } else {
+        shell.showItemInFolder(abs)
       }
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
     }
-  )
+  })
 
-  ipcMain.handle('upload:download', async (_e, relativePath: string): Promise<{ ok: boolean }> => {
+  handle('upload:download', async (_e, relativePath: string): Promise<{ ok: boolean }> => {
     const abs = resolveUploadPath(relativePath)
     if (!abs) return { ok: false }
     const mainWin = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
@@ -3810,40 +3987,37 @@ app.whenReady().then(async () => {
   // Save a copy of a device path (a file the assistant read/wrote anywhere on
   // the user's machine) to a location the user picks. Device counterpart to
   // upload:download — intentionally not workspace-scoped, same as revealPath.
-  ipcMain.handle(
-    'upload:downloadPath',
-    async (_e, p: string): Promise<{ ok: boolean; error?: string }> => {
-      const abs = resolveDevicePath(p)
-      if (!abs) return { ok: false, error: 'invalid path' }
-      const mainWin = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
-      if (!mainWin) return { ok: false, error: 'no window' }
-      try {
-        const { stat } = await import('node:fs/promises')
-        const st = await stat(abs)
-        if (!st.isFile()) return { ok: false, error: 'not a file' }
-        const { basename, resolve } = await import('node:path')
-        const result = await dialog.showSaveDialog(mainWin, { defaultPath: basename(abs) })
-        if (result.canceled || !result.filePath) return { ok: false }
-        // Saving back onto the source is a no-op — skip the copy so we never
-        // risk clobbering the original (the file is already where they asked).
-        if (resolve(result.filePath) === resolve(abs)) return { ok: true }
-        const { copyFile } = await import('node:fs/promises')
-        await copyFile(abs, result.filePath)
-        return { ok: true }
-      } catch (err) {
-        return { ok: false, error: err instanceof Error ? err.message : String(err) }
-      }
+  handle('upload:downloadPath', async (_e, p: string): Promise<{ ok: boolean; error?: string }> => {
+    const abs = resolveDevicePath(p)
+    if (!abs) return { ok: false, error: 'invalid path' }
+    const mainWin = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+    if (!mainWin) return { ok: false, error: 'no window' }
+    try {
+      const { stat } = await import('node:fs/promises')
+      const st = await stat(abs)
+      if (!st.isFile()) return { ok: false, error: 'not a file' }
+      const { basename, resolve } = await import('node:path')
+      const result = await dialog.showSaveDialog(mainWin, { defaultPath: basename(abs) })
+      if (result.canceled || !result.filePath) return { ok: false }
+      // Saving back onto the source is a no-op — skip the copy so we never
+      // risk clobbering the original (the file is already where they asked).
+      if (resolve(result.filePath) === resolve(abs)) return { ok: true }
+      const { copyFile } = await import('node:fs/promises')
+      await copyFile(abs, result.filePath)
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
     }
-  )
+  })
 
-  ipcMain.handle('upload:revealInFolder', (_e, relativePath: string): { ok: boolean } => {
+  handle('upload:revealInFolder', (_e, relativePath: string): { ok: boolean } => {
     const abs = resolveUploadPath(relativePath)
     if (!abs) return { ok: false }
     shell.showItemInFolder(abs)
     return { ok: true }
   })
 
-  ipcMain.handle('runtime:setUpdatesEnabled', async (_e, value: boolean) => {
+  handle('runtime:setUpdatesEnabled', async (_e, value: boolean) => {
     await patchConfig((c) => ({
       ...c,
       updates: { ...(c.updates ?? { enabled: true }), enabled: value }
@@ -3856,25 +4030,25 @@ app.whenReady().then(async () => {
     return { value }
   })
 
-  ipcMain.handle('runtime:setLastSettingsState', async (_e, patch: Record<string, string>) => {
+  handle('runtime:setLastSettingsState', async (_e, patch: Record<string, string>) => {
     await patchConfig((c) => ({
       ...c,
       lastSettingsState: { ...c.lastSettingsState, ...patch }
     }))
   })
 
-  ipcMain.handle('runtime:setWeekStartsOn', async (_e, value: WeekStartsOn) => {
+  handle('runtime:setWeekStartsOn', async (_e, value: WeekStartsOn) => {
     await persistWeekStartsOn(value)
     broadcast('preferences:changed', { weekStartsOn: value })
     return { value }
   })
-  ipcMain.handle('runtime:getCompactionConfig', async () => {
+  handle('runtime:getCompactionConfig', async () => {
     return getCompactionConfig()
   })
-  ipcMain.handle('runtime:getCompactionRuns', async () => {
+  handle('runtime:getCompactionRuns', async () => {
     return agent.brainstem.getCompactionRuns()
   })
-  ipcMain.handle(
+  handle(
     'runtime:setCompactionConfig',
     async (_e, patch: Partial<import('@main/workspace/workspace').CompactionConfig>) => {
       const updated = await persistCompactionConfig(patch)
@@ -3883,10 +4057,10 @@ app.whenReady().then(async () => {
       return cfg
     }
   )
-  ipcMain.handle('runtime:getReflectionConfig', async () => {
+  handle('runtime:getReflectionConfig', async () => {
     return getReflectionConfig()
   })
-  ipcMain.handle(
+  handle(
     'runtime:setReflectionConfig',
     async (_e, patch: import('@main/workspace/workspace').ReflectionPatch) => {
       // Shared with the phone's tunnel RPC — persist, reschedule, announce
@@ -3894,27 +4068,27 @@ app.whenReady().then(async () => {
       return applyReflectionPatch(patch)
     }
   )
-  ipcMain.handle('runtime:runReflectionNow', async () => {
+  handle('runtime:runReflectionNow', async () => {
     return agent.brainstem.runReflectionNow()
   })
-  ipcMain.handle('runtime:runDeepCleanNow', async () => {
+  handle('runtime:runDeepCleanNow', async () => {
     return agent.brainstem.runDeepCleanNow()
   })
   // Task-card cancel button (generic async-generation tasks; video today).
   // Mirrors what the model's video_cancel tool does — same manager, same
   // server-side DELETE — so the user can stop a run without waiting on the
   // model to notice.
-  ipcMain.handle('task:cancel', async (_e, payload: { taskId: string }) => {
+  handle('task:cancel', async (_e, payload: { taskId: string }) => {
     return videoTasks.cancel(payload.taskId)
   })
-  ipcMain.handle(
+  handle(
     'conversation:rate',
     async (_e, payload: { conversationId: string; messageId: string | null; score: number }) => {
       return recordTurnRating(payload.conversationId, payload.messageId, payload.score, 'inapp')
     }
   )
 
-  ipcMain.handle('updater:install', async () => {
+  handle('updater:install', async () => {
     if (is.dev || updateInstallInProgress) return
     // Bail before tearing anything down if there's no verified artifact —
     // otherwise a failed arm would force-exit the app with nothing installed.
@@ -3944,7 +4118,7 @@ app.whenReady().then(async () => {
     }, 5_000)
   })
 
-  ipcMain.handle('updater:consumePostUpdate', async () => {
+  handle('updater:consumePostUpdate', async () => {
     const cfg = await readConfig()
     const last = cfg?.updates?.lastVersion
     if (!last || last === app.getVersion()) return false
@@ -3959,55 +4133,52 @@ app.whenReady().then(async () => {
   // Same readers the phone's changelog RPC uses (changelogDir and friends,
   // beside applyMobileSettings). The renderer contract keeps '' for a month
   // with no page — the Changelog screen renders that as its empty state.
-  ipcMain.handle('updater:listChangelogMonths', () => listChangelogMonths())
+  handle('updater:listChangelogMonths', () => listChangelogMonths())
 
-  ipcMain.handle(
+  handle(
     'updater:readChangelog',
     async (_event, month: string, locale?: string) =>
       (await readChangelogMarkdown(month, locale)) ?? ''
   )
 
-  ipcMain.handle('workspace:getModelCatalog', () => MODEL_CATALOG)
+  handle('workspace:getModelCatalog', () => MODEL_CATALOG)
 
   // Viewer — read-only tree + read/write of individual workspace files.
-  ipcMain.handle('viewer:readTree', (): Promise<ViewerTreeNode[]> => readViewerTree())
-  ipcMain.handle('viewer:resync', (): Promise<ViewerTreeNode[]> => readViewerTree())
-  ipcMain.handle(
+  handle('viewer:readTree', (): Promise<ViewerTreeNode[]> => readViewerTree())
+  handle('viewer:resync', (): Promise<ViewerTreeNode[]> => readViewerTree())
+  handle(
     'viewer:readFile',
     (_e, relativePath: string): Promise<string> => readViewerFile(relativePath)
   )
-  ipcMain.handle(
-    'viewer:writeFile',
-    async (_e, relativePath: string, content: string): Promise<void> => {
-      await writeViewerFile(relativePath, content)
-      // Saving Soul, User or Agents — from their own pages or from the
-      // Workspace file tree — is a change a paired phone mirrors. The
-      // announcement reaches other windows directly and the phone through
-      // broadcast()'s generic config.changed hook, which is why there is no
-      // second push to remember here. Scoped to the three: every other
-      // workspace file is desktop-only, and announcing those would make the
-      // phone refetch a snapshot that cannot have moved.
-      const doc = customizationDocFor(relativePath)
-      if (doc) broadcast('customization:changed', { doc, path: CUSTOMIZATION_DOCS[doc] })
-    }
-  )
-  ipcMain.handle(
+  handle('viewer:writeFile', async (_e, relativePath: string, content: string): Promise<void> => {
+    await writeViewerFile(relativePath, content)
+    // Saving Soul, User or Agents — from their own pages or from the
+    // Workspace file tree — is a change a paired phone mirrors. The
+    // announcement reaches other windows directly and the phone through
+    // broadcast()'s generic config.changed hook, which is why there is no
+    // second push to remember here. Scoped to the three: every other
+    // workspace file is desktop-only, and announcing those would make the
+    // phone refetch a snapshot that cannot have moved.
+    const doc = customizationDocFor(relativePath)
+    if (doc) broadcast('customization:changed', { doc, path: CUSTOMIZATION_DOCS[doc] })
+  })
+  handle(
     'viewer:hasDefault',
     (_e, relativePath: string): Promise<boolean> => hasBundledDefault(relativePath)
   )
-  ipcMain.handle(
+  handle(
     'viewer:readDefault',
     (_e, relativePath: string): Promise<string> => readBundledDefault(relativePath)
   )
-  ipcMain.handle(
+  handle(
     'viewer:stat',
     (_e, relativePath: string): Promise<{ mtimeMs: number }> => statViewerFile(relativePath)
   )
-  ipcMain.handle(
+  handle(
     'viewer:readBinaryFile',
     (_e, relativePath: string): Promise<Buffer> => readViewerBinaryFile(relativePath)
   )
-  ipcMain.handle('viewer:download', async (_e, relativePath: string): Promise<{ ok: boolean }> => {
+  handle('viewer:download', async (_e, relativePath: string): Promise<{ ok: boolean }> => {
     const mainWin = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
     if (!mainWin) return { ok: false }
     const fileName = relativePath.split('/').pop() ?? relativePath
@@ -4019,7 +4190,7 @@ app.whenReady().then(async () => {
     return { ok: true }
   })
 
-  ipcMain.handle('viewer:revealInFolder', (_e, relativePath: string): { ok: boolean } => {
+  handle('viewer:revealInFolder', (_e, relativePath: string): { ok: boolean } => {
     const abs = resolveViewerPath(relativePath)
     if (!abs) return { ok: false }
     shell.showItemInFolder(abs)
@@ -4027,7 +4198,7 @@ app.whenReady().then(async () => {
   })
 
   // Heartbeat
-  ipcMain.handle('heartbeat:getJobs', () => {
+  handle('heartbeat:getJobs', () => {
     const jobs = agent.brainstem.getActiveJobs()
     const now = Date.now()
     return jobs.map((j) => ({
@@ -4039,7 +4210,7 @@ app.whenReady().then(async () => {
   // Live run-pool snapshot: up to 3 concurrent runs plus the FIFO overflow.
   // The floating run cards and the Automations page's play-button gating both
   // render from this seed + the heartbeat:runsChanged pushes below.
-  ipcMain.handle('heartbeat:getRuns', () => ({
+  handle('heartbeat:getRuns', () => ({
     running: agent.brainstem.getRunningJobs(),
     queued: agent.brainstem.getQueuedJobs()
   }))
@@ -4047,17 +4218,51 @@ app.whenReady().then(async () => {
   // Run an automation on demand from the Heartbeat page's run button. Goes
   // through the same run pool a cron fire uses (up to 3 at once, overflow
   // queued FIFO), and coalesces if the job is already running or queued.
-  ipcMain.handle('heartbeat:runJob', (_event, idOrLabel: string) => {
+  handle('heartbeat:runJob', (_event, idOrLabel: string) => {
     return agent.brainstem.runJobNow(idOrLabel)
   })
 
   // Per-job "Edited …" stamps (label → epoch ms), maintained writer-agnostically
   // by the brainstem's reload diff; adoptMeta is the one-shot donation of the
   // legacy renderer-localStorage stamps.
-  ipcMain.handle('heartbeat:getMeta', () => agent.brainstem.getHeartbeatEditStamps())
-  ipcMain.handle('heartbeat:adoptMeta', (_event, stamps: Record<string, number>) =>
+  handle('heartbeat:getMeta', () => agent.brainstem.getHeartbeatEditStamps())
+  handle('heartbeat:adoptMeta', (_event, stamps: Record<string, number>) =>
     agent.brainstem.adoptHeartbeatEditStamps(stamps ?? {})
   )
+
+  // An automation's attached files and working directories. Both are stored as
+  // marker lines in heartbeat.md — the page owns that write — so these handlers
+  // only do the parts that need main: the native pickers, the copy into the
+  // workspace, and the deletion of a copy we own. `existing` is the automation's
+  // current file list, which is how attachFilesToAutomation finds the dir it
+  // already owns instead of minting a second one.
+  handle('automations:pickFiles', async (_event, existing: string[] | undefined) => {
+    const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+    if (!win) return null
+    const result = await dialog.showOpenDialog(win, {
+      properties: ['openFile', 'multiSelections']
+    })
+    if (result.canceled || result.filePaths.length === 0) return null
+    // Copying starts only once the picker closes, so these ticks double as the
+    // dialog's "the copy is running now" signal — it shows its bar on the first
+    // one rather than while the user is still browsing.
+    return attachFilesToAutomation(existing ?? [], result.filePaths, (progress) =>
+      broadcast('automations:copyProgress', progress)
+    )
+  })
+  handle('paths:pickDirectories', async () => {
+    const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+    if (!win) return null
+    const result = await dialog.showOpenDialog(win, {
+      properties: ['openDirectory', 'multiSelections', 'createDirectory']
+    })
+    if (result.canceled || result.filePaths.length === 0) return null
+    return result.filePaths
+  })
+  handle('automations:removeFile', async (_event, filePath: string) => {
+    await removeAutomationFile(filePath)
+    return { ok: true as const }
+  })
 
   agent.brainstem.setListener({
     onJobStarted: (info) => broadcast('heartbeat:jobStarted', info),
@@ -4091,8 +4296,8 @@ app.whenReady().then(async () => {
     // re-lists on it exactly as an open page here re-fetches.
     if (mobileChannel.hasPeer) mobileChannel.pushProceduresChanged()
   })
-  ipcMain.handle('procedures:list', () => listProcedures())
-  ipcMain.handle(
+  handle('procedures:list', () => listProcedures())
+  handle(
     'procedures:create',
     (
       _event,
@@ -4105,7 +4310,7 @@ app.whenReady().then(async () => {
       }
     ) => createProcedure(payload)
   )
-  ipcMain.handle(
+  handle(
     'procedures:update',
     (
       _event,
@@ -4116,12 +4321,29 @@ app.whenReady().then(async () => {
         mode?: 'single' | 'workflow'
         icon?: string
         projectId?: string
+        files?: ProcedureFileRef[]
+        directories?: string[]
       }
     ) => updateProcedure(payload)
   )
-  ipcMain.handle('procedures:delete', async (_event, id: string) => {
+  handle('procedures:delete', async (_event, id: string) => {
     await deleteProcedure(id)
     return { ok: true as const }
+  })
+  // Pick + COPY in one step, exactly like projects:pickFiles: chosen files are
+  // copied into the procedure's uploads/procedure-<id>/ dir and attached;
+  // returns the updated procedure, or null on cancel.
+  handle('procedures:pickFiles', async (_event, procedureId: string) => {
+    const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+    if (!win) return null
+    const result = await dialog.showOpenDialog(win, {
+      properties: ['openFile', 'multiSelections']
+    })
+    if (result.canceled || result.filePaths.length === 0) return null
+    const attached = await attachFilesToProcedure(procedureId, result.filePaths, (progress) =>
+      broadcast('procedures:copyProgress', { procedureId, ...progress })
+    )
+    return attached.procedure
   })
 
   // Projects — same inert-data shape as procedures (flat JSON list, same
@@ -4137,13 +4359,13 @@ app.whenReady().then(async () => {
       mobileChannel.pushConfigChanged('projects')
     }
   })
-  ipcMain.handle('projects:list', () => listProjects())
-  ipcMain.handle(
+  handle('projects:list', () => listProjects())
+  handle(
     'projects:create',
     (_event, payload: { title: string; icon?: string; instructions?: string }) =>
       createProject(payload)
   )
-  ipcMain.handle(
+  handle(
     'projects:update',
     (
       _event,
@@ -4153,17 +4375,18 @@ app.whenReady().then(async () => {
         icon?: string
         instructions?: string
         files?: ProjectFileRef[]
+        directories?: string[]
       }
     ) => updateProject(payload)
   )
-  ipcMain.handle('projects:delete', async (_event, id: string) => {
+  handle('projects:delete', async (_event, id: string) => {
     await deleteProject(id)
     return { ok: true as const }
   })
   // Pick + COPY in one step: chosen files are copied into the project's
   // uploads/project-<id>/ dir (uniform with conversation uploads) and
   // attached; returns the updated project, or null on cancel.
-  ipcMain.handle('projects:pickFiles', async (_event, projectId: string) => {
+  handle('projects:pickFiles', async (_event, projectId: string) => {
     const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
     if (!win) return null
     const result = await dialog.showOpenDialog(win, {
@@ -4182,7 +4405,7 @@ app.whenReady().then(async () => {
   // Memory reindex — the cortex search index is rebuilt from scratch after an
   // app update (and on launch). On a large workspace that takes a while, so we
   // surface a blocking overlay with live progress, mirroring the heartbeat one.
-  ipcMain.handle('reindex:getStatus', () => agent.cortex.getReindexStatus())
+  handle('reindex:getStatus', () => agent.cortex.getReindexStatus())
   // The phone gets the same three edges as a card in its overlay stack rather
   // than a takeover — a phone that cannot be used at all while an index
   // rebuilds is a phone that looks broken. Each one re-reads the cortex instead
@@ -4287,7 +4510,7 @@ app.whenReady().then(async () => {
       diagnosticsRunning = null
     }
   }
-  ipcMain.handle(
+  handle(
     'diagnostics:export',
     async (_e, payload: { conversationId: string }): Promise<DiagnosticResult> =>
       await runDiagnosticExport(payload.conversationId)
@@ -4298,7 +4521,7 @@ app.whenReady().then(async () => {
 
   // "Save a copy" on the confirmation card — the archive already lives in the
   // workspace; this only duplicates it wherever the user points.
-  ipcMain.handle(
+  handle(
     'diagnostics:saveCopy',
     async (
       _e,
@@ -4320,14 +4543,14 @@ app.whenReady().then(async () => {
     }
   )
 
-  ipcMain.handle('diagnostics:reveal', (_e, zipPath: string): { ok: boolean } => {
+  handle('diagnostics:reveal', (_e, zipPath: string): { ok: boolean } => {
     if (!zipPath) return { ok: false }
     shell.showItemInFolder(zipPath)
     return { ok: true }
   })
 
   // Conversations
-  ipcMain.handle('conversation:list', async (): Promise<ConversationMeta[]> => {
+  handle('conversation:list', async (): Promise<ConversationMeta[]> => {
     // Fast path: the cortex conversations table answers in <1ms vs the
     // legacy JSON.parse-every-file scan (~140ms today, linear in history).
     // Fall back to the scan when the index is cold/empty (first boot,
@@ -4358,11 +4581,11 @@ app.whenReady().then(async () => {
     }
     return listConversations()
   })
-  ipcMain.handle(
+  handle(
     'conversation:load',
     (_e, id: string): Promise<ConversationFile | null> => loadConversation(id)
   )
-  ipcMain.handle('conversation:save', (_e, conv: ConversationFile): Promise<{ ok: true }> => {
+  handle('conversation:save', (_e, conv: ConversationFile): Promise<{ ok: true }> => {
     return trackBackgroundTask(async () => {
       // Titling is done up front by the TurnRunner (a pure LLM call that
       // persists the title before processing), so there's nothing to generate
@@ -4384,7 +4607,7 @@ app.whenReady().then(async () => {
       return { ok: true as const }
     })
   })
-  ipcMain.handle('conversation:delete', async (_e, id: string): Promise<{ ok: boolean }> => {
+  handle('conversation:delete', async (_e, id: string): Promise<{ ok: boolean }> => {
     // Deleting a conversation whose turn is still running would race the
     // end-of-turn persist and resurrect the file (or strand a live stream
     // with no home). The sidebar disables delete for processing rows; this
@@ -4397,24 +4620,24 @@ app.whenReady().then(async () => {
     agent.corpus.emit('conversation.deleted', { id })
     return { ok: true }
   })
-  ipcMain.handle(
+  handle(
     'conversation:create',
     (_e, model: string | null): ConversationFile => createConversation(model)
   )
 
   // Ollama
-  ipcMain.handle('ollama:detect', async () => {
+  handle('ollama:detect', async () => {
     const reachable = await detectOllama()
     const installed = isOllamaInstalled()
     return { reachable, installed }
   })
-  ipcMain.handle('ollama:installUrl', () => platformInstallUrl(process.platform))
-  ipcMain.handle('ollama:openInstallPage', async () => {
+  handle('ollama:installUrl', () => platformInstallUrl(process.platform))
+  handle('ollama:openInstallPage', async () => {
     await shell.openExternal(platformInstallUrl(process.platform))
     return { opened: true }
   })
-  ipcMain.handle('ollama:start', () => startOllama())
-  ipcMain.handle('ollama:listInstalled', async () => {
+  handle('ollama:start', () => startOllama())
+  handle('ollama:listInstalled', async () => {
     try {
       return await listTags()
     } catch {
@@ -4422,24 +4645,24 @@ app.whenReady().then(async () => {
     }
   })
 
-  ipcMain.handle('ollama:scanAvailable', async () => {
+  handle('ollama:scanAvailable', async () => {
     const cfg = await readConfig()
     const folder = cfg?.ollamaModelsFolder || defaultModelsFolder()
     const scanned = await scanModelManifests(folder)
     return enrichWithDetails(scanned)
   })
 
-  ipcMain.handle('ollama:getModelsFolder', async () => {
+  handle('ollama:getModelsFolder', async () => {
     const cfg = await readConfig()
     return cfg?.ollamaModelsFolder || defaultModelsFolder()
   })
 
-  ipcMain.handle('ollama:setModelsFolder', async (_e, folder: string) => {
+  handle('ollama:setModelsFolder', async (_e, folder: string) => {
     await patchConfig((c) => ({ ...c, ollamaModelsFolder: folder }))
     return { ok: true as const, folder }
   })
 
-  ipcMain.handle('ollama:pickModelsFolder', async () => {
+  handle('ollama:pickModelsFolder', async () => {
     const mainWin = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
     if (!mainWin) return null
     const result = await dialog.showOpenDialog(mainWin, {
@@ -4452,7 +4675,7 @@ app.whenReady().then(async () => {
 
   // Model selection — pulls (if needed) and persists. Streams progress to
   // every renderer; final 'success' or error is also broadcast.
-  ipcMain.handle('model:select', async (_e, modelName: string) => {
+  handle('model:select', async (_e, modelName: string) => {
     if (activePull && activePullModel !== modelName) {
       activePull.abort()
     }
@@ -4524,19 +4747,19 @@ app.whenReady().then(async () => {
     }
   })
 
-  ipcMain.handle('model:cancelPull', () => {
+  handle('model:cancelPull', () => {
     activePull?.abort()
     return { canceled: !!activePull }
   })
 
-  ipcMain.handle('model:clear', async () => {
+  handle('model:clear', async () => {
     activePull?.abort()
     await clearLocalModel()
     localProvider.configure(null)
     return { cleared: true }
   })
 
-  ipcMain.handle('model:status', () => ({
+  handle('model:status', () => ({
     model: localProvider.currentModel
   }))
 
@@ -4547,7 +4770,7 @@ app.whenReady().then(async () => {
   // declares a "vision" capability (cached in LocalProvider). Returns
   // false when no model is available at all so the renderer can dim the
   // upload button.
-  ipcMain.handle(
+  handle(
     'model:capabilities',
     async (): Promise<{
       provider: string | null
@@ -4581,7 +4804,7 @@ app.whenReady().then(async () => {
   // the thalamus cascade in-place. test hits the provider's /v1/models
   // endpoint, which validates auth without spending tokens and returns the
   // catalogue used to populate the model dropdown.
-  ipcMain.handle('provider:list', async (): Promise<ProviderListEntry[]> => {
+  handle('provider:list', async (): Promise<ProviderListEntry[]> => {
     const cfg = await readConfig()
     const providers = cfg?.llm.providers ?? []
     return providers.map((p) => ({
@@ -4593,7 +4816,7 @@ app.whenReady().then(async () => {
     }))
   })
 
-  ipcMain.handle(
+  handle(
     'provider:test',
     async (
       _e,
@@ -4635,7 +4858,7 @@ app.whenReady().then(async () => {
   // Save accepts an optional apiKey — if omitted, we keep what's already on
   // disk. Lets the user change just the model selection without re-pasting
   // their key.
-  ipcMain.handle(
+  handle(
     'provider:save',
     async (
       _e,
@@ -4667,18 +4890,15 @@ app.whenReady().then(async () => {
     }
   )
 
-  ipcMain.handle(
-    'provider:remove',
-    async (_e, id: CloudProviderConfig['id']): Promise<{ ok: true }> => {
-      const updated = await removeCloudProvider(id)
-      thalamus.setCloudProviders(updated.llm.providers)
-      thalamus.setBrain(updated.llm.brain ?? null)
-      broadcast('provider:updated', { id })
-      return { ok: true }
-    }
-  )
+  handle('provider:remove', async (_e, id: CloudProviderConfig['id']): Promise<{ ok: true }> => {
+    const updated = await removeCloudProvider(id)
+    thalamus.setCloudProviders(updated.llm.providers)
+    thalamus.setBrain(updated.llm.brain ?? null)
+    broadcast('provider:updated', { id })
+    return { ok: true }
+  })
 
-  ipcMain.handle(
+  handle(
     'provider:setBrain',
     async (
       _e,
@@ -4693,21 +4913,18 @@ app.whenReady().then(async () => {
     }
   )
 
-  ipcMain.handle(
-    'provider:setMode',
-    async (_e, mode: 'single' | 'workflow'): Promise<{ ok: true }> => {
-      await persistMode(mode === 'workflow' ? 'workflow' : 'single')
-      agent.setMode(mode === 'workflow' ? 'workflow' : 'single')
-      broadcast('provider:updated', { id: null })
-      return { ok: true }
-    }
-  )
+  handle('provider:setMode', async (_e, mode: 'single' | 'workflow'): Promise<{ ok: true }> => {
+    await persistMode(mode === 'workflow' ? 'workflow' : 'single')
+    agent.setMode(mode === 'workflow' ? 'workflow' : 'single')
+    broadcast('provider:updated', { id: null })
+    return { ok: true }
+  })
 
   // Chat — delegated to ElectronChannel. The handler returns the turnId
   // synchronously so the renderer can register listeners before any
   // segment fires. Streaming continues in the background inside the
   // channel.
-  ipcMain.handle(
+  handle(
     'chat:send',
     (
       e,
@@ -4716,6 +4933,7 @@ app.whenReady().then(async () => {
         conversationId?: string | null
         userMessageId?: string
         workingFolders?: string[]
+        contextFiles?: string[]
         thinkingMode?: string
         modeOverride?: 'single' | 'workflow'
         projectId?: string | null
@@ -4723,7 +4941,7 @@ app.whenReady().then(async () => {
     ) => electronChannel.send(e.sender, payload)
   )
 
-  ipcMain.handle('chat:cancel', async (_e, payload?: { conversationId?: string | null }) => {
+  handle('chat:cancel', async (_e, payload?: { conversationId?: string | null }) => {
     const conversationId = payload?.conversationId ?? null
     const result = await electronChannel.cancel(conversationId)
     // Nothing in-app owned that conversation — it's a Telegram/WhatsApp (or
@@ -4743,7 +4961,7 @@ app.whenReady().then(async () => {
   // channel. chat:turnState only broadcasts transitions, so a window opened
   // (or reopened from the tray) mid-run has no way to learn about it —
   // this is how the renderer seeds its live run state.
-  ipcMain.handle('chat:activeRuns', (): ActiveRun[] => [
+  handle('chat:activeRuns', (): ActiveRun[] => [
     ...turnRunner.activeRuns(),
     // Autonomous runs (automations, procedures) bypass the runner entirely,
     // so they carry their own registry — without them a window opened while an
@@ -4751,13 +4969,11 @@ app.whenReady().then(async () => {
     ...agent.activeAutonomousRuns()
   ])
 
-  ipcMain.handle(
-    'chat:approvalRespond',
-    (_e, payload: { id: string; decision: ApprovalDecision }) =>
-      electronChannel.respondApproval(payload)
+  handle('chat:approvalRespond', (_e, payload: { id: string; decision: ApprovalDecision }) =>
+    electronChannel.respondApproval(payload)
   )
 
-  ipcMain.handle('chat:askRespond', (_e, payload: { id: string; response: AskUserResponse }) =>
+  handle('chat:askRespond', (_e, payload: { id: string; response: AskUserResponse }) =>
     electronChannel.respondAsk(payload)
   )
 
@@ -4767,7 +4983,7 @@ app.whenReady().then(async () => {
   // pipeline — same engine as the browser's "Save as PDF", so page-break CSS
   // in the stylesheet drives clean pagination. The HTML goes through a temp
   // file because data: URLs cap out below real conversation sizes.
-  ipcMain.handle(
+  handle(
     'chat:exportPdf',
     async (
       _e,
@@ -4843,18 +5059,18 @@ app.whenReady().then(async () => {
     return countConversationsSince(cutoffMs)
   }
 
-  ipcMain.handle('usage:getSummary', async (_e, range: UsageTimeRange) => {
+  handle('usage:getSummary', async (_e, range: UsageTimeRange) => {
     return agent.usage.getSummary(range)
   })
-  ipcMain.handle('usage:getStats', async (_e, range: UsageTimeRange) => {
+  handle('usage:getStats', async (_e, range: UsageTimeRange) => {
     const stats = await agent.usage.getStats(range)
     const cutoffMs = rangeCutoffMs(range)
     return { ...stats, conversations: await countConversations(cutoffMs) }
   })
-  ipcMain.handle('usage:getDaily', async (_e, year: number) => {
+  handle('usage:getDaily', async (_e, year: number) => {
     return agent.usage.getDaily(year)
   })
-  ipcMain.handle('usage:sync', async () => {
+  handle('usage:sync', async () => {
     await agent.usage.sync()
     return { ok: true as const }
   })
@@ -4864,6 +5080,56 @@ app.whenReady().then(async () => {
     const absolutePath = join(workspaceRoot(), relativePath)
     return net.fetch(`file://${absolutePath}`)
   })
+
+  // The CLI socket serves BOTH modes: a desktop user gets `wolffish` in a
+  // terminal alongside the app, a headless box gets it as the only surface.
+  // Started after the IPC handlers above are registered — the server's whole
+  // job is forwarding into that map.
+  registerCliIpc({
+    handle,
+    handlers: ipcHandlers,
+    channel: cliChannel,
+    server: cliServer,
+    snapshot: () => buildCliSnapshot(),
+    broadcast: (channelName, payload) => broadcast(channelName, payload),
+    status: () => buildCliStatus(),
+    execPath: app.getPath('exe'),
+    cliEntry: cliEntryPath(is.dev, app.getAppPath(), process.resourcesPath),
+    // Same three functions the Wolffish tab's toggle calls. Sharing them is
+    // what keeps the two screens from ever disagreeing about whether Wolffish
+    // starts on its own — they are one setting with two doors.
+    autostart: {
+      enable: () => setAutostart(true),
+      disable: () => setAutostart(false),
+      read: () => readAutostartStatus()
+    }
+  })
+  void cliServer.start().catch((err) => wlog.error('[cli]', `socket start failed: ${err}`))
+
+  // Install the `wolffish` shim on every boot, not just on first run. It is
+  // idempotent and it has to be re-pointed after an update anyway (the app
+  // binary's path can move), so writing it unconditionally is both simpler
+  // and more correct than tracking whether it was ever installed. Silent and
+  // best-effort: it writes into the user's own ~/.local/bin (or
+  // ~/.wolffish/bin on Windows), needs no privilege, and a failure only means
+  // the Channels → CLI panel shows its "not on PATH" card with the fix.
+  // Skipped in dev, where process.execPath is the electron-vite binary.
+  if (!is.dev) {
+    void installCliPath(
+      app.getPath('exe'),
+      cliEntryPath(false, app.getAppPath(), process.resourcesPath)
+    )
+      .then((state) => {
+        if (state.error) wlog.warn('[cli]', `shim install failed: ${state.error}`)
+        else if (state.needsPathEntry) wlog.info('[cli]', `shim written, PATH entry needed`)
+      })
+      .catch(() => undefined)
+  }
+
+  if (IS_HEADLESS) {
+    wlog.info('[boot]', 'headless — no window, no tray; CLI socket is the surface')
+    return
+  }
 
   createTray(cfg?.locale ?? 'en')
   createWindow()
@@ -4897,6 +5163,11 @@ app.on('before-quit', (event) => {
 })
 
 app.on('will-quit', () => {
+  // Attached terminals get their socket closed rather than left dangling on a
+  // path whose daemon is gone — the client reads that as "detached", not as a
+  // hang. Fire-and-forget: will-quit is synchronous and the OS reclaims the
+  // socket regardless.
+  void cliServer.stop().catch(() => undefined)
   // Last-resort synchronous sweep for stdio MCP children: the idle quit
   // path never runs the async drain, and Node does not kill children on
   // parent exit — a server that ignores stdin EOF would orphan.

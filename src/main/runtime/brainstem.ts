@@ -1,3 +1,4 @@
+import { pruneAutomationUploads } from '@main/automations/files'
 import { diskWriter } from '@main/io/diskWriter'
 import type { Agent } from '@main/runtime/agent'
 import { runDetached, type Corpus } from '@main/runtime/corpus'
@@ -63,6 +64,10 @@ export type BrainstemJob = {
   project?: string | null
   /** Emoji (`icon: …` marker) stamped on the run's conversation for the rail badge. */
   icon?: string | null
+  /** Attached files (`file: …` markers) — listed to the run, never injected. */
+  files?: string[]
+  /** Working directories (`dir: …` markers) — listed fresh into the run's tail. */
+  dirs?: string[]
 }
 
 export type CompactionResult = {
@@ -242,6 +247,10 @@ export type ParsedSchedule = {
   project?: string | null
   /** Emoji from the `icon: …` marker line; absent ⇒ none. */
   icon?: string | null
+  /** Attached file paths from the repeatable `file: …` marker lines. */
+  files?: string[]
+  /** Working directory paths from the repeatable `dir: …` marker lines. */
+  dirs?: string[]
 }
 
 export type RunningJobInfo = {
@@ -519,6 +528,12 @@ export class Brainstem {
     // every write path lands here (init or reload), so the stamps can never
     // miss an edit regardless of which surface made it.
     await this.updateHeartbeatMeta(raw, heartbeatPath).catch(() => {})
+    // Same reasoning for the attached-file copies: reconcile what we keep on
+    // disk against what the file still names, so a `file:` marker removed by
+    // ANY writer (this app, the phone, the agent's tools, a hand edit) takes
+    // its copy with it. Fire-and-forget — a sweep must never delay the
+    // scheduler, and it re-runs on the next reload anyway.
+    void pruneAutomationUploads(referencedAutomationFiles(raw)).catch(() => undefined)
 
     const schedules = parseHeartbeat(raw)
     const startupJobs: ParsedSchedule[] = []
@@ -535,7 +550,9 @@ export class Brainstem {
           task: null,
           mode: schedule.mode ?? null,
           project: schedule.project ?? null,
-          icon: schedule.icon ?? null
+          icon: schedule.icon ?? null,
+          files: schedule.files ?? [],
+          dirs: schedule.dirs ?? []
         })
         continue
       }
@@ -553,7 +570,9 @@ export class Brainstem {
           runAt: schedule.runAt ?? null,
           mode: schedule.mode ?? null,
           project: schedule.project ?? null,
-          icon: schedule.icon ?? null
+          icon: schedule.icon ?? null,
+          files: schedule.files ?? [],
+          dirs: schedule.dirs ?? []
         })
         this.scheduleOnce(schedule, runStartup)
         continue
@@ -580,7 +599,9 @@ export class Brainstem {
         task,
         mode: schedule.mode ?? null,
         project: schedule.project ?? null,
-        icon: schedule.icon ?? null
+        icon: schedule.icon ?? null,
+        files: schedule.files ?? [],
+        dirs: schedule.dirs ?? []
       })
     }
 
@@ -1339,7 +1360,9 @@ export class Brainstem {
       runAt: job.runAt ?? null,
       mode: job.mode ?? null,
       project: job.project ?? null,
-      icon: job.icon ?? null
+      icon: job.icon ?? null,
+      files: job.files ?? [],
+      dirs: job.dirs ?? []
     }
     const state = this.enqueue(schedule, handler)
     if (state === 'coalesced') {
@@ -1367,7 +1390,9 @@ export class Brainstem {
     key: string,
     mode?: 'single' | 'workflow' | null,
     icon?: string | null,
-    project?: string | null
+    project?: string | null,
+    files?: string[],
+    dirs?: string[]
   ): { ok: boolean; started: boolean; error?: string } {
     if (!this.agent) return { ok: false, started: false, error: 'The agent is not ready yet.' }
     if (instruction.trim().length === 0) {
@@ -1388,7 +1413,7 @@ export class Brainstem {
       mode: mode ?? null
     }
     const state = this.enqueue(schedule, () =>
-      this.runHeartbeatJob(instruction, label, 'procedure', mode, project, icon, key)
+      this.runHeartbeatJob(instruction, label, 'procedure', mode, project, icon, key, files, dirs)
     )
     if (state === 'coalesced') {
       return {
@@ -1421,6 +1446,8 @@ export class Brainstem {
       mode?: 'single' | 'workflow' | null
       project?: string | null
       icon?: string | null
+      files?: string[]
+      dirs?: string[]
     }
   ): (() => Promise<void>) | null {
     if (source.body.trim().length === 0) return null
@@ -1432,7 +1459,9 @@ export class Brainstem {
         source.mode,
         source.project,
         source.icon,
-        source.id
+        source.id,
+        source.files,
+        source.dirs
       )
   }
 
@@ -1443,7 +1472,9 @@ export class Brainstem {
     mode?: 'single' | 'workflow' | null,
     project?: string | null,
     icon?: string | null,
-    jobId?: string
+    jobId?: string,
+    files?: string[],
+    dirs?: string[]
   ): Promise<void> {
     if (!this.agent) return
     // Concurrency is handled by the run pool, so this just runs the turn.
@@ -1452,6 +1483,9 @@ export class Brainstem {
     // project (overlay + conversation registration) and `icon` stamps the
     // conversation's rail-badge emoji. `jobId` stamps the run's live log
     // entries so the renderer can route them to the right concurrent card.
+    // `files`/`dirs` are the automation's own attachments: the files are
+    // listed to the model (never injected), the dirs ride the same
+    // working-folders channel the in-app composer's folder picker uses.
     const startedAt = Date.now()
     try {
       await this.agent.processAutonomous({
@@ -1461,7 +1495,9 @@ export class Brainstem {
         channel,
         mode: mode ?? undefined,
         projectId: project ?? undefined,
-        icon: icon ?? undefined
+        icon: icon ?? undefined,
+        contextFiles: files && files.length > 0 ? files : undefined,
+        workingFolders: dirs && dirs.length > 0 ? dirs : undefined
       })
       await this.appendRunHistory(label, channel, 'ok', Date.now() - startedAt)
     } catch (err) {
@@ -1898,7 +1934,7 @@ export function parseHeartbeat(raw: string): ParsedSchedule[] {
     if (!heading) continue
 
     const headingText = heading[1]
-    const { body, mode, project, icon } = splitMarkers(collectBody(lines, i + 1))
+    const { body, mode, project, icon, files, dirs } = splitMarkers(collectBody(lines, i + 1))
     const parsed = matchSchedule(headingText)
 
     if (!parsed) continue
@@ -1916,7 +1952,9 @@ export function parseHeartbeat(raw: string): ParsedSchedule[] {
       runAt: parsed.runAt ?? null,
       mode,
       project,
-      icon
+      icon,
+      files,
+      dirs
     })
   }
 
@@ -1989,28 +2027,41 @@ export function parseHeartbeatBlocks(raw: string): Array<{ label: string; block:
 
 /**
  * A job's optional per-job settings ride its LEADING body lines as plain
- * markers — `mode: single|workflow`, `project: <id>`, `icon: <emoji>` — in
- * any order, with blank lines allowed between them (headings are the
- * schedule+label identity, and HTML comments are stripped wholesale before
- * parsing — neither can carry them). The markers are split OFF the body here
- * so they never leak into the instruction the model receives. The renderer's
- * Automations-page parser and the automations plugin's block parser mirror
- * this rule — keep all three in sync.
+ * markers — `mode: single|workflow`, `project: <id>`, `icon: <emoji>`, plus the
+ * repeatable `file: <path>` and `dir: <path>` — in any order, with blank lines
+ * allowed between them (headings are the schedule+label identity, and HTML
+ * comments are stripped wholesale before parsing — neither can carry them). The
+ * markers are split OFF the body here so they never leak into the instruction
+ * the model receives. The renderer's Automations-page parser, the phone's port
+ * of it, and the automations plugin's block parser mirror this rule — keep all
+ * four in sync.
  */
 export const MODE_MARKER_RE = /^mode:\s*(single|workflow)\s*$/i
 export const PROJECT_MARKER_RE = /^project:\s*(\S+)\s*$/i
 export const ICON_MARKER_RE = /^icon:\s*(\S+)\s*$/i
+/**
+ * Attached files and working directories, both REPEATABLE — an automation can
+ * carry several of each, so these accumulate instead of last-one-wins. Their
+ * value is a whole path, spaces and all, which is why they take `(.+?)` where
+ * the settings above take a single token.
+ */
+export const FILE_MARKER_RE = /^file:\s*(.+?)\s*$/i
+export const DIR_MARKER_RE = /^dir:\s*(.+?)\s*$/i
 
 export function splitMarkers(body: string): {
   body: string
   mode: 'single' | 'workflow' | null
   project: string | null
   icon: string | null
+  files: string[]
+  dirs: string[]
 } {
   const lines = body.split('\n')
   let mode: 'single' | 'workflow' | null = null
   let project: string | null = null
   let icon: string | null = null
+  const files: string[] = []
+  const dirs: string[] = []
   let i = 0
   while (i < lines.length) {
     const line = lines[i].trim()
@@ -2036,9 +2087,31 @@ export function splitMarkers(body: string): {
       i++
       continue
     }
+    const f = line.match(FILE_MARKER_RE)
+    if (f) {
+      files.push(f[1])
+      i++
+      continue
+    }
+    const d = line.match(DIR_MARKER_RE)
+    if (d) {
+      dirs.push(d[1])
+      i++
+      continue
+    }
     break
   }
-  return { body: lines.slice(i).join('\n').trim(), mode, project, icon }
+  return { body: lines.slice(i).join('\n').trim(), mode, project, icon, files, dirs }
+}
+
+/**
+ * Every file path heartbeat.md still names, across ACTIVE and switched-off
+ * automations alike. parseHeartbeat can't serve this — it strips HTML comments
+ * wholesale, so a disabled automation's attachments would read as unreferenced
+ * and be swept the moment someone toggled it off.
+ */
+export function referencedAutomationFiles(raw: string): string[] {
+  return parseHeartbeatBlocks(raw).flatMap((b) => splitMarkers(b.block).files)
 }
 
 /** Back-compat shim over {@link splitMarkers} for mode-only callers. */

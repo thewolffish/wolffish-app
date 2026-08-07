@@ -223,10 +223,32 @@ function Install-Wolffish {
 
         Write-Ok "Wolffish v$latestVersion installed successfully!"
         Write-Host ""
+        Add-WolffishCliPath
     } finally {
         if (Test-Path $tempDir) {
             Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
         }
+    }
+}
+
+# The `wolffish.cmd` shim is written by the app on first launch (idempotent,
+# and it must be re-pointed after each update, so the app owns it). All this
+# does is make sure its folder is on the user's PATH — a per-user setx, so no
+# elevation and no effect on other accounts.
+function Add-WolffishCliPath {
+    $binDir = Join-Path $env:USERPROFILE ".wolffish\bin"
+    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    if ($userPath -and ($userPath -split ';' | Where-Object { $_.TrimEnd('\') -ieq $binDir.TrimEnd('\') })) {
+        Write-Info "The 'wolffish' command will be available after the first launch."
+        return
+    }
+    try {
+        $updated = if ([string]::IsNullOrEmpty($userPath)) { $binDir } else { "$userPath;$binDir" }
+        [Environment]::SetEnvironmentVariable("Path", $updated, "User")
+        Write-Ok "Added $binDir to your PATH."
+        Write-Info "Open a new terminal, then run: wolffish status"
+    } catch {
+        Write-Err "Could not update PATH automatically. Add this folder yourself: $binDir"
     }
 }
 

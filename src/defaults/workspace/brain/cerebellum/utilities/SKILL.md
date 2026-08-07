@@ -18,7 +18,7 @@ triggers:
   - show the folder
 tools:
   - name: send_file
-    description: "Deliver a file to the user as a downloadable attachment in the conversation they are talking to you in — it renders in the in-app chat and is uploaded/sent natively on WhatsApp and Telegram. Works for ANY file type (documents, images, audio, video, archives, code, text, etc.). THIS IS THE ONLY WAY A FILE REACHES THE USER: no tool auto-delivers its output, so every file you create, convert, edit, or download for the user MUST be sent with this call once the work is done. Never end a task by just naming a saved path. Up to 50 MB. Pass the file path — absolute, ~/-relative, or workspace-relative."
+    description: "Deliver a file to the user as a downloadable attachment in the conversation they are talking to you in — it renders in the in-app chat and the CLI, and is uploaded/sent natively on WhatsApp and Telegram. Works for ANY file type (documents, images, audio, video, archives, code, text, etc.). THIS IS THE ONLY WAY A FILE REACHES THE USER: no tool auto-delivers its output, so every file you create, convert, edit, or download for the user MUST be sent with this call once the work is done. Never end a task by just naming a saved path. No size limit in-app or in the CLI; WhatsApp and Telegram refuse files over their own upload ceilings and tell the user where the file is. Pass the file path — absolute, ~/-relative, or workspace-relative."
     parameters:
       file:
         type: string
@@ -77,8 +77,9 @@ whether they want it sent rather than silently withholding it.
 
 - Pass any path: absolute, `~/`-relative, or workspace-relative. Files outside the
   workspace are copied into `files/` automatically so the in-app viewer can load them.
-- Limit is 50 MB (the WhatsApp/Telegram bot ceiling). Larger files stay on disk; tell the
-  user where to find them.
+- No size limit in the in-app chat or the CLI — both read the file straight off local disk.
+  WhatsApp and Telegram enforce their own upload ceilings: an oversized video is re-encoded
+  to fit, anything else is refused with its path so you can tell the user where it lives.
 
 ## `show_path` — push an openable location card
 

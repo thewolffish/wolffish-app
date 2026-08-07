@@ -133,6 +133,15 @@ export type PendingProcedure = {
   mode?: 'single' | 'workflow'
   /** The procedure's emoji — stamped on the run's conversation for the rail badge. */
   icon?: string
+  /**
+   * The procedure's attached files and working folders. Both are seeded onto
+   * the conversation this run creates — the folders into the composer's own
+   * picker, the files as the run's model-led reference list — so a Play run
+   * sees exactly what a detached `procedure_run` of it would, and so does
+   * every follow-up turn the user types into that conversation.
+   */
+  files?: string[]
+  directories?: string[]
 }
 
 export type FlowContextValue = {

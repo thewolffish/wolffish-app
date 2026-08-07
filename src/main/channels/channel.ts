@@ -21,7 +21,7 @@ import type { ChatHistoryMessage, PersistedApproval, PersistedToolTiming } from 
  * channel via the singleton TurnRouter so amygdala doesn't need to know
  * which channel a turn belongs to.
  */
-export type ChannelId = 'electron' | 'telegram' | 'whatsapp'
+export type ChannelId = 'electron' | 'telegram' | 'whatsapp' | 'cli'
 
 /**
  * The set of callbacks the agent uses to render an active turn. The

@@ -25,7 +25,7 @@ const toolDefinitions = [
   {
     name: 'project_view',
     description:
-      "Show one project in full: icon, title, complete instructions, and its file list with per-file existence and size. Identify it by the number from project_list, its exact title, or its id.",
+      "Show one project in full: icon, title, complete instructions, its file list with per-file existence and size, and its working folders. Identify it by the number from project_list, its exact title, or its id.",
     parameters: {
       type: 'object',
       properties: {
@@ -218,6 +218,14 @@ async function viewTool(args) {
       }
       lines.push(`- ${f.name} (${fact}) at ${f.path}`)
     }
+  }
+  // Working folders are part of what a project IS — every turn inside it gets a
+  // fresh listing of each one — so a view that hid them would misdescribe it.
+  // They are attached in the app, not from here.
+  if ((p.directories ?? []).length > 0) {
+    lines.push('')
+    lines.push(`Working folders (${p.directories.length}) — every turn gets a fresh listing:`)
+    for (const dir of p.directories) lines.push(`- ${dir}`)
   }
   return { success: true, output: lines.join('\n') }
 }

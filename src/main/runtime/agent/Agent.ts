@@ -33,7 +33,8 @@ import {
   type ToolResultStatus
 } from '@main/runtime/broca'
 import { Cerebellum, type WorkflowHost } from '@main/runtime/cerebellum'
-import { buildProjectOverlay } from '@main/projects'
+import { buildProjectOverlay, projectWorkingFolders } from '@main/projects'
+import { buildAttachedFilesOverlay } from '@main/uploads/owned-copies'
 import { compactOverflow } from '@main/runtime/compactor'
 import { Corpus, turnScope, type CorpusEvent } from '@main/runtime/corpus'
 import { TurnStatsCollector } from '@main/channels/turn-stats'
@@ -186,6 +187,16 @@ export type AgentTurnOptions = {
    */
   projectId?: string | null
   /**
+   * Files this turn has been given as reference material — an automation's or
+   * a procedure's attachments. Overlaid on the system prompt as a model-led
+   * LIST (name, size, path); content is never injected, exactly like a
+   * project's files. Turn-constant, so it never perturbs the pinned-prompt
+   * cache.
+   */
+  contextFiles?: string[] | null
+  /** Which of the two owns them — the overlay names it so the model knows. */
+  contextFilesOwner?: 'automation' | 'procedure'
+  /**
    * Delivery channel for this turn's user-facing prose. Threaded into the
    * system prompt so the model writes in the channel's native text
    * formatting (WhatsApp renders no Markdown; see prefrontal's channel
@@ -305,6 +316,18 @@ export type AutonomousTurnOptions = {
    * badge shows it (automation's own icon, or a procedure's icon).
    */
   icon?: string
+  /**
+   * The automation's attached files (`file:` markers) — listed to the run as
+   * reference material, never injected. See AgentTurnOptions.contextFiles.
+   */
+  contextFiles?: string[]
+  /**
+   * The automation's working directories (`dir:` markers). Ride the same
+   * channel as the in-app composer's folder picker: a fresh shallow listing
+   * rendered into the volatile tail each iteration, so the run sees the
+   * folder as it is NOW rather than as it was when the turn started.
+   */
+  workingFolders?: string[]
 }
 
 export type AutonomousTurnResult = {
@@ -834,6 +857,13 @@ export class Agent {
     // prompt cache never churns mid-turn) and appended to the system prompt
     // below. Instructions verbatim; files as a model-led reference list.
     const projectOverlay = await buildProjectOverlay(turn.projectId ?? null).catch(() => '')
+    // An automation's or procedure's own attached files, on the same terms and
+    // for the same cache reason: one string, computed before the loop,
+    // appended to the system prompt beside the project block.
+    const filesOverlay = await buildAttachedFilesOverlay(
+      turn.contextFiles ?? [],
+      turn.contextFilesOwner ?? 'automation'
+    ).catch(() => '')
     let task: Awaited<ReturnType<typeof this.motor.createTask>> | null = null
     let totalToolCalls = 0
     let iterationCount = 0
@@ -922,10 +952,20 @@ export class Agent {
     // Working-folder listing: read ONCE per turn, main-side, and delivered via
     // the outbound volatile tail (after every cache breakpoint) — never baked
     // into persisted or replayed user content.
+    //
+    // A project's own folders join the turn's here, at the ONE seam every
+    // surface passes through: an in-app chat inside the project, a channel
+    // turn, an automation or a procedure bound to it all get them, and editing
+    // the project moves them for conversations already running. Deduped
+    // because the conversation may have picked the same folder itself.
+    const turnWorkingFolders = [
+      ...new Set([
+        ...(turn.workingFolders ?? []),
+        ...(await projectWorkingFolders(turn.projectId ?? null).catch(() => []))
+      ])
+    ]
     const workingFoldersBlock =
-      turn.workingFolders && turn.workingFolders.length > 0
-        ? await renderWorkingFolders(turn.workingFolders)
-        : ''
+      turnWorkingFolders.length > 0 ? await renderWorkingFolders(turnWorkingFolders) : ''
 
     broca.beginTurn(turn.turnId, turn.onSegment)
     // Publish the active conversation to the UI/extension ONCE, for real
@@ -1085,6 +1125,7 @@ export class Agent {
           )
         }
         if (projectOverlay) systemPrompt = systemPrompt + projectOverlay
+        if (filesOverlay) systemPrompt = systemPrompt + filesOverlay
 
         // Context Compaction: if context exceeds the model's input budget,
         // use LLM-generated summaries to reduce size while retaining
@@ -2151,7 +2192,13 @@ export class Agent {
           bypassApproval: true,
           publishConversation: false,
           modeOverride: opts.mode,
-          projectId: opts.projectId ?? null
+          projectId: opts.projectId ?? null,
+          contextFiles: opts.contextFiles ?? null,
+          // The same field serves both background sources; the overlay names
+          // the one that actually owns these files, which the run's channel
+          // already tells us.
+          contextFilesOwner: opts.channel === 'procedure' ? 'procedure' : 'automation',
+          workingFolders: opts.workingFolders
         })
       )
     } catch (err) {

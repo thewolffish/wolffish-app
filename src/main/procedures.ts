@@ -2,6 +2,15 @@ import { randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { diskWriter } from '@main/io/diskWriter'
+import { sanitizeFileName } from '@main/uploads/uploads'
+import {
+  buildAttachedFilesOverlay,
+  copyFilesInto,
+  uniqueFilename,
+  type AttachFilesProgress,
+  type CopyFilesResult,
+  type OwnedFileRef
+} from '@main/uploads/owned-copies'
 import { readConfig, workspaceRoot } from '@main/workspace/workspace'
 
 /**
@@ -24,9 +33,26 @@ export type Procedure = {
   icon?: string
   /** Project binding — runs get the project overlay and register under it. */
   projectId?: string
+  /**
+   * Files attached to this procedure. Attaching COPIES the source into
+   * `uploads/procedure-<id>/` (uniform with conversation and project uploads),
+   * so a procedure can never dangle on a moved or deleted original. Every run
+   * is told their name, size and path and reads them with its own tools —
+   * content is never injected. Absent on rows saved before the field shipped.
+   */
+  files?: ProcedureFileRef[]
+  /**
+   * Working directories this procedure operates in. References, never copies:
+   * each run gets a fresh shallow listing of every one, through the same
+   * channel the chat composer's folder picker uses.
+   */
+  directories?: string[]
   createdAt: number
   updatedAt: number
 }
+
+/** One attached procedure file (dual decl — see src/preload/index.ts). */
+export type ProcedureFileRef = OwnedFileRef
 
 function proceduresFile(): string {
   return path.join(workspaceRoot(), 'brain', 'procedures.json')
@@ -117,6 +143,10 @@ export function updateProcedure(payload: {
   mode?: 'single' | 'workflow'
   icon?: string
   projectId?: string
+  /** Whole-list replace — detached copies WE own are deleted from disk. */
+  files?: ProcedureFileRef[]
+  /** Whole-list replace. References only, so nothing is deleted. */
+  directories?: string[]
 }): Promise<Procedure> {
   return serialize(async () => {
     const procedures = await loadProcedures()
@@ -128,6 +158,20 @@ export function updateProcedure(payload: {
     if (payload.icon !== undefined) procedure.icon = payload.icon
     // '' unbinds — the field disappears from the JSON rather than storing ''.
     if (payload.projectId !== undefined) procedure.projectId = payload.projectId || undefined
+    if (payload.files !== undefined) {
+      // Detached files whose copies WE own (inside the procedure's upload dir)
+      // are deleted from disk — detach means gone, nothing orphans. A ref
+      // pointing anywhere else is a reference we never owned; leave it be.
+      const dir = procedureUploadsDir(procedure.id)
+      const keep = new Set(payload.files.map((f) => f.path))
+      for (const old of procedure.files ?? []) {
+        if (keep.has(old.path)) continue
+        if (!old.path.startsWith(dir + path.sep)) continue
+        await fs.rm(old.path, { force: true }).catch(() => undefined)
+      }
+      procedure.files = payload.files
+    }
+    if (payload.directories !== undefined) procedure.directories = payload.directories
     procedure.updatedAt = Date.now()
     await saveProcedures(procedures)
     return procedure
@@ -138,5 +182,94 @@ export function deleteProcedure(id: string): Promise<void> {
   return serialize(async () => {
     const procedures = await loadProcedures()
     await saveProcedures(procedures.filter((p) => p.id !== id))
+    // We own the copies — the procedure's upload dir goes with it.
+    await fs.rm(procedureUploadsDir(id), { recursive: true, force: true }).catch(() => undefined)
   })
+}
+
+/** Mirrors uploads.ts conversationDirName for the shared uploads/ tree. */
+export function procedureDirName(id: string): string {
+  return `procedure-${id.replace(/[^A-Za-z0-9._-]/g, '_')}`
+}
+
+function procedureUploadsDir(id: string): string {
+  return path.join(workspaceRoot(), 'uploads', procedureDirName(id))
+}
+
+export type AttachProcedureFilesResult = CopyFilesResult & { procedure: Procedure }
+
+/**
+ * Copy sources into `uploads/procedure-<id>/` and attach them — the single
+ * chokepoint for the app's file picker and the agent alike, mirroring
+ * attachFilesToProject exactly. Serialized on the same mutation tail as every
+ * other write here, so a commit landing next to a debounced prompt save cannot
+ * fork the base list.
+ */
+export function attachFilesToProcedure(
+  id: string,
+  sourcePaths: readonly string[],
+  onProgress?: (progress: AttachFilesProgress) => void
+): Promise<AttachProcedureFilesResult> {
+  return serialize(async () => {
+    const procedures = await loadProcedures()
+    const procedure = procedures.find((p) => p.id === id)
+    if (!procedure) throw new Error(`procedure not found: ${id}`)
+
+    const existing = procedure.files ?? []
+    const result = await copyFilesInto(
+      procedureUploadsDir(id),
+      sourcePaths,
+      new Set(existing.map((f) => f.name)),
+      onProgress
+    )
+    if (result.added.length > 0) {
+      procedure.files = [...existing, ...result.added]
+      procedure.updatedAt = Date.now()
+      await saveProcedures(procedures)
+    }
+    return { ...result, procedure }
+  })
+}
+
+/**
+ * Adopt an already-staged file as a procedure file — the phone's Add-files,
+ * whose bytes arrive over the tunnel instead of from a path on this machine.
+ * The same destination, naming and ownership as attachFilesToProcedure; only
+ * the first step differs (a rename of the staged bytes rather than a copy of a
+ * source that stays put). Mirrors adoptUploadedProjectFile.
+ */
+export function adoptUploadedProcedureFile(
+  id: string,
+  stagedPath: string,
+  originalName: string
+): Promise<{ procedure: Procedure; file: ProcedureFileRef }> {
+  return serialize(async () => {
+    const staged = await fs.stat(stagedPath)
+    if (!staged.isFile() || staged.size === 0) {
+      throw new Error('adoptUploadedProcedureFile: staged upload is empty')
+    }
+    const procedures = await loadProcedures()
+    const procedure = procedures.find((p) => p.id === id)
+    if (!procedure) throw new Error(`procedure not found: ${id}`)
+
+    const dir = procedureUploadsDir(id)
+    await fs.mkdir(dir, { recursive: true })
+    const finalName = await uniqueFilename(dir, sanitizeFileName(originalName))
+    const dest = path.join(dir, finalName)
+    await fs.rename(stagedPath, dest)
+
+    const file: ProcedureFileRef = { path: dest, name: finalName }
+    procedure.files = [...(procedure.files ?? []), file]
+    procedure.updatedAt = Date.now()
+    await saveProcedures(procedures)
+    return { procedure, file }
+  })
+}
+
+/**
+ * The attached-files block a procedure run's system prompt carries. Same
+ * model-led contract as the project overlay — the list, never the content.
+ */
+export function buildProcedureFilesOverlay(files: readonly string[]): Promise<string> {
+  return buildAttachedFilesOverlay(files, 'procedure')
 }

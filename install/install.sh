@@ -380,6 +380,41 @@ main() {
   esac
 
   printf "\n  ${GREEN}${BOLD}Wolffish v%s installed successfully!${RESET}\n\n" "$version"
+
+  cli_path_notice
+}
+
+# The `wolffish` command is written by the app itself on first launch (it is
+# idempotent, and it has to be re-pointed after every update anyway, so the app
+# is the only place that can keep it correct). What the app cannot do is edit a
+# shell profile — so the one thing left is telling the user whether its folder
+# is already on PATH, and exactly what to add if it isn't.
+#
+# ~/.wolffish/bin, not ~/.local/bin: everything the app writes lives under
+# ~/.wolffish so `rm -rf ~/.wolffish` is a complete uninstall. The same
+# directory already holds gog, ffmpeg and the voice engines, so one PATH entry
+# covers all of them.
+cli_path_notice() {
+  bin_dir="$HOME/.wolffish/bin"
+  case ":$PATH:" in
+    *":$bin_dir:"*)
+      info "The 'wolffish' command will be available after the first launch."
+      return
+      ;;
+  esac
+
+  shell_name=$(basename "${SHELL:-sh}")
+  case "$shell_name" in
+    zsh)  rc="$HOME/.zshrc"; line="export PATH=\"$bin_dir:\$PATH\"" ;;
+    fish) rc="$HOME/.config/fish/config.fish"; line="fish_add_path $bin_dir" ;;
+    *)    rc="$HOME/.bashrc"; line="export PATH=\"$bin_dir:\$PATH\"" ;;
+  esac
+
+  warn "$bin_dir is not on your PATH — the 'wolffish' command won't be found."
+  printf "  Add it with:\n\n"
+  printf "    ${BOLD}echo '%s' >> %s${RESET}\n\n" "$line" "$rc"
+  printf "  Then restart your shell. You can re-check any time with:\n"
+  printf "    ${BOLD}wolffish path status${RESET}\n\n"
 }
 
 main "$@"

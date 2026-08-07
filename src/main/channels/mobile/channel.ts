@@ -49,11 +49,13 @@ import {
   type MessageAttachment
 } from '@main/conversations'
 import {
+  adoptUploadedProcedureFile,
   createProcedure,
   deleteProcedure,
   listProcedures,
   updateProcedure,
-  type Procedure
+  type Procedure,
+  type ProcedureFileRef
 } from '@main/procedures'
 import {
   adoptUploadedProjectFile,
@@ -75,6 +77,8 @@ import {
   statUpload,
   uploadExists
 } from '@main/uploads/uploads'
+import { adoptUploadedAutomationFile } from '@main/automations/files'
+import { resolveWorkingDirectory } from '@main/uploads/owned-copies'
 import { readViewerFile, writeViewerFile } from '@main/viewer'
 import { workspaceRoot } from '@main/workspace/root'
 import {
@@ -333,7 +337,17 @@ type PendingUpload = {
    * before then: the transfer itself (ordering, idle sweep, size ceiling) is
    * identical for both destinations, so only the commit branches.
    */
-  target: { kind: 'conversation'; conversationId: string } | { kind: 'project'; projectId: string }
+  target:
+    | { kind: 'conversation'; conversationId: string }
+    | { kind: 'project'; projectId: string }
+    | { kind: 'procedure'; procedureId: string }
+    /**
+     * An automation has no id — heartbeat.md is its store — so the phone sends
+     * the `file:` paths it already holds and the desktop derives the dir from
+     * them. The MARKER is the phone's to write; the commit only answers with
+     * the absolute path it chose.
+     */
+    | { kind: 'automation'; existing: string[] }
   name: string
   mimeType: string | null
   /** Size the phone declared at begin — commit refuses any other total. */
@@ -1272,12 +1286,19 @@ export class MobileChannel {
       const files = Array.isArray(params.files)
         ? await this.resolveProjectFiles(id, params.files as unknown[])
         : undefined
+      // Folders are references, so a dropped one costs nothing — but an ADDED
+      // one is a path typed on a phone, and it names something on THIS machine
+      // or nothing at all. Checked here, once, for both directions.
+      const directories = Array.isArray(params.directories)
+        ? await resolveWireDirectories(params.directories as unknown[])
+        : undefined
       const project = await updateProject({
         id,
         title: wireText(params.title, TITLE_MAX),
         icon: wireText(params.icon, ICON_MAX),
         instructions: wireText(params.instructions, INSTRUCTIONS_MAX),
-        ...(files ? { files } : {})
+        ...(files ? { files } : {}),
+        ...(directories ? { directories } : {})
       })
       this.debug(`project ${id} updated from the phone`)
       return { project: toWireProject(project) }
@@ -1314,6 +1335,19 @@ export class MobileChannel {
     tunnel.onRpc(Rpc.procedureUpdate, async (params) => {
       const id = String(params.id ?? '')
       if (!id) throw new Error('procedureUpdate needs an id')
+      // A `files` array is a whole-list replace and the desktop deletes the
+      // copies it owns for everything dropped, so it is only ever honoured as
+      // a real array — an absent field must leave the list alone, and reading
+      // a malformed one as `[]` would delete every attached file.
+      const files = Array.isArray(params.files)
+        ? await this.resolveProcedureFiles(id, params.files as unknown[])
+        : undefined
+      // Folders are references, so a dropped one costs nothing — but an ADDED
+      // one is a path typed on a phone, and it names something on THIS machine
+      // or nothing at all. Checked here, once, for both directions.
+      const directories = Array.isArray(params.directories)
+        ? await resolveWireDirectories(params.directories as unknown[])
+        : undefined
       const procedure = await updateProcedure({
         id,
         title: wireText(params.title, TITLE_MAX),
@@ -1322,7 +1356,9 @@ export class MobileChannel {
         icon: wireText(params.icon, ICON_MAX),
         // '' unbinds, exactly as the desktop's setter reads it — so this one
         // passes an empty string through rather than treating it as absent.
-        projectId: wireText(params.projectId, ID_MAX)
+        projectId: wireText(params.projectId, ID_MAX),
+        ...(files ? { files } : {}),
+        ...(directories ? { directories } : {})
       })
       this.debug(`procedure ${id} updated from the phone`)
       return { procedure: toWireProcedure(procedure) }
@@ -1360,6 +1396,13 @@ export class MobileChannel {
       await writeViewerFile(HEARTBEAT_PATH, markdown)
       this.log(`heartbeat.md written from the phone (${markdown.length} chars)`)
       return { ok: true }
+    })
+
+    tunnel.onRpc(Rpc.resolveDirectory, async (params) => {
+      const resolved = await resolveWorkingDirectory(String(params.path ?? ''))
+      if (!resolved.ok) throw new Error(resolved.error)
+      this.debug(`resolved working folder for the phone — ${resolved.path}`)
+      return { path: resolved.path }
     })
 
     tunnel.onRpc(Rpc.automationRun, async (params) => {
@@ -1478,8 +1521,21 @@ export class MobileChannel {
       }
       const projectId =
         typeof params.projectId === 'string' && params.projectId ? params.projectId : null
+      const procedureId =
+        typeof params.procedureId === 'string' && params.procedureId ? params.procedureId : null
+      const automationFiles = Array.isArray(params.automationFiles)
+        ? (params.automationFiles as unknown[]).filter((v): v is string => typeof v === 'string')
+        : null
       let target: PendingUpload['target']
-      if (projectId) {
+      if (automationFiles) {
+        target = { kind: 'automation', existing: automationFiles }
+      } else if (procedureId) {
+        // Same pre-flight as a project upload: verified before a byte moves,
+        // so a long transfer can't end with nowhere to put the file.
+        const procedure = (await listProcedures()).find((p) => p.id === procedureId)
+        if (!procedure) throw new Error(`procedure not found: ${procedureId}`)
+        target = { kind: 'procedure', procedureId }
+      } else if (projectId) {
         // Verified BEFORE a byte moves: a whole video uploaded against a
         // project deleted on the desktop meanwhile would fail at commit, after
         // the minute of transfer, with nowhere for the bytes to go.
@@ -1523,13 +1579,21 @@ export class MobileChannel {
         `upload ${uploadId} begun — ${name}, ${expected} bytes, ` +
           (target.kind === 'project'
             ? `project ${target.projectId}`
-            : `conv ${target.conversationId}`)
+            : target.kind === 'procedure'
+              ? `procedure ${target.procedureId}`
+              : target.kind === 'automation'
+                ? 'an automation'
+                : `conv ${target.conversationId}`)
       )
       return {
         uploadId,
         ...(target.kind === 'project'
           ? { projectId: target.projectId }
-          : { conversationId: target.conversationId })
+          : target.kind === 'procedure'
+            ? { procedureId: target.procedureId }
+            : target.kind === 'automation'
+              ? {}
+              : { conversationId: target.conversationId })
       }
     })
 
@@ -1567,6 +1631,33 @@ export class MobileChannel {
         await fs.rm(upload.stagedPath, { force: true }).catch(() => undefined)
         throw new Error(`upload incomplete: ${upload.received} of ${upload.expected} bytes`)
       }
+      if (upload.target.kind === 'automation') {
+        // Adopted into uploads/automation-<uuid>/; the ABSOLUTE path goes back
+        // because that is what a `file:` marker holds and the engine reads.
+        const file = await adoptUploadedAutomationFile(
+          upload.target.existing,
+          upload.stagedPath,
+          upload.name
+        )
+        this.log(`automation file added from the phone — ${file.name}`)
+        return { ...this.ownedFileMetadata(file, upload), path: file.path, name: file.name }
+      }
+      if (upload.target.kind === 'procedure') {
+        // Adopted into uploads/procedure-<id>/ and attached in one serialized
+        // write, so the answer already describes the stored procedure — the
+        // phone renders that, never its own optimism.
+        const { procedure, file } = await adoptUploadedProcedureFile(
+          upload.target.procedureId,
+          upload.stagedPath,
+          upload.name
+        )
+        this.log(`procedure file added from the phone — ${file.name}`)
+        return {
+          ...this.ownedFileMetadata(file, upload),
+          procedureId: upload.target.procedureId,
+          procedure: toWireProcedure(procedure)
+        }
+      }
       if (upload.target.kind === 'project') {
         // Adopted into uploads/project-<id>/ and attached in one serialized
         // write, so the answer already describes the stored project — the
@@ -1578,7 +1669,7 @@ export class MobileChannel {
         )
         this.log(`project file added from the phone — ${file.name}`)
         return {
-          ...this.projectFileMetadata(file, upload),
+          ...this.ownedFileMetadata(file, upload),
           projectId: upload.target.projectId,
           project: toWireProject(project)
         }
@@ -1628,6 +1719,29 @@ export class MobileChannel {
     return kept
   }
 
+  /**
+   * The phone's procedure file list, reduced to refs the procedure ACTUALLY
+   * holds — the same guard resolveProjectFiles applies, for the same reason:
+   * the list is a whole-list replace that DELETES the copies it drops, so a
+   * path the phone invented can never enter it.
+   */
+  private async resolveProcedureFiles(id: string, wire: unknown[]): Promise<ProcedureFileRef[]> {
+    const procedure = (await listProcedures()).find((p) => p.id === id)
+    if (!procedure) throw new Error(`procedure not found: ${id}`)
+    const byWirePath = new Map((procedure.files ?? []).map((file) => [toWirePath(file.path), file]))
+    const kept: ProcedureFileRef[] = []
+    const seen = new Set<string>()
+    for (const entry of wire) {
+      const wirePath = (entry as { path?: unknown } | null)?.path
+      if (typeof wirePath !== 'string') continue
+      const file = byWirePath.get(wirePath)
+      if (!file || seen.has(file.path)) continue
+      seen.add(file.path)
+      kept.push(file)
+    }
+    return kept
+  }
+
   /** The scheduler's live view: the cron and the next fire, in THIS zone. */
   private activeAutomationJobs(): AutomationJob[] {
     const now = Date.now()
@@ -1660,8 +1774,8 @@ export class MobileChannel {
    * (a cache hit instead of an immediate re-download) exactly as it does for a
    * conversation upload.
    */
-  private projectFileMetadata(
-    file: ProjectFileRef,
+  private ownedFileMetadata(
+    file: { path: string; name: string },
     upload: PendingUpload
   ): { type: string; filePath: string; originalName: string; mimeType: string; sizeBytes: number } {
     const { type, mimeType } = classifyFile(file.name, upload.mimeType ?? undefined)
@@ -2216,6 +2330,16 @@ export class MobileChannel {
     this.tunnel?.emit(Event.turnStatus, { conversationId, state, detail })
   }
 
+  /**
+   * The same config snapshot the phone fetches, for a caller that isn't a
+   * phone. The CLI reads current setting values from exactly this — one
+   * assembler for every non-renderer surface, so a terminal and a phone can
+   * never disagree about what a setting is set to.
+   */
+  buildSnapshot(): Promise<Record<string, unknown>> {
+    return buildConfigSnapshot(this.deps)
+  }
+
   /** True when a phone is actually on the other end — lets callers skip the
    *  work of building a push nobody will receive. */
   get hasPeer(): boolean {
@@ -2482,6 +2606,7 @@ function toWireProject(project: Project): SyncProject {
       path: file.path.startsWith(root + path.sep) ? path.relative(root, file.path) : file.path,
       name: file.name
     })),
+    directories: project.directories ?? [],
     createdAt: project.createdAt,
     updatedAt: project.updatedAt
   }
@@ -2496,9 +2621,37 @@ function toWireProcedure(procedure: Procedure): SyncProcedure {
     mode: procedure.mode ?? null,
     icon: procedure.icon ?? '',
     projectId: procedure.projectId ?? null,
+    // Paths are sent WORKSPACE-RELATIVE for the copies we own (the phone shows
+    // a name, and an absolute desktop path means nothing to it) — the same
+    // shape a project's files travel in, so removal round-trips through
+    // resolveProcedureFiles below.
+    files: procedure.files?.map((file) => ({ path: toWirePath(file.path), name: file.name })) ?? [],
+    directories: procedure.directories ?? [],
     createdAt: procedure.createdAt,
     updatedAt: procedure.updatedAt
   }
+}
+
+/** Workspace-relative when the file is ours, absolute otherwise. */
+function toWirePath(filePath: string): string {
+  const root = workspaceRoot()
+  return filePath.startsWith(root + path.sep) ? path.relative(root, filePath) : filePath
+}
+
+/**
+ * A phone's directory list, resolved and checked against THIS machine. A path
+ * that names nothing here is refused with the reason rather than stored — a
+ * working folder the run cannot list is worse than no folder at all.
+ */
+async function resolveWireDirectories(wire: unknown[]): Promise<string[]> {
+  const out: string[] = []
+  for (const entry of wire) {
+    if (typeof entry !== 'string') continue
+    const resolved = await resolveWorkingDirectory(entry)
+    if (!resolved.ok) throw new Error(resolved.error)
+    if (!out.includes(resolved.path)) out.push(resolved.path)
+  }
+  return out
 }
 
 /**

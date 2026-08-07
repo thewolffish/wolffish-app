@@ -21,7 +21,7 @@ const toolDefinitions = [
   {
     name: 'procedure_list',
     description:
-      'List every saved procedure (a reusable prompt the user runs on demand): its number, title, and a one-line preview of the prompt. Use this before viewing, editing, deleting, or running one so you reference it by the correct number or title.',
+      'List every saved procedure (a reusable prompt the user runs on demand): its number, title, a one-line preview of the prompt, and any files or working folders attached to it. Use this before viewing, editing, deleting, or running one so you reference it by the correct number or title.',
     parameters: { type: 'object', properties: {}, required: [] }
   },
   {
@@ -174,6 +174,11 @@ async function listProceduresTool() {
     const empty = (p.prompt || '').trim().length === 0
     lines.push(`${i + 1}. **${title}** — edited ${relativeTime(p.updatedAt)}${empty ? ' · ⚠ no prompt yet' : ''}`)
     lines.push(`   ${oneLine(p.prompt) || '(no prompt yet)'}`)
+    // Attached files and working folders are part of what a procedure IS —
+    // every run is told about both, so a list that hid them would misdescribe
+    // the procedure. They are attached in the app, not from here.
+    for (const file of p.files ?? []) lines.push(`   file: \`${file.path}\``)
+    for (const dir of p.directories ?? []) lines.push(`   working folder: \`${dir}\``)
     lines.push('')
   })
   lines.push(
