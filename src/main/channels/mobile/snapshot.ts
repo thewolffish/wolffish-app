@@ -131,7 +131,39 @@ async function attempt<T>(fn: (() => Promise<T>) | undefined): Promise<T | undef
   }
 }
 
-const THINKING_MODES = new Set(['off', 'on', 'high', 'max'])
+/**
+ * Thinking modes the desktop stores per model. Exported because both
+ * directions consult it: the snapshot below refuses to send a stored value
+ * outside the set, and applyMobileSettings (index.ts) refuses to persist one
+ * — so a phone and a desktop that disagree about what counts as a mode fail
+ * loudly instead of storing junk.
+ */
+export const THINKING_MODES = new Set(['off', 'on', 'high', 'max'])
+
+/**
+ * The allowed-list fields travel to the phone as one comma-joined line (the
+ * `allowedUserIds` / `allowedNumbers` strings the snapshot below mints) and
+ * come back the same way through configSet. The parsers live beside the
+ * joins so the round trip is one contract in one file — a format change that
+ * touched only one direction would revert the field on every edit, silently.
+ * Parsing is lenient (whitespace tolerated, junk entries dropped) because
+ * the string arrives straight off a phone keyboard.
+ */
+export function parseAllowedUserIds(text: string): number[] {
+  return text
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map(Number)
+    .filter((id) => Number.isInteger(id) && id > 0)
+}
+
+export function parseAllowedNumbers(text: string): string[] {
+  return text
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+}
 
 /**
  * The three hand-written documents that shape the agent — the desktop's Soul,

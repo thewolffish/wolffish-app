@@ -12,6 +12,9 @@ import { MobileChannel } from '@main/channels/mobile/channel'
 import {
   CUSTOMIZATION_DOCS,
   CUSTOMIZATION_MAX_BYTES,
+  THINKING_MODES,
+  parseAllowedNumbers,
+  parseAllowedUserIds,
   type CustomizationDoc
 } from '@main/channels/mobile/snapshot'
 import { TelegramChannel } from '@main/channels/telegram/channel'
@@ -994,8 +997,10 @@ let mobileSetCapabilityEnabled: (name: string, enabled: boolean) => Promise<bool
  * A whitelist, deliberately: the phone names flat keys from its own config
  * surface, and anything unlisted throws — the phone treats the error as a
  * refusal and refetches the snapshot, so an out-of-date app can never write
- * somewhere unexpected. The extension PORT is deliberately absent: moving it
- * restarts the local pairing server, which is the desktop's own act.
+ * somewhere unexpected. Two absences are deliberate: the extension PORT
+ * (moving it restarts the local pairing server, which is the desktop's own
+ * act) and the Telegram/WhatsApp power switches (starting a bridge process
+ * is likewise this machine's act; the phone renders those rows as status).
  */
 async function applyMobileSettings(settings: Record<string, unknown>): Promise<void> {
   const str = (value: unknown): string => (typeof value === 'string' ? value : String(value ?? ''))
@@ -1127,6 +1132,155 @@ async function applyMobileSettings(settings: Record<string, unknown>): Promise<v
           updates: { ...(c.updates ?? { enabled: true }), enabled: value === true }
         }))
         break
+      // The Model screen and the composer's control cluster. Each key maps
+      // onto the exact handler its own desktop control calls —
+      // `provider:setMode`, `runtime:setThinkingMode`, `runtime:setLocalOnly`,
+      // `model:select`, `provider:setBrain` — same persistence, same live
+      // runtime update, same announcement, so a pick on either screen is the
+      // same act.
+      case 'chatMode': {
+        const mode = value === 'workflow' ? 'workflow' : 'single'
+        await persistMode(mode)
+        agent.setMode(mode)
+        broadcast('provider:updated', { id: null })
+        break
+      }
+      case 'thinkingMode': {
+        const mode = str(value)
+        if (!THINKING_MODES.has(mode)) throw new Error(`"${mode}" is not a thinking mode`)
+        // Stored per model, exactly as the desktop's brain button stores it.
+        // The snapshot serves the current Brain's entry, so the Brain is the
+        // model this phone-side chip names — no Brain, nothing to hold it.
+        const model = str((await readConfig())?.llm.brain?.model)
+        if (!model) throw new Error('no Brain model to hold a thinking mode')
+        await persistThinkingMode(model, mode)
+        broadcast('preferences:changed', { thinkingMode: { model, mode } })
+        break
+      }
+      case 'localOnly':
+        await persistLocalOnly(value === true)
+        thalamus.setLocalOnly(value === true)
+        break
+      case 'localModel': {
+        // Choosing among the models the desktop has already pulled — the
+        // phone's picker lists /api/tags, so anything else is a stale row.
+        // Refusing beats silently starting a multi-gigabyte pull.
+        const modelName = str(value)
+        const installed = await listTags().catch(() => [])
+        if (!installed.some((tag) => tag.name === modelName)) {
+          throw new Error(`"${modelName}" is not installed on the desktop`)
+        }
+        await selectLocalModel(modelName)
+        const updated = await readConfig()
+        if (updated?.llm.local.model) {
+          localProvider.configure(updated.llm.local.model, updated.llm.local.endpoint)
+        }
+        broadcast('model:pullDone', { modelName, ok: true as const })
+        break
+      }
+      case 'brainProvider': {
+        // The provider half of the cloud picker. The phone follows with its
+        // brainModel write; until that lands, the provider's own stored model
+        // keeps the Brain coherent — the same pair the desktop's picker sets.
+        const providerId = str(value)
+        const provider = (await readConfig())?.llm.providers.find((p) => p.id === providerId)
+        if (!provider) throw new Error(`"${providerId}" is not a configured provider`)
+        const updated = await persistBrain({ providerId: provider.id, model: provider.model })
+        thalamus.setBrain(updated.llm.brain ?? null)
+        broadcast('provider:updated', { id: provider.id })
+        break
+      }
+      case 'brainModel': {
+        const brain = (await readConfig())?.llm.brain
+        if (!brain) throw new Error('no Brain provider to set a model for')
+        const updated = await persistBrain({ providerId: brain.providerId, model: str(value) })
+        thalamus.setBrain(updated.llm.brain ?? null)
+        broadcast('provider:updated', { id: brain.providerId })
+        break
+      }
+      case 'providers': {
+        // The Model screen's provider cards, as one array. Only two fields
+        // are honored per entry: a model choice and a NEWLY TYPED key. The
+        // snapshot sends key previews (12 chars + '…', see maskKey), and
+        // those round-trip back here on every model change — a masked value
+        // must never overwrite the real credential it abbreviates. Rows this
+        // desktop does not have cannot carry a user edit (the phone renders
+        // snapshot rows), so they are dropped rather than refused.
+        if (!Array.isArray(value)) throw new Error('providers must be an array')
+        const stored = (await readConfig())?.llm.providers ?? []
+        let changed: string | null = null
+        for (const entry of value as Array<{ id?: unknown; model?: unknown; apiKey?: unknown }>) {
+          const existing = stored.find((p) => p.id === entry?.id)
+          if (!existing) continue
+          const model =
+            typeof entry.model === 'string' && entry.model ? entry.model : existing.model
+          const apiKey =
+            typeof entry.apiKey === 'string' && entry.apiKey && !entry.apiKey.endsWith('…')
+              ? entry.apiKey
+              : existing.apiKey
+          if (model === existing.model && apiKey === existing.apiKey) continue
+          await setCloudProvider({ ...existing, model, apiKey })
+          changed = existing.id
+        }
+        if (changed) {
+          // Re-seed the cascade exactly as `provider:save` does — setBrain
+          // included, because setCloudProvider mirrors a model change onto a
+          // Brain that points at the edited provider.
+          const updated = await readConfig()
+          if (updated?.llm.providers) {
+            thalamus.setCloudProviders(updated.llm.providers)
+            thalamus.setBrain(updated.llm.brain ?? null)
+          }
+          broadcast('provider:updated', { id: changed })
+        }
+        break
+      }
+      case 'mcpServers': {
+        // The MCP screen's switches, as one name→enabled map — the snapshot
+        // lists servers by display name and ids stay desktop-side, so the
+        // name resolution here mirrors the snapshot's exactly. Applied as a
+        // diff through the manager (the path `mcp:setEnabled` takes), which
+        // owns lifecycle, persistence and the status broadcast.
+        const map = (value ?? {}) as Record<string, unknown>
+        const servers = (await readConfig())?.mcp?.servers ?? []
+        for (const server of servers) {
+          const name =
+            typeof server.name === 'string'
+              ? server.name
+              : typeof server.slug === 'string'
+                ? server.slug
+                : 'server'
+          const wanted = map[name]
+          if (typeof wanted !== 'boolean' || wanted === (server.enabled !== false)) continue
+          const result = await mcpManager.setEnabled(server.id, wanted)
+          if (!result.ok) throw new Error(result.error ?? `could not switch "${name}"`)
+        }
+        break
+      }
+      // The compaction schedule — persist and reschedule exactly as
+      // `runtime:setCompactionConfig` does. Reflection's settings ride their
+      // own RPC (applyReflectionConfig below); these three are the phone's
+      // only Knowledge keys on the generic path.
+      case 'compactionDailyHour':
+      case 'compactionWeeklyHour': {
+        const hour = Math.round(Number(value))
+        if (!Number.isFinite(hour) || hour < 0 || hour > 23) {
+          throw new Error(`"${String(value)}" is not an hour`)
+        }
+        const patch = key === 'compactionDailyHour' ? { dailyHour: hour } : { weeklyHour: hour }
+        const updated = await persistCompactionConfig(patch)
+        agent.brainstem.setCompactionConfig(updated.compaction!)
+        break
+      }
+      case 'compactionWeeklyDay': {
+        const day = Math.round(Number(value))
+        if (!Number.isFinite(day) || day < 0 || day > 6) {
+          throw new Error(`"${String(value)}" is not a weekday`)
+        }
+        const updated = await persistCompactionConfig({ weeklyDay: day })
+        agent.brainstem.setCompactionConfig(updated.compaction!)
+        break
+      }
       // The phone's own two channel settings, edited from the phone. Routed
       // through the channel's setters rather than the config writer, because
       // each does more than persist: notifications registers or withdraws the
@@ -1156,6 +1310,56 @@ async function applyMobileSettings(settings: Record<string, unknown>): Promise<v
       case 'cliVerbose':
         await persistCliConfig({ verbose: value === true })
         broadcast('cli:configChange', await getCliConfig())
+        break
+      // The in-app feed preference — persist and announce exactly as
+      // `inapp:setConfig` does, window push included, so an open desktop
+      // chat adopts the phone's flip without a refetch. It drives the
+      // phone's own chat feed too; the preference is the workspace's.
+      case 'inappVerbose': {
+        const updated = await persistInAppConfig({ verbose: value === true })
+        const next = updated.inapp ?? { verbose: false }
+        BrowserWindow.getAllWindows().forEach((w) => w.webContents.send('inapp:configChange', next))
+        break
+      }
+      // Telegram / WhatsApp — every editable row of the phone's Channels
+      // screen, through the same patch helpers `telegram:setConfig` and
+      // `whatsapp:setConfig` call, restart semantics included: an allow-list
+      // change restarts a running bridge, a preference-only change does not.
+      // The power switches are deliberately absent — starting a bridge is
+      // the desktop's own act, and the phone renders them as status rows.
+      case 'telegramAllowedUserIds':
+        await applyTelegramConfigPatch({ allowedUserIds: parseAllowedUserIds(str(value)) })
+        break
+      case 'telegramAutoRefresh':
+        await applyTelegramConfigPatch({ autoRefresh: value === true })
+        break
+      case 'telegramStaleHours': {
+        const hours = int(value)
+        if (hours) await applyTelegramConfigPatch({ staleHours: hours })
+        break
+      }
+      case 'telegramVerbose':
+        await applyTelegramConfigPatch({ verbose: value === true })
+        break
+      case 'telegramHideAutomations':
+        await applyTelegramConfigPatch({ hideAutomationsFromResume: value === true })
+        break
+      case 'whatsappAllowedNumbers':
+        await applyWhatsAppConfigPatch({ allowedPhoneNumbers: parseAllowedNumbers(str(value)) })
+        break
+      case 'whatsappAutoRefresh':
+        await applyWhatsAppConfigPatch({ autoRefresh: value === true })
+        break
+      case 'whatsappStaleHours': {
+        const hours = int(value)
+        if (hours) await applyWhatsAppConfigPatch({ staleHours: hours })
+        break
+      }
+      case 'whatsappVerbose':
+        await applyWhatsAppConfigPatch({ verbose: value === true })
+        break
+      case 'whatsappHideAutomations':
+        await applyWhatsAppConfigPatch({ hideAutomationsFromResume: value === true })
         break
       default:
         throw new Error(`"${key}" is not editable from the phone`)
@@ -1208,6 +1412,70 @@ const MOBILE_KEY_SERVICE: Record<string, string | undefined> = {
   browserScreenshotMaxWidth: 'browserExtension',
   browserScreenshotFormat: 'browserExtension',
   browserScreenshotQuality: 'browserExtension'
+}
+
+/**
+ * Persist a Telegram patch and run the channel lifecycle — one path however
+ * the change arrives (the settings IPC or the phone's configSet). A patch
+ * that touches only runtime preferences (verbose, autoRefresh, staleHours,
+ * hideAutomations) needs no bot restart — those are read fresh per
+ * message/turn. Restart stays reserved for connection changes (token,
+ * allow-list, enable transitions).
+ */
+async function applyTelegramConfigPatch(patch: Partial<TelegramConfig>): Promise<{
+  status: ReturnType<TelegramChannel['getStatus']>
+  config: TelegramConfig
+}> {
+  const updated = await persistTelegramConfig(patch)
+  const next = updated.telegram ?? {
+    enabled: false,
+    botToken: '',
+    allowedUserIds: []
+  }
+  const touchesConnection =
+    patch.enabled !== undefined ||
+    patch.botToken !== undefined ||
+    patch.allowedUserIds !== undefined
+  if (next.enabled) {
+    if (touchesConnection) {
+      // Re-running start with a different token must restart the
+      // long-poll loop, otherwise the old bot keeps replying.
+      await telegramChannel.restart(next).catch(() => undefined)
+    }
+  } else {
+    await telegramChannel.stop('config disabled').catch(() => undefined)
+  }
+  return { status: telegramChannel.getStatus(), config: next }
+}
+
+/**
+ * WhatsApp's counterpart, same contract: persist, mirror the allow-list into
+ * the live channel, start/stop on enable transitions, and announce the
+ * status to every surface — whichever device made the change.
+ */
+async function applyWhatsAppConfigPatch(patch: Partial<WhatsAppConfig>): Promise<{
+  status: ReturnType<WhatsAppChannel['getStatus']>
+  config: WhatsAppConfig
+}> {
+  const previous = await getWhatsAppConfig()
+  const updated = await persistWhatsAppConfig(patch)
+  const next = updated.whatsapp ?? { enabled: false, allowedPhoneNumbers: [] }
+  whatsappChannel.updateAllowedPhoneNumbers(next.allowedPhoneNumbers ?? [])
+  if (previous.enabled !== next.enabled) {
+    if (next.enabled) {
+      if (whatsappChannel.isStarted()) {
+        whatsappChannel.setProcessingEnabled(true)
+      } else {
+        await whatsappChannel.start(next).catch(() => undefined)
+      }
+    } else {
+      whatsappChannel.setProcessingEnabled(false)
+    }
+  }
+  const status = whatsappChannel.getStatus()
+  // Every surface, not just the window (or phone) that asked.
+  broadcast('whatsapp:statusChange', status)
+  return { status, config: next }
 }
 
 /**
@@ -2630,31 +2898,10 @@ app.whenReady().then(async () => {
       status: ReturnType<TelegramChannel['getStatus']>
       config: TelegramConfig
     }> => {
-      const updated = await persistTelegramConfig(patch)
-      const next = updated.telegram ?? {
-        enabled: false,
-        botToken: '',
-        allowedUserIds: []
-      }
-      // A patch that touches only runtime preferences (verbose,
-      // autoRefresh, staleHours) needs no bot restart — those are read
-      // fresh per message/turn. Restart stays reserved for connection
-      // changes (token, allow-list, enable transitions). No existing
-      // caller sends a prefs-only patch, so this only adds a new path.
-      const touchesConnection =
-        patch.enabled !== undefined ||
-        patch.botToken !== undefined ||
-        patch.allowedUserIds !== undefined
-      if (next.enabled) {
-        if (touchesConnection) {
-          // Re-running start with a different token must restart the
-          // long-poll loop, otherwise the old bot keeps replying.
-          await telegramChannel.restart(next).catch(() => undefined)
-        }
-      } else {
-        await telegramChannel.stop('config disabled').catch(() => undefined)
-      }
-      return { ok: true as const, status: telegramChannel.getStatus(), config: next }
+      // Shared with the phone's configSet path (applyTelegramConfigPatch) so
+      // the restart rules cannot drift between the two writers.
+      const result = await applyTelegramConfigPatch(patch)
+      return { ok: true as const, ...result }
     }
   )
 
@@ -2697,25 +2944,10 @@ app.whenReady().then(async () => {
       status: ReturnType<WhatsAppChannel['getStatus']>
       config: WhatsAppConfig
     }> => {
-      const previous = await getWhatsAppConfig()
-      const updated = await persistWhatsAppConfig(patch)
-      const next = updated.whatsapp ?? { enabled: false, allowedPhoneNumbers: [] }
-      whatsappChannel.updateAllowedPhoneNumbers(next.allowedPhoneNumbers ?? [])
-      if (previous.enabled !== next.enabled) {
-        if (next.enabled) {
-          if (whatsappChannel.isStarted()) {
-            whatsappChannel.setProcessingEnabled(true)
-          } else {
-            await whatsappChannel.start(next).catch(() => undefined)
-          }
-        } else {
-          whatsappChannel.setProcessingEnabled(false)
-        }
-      }
-      const status = whatsappChannel.getStatus()
-      // Every surface, not just the window that asked.
-      broadcast('whatsapp:statusChange', status)
-      return { ok: true as const, status, config: next }
+      // Shared with the phone's configSet path (applyWhatsAppConfigPatch) so
+      // the lifecycle rules cannot drift between the two writers.
+      const result = await applyWhatsAppConfigPatch(patch)
+      return { ok: true as const, ...result }
     }
   )
 
