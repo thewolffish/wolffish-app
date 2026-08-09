@@ -46,6 +46,7 @@ import type { Agent } from '@main/runtime/agent'
 import type { ApprovalDecision, ApprovalRequest } from '@main/runtime/amygdala'
 import { upsertTaskSegment, upsertWorkflowSegment, type Segment } from '@main/runtime/broca'
 import type { AskUserRequest, AskUserResponse } from '@main/runtime/cerebellum'
+import { queueConversationSummarization } from '@main/conversation-summarizer'
 import { turnScope, type CorpusEvents } from '@main/runtime/corpus'
 import { composeAttachmentContext } from '@main/uploads/compose-attachments'
 import type { ChatHistoryMessage } from '@preload/index'
@@ -120,11 +121,16 @@ export class CliChannel {
    */
   private readonly pendingApprovals = new Map<
     string,
-    { turnId: string; resolve: (decision: ApprovalDecision) => void }
+    {
+      turnId: string
+      resolve: (decision: ApprovalDecision) => void
+      /** Enough to REDRAW the card for a terminal that arrived after it. */
+      frame: CliEvent
+    }
   >()
   private readonly pendingAsks = new Map<
     string,
-    { turnId: string; resolve: (response: AskUserResponse) => void }
+    { turnId: string; resolve: (response: AskUserResponse) => void; frame: CliEvent }
   >()
   private readonly turns = new Map<string, LiveTurn>()
   private readonly byConversation = new Map<string, string>()
@@ -161,17 +167,33 @@ export class CliChannel {
    * Requests still waiting for a human, so a client attaching mid-turn can
    * render the cards it never saw. Same idea as chat:activeRuns for runs.
    */
-  pendingRequests(): Array<{ kind: 'approval' | 'ask'; id: string; turnId: string }> {
+  /**
+   * Everything still waiting for a human, WITH the frame that describes it.
+   *
+   * Returning only ids was enough to count them and nothing else: a terminal
+   * reattaching after an SSH drop could see that two decisions were parked and
+   * had no way to render either question, so the only honest thing it could do
+   * was say so and leave the turn stuck. The stored frame is the same one the
+   * live stream sent, so a returning client draws exactly the card it missed.
+   */
+  pendingRequests(): Array<{
+    kind: 'approval' | 'ask'
+    id: string
+    turnId: string
+    frame: CliEvent
+  }> {
     return [
       ...[...this.pendingApprovals.entries()].map(([id, e]) => ({
         kind: 'approval' as const,
         id,
-        turnId: e.turnId
+        turnId: e.turnId,
+        frame: e.frame
       })),
       ...[...this.pendingAsks.entries()].map(([id, e]) => ({
         kind: 'ask' as const,
         id,
-        turnId: e.turnId
+        turnId: e.turnId,
+        frame: e.frame
       }))
     ]
   }
@@ -411,8 +433,40 @@ export class CliChannel {
         if (existing >= 0) disk.messages[existing] = assistant
         else disk.messages.push(assistant)
         disk.updatedAt = assistant.timestamp
+        /**
+         * A heartbeat or procedure run SEALS its conversation as a finished
+         * record. Answering in one from the terminal makes it live again, and
+         * saying so is not optional bookkeeping — Telegram and WhatsApp both do
+         * it (see the identical block in their channels) and this one did not,
+         * with two consequences that both look like something else:
+         *
+         *  - The app treats a sealed file as a closed record, so terminal turns
+         *    appended to an automation's conversation were written to disk and
+         *    never appeared in the window. Reported as "I don't see it on
+         *    desktop"; the messages were there the whole time.
+         *  - The summarizer SKIPS sealed files, so the conversation never gets
+         *    a rolling summary and every later reply replays the entire
+         *    verbatim transcript — forever, and more expensively each time.
+         */
+        if (disk.sealed) disk.sealed = false
         return disk
-      }).catch(() => undefined)
+      })
+        .then(() => {
+          /**
+           * Ask for a rolling summary, exactly as Telegram and WhatsApp do at
+           * this same fold.
+           *
+           * Missing here, and the omission compounds: without a summary the
+           * next turn replays the whole verbatim transcript, so a long-lived
+           * terminal conversation grows its own context linearly and costs
+           * more on every reply until it hits the ceiling. That is worst
+           * precisely where this channel matters most — a headless box, where
+           * the terminal is the ONLY surface and its conversations are the
+           * long ones.
+           */
+          queueConversationSummarization(conversation.id)
+        })
+        .catch(() => undefined)
     }
 
     return {
@@ -439,8 +493,7 @@ export class CliChannel {
       },
       onApprovalRequest: (req: ApprovalRequest & { id: string }) => {
         return new Promise<ApprovalDecision>((resolve) => {
-          this.pendingApprovals.set(req.id, { turnId, resolve })
-          this.emit({
+          const frame: CliEvent = {
             t: 'approvalRequest',
             conversationId,
             turnId,
@@ -451,20 +504,23 @@ export class CliChannel {
             level: req.level,
             reason: req.reason,
             description: req.description
-          })
+          }
+          this.pendingApprovals.set(req.id, { turnId, resolve, frame })
+          this.emit(frame)
         })
       },
       onAskUserRequest: (req: AskUserRequest & { id: string }) => {
         return new Promise<AskUserResponse>((resolve) => {
-          this.pendingAsks.set(req.id, { turnId, resolve })
-          this.emit({
+          const frame: CliEvent = {
             t: 'askRequest',
             conversationId,
             turnId,
             id: req.id,
             toolCallId: req.toolCallId,
             questions: req.questions
-          })
+          }
+          this.pendingAsks.set(req.id, { turnId, resolve, frame })
+          this.emit(frame)
         })
       },
       onDone: () => {

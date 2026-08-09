@@ -156,8 +156,11 @@ const toolDefinitions = [
   },
   {
     name: 'memory_save',
+    // The pointer matters more than it looks: introspect is always loaded and
+    // `knowledge` is not, so this description is the discovery path from "I
+    // saved a fact" to "I can now correct or delete it".
     description:
-      'Durably save one self-contained fact to your long-term knowledge (deduplicated). Use for preferences, decisions, project facts, or people details worth remembering across conversations — not for transient task state.',
+      'Durably save one self-contained fact to your long-term knowledge (deduplicated) — the quick note you can take from anywhere, no discovery hop. Use for preferences, decisions, project facts, or people details worth remembering across conversations, not for transient task state. Pass `topic` whenever you know which subject it belongs to (the person, the project); without one the fact is filed unattributed for the nightly curator to sort. This tool only ADDS: to correct a fact you already saved, or to forget one that is no longer true, use the `knowledge` capability (knowledge_edit / knowledge_forget).',
     parameters: {
       type: 'object',
       properties: {
@@ -166,6 +169,11 @@ const toolDefinitions = [
           type: 'string',
           description: 'Which knowledge file it belongs in (default technical).',
           enum: ['projects', 'people', 'preferences', 'technical', 'decisions']
+        },
+        topic: {
+          type: 'string',
+          description:
+            'Subject this fact is about — the person, project or area it belongs under (e.g. "Sana (wife)", "Wolffish"). Created if new. Strongly preferred: an unattributed fact has to wait for the nightly curator to be filed.'
         }
       },
       required: ['fact']
@@ -1739,13 +1747,15 @@ async function memorySave(args) {
   const fact = typeof args?.fact === 'string' ? args.fact.trim() : ''
   if (!fact) return { success: false, error: 'Provide `fact` — one durable, self-contained sentence.' }
   const type = KNOWLEDGE_TYPES.includes(args?.type) ? args.type : 'technical'
-  const result = await cortexBridge.saveKnowledge(type, fact)
+  const topic = typeof args?.topic === 'string' ? args.topic.trim() : ''
+  const result = await cortexBridge.saveKnowledge(type, fact, topic || undefined)
   if (!result.ok) return { success: false, error: 'could not save the fact' }
+  if (result.deduped) return { success: true, output: `Already saved in knowledge/${type}.md — no duplicate written.` }
   return {
     success: true,
-    output: result.deduped
-      ? `Already saved in knowledge/${type}.md — no duplicate written.`
-      : `Saved to knowledge/${type}.md.`
+    output: result.filed
+      ? `Saved to knowledge/${type}.md under \u201c${topic}\u201d.`
+      : `Saved to knowledge/${type}.md, unfiled — pass \`topic\` next time so it sits under the right subject.`
   }
 }
 

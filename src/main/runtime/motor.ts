@@ -388,7 +388,11 @@ export class Motor {
       })
 
       const classified = classifyError(step.error, result.exitCode)
-      if (!classified.retryable) {
+      // A tool that declares its own failure non-retryable outranks the text
+      // heuristics below it — the tool KNOWS, the regexes guess. This is the
+      // only signal that can stop a retry whose danger is that it would
+      // succeed a second time (see ToolExecutionResult.retryable).
+      if (result.retryable === false || !classified.retryable) {
         // Deterministic failure — same call, same args, same wall. Stop now
         // instead of burning two more retries on identical permission /
         // validation / not_found errors.

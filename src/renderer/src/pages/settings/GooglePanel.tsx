@@ -72,6 +72,8 @@ export function GooglePanel(): React.JSX.Element {
   // expired/been revoked). Missing entries mean "healthy or not-yet-checked" —
   // the chip stays green so healthy accounts never flicker.
   const [health, setHealth] = useState<Record<string, boolean>>({})
+  // Which account's reconnect is running, so only that row's button spins.
+  const [reauthing, setReauthing] = useState<string | null>(null)
   const [authUrl, setAuthUrl] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const authCanceledRef = useRef(false)
@@ -351,38 +353,73 @@ export function GooglePanel(): React.JSX.Element {
     [t, toast]
   )
 
-  const handleAuth = useCallback(async () => {
-    if (!email.trim()) return
-    authCanceledRef.current = false
-    setStage('authorizing')
-    setAuthUrl(null)
-    try {
-      const result = await window.api.google.authAdd(email.trim())
-      if (result.ok) {
-        setConfig((prev) => (prev ? { ...prev, status: 'active' } : prev))
-        setStatus({ status: 'active', errorKind: null, error: null })
-        setEmail('')
-        const refreshed = await window.api.google.listAccounts()
-        setAccounts(refreshed)
-        toast.show({
-          message: t('settings.services.google.toasts.authorized'),
-          tone: 'success'
-        })
-      } else if (!authCanceledRef.current) {
-        // User-canceled auths are silent — they pressed Cancel deliberately.
-        toast.show({
-          message: t('settings.services.google.toasts.authFailed'),
-          tone: 'error'
-        })
-        const live = await window.api.google.status()
-        setStatus(live)
-      }
-    } finally {
-      setStage('idle')
-      setAuthUrl(null)
+  // The single OAuth path: "Add account" and an inactive account's reconnect
+  // button both land here, so re-connecting behaves exactly like a fresh add —
+  // same authorizing stage, same link fallback, same Cancel button. `reauth`
+  // only tells gogcli to force Google's consent screen for an account it
+  // already knows, which is what makes the new refresh token actually arrive.
+  const runAuth = useCallback(
+    async (target: string, opts?: { reauth?: boolean }) => {
+      const trimmed = target.trim()
+      if (!trimmed) return
       authCanceledRef.current = false
-    }
-  }, [email, t, toast])
+      setStage('authorizing')
+      setAuthUrl(null)
+      try {
+        const result = await window.api.google.authAdd(trimmed, opts)
+        if (result.ok) {
+          setConfig((prev) => (prev ? { ...prev, status: 'active' } : prev))
+          setStatus({ status: 'active', errorKind: null, error: null })
+          // Only the typed-in field gets cleared; a reconnect never touches it.
+          if (!opts?.reauth) setEmail('')
+          const refreshed = await window.api.google.listAccounts()
+          setAccounts(refreshed)
+          // A reconnect leaves the account set unchanged, so the health effect
+          // (keyed on that set) won't re-fire and the chip would stay red.
+          // Flip it here for the account gogcli actually stored, then re-probe
+          // to replace the guess with the truth.
+          setHealth((prev) => ({ ...prev, [result.account]: true }))
+          void window.api.google.checkAccounts().then(
+            (map) => setHealth(map),
+            () => {
+              /* best-effort — the optimistic chip stands until the next probe */
+            }
+          )
+          toast.show({
+            message: t('settings.services.google.toasts.authorized'),
+            tone: 'success'
+          })
+        } else if (!authCanceledRef.current) {
+          // User-canceled auths are silent — they pressed Cancel deliberately.
+          toast.show({
+            message: t('settings.services.google.toasts.authFailed'),
+            tone: 'error'
+          })
+          const live = await window.api.google.status()
+          setStatus(live)
+        }
+      } finally {
+        setStage('idle')
+        setAuthUrl(null)
+        authCanceledRef.current = false
+      }
+    },
+    [t, toast]
+  )
+
+  const handleAuth = useCallback(() => runAuth(email), [email, runAuth])
+
+  const handleReauth = useCallback(
+    async (accountEmail: string) => {
+      setReauthing(accountEmail)
+      try {
+        await runAuth(accountEmail, { reauth: true })
+      } finally {
+        setReauthing(null)
+      }
+    },
+    [runAuth]
+  )
 
   const handleCancelAuth = useCallback(async () => {
     authCanceledRef.current = true
@@ -442,11 +479,13 @@ export function GooglePanel(): React.JSX.Element {
           email={email}
           accounts={accounts}
           health={health}
+          reauthing={reauthing}
           authUrl={authUrl}
           onEmailChange={setEmail}
           onAuthorize={() => void handleAuth()}
           onCancel={() => void handleCancelAuth()}
           onRemove={(acc) => void handleRemove(acc)}
+          onReauth={(acc) => void handleReauth(acc)}
         />
 
         {!credsDone && <OAuthGuide />}
@@ -707,22 +746,26 @@ function AuthSection({
   email,
   accounts,
   health,
+  reauthing,
   authUrl,
   onEmailChange,
   onAuthorize,
   onCancel,
-  onRemove
+  onRemove,
+  onReauth
 }: {
   enabled: boolean
   stage: Stage
   email: string
   accounts: string[]
   health: Record<string, boolean>
+  reauthing: string | null
   authUrl: string | null
   onEmailChange: (v: string) => void
   onAuthorize: () => void
   onCancel: () => void
   onRemove: (account: string) => void
+  onReauth: (account: string) => void
 }): React.JSX.Element {
   const { t } = useTranslation()
   const toast = useToast()
@@ -760,6 +803,34 @@ function AuthSection({
                   <span className="text-fg flex-1 truncate font-mono text-sm select-text">
                     {acc}
                   </span>
+                  {expired && (
+                    <button
+                      type="button"
+                      onClick={() => onReauth(acc)}
+                      disabled={authorizing}
+                      aria-label={t('settings.services.google.auth.reconnectLabel', {
+                        account: acc
+                      })}
+                      className={cn(
+                        'shrink-0 rounded text-[11px] font-medium',
+                        'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+                        // One text color per branch — cn doesn't merge conflicting
+                        // utilities. Dim while another account is authorizing;
+                        // the row actually reconnecting says so in words.
+                        reauthing === acc
+                          ? 'text-muted animate-pulse cursor-default'
+                          : authorizing
+                            ? 'text-muted/50 cursor-default'
+                            : 'text-accent cursor-pointer hover:underline'
+                      )}
+                    >
+                      {t(
+                        reauthing === acc
+                          ? 'settings.services.google.auth.reconnecting'
+                          : 'settings.services.google.auth.reconnect'
+                      )}
+                    </button>
+                  )}
                   <span
                     className={cn(
                       'shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider',

@@ -123,6 +123,13 @@ Restart=always
 RestartSec=5
 # The agent shells out constantly; give it the user's real environment.
 Environment=WOLFFISH_HEADLESS=1
+# Electron is Chromium, and Chromium wants a display at startup even when
+# nothing is ever drawn. A systemd user unit has no session and no DISPLAY, so
+# this is what keeps the boot from aborting on a server. Main reads the same
+# signal and switches Ozone to its headless platform; this is the belt to that
+# braces, for a build that predates it or an ELECTRON_OZONE override in the
+# environment.
+Environment=ELECTRON_OZONE_PLATFORM_HINT=headless
 
 [Install]
 WantedBy=default.target

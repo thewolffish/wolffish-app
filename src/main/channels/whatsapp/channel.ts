@@ -142,6 +142,17 @@ export type WhatsAppChannelStatus = {
   status: WhatsAppConnectionStatus
   error: string | null
   qr: string | null
+  /**
+   * The 8-character code WhatsApp shows under "Link with phone number
+   * instead", when linking was started that way rather than by QR.
+   *
+   * It exists because a QR does not fit a terminal. A WhatsApp code is ~215
+   * characters, which is a 49×49 matrix even at the lowest error correction —
+   * 27 printed rows before the caption, against the 24 an SSH window gives
+   * you. On the headless box this channel is most useful on, the square is
+   * unscannable no matter how it is drawn, and this is the route that works.
+   */
+  pairingCode: string | null
   connectedPhone: string | null
   connectedName: string | null
   /**
@@ -387,6 +398,14 @@ export class WhatsAppChannel {
   private readonly segmentQueue = new Map<string, Promise<void>>()
   private processingEnabled = true
   private qrRequested = false
+  /**
+   * Set when linking was started by phone number instead of QR. Holds the
+   * number until the socket is far enough along to ask WhatsApp for a code,
+   * which is the moment the first QR would otherwise have been emitted — that
+   * is the earliest point the server will answer a pairing request.
+   */
+  private pairingNumber: string | null = null
+  private pairingCode: string | null = null
   private hadValidSession = false
   private connectedAt = 0
   /**
@@ -465,6 +484,7 @@ export class WhatsAppChannel {
       status: this.status,
       error: this.statusError,
       qr: this.currentQr,
+      pairingCode: this.pairingCode,
       connectedPhone: user?.id ? user.id.split('@')[0].split(':')[0] : null,
       connectedName: user?.notify ?? user?.name ?? null,
       hasSession: this.hadValidSession
@@ -512,6 +532,8 @@ export class WhatsAppChannel {
     this.processingEnabled = true
     this.statusError = null
     this.currentQr = null
+    this.pairingCode = null
+    this.pairingNumber = null
 
     this.authDir = path.join(workspaceRoot(), 'whatsapp', 'auth')
     await fs.mkdir(this.authDir, { recursive: true })
@@ -595,6 +617,8 @@ export class WhatsAppChannel {
     this.status = 'disconnected'
     this.statusError = null
     this.currentQr = null
+    this.pairingCode = null
+    this.pairingNumber = null
     this.qrRequested = false
     this.agent.cerebellum.unregisterInProcessCapability(WHATSAPP_CAPABILITY_NAME)
     this.agent.corpus.emit('whatsapp.stopped', reason ? { reason } : {})
@@ -728,6 +752,15 @@ export class WhatsAppChannel {
 
     if (qr) {
       if (this.qrRequested) {
+        // A QR here means the socket has reached the unauthenticated-but-live
+        // point, which is the earliest WhatsApp will answer a pairing-code
+        // request. Take that route instead of the square when a number was
+        // given, and never draw a QR the caller did not ask for.
+        if (this.pairingNumber) {
+          void this.askForPairingCode(sock, this.pairingNumber)
+          return
+        }
+        if (this.pairingCode) return
         // Only accept the first QR — ignore Baileys' QR rotation.
         if (this.status !== 'qr') {
           this.status = 'qr'
@@ -742,9 +775,8 @@ export class WhatsAppChannel {
         this.sock = null
         this.status = 'disconnected'
         this.currentQr = null
-        this.statusError = this.hadValidSession
-          ? 'Session expired — click Connect to re-link.'
-          : null
+        this.pairingCode = null
+        this.statusError = this.hadValidSession ? 'Session expired — link WhatsApp again.' : null
         this.hadValidSession = false
         void this.clearAuthState()
         if (this.reconnectTimer) {
@@ -762,6 +794,7 @@ export class WhatsAppChannel {
       this.status = 'connected'
       this.statusError = null
       this.currentQr = null
+      this.pairingCode = null
       this.reconnectAttempt = 0
       this.qrRequested = false
       this.hadValidSession = true
@@ -781,7 +814,7 @@ export class WhatsAppChannel {
 
       if (statusCode === DisconnectReason.loggedOut) {
         this.status = 'disconnected'
-        this.statusError = 'Logged out — click Connect to re-link.'
+        this.statusError = 'Logged out — link WhatsApp again.'
         this.qrRequested = false
         void this.clearAuthState()
         this.agent.corpus.emit('whatsapp.loggedOut', {})
@@ -798,9 +831,10 @@ export class WhatsAppChannel {
       // If we were in QR flow (pairing) and it wasn't a restart, it's a real timeout.
       if (this.qrRequested) {
         this.status = 'disconnected'
-        this.statusError = 'QR code expired — click Connect to try again.'
+        this.statusError = 'The code expired — start linking again.'
         this.qrRequested = false
         this.currentQr = null
+        this.pairingCode = null
         this.agent.corpus.emit('whatsapp.statusChanged', {})
         return
       }
@@ -3386,12 +3420,76 @@ export class WhatsAppChannel {
 
   requestQr(): void {
     this.qrRequested = true
+    this.pairingNumber = null
+    this.pairingCode = null
     if (!this.authDir) return
     if (this.status === 'disconnected' || this.status === 'error') {
       this.status = 'connecting'
       this.statusError = null
       this.reconnectAttempt = 0
       void this.connect()
+    }
+  }
+
+  /**
+   * Link by phone number rather than QR — the headless route.
+   *
+   * Returns immediately: the code cannot be asked for until the socket has
+   * reached the point where WhatsApp would have handed us a QR, so the request
+   * is armed here and fired from handleConnectionUpdate. The code arrives on
+   * `whatsapp.pairingCode` and on the status snapshot, exactly the way the QR
+   * does, so a caller that missed the event can still read it.
+   *
+   * Refuses while a session is live: this begins a NEW link, and doing it
+   * silently under a working account would take the agent off WhatsApp.
+   */
+  requestPairingCode(phoneNumber: string): { ok: boolean; error?: string } {
+    const digits = String(phoneNumber ?? '').replace(/[^0-9]/g, '')
+    // WhatsApp wants country code + number, no plus and no separators. Below
+    // eight digits cannot be a real one, and the failure this catches is a
+    // user typing a local number without its country code, which otherwise
+    // fails minutes later with an opaque server error.
+    if (digits.length < 8) {
+      return { ok: false, error: 'give the full number including country code, e.g. +15551234567' }
+    }
+    if (this.status === 'connected') {
+      return { ok: false, error: 'already linked — disconnect first to link a different account' }
+    }
+    if (!this.authDir) return { ok: false, error: 'WhatsApp is not started' }
+    this.qrRequested = true
+    this.pairingNumber = digits
+    this.pairingCode = null
+    if (this.status === 'disconnected' || this.status === 'error') {
+      this.status = 'connecting'
+      this.statusError = null
+      this.reconnectAttempt = 0
+      void this.connect()
+    }
+    return { ok: true }
+  }
+
+  /**
+   * Ask WhatsApp for the eight-character code, once, on the socket that is
+   * currently negotiating. Failures land on the status as an error rather than
+   * throwing into an event handler.
+   */
+  private async askForPairingCode(sock: WASocket, number: string): Promise<void> {
+    this.pairingNumber = null
+    try {
+      const code = await sock.requestPairingCode(number)
+      if (this.sock !== sock) return
+      this.pairingCode = code
+      this.status = 'qr'
+      this.statusError = null
+      this.agent.corpus.emit('whatsapp.pairingCode', { code })
+      this.agent.corpus.emit('whatsapp.statusChanged', {})
+    } catch (error) {
+      if (this.sock !== sock) return
+      this.pairingCode = null
+      this.status = 'error'
+      this.statusError =
+        error instanceof Error ? error.message : 'WhatsApp refused the pairing request'
+      this.agent.corpus.emit('whatsapp.statusChanged', {})
     }
   }
 

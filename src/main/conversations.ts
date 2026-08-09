@@ -101,7 +101,13 @@ export type TimelineEntry = {
   detail?: string
 }
 
-export type ConversationRatingSource = 'inapp' | 'telegram' | 'whatsapp' | 'mobile'
+/**
+ * Which surface cast the score. `cli` is a real source, not a synonym for
+ * `inapp`: the reflection reads this ledger, and a terminal-only install whose
+ * every score claimed to come from a window nobody opened would be describing
+ * a machine that does not exist.
+ */
+export type ConversationRatingSource = 'inapp' | 'telegram' | 'whatsapp' | 'mobile' | 'cli'
 
 /**
  * A user's 0-10 score for one completed turn, keyed by the turn's assistant

@@ -29,12 +29,26 @@ import { randomBytes } from 'node:crypto'
 export const MOBILE_CAPABILITY_NAME = 'phone'
 
 /**
- * Notifications are 100% model-initiated: this tool is the ONLY way a phone
- * notification comes into being, and everything that routes it — the phone's
- * identity, the notification id, the ttl — is stamped by the harness in the
- * channel, never taken from the model. The model's input is treated as
- * untrusted: lengths clamp, enums fall back, deep links must match the app
- * scheme, and per-run rate limits refuse loudly rather than dropping quietly.
+ * Notifications are 100% model-led. This tool is the ONLY way a phone
+ * notification comes into being, and the decision to send one is the model's
+ * alone: nothing here counts them, caps them per run or per phase, or refuses
+ * a repeat of something already sent. Every call reaches the phone.
+ *
+ * The harness's job is the two things the model cannot do for itself:
+ *
+ *   ROUTE   the phone's identity, the notification id and the ttl are stamped
+ *           in the channel and never taken from the model, so a notification
+ *           cannot be misaddressed and a deeplink cannot name a screen the app
+ *           does not have. Model input is untrusted — lengths clamp, enums
+ *           fall back, an undeliverable link is refused with the real list.
+ *   REPORT  what actually happened, including when that is "unknown". A
+ *           delivery the relay never confirmed is said to be UNCONFIRMED
+ *           rather than failed, because the two call for different judgements
+ *           and only the model gets to make them.
+ *
+ * The one hard rule points at the harness, not the model: one call, one frame.
+ * Every failure returned here is `retryable: false`, so motor cannot re-fire a
+ * send on its own — which it did, three times, on 2026-08-08.
  */
 
 /** ttl per phase — harness policy, deliberately not a model input. A stale
@@ -59,13 +73,6 @@ export const TTL_BY_PHASE: Record<NotifyPhase, number> = {
  * comes from, and equally not the model's to choose.
  */
 const CURRENT_CONVERSATION = 'current'
-
-/** At most one notification per phase per run… */
-const MAX_PER_RUN_PER_PHASE = 1
-/** …and never more than this many per run, whatever the phases. */
-const MAX_PER_RUN = 5
-/** Bounded memory for the per-run counters. */
-const MAX_TRACKED_RUNS = 64
 
 /** The settings pages, named as a deeplink spells them. Derived from the route
  *  table so what the model is told can never drift from what is accepted. */
@@ -144,8 +151,24 @@ function success(output: string): ToolExecutionResult {
   return { success: true, output }
 }
 
+/**
+ * Every failure this tool can return is non-retryable, and that is a property
+ * of the TOOL, not of any particular message.
+ *
+ * Half of them are deterministic (a bad deeplink, a disabled setting, a spent
+ * budget) and would fail identically. The other half — anything from the
+ * delivery layer — is worse than deterministic: it is UNKNOWN. A notification
+ * the relay never answered for may well be on the user's lock screen already,
+ * so "failed" here never licenses a second send.
+ *
+ * Motor honours this flag before its own text heuristics. Without it the
+ * generic retry loop re-fired a "the relay did not answer" notify twice, 2 s
+ * and 4 s later, each with a fresh notificationId that neither the relay's
+ * idempotency record nor the phone's seen-set could fold — three identical
+ * notifications from one model call, and only the last one in the transcript.
+ */
 function failure(error: string): ToolExecutionResult {
-  return { success: false, error }
+  return { success: false, error, retryable: false }
 }
 
 /**
@@ -161,7 +184,7 @@ export function buildMobileCapability(deps: ToolDeps): {
   const tools: SkillToolDescriptor[] = [
     {
       name: 'notify_phone',
-      description: `Send a push notification to the user's paired phone — their lock screen, their pocket. This tool being available already means a phone is paired and notifications are allowed; every send is still YOUR deliberate call. Use it when something earns the interruption: a long or background run finished with a result worth seeing (a scheduled automation's daily digest especially — end it with one 'completed' notification), a failure or something unexpected the user would want to know now, you are blocked on their input or approval ('needs_input' — send it the moment you block; it expires in minutes), or they explicitly asked to be told. Never for routine progress, per-action narration, or a turn the user is actively watching. A notification COMPLEMENTS your conversation reply, never replaces any part of it: it is not shown in the conversation, so the reply must stand complete on its own and never lean on the notification. Write it warm and concrete: the outcome, not the ceremony ('AI news is ready — 7 stories, 2 worth your time' beats 'Task completed'). Where the tap LANDS is yours to choose and almost always worth choosing: deeplink "${DEEPLINK_SCHEME}chat?id=${CURRENT_CONVERSATION}" opens this run's own conversation, which is where the thing you are announcing actually is — pass it whenever there is something to read, and leave deeplink out only when there is genuinely nothing to look at (the deeplink parameter lists every screen you can send them to). Limits enforced: one per phase per run, 5 per run; a rate-limit refusal or a dropped delivery is final — never retry it.`,
+      description: `Send a push notification to the user's paired phone — their lock screen, their pocket. This tool being available already means a phone is paired and notifications are allowed; every send is still YOUR deliberate call. Use it when something earns the interruption: a long or background run finished with a result worth seeing (a scheduled automation's daily digest especially — end it with one 'completed' notification), a failure or something unexpected the user would want to know now, you are blocked on their input or approval ('needs_input' — send it the moment you block; it expires in minutes), or they explicitly asked to be told. Never for routine progress, per-action narration, or a turn the user is actively watching. A notification COMPLEMENTS your conversation reply, never replaces any part of it: it is not shown in the conversation, so the reply must stand complete on its own and never lean on the notification. Write it warm and concrete: the outcome, not the ceremony ('AI news is ready — 7 stories, 2 worth your time' beats 'Task completed'). Where the tap LANDS is yours to choose and almost always worth choosing: deeplink "${DEEPLINK_SCHEME}chat?id=${CURRENT_CONVERSATION}" opens this run's own conversation, which is where the thing you are announcing actually is — pass it whenever there is something to read, and leave deeplink out only when there is genuinely nothing to look at (the deeplink parameter lists every screen you can send them to). ONE call per moment worth announcing, and the restraint is YOURS: nothing here counts your notifications or refuses a repeat, so every call you make lands on the user's phone. A run that ends with a digest ends with a single notification — not one per finding, and never the same one twice. Before a second call in one run, ask whether the user would want a second buzz; usually the answer is no and it belongs in your reply instead. Never call this in a retry loop: an answer reporting delivery as UNCONFIRMED means it may already be on their lock screen, so sending it again — reworded, re-phased, or verbatim — is how one notification becomes three on a phone in someone's pocket.`,
       parameters: {
         title: {
           type: 'string',
@@ -189,21 +212,17 @@ export function buildMobileCapability(deps: ToolDeps): {
         },
         deeplink: {
           type: 'string',
-          description: `Which screen of the mobile app the tap opens. Omitted, a tap just opens the app wherever the user left it — nothing navigates that you did not choose, so pass this whenever the notification is ABOUT something they can look at. Conversations: ${DEEPLINK_SCHEME}chat?id=${CURRENT_CONVERSATION} opens this run's own conversation and is the one you want almost every time — always prefer it to spelling an id out, since you do not reliably know your own conversation id; ${DEEPLINK_SCHEME}chat?id=<conversationId> opens a DIFFERENT conversation by its exact id from conversation_list; ${DEEPLINK_SCHEME}chat with no id opens a new empty chat; ${DEEPLINK_SCHEME}history is the list of all conversations. App screens: ${DEEPLINK_SCHEME}settings, or ${DEEPLINK_SCHEME}settings/<page> where <page> is exactly one of ${SETTINGS_PAGES} — e.g. ${DEEPLINK_SCHEME}settings/automations for a scheduled run's own schedule, ${DEEPLINK_SCHEME}settings/usage for spend, ${DEEPLINK_SCHEME}settings/services for a provider key that needs attention. Nothing else exists: another scheme, a page not in that list, or an invented path is refused with the full list of what does — nothing was sent and no budget was spent, so fix the link and call once more.`,
+          description: `Which screen of the mobile app the tap opens. Omitted, a tap just opens the app wherever the user left it — nothing navigates that you did not choose, so pass this whenever the notification is ABOUT something they can look at. Conversations: ${DEEPLINK_SCHEME}chat?id=${CURRENT_CONVERSATION} opens this run's own conversation and is the one you want almost every time — always prefer it to spelling an id out, since you do not reliably know your own conversation id; ${DEEPLINK_SCHEME}chat?id=<conversationId> opens a DIFFERENT conversation by its exact id from conversation_list; ${DEEPLINK_SCHEME}chat with no id opens a new empty chat; ${DEEPLINK_SCHEME}history is the list of all conversations. App screens: ${DEEPLINK_SCHEME}settings, or ${DEEPLINK_SCHEME}settings/<page> where <page> is exactly one of ${SETTINGS_PAGES} — e.g. ${DEEPLINK_SCHEME}settings/automations for a scheduled run's own schedule, ${DEEPLINK_SCHEME}settings/usage for spend, ${DEEPLINK_SCHEME}settings/services for a provider key that needs attention. Nothing else exists: another scheme, a page not in that list, or an invented path is refused with the full list of what does — nothing was sent, so fix the link and call once more.`,
           required: false
         }
       }
     }
   ]
 
-  /** Per-run notification budget. Keyed by the turn id; insertion-ordered so
-   *  overflow evicts the oldest run. */
-  const budgets = new Map<string, { total: number; phases: Set<NotifyPhase> }>()
-
   const capability: Capability = {
     name: MOBILE_CAPABILITY_NAME,
     dir: '<in-process>',
-    description: `Reach the user's paired phone. notify_phone sends a push notification for moments worth interrupting the user for: a run finishing with something worth seeing (daily automations end their digest with one), a failure or a genuinely unexpected finding, a question that blocks you while they are away, or anything they explicitly asked to be told about. The tap itself navigates wherever the model says: deeplink "${DEEPLINK_SCHEME}chat?id=${CURRENT_CONVERSATION}" opens the run's own conversation, and every other screen the app has — history, settings and each settings page — can be named the same way; without a deeplink a tap just opens the app. The phone deduplicates and the desktop rate-limits, so call it once per moment — never in a retry loop. This capability is only present while a phone is paired and notifications are allowed.`,
+    description: `Reach the user's paired phone. notify_phone sends a push notification for moments worth interrupting the user for: a run finishing with something worth seeing (daily automations end their digest with one), a failure or a genuinely unexpected finding, a question that blocks you while they are away, or anything they explicitly asked to be told about. The tap itself navigates wherever the model says: deeplink "${DEEPLINK_SCHEME}chat?id=${CURRENT_CONVERSATION}" opens the run's own conversation, and every other screen the app has — history, settings and each settings page — can be named the same way; without a deeplink a tap just opens the app. Nothing rate-limits it: every call reaches the user's phone, so call it once per moment — one notification per run is the norm, and never a retry loop. This capability is only present while a phone is paired and notifications are allowed.`,
     triggers: { keywords: ['notify', 'phone', 'push notification', 'ping me', 'alert me'] },
     tools,
     body: '',
@@ -223,7 +242,7 @@ export function buildMobileCapability(deps: ToolDeps): {
     })),
     execute: async (toolName, args) => {
       if (toolName !== 'notify_phone') return failure(`unknown phone tool: ${toolName}`)
-      return notifyPhone(deps, budgets, args)
+      return notifyPhone(deps, args)
     }
   }
 
@@ -232,7 +251,6 @@ export function buildMobileCapability(deps: ToolDeps): {
 
 async function notifyPhone(
   deps: ToolDeps,
-  budgets: Map<string, { total: number; phases: Set<NotifyPhase> }>,
   args: Record<string, unknown>
 ): Promise<ToolExecutionResult> {
   const title = sanitizeTitle(typeof args.title === 'string' ? args.title : '')
@@ -248,8 +266,8 @@ async function notifyPhone(
     : 'normal'
 
   // The run identity comes from the harness's own async context — never from
-  // the model — and it is what the rate limits and the relay's audit trail
-  // key on. Turns and background automations both carry one.
+  // the model — and it is what the relay's audit trail keys on. Turns and
+  // background automations both carry one.
   const scope = turnScope.getStore()
   const runId = scope?.turnId ?? 'untracked'
 
@@ -298,39 +316,23 @@ async function notifyPhone(
     }
   }
 
-  const budget = budgets.get(runId) ?? { total: 0, phases: new Set<NotifyPhase>() }
-  if (budget.total >= MAX_PER_RUN) {
-    return failure(
-      `rate limit: this run already sent ${MAX_PER_RUN} notifications (the maximum). ` +
-        'Do not send more this run — summarize in your reply instead.'
-    )
-  }
-  if (budget.phases.has(phase)) {
-    return failure(
-      `rate limit: this run already sent a "${phase}" notification (max ${MAX_PER_RUN_PER_PHASE} per phase per run). ` +
-        'Pick a different phase only if something genuinely new happened; otherwise do not notify again.'
-    )
-  }
-
+  // Straight to the wire. Every notification the model asks for is sent: there
+  // is no counter here, no per-phase slot, and no memory of what this run has
+  // already said. Whether a moment is worth interrupting the user for is a
+  // judgement, and this harness does not take judgements away from the model.
+  // It tells it the truth about what happened (below) and lets it decide.
+  //
+  // What IS guaranteed is that the harness never acts on its own: one call,
+  // one frame. See `failure` — every result here is non-retryable, so motor
+  // cannot quietly re-fire a send the model made exactly once.
   let result: NotifyResultFrame
   try {
     result = await deps.notify({ title, body, phase, urgency, deeplink, runId })
   } catch (error) {
+    // Never left this machine — no phone paired, notifications switched off by
+    // the user, the relay link down. Nothing about it is unknown, and if the
+    // link comes back later in the same run the next call goes.
     return failure(error instanceof Error ? error.message : String(error))
-  }
-
-  // Count only notifications that actually went somewhere — a dropped one
-  // should not eat the run's budget.
-  if (result.route !== 'dropped') {
-    budget.total += 1
-    budget.phases.add(phase)
-    budgets.delete(runId)
-    budgets.set(runId, budget)
-    while (budgets.size > MAX_TRACKED_RUNS) {
-      const oldest = budgets.keys().next().value
-      if (oldest === undefined) break
-      budgets.delete(oldest)
-    }
   }
 
   switch (result.route) {
@@ -346,7 +348,10 @@ async function notifyPhone(
       )
     default:
       return failure(
-        `notification was not delivered: ${result.reason ?? 'unknown reason'}. Do not retry.`
+        `the notification's delivery is UNCONFIRMED: ${result.reason ?? 'unknown reason'}. ` +
+          'That is not the same as undelivered — it may well be on the phone already, so ' +
+          'sending it again risks showing the user the same notification twice. Your call: ' +
+          'if it was worth one interruption it is rarely worth two uncertain ones.'
       )
   }
 }

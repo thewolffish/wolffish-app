@@ -862,10 +862,13 @@ export function Procedures(): React.JSX.Element {
           )}
 
           <span className="text-muted text-xs font-medium">{t('procedures.prompt')}</span>
-          {/* Four lines of the prompt, in the card's own code block. With files
-              and folders above it, an inline editor tall enough to write in
-              pushed everything else off screen — clicking opens the
-              full-height editor below instead. */}
+          {/* The prompt, in the card's own code block — capped but scrollable,
+              so the whole thing can be read here without opening anything.
+              With files and folders above it, an inline editor tall enough to
+              write in pushed everything else off screen — clicking opens the
+              full-height editor below instead. Scrolling stays clean: the wheel
+              moves this block rather than the dialog behind it, and dragging
+              its scrollbar never reaches the button's click handler. */}
           <button
             type="button"
             onClick={() => setPromptExpanded(true)}
@@ -878,7 +881,7 @@ export function Procedures(): React.JSX.Element {
             {draftPrompt.trim() ? (
               <pre
                 dir="auto"
-                className="text-muted line-clamp-4 font-mono text-xs leading-relaxed wrap-break-word whitespace-pre-wrap"
+                className="text-muted max-h-40 overflow-y-auto overscroll-contain font-mono text-xs leading-relaxed wrap-break-word whitespace-pre-wrap"
               >
                 {draftPrompt}
               </pre>

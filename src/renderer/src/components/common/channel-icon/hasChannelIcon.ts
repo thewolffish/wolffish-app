@@ -10,6 +10,7 @@ const CHANNEL_ICON_KINDS: ReadonlySet<string> = new Set([
   'telegram',
   'whatsapp',
   'mobile',
+  'cli',
   'heartbeat',
   'procedure'
 ])

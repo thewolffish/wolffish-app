@@ -9,13 +9,47 @@
  * never installed — so each one reports what is TRUE, not what was requested.
  */
 import { spawn } from 'node:child_process'
+import fs from 'node:fs/promises'
+import path from 'node:path'
 import { c, heading, icon, keyValue, out, shortPath, table, wrapText } from '../lib/ui.mjs'
 import { daemonPid } from '../lib/client.mjs'
+import { editorSummary } from '../lib/editor.mjs'
 
-export async function status(client, { json } = {}) {
-  const snapshot = await client.invoke('cli:status')
+/**
+ * Every key-shaped value in the status snapshot, replaced.
+ *
+ * `cli:status` carries the whole workspace config, which includes every
+ * provider API key and the Telegram bot token in clear. `--json` is the form
+ * people pipe into a file, paste into an issue, or leave in a CI log, and on a
+ * shared VPS that is the entire credential set leaving the box. The rest of
+ * the CLI already masks — `settings list` does — so this brings the one
+ * command that did not into line.
+ *
+ * Keyed on the NAME rather than the value: a redactor that guesses from shape
+ * misses a short key and mangles an unrelated hash.
+ */
+const SECRET_KEY = /(apikey|api_key|token|password|secret|clientsecret|refresh_token)$/i
+
+function redactSecrets(value) {
+  if (Array.isArray(value)) return value.map(redactSecrets)
+  if (!value || typeof value !== 'object') return value
+  const copy = {}
+  for (const [key, entry] of Object.entries(value)) {
+    if (SECRET_KEY.test(key) && typeof entry === 'string' && entry.length > 0) {
+      copy[key] = `${entry.slice(0, 4)}${'•'.repeat(8)}`
+    } else {
+      copy[key] = redactSecrets(entry)
+    }
+  }
+  return copy
+}
+
+export async function status(client, { json, raw = false } = {}) {
+  // Our PATH, not the daemon's — a service-managed daemon has a minimal one
+  // and would report every working shim as missing.
+  const snapshot = await client.invoke('cli:status', process.env.PATH ?? null)
   if (json) {
-    out(JSON.stringify(snapshot, null, 2))
+    out(JSON.stringify(raw ? snapshot : redactSecrets(snapshot), null, 2))
     return 0
   }
 
@@ -30,10 +64,26 @@ export async function status(client, { json } = {}) {
     ['platform', String(snapshot.platform ?? '')]
   ])
 
-  const brainModel = snapshot.workspace?.model ?? snapshot.workspace?.brain ?? null
+  // The brain lives at workspace.config.llm.brain — `{ providerId, model }`.
+  // Reading `workspace.model` / `workspace.brain`, as this did, found nothing
+  // on every machine there has ever been, so a fully configured install was
+  // told to go and configure itself.
+  const brain = snapshot.workspace?.config?.llm?.brain ?? null
+  const local = snapshot.workspace?.config?.llm?.local ?? null
   heading('Brain')
-  keyValue([['model', brainModel ? c.bold(String(brainModel)) : c.yellow('not configured')]])
-  if (!brainModel)
+  keyValue([
+    [
+      'model',
+      brain?.model
+        ? `${c.bold(String(brain.model))}${brain.providerId ? c.gray(`  ${brain.providerId}`) : ''}`
+        : c.yellow('not configured')
+    ],
+    ['mode', c.gray(String(snapshot.workspace?.config?.llm?.mode ?? 'single'))],
+    ...(local?.enabled
+      ? [['local', c.gray(`${local.model ?? '?'} · ${local.provider ?? ''}`)]]
+      : [])
+  ])
+  if (!brain?.model)
     out(c.gray('    wolffish keys set anthropic && wolffish brain anthropic <model>'))
 
   heading('Autostart')
@@ -51,10 +101,15 @@ export async function status(client, { json } = {}) {
 
   heading('Command')
   const p = snapshot.path ?? {}
+  const editor = editorSummary()
   keyValue([
     ['on PATH', p.installed ? c.green('yes') : c.red('no')],
     ['shim', c.gray(shortPath(p.target ?? ''))],
-    ...(p.resolved ? [['resolves to', c.gray(shortPath(p.resolved))]] : [])
+    ...(p.resolved ? [['resolves to', c.gray(shortPath(p.resolved))]] : []),
+    // Which editor an "Edit …" menu entry will open. It used to be whatever
+    // `$EDITOR` said and nothing when that was unset, which was most machines —
+    // so this is now both answerable and always a real answer.
+    ['editor', `${editor.name} ${c.gray(`· ${editor.detail}`)}`]
   ])
   if (!p.installed) {
     out()
@@ -144,6 +199,28 @@ export async function service(client, args) {
       out(c.gray('  not running'))
       return 0
     }
+    /**
+     * The pid file outlives a crash, and pids are recycled.
+     *
+     * Signalling whatever now holds that number is not a theoretical worry on
+     * a busy server — it is how `wolffish service stop` kills someone else's
+     * process. The socket is the check that costs nothing: a daemon that
+     * answers is the daemon, and a pid file with nothing behind it is stale by
+     * definition.
+     */
+    const live = await client.invoke('cli:status').catch(() => null)
+    if (!live) {
+      out(c.yellow('  the pid file is stale — nothing is answering on the socket'))
+      out(c.gray(`  not signalling pid ${pid}; it may belong to something else now`))
+      return 1
+    }
+    if (live.cli?.pid && live.cli.pid !== pid) {
+      out(c.yellow(`  the pid file says ${pid} but the daemon answering is ${live.cli.pid}`))
+      out(c.gray('  stopping the one that answered'))
+      process.kill(live.cli.pid, 'SIGTERM')
+      out(`${icon.ok()} sent SIGTERM to pid ${live.cli.pid}`)
+      return 0
+    }
     process.kill(pid, 'SIGTERM')
     out(`${icon.ok()} sent SIGTERM to pid ${pid}`)
     return 0
@@ -158,23 +235,64 @@ export async function service(client, args) {
   return 2
 }
 
-function tailLogs(args) {
+/**
+ * The tail of today's log — the first thing anyone reaches for on a server.
+ *
+ * The file is picked HERE rather than inside a shell pipeline. The pipeline
+ * version (`ls … | head -1 | xargs tail`) had two failure modes that both look
+ * like a hang: with no log file yet, `xargs` runs `tail` with no argument, and
+ * GNU tail then reads stdin forever — the terminal simply stops, with no
+ * output and no error. And `sh -lc` sources a login profile, so anything a
+ * user's `.profile` prints lands in the middle of their logs.
+ */
+async function tailLogs(args) {
   const home = process.env.HOME || process.env.USERPROFILE || ''
-  const dir = `${home}/.wolffish/workspace/logs`
+  const dir = path.join(home, '.wolffish', 'workspace', 'logs')
+
+  let newest = null
+  try {
+    const entries = await fs.readdir(dir)
+    const logs = await Promise.all(
+      entries
+        .filter((name) => name.endsWith('.log'))
+        .map(async (name) => {
+          const full = path.join(dir, name)
+          const stat = await fs.stat(full).catch(() => null)
+          return stat ? { full, at: stat.mtimeMs } : null
+        })
+    )
+    newest = logs.filter(Boolean).sort((a, b) => b.at - a.at)[0]?.full ?? null
+  } catch {
+    newest = null
+  }
+
+  if (!newest) {
+    out(c.yellow('  no log file yet'))
+    out(c.gray(`  they appear in ${shortPath(dir)} once the daemon has written one`))
+    return 1
+  }
+
+  const follow = args.includes('-f') || args.includes('--follow')
   if (process.platform === 'win32') {
-    out(c.gray(`  logs are in ${dir}`))
+    // No tail to lean on. Print the tail ourselves; -f is not offered rather
+    // than pretended at.
+    const text = await fs.readFile(newest, 'utf8').catch(() => '')
+    const lines = text.split('\n')
+    out(lines.slice(-200).join('\n'))
+    if (follow) out(c.gray(`  (following is not supported here — the file is ${newest})`))
     return 0
   }
-  const follow = args.includes('-f') || args.includes('--follow')
-  const child = spawn(
-    'sh',
-    [
-      '-lc',
-      `ls -1t "${dir}"/*.log 2>/dev/null | head -1 | xargs ${follow ? 'tail -f' : 'tail -n 200'}`
-    ],
-    { stdio: 'inherit' }
-  )
-  return new Promise((resolve) => child.on('close', (code) => resolve(code ?? 0)))
+
+  const child = spawn('tail', follow ? ['-f', newest] : ['-n', '200', newest], {
+    stdio: 'inherit'
+  })
+  return new Promise((resolve) => {
+    child.on('error', () => {
+      out(c.gray(`  could not run tail — the file is ${newest}`))
+      resolve(1)
+    })
+    child.on('close', (code) => resolve(code ?? 0))
+  })
 }
 
 /**
@@ -188,7 +306,7 @@ export async function pathCommand(client, args) {
   const [sub] = args
 
   if (!sub || sub === 'status') {
-    const state = await client.invoke('cli:pathStatus')
+    const state = await client.invoke('cli:pathStatus', process.env.PATH ?? null)
     heading('Command')
     keyValue([
       ['on PATH', state.installed ? c.green('yes') : c.red('no')],

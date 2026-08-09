@@ -28,6 +28,13 @@ export const SOCKET_PATH =
 
 const PID_PATH = path.join(os.homedir(), '.wolffish', 'cli.pid')
 
+/**
+ * How long one handler call may take before the client gives up. Generous:
+ * some handlers install a binary or walk the whole workspace. It exists to
+ * turn "hangs forever" into an error with a fix in it, not to police latency.
+ */
+const INVOKE_TIMEOUT_MS = 180_000
+
 /** How long to wait for a daemon we just started to answer. */
 const BOOT_TIMEOUT_MS = 45_000
 const BOOT_POLL_MS = 250
@@ -124,12 +131,44 @@ export class DaemonClient {
     }
   }
 
-  /** Call one of the app's IPC handlers by name. */
+  /**
+   * Call one of the app's IPC handlers by name.
+   *
+   * Bounded, because the failure it guards against is invisible: a daemon that
+   * is WEDGED rather than dead holds an open socket and never answers, and an
+   * unbounded promise turns that into a command that prints nothing and never
+   * returns — indistinguishable from slow work. The ceiling is generous
+   * (handlers here install binaries, walk the workspace and talk to providers)
+   * and the message names the recovery, because the only cure is a restart.
+   *
+   * A rejection also has to CLEAR the pending entry: a late answer arriving
+   * after the timeout would otherwise resolve a promise nobody holds and leak
+   * the entry for the life of the process.
+   */
   invoke(channel, ...args) {
     if (!this.socket) return Promise.reject(new Error('not connected'))
     const id = this.nextId++
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject })
+      const timer = setTimeout(() => {
+        if (!this.pending.delete(id)) return
+        reject(
+          new Error(
+            `the daemon did not answer "${channel}" within ${Math.round(INVOKE_TIMEOUT_MS / 1000)}s — it may be wedged (wolffish service stop, then run any command again)`
+          )
+        )
+      }, INVOKE_TIMEOUT_MS)
+      // `unref` so a pending call never keeps a finished command alive.
+      timer.unref?.()
+      this.pending.set(id, {
+        resolve: (value) => {
+          clearTimeout(timer)
+          resolve(value)
+        },
+        reject: (error) => {
+          clearTimeout(timer)
+          reject(error)
+        }
+      })
       this.socket.write(JSON.stringify({ id, t: 'invoke', channel, args }) + '\n')
     })
   }

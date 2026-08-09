@@ -410,7 +410,20 @@ class GoogleService {
     return { ok: true, clientId: creds.client_id, projectId: creds.project_id ?? '' }
   }
 
-  authAdd(email: string, onAuthUrl?: (url: string) => void): Promise<GoogleAuthResult> {
+  /**
+   * Run gogcli's interactive OAuth flow for `email` and store the resulting
+   * refresh token. `reauth` is for re-connecting an account whose stored token
+   * already died: it forces Google's consent screen (without it Google takes
+   * the "already authorized" fast path and hands back an access token with no
+   * new refresh token, leaving the account just as broken) and auto-confirms
+   * overwriting the existing entry, since stdin is closed and a prompt would
+   * hang until the timeout.
+   */
+  authAdd(
+    email: string,
+    onAuthUrl?: (url: string) => void,
+    opts?: { reauth?: boolean }
+  ): Promise<GoogleAuthResult> {
     const trimmed = email.trim()
     if (!trimmed) {
       const message = 'Email is required'
@@ -425,7 +438,9 @@ class GoogleService {
       // Match gogcli's internal OAuth deadline to our outer wrapper —
       // its default (~3 min) is shorter and fires first, killing the
       // local callback server before the user finishes consent.
-      const child = spawn(GOG_PATH, ['auth', 'add', trimmed, '--timeout=10m'], {
+      const args = ['auth', 'add', trimmed, '--timeout=10m']
+      if (opts?.reauth) args.push('--force-consent', '--force')
+      const child = spawn(GOG_PATH, args, {
         stdio: ['ignore', 'pipe', 'pipe']
       })
       this.authChild = child

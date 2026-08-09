@@ -83,6 +83,7 @@ export function WhatsAppPanel(): React.JSX.Element {
         status: 'disconnected',
         error: null,
         qr: null,
+        pairingCode: null,
         connectedPhone: null,
         connectedName: null,
         hasSession: false
@@ -215,6 +216,7 @@ export function WhatsAppPanel(): React.JSX.Element {
         status: 'disconnected',
         error: null,
         qr: null,
+        pairingCode: null,
         connectedPhone: null,
         connectedName: null,
         hasSession: false

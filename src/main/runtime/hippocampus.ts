@@ -172,7 +172,7 @@ export class Hippocampus {
    * end of consolidation when something graduates from "noise of the
    * week" into "true about the user".
    */
-  async promoteToKnowledge(file: KnowledgeFile, fact: string): Promise<void> {
+  async promoteToKnowledge(file: KnowledgeFile, fact: string, topic?: string): Promise<void> {
     if (!this.workspaceRoot) return
     const filepath = path.join(
       this.workspaceRoot,
@@ -191,21 +191,19 @@ export class Hippocampus {
       return
     }
 
-    // RMW inside the file's write queue: the dedup check and the append are
+    // RMW inside the file's write queue: the dedup check and the write are
     // one atomic step, so two concurrent promotions of the same fact can't
     // both pass the check and write duplicate bullets.
     let wrote = false
     try {
       await diskWriter.update(filepath, (raw) => {
         const existing = raw ?? `# ${capitalize(file)}\n\n`
-        // Append-only WITH dedup: the nightly consolidation re-derives the
-        // same facts night after night — without this, knowledge files
-        // silently fill with duplicate bullets (observed live in
-        // preferences.md).
+        // Dedup: the nightly consolidation re-derives the same facts night
+        // after night — without this, knowledge files silently fill with
+        // duplicate bullets (observed live in preferences.md).
         if (existing.split(/\r?\n/).some((l) => l.trim() === line)) return null
         wrote = true
-        const needsNewline = existing.length > 0 && !existing.endsWith('\n')
-        return `${existing}${needsNewline ? '\n' : ''}${line}\n`
+        return Hippocampus.fileEntry(existing, line, topic)
       })
     } catch {
       return
@@ -213,6 +211,51 @@ export class Hippocampus {
     if (!wrote) return
 
     this.corpus?.emit('memory.knowledgeUpdated', { file, fact: trimmed })
+  }
+
+  /**
+   * Place one entry in a knowledge file — the single placement rule shared by
+   * every writer (memory_save's quick note, the knowledge capability's filed
+   * add, the nightly promotions).
+   *
+   * With a topic, the entry lands at the end of that `## Topic` section, which
+   * is created if it doesn't exist. WITHOUT one it lands in the PREAMBLE, above
+   * the first topic — never appended at end-of-file. That last part is the
+   * whole point: in a file organized by topic, an end-of-file append reads as
+   * belonging to whichever topic happens to be last, so "Sana started a new
+   * job" filed with no topic used to end up under `## Omar (brother)`. An
+   * unfiled note has to claim nothing; the nightly curator files it properly.
+   */
+  static fileEntry(content: string, line: string, topic?: string): string {
+    const body = content.replace(/\s+$/, '')
+    const lines = body.split('\n')
+    const wanted = topic?.trim() ?? ''
+
+    if (wanted) {
+      const headingAt = lines.findIndex(
+        (l) => l.trim().toLowerCase() === `## ${wanted}`.toLowerCase()
+      )
+      if (headingAt === -1) return `${body}\n\n## ${wanted}\n${line}\n`
+      let end = lines.length
+      for (let i = headingAt + 1; i < lines.length; i += 1) {
+        if (/^#{1,2}\s/.test(lines[i])) {
+          end = i
+          break
+        }
+      }
+      // Land after the section's last real entry, not after its trailing blank
+      // line, so the entry can't drift under the next heading.
+      while (end > headingAt + 1 && lines[end - 1].trim() === '') end -= 1
+      lines.splice(end, 0, line)
+      return `${lines.join('\n')}\n`
+    }
+
+    const firstTopic = lines.findIndex((l) => /^##\s/.test(l))
+    if (firstTopic === -1) return `${body}\n${line}\n`
+    let at = firstTopic
+    while (at > 0 && lines[at - 1].trim() === '') at -= 1
+    lines.splice(at, 0, line)
+    return `${lines.join('\n')}\n`
   }
 
   /**

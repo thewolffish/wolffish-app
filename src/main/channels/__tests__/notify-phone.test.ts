@@ -136,76 +136,89 @@ async function run(): Promise<void> {
     ok('sloppy deeplink normalized', frame.deeplink === 'wolffish://settings/usage')
     ok('runId stamped from harness scope, not the model', frame.runId === 'untracked')
 
-    // Rate limits inside one run: 1 per phase, 5 per run, loud errors.
-    await turnScope.run({ turnId: 'turn_rate_1', conversationId: null, autonomous: false }, () =>
+    // NOTHING here rate-limits, counts, or deduplicates. Whether a moment is
+    // worth interrupting the user for is the model's judgement, and the harness
+    // does not overrule it: it carries the message and reports honestly what
+    // happened to it. Every assertion below used to be a refusal.
+    await turnScope.run({ turnId: 'turn_open_1', conversationId: null, autonomous: false }, () =>
       (async () => {
-        const first = await plugin.execute('notify_phone', {
-          title: 't',
-          body: 'b',
-          phase: 'completed'
-        })
-        ok('first completed notification allowed', first.success === true)
-        const dupPhase = await plugin.execute('notify_phone', {
-          title: 't2',
-          body: 'b2',
-          phase: 'completed'
-        })
-        ok(
-          'second completed notification refused with the limit named',
-          !dupPhase.success && (dupPhase.error ?? '').includes('per phase')
-        )
-        for (const phase of ['started', 'needs_input', 'failed', 'info']) {
-          const one = await plugin.execute('notify_phone', { title: 't', body: 'b', phase })
-          ok(`phase ${phase} allowed once`, one.success === true)
+        nextRoute = 'inband'
+        const before = sent.length
+        // The same phase, the same words, over and over. Once refused by a
+        // per-phase cap, then by a 5-per-run cap, then by a fingerprint.
+        for (let i = 1; i <= 8; i += 1) {
+          const one = await plugin.execute('notify_phone', {
+            title: 't',
+            body: 'b',
+            phase: 'completed'
+          })
+          ok(`identical call ${i} of 8 is delivered, not refused`, one.success === true, one.error)
         }
-        const sixth = await plugin.execute('notify_phone', {
-          title: 't',
-          body: 'b',
-          phase: 'completed'
-        })
         ok(
-          'hard cap of 5 per run refused with the limit named',
-          !sixth.success && (sixth.error ?? '').includes('5 notifications')
+          'eight calls in one run put eight frames on the wire',
+          sent.length === before + 8,
+          `${sent.length - before} frames`
         )
       })()
     )
 
-    // A different run starts with a fresh budget.
-    await turnScope.run({ turnId: 'turn_rate_2', conversationId: null, autonomous: false }, () =>
-      (async () => {
-        const fresh = await plugin.execute('notify_phone', {
-          title: 't',
-          body: 'b',
-          phase: 'completed'
-        })
-        ok('a new run has its own budget', fresh.success === true)
-      })()
-    )
-
-    // A dropped notification reports failure and does NOT consume budget.
-    await turnScope.run({ turnId: 'turn_rate_3', conversationId: null, autonomous: false }, () =>
+    // A delivery the relay never confirmed is reported as UNKNOWN rather than
+    // failed — the model needs that difference to judge what to do next — and
+    // it takes nothing away from the run: the next call still goes.
+    await turnScope.run({ turnId: 'turn_open_2', conversationId: null, autonomous: false }, () =>
       (async () => {
         nextRoute = 'dropped'
+        const before = sent.length
         const dropped = await plugin.execute('notify_phone', {
           title: 't',
           body: 'b',
           phase: 'completed'
         })
         ok(
-          'dropped result surfaces as a tool failure with the reason',
-          !dropped.success && (dropped.error ?? '').includes('phone is offline')
+          'an unconfirmed delivery says so, and names the reason',
+          !dropped.success &&
+            (dropped.error ?? '').includes('UNCONFIRMED') &&
+            (dropped.error ?? '').includes('phone is offline')
+        )
+        ok(
+          'the model is told it may already be on the phone, and left to judge',
+          !dropped.success && (dropped.error ?? '').includes('Your call')
+        )
+        // The one rule that IS enforced, and it binds the HARNESS, not the
+        // model: motor may not re-fire a send the model made once. Every
+        // failure this tool returns carries the flag that stops it.
+        ok(
+          'the failure is flagged non-retryable so motor cannot re-fire it',
+          (dropped as { retryable?: boolean }).retryable === false
         )
         nextRoute = 'push'
-        const retryAfterDrop = await plugin.execute('notify_phone', {
+        const next = await plugin.execute('notify_phone', {
           title: 't',
           body: 'b',
           phase: 'completed'
         })
-        ok('a dropped attempt did not consume the phase budget', retryAfterDrop.success === true)
+        ok('an unconfirmed attempt costs the run nothing', next.success === true)
+        ok('push route is reported to the model', (next.output ?? '').includes('push notification'))
+        ok('both reached the wire', sent.length === before + 2, `${sent.length - before} frames`)
+      })()
+    )
+
+    // The refusals that remain are arguments that cannot be delivered as
+    // written. Not policy — a malformed call, answered with an error that
+    // teaches, so the model can fix it and call again.
+    await turnScope.run({ turnId: 'turn_open_3', conversationId: null, autonomous: false }, () =>
+      (async () => {
+        const before = sent.length
+        const bad = await plugin.execute('notify_phone', {
+          title: 't',
+          body: 'b',
+          deeplink: 'wolffish://nowhere'
+        })
         ok(
-          'push route is reported to the model',
-          (retryAfterDrop.output ?? '').includes('push notification')
+          'an undeliverable deeplink is still refused, with the real list',
+          !bad.success && (bad.error ?? '').includes('wolffish://history')
         )
+        ok('and nothing was sent', sent.length === before)
       })()
     )
   }

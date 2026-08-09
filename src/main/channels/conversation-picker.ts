@@ -84,6 +84,10 @@ export function originLabel(channel?: string | null): string {
       return 'Telegram'
     case 'whatsapp':
       return 'WhatsApp'
+    case 'mobile':
+      return 'Phone'
+    case 'cli':
+      return 'Terminal'
     case 'heartbeat':
       return 'Automated'
     case 'procedure':

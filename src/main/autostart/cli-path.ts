@@ -38,6 +38,16 @@ const TAG = '[cli-path]'
 export type CliPathStatus = {
   /** `wolffish` resolves on PATH and points at our shim. */
   installed: boolean
+  /**
+   * Our shim FILE exists, whether or not the shell can find it.
+   *
+   * Not the same question as `installed`, and the difference is what a Remove
+   * control has to gate on: a shim written into a directory that is not on
+   * PATH, or one shadowed by another binary, reports `installed: false` while
+   * very much still being a file this app put there. Gating removal on
+   * `installed` hid the button in exactly the cases someone wants it.
+   */
+  present: boolean
   /** Where the shim is (or would be) written. */
   target: string
   /** What `which wolffish` actually answers, when anything does. */
@@ -163,10 +173,22 @@ function samePath(a: string, b: string): boolean {
   return left === right
 }
 
-/** True when `dir` is on the PATH this process inherited. */
-function onPath(dir: string): boolean {
+/**
+ * True when `dir` is on a PATH — the CALLER's when it sends one, this
+ * process's otherwise.
+ *
+ * The distinction is the whole point. This runs in the daemon, and a daemon
+ * started by systemd or launchd inherits a minimal PATH that has nothing to do
+ * with the user's shell. Reading its own environment therefore reported "on
+ * PATH: no" on every service-managed install — a confident wrong answer that
+ * sent people to reinstall a shim that was already working — and reported
+ * "yes" for a desktop launch that happened to inherit a login shell. The
+ * terminal knows the answer for certain, because it IS the shell; it just had
+ * no way to say so.
+ */
+function onPath(dir: string, callerPath?: string | null): boolean {
   const sep = process.platform === 'win32' ? ';' : ':'
-  const entries = (process.env.PATH ?? '').split(sep).filter(Boolean)
+  const entries = (callerPath ?? process.env.PATH ?? '').split(sep).filter(Boolean)
   return entries.some((entry) => samePath(entry, dir))
 }
 
@@ -192,12 +214,12 @@ function profileHintFor(dir: string): string {
   return `echo 'export PATH="${portable}:$PATH"' >> ${rc}`
 }
 
-export async function cliPathStatus(): Promise<CliPathStatus> {
+export async function cliPathStatus(callerPath?: string | null): Promise<CliPathStatus> {
   const target = shimPath()
   const dir = shimDir()
   const present = existsSync(target)
   const resolved = await whichWolffish()
-  const dirOnPath = onPath(dir)
+  const dirOnPath = onPath(dir, callerPath)
 
   // Resolving to something that is NOT our shim is the confusing case: the
   // command "works" and does the wrong thing. On Linux that is usually the
@@ -207,6 +229,7 @@ export async function cliPathStatus(): Promise<CliPathStatus> {
 
   return {
     installed: present && dirOnPath && !resolvedElsewhere,
+    present,
     target,
     resolved,
     needsPathEntry: present && !dirOnPath,

@@ -486,6 +486,7 @@
           "checking": "Checking…",
           "install": "Install command",
           "reinstall": "Reinstall",
+          "remove": "Remove",
           "installed_at": "Installed at",
           "resolves": "Your shell runs",
           "shadowed": "Another program named \"wolffish\" comes first on your PATH — this is usually the desktop app itself, linked by the package manager. Running the command will open the app instead of the terminal session. Move {{dir}} ahead of it, or remove the other link.",
@@ -498,7 +499,9 @@
             "installed": "Command installed",
             "needsPath": "Installed — add its folder to your PATH",
             "shadowed": "Installed, but another wolffish runs first",
-            "failed": "Could not install the command"
+            "failed": "Could not install the command",
+            "removed": "Command removed",
+            "removeFailed": "Could not remove the command"
           }
         },
         "service": {
@@ -1006,6 +1009,9 @@
           "active": "Active",
           "inactive": "Inactive",
           "remove": "Remove",
+          "reconnect": "Reconnect",
+          "reconnecting": "Reconnecting",
+          "reconnectLabel": "Reconnect {{account}}",
           "accountLabel": "Authorized account {{account}}",
           "linkNote": "If the browser didn't open,",
           "linkOpen": "open the authorization link",

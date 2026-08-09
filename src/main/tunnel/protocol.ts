@@ -147,6 +147,17 @@ export const Rpc = {
   /** Stop the running turn. */
   abortTurn: 'desktop.chat.abort',
   /**
+   * Which conversations have a turn in flight right now, as
+   * `{ conversationIds: string[] }` — this app's own chat:activeRuns, served
+   * to the phone for the reason a renderer window gets it: 'started' is a
+   * broadcast, so a surface that connects mid-run has already missed the only
+   * announcement that turn was ever going to send.
+   *
+   * The phone reads it once per connection and opens a live overlay per id,
+   * which is what every piece of its chat chrome derives "running" from.
+   */
+  activeRuns: 'desktop.chat.activeRuns',
+  /**
    * The user answered an ask-the-user card. Params: `{ id, response }` where
    * `response` is the desktop's AskUserResponse — `{ kind: 'answered',
    * answers }` (one answer per question, in order) or `{ kind: 'canceled' }`.

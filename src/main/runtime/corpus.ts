@@ -165,6 +165,14 @@ export type CorpusEvents = {
   'memory.knowledgeUpdated': { file: string; fact: string }
   'memory.knowledgeRewritten': { file: string; bytes: number }
 
+  /**
+   * The agent amended one of its own long-term surfaces through the
+   * `knowledge` capability (playbook, custom instructions, identity, or a
+   * curated knowledge file). Distinct from the memory.* events above, which
+   * are the automated consolidation path — this one is model-initiated.
+   */
+  'knowledge.edited': { target: string; rel: string; op: string; bytes: number }
+
   'reflection.reviewed': {
     conversation: string
     userScore: number | null
@@ -262,6 +270,8 @@ export type CorpusEvents = {
   'whatsapp.stopped': { reason?: string }
   'whatsapp.statusChanged': Record<string, never>
   'whatsapp.qr': { qr: string }
+  /** Linking by phone number produced its eight-character code. */
+  'whatsapp.pairingCode': { code: string }
   'whatsapp.loggedOut': Record<string, never>
   'whatsapp.error': {
     kind: 'auth' | 'network' | 'crypto' | 'stream' | 'unknown'

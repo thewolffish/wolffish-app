@@ -47,14 +47,18 @@ const GUI_ONLY: Record<string, string> = {
   'upload:pickFile': 'pass file paths instead: wolffish -f <path>, or /attach <path> in the REPL',
   'upload:pickFolder': 'pass the folder path instead',
   'projects:pickFiles': 'use: wolffish project files add <id> <path…>',
-  'ollama:pickModelsFolder': 'use: wolffish config set ollamaModelsFolder <path>',
-  'upload:revealInFolder': 'use: wolffish open <path>',
-  'viewer:revealInFolder': 'use: wolffish open <path>',
-  'voice:revealInFolder': 'use: wolffish open <path>',
-  'diagnostics:reveal': 'use: wolffish open <path>',
-  'browserExtension:openExtensionFolder': 'use: wolffish open <path>',
+  'ollama:pickModelsFolder': 'use: wolffish settings local — "Where models are stored"',
+  // These name `wolffish view`, not `wolffish open` — there is no `open`
+  // command, and a redirection to a command that does not exist is a dead end
+  // wearing the costume of a helpful error.
+  'upload:revealInFolder': 'use: wolffish view <path>',
+  'viewer:revealInFolder': 'use: wolffish view <path>',
+  'voice:revealInFolder': 'use: wolffish view <path>',
+  'diagnostics:reveal': 'the archive path is printed by: wolffish conversations diagnose <id>',
+  'browserExtension:openExtensionFolder':
+    'the path is printed by: wolffish settings browserExtension',
   'browserExtension:openExtensionsPage': 'open the browser extensions page yourself',
-  'ollama:openInstallPage': 'the install URL is printed by: wolffish status',
+  'ollama:openInstallPage': 'install Ollama from ollama.com, then run: ollama serve',
   'spellcheck:replace': 'renderer-only',
   'spellcheck:addToDictionary': 'renderer-only',
   'tray-menu:action': 'renderer-only',
@@ -117,17 +121,41 @@ export class CliServer {
     const server = net.createServer((socket) => this.onConnection(socket))
     this.server = server
 
-    await new Promise<void>((resolve, reject) => {
-      server.once('error', reject)
-      server.listen(socketPath, () => {
-        server.removeListener('error', reject)
-        resolve()
+    /**
+     * The permission is set BEFORE the socket exists, not after.
+     *
+     * `listen()` creates the node with the process umask — 0755 on a default
+     * Linux box — and the chmod that followed left a window in which any local
+     * user could connect and drive the agent. Narrow, but on a shared VPS it is
+     * a window into someone's whole account, and it opens on every start.
+     * `process.umask` is the only way to influence the mode at creation, so it
+     * is tightened around the listen and restored immediately.
+     */
+    const previousUmask = process.platform === 'win32' ? null : process.umask(0o177)
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once('error', reject)
+        server.listen(socketPath, () => {
+          server.removeListener('error', reject)
+          resolve()
+        })
       })
-    })
+    } finally {
+      if (previousUmask !== null) process.umask(previousUmask)
+    }
 
     if (process.platform !== 'win32') {
-      // Owner-only. The socket IS the authentication.
-      await fs.chmod(socketPath, 0o600).catch(() => undefined)
+      // Belt and braces, and the one that must be LOUD if it fails: a socket
+      // left group- or world-writable is an unauthenticated control channel,
+      // so a failure here is logged rather than swallowed.
+      try {
+        await fs.chmod(socketPath, 0o600)
+      } catch (error) {
+        wlog.error(
+          TAG,
+          `could not restrict ${socketPath} to this user (${String(error)}) — other local users may be able to drive Wolffish`
+        )
+      }
     }
 
     this.listening = true
@@ -263,11 +291,29 @@ export class CliServer {
     }
 
     try {
-      // The synthetic event stands in for IpcMainInvokeEvent. Only three of the
-      // app's handlers read it at all (two spellcheck, one OAuth), and all
-      // three are refused above or renderer-scoped, so a null sender is
-      // honest rather than a stub that would silently misbehave.
-      const value = await handler(null, ...args)
+      /**
+       * A stub event stands in for IpcMainInvokeEvent, rather than `null`.
+       *
+       * `null` was chosen on the reasoning that the only handlers reading the
+       * event were refused above — and that stopped being true the moment one
+       * wasn't. `google:authAdd` calls `event.sender.send` from a child
+       * process's stdout listener, so a terminal asking to authorize an
+       * account raised an uncaught TypeError in the MAIN PROCESS, with nothing
+       * around it to catch. (That handler now broadcasts, but the class of bug
+       * is one careless `event.sender` away from returning.)
+       *
+       * `send` therefore routes to the same broadcast every attached client is
+       * already listening on: a handler that wanted to push something at the
+       * caller gets its wish, and no handler can take the daemon down by
+       * assuming a window.
+       */
+      const stubEvent = {
+        sender: {
+          send: (pushChannel: string, payload: unknown) => this.pushBroadcast(pushChannel, payload),
+          isDestroyed: () => false
+        }
+      }
+      const value = await handler(stubEvent, ...args)
       this.write(socket, { id, t: 'result', ok: true, value })
     } catch (err) {
       this.write(socket, {

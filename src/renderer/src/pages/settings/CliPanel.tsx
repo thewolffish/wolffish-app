@@ -76,6 +76,13 @@ void loadCliSnapshot()
 window.api?.cli?.onPathChange((path) => {
   if (cachedSnapshot) cachedSnapshot = { ...cachedSnapshot, path }
 })
+// The verbose toggle is editable from the paired phone too, and a phone-side
+// write lands as this push (main broadcasts it from applyMobileSettings, the
+// same way cli:setConfig does). Kept warm so reopening the tab paints what the
+// workspace actually holds rather than the value this window last wrote.
+window.api?.cli?.onConfigChange((config) => {
+  if (cachedSnapshot) cachedSnapshot = { ...cachedSnapshot, config }
+})
 window.api?.runtime?.onPreferencesChanged(() => {
   void window.api?.cli?.serviceStatus().then((service) => {
     if (cachedSnapshot) cachedSnapshot = { ...cachedSnapshot, service }
@@ -138,10 +145,18 @@ export function CliPanel(): React.JSX.Element {
     const off = window.api.cli.onPathChange((next) => {
       if (!cancelled) setPathState(next)
     })
+    // Verbose is editable from the phone's Channels → CLI card as well, and
+    // that write is announced on this channel. Following it is what makes the
+    // two screens one control instead of two copies that drift apart the
+    // moment either is touched.
+    const offConfig = window.api.cli.onConfigChange((next) => {
+      if (!cancelled) setConfig(next)
+    })
     return () => {
       cancelled = true
       off()
       offPrefs()
+      offConfig()
     }
   }, [])
 
@@ -174,6 +189,33 @@ export function CliPanel(): React.JSX.Element {
       }
     } catch {
       toast.show({ message: t('settings.channels.cli.path.toast.failed'), tone: 'error' })
+    } finally {
+      setBusy(null)
+    }
+  }, [t, toast])
+
+  /**
+   * Take the shim back off the PATH.
+   *
+   * Worth a button of its own rather than leaving the terminal as the only way
+   * out: the card that installs a thing is where someone looks to uninstall
+   * it, and a screen that can only add is a screen you have to leave to undo.
+   * No confirmation — the shim is one click to put back, and the state after
+   * is rendered from what main answers, not assumed.
+   */
+  const removePath = useCallback(async () => {
+    setBusy('path')
+    try {
+      const next = await window.api.cli.uninstallPath()
+      setPathState(next)
+      toast.show({
+        message: next.error
+          ? t('settings.channels.cli.path.toast.removeFailed')
+          : t('settings.channels.cli.path.toast.removed'),
+        tone: next.error ? 'error' : 'success'
+      })
+    } catch {
+      toast.show({ message: t('settings.channels.cli.path.toast.removeFailed'), tone: 'error' })
     } finally {
       setBusy(null)
     }
@@ -284,25 +326,41 @@ export function CliPanel(): React.JSX.Element {
                 </span>
               </div>
             </div>
-            {/* Always rendered, so the header never reflows when the probe
-                lands — only its label and emphasis change. */}
-            <button
-              type="button"
-              disabled={busy === 'path' || pathState === null}
-              onClick={() => void installPath()}
-              className={cn(
-                'shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium cursor-pointer',
-                'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-                'disabled:cursor-default disabled:opacity-50',
-                pathHealthy
-                  ? 'border-border text-muted hover:text-fg border'
-                  : 'bg-primary text-primary-fg shadow-sm'
+            {/* Install is always rendered, so the header never reflows when the
+                probe lands — only its label and emphasis change. Remove joins
+                it only once there is a shim to remove — gated on `present`, not
+                `installed`: a shim written somewhere the shell cannot see it is
+                still a file this app put there, and that is precisely when
+                someone wants it gone.
+
+                Both are the shared Button, and Remove wears the destructive
+                treatment the Data tab's factory reset uses — red border, red
+                tint, red text, before it is hovered rather than after. Removal
+                should look like removal everywhere in the app, and a control
+                that only reveals its danger on hover reveals it too late. */}
+            <div className="flex shrink-0 items-center gap-2">
+              {pathState?.present && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={busy === 'path'}
+                  onClick={() => void removePath()}
+                  className="border-red-500/40 bg-red-500/10 text-red-700 hover:bg-red-500/20 active:bg-red-500/20 dark:text-red-400"
+                >
+                  {t('settings.channels.cli.path.remove')}
+                </Button>
               )}
-            >
-              {pathHealthy
-                ? t('settings.channels.cli.path.reinstall')
-                : t('settings.channels.cli.path.install')}
-            </button>
+              <Button
+                size="sm"
+                variant={pathHealthy ? 'outline' : 'primary'}
+                disabled={busy === 'path' || pathState === null}
+                onClick={() => void installPath()}
+              >
+                {pathHealthy
+                  ? t('settings.channels.cli.path.reinstall')
+                  : t('settings.channels.cli.path.install')}
+              </Button>
+            </div>
           </div>
 
           {/* Notices are CONTENT, not a loading state — they belong to a
@@ -797,31 +855,33 @@ function CommandReference({
       {
         key: 'conversations',
         rows: [
-          ['wolffish ls', 'list conversations'],
-          ['wolffish show <id>', 'print a transcript'],
+          ['wolffish conversations', 'list conversations'],
+          ['wolffish conversations show <id>', 'print a transcript'],
           ['wolffish resume <id>', 'continue one'],
-          ['wolffish rm <id>', 'delete one']
+          ['wolffish conversations rm <id>', 'delete one']
         ]
       },
       {
+        // The terminal's settings surface is this window's, walked: page, then
+        // card, then row. These are the words that open each level.
         key: 'settings',
         rows: [
-          ['wolffish config', 'every setting and its current value'],
-          ['wolffish config set <id> <value>', 'change one'],
-          ['wolffish keys set anthropic', 'enter a key without echoing it'],
-          ['wolffish brain anthropic <model>', 'switch the model'],
-          ['wolffish capabilities off memes', 'toggle a capability']
+          ['wolffish settings', 'browse every page and card'],
+          ['wolffish settings channels telegram', 'straight to one card'],
+          ['wolffish settings list', 'every setting and its value'],
+          ['wolffish settings set <id> <value>', 'change one'],
+          ['wolffish settings providers', 'keys and the brain']
         ]
       },
       {
         key: 'workspace',
         rows: [
-          ['wolffish soul', 'edit Soul in $EDITOR'],
-          ['wolffish user', 'edit User'],
-          ['wolffish agents', 'edit Agents'],
-          ['wolffish project list', 'projects'],
-          ['wolffish automation edit', 'edit the automation file'],
-          ['wolffish usage month', 'tokens and cost']
+          ['wolffish projects', 'projects'],
+          ['wolffish procedures run <id>', 'run a procedure'],
+          ['wolffish automations edit', 'edit the automation file'],
+          ['wolffish documents soul', 'edit Soul in $EDITOR'],
+          ['wolffish files', 'browse the workspace'],
+          ['wolffish settings usage', 'tokens and cost']
         ]
       },
       {

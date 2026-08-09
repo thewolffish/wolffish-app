@@ -359,11 +359,14 @@ function ProjectDialogBody({
             <Copy01Icon size={13} />
           </button>
         </div>
-        {/* Four lines of the instructions, in the card's own code block. With
-            files and folders below it, an inline editor tall enough to write in
-            pushed everything else off screen — clicking opens the full-height
-            editor below instead, exactly as the Automations and Procedures
-            editors do. */}
+        {/* The instructions, in the card's own code block — capped but
+            scrollable, so the whole thing can be read here without opening
+            anything. With files and folders below it, an inline editor tall
+            enough to write in pushed everything else off screen — clicking
+            opens the full-height editor below instead, exactly as the
+            Automations and Procedures editors do. Scrolling stays clean: the
+            wheel moves this block rather than the dialog behind it, and
+            dragging its scrollbar never reaches the button's click handler. */}
         <button
           type="button"
           onClick={() => !busy && setInstructionsExpanded(true)}
@@ -379,7 +382,7 @@ function ProjectDialogBody({
           {draftInstructions.trim() ? (
             <pre
               dir="auto"
-              className="text-muted line-clamp-4 font-mono text-xs leading-relaxed wrap-break-word whitespace-pre-wrap"
+              className="text-muted max-h-40 overflow-y-auto overscroll-contain font-mono text-xs leading-relaxed wrap-break-word whitespace-pre-wrap"
             >
               {draftInstructions}
             </pre>

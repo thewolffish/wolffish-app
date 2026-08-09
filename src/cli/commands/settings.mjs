@@ -1,23 +1,49 @@
 /**
- * `wolffish config` — every setting the desktop panels show, read and written
- * through the same handlers those panels call.
+ * Reading and writing ONE setting, and the four list-shaped flows that are not
+ * settings at all: providers, the Brain, prompt variables, capabilities.
  *
- * Reading matters as much as writing. A config command that only sets values
- * makes you guess what the current state is, so the default listing prints the
- * card's own label, its description, and what it is set to right now — the
- * same three things the panel shows, in the user's locale.
+ * Everything here goes through the same handlers the desktop panels call. The
+ * browser (settings-browser.mjs) walks the page → card → row hierarchy; this
+ * file is what it calls once a row or a flow is chosen, and what scripts call
+ * directly by id.
  */
-import { c, heading, icon, out, pad, question, table, visibleLength, wrapText } from '../lib/ui.mjs'
+import { c, heading, icon, interactive, out, pad, question, table, wrapText } from '../lib/ui.mjs'
 
-const GROUP_TITLES = {
-  wolffish: 'Wolffish · runtime behavior',
-  model: 'Model',
-  appearance: 'Appearance',
-  channels: 'Channels',
-  services: 'Services',
-  knowledge: 'Knowledge',
-  updates: 'Updates'
+/**
+ * Providers the app knows how to talk to, for the picker on a machine that has
+ * none configured yet. Mirrors the CloudProviderId union in preload/index.ts;
+ * a stale entry here costs a menu line, a missing one costs a dead end.
+ */
+const KNOWN_PROVIDERS = [
+  'anthropic',
+  'openai',
+  'openrouter',
+  'deepseek',
+  'xai',
+  'qwen',
+  'kimi',
+  'minimax',
+  'mimo',
+  'stepfun',
+  'zai'
+]
+
+/** `provider:test`'s error kinds, said in words rather than in enum. */
+const KEY_ERRORS = {
+  invalid_key: 'the provider rejected that key',
+  rate_limited: 'the provider is rate-limiting — try again in a moment',
+  invalid_model: 'the key works but that model does not exist for it',
+  network: 'could not reach the provider — check the network',
+  generic: 'the provider refused the request'
 }
+
+/**
+ * Names that mean "this is a credential". Matching on the NAME rather than
+ * asking is deliberate: the desktop has a checkbox next to the field, and a
+ * terminal prompt for every variable would be a question asked ten times to
+ * catch the one that mattered.
+ */
+const SENSITIVE_NAME = /(key|token|secret|password|passwd|pwd|credential|auth)/i
 
 async function locale(client) {
   try {
@@ -28,51 +54,19 @@ async function locale(client) {
   }
 }
 
-export async function listSettings(client, { group, json, long } = {}) {
-  const cards = await client.invoke('cli:describeSettings', await locale(client))
-  const filtered = group ? cards.filter((card) => card.group === group) : cards
-
-  if (json) {
-    out(JSON.stringify(filtered, null, 2))
-    return 0
-  }
-  if (filtered.length === 0) {
-    out(c.yellow(`no settings in group "${group}"`))
-    return 1
-  }
-
-  let currentGroup = null
-  for (const card of filtered) {
-    if (card.group !== currentGroup) {
-      currentGroup = card.group
-      heading(GROUP_TITLES[currentGroup] ?? currentGroup)
-    }
-    const value =
-      card.kind === 'boolean'
-        ? card.value === true
-          ? c.green(card.display)
-          : c.gray(card.display)
-        : c.cyan(card.display)
-    // A setting whose registration disagrees with its stored intent gets both
-    // states and a warning marker — the honest rendering of "you asked for
-    // this and the machine did not do it".
-    const mismatch =
-      card.actual && card.value === true && !/^(active|مُفعّل|مفعل)$/i.test(card.actual)
-    const actual = card.actual ? c.gray(` · ${card.actual}`) : ''
-    out()
-    out(
-      `  ${mismatch ? icon.warn() : ' '} ${c.bold(card.label)}` +
-        `${' '.repeat(Math.max(1, 44 - visibleLength(card.label)))}${value}${actual}`
-    )
-    out(`    ${c.gray(card.id)}`)
-    if (long && card.description) out(wrapText(c.gray(card.description), 4))
-    if (long && card.options?.length) {
-      out(`    ${c.gray('options: ' + card.options.map((o) => o.value).join(', '))}`)
-    }
-  }
-  out()
-  if (!long) out(c.gray('  --long for descriptions and allowed values'))
-  return 0
+/**
+ * Enough of a credential to recognise WHICH one is installed, never enough to
+ * use it — the same rule the daemon applies to setting cards (`maskSecret` in
+ * channels/cli/ipc.ts), repeated here because `provider:list` hands this
+ * process the raw key (the desktop panel needs it) and a terminal is
+ * scrollback, tmux buffers and screen shares.
+ */
+function mask(value) {
+  const text = String(value ?? '')
+  if (text.length === 0) return 'not set'
+  if (text.length < 5) return '•'.repeat(6)
+  if (text.length <= 10) return `${text.slice(0, 2)}${'•'.repeat(6)}${text.slice(-2)}`
+  return `${text.slice(0, 6)}${'•'.repeat(10)}${text.slice(-2)}`
 }
 
 export async function getSetting(client, id, { json } = {}) {
@@ -131,14 +125,14 @@ function suggest(cards, id) {
     out(c.gray('  did you mean:'))
     for (const candidate of close) out(`    ${candidate}`)
   } else {
-    out(c.gray('  list them all with: wolffish config'))
+    out(c.gray('  list them all with: wolffish settings list'))
   }
 }
 
 /**
- * `wolffish keys` — API keys and channel tokens, entered without echo and
- * never as an argv token. A key typed as `wolffish config set … sk-live-…`
- * lands in the shell history file; this path does not.
+ * Provider keys, entered without echo and never as an argv token. A key typed
+ * as `wolffish settings set … sk-live-…` lands in the shell history file; this
+ * path does not.
  */
 export async function manageKeys(client, args) {
   const [sub, ...rest] = args
@@ -146,34 +140,78 @@ export async function manageKeys(client, args) {
     const snapshot = await client.invoke('cli:describeSettings', await locale(client))
     const providers = await client.invoke('provider:list').catch(() => [])
     heading('Model providers')
-    // provider:list carries the raw key (the renderer needs it to show a
-    // masked field). Only ever report whether one is present — a key printed
-    // to a terminal ends up in scrollback, tmux buffers and screen shares.
     table(
       ['provider', 'model', 'key'],
       providers.map((p) => [
         p.id,
         p.model || c.gray('—'),
-        p.apiKey ? c.green('set') : c.gray('not set')
+        p.apiKey ? c.gray(mask(p.apiKey)) : c.gray('not set')
       ])
     )
+    // Already masked by the daemon before it reached this process — `value` on
+    // a secret card IS the mask, never the credential.
     const secrets = snapshot.filter((card) => card.kind === 'secret')
     if (secrets.length > 0) {
       heading('Service keys')
       table(
         ['setting', 'value'],
-        secrets.map((card) => [card.id, card.value ? c.green('set') : c.gray('not set')])
+        secrets.map((card) => [card.id, card.value ? c.gray(card.display) : c.gray('not set')])
       )
     }
     out()
-    out(c.gray('  wolffish keys set <provider> [model]    prompts for the key, no echo'))
+    out(c.gray('  add or replace a key from this card, or: wolffish keys set <provider>'))
     return 0
+  }
+
+  // Reached from the settings browser, where the user has not typed a
+  // provider name — pick one from what the app actually supports rather than
+  // making them remember the id.
+  if (sub === 'set-interactive') {
+    const providers = await client.invoke('provider:list').catch(() => [])
+    const snapshot = await client.invoke('cli:snapshot').catch(() => ({}))
+    /**
+     * On a machine with no provider yet, `provider:list` is empty — and an
+     * empty picker that says "use the command you just used" is a dead end on
+     * exactly the machine this flow exists for. Offer the catalogue instead.
+     */
+    const known = providers.length > 0 ? providers : KNOWN_PROVIDERS.map((id) => ({ id }))
+    if (known.length === 0) {
+      out(c.yellow('  no providers configured yet'))
+      out(c.gray('  wolffish keys set <provider> — anthropic, openai, deepseek, xai, ...'))
+      return 1
+    }
+    heading('Provider')
+    known.forEach((p, i) => {
+      const has = p.apiKey ? c.green('key set') : c.gray('no key')
+      const isBrain = snapshot?.llm?.brainProvider === p.id && snapshot?.llm?.brainModel === p.model
+      out(
+        `   ${c.cyan(String(i + 1).padStart(2))}. ${String(p.id).padEnd(12)} ${has}` +
+          (isBrain ? c.gray(' · current brain') : '')
+      )
+    })
+    out()
+    if (!interactive()) return 0
+    const pick = (await question(`  ${c.dim(`1-${known.length}, blank cancels`)}: `)).trim()
+    if (!pick) return 0
+    const chosen = known[Number.parseInt(pick, 10) - 1]
+    if (!chosen) {
+      out(c.red('  no such provider'))
+      return 1
+    }
+    return manageKeys(client, ['set', chosen.id])
   }
 
   if (sub === 'set') {
     const [provider, model] = rest
     if (!provider) {
       out(c.red('usage: wolffish keys set <provider> [model]'))
+      return 2
+    }
+    // A key has to be TYPED. On a non-TTY with no session there is nobody to
+    // type it, and the raw read would sit on a stdin that never reaches EOF —
+    // a command that hangs a deploy script forever rather than failing it.
+    if (!interactive()) {
+      out(c.red('  a key has to be typed — run this from a terminal'))
       return 2
     }
     const apiKey = await question(`  ${c.bold(provider)} API key ${c.dim('(hidden)')}: `, {
@@ -186,16 +224,46 @@ export async function manageKeys(client, args) {
     const existing = (await client.invoke('provider:list').catch(() => [])).find(
       (entry) => entry.id === provider
     )
+
+    /**
+     * TEST first, then save — the desktop panel's order, and the reason it
+     * works where this did not.
+     *
+     * `provider:test` is what fetches the provider's model catalogue, and
+     * `provider:save` stores whatever it is handed. Saving a bare key stored
+     * `models: undefined`, so `wolffish brain <provider> <model>` had nothing
+     * to offer and nothing to validate against: the key was accepted, the
+     * provider looked configured, and the first real turn failed on a model
+     * name the user had to guess. A wrong key also failed here rather than
+     * silently, hours later, in a turn.
+     */
+    out(c.gray('  checking the key…'))
+    const test = await client
+      .invoke('provider:test', { id: provider, apiKey: apiKey.trim() })
+      .catch((error) => ({ ok: false, kind: error?.message }))
+    if (test?.ok === false) {
+      out(
+        `${icon.fail()} ${c.red(KEY_ERRORS[test.kind] ?? test.kind ?? 'the provider rejected it')}`
+      )
+      out(c.gray('  nothing was saved'))
+      return 1
+    }
+    const models = Array.isArray(test?.models) ? test.models : []
     const result = await client.invoke('provider:save', {
       id: provider,
-      model: model ?? existing?.model ?? '',
-      apiKey: apiKey.trim()
+      model: model ?? existing?.model ?? models[0] ?? '',
+      apiKey: apiKey.trim(),
+      models: models.length ? models : undefined,
+      reasoningModels: test?.reasoningModels
     })
     if (result?.ok === false) {
       out(`${icon.fail()} ${c.red(result.error ?? 'failed')}`)
       return 1
     }
     out(`${icon.ok()} saved key for ${c.bold(provider)}`)
+    if (models.length) {
+      out(c.gray(`  ${models.length} models available — wolffish brain ${provider} <model>`))
+    }
     return 0
   }
 
@@ -203,21 +271,55 @@ export async function manageKeys(client, args) {
   return 2
 }
 
-/** `wolffish brain` — which model runs, and switching it. */
+/**
+ * Which model runs, and switching it.
+ *
+ * With arguments it is a one-liner for scripts. With none it PICKS, rather
+ * than printing a table and a command to retype: it is reached from inside the
+ * settings browser, where the user has already said "change the brain", and
+ * answering that with homework is the friction this whole surface exists to
+ * remove.
+ */
 export async function brain(client, args) {
   const providers = await client.invoke('provider:list').catch(() => [])
-  if (args.length === 0) {
-    heading('Brain')
-    const connected = providers.filter((p) => Boolean(p.apiKey))
-    if (connected.length === 0) {
-      out(c.yellow('  no provider has a key yet — wolffish keys set <provider>'))
-      return 1
+
+  if (args.length > 0) {
+    const [providerId, model] = args
+    if (!providerId || !model) {
+      out(c.red('usage: wolffish brain <provider> <model>'))
+      return 2
     }
-    // Which one is actually the Brain lives in the config snapshot, not in
-    // provider:list — the setting is a single choice across providers.
-    const snapshot = await client.invoke('cli:snapshot').catch(() => ({}))
-    const activeProvider = snapshot?.llm?.brainProvider ?? null
-    const activeModel = snapshot?.llm?.brainModel ?? null
+    await client.invoke('provider:setBrain', { providerId, model })
+    out(`${icon.ok()} brain is now ${c.bold(`${providerId}/${model}`)}`)
+    return 0
+  }
+
+  heading('Brain')
+  const connected = providers.filter((p) => Boolean(p.apiKey))
+  if (connected.length === 0) {
+    out(c.yellow('  no provider has a key yet'))
+    out(c.gray('  add one from this card, or: wolffish keys set <provider>'))
+    return 1
+  }
+
+  // Which one is actually the Brain lives in the config snapshot, not in
+  // provider:list — the setting is a single choice across providers.
+  const snapshot = await client.invoke('cli:snapshot').catch(() => ({}))
+  const activeProvider = snapshot?.llm?.brainProvider ?? null
+  const activeModel = snapshot?.llm?.brainModel ?? null
+
+  // One row per provider+model the machine could actually run, so choosing is
+  // a number rather than two names typed from memory.
+  const choices = connected.flatMap((provider) => {
+    const models = provider.models?.length
+      ? provider.models
+      : provider.model
+        ? [provider.model]
+        : []
+    return models.map((model) => ({ provider: provider.id, model }))
+  })
+
+  if (!interactive() || choices.length === 0) {
     table(
       ['provider', 'model', 'active'],
       connected.map((p) => [
@@ -230,13 +332,29 @@ export async function brain(client, args) {
     out(c.gray('  wolffish brain <provider> <model>'))
     return 0
   }
-  const [providerId, model] = args
-  if (!providerId || !model) {
-    out(c.red('usage: wolffish brain <provider> <model>'))
-    return 2
+
+  choices.forEach((choice, index) => {
+    const current =
+      choice.provider === activeProvider && choice.model === activeModel ? c.green(' ●') : ''
+    out(
+      `   ${c.cyan(String(index + 1).padStart(2))}. ${pad(choice.provider, 12)} ${choice.model}${current}`
+    )
+  })
+  out()
+  const answer = (await question(`  ${c.dim(`1-${choices.length}, blank keeps it`)}: `)).trim()
+  if (!answer) return 0
+  const chosen = choices[Number.parseInt(answer, 10) - 1]
+  if (!chosen) {
+    out(c.red('  no such option'))
+    return 1
   }
-  await client.invoke('provider:setBrain', { providerId, model })
-  out(`${icon.ok()} brain is now ${c.bold(`${providerId}/${model}`)}`)
+  await client.invoke('provider:setBrain', { providerId: chosen.provider, model: chosen.model })
+  // Read back: the setter normalises and the panels re-seed from the config,
+  // so what holds is what the snapshot says, not what was asked for.
+  const after = await client.invoke('cli:snapshot').catch(() => ({}))
+  out(
+    `${icon.ok()} brain is now ${c.bold(`${after?.llm?.brainProvider ?? chosen.provider}/${after?.llm?.brainModel ?? chosen.model}`)}`
+  )
   return 0
 }
 
@@ -263,7 +381,16 @@ export async function variables(client, args) {
     }
     const value = valueParts.join(' ')
     const next = current.filter((v) => v.name !== name)
-    next.push({ name, value, sensitive: false })
+    /**
+     * A variable whose name reads like a credential is stored sensitive, so
+     * `wolffish vars` masks it the way the desktop does. Every CLI-created
+     * variable used to be `sensitive: false`, which meant a key put in from the
+     * terminal printed in full on every later listing — the one surface where
+     * the listing lands in scrollback.
+     */
+    const sensitive = SENSITIVE_NAME.test(name)
+    next.push({ name, value, sensitive })
+    if (sensitive) out(c.gray('  stored as a secret — it will be masked when listed'))
     await client.invoke('variables:save', next)
     out(`${icon.ok()} ${name}`)
     return 0

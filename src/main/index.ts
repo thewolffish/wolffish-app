@@ -5,6 +5,7 @@ import { attachFilesToAutomation, removeAutomationFile } from '@main/automations
 import { braveService, type BraveStatus, type BraveTestResult } from '@main/brave'
 import { turnRouter } from '@main/channels/channel'
 import { collectChannelStatus } from '@main/channels/status'
+import { normalizeReasoningMode, reasoningModesFor } from '@main/runtime/reasoning'
 import { ElectronChannel } from '@main/channels/electron/channel'
 import { ExtensionServer } from '@main/channels/extension/server'
 import { MobileChannel } from '@main/channels/mobile/channel'
@@ -70,6 +71,7 @@ import { CliServer } from '@main/channels/cli/server'
 import { registerCliIpc, type AutostartFacts } from '@main/channels/cli/ipc'
 import { cliEntryPath, cliPathStatus, installCliPath } from '@main/autostart/cli-path'
 import {
+  autostartMechanism,
   autostartStatus,
   installAutostart,
   uninstallAutostart,
@@ -117,6 +119,12 @@ import { previewSchedule } from '@main/runtime/brainstem'
 import { COMPACTION_THRESHOLD } from '@main/runtime/compactor'
 import type { AskUserResponse } from '@main/runtime/cerebellum'
 import { LOCKED_CAPABILITIES } from '@main/runtime/cerebellum'
+import {
+  isKnowledgeTarget,
+  KNOWLEDGE_TARGETS,
+  KnowledgeStore,
+  type EntrySource
+} from '@main/runtime/knowledge'
 import { deleteCapabilityFolder, importCapability } from '@main/runtime/capabilityImport'
 import { McpManager } from '@main/runtime/mcp/manager'
 import type { McpAddInput, McpHeader } from '@main/runtime/mcp/types'
@@ -197,6 +205,7 @@ import {
   setBraveConfig as persistBraveConfig,
   setBrowserExtensionConfig as persistBrowserExtensionConfig,
   setBypassPermissions as persistBypassPermissions,
+  setCliConfig as persistCliConfig,
   setCompactionConfig as persistCompactionConfig,
   setComputerUseConfig as persistComputerUseConfig,
   setReflectionConfig as persistReflectionConfig,
@@ -309,6 +318,14 @@ function resolveDevicePath(p: string): string | null {
 //
 // Do NOT also pass `--disable-setuid-sandbox`: it's redundant under
 // `--no-sandbox` and Linux-only, so it only muddies the flag set.
+/**
+ * Same two signals `IS_HEADLESS` reads further down. Duplicated rather than
+ * hoisted because the switches below have to be appended before Electron
+ * commits to a display, which is earlier than that constant is defined.
+ */
+const IS_HEADLESS_BOOT =
+  process.argv.includes('--headless') || process.env.WOLFFISH_HEADLESS === '1'
+
 app.commandLine.appendSwitch('no-sandbox')
 
 // Running unsandboxed, Chromium's guest/renderer processes allocate their
@@ -342,6 +359,33 @@ app.commandLine.appendSwitch('disable-gpu-sandbox')
 // have committed to a sandbox before appendSwitch() ran in this main module.
 // Belt-and-suspenders for the same blank-guest issue.
 app.commandLine.appendSwitch('no-zygote')
+
+/**
+ * A Linux box with no display server — the machine this whole CLI exists for.
+ *
+ * Electron is Chromium, and Chromium on Linux insists on a display at startup
+ * even when nothing will ever be drawn: without one it aborts with "Missing X
+ * server or $DISPLAY" before a single line of this file's logic runs. The
+ * systemd unit written by autostart.ts launches exactly that way — no session,
+ * no DISPLAY — so a VPS install would register successfully, report itself
+ * healthy, and then fail to boot on every restart, with the reason visible
+ * only in the journal.
+ *
+ * Ozone's headless platform is the supported way to run with no display at
+ * all. Applied ONLY when this really is a headless Linux launch, so a normal
+ * desktop start is untouched.
+ */
+if (
+  process.platform === 'linux' &&
+  IS_HEADLESS_BOOT &&
+  !process.env.DISPLAY &&
+  !process.env.WAYLAND_DISPLAY
+) {
+  app.commandLine.appendSwitch('ozone-platform', 'headless')
+  app.commandLine.appendSwitch('disable-gpu')
+  app.commandLine.appendSwitch('disable-software-rasterizer')
+  app.disableHardwareAcceleration()
+}
 
 // Single-instance guard: if Wolffish is already running (even collapsed to
 // tray), focus the existing window instead of showing a lockfile error.
@@ -1094,6 +1138,24 @@ async function applyMobileSettings(settings: Record<string, unknown>): Promise<v
       case 'mobileVerbose':
         await mobileChannel.setVerbose(value === true)
         break
+      /**
+       * The terminal's feed preference — the one CLI setting the phone edits.
+       * Everything else on that card is a machine fact (is `wolffish` on PATH,
+       * did the autostart registration take, by which mechanism), and the two
+       * that ARE knobs upstream — autostart on/off and its mode — are the same
+       * OS registration `launchAtStartup` is, which this device has always
+       * reported rather than driven.
+       *
+       * Persist and announce exactly as `cli:setConfig` does, broadcast
+       * included: that push is what an open Channels → CLI panel re-seeds
+       * from, so a flip made on the phone moves the segmented control in the
+       * window without a refetch. Skipping it would leave the two screens
+       * disagreeing until the panel was reopened.
+       */
+      case 'cliVerbose':
+        await persistCliConfig({ verbose: value === true })
+        broadcast('cli:configChange', await getCliConfig())
+        break
       default:
         throw new Error(`"${key}" is not editable from the phone`)
     }
@@ -1251,6 +1313,11 @@ const mobileChannel = new MobileChannel({
   // What the OS has ACTUALLY registered, not the stored intent — the two
   // disagree whenever a registration failed, which on Linux used to be always.
   launchAtStartupActive: async () => (await readAutostartStatus()).active,
+  // The terminal half of this desktop, as the phone's CLI card reports it.
+  // Same two probes the Channels → CLI panel runs, so the card on the phone
+  // and the card in the window answer from one source rather than two.
+  cliPathInstalled: async () => (await cliPathStatus()).installed,
+  cliMechanism: async () => autostartMechanism(await currentRunMode()),
   // Deliberately lazy: extensionServer is constructed a few statements below,
   // and this closure only runs once a phone asks for a snapshot.
   extensionStatus: async () => extensionServer.getStatus(),
@@ -1417,33 +1484,88 @@ agent.cerebellum.setCortexHost({
   usageSummary: (opts) => agent.cortex.usageSummary(opts),
   searchArtifacts: (opts) => agent.cortex.searchArtifacts(opts),
   coverage: () => agent.cortex.coverage(),
-  saveKnowledge: async (file, fact) => {
+  saveKnowledge: async (file, fact, topic) => {
     // Exact-line dedup here: promoteToKnowledge is append-only by design, so
     // the bridge is where "don't save what's already saved" lives.
     const trimmed = fact.trim()
-    if (!trimmed) return { ok: false, deduped: false }
+    const filed = Boolean(topic?.trim())
+    if (!trimmed) return { ok: false, deduped: false, filed }
     const line = trimmed.startsWith('-') ? trimmed : `- ${trimmed}`
+    let newTopic = filed
     try {
       const { readFile } = await import('node:fs/promises')
       const p = join(workspaceRoot(), 'brain', 'hippocampus', 'knowledge', `${file}.md`)
       const existing = await readFile(p, 'utf8').catch(() => '')
       if (existing.split(/\r?\n/).some((l) => l.trim() === line)) {
-        return { ok: true, deduped: true }
+        return { ok: true, deduped: true, filed }
+      }
+      if (filed) {
+        const heading = `## ${topic?.trim()}`.toLowerCase()
+        newTopic = !existing.split(/\r?\n/).some((l) => l.trim().toLowerCase() === heading)
       }
     } catch {
       // a failed dedup probe must not block the save
     }
-    await agent.hippocampus.promoteToKnowledge(file, trimmed)
-    return { ok: true, deduped: false }
+    await agent.hippocampus.promoteToKnowledge(file, trimmed, topic)
+    // A note filed under a topic that didn't exist yet ADDS a `##` heading, and
+    // the memory map (which carries only headings) is cached per calendar day —
+    // without this the new topic would stay invisible until midnight. Filing
+    // into an existing topic changes no heading, so it costs no cache break.
+    if (newTopic) agent.prefrontal.invalidateMemoryMap()
+    return { ok: true, deduped: false, filed }
   }
 })
+// Wire the amend surface the `knowledge` capability's plugin receives. The
+// store owns the allowlist, the structure invariants and the .bak safety net;
+// this bridge only validates the target name (a plugin arg is untrusted input)
+// and hands the memory map a targeted invalidation when topics change.
+const knowledgeStore = new KnowledgeStore({
+  workspaceRoot: workspaceRoot(),
+  corpus: agent.corpus,
+  onKnowledgeTopicsChanged: () => agent.prefrontal.invalidateMemoryMap()
+})
+{
+  const badTarget = (target: string): { ok: false; error: string } => ({
+    ok: false,
+    error: `Unknown target "${target}" — pick one of: ${KNOWLEDGE_TARGETS.join(', ')}.`
+  })
+  agent.cerebellum.setKnowledgeHost({
+    targets: () => [...KNOWLEDGE_TARGETS],
+    list: () => knowledgeStore.list(),
+    read: async (target) => {
+      if (!isKnowledgeTarget(target)) return badTarget(target)
+      const { rel, content } = await knowledgeStore.read(target)
+      return { ok: true as const, rel, content }
+    },
+    add: async (target, entry, opts) =>
+      isKnowledgeTarget(target)
+        ? knowledgeStore.add(target, entry, {
+            section: opts.section,
+            source: opts.source as EntrySource | undefined
+          })
+        : badTarget(target),
+    edit: async (target, find, replace) =>
+      isKnowledgeTarget(target) ? knowledgeStore.edit(target, find, replace) : badTarget(target),
+    forget: async (target, find) =>
+      isKnowledgeTarget(target) ? knowledgeStore.forget(target, find) : badTarget(target),
+    rewrite: async (target, content) =>
+      isKnowledgeTarget(target) ? knowledgeStore.rewrite(target, content) : badTarget(target),
+    restore: async (target) =>
+      isKnowledgeTarget(target) ? knowledgeStore.restore(target) : badTarget(target)
+  })
+}
 // Feed live channel connectivity to the introspect capability so the agent can
 // check whether Telegram/WhatsApp are reachable (via `channel_status` /
 // `wolffish_status`) and tell the user how to reconnect a disconnected one.
 agent.cerebellum.setChannelStatusProvider(() =>
   collectChannelStatus({
     telegram: () => telegramChannel.getStatus(),
-    whatsapp: () => whatsappChannel.getStatus()
+    whatsapp: () => whatsappChannel.getStatus(),
+    mobile: () => mobileChannel.getStatus(),
+    // The agent's own view has to include the terminal, or on a headless box
+    // it believes it has no way to answer the person it is talking to.
+    cli: () => ({ clients: cliServer.clientCount(), listening: cliServer.isListening() }),
+    headless: () => IS_HEADLESS
   })
 )
 // ── Video generation (MiniMax H3) ────────────────────────────────────────
@@ -2056,11 +2178,13 @@ async function readAutostartStatus(): Promise<AutostartFacts> {
 }
 
 /** Everything `wolffish status` prints that isn't a config value. */
-async function buildCliStatus(): Promise<Record<string, unknown>> {
+async function buildCliStatus(callerPath?: string | null): Promise<Record<string, unknown>> {
   const [workspace, autostart, cliPath] = await Promise.all([
     getStatus().catch(() => null),
     readAutostartStatus().catch(() => null),
-    cliPathStatus().catch(() => null)
+    // The terminal's PATH when it sent one — see cliPathStatus for why the
+    // daemon's own is the wrong thing to answer this question with.
+    cliPathStatus(callerPath).catch(() => null)
   ])
   return {
     version: app.getVersion(),
@@ -2071,7 +2195,10 @@ async function buildCliStatus(): Promise<Record<string, unknown>> {
     path: cliPath,
     channels: collectChannelStatus({
       telegram: () => telegramChannel.getStatus(),
-      whatsapp: () => whatsappChannel.getStatus()
+      whatsapp: () => whatsappChannel.getStatus(),
+      mobile: () => mobileChannel.getStatus(),
+      cli: () => ({ clients: cliServer.clientCount(), listening: cliServer.isListening() }),
+      headless: () => IS_HEADLESS
     }),
     mobile: mobileChannel.getStatus(),
     extension: extensionServer.getStatus(),
@@ -2438,7 +2565,33 @@ app.whenReady().then(async () => {
   })
   handle('runtime:setThinkingMode', async (_e, model: string, mode: string) => {
     await persistThinkingMode(model, mode)
+    broadcast('preferences:changed', { thinkingMode: { model, mode } })
   })
+
+  /**
+   * Which reasoning modes a given provider+model actually honours, and what is
+   * stored for it now.
+   *
+   * The renderer works this out through the thalamus it shares by import; a
+   * terminal has no such access, so per-model reasoning effort — the brain
+   * button — was the one model control with no headless route at all. Reading
+   * it here keeps ONE registry (reasoning.ts) answering for every surface.
+   */
+  handle(
+    'runtime:reasoningModes',
+    async (
+      _e,
+      payload: { provider: string; model: string }
+    ): Promise<{ modes: string[]; current: string }> => {
+      const cfg = await readConfig()
+      const provider = cfg?.llm.providers.find((p) => p.id === payload.provider)
+      const modes = reasoningModesFor(payload.provider, payload.model, {
+        openrouterReasoning: provider?.reasoningModels?.includes(payload.model) ?? false
+      })
+      const stored = cfg?.llm.thinkingModes?.[payload.model]
+      return { modes, current: normalizeReasoningMode(stored, modes) }
+    }
+  )
 
   handle('runtime:setLaunchAtStartup', async (_e, value: boolean) => {
     const status = await setAutostart(value)
@@ -2515,11 +2668,12 @@ app.whenReady().then(async () => {
   // starting in the background reads "starting" forever until the user
   // re-saves. The channel emits `telegram.statusChanged` on every
   // transition; we forward the current snapshot.
-  agent.corpus.on('telegram.statusChanged', () => {
-    for (const w of BrowserWindow.getAllWindows()) {
-      w.webContents.send('telegram:statusChange', telegramChannel.getStatus())
-    }
-  })
+  // Through `broadcast()` for the same reason WhatsApp's are: a terminal
+  // watching a channel come up is as real a surface as a settings panel, and
+  // on a headless box it is the ONLY one.
+  agent.corpus.on('telegram.statusChanged', () =>
+    broadcast('telegram:statusChange', telegramChannel.getStatus())
+  )
 
   handle(
     'telegram:sendTestMessage',
@@ -2558,10 +2712,8 @@ app.whenReady().then(async () => {
         }
       }
       const status = whatsappChannel.getStatus()
-      // Push status update to renderer
-      BrowserWindow.getAllWindows().forEach((w) =>
-        w.webContents.send('whatsapp:statusChange', status)
-      )
+      // Every surface, not just the window that asked.
+      broadcast('whatsapp:statusChange', status)
       return { ok: true as const, status, config: next }
     }
   )
@@ -2574,42 +2726,50 @@ app.whenReady().then(async () => {
   handle('whatsapp:logout', async (): Promise<void> => {
     await whatsappChannel.logout()
     await persistWhatsAppConfig({ enabled: false })
-    BrowserWindow.getAllWindows().forEach((w) =>
-      w.webContents.send('whatsapp:statusChange', whatsappChannel.getStatus())
-    )
+    broadcast('whatsapp:statusChange', whatsappChannel.getStatus())
   })
 
   handle('whatsapp:requestQr', (): void => {
     whatsappChannel.requestQr()
-    BrowserWindow.getAllWindows().forEach((w) =>
-      w.webContents.send('whatsapp:statusChange', whatsappChannel.getStatus())
-    )
+    broadcast('whatsapp:statusChange', whatsappChannel.getStatus())
   })
 
-  // Push QR codes and status changes to the renderer as they happen
-  agent.corpus.on('whatsapp.qr', ({ qr }) => {
-    BrowserWindow.getAllWindows().forEach((w) => w.webContents.send('whatsapp:qr', qr))
-  })
-  agent.corpus.on('whatsapp.started', () => {
-    BrowserWindow.getAllWindows().forEach((w) =>
-      w.webContents.send('whatsapp:statusChange', whatsappChannel.getStatus())
-    )
-  })
-  agent.corpus.on('whatsapp.stopped', () => {
-    BrowserWindow.getAllWindows().forEach((w) =>
-      w.webContents.send('whatsapp:statusChange', whatsappChannel.getStatus())
-    )
-  })
-  agent.corpus.on('whatsapp.error', () => {
-    BrowserWindow.getAllWindows().forEach((w) =>
-      w.webContents.send('whatsapp:statusChange', whatsappChannel.getStatus())
-    )
-  })
-  agent.corpus.on('whatsapp.statusChanged', () => {
-    BrowserWindow.getAllWindows().forEach((w) =>
-      w.webContents.send('whatsapp:statusChange', whatsappChannel.getStatus())
-    )
-  })
+  /**
+   * Link by phone number instead of QR. The only route that works on a
+   * machine with no screen — and, measured, on any ordinary 80×24 terminal,
+   * where a WhatsApp QR needs 27 rows before its caption.
+   */
+  handle(
+    'whatsapp:requestPairingCode',
+    (_e, phoneNumber: string): { ok: boolean; error?: string } => {
+      const result = whatsappChannel.requestPairingCode(phoneNumber)
+      broadcast('whatsapp:statusChange', whatsappChannel.getStatus())
+      return result
+    }
+  )
+
+  /**
+   * Push QR codes and status changes out as they happen — through
+   * `broadcast()`, NOT straight at the windows.
+   *
+   * These used to call `BrowserWindow.getAllWindows()` directly, and that made
+   * linking WhatsApp from a terminal impossible rather than merely awkward:
+   * `wolffish pair whatsapp` subscribes to `whatsapp:statusChange` and waits
+   * for the code, and the code was only ever posted to renderer processes. On
+   * the machine this CLI exists for — a VPS with no window at all — the events
+   * went to an empty array and the terminal sat at "waiting for a code…"
+   * forever. `broadcast()` is the chokepoint that already fans out to windows,
+   * attached terminals AND the phone, so the pairing flow reaches whoever
+   * actually asked for it.
+   */
+  agent.corpus.on('whatsapp.qr', ({ qr }) => broadcast('whatsapp:qr', qr))
+  agent.corpus.on('whatsapp.pairingCode', ({ code }) => broadcast('whatsapp:pairingCode', code))
+  const pushWhatsAppStatus = (): void =>
+    broadcast('whatsapp:statusChange', whatsappChannel.getStatus())
+  agent.corpus.on('whatsapp.started', pushWhatsAppStatus)
+  agent.corpus.on('whatsapp.stopped', pushWhatsAppStatus)
+  agent.corpus.on('whatsapp.error', pushWhatsAppStatus)
+  agent.corpus.on('whatsapp.statusChanged', pushWhatsAppStatus)
 
   // In-app (desktop) chat — the primary renderer feed, not a remote relay
   // channel. Only a display preference (verbose) to persist; no lifecycle,
@@ -2983,23 +3143,43 @@ app.whenReady().then(async () => {
     }
   )
 
-  handle('google:authAdd', async (event, email: string): Promise<GoogleAuthResult> => {
-    // Capture the auth list before the OAuth flow so we can detect which
-    // email gogcli actually stored — Google's OAuth returns the user's
-    // real email, which often differs from whatever the user typed.
-    const before = await googleService.listAccounts()
-    const result = await googleService.authAdd(email, (url) => {
-      event.sender.send('google:authUrl', { url })
-    })
-    if (result.ok) {
-      const after = await googleService.listAccounts()
-      const newlyAdded = after.find((a) => !before.includes(a))
-      const actual = newlyAdded ?? (after.includes(email) ? email : (after[0] ?? email))
-      await persistGoogleConfig({ status: 'active' })
-      return { ok: true as const, account: actual }
+  handle(
+    'google:authAdd',
+    async (_event, email: string, opts?: { reauth?: boolean }): Promise<GoogleAuthResult> => {
+      // Capture the auth list before the OAuth flow so we can detect which
+      // email gogcli actually stored — Google's OAuth returns the user's
+      // real email, which often differs from whatever the user typed.
+      const before = await googleService.listAccounts()
+      const result = await googleService.authAdd(
+        email,
+        (url) => {
+          /**
+           * `broadcast`, not `event.sender.send`.
+           *
+           * The CLI dispatches these handlers with a null event (see
+           * `server.ts`), and this callback fires from gogcli's stdout
+           * listener with nothing around it — so `event.sender` was an
+           * uncaught TypeError in the main process the instant a terminal
+           * user asked to authorize an account. Broadcasting also happens to
+           * be what a headless box needs: there is no browser to open, so the
+           * consent URL has to be printable in the terminal.
+           */
+          broadcast('google:authUrl', { url })
+        },
+        opts
+      )
+      if (result.ok) {
+        const after = await googleService.listAccounts()
+        const newlyAdded = after.find((a) => !before.includes(a))
+        // A re-auth overwrites an entry that was already listed, so there is
+        // no "newly added" email to detect — fall back to the one we asked for.
+        const actual = newlyAdded ?? (after.includes(email) ? email : (after[0] ?? email))
+        await persistGoogleConfig({ status: 'active' })
+        return { ok: true as const, account: actual }
+      }
+      return result
     }
-    return result
-  })
+  )
 
   handle('google:listAccounts', (): Promise<string[]> => googleService.listAccounts())
 
@@ -4083,8 +4263,22 @@ app.whenReady().then(async () => {
   })
   handle(
     'conversation:rate',
-    async (_e, payload: { conversationId: string; messageId: string | null; score: number }) => {
-      return recordTurnRating(payload.conversationId, payload.messageId, payload.score, 'inapp')
+    async (
+      _e,
+      payload: {
+        conversationId: string
+        messageId: string | null
+        score: number
+        /**
+         * Which surface is voting. The renderer omits it and means itself; the
+         * terminal names itself, so the ledger the reflection reads says where
+         * the judgement actually came from.
+         */
+        source?: ConversationRatingSource
+      }
+    ) => {
+      const source: ConversationRatingSource = payload.source === 'cli' ? 'cli' : 'inapp'
+      return recordTurnRating(payload.conversationId, payload.messageId, payload.score, source)
     }
   )
 
@@ -5092,7 +5286,14 @@ app.whenReady().then(async () => {
     server: cliServer,
     snapshot: () => buildCliSnapshot(),
     broadcast: (channelName, payload) => broadcast(channelName, payload),
-    status: () => buildCliStatus(),
+    status: (callerPath) => buildCliStatus(callerPath),
+    // The same three-step fallthrough chat:cancel uses, so the terminal can
+    // stop a run it did not start — which on a headless box is every run.
+    cancelAnywhere: async (conversationId) => {
+      if ((await electronChannel.cancel(conversationId)).canceled) return true
+      if (turnRunner.cancelConversation(conversationId)) return true
+      return agent.cancelAutonomousRun(conversationId)
+    },
     execPath: app.getPath('exe'),
     cliEntry: cliEntryPath(is.dev, app.getAppPath(), process.resourcesPath),
     // Same three functions the Wolffish tab's toggle calls. Sharing them is

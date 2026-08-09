@@ -375,6 +375,62 @@ async function main(): Promise<void> {
     )
   })
 
+  // ── the CLI's console-capability detection ────────────────────────────────
+  // Windows is the whole reason this exists: a legacy conhost on codepage 437
+  // receives Node's UTF-8 and prints mojibake, and a console font without
+  // braille prints boxes. The bias is toward ASCII — it always renders, and
+  // mojibake never does — so anything NOT known to cope gets the ASCII set.
+  const ui = await import('../../cli/lib/ui.mjs')
+  const detect: Array<[NodeJS.Platform, Record<string, string>, boolean, string]> = [
+    ['darwin', {}, true, 'macOS draws everything'],
+    ['linux', {}, true, 'Linux draws everything'],
+    ['win32', {}, false, 'plain Windows falls back to ASCII'],
+    ['win32', { WT_SESSION: '1' }, true, 'Windows Terminal announces itself'],
+    ['win32', { TERM_PROGRAM: 'vscode' }, true, 'the VS Code terminal copes'],
+    ['win32', { WOLFFISH_UNICODE: '1' }, true, 'an explicit opt-in wins'],
+    ['darwin', { WOLFFISH_UNICODE: '0' }, false, 'an explicit opt-out wins']
+  ]
+  for (const [platform, env, want, why] of detect) {
+    const saved: Record<string, string | undefined> = {}
+    for (const key of ['WT_SESSION', 'TERM_PROGRAM', 'WOLFFISH_UNICODE']) {
+      saved[key] = process.env[key]
+      delete process.env[key]
+    }
+    Object.assign(process.env, env)
+    const got = await asPlatform(platform, TMP, () => {
+      ui.setUnicode(ui.detectUnicodeForTest())
+      return ui.unicodeOk()
+    })
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+    check(`glyphs: ${why}`, () => assert.equal(got, want))
+  }
+  ui.setUnicode(true)
+
+  // Both wordmarks exist and each is drawable by the console it targets — the
+  // ASCII one is the same hash art install.ps1 prints, so the CLI and the
+  // installer look like one product on Windows too.
+  check('the ASCII wordmark is pure ASCII', () => {
+    ui.setUnicode(false)
+    const lines = ui.wordmark()
+    assert.ok(lines.length > 0)
+    for (const line of lines) {
+      // eslint-disable-next-line no-control-regex
+      assert.ok(/^[\x00-\x7f]*$/.test(line), `non-ASCII in the fallback wordmark: ${line}`)
+    }
+    ui.setUnicode(true)
+  })
+
+  check('ASCII mode transliterates prose punctuation instead of dropping it', () => {
+    ui.setUnicode(false)
+    assert.equal(ui.safe('a \u2014 b\u2026'), 'a - b...')
+    assert.equal(ui.safe('\u2018q\u2019'), "'q'")
+    ui.setUnicode(true)
+    assert.equal(ui.safe('a \u2014 b\u2026'), 'a \u2014 b\u2026')
+  })
+
   // ── the packaged client entry resolves per platform ───────────────────────
   check('cli entry resolves under resources when packaged', () => {
     const entry = cliPath.cliEntryPath(false, '/app', '/res')

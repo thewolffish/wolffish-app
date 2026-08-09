@@ -572,6 +572,20 @@ Director mode is OFF (a Settings toggle the user controls). When generating a vi
    */
   private memoryMapCache: { day: string; body: string } | null = null
 
+  /**
+   * Drop the day-cached memory map so the next prompt re-derives it. Called
+   * when the agent edits a knowledge file's `##` topics through the
+   * `knowledge` capability: without this the map would advertise yesterday's
+   * topic list until midnight — a topic just added would be invisible, and one
+   * just forgotten would still be offered. Deliberately NOT called for
+   * ordinary fact edits inside an existing section: the map only carries
+   * headings, so re-deriving it there would break the prompt-cache prefix for
+   * nothing.
+   */
+  invalidateMemoryMap(): void {
+    this.memoryMapCache = null
+  }
+
   private async buildMemoryMap(): Promise<string> {
     const day = new Date().toISOString().slice(0, 10)
     if (this.memoryMapCache?.day === day) return this.memoryMapCache.body

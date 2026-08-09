@@ -346,7 +346,7 @@ export function Settings(): React.JSX.Element {
                                   : 'text-muted hover:bg-border/30 hover:text-fg'
                               )}
                             >
-                              <Icon size={14} />
+                              <NavIcon icon={Icon} />
                               <span>{t(`settings.channels.tabs.${ch}`)}</span>
                             </button>
                           )
@@ -382,7 +382,7 @@ export function Settings(): React.JSX.Element {
                                   : 'text-muted hover:bg-border/30 hover:text-fg'
                               )}
                             >
-                              <Icon size={14} />
+                              <NavIcon icon={Icon} />
                               <span>{t(`settings.services.tabs.${s}`)}</span>
                             </button>
                           )
@@ -609,10 +609,44 @@ const PROVIDER_ICONS: Record<
   zai: ZaiLogo
 }
 
+type NavIconComponent = React.ComponentType<{ size?: number }>
+
+/**
+ * Sub-nav glyphs come from two families that do not agree on how much of the
+ * 24-unit box the art fills: hugeicons line icons draw into roughly 86/96,
+ * while Simple Icons brand marks are solid and run the full 96. Drawn at one
+ * size the brand marks read a size larger than everything around them, and the
+ * few sparser line icons read a size smaller, so those outliers get nudged
+ * until every glyph lands on the same optical size. Sizes are measured ink
+ * extents, not guesses — see NavIcon for why the box stays fixed.
+ */
+const NAV_ICON_SIZE = 14
+const NAV_ICON_SIZE_OVERRIDES = new Map<NavIconComponent, number>([
+  [BraveLogo, 13],
+  [GoogleLogo, 13],
+  [NotionLogo, 13],
+  [TelegramLogo, 13],
+  [BrowserIcon, 15],
+  [ComputerTerminal01Icon, 15]
+])
+
+/**
+ * The glyph resizes but its box does not — a 13px mark and a 15px icon both
+ * occupy 14px, so labels stay flush down the column instead of stepping in and
+ * out by a pixel per row.
+ */
+function NavIcon({ icon: Icon }: { icon: NavIconComponent }): React.JSX.Element {
+  return (
+    <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center">
+      <Icon size={NAV_ICON_SIZE_OVERRIDES.get(Icon) ?? NAV_ICON_SIZE} />
+    </span>
+  )
+}
+
 type Channel = 'inapp' | 'cli' | 'mobile' | 'telegram' | 'whatsapp'
 const CHANNELS: Channel[] = ['inapp', 'cli', 'mobile', 'telegram', 'whatsapp']
 
-const CHANNEL_ICONS: Record<Channel, React.ComponentType<{ size?: number }>> = {
+const CHANNEL_ICONS: Record<Channel, NavIconComponent> = {
   inapp: ComputerIcon,
   cli: ComputerTerminal01Icon,
   mobile: SmartPhone01Icon,
@@ -650,7 +684,7 @@ const SERVICES: Service[] = [
   'computerUse'
 ]
 
-const SERVICE_ICONS: Record<Service, React.ComponentType<{ size?: number }>> = {
+const SERVICE_ICONS: Record<Service, NavIconComponent> = {
   browserExtension: BrowserIcon,
   brave: BraveLogo,
   notion: NotionLogo,

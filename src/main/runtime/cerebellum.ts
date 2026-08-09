@@ -148,6 +148,20 @@ export type ToolExecutionResult = {
   images?: ToolResultImage[]
   exitCode?: number | null
   partial?: boolean
+  /**
+   * `false` when this failure must never be auto-retried. Motor's classifier
+   * guesses retryability from the error TEXT; this is the tool stating the
+   * fact, and it wins over the guess.
+   *
+   * The case it exists for is not "the retry would fail again" — it is "the
+   * retry would SUCCEED, twice". A tool whose side effect leaves the machine
+   * (a notification, a message, a payment) cannot report the difference
+   * between "not delivered" and "delivered, but the confirmation was lost",
+   * so a failure it returns is at best *unknown*. Re-firing it on that
+   * unknown is how one notification became three on the user's phone.
+   * At-most-once beats at-least-once for anything the user can see.
+   */
+  retryable?: boolean
 }
 
 export type RiskLevel = 'low' | 'medium' | 'high'
@@ -606,9 +620,58 @@ export type CortexHost = {
    */
   saveKnowledge: (
     file: 'projects' | 'people' | 'preferences' | 'technical' | 'decisions',
-    fact: string
-  ) => Promise<{ ok: boolean; deduped: boolean }>
+    fact: string,
+    topic?: string
+  ) => Promise<{ ok: boolean; deduped: boolean; filed: boolean }>
 }
+
+/**
+ * The amend surface over everything the agent believes long-term: its
+ * playbook, custom instructions, identity files, and the five curated
+ * knowledge files. Implemented in main over KnowledgeStore, which owns the
+ * allowlist, the structure invariants and the `.bak` safety net — the plugin
+ * only formats. Present only when the host wired one in via setKnowledgeHost.
+ */
+export type KnowledgeHost = {
+  list: () => Promise<KnowledgeTargetInfo[]>
+  read: (
+    target: KnowledgeTargetName
+  ) => Promise<{ ok: true; rel: string; content: string } | { ok: false; error: string }>
+  add: (
+    target: KnowledgeTargetName,
+    entry: string,
+    opts: { section?: string; source?: string }
+  ) => Promise<KnowledgeWriteResult>
+  edit: (
+    target: KnowledgeTargetName,
+    find: string,
+    replace: string
+  ) => Promise<KnowledgeWriteResult>
+  forget: (target: KnowledgeTargetName, find: string) => Promise<KnowledgeWriteResult>
+  rewrite: (target: KnowledgeTargetName, content: string) => Promise<KnowledgeWriteResult>
+  restore: (target: KnowledgeTargetName) => Promise<KnowledgeWriteResult>
+  /** Valid target names, so the plugin can reject a typo without a round trip. */
+  targets: () => KnowledgeTargetName[]
+}
+
+export type KnowledgeTargetName = string
+
+export type KnowledgeTargetInfo = {
+  target: string
+  rel: string
+  governs: string
+  everyPrompt: boolean
+  bytes: number
+  maxChars: number
+  sections: string[]
+  entries: number
+  updatedAt: string | null
+  hasBackup: boolean
+}
+
+export type KnowledgeWriteResult =
+  | { ok: true; message: string; warning?: string }
+  | { ok: false; error: string }
 
 export type PluginContext = {
   pluginDir: string
@@ -676,6 +739,14 @@ export type PluginContext = {
    * memory_save / usage_report tools. Undefined for every other plugin.
    */
   cortex?: CortexHost
+  /**
+   * Long-term knowledge amend surface. Present only when the host wired one
+   * in via setKnowledgeHost — used by the `knowledge` capability to read,
+   * amend, forget, rewrite and restore the agent's own playbook, custom
+   * instructions, identity files and curated knowledge. Undefined for every
+   * other plugin.
+   */
+  knowledge?: KnowledgeHost
   /**
    * Async video-generation surface. Present only when the host wired one in
    * via setVideoTasksHost — used by the `video` capability to submit, await,
@@ -810,6 +881,11 @@ export const LOCKED_CAPABILITIES: ReadonlySet<string> = new Set([
   'automations',
   'projects',
   'introspect',
+  // Amending its own long-term memory is self-management, not an optional
+  // extra: with this off the agent can learn (memory_save, nightly reflection)
+  // but never unlearn, and a wrong belief would survive every correction the
+  // user makes. Locked for the same reason `skills` is.
+  'knowledge',
   'operating-manual',
   'pdf-design',
   'web-design',
@@ -872,6 +948,7 @@ export class Cerebellum {
   private workflowHost?: WorkflowHost
   private mcpHost?: McpHost
   private cortexHost?: CortexHost
+  private knowledgeHost?: KnowledgeHost
   private videoTasksHost?: VideoTasksHost
   /**
    * Bumped every time the live tool surface changes — a reload (skills
@@ -1019,6 +1096,16 @@ export class Cerebellum {
    */
   setCortexHost(host: CortexHost): void {
     this.cortexHost = host
+  }
+
+  /**
+   * Wire the long-term knowledge host (implemented in main over KnowledgeStore)
+   * that the `knowledge` capability's plugin receives in its init context. Set
+   * once at startup; survives reload() so the bridge keeps working after the
+   * plugin is re-imported.
+   */
+  setKnowledgeHost(host: KnowledgeHost): void {
+    this.knowledgeHost = host
   }
 
   /**
@@ -1989,6 +2076,7 @@ export class Cerebellum {
         workflow: this.workflowHost,
         mcp: this.mcpHost,
         cortex: this.cortexHost,
+        knowledge: this.knowledgeHost,
         videoTasks: this.videoTasksHost,
         askUser: (input) => this.dispatchAskUser(input),
         getChannelStatus: () => this.channelStatusProvider?.() ?? []
@@ -2482,7 +2570,15 @@ function normalizeToolResult(raw: unknown): ToolExecutionResult {
       if (text) output = text
     }
     if (output === '') {
-      const known = new Set(['success', 'output', 'error', 'images', 'exitCode', 'partial'])
+      const known = new Set([
+        'success',
+        'output',
+        'error',
+        'images',
+        'exitCode',
+        'partial',
+        'retryable'
+      ])
       const extra: Record<string, unknown> = {}
       for (const k of Object.keys(r)) if (!known.has(k)) extra[k] = r[k]
       const keys = Object.keys(extra)
@@ -2507,6 +2603,7 @@ function normalizeToolResult(raw: unknown): ToolExecutionResult {
     out.exitCode = r.exitCode as number | null
   }
   if (typeof r.partial === 'boolean') out.partial = r.partial
+  if (typeof r.retryable === 'boolean') out.retryable = r.retryable
   return out
 }
 

@@ -121,6 +121,8 @@ export type WhatsAppChannelStatus = {
   status: WhatsAppConnectionStatus
   error: string | null
   qr: string | null
+  /** The eight-character code, when linking was started by phone number. */
+  pairingCode: string | null
   connectedPhone: string | null
   connectedName: string | null
   /**
@@ -164,6 +166,8 @@ export type CliConfig = {
  */
 export type CliPathStatus = {
   installed: boolean
+  /** The shim file exists, even if the shell cannot find it — see cli-path.ts. */
+  present: boolean
   target: string
   resolved: string | null
   needsPathEntry: boolean
@@ -413,6 +417,7 @@ export type ConversationChannel =
   | 'telegram'
   | 'whatsapp'
   | 'mobile'
+  | 'cli'
   | 'heartbeat'
   | 'procedure'
 
@@ -506,7 +511,13 @@ export type ConversationFile = {
   ratings?: ConversationRating[]
 }
 
-export type ConversationRatingSource = 'inapp' | 'telegram' | 'whatsapp' | 'mobile'
+/**
+ * Which surface cast the score. `cli` is a real source, not a synonym for
+ * `inapp`: the reflection reads this ledger, and a terminal-only install whose
+ * every score claimed to come from a window nobody opened would be describing
+ * a machine that does not exist.
+ */
+export type ConversationRatingSource = 'inapp' | 'telegram' | 'whatsapp' | 'mobile' | 'cli'
 
 /** A user's 0-10 score for one completed turn (dual decl — see src/main/conversations.ts). */
 export type ConversationRating = {
@@ -1800,7 +1811,9 @@ export type GoogleApi = {
   onAuthUrl: (listener: (event: GoogleAuthUrlEvent) => void) => () => void
   uploadCredentials: (jsonContent: string) => Promise<GoogleCredentialsResult>
   deleteCredentials: () => Promise<{ ok: true } | { ok: false; message: string }>
-  authAdd: (email: string) => Promise<GoogleAuthResult>
+  // `reauth` re-runs the same OAuth flow for an account that already exists,
+  // forcing Google's consent screen so a fresh refresh token comes back.
+  authAdd: (email: string, opts?: { reauth?: boolean }) => Promise<GoogleAuthResult>
   cancelAuth: () => Promise<boolean>
   listAccounts: () => Promise<string[]>
   // Best-effort per-account token health: email → true (refresh token still
@@ -2572,7 +2585,7 @@ const api: WolffishApi = {
     onAuthUrl: (listener) => subscribe('google:authUrl', listener),
     uploadCredentials: (jsonContent) => ipcRenderer.invoke('google:uploadCredentials', jsonContent),
     deleteCredentials: () => ipcRenderer.invoke('google:deleteCredentials'),
-    authAdd: (email) => ipcRenderer.invoke('google:authAdd', email),
+    authAdd: (email, opts) => ipcRenderer.invoke('google:authAdd', email, opts),
     cancelAuth: () => ipcRenderer.invoke('google:cancelAuth'),
     listAccounts: () => ipcRenderer.invoke('google:listAccounts'),
     checkAccounts: () => ipcRenderer.invoke('google:checkAccounts'),

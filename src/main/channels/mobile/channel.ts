@@ -529,8 +529,9 @@ export class MobileChannel {
 
   /**
    * The whole notify path, model side down: the tool handler (tools.ts) has
-   * already validated and rate-limited the model's words; this stamps the
-   * routing identity the model must never control — the phoneId from the
+   * already validated the model's words — validated, not rationed; nothing
+   * caps how many a run may send. This stamps the routing identity the model
+   * must never control — the phoneId from the
    * pairing record and a freshly minted ULID — derives the ttl from the
    * phase, emits the frame over the EXISTING relay connection, and resolves
    * with the relay's routing decision. Every refusal is a thrown Error with
@@ -576,7 +577,16 @@ export class MobileChannel {
           type: 'notify_result',
           notificationId: frame.notificationId,
           route: 'dropped',
-          reason: 'the relay did not answer — it may be unreachable or predate notification support'
+          // Deliberately worded as ignorance, not failure. The relay forwards
+          // to the phone BEFORE it answers, so a missing answer says nothing
+          // about whether the notification arrived — and it usually did. Read
+          // as "not delivered" this was retried, and the user got the same
+          // notification three times.
+          reason:
+            'the relay did not answer within ' +
+            `${NOTIFY_RESULT_TIMEOUT_MS / 1000}s, so delivery is unknown — the notification may ` +
+            'have reached the phone anyway. The relay may also be unreachable or predate ' +
+            'notification support'
         })
       }, NOTIFY_RESULT_TIMEOUT_MS)
       this.pendingNotifies.set(frame.notificationId, { resolve, timer })
@@ -913,6 +923,25 @@ export class MobileChannel {
         this.emitStatus()
       }
       return { ok: true, app: 'wolffish-app', platform: process.platform }
+    })
+
+    /**
+     * Which conversations have a turn in flight RIGHT NOW — the phone's
+     * chat:activeRuns, and it exists for the reason that one does: 'started'
+     * is a broadcast, so a surface that connects mid-run has already missed
+     * the only announcement that turn was ever going to send. Both halves,
+     * exactly as index.ts concatenates them for this app's own windows —
+     * channel turns and autonomous runs.
+     *
+     * Without it a phone opening a conversation this desktop is still writing
+     * renders it idle: live composer, no stop, and a rating bar offering to
+     * score a turn that has not finished.
+     */
+    tunnel.onRpc(Rpc.activeRuns, async () => {
+      const ids = [...this.deps.runner.activeRuns(), ...this.deps.agent.activeAutonomousRuns()].map(
+        (run) => run.conversationId
+      )
+      return { conversationIds: [...new Set(ids)] }
     })
 
     tunnel.onRpc(Rpc.configSnapshot, async () => {

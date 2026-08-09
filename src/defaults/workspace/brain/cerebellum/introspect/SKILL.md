@@ -202,7 +202,7 @@ tools:
         enum: [brief, full]
         description: brief (default) or full — full raises per-item excerpt caps
   - name: memory_save
-    description: Durably save one self-contained fact to your long-term knowledge (deduplicated). Use for preferences, decisions, project facts, or people details worth remembering across conversations — not for transient task state.
+    description: 'Durably save one self-contained fact to your long-term knowledge (deduplicated) — the quick note you can take from anywhere, no discovery hop. Use for preferences, decisions, project facts, or people details worth remembering across conversations, not for transient task state. Pass `topic` whenever you know the subject it belongs to. This tool only ADDS: to correct a fact you already saved, or to forget one that is no longer true, use the `knowledge` capability (knowledge_edit / knowledge_forget).'
     parameters:
       fact:
         type: string
@@ -213,6 +213,10 @@ tools:
         required: false
         enum: [projects, people, preferences, technical, decisions]
         description: Which knowledge file it belongs in (default technical)
+      topic:
+        type: string
+        required: false
+        description: 'Subject this fact is about — the person, project or area it belongs under. Created if new. Strongly preferred: an unattributed fact waits for the nightly curator to be filed.'
   - name: usage_report
     description: 'Your own LLM spend from the usage ledger: requests, tokens (in/out/cache), and cost, total and per model, for a period.'
     parameters:
@@ -266,6 +270,9 @@ tools:
   read one verbatim (messages + tool activity, paginated). conversation_read
   also recovers turns of the CURRENT conversation that were summarized away.
 - `memory_save` — durably save a fact to long-term knowledge (deduplicated).
+  Append-only. To **correct or forget** a fact — or to amend your playbook,
+  standing instructions, or identity — reach for the `knowledge` capability
+  (`knowledge_read` / `knowledge_edit` / `knowledge_forget`).
 - `usage_report` — your own LLM spend (requests, tokens, cost, per model).
 - `wolffish_recall` — stable alias over the same index (query/date/source);
   memory_search offers richer filters.

@@ -25,7 +25,8 @@
  *   reasoning card         dim, collapsed to a count unless verbose
  *   turn footer            model · tokens · duration            (verbose)
  */
-import { c, icon, out, shortPath, wrapText, bytes, width } from './ui.mjs'
+import { c, g, icon, out, safe, shortPath, wrapText, bytes, width } from './ui.mjs'
+import { createMarkdownStream, renderMarkdown } from './markdown.mjs'
 
 const OUTPUT_MARKER =
   /\[wolffish-output:\s*([^\]]+?)\s+\((image|audio|video|document|file|chart)\)\]/g
@@ -75,8 +76,53 @@ function summarizeArgs(args) {
 }
 
 export class TurnRenderer {
-  constructor({ verbose = false } = {}) {
+  /**
+   * `raw` writes the model's markdown through untouched. It is the default off
+   * a TTY for the same reason colour is: `wolffish -p … | pbcopy` must give the
+   * real markdown, and someone redirecting to a file wants the source, not
+   * ANSI. Interactive terminals get it rendered.
+   */
+  /**
+   * `fileOffset` is how many files the SESSION has already been handed.
+   *
+   * The numbers printed next to a delivered file are what `/open` and `/save`
+   * take, and those index the session's list, not this turn's. Numbering from
+   * one every turn meant the second turn's first file said "/open 1" and
+   * `/open 1` opened a file from the first turn — the more files a session
+   * produced, the further the hint drifted from the truth.
+   */
+  constructor({
+    verbose = false,
+    raw = !process.stdout.isTTY,
+    fileOffset = 0,
+    replay = false,
+    showTools = '--tools'
+  } = {}) {
     this.verbose = verbose
+    this.raw = raw
+    this.fileOffset = fileOffset
+    /**
+     * True when re-rendering a STORED message rather than a live stream.
+     *
+     * The difference matters for anything measured against the clock: a
+     * replayed turn's "elapsed" is the age of this object, not of the turn.
+     */
+    this.replay = replay
+    /** What to type to see the hidden detail — `/show tools` inside a session. */
+    this.showTools = showTools
+    // Rendered prose is line-buffered (markdown cannot be rendered a character
+    // at a time), so it goes through its own writer rather than #prose.
+    this.markdown = raw
+      ? null
+      : createMarkdownStream({
+          write: (chunk) => {
+            // safe() here, not in out(): this writer bypasses out() so the
+            // stream can place newlines itself, which also bypasses the
+            // transliteration every other line gets.
+            process.stdout.write(safe(chunk))
+            this.atLineStart = chunk.endsWith('\n')
+          }
+        })
     this.toolNames = new Map()
     this.toolStartedAt = new Map()
     // Task and workflow segments are SNAPSHOTS keyed by id — the app replaces
@@ -86,6 +132,7 @@ export class TurnRenderer {
     this.taskState = new Map()
     this.workflowState = new Map()
     this.deliveredThisTurn = new Set()
+    this.startedAt = Date.now()
     this.atLineStart = true
     this.sawProse = false
     this.files = []
@@ -101,6 +148,7 @@ export class TurnRenderer {
   }
 
   #line(text = '') {
+    this.#flushProse()
     if (!this.atLineStart) {
       out()
       this.atLineStart = true
@@ -109,9 +157,23 @@ export class TurnRenderer {
   }
 
   #prose(delta) {
-    process.stdout.write(delta)
-    this.atLineStart = delta.endsWith('\n')
     this.sawProse = true
+    if (this.markdown) {
+      this.markdown.push(delta)
+      return
+    }
+    process.stdout.write(safe(delta))
+    this.atLineStart = delta.endsWith('\n')
+  }
+
+  /**
+   * Render whatever prose is still held before anything else writes. Every
+   * non-text segment calls this: a tool line printed while a half-finished
+   * sentence sits in the buffer would appear ABOVE it, reordering the turn.
+   */
+  #flushProse() {
+    if (!this.markdown || !this.markdown.pending) return
+    this.markdown.flush()
   }
 
   segment(segment) {
@@ -178,7 +240,7 @@ export class TurnRenderer {
       if (this.deliveredThisTurn.has(file.path)) continue
       this.deliveredThisTurn.add(file.path)
       this.files.push(file)
-      const index = this.files.length
+      const index = this.fileOffset + this.files.length
       this.#line(
         `${icon.file()} ${c.bold(basename(file.path))}  ${c.gray(shortPath(file.path))}` +
           (file.kind === 'chart' ? c.gray('  (chart — renders in the app and on the phone)') : '')
@@ -240,15 +302,48 @@ export class TurnRenderer {
   }
 
   #turnEnd(segment) {
-    if (segment.reasoningContent && !this.verbose) {
-      const words = String(segment.reasoningContent).split(/\s+/).length
-      this.#line(c.gray(`  (thought for ~${words} words)`))
-    } else if (segment.reasoningContent && this.verbose) {
-      this.#line(c.gray(wrapText(String(segment.reasoningContent), 2)))
+    const reasoning = String(segment.reasoningContent ?? '').trim()
+    if (reasoning) {
+      if (this.verbose) {
+        /**
+         * Labelled, and set apart from the answer.
+         *
+         * Dumped as a bare grey paragraph it read as part of the reply — the
+         * model's private working and its actual answer ran together with
+         * nothing between them saying which was which. The desktop draws a
+         * titled card for exactly this reason; a rule and a heading are the
+         * terminal's version of the same boundary.
+         */
+        this.#line()
+        this.#line(c.gray(`  ${g.hline.repeat(3)} reasoning ${g.hline.repeat(3)}`))
+        this.#line(c.gray(wrapText(reasoning, 2)))
+        this.#line(c.gray(`  ${g.hline.repeat(3 + 11 + 3)}`))
+      } else {
+        /**
+         * A clean feed still SAYS there was reasoning, and how to read it.
+         *
+         * It used to print `thought for ${Date.now() - this.startedAt}` — the
+         * age of this renderer object, which for a live turn is the turn's
+         * wall time (fair) and for a REPLAYED one is however long the loop
+         * took to reach that message. Every stored transcript therefore
+         * claimed "thought for 0ms", which is not a rounding error, it is a
+         * different quantity. Replay reports the size it can actually measure
+         * and points at the switch that shows it.
+         */
+        const words = reasoning.split(/\s+/).filter(Boolean).length
+        this.#line(
+          c.gray(
+            this.replay
+              ? `  ${icon.dot()} reasoned ${words} word${words === 1 ? '' : 's'} — ${this.showTools} to read it`
+              : `  ${icon.dot()} thought for ${formatDuration(Date.now() - this.startedAt)}`
+          )
+        )
+      }
     }
     if (segment.stopReason === 'canceled') {
       this.#line(c.yellow('  stopped'))
     }
+    this.#flushProse()
     if (!this.atLineStart) out()
     this.atLineStart = true
   }
@@ -274,6 +369,8 @@ export class TurnRenderer {
 
   /** Reset per-turn state; delivered files persist for /open in the session. */
   endTurn() {
+    this.#flushProse()
+    this.startedAt = Date.now()
     this.toolNames.clear()
     this.toolStartedAt.clear()
     this.taskState.clear()
@@ -283,6 +380,17 @@ export class TurnRenderer {
   }
 }
 
+/** Human durations: sub-second in ms, then seconds, then m/s. */
+export function formatDuration(ms) {
+  const value = Number(ms)
+  if (!Number.isFinite(value) || value < 0) return '—'
+  if (value < 1000) return `${Math.round(value)}ms`
+  if (value < 60_000) return `${(value / 1000).toFixed(1)}s`
+  const minutes = Math.floor(value / 60_000)
+  const seconds = Math.round((value % 60_000) / 1000)
+  return `${minutes}m ${seconds}s`
+}
+
 export function basename(p) {
   const cleaned = String(p).replace(/[/\\]+$/, '')
   const cut = Math.max(cleaned.lastIndexOf('/'), cleaned.lastIndexOf('\\'))
@@ -290,7 +398,7 @@ export function basename(p) {
 }
 
 /** Render a stored conversation message — used by `wolffish show`. */
-export function renderStoredMessage(message, { verbose = false } = {}) {
+export function renderStoredMessage(message, { verbose = false, showTools = '--tools' } = {}) {
   if (message.role === 'user') {
     out()
     out(c.blue('› ') + c.bold(message.content || ''))
@@ -300,14 +408,15 @@ export function renderStoredMessage(message, { verbose = false } = {}) {
     return
   }
   out()
-  const renderer = new TurnRenderer({ verbose })
+  const renderer = new TurnRenderer({ verbose, replay: true, showTools })
   if (message.segments?.length) {
     for (const segment of message.segments) renderer.segment(segment)
+    renderer.endTurn()
     if (!message.segments.some((s) => s.kind === 'text') && message.content) {
-      out(message.content)
+      out(renderMarkdown(message.content))
     }
   } else if (message.content) {
-    out(message.content)
+    out(renderMarkdown(message.content))
   }
   out()
 }
