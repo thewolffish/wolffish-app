@@ -15,6 +15,14 @@ PACKAGE_NAME="wolffish-app"
 # to run the one that does not exist yet is how a working install reads as broken.
 EXE_NAME="wolffish-app"
 
+# Whether the installer may append a PATH line to a shell profile. Only the
+# AppImage route ever needs it (see add_to_path), and --no-modify-path is there
+# for anyone whose dotfiles are generated and would lose the edit anyway.
+MODIFY_PATH=1
+
+# Set once add_to_path has spoken, so the closing notice does not repeat it.
+PATH_HANDLED=0
+
 # apt and dpkg must never stop to ask a question. This script is normally read
 # from a pipe (`curl … | sh`), so a conffile prompt or a debconf dialog would
 # hang forever with no one able to answer it.
@@ -63,8 +71,9 @@ usage() {
   banner
   printf "Usage: install.sh [OPTIONS]\n\n"
   printf "Options:\n"
-  printf "  --help       Show this help message\n"
-  printf "  --version    Print the latest available version and exit\n"
+  printf "  --help             Show this help message\n"
+  printf "  --version          Print the latest available version and exit\n"
+  printf "  --no-modify-path   Never touch a shell profile (AppImage installs only)\n"
   printf "\nInstalls Wolffish on macOS (.dmg), Linux (.deb/.rpm/.AppImage), or Windows (.exe).\n"
   exit 0
 }
@@ -280,16 +289,35 @@ install_deb() {
   info "Installing the Debian package (you may be prompted for your password)..."
 
   if command -v apt-get >/dev/null 2>&1; then
+    local refreshed=0
+
+    # Ask the solver first, in a simulation that downloads nothing and prints
+    # nothing. On a machine with stale package lists — a fresh VPS image, or
+    # one whose mirror cloud-init rewrote and never refreshed — every library
+    # the app needs reads as "not installable" while sitting one `apt-get
+    # update` away, and apt says so in a page of unmet dependencies ending in
+    # "held broken packages". That text describes the LISTS, not the machine,
+    # and it is the last thing anyone should read during an install that is
+    # about to succeed. Simulating moves the decision ahead of any output, so
+    # the only apt failure a user ever sees is a real one.
+    if ! as_root apt-get install -s -y "$deb" >/dev/null 2>&1; then
+      info "Package lists look stale — refreshing them..."
+      as_root apt-get update || true
+      refreshed=1
+    fi
+
+    # The real thing, output and all: this is the long step, and watching 100 MB
+    # of dependencies arrive is the difference between working and hung.
     as_root apt-get install -y "$deb" && deb_installed && return 0
 
-    # Nearly always stale package lists rather than a machine that genuinely
-    # cannot run Wolffish: a fresh VPS image, or one whose mirror cloud-init
-    # rewrote and never refreshed. Every library the app needs then reads as
-    # "not installable" while sitting one `apt-get update` away, and apt
-    # reports it as "held broken packages", which sounds like the opposite.
-    info "Package lists look stale — refreshing them and retrying..."
-    as_root apt-get update || true
-    as_root apt-get install -y "$deb" && deb_installed && return 0
+    # Lists can satisfy the solver and still be stale enough to 404 on the
+    # fetch, which a simulation cannot predict. Worth one refresh — but only
+    # if the check above did not already do it.
+    if [ "$refreshed" = "0" ]; then
+      info "Refreshing package lists and retrying..."
+      as_root apt-get update || true
+      as_root apt-get install -y "$deb" && deb_installed && return 0
+    fi
   fi
 
   # No apt, or an apt too old to install from a file path. dpkg alone cannot
@@ -382,7 +410,43 @@ install_appimage() {
   chmod +x "$launcher"
 
   ok "Wolffish installed to $app_path"
+  add_to_path "$bin_dir"
   is_headless_host || info "Launch with: $EXE_NAME"
+}
+
+# Put ~/.wolffish/bin on PATH, because on this route nothing else can.
+#
+# A .deb or .rpm ships /usr/bin/wolffish and needs none of this. An AppImage has
+# no package manager and no system directory to write to, so a PATH line in a
+# shell profile is the only way the command becomes findable — and an install
+# that ends by handing someone homework is an install that is not finished.
+# Skipped when the directory is already on PATH, and it appends only a line that
+# is not already in the file, so re-running the installer never stacks them up.
+add_to_path() {
+  local dir="$1" rc line
+  PATH_HANDLED=1
+  [ "$MODIFY_PATH" = "1" ] || { info "Add $dir to your PATH to use the command."; return 0; }
+
+  case ":$PATH:" in
+    *":$dir:"*) return 0 ;;
+  esac
+
+  rc=$(profile_file)
+  line=$(path_line "$dir")
+
+  if [ -f "$rc" ] && grep -qF "$line" "$rc" 2>/dev/null; then
+    info "$rc already adds it — open a new terminal to pick it up."
+    return 0
+  fi
+
+  mkdir -p "$(dirname "$rc")"
+  printf '\n# Added by the Wolffish installer\n%s\n' "$line" >> "$rc" || {
+    warn "Could not write $rc — add this line yourself:"
+    printf "    ${BOLD}%s${RESET}\n\n" "$line"
+    return 0
+  }
+  ok "Added $dir to your PATH in $rc"
+  info "Open a new terminal, or run: . $rc"
 }
 
 # A box with no display server is what the CLI exists for — and the two things a
@@ -411,6 +475,17 @@ native_ok() {
 # logs you in as root. The app is unsandboxed by design either way.
 headless_start_notice() {
   is_headless_host || return 0
+
+  # With `wolffish` already on PATH there is no dance left to describe: the CLI
+  # starts the agent itself, in the background, with the flags a root VPS needs.
+  # Telling someone to run the app binary by hand instead is how they end up
+  # with a daemon holding their terminal and a prompt that ignores them.
+  if command -v wolffish >/dev/null 2>&1; then
+    printf "  No display detected. The agent starts itself the first time you run:\n\n"
+    printf "    ${BOLD}wolffish${RESET}\n\n"
+    return 0
+  fi
+
   printf "  No display detected — start the agent with:\n\n"
   printf "    ${BOLD}%s --headless --no-sandbox &${RESET}\n\n" "$EXE_NAME"
   printf "  The first run is also what creates the ${BOLD}wolffish${RESET} command.\n\n"
@@ -450,6 +525,7 @@ main() {
   for arg in "$@"; do
     case "$arg" in
       --help|-h) usage ;;
+      --no-modify-path) MODIFY_PATH=0 ;;
       --version|-v)
         os=$(detect_os)
         case "$os" in
@@ -506,6 +582,14 @@ main() {
   download_url="$RELEASES_BASE/$rel_url"
 
   TEMP_DIR=$(mktemp -d)
+  # mktemp gives 0700, which apt cannot see into: it drops to the unprivileged
+  # `_apt` user to fetch, fails to read the package sitting in root's private
+  # directory, and prints a permission-denied notice before falling back to
+  # working as root. Harmless, and alarming in the middle of an install that
+  # worked. The contents are a public release artifact whose checksum is
+  # verified below, world-READABLE and still owner-write-only, and the whole
+  # directory is removed on exit either way.
+  chmod 755 "$TEMP_DIR"
   local dest="$TEMP_DIR/$filename"
 
   download_file "$download_url" "$dest"
@@ -542,6 +626,18 @@ main() {
 # directory already holds gog, ffmpeg and the voice engines, so one PATH entry
 # covers all of them.
 cli_path_notice() {
+  # The AppImage route has already dealt with PATH and said so. A second,
+  # differently-worded notice about the same directory is how a finished
+  # install reads as broken.
+  [ "$PATH_HANDLED" = "1" ] && return 0
+
+  # A .deb or .rpm ships /usr/bin/wolffish, so the command resolves the moment
+  # the package manager finishes — nothing to add, and nothing to warn about.
+  if command -v wolffish >/dev/null 2>&1; then
+    info "The 'wolffish' command is ready."
+    return 0
+  fi
+
   local bin_dir="$HOME/.wolffish/bin"
   case ":$PATH:" in
     *":$bin_dir:"*)

@@ -12,7 +12,7 @@
  * the state you asked about, 2 you used the command wrong.
  */
 import { fstatSync } from 'node:fs'
-import { connect, daemonPid, DaemonClient } from './lib/client.mjs'
+import { connect, daemonExecPath, daemonPid, DaemonClient } from './lib/client.mjs'
 
 /**
  * `wolffish status | head -3` is a normal thing to type, and it used to end in
@@ -226,25 +226,44 @@ async function main() {
   // These read the machine's own state, so they must report "not running"
   // rather than quietly starting a daemon to answer the question.
   const noAutostart = new Set(['status', 'service', 'path'])
+  // Whether this command was even willing to start a daemon, which decides
+  // what a failure to reach one MEANS. These three report ON the agent, so
+  // launching one to answer "is it running?" would make the answer always yes.
+  const attemptedStart = !noAutostart.has(command)
   let client
   try {
-    client = await connect({
-      autostart: !noAutostart.has(command),
-      quiet: flags.json
-    })
+    client = await connect({ autostart: attemptedStart, quiet: flags.json })
   } catch {
-    if (command === 'path' || command === 'service') {
-      err(c.red('The Wolffish daemon is not running.'))
-      err(c.gray('  start it with any other command, e.g.: wolffish status'))
+    // Nothing suggested from here may be a command that needs a daemon —
+    // which is every `service` and `path` subcommand, because dispatch happens
+    // after this connect. That rules out `service logs` and `service stop`, the
+    // two anyone would reach for, so these point at a pid and a binary instead:
+    // a kill and a foreground run work with no daemon at all. (`service logs`
+    // and `service stop` read a file and signal a pid; neither needs the
+    // connection they are gated behind. Worth unpicking, but not from here.)
+    const pid = daemonPid()
+    if (pid) {
+      err(c.red('Could not reach the Wolffish daemon.'))
+      err(
+        wrapText(
+          c.gray(
+            `A process is registered but its socket is unreachable. Stop it with: kill ${pid} — then run any command again.`
+          ),
+          2
+        )
+      )
       return 1
     }
-    err(c.red('Could not reach the Wolffish daemon.'))
+    err(c.red('The Wolffish daemon is not running.'))
     err(
       wrapText(
         c.gray(
-          daemonPid()
-            ? 'A process is registered but the socket is unreachable — try: wolffish service stop, then run any command again.'
-            : 'Nothing is running and it could not be started. Check the install, or run the app once.'
+          attemptedStart
+            ? `It could not be started either. Run it in the foreground to see why: ${daemonExecPath()} --headless --no-sandbox`
+            : // NOT "e.g. wolffish status": status is one of the three that
+              // will not start one either, so the old advice sent people in a
+              // circle. Name something that actually does it.
+              'This command reports on the agent rather than starting one. Any other command starts it — try: wolffish settings'
         ),
         2
       )

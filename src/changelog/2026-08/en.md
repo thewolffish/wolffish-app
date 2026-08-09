@@ -1,4 +1,14 @@
-## v1.0.240 — 2026-08-09 `Latest`
+## v1.0.241 — 2026-08-09 `Latest`
+
+### The Command Is There When the Install Finishes
+
+Installing Wolffish on Linux left you with no `wolffish` command and a note explaining how to get one: add a directory to your PATH, restart your shell, and launch the app once so it could write itself a launcher. Every step of that was real, and on a server the middle one was circular — the thing you had to launch was the thing you were trying to reach. The `.deb` and `.rpm` now **ship the command themselves**, alongside the app binary they already installed. It exists the moment the package manager finishes: **no first launch, no PATH line, no new shell**, the same command for every account on the machine, and removed cleanly when the package is. The installer says so instead of assigning homework — and where the terminal used to be told to start the agent by hand, with a flag and an ampersand it had to explain, it now says the only true thing left: **run `wolffish`**. The agent starts itself, in the background, with everything a root server needs already applied. That advice was not just longer, it was a trap: run without the ampersand and the daemon holds the terminal you were about to type into. The AppImage has no package manager to do any of this, so there the installer **writes the PATH line for you** — once, never twice however often you reinstall, and `--no-modify-path` if you would rather it kept its hands off your dotfiles.
+
+### Messages That Sent You in a Circle
+
+Asking a stopped agent for its status answered **"Nothing is running and it could not be started"**, which was two wrong things at once: nothing had tried to start it, and nothing was broken. `status` deliberately does not launch a daemon — a question about whether something is running should not make the answer yes by asking — but it never said so, and "check the install" is a bad thing to read about an install that is fine. Its neighbour was worse: the message for `path` and `service` said to start the agent **with `wolffish status`**, which is in the same set of commands that will not start one, so following the instruction returned you to the instruction. Both now say what is true — that these three report on the agent rather than starting one — and name a command that **actually does it**. And the install itself stopped showing its own worst moment: a machine with stale package lists made apt print a page of unmet dependencies ending in "held broken packages" before the retry quietly fixed everything, so the loudest thing in a successful install was a wall of red about a problem that no longer existed. The installer now asks apt in a **simulation first**, which downloads nothing and prints nothing, and refreshes the lists before any of that reaches you. The only apt failure you will see now is one that is really happening.
+
+## v1.0.240 — 2026-08-09
 
 ### The Install That Said It Worked
 

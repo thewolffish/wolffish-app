@@ -222,6 +222,25 @@ function profileHintFor(dir: string): string {
   return `echo 'export PATH="${portable}:$PATH"' >> ${rc}`
 }
 
+/**
+ * Is the file `wolffish` resolves to one of ours?
+ *
+ * Both launchers carry the same banner — the shim this module writes, and the
+ * `/usr/bin/wolffish` the .deb and .rpm ship — so one read answers it. The size
+ * guard is not a micro-optimization: `resolved` is whatever happens to own that
+ * name on this machine, and reading an arbitrary binary in as a UTF-8 string
+ * would mean a several-hundred-megabyte allocation on every status check.
+ */
+async function isWolffishCli(file: string): Promise<boolean> {
+  try {
+    const { size } = await fs.stat(file)
+    if (size > 8192) return false
+    return (await fs.readFile(file, 'utf8')).includes('Wolffish CLI launcher')
+  } catch {
+    return false
+  }
+}
+
 export async function cliPathStatus(callerPath?: string | null): Promise<CliPathStatus> {
   const target = shimPath()
   const dir = shimDir()
@@ -231,17 +250,24 @@ export async function cliPathStatus(callerPath?: string | null): Promise<CliPath
 
   // Resolving to something that is NOT our shim is the confusing case: the
   // command "works" and does the wrong thing. On Linux that is usually the
-  // package's own /usr/bin/wolffish symlink to the GUI binary, which will
+  // package's own /usr/bin/wolffish-app symlink to the GUI binary, which will
   // open a window instead of a prompt.
-  const resolvedElsewhere = resolved !== null && !samePath(resolved, target)
+  //
+  // The exception is the package's `/usr/bin/wolffish`, which IS this client —
+  // installed system-wide so the command works before the app has ever run.
+  // Reporting that as a conflict, and telling the user to fix a PATH that needs
+  // no fixing, is crying wolf about the thing working exactly as designed.
+  const elsewhere = resolved !== null && !samePath(resolved, target)
+  const packaged = elsewhere && (await isWolffishCli(resolved as string))
+  const resolvedElsewhere = elsewhere && !packaged
 
   return {
-    installed: present && dirOnPath && !resolvedElsewhere,
+    installed: packaged || (present && dirOnPath && !resolvedElsewhere),
     present,
     target,
     resolved,
-    needsPathEntry: present && !dirOnPath,
-    profileHint: dirOnPath ? null : profileHintFor(dir),
+    needsPathEntry: !packaged && present && !dirOnPath,
+    profileHint: packaged || dirOnPath ? null : profileHintFor(dir),
     shadowedBy: resolvedElsewhere ? resolved : null,
     error: null
   }

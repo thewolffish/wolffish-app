@@ -213,6 +213,16 @@ export function socketExists() {
  * away: this process must be able to exit — or be killed with the terminal —
  * without taking the agent down with it.
  */
+/**
+ * The binary a daemon gets started from. Exported because the error shown when
+ * one cannot be started has to name it: the path differs per install (a .deb
+ * puts it in /opt, an AppImage is the image itself), and "run it yourself to
+ * see the error" is useless without saying which `it`.
+ */
+export function daemonExecPath() {
+  return process.env.WOLFFISH_EXEC || process.env.APPIMAGE || process.execPath
+}
+
 export async function startDaemon({ quiet = false } = {}) {
   // APPIMAGE before execPath, and it is not a preference. Under an AppImage
   // this process IS the image, mounted at a /tmp path that the runtime unmounts
@@ -221,7 +231,7 @@ export async function startDaemon({ quiet = false } = {}) {
   // demolition, which reads as the agent dying seconds after any command that
   // had to start it. Launching the .AppImage instead gives the daemon its own
   // mount, owned by its own process.
-  const execPath = process.env.WOLFFISH_EXEC || process.env.APPIMAGE || process.execPath
+  const execPath = daemonExecPath()
   const args = []
   // Under ELECTRON_RUN_AS_NODE the binary is a plain node, so the app's own
   // entry has to be named. Unset it for the child: the daemon needs the real
