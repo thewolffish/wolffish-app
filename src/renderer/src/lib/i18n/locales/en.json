@@ -490,7 +490,7 @@
           "installed_at": "Installed at",
           "resolves": "Your shell runs",
           "shadowed": "Another program named \"wolffish\" comes first on your PATH — this is usually the desktop app itself, linked by the package manager. Running the command will open the app instead of the terminal session. Move {{dir}} ahead of it, or remove the other link.",
-          "needsEntry": "The command is installed, but its folder is not on your PATH, so the shell cannot find it yet. Add this line, then open a new terminal:",
+          "needsEntry": "Its folder is not on your PATH yet. Add this line, then open a new terminal:",
           "failed": "Could not install the command: {{error}}",
           "hint": "Wolffish writes this automatically on every launch, so it stays pointed at the current version after an update.",
           "verify": "Check any time with",

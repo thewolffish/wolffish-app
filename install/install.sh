@@ -4,6 +4,22 @@ set -eu
 RELEASES_BASE="https://releases.wolffi.sh"
 TEMP_DIR=""
 
+# The name dpkg and rpm know Wolffish by. electron-builder derives it from
+# package.json#name, NOT from productName (which is what /opt/Wolffish uses).
+PACKAGE_NAME="wolffish-app"
+
+# And the binary those packages put on PATH — named after package.json#name too.
+# So a fresh deb/rpm install has `wolffish-app` and nothing else: `wolffish`, the
+# CLI, is a shim the app writes into ~/.wolffish/bin the first time it boots.
+# Both names appear in the closing notices for that reason, and telling someone
+# to run the one that does not exist yet is how a working install reads as broken.
+EXE_NAME="wolffish-app"
+
+# apt and dpkg must never stop to ask a question. This script is normally read
+# from a pipe (`curl … | sh`), so a conffile prompt or a debconf dialog would
+# hang forever with no one able to answer it.
+export DEBIAN_FRONTEND=noninteractive
+
 # Colors
 if [ -t 1 ]; then
   RED='\033[0;31m'
@@ -225,53 +241,179 @@ choose_linux_extension() {
   echo "$fmt"
 }
 
-# Install a .deb via apt (resolves dependencies); fall back to dpkg + apt -f.
+# Ask dpkg whether the package is installed AND configured.
+#
+# This is the only honest test of a .deb install, because a failing one does not
+# reliably fail loudly: `apt-get -f install` resolves a dependency it cannot
+# satisfy by REMOVING the package that needs it, and exits 0 having done so. An
+# installer that trusts exit statuses alone therefore announces a successful
+# install of nothing at all — and never falls back, because as far as it knows
+# there is nothing to fall back from.
+deb_installed() {
+  local status
+  status=$(dpkg-query -W -f='${Status}' "$PACKAGE_NAME" 2>/dev/null || true)
+  case "$status" in
+    *" ok installed") return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+rpm_installed() {
+  rpm -q "$PACKAGE_NAME" >/dev/null 2>&1
+}
+
+# Said when the package manager could not satisfy Wolffish's dependencies. The
+# library list is read out of the package itself so it cannot drift from what
+# electron-builder actually shipped.
+deps_hint() {
+  local deps
+  deps=$(dpkg-deb -f "$1" Depends 2>/dev/null | tr ',' ' ' | tr -s ' ' || true)
+  err "Could not install Wolffish's system libraries."
+  [ -n "$deps" ] && printf "  Wolffish needs: %s\n" "$deps" >&2
+  printf "  Install them first with: %s\n" "sudo apt-get update && sudo apt-get -f install" >&2
+}
+
+# Install a .deb via apt so dependencies resolve — then prove it worked.
 install_deb() {
+  local deb="$1"
+
   info "Installing the Debian package (you may be prompted for your password)..."
+
   if command -v apt-get >/dev/null 2>&1; then
-    if ! as_root apt-get install -y "$1"; then
-      as_root dpkg -i "$1" || true
-      as_root apt-get install -f -y || return 1
-    fi
-  else
-    as_root dpkg -i "$1" || return 1
+    as_root apt-get install -y "$deb" && deb_installed && return 0
+
+    # Nearly always stale package lists rather than a machine that genuinely
+    # cannot run Wolffish: a fresh VPS image, or one whose mirror cloud-init
+    # rewrote and never refreshed. Every library the app needs then reads as
+    # "not installable" while sitting one `apt-get update` away, and apt
+    # reports it as "held broken packages", which sounds like the opposite.
+    info "Package lists look stale — refreshing them and retrying..."
+    as_root apt-get update || true
+    as_root apt-get install -y "$deb" && deb_installed && return 0
   fi
-  ok "Wolffish installed — find it in your application menu or run: wolffish"
+
+  # No apt, or an apt too old to install from a file path. dpkg alone cannot
+  # fetch dependencies, so this only lands the package; apt then completes it.
+  as_root dpkg -i "$deb" >/dev/null 2>&1 || true
+  if command -v apt-get >/dev/null 2>&1; then
+    # --no-remove because apt's way of "fixing" a dependency it cannot satisfy
+    # is to remove packages until the problem is gone — starting with the one
+    # just unpacked, and not necessarily stopping there. Refuse that trade on
+    # a machine whose only instruction was to install something.
+    as_root apt-get install -f -y --no-remove >/dev/null 2>&1 || true
+  fi
+  deb_installed && return 0
+
+  # Leave nothing half-unpacked: an unconfigured package makes every later apt
+  # run on this machine fail, on a box that never got a working Wolffish.
+  as_root dpkg --remove "$PACKAGE_NAME" >/dev/null 2>&1 || true
+  deps_hint "$deb"
+  return 1
 }
 
 # Install a .rpm via the system package manager (resolves dependencies).
 install_rpm() {
   info "Installing the RPM package (you may be prompted for your password)..."
   if command -v dnf >/dev/null 2>&1; then
-    as_root dnf install -y "$1" || return 1
+    as_root dnf install -y "$1" || true
   elif command -v zypper >/dev/null 2>&1; then
-    as_root zypper --non-interactive install --allow-unsigned-rpm "$1" || return 1
+    as_root zypper --non-interactive install --allow-unsigned-rpm "$1" || true
   elif command -v yum >/dev/null 2>&1; then
-    as_root yum install -y "$1" || return 1
+    as_root yum install -y "$1" || true
   else
-    as_root rpm -i "$1" || return 1
+    as_root rpm -i "$1" || true
   fi
-  ok "Wolffish installed — find it in your application menu or run: wolffish"
+  rpm_installed && return 0
+  err "Could not install Wolffish's system libraries."
+  return 1
 }
 
-# Portable AppImage: install to ~/.local/bin (no root needed). Universal fallback.
+# An AppImage mounts itself to run, and ours needs two separate things to do it.
+#
+# electron-builder builds this app with its default (legacy) AppImage toolset —
+# AppImageKit 12, whose runtime dlopens libfuse.so.2 and exits when it is not
+# there. Ubuntu 22.04+, Debian 12, Fedora and Arch all ship FUSE 3 only, so that
+# is most current machines. Mounting then also needs the kernel's /dev/fuse,
+# which a container started without the device does not have.
+#
+# Either one missing means the same thing — this box cannot mount an AppImage —
+# and the runtime's answer to that is APPIMAGE_EXTRACT_AND_RUN, which unpacks
+# into $TMPDIR instead. It costs hundreds of megabytes per launch, so it is only
+# ever worth baking in when a plain exec genuinely cannot work.
+can_mount_appimage() {
+  [ -e /dev/fuse ] || return 1
+  { ldconfig -p 2>/dev/null || /sbin/ldconfig -p 2>/dev/null; } | grep -q 'libfuse\.so\.2'
+}
+
+# Portable AppImage: no root needed, works on any distro. Universal fallback.
+#
+# Everything lands under ~/.wolffish, including the launcher — so `rm -rf
+# ~/.wolffish` stays a complete uninstall (the app's own rule), nothing 600 MB
+# large is parked in a bin directory, and the ONE PATH entry the app already
+# asks for covers the launcher, the CLI shim the app writes next to it, and the
+# gog/ffmpeg/voice binaries that are already there.
+#
+# The launcher is `wolffish-app`, the same name the .deb and .rpm give the app
+# binary, and deliberately NOT `wolffish` — that name belongs to the CLI shim.
+# Two different programs answering to one name, resolved by PATH order, is a
+# coin flip nobody can debug.
 install_appimage() {
-  local install_dir="$HOME/.local/bin"
+  local home_dir="$HOME/.wolffish"
+  local app_path="$home_dir/Wolffish.AppImage"
+  local bin_dir="$home_dir/bin"
+  local launcher="$bin_dir/$EXE_NAME"
+  local extract=""
 
-  mkdir -p "$install_dir"
+  mkdir -p "$home_dir" "$bin_dir"
 
-  info "Installing to $install_dir/wolffish..."
-  cp "$1" "$install_dir/wolffish"
-  chmod +x "$install_dir/wolffish"
+  info "Installing to $app_path..."
+  cp "$1" "$app_path"
+  chmod +x "$app_path"
 
-  ok "Wolffish installed to $install_dir/wolffish"
-
-  if ! echo "$PATH" | grep -q "$install_dir"; then
-    warn "$install_dir is not in your PATH"
-    info "Add it with: export PATH=\"\$HOME/.local/bin:\$PATH\""
+  if ! can_mount_appimage; then
+    info "This system cannot mount an AppImage — the launcher will self-extract."
+    extract="APPIMAGE_EXTRACT_AND_RUN=1 "
   fi
 
-  info "Launch with: wolffish"
+  printf '%s\n' \
+    '#!/bin/sh' \
+    '# Wolffish AppImage launcher — written by the installer, safe to regenerate.' \
+    "${extract}exec \"$app_path\" \"\$@\"" > "$launcher"
+  chmod +x "$launcher"
+
+  ok "Wolffish installed to $app_path"
+  is_headless_host || info "Launch with: $EXE_NAME"
+}
+
+# A box with no display server is what the CLI exists for — and the two things a
+# desktop install signs off with are the two things it does not have: an
+# application menu, and a `wolffish` that opens a window. Electron aborts on a
+# display it cannot find unless the launch says headless was the intent.
+is_headless_host() {
+  [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]
+}
+
+native_ok() {
+  if is_headless_host; then
+    ok "Wolffish installed"
+  else
+    ok "Wolffish installed — find it in your application menu or run: $EXE_NAME"
+  fi
+}
+
+# A machine with no display has no icon to click, and no `wolffish` yet either —
+# so "launch it once" is not an instruction it can follow. Name the binary it
+# actually has, with the flag that stops Electron from aborting on a display
+# server it will never find.
+#
+# --no-sandbox is not optional here and not a suggestion: Chromium aborts as
+# root with the sandbox on, before any of the app's own code runs, and a VPS
+# logs you in as root. The app is unsandboxed by design either way.
+headless_start_notice() {
+  is_headless_host || return 0
+  printf "  No display detected — start the agent with:\n\n"
+  printf "    ${BOLD}%s --headless --no-sandbox &${RESET}\n\n" "$EXE_NAME"
+  printf "  The first run is also what creates the ${BOLD}wolffish${RESET} command.\n\n"
 }
 
 # Dispatch to the right installer for the chosen artifact. If a native package
@@ -280,8 +422,8 @@ install_linux() {
   local path="$1" ext="$2" manifest="$3" os="$4" ai_url ai_file ai_sha
 
   case "$ext" in
-    deb) install_deb "$path" && return 0 ;;
-    rpm) install_rpm "$path" && return 0 ;;
+    deb) install_deb "$path" && { native_ok; return 0; } ;;
+    rpm) install_rpm "$path" && { native_ok; return 0; } ;;
     *)   install_appimage "$path"; return $? ;;
   esac
 
@@ -375,13 +517,18 @@ main() {
 
   case "$os" in
     macos)   install_macos "$dest" ;;
-    linux)   install_linux "$dest" "$extension" "$manifest" "$os" ;;
+    linux)   install_linux "$dest" "$extension" "$manifest" "$os" || die "Wolffish was not installed." ;;
     windows) install_windows "$dest" ;;
   esac
 
   printf "\n  ${GREEN}${BOLD}Wolffish v%s installed successfully!${RESET}\n\n" "$version"
 
+  # PATH first, then how to start: on an AppImage install the binary named
+  # below IS in the directory the notice above adds, so the other order tells
+  # people to run a command that cannot resolve yet.
   cli_path_notice
+  [ "$os" = "linux" ] && headless_start_notice
+  return 0
 }
 
 # The `wolffish` command is written by the app itself on first launch (it is
@@ -395,26 +542,36 @@ main() {
 # directory already holds gog, ffmpeg and the voice engines, so one PATH entry
 # covers all of them.
 cli_path_notice() {
-  bin_dir="$HOME/.wolffish/bin"
+  local bin_dir="$HOME/.wolffish/bin"
   case ":$PATH:" in
     *":$bin_dir:"*)
       info "The 'wolffish' command will be available after the first launch."
-      return
+      return 0
       ;;
-  esac
-
-  shell_name=$(basename "${SHELL:-sh}")
-  case "$shell_name" in
-    zsh)  rc="$HOME/.zshrc"; line="export PATH=\"$bin_dir:\$PATH\"" ;;
-    fish) rc="$HOME/.config/fish/config.fish"; line="fish_add_path $bin_dir" ;;
-    *)    rc="$HOME/.bashrc"; line="export PATH=\"$bin_dir:\$PATH\"" ;;
   esac
 
   warn "$bin_dir is not on your PATH — the 'wolffish' command won't be found."
   printf "  Add it with:\n\n"
-  printf "    ${BOLD}echo '%s' >> %s${RESET}\n\n" "$line" "$rc"
+  printf "    ${BOLD}echo '%s' >> %s${RESET}\n\n" "$(path_line "$bin_dir")" "$(profile_file)"
   printf "  Then restart your shell. You can re-check any time with:\n"
   printf "    ${BOLD}wolffish path status${RESET}\n\n"
+}
+
+# Where a PATH line belongs, and what it should say — the login shell decides
+# both, and fish spells the line differently from every other shell.
+profile_file() {
+  case "$(basename "${SHELL:-sh}")" in
+    zsh)  echo "$HOME/.zshrc" ;;
+    fish) echo "$HOME/.config/fish/config.fish" ;;
+    *)    echo "$HOME/.bashrc" ;;
+  esac
+}
+
+path_line() {
+  case "$(basename "${SHELL:-sh}")" in
+    fish) echo "fish_add_path $1" ;;
+    *)    echo "export PATH=\"$1:\$PATH\"" ;;
+  esac
 }
 
 main "$@"

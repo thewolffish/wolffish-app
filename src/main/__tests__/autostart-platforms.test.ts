@@ -129,7 +129,6 @@ async function main(): Promise<void> {
   await asPlatform('linux', linuxHome, () =>
     autostart.installAutostart('gui', '/opt/Wolffish/wolffish')
   )
-  if (savedXdg !== undefined) process.env.XDG_CONFIG_HOME = savedXdg
 
   const desktopFile = path.join(linuxHome, '.config', 'autostart', 'wolffish.desktop')
   check('linux desktop: writes ~/.config/autostart/wolffish.desktop', () => {
@@ -144,10 +143,20 @@ async function main(): Promise<void> {
     // GNOME skips entries without this; KDE ignores it. Harmless either way.
     assert.ok(body.includes('X-GNOME-Autostart-enabled=true'))
   })
+  check('linux desktop: the entry launches unsandboxed, so root can use it too', () => {
+    const body = fs.readFileSync(desktopFile, 'utf8')
+    const exec = body.split('\n').find((line) => line.startsWith('Exec='))
+    assert.ok(exec?.includes('--no-sandbox'), `root would abort before startup: ${exec}`)
+  })
   check('linux desktop: entry is executable (some sessions require it)', () => {
     assert.ok((fs.statSync(desktopFile).mode & 0o111) !== 0, 'exec bit not set')
   })
   await asPlatform('linux', linuxHome, () => autostart.uninstallAutostart('gui'))
+  // Restored only now, after the UNINSTALL. Putting it back before that line
+  // left the removal reading the real XDG_CONFIG_HOME on any machine that sets
+  // one: the temp entry survived (so this case failed) and the delete landed on
+  // the developer's own autostart entry instead.
+  if (savedXdg !== undefined) process.env.XDG_CONFIG_HOME = savedXdg
   check('linux desktop: uninstall removed the entry', () => {
     assert.ok(!fs.existsSync(desktopFile), 'entry survived uninstall')
   })
@@ -170,7 +179,14 @@ async function main(): Promise<void> {
     for (const section of ['[Unit]', '[Service]', '[Install]']) {
       assert.ok(body.includes(section), `missing ${section}`)
     }
-    assert.ok(body.includes('ExecStart=/opt/Wolffish/wolffish --headless'), 'wrong ExecStart')
+    // --no-sandbox is load-bearing, not cosmetic: Chromium aborts as root
+    // before any of the app's code runs, and a systemd unit on a VPS is
+    // usually root's. Without it the unit installs, reports healthy, and the
+    // service dies on every start with a FATAL only the journal sees.
+    assert.ok(
+      body.includes('ExecStart=/opt/Wolffish/wolffish --headless --no-sandbox'),
+      `wrong ExecStart:\n${body}`
+    )
     assert.ok(body.includes('Restart=always'), 'a crashed agent must come back')
     assert.ok(body.includes('WantedBy=default.target'), 'must be enable-able')
     // Without this the daemon starts with no idea it is headless.
@@ -373,6 +389,163 @@ async function main(): Promise<void> {
       fs.existsSync(path.join(foreignDir, 'wolffish')),
       'deleted a file the app did not write'
     )
+  })
+
+  // ── AppImage: recording a path that outlives the process ──────────────────
+  // An AppImage runs from /tmp/.mount_WolffiXXXXXX, deleted on exit and named
+  // differently on every launch. Everything written here is READ LATER — the
+  // shim by a shell, the unit by systemd at next boot — so naming the mount
+  // produces artifacts that are broken before they are first used, while
+  // looking correct to the process that wrote them. The .AppImage is the
+  // stable name, and the client has to be lifted out of the mount entirely
+  // because no string outside can address a file inside it.
+  const appImageHome = path.join(TMP, 'appimage')
+  const mount = path.join(TMP, '.mount_Wolffi123456')
+  const mountCli = path.join(mount, 'resources', 'cli')
+  fs.mkdirSync(path.join(mountCli, 'lib'), { recursive: true })
+  fs.mkdirSync(appImageHome, { recursive: true })
+  fs.writeFileSync(path.join(mountCli, 'wolffish.mjs'), "import './lib/client.mjs'\n")
+  fs.writeFileSync(path.join(mountCli, 'lib', 'client.mjs'), 'export const connect = () => {}\n')
+
+  const savedAppImage = process.env.APPIMAGE
+  process.env.APPIMAGE = path.join(appImageHome, '.wolffish', 'Wolffish.AppImage')
+
+  await asPlatform('linux', appImageHome, () =>
+    cliPath.installCliPath(path.join(mount, 'wolffish-app'), path.join(mountCli, 'wolffish.mjs'))
+  )
+  const appImageShim = fs.readFileSync(
+    path.join(appImageHome, '.wolffish', 'bin', 'wolffish'),
+    'utf8'
+  )
+  check('appimage: the shim names the .AppImage, not the mount it is running from', () => {
+    assert.ok(appImageShim.includes('Wolffish.AppImage'), `named nothing stable:\n${appImageShim}`)
+    assert.ok(!appImageShim.includes(mount), 'recorded a path that dies with this process')
+  })
+  check('appimage: the client is lifted out of the mount, imports included', () => {
+    const copied = path.join(appImageHome, '.wolffish', 'cli', 'wolffish.mjs')
+    assert.ok(fs.existsSync(copied), 'client not copied out')
+    assert.ok(
+      fs.existsSync(path.join(appImageHome, '.wolffish', 'cli', 'lib', 'client.mjs')),
+      'copied the entry but not what it imports — the shim would die on first import'
+    )
+    assert.ok(appImageShim.includes(copied), `shim does not name the copy:\n${appImageShim}`)
+  })
+  check('appimage: the copy respects the rm -rf ~/.wolffish rule', () => {
+    const stray = fs.readdirSync(appImageHome).filter((entry) => entry !== '.wolffish')
+    assert.deepEqual(stray, [], `wrote outside the footprint: ${stray.join(', ')}`)
+  })
+  check('appimage: a mounted launch does not make the shim self-extract', () => {
+    assert.ok(
+      !appImageShim.includes('APPIMAGE_EXTRACT_AND_RUN'),
+      'unpacks ~600 MB on every command for a machine that can mount fine'
+    )
+  })
+
+  // A box with no /dev/fuse — a container started without the device — can only
+  // run an AppImage by unpacking it, and the installer bakes that into the
+  // launcher it writes. The shim has to reach the same conclusion or `wolffish`
+  // fails on exactly the machines the installer just got working. It does not
+  // re-derive it: this process running at all is proof of a launch that worked.
+  const extractHome = path.join(TMP, 'appimage-extract')
+  fs.mkdirSync(extractHome, { recursive: true })
+  process.env.APPIMAGE = path.join(extractHome, '.wolffish', 'Wolffish.AppImage')
+  process.env.APPIMAGE_EXTRACT_AND_RUN = '1'
+  await asPlatform('linux', extractHome, () =>
+    cliPath.installCliPath(path.join(mount, 'wolffish-app'), path.join(mountCli, 'wolffish.mjs'))
+  )
+  delete process.env.APPIMAGE_EXTRACT_AND_RUN
+  check('appimage: a self-extracting launch is carried into the shim', () => {
+    const body = fs.readFileSync(path.join(extractHome, '.wolffish', 'bin', 'wolffish'), 'utf8')
+    assert.ok(
+      body.includes('APPIMAGE_EXTRACT_AND_RUN=1 ELECTRON_RUN_AS_NODE=1 exec'),
+      `shim would try to mount on a box that cannot:\n${body}`
+    )
+  })
+
+  // The same answer has to reach the two files a service manager reads at boot,
+  // in the syntax each of them speaks — or autostart registers cleanly and the
+  // agent never comes back after a reboot.
+  process.env.APPIMAGE_EXTRACT_AND_RUN = '1'
+  const extractSvc = path.join(TMP, 'appimage-extract-svc')
+  fs.mkdirSync(extractSvc, { recursive: true })
+  await asPlatform('linux', extractSvc, () =>
+    autostart.installAutostart('headless', path.join(mount, 'wolffish-app'))
+  )
+  // Faking os.homedir() is not enough for the XDG entry: xdgPath() reads
+  // XDG_CONFIG_HOME first, so on a machine that sets it this case would assert
+  // against a file that was never written — and would write a real autostart
+  // entry, pointing at a /tmp mount, into the developer's own session.
+  const savedXdgSvc = process.env.XDG_CONFIG_HOME
+  delete process.env.XDG_CONFIG_HOME
+  await asPlatform('linux', extractSvc, () =>
+    autostart.installAutostart('gui', path.join(mount, 'wolffish-app'))
+  )
+  if (savedXdgSvc !== undefined) process.env.XDG_CONFIG_HOME = savedXdgSvc
+  delete process.env.APPIMAGE_EXTRACT_AND_RUN
+  check('appimage: the systemd unit carries the self-extract environment', () => {
+    const body = fs.readFileSync(
+      path.join(extractSvc, '.config', 'systemd', 'user', 'wolffish.service'),
+      'utf8'
+    )
+    assert.ok(
+      body.includes('Environment=APPIMAGE_EXTRACT_AND_RUN=1'),
+      `the unit cannot mount and will fail at every boot:\n${body}`
+    )
+    for (const line of body.split('\n')) {
+      const text = line.trim()
+      if (!text || text.startsWith('#') || text.startsWith('[')) continue
+      assert.ok(/^[A-Za-z]+=/.test(text), `not a systemd directive: ${text}`)
+    }
+  })
+  check('appimage: the XDG entry carries it as env, not as a bare assignment', () => {
+    const body = fs.readFileSync(
+      path.join(extractSvc, '.config', 'autostart', 'wolffish.desktop'),
+      'utf8'
+    )
+    const exec = body.split('\n').find((line) => line.startsWith('Exec='))
+    assert.ok(
+      exec?.startsWith('Exec=env APPIMAGE_EXTRACT_AND_RUN=1 '),
+      `a NAME=VALUE prefix would be read as the program to run: ${exec}`
+    )
+  })
+
+  // systemd reads this file at NEXT boot, when the mount is long gone. This is
+  // the failure that registers successfully, reports itself healthy, and then
+  // never starts the app again — with the reason only in the journal.
+  const appImageUnitHome = path.join(TMP, 'appimage-unit')
+  fs.mkdirSync(appImageUnitHome, { recursive: true })
+  await asPlatform('linux', appImageUnitHome, () =>
+    autostart.installAutostart('headless', path.join(mount, 'wolffish-app'))
+  )
+  check('appimage: the systemd unit starts the .AppImage, not the mount', () => {
+    const body = fs.readFileSync(
+      path.join(appImageUnitHome, '.config', 'systemd', 'user', 'wolffish.service'),
+      'utf8'
+    )
+    assert.ok(
+      body.includes(`ExecStart=${process.env.APPIMAGE} --headless --no-sandbox`),
+      `wrong ExecStart:\n${body}`
+    )
+    assert.ok(!body.includes(mount), 'unit names a mount that will not exist at boot')
+  })
+
+  if (savedAppImage === undefined) delete process.env.APPIMAGE
+  else process.env.APPIMAGE = savedAppImage
+
+  // ...and a native install is untouched by any of it: /opt is a real
+  // directory, so there is nothing to copy and nothing to redirect.
+  const nativeHome = path.join(TMP, 'native')
+  fs.mkdirSync(nativeHome, { recursive: true })
+  await asPlatform('linux', nativeHome, () =>
+    cliPath.installCliPath('/opt/Wolffish/wolffish-app', '/opt/Wolffish/resources/cli/wolffish.mjs')
+  )
+  check('native install: no client copy, shim points straight into /opt', () => {
+    assert.ok(
+      !fs.existsSync(path.join(nativeHome, '.wolffish', 'cli')),
+      'copied the client on an install whose paths are already stable'
+    )
+    const body = fs.readFileSync(path.join(nativeHome, '.wolffish', 'bin', 'wolffish'), 'utf8')
+    assert.ok(body.includes('/opt/Wolffish/resources/cli/wolffish.mjs'), body)
   })
 
   // ── the CLI's console-capability detection ────────────────────────────────

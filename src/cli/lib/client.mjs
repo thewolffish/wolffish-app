@@ -214,7 +214,14 @@ export function socketExists() {
  * without taking the agent down with it.
  */
 export async function startDaemon({ quiet = false } = {}) {
-  const execPath = process.env.WOLFFISH_EXEC || process.execPath
+  // APPIMAGE before execPath, and it is not a preference. Under an AppImage
+  // this process IS the image, mounted at a /tmp path that the runtime unmounts
+  // the moment this process exits — and this child is meant to outlive it by
+  // days. Spawning execPath would hand the daemon a filesystem scheduled for
+  // demolition, which reads as the agent dying seconds after any command that
+  // had to start it. Launching the .AppImage instead gives the daemon its own
+  // mount, owned by its own process.
+  const execPath = process.env.WOLFFISH_EXEC || process.env.APPIMAGE || process.execPath
   const args = []
   // Under ELECTRON_RUN_AS_NODE the binary is a plain node, so the app's own
   // entry has to be named. Unset it for the child: the daemon needs the real
@@ -222,6 +229,12 @@ export async function startDaemon({ quiet = false } = {}) {
   const env = { ...process.env, WOLFFISH_HEADLESS: '1' }
   delete env.ELECTRON_RUN_AS_NODE
   args.push('--headless')
+  // Chromium aborts as root unless this is on the command line — the check runs
+  // before any of the app's own code, so the switch main appends at startup is
+  // read too late. A VPS logs you in as root, which makes this the difference
+  // between `wolffish` working there and dying with a FATAL nobody sees, since
+  // the daemon is spawned detached with its output thrown away.
+  args.push('--no-sandbox')
 
   if (!quiet) process.stderr.write('Starting the Wolffish daemon…\n')
   const child = spawn(execPath, args, {

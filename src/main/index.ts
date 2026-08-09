@@ -69,6 +69,7 @@ import {
 import { CliChannel } from '@main/channels/cli/channel'
 import { CliServer } from '@main/channels/cli/server'
 import { registerCliIpc, type AutostartFacts } from '@main/channels/cli/ipc'
+import { stableExecPath } from '@main/autostart/appimage'
 import { cliEntryPath, cliPathStatus, installCliPath } from '@main/autostart/cli-path'
 import {
   autostartMechanism,
@@ -5294,7 +5295,9 @@ app.whenReady().then(async () => {
       if (turnRunner.cancelConversation(conversationId)) return true
       return agent.cancelAutonomousRun(conversationId)
     },
-    execPath: app.getPath('exe'),
+    // The .AppImage rather than the /tmp mount it is running from, so the
+    // Channels → CLI panel names a path the user can still find afterwards.
+    execPath: stableExecPath(app.getPath('exe')),
     cliEntry: cliEntryPath(is.dev, app.getAppPath(), process.resourcesPath),
     // Same three functions the Wolffish tab's toggle calls. Sharing them is
     // what keeps the two screens from ever disagreeing about whether Wolffish
@@ -5311,9 +5314,9 @@ app.whenReady().then(async () => {
   // idempotent and it has to be re-pointed after an update anyway (the app
   // binary's path can move), so writing it unconditionally is both simpler
   // and more correct than tracking whether it was ever installed. Silent and
-  // best-effort: it writes into the user's own ~/.local/bin (or
-  // ~/.wolffish/bin on Windows), needs no privilege, and a failure only means
-  // the Channels → CLI panel shows its "not on PATH" card with the fix.
+  // best-effort: it writes into the user's own ~/.wolffish/bin, needs no
+  // privilege, and a failure only means the Channels → CLI panel shows its
+  // "not on PATH" card with the fix.
   // Skipped in dev, where process.execPath is the electron-vite binary.
   if (!is.dev) {
     void installCliPath(

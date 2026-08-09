@@ -26,6 +26,7 @@
  * an optimization here; a unit installed without it is reported as a WARNING
  * state, not a healthy one.
  */
+import { appImageLaunchEnv, stableExecPath } from '@main/autostart/appimage'
 import { wlog } from '@main/workspace/logger'
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
@@ -97,9 +98,24 @@ export function isHeadlessHost(): boolean {
   return !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY
 }
 
+/**
+ * `--no-sandbox` on the COMMAND LINE, not just the `app.commandLine` switch main
+ * already appends.
+ *
+ * Chromium refuses to start as root with the sandbox enabled — it aborts with
+ * `FATAL: Running as root without --no-sandbox is not supported` from
+ * PreSandboxStartup, which runs long before a line of the app's JavaScript is
+ * evaluated. So appending the switch from main is too late to be seen by the
+ * one check that most needs it, and the app is unlaunchable for the user a VPS
+ * hands you by default: root. It changes nothing else — this app already runs
+ * fully unsandboxed on purpose (see the `no-sandbox` block in main), so putting
+ * the same decision in argv only moves it early enough to count.
+ */
+const NO_SANDBOX = '--no-sandbox'
+
 /** The command a service manager should run. Quoted by each writer as needed. */
 function serviceCommand(execPath: string): { bin: string; args: string[] } {
-  return { bin: execPath, args: ['--headless'] }
+  return { bin: execPath, args: ['--headless', NO_SANDBOX] }
 }
 
 // ─── Linux: systemd user unit ───────────────────────────────────────────────
@@ -110,6 +126,12 @@ function systemdUnitPath(): string {
 
 function systemdUnitBody(execPath: string): string {
   const { bin, args } = serviceCommand(execPath)
+  // An AppImage that can only run by unpacking itself has to say so here too.
+  // systemd reads this file at boot with none of the environment the install
+  // ran in, so without the line the unit enables cleanly, reports healthy, and
+  // fails to mount on every single start — the exact shape of failure this
+  // whole module exists to stop.
+  const launchEnv = appImageLaunchEnv()
   return `[Unit]
 Description=Wolffish
 Documentation=https://wolffi.sh
@@ -130,7 +152,7 @@ Environment=WOLFFISH_HEADLESS=1
 # braces, for a build that predates it or an ELECTRON_OZONE override in the
 # environment.
 Environment=ELECTRON_OZONE_PLATFORM_HINT=headless
-
+${launchEnv ? `Environment=${launchEnv}\n` : ''}
 [Install]
 WantedBy=default.target
 `
@@ -227,12 +249,17 @@ function xdgPath(): string {
 async function installXdg(execPath: string): Promise<AutostartStatus> {
   const file = xdgPath()
   await fs.mkdir(path.dirname(file), { recursive: true })
+  // `Exec=` is a command line, not a shell line, so a NAME=VALUE prefix would be
+  // read as the program to run. `env` is the portable way to say the same thing
+  // to a session manager. Absent unless this app is itself running unpacked.
+  const launchEnv = appImageLaunchEnv()
+  const prefix = launchEnv ? `env ${launchEnv} ` : ''
   const body = `[Desktop Entry]
 Type=Application
 Version=1.0
 Name=Wolffish
 Comment=Personal AI agent that runs locally with full system access
-Exec="${execPath}"
+Exec=${prefix}"${execPath}" ${NO_SANDBOX}
 Icon=wolffish
 Terminal=false
 X-GNOME-Autostart-enabled=true
@@ -463,16 +490,21 @@ export async function installAutostart(
   execPath: string
 ): Promise<AutostartStatus> {
   const mechanism = mechanismFor(mode)
+  // Every branch below writes execPath into a file a service manager reads at
+  // NEXT boot. Under an AppImage the caller's path is a /tmp mount that will
+  // not exist by then, so the registration would succeed, report itself
+  // healthy, and quietly never start the app again.
+  const exec = stableExecPath(execPath)
   try {
     switch (mechanism) {
       case 'systemd':
-        return await installSystemd(execPath)
+        return await installSystemd(exec)
       case 'xdg':
-        return await installXdg(execPath)
+        return await installXdg(exec)
       case 'launchd':
-        return await installLaunchd(execPath)
+        return await installLaunchd(exec)
       case 'schtasks':
-        return await installSchtasks(execPath)
+        return await installSchtasks(exec)
       default:
         return { active: false, mechanism, location: null, warning: null }
     }
