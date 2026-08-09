@@ -105,7 +105,7 @@ function titleKeyFor(errorReason: string, statusCode: number | null): string {
   return 'errors.provider.noProviderTitle'
 }
 
-function ErrorDetailBlock({ text }: { text: string }): React.JSX.Element {
+export function ErrorDetailBlock({ text }: { text: string }): React.JSX.Element {
   const [copied, setCopied] = useState(false)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(

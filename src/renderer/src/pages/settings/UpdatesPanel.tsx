@@ -1,9 +1,10 @@
+import { ErrorDetailBlock } from '@components/common/provider-error-card/ProviderErrorCard'
 import { Button } from '@components/core/Button'
 import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn'
 import type { UpdateCheckResult, UpdaterErrorInfo } from '@preload/index'
 import { useFlow } from '@providers/flow/useFlow'
-import { Alert02Icon, Download01Icon } from 'hugeicons-react'
+import { Download01Icon, RefreshIcon, SystemUpdate02Icon } from 'hugeicons-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -247,7 +248,7 @@ export function UpdatesPanel(): React.JSX.Element {
 
           <div className="border-border/60 border-t" />
 
-          <div className="flex flex-col gap-3 min-h-[68px]">
+          <div className="flex flex-col gap-3 min-h-17">
             {phase === 'downloading' || phase === 'verifying' ? (
               <>
                 <div className="flex items-center justify-between gap-4">
@@ -375,32 +376,52 @@ function UpdateErrorAlert({
   retryLabel: string
   onRetry: () => void
 }): React.JSX.Element {
+  const { t } = useTranslation()
+  const [showDetail, setShowDetail] = useState(false)
+
   return (
     <div
       role="alert"
+      aria-live="polite"
       className={cn(
-        'flex flex-col gap-3 rounded-xl border px-4 py-3',
         'border-red-300 bg-red-50 text-red-900',
-        'dark:border-red-700 dark:bg-red-900/30 dark:text-red-100'
+        'dark:border-red-700 dark:bg-red-900/40 dark:text-red-100',
+        'w-full rounded-2xl border px-4 py-3 text-sm'
       )}
     >
-      <div className="flex items-start gap-2.5">
-        <Alert02Icon size={16} className="mt-0.5 shrink-0" />
-        <div className="flex min-w-0 flex-col gap-1">
-          <span className="text-sm font-medium">{title}</span>
-          <p className="text-xs leading-relaxed break-words opacity-90">{reason}</p>
+      <div className="flex items-center gap-3">
+        <SystemUpdate02Icon size={18} className="shrink-0" aria-hidden />
+        <div className="flex-1 text-xs">
+          <p className="font-medium">{title}</p>
+          <p className="opacity-80">{reason}</p>
           {detail && (
-            <p className="mt-0.5 max-h-24 overflow-y-auto font-mono text-[11px] leading-relaxed break-words opacity-70">
-              {detail}
-            </p>
+            <button
+              type="button"
+              onClick={() => setShowDetail((v) => !v)}
+              className={cn(
+                'mt-1 text-[11px] underline underline-offset-2 opacity-60',
+                'hover:opacity-90'
+              )}
+            >
+              {t('errors.provider.viewDetails')}
+            </button>
           )}
         </div>
-      </div>
-      <div className="flex justify-end">
-        <Button type="button" variant="outline" onClick={onRetry}>
+        <button
+          type="button"
+          onClick={onRetry}
+          className={cn(
+            'flex shrink-0 items-center gap-1.5 self-center rounded-lg px-2.5 py-1.5',
+            'text-[11px] font-medium cursor-pointer',
+            'bg-red-600 text-white hover:bg-red-700',
+            'dark:bg-red-700 dark:hover:bg-red-600'
+          )}
+        >
+          <RefreshIcon size={12} aria-hidden />
           {retryLabel}
-        </Button>
+        </button>
       </div>
+      {showDetail && detail && <ErrorDetailBlock text={detail} />}
     </div>
   )
 }
