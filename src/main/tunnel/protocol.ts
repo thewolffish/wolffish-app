@@ -896,6 +896,16 @@ export type NotificationAckFrame = { v: 1; type: 'notification_ack'; notificatio
  */
 export type SetBadgeFrame = { v: 1; type: 'set_badge'; phoneId: string; count: number }
 
+/**
+ * Phone → relay, on unpairing: forget the device entirely — token, platform,
+ * badge count. The relay then answers every later notify for that phoneId
+ * with `dropped` instead of claiming delivery to a phone that wiped its copy
+ * of everything the notification would describe. The desktop never sends or
+ * receives it — mirrored here so the three protocol files carry the same
+ * control-plane contract.
+ */
+export type UnregisterPushFrame = { v: 1; type: 'unregister_push'; phoneId: string }
+
 /** Relay → desktop: how the notify was routed, answered immediately. */
 export type NotifyResultFrame = {
   v: 1
