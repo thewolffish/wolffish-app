@@ -91,11 +91,17 @@ function renderQr(matrix, { color = true } = {}) {
  * saved. A QR on a screen is not being read off a crumpled receipt — the extra
  * redundancy buys nothing here and costs the fit.
  *
- * The app already depends on `qrcode` for the panels and the CLI runs under the
- * app's own runtime, so it is importable here. If it somehow is not, every
- * caller has a text fallback — never a dead end.
+ * Two routes, in order. In dev the CLI sits inside the repo, where `qrcode`
+ * resolves from the project's node_modules. A packaged install is different:
+ * the CLI ships as loose source NEXT TO app.asar while the dependency lives
+ * inside it, and ESM resolution only walks real directories — so the local
+ * import fails there every time, on every platform. The daemon runs from
+ * inside the archive and can always reach it, so it answers `cli:qrMatrix`
+ * and this side only draws. A daemon from before that channel existed says
+ * "unknown channel", which lands in the same catch — and every caller has a
+ * text fallback, never a dead end.
  */
-async function toMatrix(text) {
+async function toMatrix(client, text) {
   try {
     const { default: QRCode } = await import('qrcode')
     const qr = QRCode.create(text, { errorCorrectionLevel: 'L' })
@@ -109,8 +115,17 @@ async function toMatrix(text) {
     }
     return matrix
   } catch {
-    return null
+    // fall through to the daemon
   }
+  try {
+    const result = await client.invoke('cli:qrMatrix', text)
+    if (result?.ok && Array.isArray(result.rows) && result.rows.length > 0) {
+      return result.rows.map((row) => Array.from(row, (cell) => cell === '1'))
+    }
+  } catch {
+    // older daemon, or none — the caller's text fallback takes it from here
+  }
+  return null
 }
 
 /** What drawing this matrix would cost, in printed rows and columns. */
@@ -126,7 +141,7 @@ function footprint(matrix) {
  * whether to offer the other route, rather than printing a fallback hint
  * underneath a code that came out fine.
  */
-async function printQr(text, { reserveRows = 6 } = {}) {
+async function printQr(client, text, { reserveRows = 6 } = {}) {
   // A console that cannot print the half-block glyph turns every module into
   // "?" — a square of punctuation that looks like a QR from a distance and is
   // not one. Legacy Windows consoles are the case; refusing is the only honest
@@ -135,7 +150,7 @@ async function printQr(text, { reserveRows = 6 } = {}) {
     out(c.yellow('  this console cannot draw a QR — use the code instead'))
     return 'too-big'
   }
-  const matrix = await toMatrix(text)
+  const matrix = await toMatrix(client, text)
   if (!matrix) {
     out(c.yellow('  no QR renderer available — here is the raw payload instead'))
     out(`  ${text}`)
@@ -281,7 +296,7 @@ async function pairPhone(client, rest) {
       out()
       out(wrapText(c.gray('Enter this code in the Wolffish app on your phone.'), 2))
     } else if (offer.payload) {
-      drew = await printQr(offer.payload)
+      drew = await printQr(client, offer.payload)
       if (drew === 'drawn') {
         out()
         out(wrapText(c.gray('Scan this with the Wolffish app on your phone.'), 2))
@@ -466,7 +481,7 @@ async function linkByQr(client, { allowFallback }) {
   let fits = true
   const outcome = await watchWhatsApp(client, {
     onQr: async (qr) => {
-      const drew = await printQr(qr)
+      const drew = await printQr(client, qr)
       if (drew === 'drawn') {
         out()
         out(wrapText(c.gray('WhatsApp → Settings → Linked devices → Link a device'), 2))

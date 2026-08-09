@@ -48,6 +48,7 @@ import {
 import { readViewerFile, writeViewerFile } from '@main/viewer'
 import { getCliConfig, localesPath, setCliConfig, type CliConfig } from '@main/workspace/workspace'
 import { wlog } from '@main/workspace/logger'
+import QRCode from 'qrcode'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -535,6 +536,45 @@ export function registerCliIpc(deps: CliIpcDeps): void {
       if (owner === 'project') await updateProject({ id, directories })
       else await updateProcedure({ id, directories })
       return { ok: true, files: current.files ?? [], directories, skipped: [], missing }
+    }
+  )
+
+  // ── Pairing ──────────────────────────────────────────────────────────────
+  /**
+   * The module matrix for a QR the terminal wants to draw.
+   *
+   * The CLI ships as loose source next to app.asar, so its own
+   * `import('qrcode')` fails in every packaged install: ESM resolution walks
+   * the real directories above resources/cli and never enters the archive.
+   * This process runs from inside the archive, where the dependency resolves,
+   * so the daemon computes the matrix and the terminal only draws it. Rows
+   * travel as '1'/'0' strings — JSON-friendly on the socket, and unambiguous
+   * about orientation in a way a flat bit array was not.
+   *
+   * Level L to match the CLI's own local path: the code is read off a screen,
+   * not a crumpled receipt, and the smaller matrix is what keeps it inside a
+   * terminal window (see printQr in pair.mjs, which measures before drawing).
+   */
+  handle(
+    'cli:qrMatrix',
+    (
+      _e,
+      text: string
+    ): { ok: true; size: number; rows: string[] } | { ok: false; error: string } => {
+      try {
+        const qr = QRCode.create(String(text ?? ''), { errorCorrectionLevel: 'L' })
+        const size = qr.modules.size
+        const data = qr.modules.data
+        const rows: string[] = []
+        for (let y = 0; y < size; y++) {
+          let row = ''
+          for (let x = 0; x < size; x++) row += data[y * size + x] ? '1' : '0'
+          rows.push(row)
+        }
+        return { ok: true, size, rows }
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      }
     }
   )
 
