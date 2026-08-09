@@ -1,4 +1,22 @@
-## v1.0.241 — 2026-08-09 `Latest`
+## v1.0.242 — 2026-08-09 `Latest`
+
+### Every Row Your Phone Shows Now Takes an Edit
+
+The phone has been able to *read* the desktop's settings for a while — model, providers, channels, schedules, rendered as the same cards the desktop draws. Editing was another story: most rows were a look, not a control. The write side is there now. **The Model screen edits from the phone** — chat mode, the thinking chip, local-only, the local model, the cloud provider and its model, even a newly typed provider key — and every one of those routes into **the exact handler the desktop's own control calls**: same persistence, same live runtime update, same announcement, so a pick on either screen is the same act and an open desktop window adopts it without a refetch. The details carry the same care. A key you see on the phone is a **twelve-character preview**, and previews round-trip on every edit — so a masked value can never overwrite the real credential it abbreviates. A local model pick is checked against **what is actually installed on the desktop**, because refusing a stale row beats silently starting a multi-gigabyte download. **MCP switches**, the **compaction schedule** and the in-app feed's verbosity flip from the phone as well. And the Telegram and WhatsApp cards became editable end to end — allow-lists, auto-refresh, stale hours, verbose, hide-automations — through **the same code path the desktop's own settings take**, so the rules cannot drift: a change that touches the connection restarts a running bridge, a preference-only change deliberately does not. The allow-lists travel as one comma-separated line and are parsed the way something typed on a phone keyboard deserves — whitespace tolerated, a junk entry costing itself rather than the list. Two switches stayed home on purpose: the Telegram and WhatsApp **power switches**, because starting a bridge process is this machine's act, and the phone shows them as what they are — status.
+
+### The QR a Packaged Install Could Never Draw
+
+`wolffish pair` ends in a QR — and in every packaged install, on every platform, it ended in **"no QR renderer available"** and a wall of raw text instead. The reason was the shape of the install itself: the terminal client ships as loose files next to the app archive, while the QR library lives *inside* it, and module resolution only walks real directories — so the terminal's own import failed everywhere except a development checkout, which is exactly where nobody would notice. The daemon runs from inside the archive, where the library resolves, so **the daemon now computes the matrix and the terminal only draws it**. A terminal updated ahead of its daemon — the mid-upgrade window, where the daemon predates the channel — falls back to the old raw-text payload instead of dying, because a pairing flow must never dead-end. And a development checkout still draws with no daemon's help at all.
+
+### Bad News in One Shape
+
+When an update failed to download, the Updates page grew a red box of its own design: a title, a paragraph of reason, and the raw error dumped underneath at full length. The chat already solved this — the provider error card, with its one-line summary, its **"view details"** fold, and a detail block you can **copy with one click** — so the update failure now *is* that card: same shape, same fold, same copy button, with retry sitting beside it as a button instead of below it as a second row. One design for "something went wrong", wherever you meet it.
+
+### The Agent's Manual Caught Up
+
+Two lines of the agent's own instructions had quietly gone stale. They still described phone notifications as **budgeted** — one per phase, five per run — though nothing has counted or capped a send since v1.0.239; restraint is a judgement the instructions teach, not a meter that runs out, and now they say so. And where a notification wants its tap to land on the conversation that produced it, the agent no longer looks the id up first: **`wolffish://chat?id=current`** names this run's own conversation and the app resolves it — one less lookup, one less way to point a tap at the wrong place.
+
+## v1.0.241 — 2026-08-09
 
 ### The Command Is There When the Install Finishes
 
