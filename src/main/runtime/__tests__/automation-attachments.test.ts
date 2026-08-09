@@ -71,6 +71,45 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
 /** The workspace root the app derives from homedir — see workspace/root.ts. */
 const WORKSPACE = path.join(TEST_HOME, '.wolffish', 'workspace')
 
+/**
+ * The phone port's surface, declared HERE rather than reached for as
+ * `typeof import('../../../../../wolffish-mobile/…')`.
+ *
+ * §7's cross-check against the phone is deliberately OPTIONAL — the runtime
+ * side skips it when the mobile repo is not checked out next door. A cross-repo
+ * `typeof import` is not optional: tsc resolves it unconditionally, whether or
+ * not the guarded branch ever runs. So on every machine without wolffish-mobile
+ * beside this one — which is every CI runner — `npm run typecheck` died with
+ * TS2307 on a check designed to skip, and the whole build with it.
+ *
+ * A structural type keeps the assertions type-checked and the check itself
+ * genuinely optional. It is narrowed to what this test calls; the fields it
+ * omits are on `AutomationBlock` over there and simply not read here.
+ */
+type PhoneBlock = {
+  label: string
+  body: string
+  icon: string | null
+  files: string[]
+  dirs: string[]
+}
+
+type PhoneHeartbeat = {
+  parseAutomations: (markdown: string) => PhoneBlock[]
+  writeDraft: (
+    markdown: string,
+    bound: { label: string; active: boolean } | null,
+    draft: { schedule: string; prompt: string; icon: string; projectId: string }
+  ) => { markdown: string }
+  addBlockPath: (markdown: string, block: PhoneBlock, kind: 'file' | 'dir', value: string) => string
+  removeBlockPath: (
+    markdown: string,
+    block: PhoneBlock,
+    kind: 'file' | 'dir',
+    value: string
+  ) => string
+}
+
 async function run(): Promise<void> {
   const { parseHeartbeat, splitMarkers, referencedAutomationFiles, Brainstem } =
     await import('@main/runtime/brainstem')
@@ -480,9 +519,7 @@ async function run(): Promise<void> {
     if (!fs.existsSync(mobile)) {
       console.warn('… wolffish-mobile not checked out next door; phone parser not cross-checked')
     } else {
-      const phone = (await import(
-        mobile
-      )) as typeof import('../../../../../wolffish-mobile/src/lib/automations/heartbeat')
+      const phone = (await import(mobile)) as PhoneHeartbeat
       const md = `## Daily (08:00)\n\n${block}\n`
       const [parsed] = phone.parseAutomations(md)
       ok(
