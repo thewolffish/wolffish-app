@@ -34,7 +34,6 @@ import {
   CLI_SETTING_GROUPS,
   CLI_SETTING_SECTIONS,
   coerceSettingValue,
-  resolveLabel,
   settingArgs
 } from '@main/channels/cli/settings'
 
@@ -283,28 +282,17 @@ async function main(): Promise<void> {
    * Labels are CARD-SCOPED in this app: "Status" and "Verbose task results"
    * are unambiguous inside a Telegram card and meaningless in a flat list of
    * every setting. Two rows on ONE card that render identically cannot be told
-   * apart at all, and — because the label comes from the i18n bundle, not from
-   * this table — the collision appears when a translation lands, not when the
-   * row is written. Both shipped locales are checked, against the same
-   * resolver the CLI serves.
+   * apart at all.
    */
   check('no two rows on the same card render the same label', () => {
-    const localesDir = path.join(ROOT, 'src', 'renderer', 'src', 'lib', 'i18n', 'locales')
-    const en = JSON.parse(fs.readFileSync(path.join(localesDir, 'en.json'), 'utf8'))
+    const seen = new Map<string, string>()
     const collisions: string[] = []
-    for (const locale of ['en', 'ar']) {
-      const bundle = JSON.parse(fs.readFileSync(path.join(localesDir, `${locale}.json`), 'utf8'))
-      const seen = new Map<string, string>()
-      for (const setting of CLI_SETTINGS) {
-        const label = resolveLabel(bundle, en, setting.i18n, setting.fallback)
-        const key = `${locale} ${setting.section} ${label.toLowerCase()}`
-        const previous = seen.get(key)
-        if (previous)
-          collisions.push(
-            `${locale} · ${setting.section} · "${label}" — ${previous} and ${setting.id}`
-          )
-        else seen.set(key, setting.id)
-      }
+    for (const setting of CLI_SETTINGS) {
+      const key = `${setting.section} ${setting.label.toLowerCase()}`
+      const previous = seen.get(key)
+      if (previous)
+        collisions.push(`${setting.section} · "${setting.label}" — ${previous} and ${setting.id}`)
+      else seen.set(key, setting.id)
     }
     assert.deepEqual(
       collisions,
@@ -314,7 +302,7 @@ async function main(): Promise<void> {
   })
 
   /**
-   * A fallback that prefixes its own card ("Telegram · Status" inside the
+   * A label that prefixes its own card ("Telegram · Status" inside the
    * Telegram card) is the flat-list habit surviving the move to cards. It is
    * not wrong, only redundant, and redundancy in a 46-column label costs the
    * value its room.
@@ -323,15 +311,15 @@ async function main(): Promise<void> {
    * card is a real label that happens to start with the card's name, and a
    * check that flags it is a check nobody will keep.
    */
-  check('no fallback label re-states the card it sits on', () => {
+  check('no label re-states the card it sits on', () => {
     const sections = new Map(CLI_SETTING_SECTIONS.map((s) => [s.id, s]))
     const repeats = CLI_SETTINGS.filter((setting) => {
-      const card = sections.get(setting.section)?.fallback ?? ''
+      const card = sections.get(setting.section)?.label ?? ''
       if (card.length < 2) return false
       return new RegExp(`^${card.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*[·:\\-]\\s`, 'i').test(
-        setting.fallback
+        setting.label
       )
-    }).map((s) => `${s.id} → "${s.fallback}"`)
+    }).map((s) => `${s.id} → "${s.label}"`)
     assert.deepEqual(
       repeats,
       [],
@@ -346,9 +334,11 @@ async function main(): Promise<void> {
     assert.deepEqual(bare, [])
   })
 
-  check('every setting has a fallback label, for keys the bundle lacks', () => {
-    const bare = CLI_SETTINGS.filter((s) => !s.fallback || s.fallback.length === 0).map((s) => s.id)
-    assert.deepEqual(bare, [])
+  check('every setting has a label, and no label is a dotted id', () => {
+    const bare = CLI_SETTINGS.filter(
+      (s) => !s.label || s.label.length === 0 || /^[a-z]+(\.[a-zA-Z]+)+$/.test(s.label)
+    ).map((s) => s.id)
+    assert.deepEqual(bare, [], 'a row must read as words, never as a key')
   })
 
   // A dotted wrap is how a nested partial (`{ scoring: { inapp: true } }`)

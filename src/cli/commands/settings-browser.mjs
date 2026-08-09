@@ -34,24 +34,15 @@ import {
 } from '../lib/ui.mjs'
 import { actionsFor } from './settings-actions.mjs'
 
-async function locale(client) {
-  try {
-    const value = await client.invoke('locale:get')
-    return typeof value === 'string' ? value : (value?.locale ?? 'en')
-  } catch {
-    return 'en'
-  }
-}
-
 /**
  * Everything the browser renders.
  *
- * Cached, and deliberately so. This is three IPC round-trips — a locale, a
- * group tree and a full describe over every setting in the app — and it used to
- * run on entry, AGAIN immediately after, and then once more per keystroke. On
- * this machine that is about a second each: opening the browser cost two
- * seconds before it drew anything, and every number you pressed cost another
- * one, which reads as a menu that has hung rather than a menu that is thinking.
+ * Cached, and deliberately so. This is two IPC round-trips — a group tree and
+ * a full describe over every setting in the app — and it used to run on
+ * entry, AGAIN immediately after, and then once more per keystroke. On this
+ * machine that is about a second each: opening the browser cost two seconds
+ * before it drew anything, and every number you pressed cost another one,
+ * which reads as a menu that has hung rather than a menu that is thinking.
  *
  * The cache is invalidated the moment anything could have changed it — a
  * setting written, a flow run — because the ONE property this listing must keep
@@ -66,10 +57,9 @@ function stale() {
 
 async function load(client) {
   if (cache) return cache
-  const lang = await locale(client)
   const [groups, cards] = await Promise.all([
-    client.invoke('cli:settingGroups', lang),
-    client.invoke('cli:describeSettings', lang)
+    client.invoke('cli:settingGroups'),
+    client.invoke('cli:describeSettings')
   ])
   cache = { groups, cards }
   return cache
@@ -550,9 +540,7 @@ export async function editSetting(client, card) {
     return 1
   }
 
-  const after = (await client.invoke('cli:describeSettings', await locale(client))).find(
-    (entry) => entry.id === card.id
-  )
+  const after = (await client.invoke('cli:describeSettings')).find((entry) => entry.id === card.id)
   out(`${icon.ok()} ${c.bold(card.label)} ${c.gray('→')} ${c.cyan(after?.display ?? next)}`)
   if (after?.actual) out(c.gray(`  registered: ${after.actual}`))
   return 0

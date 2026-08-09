@@ -8,14 +8,14 @@
  *     client. A second reader would be a second thing to keep true.
  *  2. WRITES go through the app's own IPC channels — the exact handlers the
  *     desktop panels call. Nothing here writes config.json.
- *  3. LABELS come from the renderer's i18n bundle, so the terminal prints the
- *     same sentences the cards do, in the user's locale, Arabic included.
- *     `fallback` covers the rows whose panel renders a label inline and has no
- *     key of its own — better an English word than a raw id.
+ *  3. LABELS and descriptions are plain English, written here. The terminal
+ *     is an English surface — no locale bundles, no key indirection, nothing
+ *     that can print `chat.mode` when a lookup misses. The text mirrors what
+ *     the desktop cards say; only the desktop translates it.
  *
- * What did NOT exist is the BINDING between those three. That table is this
- * file. A setting added here is immediately listable, readable, writable and
- * documented in the CLI, with no further wiring.
+ * What did NOT exist is the BINDING between the first two and the words. That
+ * table is this file. A setting added here is immediately listable, readable,
+ * writable and documented in the CLI, with no further wiring.
  *
  * THE SHAPE IS THE WINDOW'S SHAPE: page → card → row. The desktop nav has a
  * tab (`CLI_SETTING_GROUPS`), the tab has cards (`CLI_SETTING_SECTIONS`), and
@@ -23,8 +23,8 @@
  * produced a terminal listing with "Verbose task results" four times and no
  * way to tell which was Telegram's. Labels are card-scoped in the app
  * ("Status" inside a Telegram card is unambiguous), so a row's label is only
- * meaningful UNDER ITS SECTION, and `fallback` no longer repeats the channel
- * name the section heading already prints.
+ * meaningful UNDER ITS SECTION, and a label never repeats the channel name
+ * the section heading already prints.
  *
  * LIST-SHAPED state is deliberately absent: providers and their keys, local
  * models, capabilities, variables, MCP servers, Notion/GitHub/Google
@@ -38,9 +38,7 @@ export type CliSettingKind = 'boolean' | 'enum' | 'number' | 'string' | 'secret'
 
 export type CliSettingOption = {
   value: string
-  /** i18n key for the option's label; falls back to a title-cased value. */
-  i18n?: string
-  label?: string
+  label: string
 }
 
 export type CliSetting = {
@@ -49,10 +47,10 @@ export type CliSetting = {
   group: CliSettingGroup
   /** The card this row sits in — a `CLI_SETTING_SECTIONS` id. */
   section: string
-  /** i18n prefix; `.label` and `.description` hang off it. */
-  i18n: string
-  /** Used when the i18n key does not exist — many panels label inline. */
-  fallback: string
+  /** The row's name, as the desktop card says it. Card-scoped, English. */
+  label: string
+  /** A sentence or two under the label — what the setting does. */
+  description?: string
   kind: CliSettingKind
   options?: CliSettingOption[]
   /** Dot path into the config snapshot holding the current value. */
@@ -102,27 +100,25 @@ export type CliSettingGroup =
  */
 export const CLI_SETTING_GROUPS: Array<{
   id: CliSettingGroup
-  i18n: string
-  fallback: string
+  label: string
   interactive?: true
 }> = [
-  { id: 'model', i18n: 'settings.tabs.model', fallback: 'Models' },
-  { id: 'channels', i18n: 'settings.tabs.channels', fallback: 'Channels' },
-  { id: 'services', i18n: 'settings.tabs.services', fallback: 'Services' },
-  { id: 'mcp', i18n: 'settings.tabs.mcp', fallback: 'MCP', interactive: true },
-  { id: 'variables', i18n: 'settings.tabs.variables', fallback: 'Variables', interactive: true },
+  { id: 'model', label: 'Models' },
+  { id: 'channels', label: 'Channels' },
+  { id: 'services', label: 'Services' },
+  { id: 'mcp', label: 'MCP', interactive: true },
+  { id: 'variables', label: 'Variables', interactive: true },
   {
     id: 'capabilities',
-    i18n: 'settings.tabs.capabilities',
-    fallback: 'Capabilities',
+    label: 'Capabilities',
     interactive: true
   },
-  { id: 'knowledge', i18n: 'settings.tabs.knowledge', fallback: 'Knowledge' },
-  { id: 'usage', i18n: 'settings.tabs.usage', fallback: 'Usage', interactive: true },
-  { id: 'data', i18n: 'settings.tabs.data', fallback: 'Data', interactive: true },
-  { id: 'updates', i18n: 'settings.tabs.updates', fallback: 'Updates' },
-  { id: 'wolffish', i18n: 'settings.tabs.wolffish', fallback: 'Preferences' },
-  { id: 'appearance', i18n: 'settings.tabs.appearance', fallback: 'Appearance' }
+  { id: 'knowledge', label: 'Knowledge' },
+  { id: 'usage', label: 'Usage', interactive: true },
+  { id: 'data', label: 'Data', interactive: true },
+  { id: 'updates', label: 'Updates' },
+  { id: 'wolffish', label: 'Preferences' },
+  { id: 'appearance', label: 'Appearance' }
 ]
 
 /**
@@ -131,165 +127,137 @@ export const CLI_SETTING_GROUPS: Array<{
  * service, Knowledge → Compaction and Reflection), and the panel's own title
  * where the page is a single card.
  *
- * i18n keys are the window's: a card called Telegram in the app is called
- * Telegram here, in the same language, because someone who knows where a
- * setting lives on screen should not have to learn a second taxonomy.
+ * Names are the window's: a card called Telegram in the app is called
+ * Telegram here, because someone who knows where a setting lives on screen
+ * should not have to learn a second taxonomy.
  */
 export type CliSettingSection = {
   id: string
   group: CliSettingGroup
-  /**
-   * Optional on purpose. A card whose only candidate key is an interpolation
-   * template (`settings.model.cloud.title` is literally "{{provider}}") or does
-   * not exist at all must fall straight through to `fallback` — printing a
-   * template placeholder as a heading is worse than printing English.
-   */
-  i18n?: string
-  fallback: string
+  label: string
 }
 
 export const CLI_SETTING_SECTIONS: CliSettingSection[] = [
   // Models — the two chat-wide choices, then the provider keys and the local
   // models, both of which are flows rather than rows.
-  { id: 'model.chat', group: 'model', fallback: 'Chat' },
-  { id: 'model.providers', group: 'model', fallback: 'Providers' },
+  { id: 'model.chat', group: 'model', label: 'Chat' },
+  { id: 'model.providers', group: 'model', label: 'Providers' },
   {
     id: 'model.local',
     group: 'model',
-    i18n: 'settings.model.providers.ollama',
-    fallback: 'Ollama'
+    label: 'Ollama'
   },
 
   // Channels — the desktop's five sub-tabs, in its order.
   {
     id: 'channels.inapp',
     group: 'channels',
-    i18n: 'settings.channels.tabs.inapp',
-    fallback: 'In-App'
+    label: 'In-App'
   },
-  { id: 'channels.cli', group: 'channels', i18n: 'settings.channels.tabs.cli', fallback: 'CLI' },
+  { id: 'channels.cli', group: 'channels', label: 'CLI' },
   {
     id: 'channels.mobile',
     group: 'channels',
-    i18n: 'settings.channels.tabs.mobile',
-    fallback: 'Mobile'
+    label: 'Mobile'
   },
   {
     id: 'channels.telegram',
     group: 'channels',
-    i18n: 'settings.channels.tabs.telegram',
-    fallback: 'Telegram'
+    label: 'Telegram'
   },
   {
     id: 'channels.whatsapp',
     group: 'channels',
-    i18n: 'settings.channels.tabs.whatsapp',
-    fallback: 'WhatsApp'
+    label: 'WhatsApp'
   },
 
   // Services — the desktop's ten sub-tabs, in its order.
   {
     id: 'services.browserExtension',
     group: 'services',
-    i18n: 'settings.services.tabs.browserExtension',
-    fallback: 'Browser Extension'
+    label: 'Browser Extension'
   },
   {
     id: 'services.brave',
     group: 'services',
-    i18n: 'settings.services.tabs.brave',
-    fallback: 'Brave Search'
+    label: 'Brave Search'
   },
   {
     id: 'services.google',
     group: 'services',
-    i18n: 'settings.services.tabs.google',
-    fallback: 'Google Workspace'
+    label: 'Google Workspace'
   },
   {
     id: 'services.memes',
     group: 'services',
-    i18n: 'settings.services.tabs.memes',
-    fallback: 'Memes'
+    label: 'Memes'
   },
   {
     id: 'services.video',
     group: 'services',
-    i18n: 'settings.services.tabs.video',
-    fallback: 'Video generation'
+    label: 'Video generation'
   },
   {
     id: 'services.notion',
     group: 'services',
-    i18n: 'settings.services.tabs.notion',
-    fallback: 'Notion'
+    label: 'Notion'
   },
   {
     id: 'services.github',
     group: 'services',
-    i18n: 'settings.services.tabs.github',
-    fallback: 'GitHub'
+    label: 'GitHub'
   },
   {
     id: 'services.tts',
     group: 'services',
-    i18n: 'settings.services.tabs.tts',
-    fallback: 'Text-to-Speech'
+    label: 'Text-to-Speech'
   },
   {
     id: 'services.stt',
     group: 'services',
-    i18n: 'settings.services.tabs.stt',
-    fallback: 'Speech-to-Text'
+    label: 'Speech-to-Text'
   },
   {
     id: 'services.computerUse',
     group: 'services',
-    i18n: 'settings.services.tabs.computerUse',
-    fallback: 'Computer Use'
+    label: 'Computer Use'
   },
 
   // Single-card pages. The card still exists so the flows registered against
   // it have somewhere to land.
-  { id: 'mcp.servers', group: 'mcp', i18n: 'settings.mcp.title', fallback: 'MCP servers' },
+  { id: 'mcp.servers', group: 'mcp', label: 'MCP' },
   {
     id: 'variables.list',
     group: 'variables',
-    i18n: 'settings.variables.title',
-    fallback: 'Variables'
+    label: 'Variables'
   },
   {
     id: 'capabilities.list',
     group: 'capabilities',
-    i18n: 'settings.capabilities.title',
-    fallback: 'Capabilities'
+    label: 'Capabilities'
   },
   {
     id: 'knowledge.compaction',
     group: 'knowledge',
-    i18n: 'settings.knowledge.tabs.compaction',
-    fallback: 'Compaction'
+    label: 'Compaction'
   },
   {
     id: 'knowledge.reflection',
     group: 'knowledge',
-    i18n: 'settings.knowledge.tabs.reflection',
-    fallback: 'Reflection'
+    label: 'Reflection'
   },
-  { id: 'usage.report', group: 'usage', i18n: 'settings.usage.title', fallback: 'Usage' },
-  { id: 'data.workspace', group: 'data', i18n: 'settings.data.title', fallback: 'Data' },
-  { id: 'updates.app', group: 'updates', i18n: 'settings.tabs.updates', fallback: 'Updates' },
+  { id: 'usage.report', group: 'usage', label: 'Usage' },
+  { id: 'data.workspace', group: 'data', label: 'Data' },
+  { id: 'updates.app', group: 'updates', label: 'Updates' },
   {
     id: 'wolffish.general',
     group: 'wolffish',
-    i18n: 'settings.tabs.wolffish',
-    fallback: 'Preferences'
+    label: 'Preferences'
   },
   {
     id: 'appearance.general',
     group: 'appearance',
-    i18n: 'settings.appearance.title',
-    fallback: 'Appearance'
+    label: 'Appearance'
   }
 ]
 
@@ -387,8 +355,9 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'model.mode',
     group: 'model',
     section: 'model.chat',
-    i18n: 'chat.mode',
-    fallback: 'Chat mode',
+    label: 'Chat mode',
+    description:
+      'Single has one model answer directly — everyday questions. Workflow has many agents plan and verify — complex tasks.',
     kind: 'enum',
     options: [
       { value: 'single', label: 'Single' },
@@ -402,8 +371,9 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'model.localOnly',
     group: 'model',
     section: 'model.chat',
-    i18n: 'chat.localOnly',
-    fallback: 'Local only',
+    label: 'Local only',
+    description:
+      'On answers with the local Ollama model only. Off uses whichever provider the model switch selects.',
     kind: 'boolean',
     read: 'llm.localOnly',
     channel: 'runtime:setLocalOnly',
@@ -415,8 +385,9 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'channels.inapp.verbose',
     group: 'channels',
     section: 'channels.inapp',
-    i18n: 'settings.services.inapp.verbose',
-    fallback: 'Verbose task results',
+    label: 'Verbose task results',
+    description:
+      'Show every tool call and step in the chat, plus the model/provider chip. Off (the default) keeps a clean feed — only agent replies and the files it sends.',
     kind: 'boolean',
     read: 'channels.inapp.verbose',
     channel: 'inapp:setConfig',
@@ -426,8 +397,9 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'channels.cli.verbose',
     group: 'channels',
     section: 'channels.cli',
-    i18n: 'settings.channels.cli.verbose',
-    fallback: 'Verbose task results',
+    label: 'Verbose task results',
+    description:
+      'Off (default) prints a clean feed: what the agent says, the files it delivers, and anything that failed. On adds the model chip and every tool call and result, the same way the in-app verbose toggle does.',
     kind: 'boolean',
     read: 'channels.cli.verbose',
     channel: 'cli:setConfig',
@@ -443,14 +415,14 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'channels.cli.runMode',
     group: 'channels',
     section: 'channels.cli',
-    i18n: 'settings.channels.cli.service.modeLabel',
-    fallback: 'Start it as',
+    label: 'Start it as',
+    description:
+      'A login item starts when you log in and opens the window — it needs a desktop session. A background service starts with the machine, with no session and no window — what a server wants.',
     kind: 'enum',
     options: [
-      { value: 'gui', i18n: 'settings.channels.cli.service.mode.gui.label', label: 'Login item' },
+      { value: 'gui', label: 'Login item' },
       {
         value: 'headless',
-        i18n: 'settings.channels.cli.service.mode.headless.label',
         label: 'Background service'
       }
     ],
@@ -462,8 +434,9 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'channels.mobile.notifications',
     group: 'channels',
     section: 'channels.mobile',
-    i18n: 'settings.mobile.notifications',
-    fallback: 'Allow notifications',
+    label: 'Phone notifications',
+    description:
+      'Lets the agent send a push notification to your paired phone with its notify_phone tool — when a run finishes, fails, or needs you. Nothing is ever sent automatically; the agent has to deliberately call the tool, and Off makes that tool refuse.',
     kind: 'boolean',
     read: 'channels.mobile.notifications',
     channel: 'mobile:setNotifications',
@@ -473,8 +446,9 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'channels.mobile.verbose',
     group: 'channels',
     section: 'channels.mobile',
-    i18n: 'settings.mobile.verbose',
-    fallback: 'Verbose task results',
+    label: 'Task results',
+    description:
+      "Off keeps the phone's feed clean: assistant messages, file-bearing results and errors. On relays every tool call and activity. Connection logging is always on and is not affected by this.",
     kind: 'boolean',
     read: 'channels.mobile.verbose',
     channel: 'mobile:setVerbose',
@@ -484,8 +458,8 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'channels.telegram.enabled',
     group: 'channels',
     section: 'channels.telegram',
-    i18n: 'settings.services.telegram.status',
-    fallback: 'Status',
+    label: 'Status',
+    description: 'Turns the Telegram channel on or off.',
     kind: 'boolean',
     read: 'channels.telegram.enabled',
     channel: 'telegram:setConfig',
@@ -495,8 +469,9 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'channels.telegram.allowedUserIds',
     group: 'channels',
     section: 'channels.telegram',
-    i18n: 'settings.services.telegram.allowedUsers',
-    fallback: 'Allowed user IDs',
+    label: 'Allowed user IDs',
+    description:
+      'Comma-separated numeric Telegram user IDs; only these users can talk to the agent. Send /start to @userinfobot to get yours.',
     kind: 'string',
     hint: 'comma-separated',
     read: 'channels.telegram.allowedUserIds',
@@ -516,8 +491,9 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'channels.telegram.verbose',
     group: 'channels',
     section: 'channels.telegram',
-    i18n: 'settings.services.telegram.verbose',
-    fallback: 'Verbose task results',
+    label: 'Verbose task results',
+    description:
+      'Relay every tool call and step to the chat. Off (the default) sends a clean feed — only agent replies and the files it sends.',
     kind: 'boolean',
     read: 'channels.telegram.verbose',
     channel: 'telegram:setConfig',
@@ -527,8 +503,9 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'channels.telegram.autoRefresh',
     group: 'channels',
     section: 'channels.telegram',
-    i18n: 'settings.services.telegram.autoRefresh',
-    fallback: 'Auto-refresh conversations',
+    label: 'Auto-refresh conversations',
+    description:
+      'Start a fresh conversation after idle time. Previous ones stay accessible via /resume.',
     kind: 'boolean',
     read: 'channels.telegram.autoRefresh',
     channel: 'telegram:setConfig',
@@ -538,8 +515,8 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'channels.telegram.staleHours',
     group: 'channels',
     section: 'channels.telegram',
-    i18n: 'settings.services.telegram.autoRefresh.staleLabel',
-    fallback: 'Idle timeout',
+    label: 'Idle timeout',
+    description: 'Hours a conversation sits idle before auto-refresh starts a fresh one.',
     kind: 'number',
     hint: 'hours',
     read: 'channels.telegram.staleHours',
@@ -550,8 +527,9 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'channels.telegram.hideAutomations',
     group: 'channels',
     section: 'channels.telegram',
-    i18n: 'settings.services.telegram.hideAutomations',
-    fallback: 'Hide automations from /resume',
+    label: 'Hide automations from /resume',
+    description:
+      'Keep scheduled automation runs out of the /resume list so it only offers real conversations. On by default. They stay in /delete and in the app.',
     kind: 'boolean',
     read: 'channels.telegram.hideAutomations',
     channel: 'telegram:setConfig',
@@ -561,8 +539,8 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'channels.whatsapp.enabled',
     group: 'channels',
     section: 'channels.whatsapp',
-    i18n: 'settings.services.whatsapp.status',
-    fallback: 'Status',
+    label: 'Status',
+    description: 'Turns the WhatsApp channel on or off.',
     kind: 'boolean',
     read: 'channels.whatsapp.enabled',
     channel: 'whatsapp:setConfig',
@@ -572,8 +550,8 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'channels.whatsapp.allowedNumbers',
     group: 'channels',
     section: 'channels.whatsapp',
-    i18n: 'settings.services.whatsapp.allowedPhones',
-    fallback: 'Allowed phone numbers',
+    label: 'Allowed phone numbers',
+    description: 'Comma-separated phone numbers. Only messages from these numbers are processed.',
     kind: 'string',
     hint: 'comma-separated',
     read: 'channels.whatsapp.allowedNumbers',
@@ -585,8 +563,9 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'channels.whatsapp.verbose',
     group: 'channels',
     section: 'channels.whatsapp',
-    i18n: 'settings.services.whatsapp.verbose',
-    fallback: 'Verbose task results',
+    label: 'Verbose task results',
+    description:
+      'Relay every tool call and step to the chat. Off (the default) sends a clean feed — only agent replies and the files it sends.',
     kind: 'boolean',
     read: 'channels.whatsapp.verbose',
     channel: 'whatsapp:setConfig',
@@ -596,8 +575,9 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'channels.whatsapp.autoRefresh',
     group: 'channels',
     section: 'channels.whatsapp',
-    i18n: 'settings.services.whatsapp.autoRefresh',
-    fallback: 'Auto-refresh conversations',
+    label: 'Auto-refresh conversations',
+    description:
+      'Start a fresh conversation after idle time. Previous ones stay accessible via /resume.',
     kind: 'boolean',
     read: 'channels.whatsapp.autoRefresh',
     channel: 'whatsapp:setConfig',
@@ -607,8 +587,8 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'channels.whatsapp.staleHours',
     group: 'channels',
     section: 'channels.whatsapp',
-    i18n: 'settings.services.whatsapp.autoRefresh.staleLabel',
-    fallback: 'Idle timeout',
+    label: 'Idle timeout',
+    description: 'Hours a conversation sits idle before auto-refresh starts a fresh one.',
     kind: 'number',
     hint: 'hours',
     read: 'channels.whatsapp.staleHours',
@@ -619,8 +599,9 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'channels.whatsapp.hideAutomations',
     group: 'channels',
     section: 'channels.whatsapp',
-    i18n: 'settings.services.whatsapp.hideAutomations',
-    fallback: 'Hide automations from /resume',
+    label: 'Hide automations from /resume',
+    description:
+      'Keep scheduled automation runs out of the /resume list so it only offers real conversations. On by default. They stay in /delete and in the app.',
     kind: 'boolean',
     read: 'channels.whatsapp.hideAutomations',
     channel: 'whatsapp:setConfig',
@@ -632,8 +613,9 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'services.browserExtension.port',
     group: 'services',
     section: 'services.browserExtension',
-    i18n: 'settings.services.browserExtension.portLabel',
-    fallback: 'WebSocket port',
+    label: 'WebSocket Port',
+    description:
+      "The port the extension connects to. Default is 23151. Change only if there's a conflict.",
     kind: 'number',
     read: 'services.browserExtension.port',
     channel: 'browserExtension:setConfig',
@@ -643,8 +625,8 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'services.browserExtension.screenshotMaxWidth',
     group: 'services',
     section: 'services.browserExtension',
-    i18n: 'settings.services.browserExtension.resolutionLabel',
-    fallback: 'Screenshot resolution',
+    label: 'Screenshot resolution',
+    description: 'Maximum width in pixels. Lower values use less tokens but reduce detail.',
     kind: 'number',
     hint: 'pixels',
     read: 'services.browserExtension.screenshotMaxWidth',
@@ -655,8 +637,8 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'services.browserExtension.screenshotFormat',
     group: 'services',
     section: 'services.browserExtension',
-    i18n: 'settings.services.browserExtension.formatLabel',
-    fallback: 'Screenshot format',
+    label: 'Screenshot format',
+    description: 'JPEG is smaller and faster. PNG is lossless and better for text-heavy screens.',
     kind: 'enum',
     options: IMAGE_FORMATS,
     read: 'services.browserExtension.screenshotFormat',
@@ -667,8 +649,8 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'services.browserExtension.screenshotQuality',
     group: 'services',
     section: 'services.browserExtension',
-    i18n: 'settings.services.browserExtension.screenshotQuality',
-    fallback: 'Screenshot quality',
+    label: 'Screenshot quality',
+    description: 'JPEG quality, 1-100. Higher is sharper and larger.',
     kind: 'number',
     hint: '1-100',
     read: 'services.browserExtension.screenshotQuality',
@@ -679,8 +661,9 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'services.brave.enabled',
     group: 'services',
     section: 'services.brave',
-    i18n: 'settings.services.brave.status',
-    fallback: 'Status',
+    label: 'Status',
+    description:
+      'When on, web searches go through Brave first. When off, DuckDuckGo is used directly.',
     kind: 'boolean',
     read: 'services.braveEnabled',
     channel: 'brave:setConfig',
@@ -690,8 +673,9 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'services.brave.apiKey',
     group: 'services',
     section: 'services.brave',
-    i18n: 'settings.services.brave.apiKey',
-    fallback: 'API key',
+    label: 'API key',
+    description:
+      'Free key (2,000 searches a month) from api.search.brave.com. Stored locally in config.json.',
     kind: 'secret',
     read: 'services.braveApiKey',
     channel: 'brave:setConfig',
@@ -706,8 +690,8 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'services.memes.enabled',
     group: 'services',
     section: 'services.memes',
-    i18n: 'settings.services.memes.status',
-    fallback: 'Status',
+    label: 'Status',
+    description: 'Captioned memes and reaction GIFs via Memegen, Giphy, or Imgflip.',
     kind: 'boolean',
     read: 'services.memesEnabled',
     channel: 'cerebellum:toggleCapability',
@@ -718,8 +702,8 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'services.memes.giphyApiKey',
     group: 'services',
     section: 'services.memes',
-    i18n: 'settings.services.memes.giphy',
-    fallback: 'Giphy API key',
+    label: 'Giphy API key',
+    description: 'Search and download reaction GIFs. Requires a free API key.',
     kind: 'secret',
     read: 'services.memes.giphyApiKey',
     channel: 'memes:setConfig',
@@ -729,8 +713,9 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'services.memes.imgflipUsername',
     group: 'services',
     section: 'services.memes',
-    i18n: 'settings.services.memes.imgflipUsername',
-    fallback: 'Imgflip username',
+    label: 'Imgflip username',
+    description:
+      'Create a free account at imgflip.com. Username and password are used to generate memes.',
     kind: 'string',
     read: 'services.memes.imgflipUsername',
     channel: 'memes:setConfig',
@@ -740,8 +725,8 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'services.memes.imgflipPassword',
     group: 'services',
     section: 'services.memes',
-    i18n: 'settings.services.memes.imgflipPassword',
-    fallback: 'Imgflip password',
+    label: 'Imgflip password',
+    description: 'The password for the Imgflip account.',
     kind: 'secret',
     read: 'services.memes.imgflipPassword',
     channel: 'memes:setConfig',
@@ -751,8 +736,8 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'services.video.enabled',
     group: 'services',
     section: 'services.video',
-    i18n: 'settings.services.video.status',
-    fallback: 'Status',
+    label: 'Status',
+    description: 'Generate video with MiniMax H3 from text, images, frames, or reference media.',
     kind: 'boolean',
     read: 'services.videoEnabled',
     channel: 'cerebellum:toggleCapability',
@@ -763,8 +748,9 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'services.video.apiKey',
     group: 'services',
     section: 'services.video',
-    i18n: 'settings.services.video.apiKey',
-    fallback: 'API key',
+    label: 'MiniMax API key (video)',
+    description:
+      'The same MiniMax key you use elsewhere works here; it is stored separately on purpose.',
     kind: 'secret',
     read: 'services.videoApiKey',
     channel: 'video:setConfig',
@@ -774,8 +760,9 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'services.video.director',
     group: 'services',
     section: 'services.video',
-    i18n: 'settings.services.video.director.title',
-    fallback: 'Your chat model is the director',
+    label: 'Chat model as director',
+    description:
+      'The chat model rewrites your request into a full cinematic prompt — subject, camera, lighting — before it reaches the video model.',
     kind: 'boolean',
     read: 'services.videoDirector',
     channel: 'video:setConfig',
@@ -785,8 +772,8 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'services.tts.voice',
     group: 'services',
     section: 'services.tts',
-    i18n: 'settings.services.tts.voice',
-    fallback: 'Voice',
+    label: 'Default voice',
+    description: 'The voice used when Wolffish speaks.',
     kind: 'enum',
     options: TTS_VOICES,
     read: 'services.ttsVoice',
@@ -797,8 +784,8 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'services.tts.speed',
     group: 'services',
     section: 'services.tts',
-    i18n: 'settings.services.tts.speed',
-    fallback: 'Speed',
+    label: 'Speech rate',
+    description: 'How fast generated speech plays.',
     kind: 'enum',
     options: TTS_SPEEDS,
     read: 'services.ttsSpeed',
@@ -809,8 +796,8 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'services.stt.model',
     group: 'services',
     section: 'services.stt',
-    i18n: 'settings.services.stt.model',
-    fallback: 'Model',
+    label: 'Default model',
+    description: 'Whisper model for transcription. Larger models are more accurate and slower.',
     kind: 'enum',
     options: STT_MODELS,
     read: 'services.sttModel',
@@ -821,8 +808,8 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'services.computerUse.screenshotMaxWidth',
     group: 'services',
     section: 'services.computerUse',
-    i18n: 'settings.services.computerUse.resolutionLabel',
-    fallback: 'Screenshot resolution',
+    label: 'Screenshot resolution',
+    description: 'Maximum width in pixels. Lower values use less tokens but reduce detail.',
     kind: 'number',
     hint: 'pixels',
     read: 'services.screenshotMaxWidth',
@@ -833,8 +820,8 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'services.computerUse.screenshotFormat',
     group: 'services',
     section: 'services.computerUse',
-    i18n: 'settings.services.computerUse.formatLabel',
-    fallback: 'Screenshot format',
+    label: 'Screenshot format',
+    description: 'JPEG is smaller and faster. PNG is lossless and better for text-heavy screens.',
     kind: 'enum',
     options: IMAGE_FORMATS,
     read: 'services.screenshotFormat',
@@ -847,8 +834,8 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'knowledge.compaction.dailyHour',
     group: 'knowledge',
     section: 'knowledge.compaction',
-    i18n: 'settings.knowledge.compaction.daily',
-    fallback: 'Daily compaction',
+    label: 'Daily compaction',
+    description: "Extracts key facts from today's conversations and saves them to knowledge files.",
     kind: 'enum',
     options: HOURS,
     read: 'compaction.dailyHour',
@@ -859,8 +846,8 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'knowledge.compaction.weeklyDay',
     group: 'knowledge',
     section: 'knowledge.compaction',
-    i18n: 'settings.knowledge.compaction.weekly',
-    fallback: 'Weekly consolidation',
+    label: 'Weekly consolidation',
+    description: "Merges the week's episode logs into a single digest for archival.",
     kind: 'enum',
     options: DAYS,
     read: 'compaction.weeklyDay',
@@ -871,8 +858,8 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'knowledge.compaction.weeklyHour',
     group: 'knowledge',
     section: 'knowledge.compaction',
-    i18n: 'settings.knowledge.compaction.weeklyHour',
-    fallback: 'Weekly consolidation hour',
+    label: 'Weekly consolidation hour',
+    description: 'The hour the weekly consolidation runs, on the chosen day.',
     kind: 'enum',
     options: HOURS,
     read: 'compaction.weeklyHour',
@@ -883,8 +870,9 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'knowledge.reflection.hour',
     group: 'knowledge',
     section: 'knowledge.reflection',
-    i18n: 'settings.knowledge.reflection.nightly',
-    fallback: 'Nightly reflection',
+    label: 'Nightly reflection',
+    description:
+      'Reviews every conversation that has settled since the last pass — automations included — scoring each one and extracting what worked, what failed, and what you liked. Your 0-10 scores are the ground truth; the lessons fold into the playbook carried into every turn. Missed fires (asleep, app closed) run on the next launch.',
     kind: 'enum',
     options: HOURS,
     read: 'reflection.hour',
@@ -895,8 +883,9 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'knowledge.reflection.quietHours',
     group: 'knowledge',
     section: 'knowledge.reflection',
-    i18n: 'settings.knowledge.reflection.quiet',
-    fallback: 'Review after quiet for',
+    label: 'Review after quiet for',
+    description:
+      "A conversation is only reviewed once it has been idle this long, so unfinished or not-yet-scored work isn't judged early. Anything still warm simply waits for a later night — nothing is ever skipped — and a conversation you continue after its review gets reviewed again with the new turns and scores included.",
     kind: 'number',
     hint: 'hours',
     read: 'reflection.quietHours',
@@ -907,8 +896,8 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'knowledge.reflection.scoring.inapp',
     group: 'knowledge',
     section: 'knowledge.reflection',
-    i18n: 'settings.knowledge.reflection.scoring',
-    fallback: 'Turn scoring · in-app',
+    label: 'Turn scoring · in-app',
+    description: 'Shows a 0-10 rating bar above the chat composer after each completed turn.',
     kind: 'boolean',
     read: 'reflection.scoring.inapp',
     channel: 'runtime:setReflectionConfig',
@@ -918,8 +907,9 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'knowledge.reflection.scoring.telegram',
     group: 'knowledge',
     section: 'knowledge.reflection',
-    i18n: 'settings.knowledge.reflection.scoringTelegram',
-    fallback: 'Turn scoring · Telegram',
+    label: 'Turn scoring · Telegram',
+    description:
+      'A reply that is just a number 0-10 scores the last turn instead of sending a message.',
     kind: 'boolean',
     read: 'reflection.scoring.telegram',
     channel: 'runtime:setReflectionConfig',
@@ -929,8 +919,9 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'knowledge.reflection.scoring.whatsapp',
     group: 'knowledge',
     section: 'knowledge.reflection',
-    i18n: 'settings.knowledge.reflection.scoringWhatsapp',
-    fallback: 'Turn scoring · WhatsApp',
+    label: 'Turn scoring · WhatsApp',
+    description:
+      'A reply that is just a number 0-10 scores the last turn instead of sending a message.',
     kind: 'boolean',
     read: 'reflection.scoring.whatsapp',
     channel: 'runtime:setReflectionConfig',
@@ -942,8 +933,8 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'updates.enabled',
     group: 'updates',
     section: 'updates.app',
-    i18n: 'settings.updates.auto',
-    fallback: 'Automatic updates',
+    label: 'Automatic updates',
+    description: 'Check for and download updates automatically on launch.',
     kind: 'boolean',
     read: 'preferences.updatesEnabled',
     channel: 'runtime:setUpdatesEnabled',
@@ -955,8 +946,9 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'wolffish.launchAtStartup',
     group: 'wolffish',
     section: 'wolffish.general',
-    i18n: 'settings.wolffish.launchAtStartup',
-    fallback: 'Launch at startup',
+    label: 'Launch at startup',
+    description:
+      'Automatically start Wolffish when you log into your computer. When enabled, Wolffish registers itself as a login item with your operating system — macOS, Windows, and Linux are all supported. This lets Wolffish be ready the moment your session begins, so you can jump straight into a conversation without opening it manually. Disable this if you prefer to launch Wolffish only when you need it.',
     kind: 'boolean',
     read: 'preferences.launchAtStartup',
     actualRead: 'preferences.launchAtStartupActive',
@@ -967,8 +959,9 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'wolffish.blockCredentials',
     group: 'wolffish',
     section: 'wolffish.general',
-    i18n: 'settings.wolffish.blockCredentials',
-    fallback: 'Block sensitive data in messages',
+    label: 'Block sensitive data in messages',
+    description:
+      'When enabled, messages that appear to contain passwords, API keys, tokens, or private keys are immediately discarded — they never reach the agent, are never stored, and you get a short notification instead. Off by default so the agent can freely discuss credentials when needed. Turn it on if you want a hard guard against accidentally pasting secrets into chat.',
     kind: 'boolean',
     read: 'preferences.blockCredentials',
     channel: 'runtime:setBlockCredentials',
@@ -978,8 +971,9 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'wolffish.bypassPermissions',
     group: 'wolffish',
     section: 'wolffish.general',
-    i18n: 'settings.wolffish.bypassPermissions',
-    fallback: 'Bypass permissions mode',
+    label: 'Bypass permissions mode',
+    description:
+      'When enabled, all tool actions auto-approve without showing the approval dialog. The amygdala still classifies every action and logs everything to the corpus event bus and feedback files exactly as before — only the human approval step is skipped. Use this for trusted environments where you want full agent autonomy. Disable it any time to restore manual approval.',
     kind: 'boolean',
     read: 'preferences.bypassPermissions',
     channel: 'runtime:setBypassPermissions',
@@ -989,8 +983,9 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'wolffish.restrictPowerfulModels',
     group: 'wolffish',
     section: 'wolffish.general',
-    i18n: 'settings.wolffish.restrictPowerfulModels',
-    fallback: 'Restrict powerful local models',
+    label: 'Restrict powerful local models',
+    description:
+      'When enabled, the model picker blocks local models whose memory footprint exceeds what your system can handle comfortably (~55% of total RAM). This prevents severe slowdowns, swap thrashing, and system instability caused by loading oversized models. Turning this off lets you install and run any model regardless of hardware limits — not recommended. Oversized models force your system into heavy disk swapping, making both Wolffish and your entire machine unresponsive.',
     kind: 'boolean',
     read: 'llm.restrictPowerfulModels',
     channel: 'runtime:setRestrictPowerfulModels',
@@ -1000,12 +995,13 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'wolffish.weekStartsOn',
     group: 'wolffish',
     section: 'wolffish.general',
-    i18n: 'settings.wolffish.weekStartsOn',
-    fallback: 'Start of week',
+    label: 'Start of week',
+    description:
+      'Sets the day Wolffish treats as the first day of the week. Drives how the activity heatmap is laid out and how date ranges like "this week" line up in your head. Default is Monday (the ISO 8601 standard most of the world uses); pick Sunday if your calendar app and routines start there. Internal weekly memory files keep their existing ISO-week names so older summaries don\'t shift.',
     kind: 'enum',
     options: [
-      { value: '1', i18n: 'settings.wolffish.weekStartsOn.monday', label: 'Monday' },
-      { value: '0', i18n: 'settings.wolffish.weekStartsOn.sunday', label: 'Sunday' }
+      { value: '1', label: 'Monday' },
+      { value: '0', label: 'Sunday' }
     ],
     read: 'preferences.weekStartsOn',
     channel: 'runtime:setWeekStartsOn',
@@ -1017,8 +1013,8 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'appearance.theme',
     group: 'appearance',
     section: 'appearance.general',
-    i18n: 'theme',
-    fallback: 'Theme',
+    label: 'Theme',
+    description: 'System follows the operating system; Light and Dark force one look.',
     kind: 'enum',
     options: [
       { value: 'system', label: 'System' },
@@ -1033,8 +1029,8 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'appearance.locale',
     group: 'appearance',
     section: 'appearance.general',
-    i18n: 'locale',
-    fallback: 'Language',
+    label: 'Language',
+    description: "The desktop app's display language. The terminal is always English.",
     kind: 'enum',
     options: [
       { value: 'en', label: 'English' },
@@ -1045,48 +1041,6 @@ export const CLI_SETTINGS: CliSetting[] = [
     wrap: null
   }
 ]
-
-/**
- * Label resolution, shared by the IPC layer that serves the CLI and the test
- * that guards this table. One implementation, because the property being
- * checked — no two rows on the same card read the same — is a property of the
- * RENDERED label, and a test that re-implemented the lookup would be checking
- * its own copy rather than what ships.
- *
- * The bundle is not consistent, because it never had to be: some cards carry
- * `{ label, description }` under their key, and just as many render the label
- * from a bare string at the key itself (`settings.services.brave.apiKey` IS
- * "API key"). A key that resolves to an object is a whole card's sub-tree, not
- * a label, so it falls through to the caller's default.
- */
-export function localeString(bundle: unknown, dotted: string): string | null {
-  const value = readPath(bundle, dotted)
-  return typeof value === 'string' ? value : null
-}
-
-/** Strips the inline <cmd> markup a couple of labels carry for the web. */
-export function resolveText(
-  bundle: unknown,
-  fallbackBundle: unknown,
-  dotted: string,
-  ifMissing: string
-): string {
-  const raw = localeString(bundle, dotted) ?? localeString(fallbackBundle, dotted) ?? ifMissing
-  return raw.replace(/<\/?[a-z][^>]*>/gi, '')
-}
-
-/** A row's label: `<key>.label`, then the key itself, then the fallback. */
-export function resolveLabel(
-  bundle: unknown,
-  fallbackBundle: unknown,
-  i18n: string,
-  ifMissing: string
-): string {
-  const scoped =
-    localeString(bundle, `${i18n}.label`) ?? localeString(fallbackBundle, `${i18n}.label`)
-  if (scoped) return scoped.replace(/<\/?[a-z][^>]*>/gi, '')
-  return resolveText(bundle, fallbackBundle, i18n, ifMissing)
-}
 
 /** Read a dot path out of the snapshot. Missing anywhere yields undefined. */
 export function readPath(source: unknown, dotted: string): unknown {

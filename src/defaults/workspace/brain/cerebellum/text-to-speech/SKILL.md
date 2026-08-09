@@ -77,7 +77,7 @@ tools:
         required: false
         description: "Speech rate multiplier between 0.5 and 1.5 (default 1.0). Omit to use the user's configured default."
   - name: voice_respond
-    description: Respond to the user entirely as a voice memo. The voice IS the response — do not also send the same text as a regular message. Include only a brief label like "Voice memo" so something appears while audio loads.
+    description: Reply to the user as a spoken voice memo — the default close for a <voice_note> prompt. The audio carries the reply — never restate its text as a regular message; a brief label like "Voice memo" is the only prose it needs. Files and other deliverables still go out normally BEFORE it.
     parameters:
       text:
         type: string
@@ -115,6 +115,7 @@ voice memo after that is fully offline.
 
 ## When to use each tool
 
+- **The user's message is tagged `<voice_note>` (they spoke instead of typing)** → default to a spoken reply, per the core contract's voice-reply rules. A conversational answer is one `voice_respond` and nothing else; a turn that produced files/tables/code delivers those exactly as a typed turn would, then closes with one `voice_respond` speaking the answer or summary. The default yields when the message itself asks for text ("write it down", dictated document content) or a standing preference says so.
 - **"convert this to a voice memo"**, **"read this aloud"**, **"say this"** → `voice_generate` with the specified text. The voice memo attaches below your text response.
 - **"respond in voice"**, **"reply with audio"**, **"voice memo only"** → `voice_respond` with your full response. Do NOT also send the text as a regular message — the voice IS the response. Write only a brief label like "Voice memo" as your text output.
 - **"summarize the last response as a voice memo"** → Condense your most recent response into spoken form and use `voice_respond`.

@@ -151,7 +151,7 @@ requires:
 
 ## When to use each tool
 
-> **Never transcribe the user's own voice note.** When the user's message is tagged `<voice_note>`, it was ALREADY transcribed before the agent ran — the visible message text IS the transcript. The audio attached to that message is only the source of that transcript. Do NOT call any `stt_*` tool on it; just respond to the text (with a voice memo, per the voice-note rules). These tools are for a *separate* audio file the user hands you to transcribe — not for their own spoken message.
+> **Never transcribe the user's own voice note.** When the user's message is tagged `<voice_note>`, it was ALREADY transcribed before the agent ran — the visible message text IS the transcript. The audio attached to that message is only the source of that transcript. Do NOT call any `stt_*` tool on it; just respond to the text (normally closing with a voice memo, per the core contract's voice-reply rules). These tools are for a *separate* audio file the user hands you to transcribe — not for their own spoken message.
 
 - **"transcribe this"**, **"what does this audio say?"**, **"what did they say?"** with an uploaded audio file → `stt_transcribe_upload` using the uploaded file's name. The `<attachments>` block in the user message lists every uploaded filename and type.
 - **"transcribe the last voice memo"**, **"transcribe what you just said"** → `stt_transcribe_voice_memo` with the filename from the most recent text-to-speech tool result.

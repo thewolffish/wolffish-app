@@ -17,8 +17,6 @@ import {
   CLI_SETTING_SECTIONS,
   coerceSettingValue,
   readPath,
-  resolveLabel,
-  resolveText,
   settingArgs,
   type CliSetting,
   type CliSettingGroup
@@ -46,7 +44,7 @@ import {
   splitMarkers
 } from '@main/runtime/brainstem'
 import { readViewerFile, writeViewerFile } from '@main/viewer'
-import { getCliConfig, localesPath, setCliConfig, type CliConfig } from '@main/workspace/workspace'
+import { getCliConfig, setCliConfig, type CliConfig } from '@main/workspace/workspace'
 import { wlog } from '@main/workspace/logger'
 import QRCode from 'qrcode'
 import fs from 'node:fs/promises'
@@ -81,11 +79,9 @@ export type CliSettingCard = {
   /**
    * The same fact as `actual`, as a boolean.
    *
-   * `actual` is LOCALIZED, and the terminal used to decide whether to flag a
-   * mismatch by regex-matching it against /^(active|مُفعّل)$/ — a test the
-   * Arabic bundle fails, because its word is "نشط". Every correctly registered
-   * autostart was marked as failed for anyone running the app in Arabic.
-   * Compare booleans; render strings.
+   * `actual` is a display string, and the terminal used to decide whether to
+   * flag a mismatch by regex-matching it — a test that broke the moment the
+   * word changed. Compare booleans; render strings.
    */
   actualOk?: boolean | null
   options?: Array<{ value: string; label: string }>
@@ -111,38 +107,6 @@ export type CliSettingSectionCard = {
   label: string
   count: number
 }
-
-type LocaleBundle = Record<string, unknown>
-
-const localeCache = new Map<string, LocaleBundle>()
-
-/**
- * Read one locale bundle off disk. Cached — the file is ~100 KB and a settings
- * listing would otherwise re-read it per row. English is the fallback for a
- * key a translation hasn't reached yet, exactly as i18next behaves.
- */
-async function loadLocale(locale: string): Promise<LocaleBundle> {
-  const cached = localeCache.get(locale)
-  if (cached) return cached
-  try {
-    const raw = await fs.readFile(path.join(localesPath(), `${locale}.json`), 'utf8')
-    const parsed = JSON.parse(raw) as LocaleBundle
-    localeCache.set(locale, parsed)
-    return parsed
-  } catch {
-    if (locale !== 'en') return loadLocale('en')
-    return {}
-  }
-}
-
-/**
- * Card text and row labels in the user's locale, falling back to English and
- * then to the caller's own default. Both live in `settings.ts` so the test
- * that guards the table checks the same resolution that ships (see
- * `resolveLabel` there for why the bundle needs two shapes tried).
- */
-const text = resolveText
-const label = resolveLabel
 
 /**
  * Show enough of a credential to recognise WHICH one is installed, never
@@ -231,18 +195,16 @@ export function registerCliIpc(deps: CliIpcDeps): void {
   const { handle, channel, server } = deps
 
   // ── Settings, as printable cards ─────────────────────────────────────────
-  handle('cli:describeSettings', async (_e, locale?: string): Promise<CliSettingCard[]> => {
+  // The trailing argument older clients passed (a locale) is accepted and
+  // ignored: the CLI is an English surface, and the table's own words are
+  // final. See settings.ts.
+  handle('cli:describeSettings', async (): Promise<CliSettingCard[]> => {
     const snapshot = await deps.snapshot()
-    const active = typeof locale === 'string' && locale.length > 0 ? locale : 'en'
-    const bundle = await loadLocale(active)
-    const fallback = active === 'en' ? bundle : await loadLocale('en')
 
     return CLI_SETTINGS.map((setting) => {
       const options = setting.options?.map((option) => ({
         value: option.value,
-        label: option.i18n
-          ? text(bundle, fallback, option.i18n, option.label ?? option.value)
-          : (option.label ?? option.value.charAt(0).toUpperCase() + option.value.slice(1))
+        label: option.label
       }))
       const raw = readPath(snapshot, setting.read)
       // A credential never leaves this function intact — not in `display`, and
@@ -261,8 +223,8 @@ export function registerCliIpc(deps: CliIpcDeps): void {
         group: setting.group,
         section: setting.section,
         kind: setting.kind,
-        label: label(bundle, fallback, setting.i18n, setting.fallback),
-        description: text(bundle, fallback, `${setting.i18n}.description`, ''),
+        label: setting.label,
+        description: setting.description ?? '',
         hint: setting.hint ?? null,
         value,
         display: displayValue(setting, raw, options),
@@ -271,12 +233,7 @@ export function registerCliIpc(deps: CliIpcDeps): void {
       if (setting.actualRead) {
         const actual = readPath(snapshot, setting.actualRead)
         card.actualOk = actual === undefined ? null : actual === true
-        card.actual =
-          actual === undefined
-            ? null
-            : actual === true
-              ? text(bundle, fallback, 'settings.wolffish.launchAtStartup.active', 'Active')
-              : text(bundle, fallback, 'settings.wolffish.launchAtStartup.inactive', 'Inactive')
+        card.actual = actual === undefined ? null : actual === true ? 'Active' : 'Inactive'
       }
       return card
     })
@@ -315,22 +272,17 @@ export function registerCliIpc(deps: CliIpcDeps): void {
    * the window can find it here, and the card is what makes a row's label
    * ("Status", "Verbose task results") mean something on its own.
    */
-  handle('cli:settingGroups', async (_e, locale?: string): Promise<CliSettingGroupCard[]> => {
-    const active = typeof locale === 'string' && locale.length > 0 ? locale : 'en'
-    const bundle = await loadLocale(active)
-    const fallback = active === 'en' ? bundle : await loadLocale('en')
+  handle('cli:settingGroups', async (): Promise<CliSettingGroupCard[]> => {
     return CLI_SETTING_GROUPS.map((group) => ({
       id: group.id,
-      label: text(bundle, fallback, group.i18n, group.fallback),
+      label: group.label,
       count: CLI_SETTINGS.filter((s) => s.group === group.id).length,
       interactive: group.interactive === true,
       sections: CLI_SETTING_SECTIONS.filter((section) => section.group === group.id).map(
         (section) => ({
           id: section.id,
           group: section.group,
-          label: section.i18n
-            ? text(bundle, fallback, section.i18n, section.fallback)
-            : section.fallback,
+          label: section.label,
           count: CLI_SETTINGS.filter((s) => s.section === section.id).length
         })
       )

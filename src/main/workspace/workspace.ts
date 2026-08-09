@@ -557,20 +557,6 @@ export function defaultsWorkspacePath(): string {
   return path.join(defaultsRootPath(), 'workspace')
 }
 
-/**
- * The renderer's i18n bundles, shipped as FILES (not bundled JS) so the main
- * process can read them without importing across the main/renderer boundary.
- * The CLI prints the same setting labels and descriptions the desktop cards
- * show, in the same locale, from this one source — a second copy of that text
- * is a second thing to keep true. Mirrors how src/changelog is shipped.
- */
-export function localesPath(): string {
-  if (is.dev) {
-    return path.join(app.getAppPath(), 'src', 'renderer', 'src', 'lib', 'i18n', 'locales')
-  }
-  return path.join(process.resourcesPath, 'locales')
-}
-
 export async function readConfig(): Promise<WorkspaceConfig | null> {
   try {
     const { config } = await readConfigStrict()

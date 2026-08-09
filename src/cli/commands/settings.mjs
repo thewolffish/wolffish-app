@@ -45,15 +45,6 @@ const KEY_ERRORS = {
  */
 const SENSITIVE_NAME = /(key|token|secret|password|passwd|pwd|credential|auth)/i
 
-async function locale(client) {
-  try {
-    const value = await client.invoke('locale:get')
-    return typeof value === 'string' ? value : (value?.locale ?? 'en')
-  } catch {
-    return 'en'
-  }
-}
-
 /**
  * Enough of a credential to recognise WHICH one is installed, never enough to
  * use it — the same rule the daemon applies to setting cards (`maskSecret` in
@@ -70,7 +61,7 @@ function mask(value) {
 }
 
 export async function getSetting(client, id, { json } = {}) {
-  const cards = await client.invoke('cli:describeSettings', await locale(client))
+  const cards = await client.invoke('cli:describeSettings')
   const card = cards.find((entry) => entry.id === id)
   if (!card) {
     out(c.red(`unknown setting: ${id}`))
@@ -101,14 +92,14 @@ export async function setSetting(client, id, value) {
   if (!result?.ok) {
     out(`${icon.fail()} ${c.red(result?.error ?? 'failed')}`)
     if (String(result?.error ?? '').startsWith('unknown setting')) {
-      const cards = await client.invoke('cli:describeSettings', await locale(client))
+      const cards = await client.invoke('cli:describeSettings')
       suggest(cards, id)
     }
     return 1
   }
   // Read back rather than echoing the input: the handler may normalize, and a
   // setting whose OS registration failed must not report success.
-  const cards = await client.invoke('cli:describeSettings', await locale(client))
+  const cards = await client.invoke('cli:describeSettings')
   const card = cards.find((entry) => entry.id === id)
   out(`${icon.ok()} ${c.bold(card?.label ?? id)} ${c.gray('→')} ${c.cyan(card?.display ?? value)}`)
   if (card?.actual) out(c.gray(`  registered: ${card.actual}`))
@@ -137,7 +128,7 @@ function suggest(cards, id) {
 export async function manageKeys(client, args) {
   const [sub, ...rest] = args
   if (!sub || sub === 'list') {
-    const snapshot = await client.invoke('cli:describeSettings', await locale(client))
+    const snapshot = await client.invoke('cli:describeSettings')
     const providers = await client.invoke('provider:list').catch(() => [])
     heading('Model providers')
     table(

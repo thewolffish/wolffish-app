@@ -1,4 +1,14 @@
-## v1.0.242 — 2026-08-09 `Latest`
+## v1.0.243 — 2026-08-10 `Latest`
+
+### Talk to It and It Talks Back
+
+Speak instead of typing — the in-app mic, a Telegram or WhatsApp voice note, your phone — and Wolffish now **answers out loud by default**. A conversational exchange comes back as **one voice memo that is the whole reply**, not a memo trailing a wall of text that restates it. A turn that produced real things — files, tables, code, charts — still delivers them exactly as a typed turn would, because a spreadsheet has no spoken form, and then **closes with one voice memo** speaking the answer over them. Your words always win: say **"write it down"**, dictate content meant for a document, or keep a standing preference for text, and it is a normal typed turn. The reply also arrives **in the language you spoke** — every voice note carries the language the transcriber heard, and the agent treats that as final, so an English question gets an English answer even if the rest of your life with it runs in Arabic. The rule lives in the agent's **core contract** now rather than deep inside a skill, and one companion fix rides along: the agent is told, firmly, that your voice note is **already transcribed** — the text it sees *is* the transcript — so it never wastes a turn running speech-to-text on the message you just spoke to it.
+
+### A Terminal That Explains Every Setting
+
+`wolffish settings` walks the same page → card → row tree as these screens, but two thirds of its rows stopped at a bare label — and the label itself was fetched through the desktop's translation files, shipped alongside the app for that one purpose, where a lookup that missed printed a raw key like `chat.mode` where a name should be. The words are now **written directly where the settings are defined**: every one of the 53 rows carries a real label and **a sentence or two of description** — what the setting does, what the default is, what the trade is — the same facts the desktop cards teach. A few labels sharpened in the writing: the mobile toggle says **"Phone notifications"** instead of "Allow notifications", the voice card says **"Default voice"** and **"Speech rate"** rather than "Voice" and "Speed". The settings browser opens **one round-trip sooner** too, since there is no language to fetch before it can draw. One trade is made deliberately and worth saying plainly: **the terminal is an English surface now**. The desktop app still speaks your language, Arabic included — only the terminal stopped translating, and in exchange nothing in it can ever print a key instead of a word. An older terminal talking to this daemon keeps working untouched; the language it still sends is accepted and ignored.
+
+## v1.0.242 — 2026-08-09
 
 ### Every Row Your Phone Shows Now Takes an Edit
 
