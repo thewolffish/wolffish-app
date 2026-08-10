@@ -169,8 +169,8 @@ export function MarkdownEditorPage({
               type="button"
               onClick={() => void handleSave()}
               disabled={!isDirty || saving}
-              aria-label={saving ? t('workspace.saving') : t('workspace.save')}
-              title={saving ? t('workspace.saving') : t('workspace.save')}
+              aria-label={t('workspace.save')}
+              title={t('workspace.save')}
               className={cn(
                 'text-muted hover:text-fg hover:bg-border/40 flex h-8 w-8 items-center justify-center rounded-lg cursor-pointer',
                 'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',

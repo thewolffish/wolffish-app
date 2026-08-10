@@ -6,6 +6,7 @@ import { CopyButton } from '@components/core/CopyButton'
 import { Modal } from '@components/core/Modal'
 import { Select } from '@components/core/Select'
 import { useToast } from '@components/core/toast/useToast'
+import { escapePromptBody } from '@lib/heartbeat-escape'
 import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
 import { pageTopPadding } from '@lib/utils/platform'
@@ -1093,7 +1094,10 @@ export function Heartbeat(): React.JSX.Element {
       }
       const write = saveChainRef.current.then(async () => {
         const current = contentRef.current
-        const promptLines = stripLeadingSettings(prompt).split('\n')
+        // Escaped at the write seam: a pasted prompt with its own `## `
+        // sections, dashed separators or comment tokens would otherwise
+        // corrupt the file's block grammar (see escapePromptBody).
+        const promptLines = escapePromptBody(stripLeadingSettings(prompt)).split('\n')
         const bound = boundRef.current
         // Marker lines the dialog owns. The icon is always written (every
         // automation carries an emoji — default ❤️); the project marker only
@@ -1676,8 +1680,8 @@ export function Heartbeat(): React.JSX.Element {
                   type="button"
                   onClick={() => void handleSave()}
                   disabled={!isDirty || saving}
-                  aria-label={saving ? t('workspace.saving') : t('workspace.save')}
-                  title={saving ? t('workspace.saving') : t('workspace.save')}
+                  aria-label={t('workspace.save')}
+                  title={t('workspace.save')}
                   className={cn(
                     'text-muted hover:text-fg hover:bg-border/40 flex h-8 w-8 items-center justify-center rounded-lg cursor-pointer',
                     'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
@@ -2126,7 +2130,7 @@ export function Heartbeat(): React.JSX.Element {
                 onClick={() => void handleDelete(deleteTarget)}
                 className="flex-1 border border-transparent bg-red-600 text-white shadow-none hover:bg-red-700"
               >
-                {deleting ? t('heartbeat.deleting') : t('heartbeat.deleteConfirm')}
+                {t('heartbeat.deleteConfirm')}
               </Button>
             </div>
           }

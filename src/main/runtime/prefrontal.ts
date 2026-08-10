@@ -158,12 +158,19 @@ const CHANNEL_CAPABILITIES: ReadonlySet<string> = new Set(['telegram', 'whatsapp
  * master speaks (the single voice). The `ask` capability is also withheld: a
  * subagent's ask_user card can't anchor in the chat (its toolCallId never
  * reaches the renderer) and would park the agent on a question that can't be
- * answered — blockers belong in its report to the master.
+ * answered — blockers belong in its report to the master. `utilities`
+ * (send_file / show_path) is the same single-voice rule applied to files:
+ * both tools land attachments/cards directly in the user's conversation, and
+ * the courier doctrine a worker inherits from agents.core.md ("the final tool
+ * call of a file-producing task is send_file") would otherwise push it into
+ * delivering — workers save under the workspace files/ dir and report paths;
+ * the master delivers.
  */
 const AGENT_EXCLUDED_CAPABILITIES: ReadonlySet<string> = new Set([
   ...DELEGATION_CAPABILITIES,
   ...CHANNEL_CAPABILITIES,
-  'ask'
+  'ask',
+  'utilities'
 ])
 
 // Self-qualifying overlay for locally-run models. Deliberately NOT a
@@ -411,10 +418,11 @@ The ONLY exception: the user's own message explicitly asks for something else ("
 
   /**
    * The capabilities a given role must NOT see. A master gets everything
-   * (incl. delegation); an agent loses delegation, channel egress AND ask; a
-   * single-mode turn loses only delegation. Used for BOTH the API tool array
-   * (`getToolDefinitions`) and the `<capabilities>` prompt block so the two
-   * never drift — an agent shouldn't read about tools it can't call.
+   * (incl. delegation); an agent loses delegation, channel egress, ask AND
+   * delivery (utilities); a single-mode turn loses only delegation. Used for
+   * BOTH the API tool array (`getToolDefinitions`) and the `<capabilities>`
+   * prompt block so the two never drift — an agent shouldn't read about tools
+   * it can't call.
    */
   private excludedCapabilitiesFor(role?: 'master' | 'agent'): ReadonlySet<string> | undefined {
     return role === 'master'

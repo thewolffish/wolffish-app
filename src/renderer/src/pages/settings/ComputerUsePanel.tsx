@@ -182,9 +182,7 @@ export function ComputerUsePanel(): React.JSX.Element {
                 </div>
 
                 <Button onClick={handleSave} disabled={busy || !dirty} className="self-start">
-                  {busy
-                    ? t('settings.services.computerUse.saving')
-                    : t('settings.services.computerUse.save')}
+                  {t('settings.services.computerUse.save')}
                 </Button>
               </section>
 

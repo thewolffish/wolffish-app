@@ -675,10 +675,13 @@ function checkOnceTime(runAt) {
   return null
 }
 
-/** Reject instruction bodies that would break the heartbeat parser. */
+/** Reject instruction bodies heartbeat.md's block grammar can't hold verbatim. */
 function checkInstruction(instruction) {
   if (/^##\s+/m.test(instruction)) {
     return 'The instruction contains a line starting with "## ", which the heartbeat parser reads as a new automation heading. Rephrase it without markdown headings (plain sentences and "-" bullets are fine).'
+  }
+  if (/^---+\s*$/m.test(instruction)) {
+    return 'The instruction contains a dashed separator line ("---"), which the heartbeat parser drops from the body. Remove it — a blank line separates sections just as well.'
   }
   // HTML-comment delimiters in the body could splice into the example comment
   // block and corrupt the file. They never belong in a plain instruction.

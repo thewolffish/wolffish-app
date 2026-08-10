@@ -7,6 +7,9 @@
  * synthetic workspace and opens the resulting archive:
  *  - the conversation, its filtered corpus slice, and ONLY its tasks are in
  *  - another conversation's events and tasks are NOT
+ *  - a failed step inside a SUCCEEDED task still surfaces in every roll-up
+ *    (metrics, readme, failures.md, opinion prompt) — worker failures were
+ *    invisible at conversation level before
  *  - the capability SKILL.md for a tool it actually called rides along
  *  - config secrets are redacted, structure survives
  *  - attachment media is listed but not copied; small text is copied
@@ -179,7 +182,43 @@ async function run(): Promise<void> {
       ``
     ].join('\n')
   )
-  write(`brain/motor/tasks/TASK-mine123.md`, '# Task: figure\n\n- **Status:** STOPPED\n')
+  // The task transcript in motor's real format. The task ended SUCCEEDED —
+  // step 2 failed and step 3 recovered — which is the shape that made worker
+  // failures invisible: nothing about it exists in the conversation's own
+  // segments, and a status-level check reports success.
+  write(
+    `brain/motor/tasks/TASK-mine123.md`,
+    [
+      '# Task: figure',
+      '',
+      '- **ID:** TASK-mine123',
+      '- **Status:** SUCCEEDED',
+      `- **Created:** ${new Date(now - 50_000).toISOString()}`,
+      `- **Updated:** ${new Date(now - 20_000).toISOString()}`,
+      '- **Steps:** 2/3 succeeded',
+      '',
+      '## Steps',
+      '',
+      '### Step 1: pdf_extract_images ✅',
+      '- **Args:** `{"path":"/tmp/book.pdf"}`',
+      '- **Attempts:** 1',
+      '- **Output:** extracted 3 images',
+      '- **Result:** succeeded',
+      '',
+      '### Step 2: send_file ❌',
+      '- **Args:** `{"path":"/tmp/missing-figure.png"}`',
+      '- **Attempts:** 3',
+      '- **Error:** tool failed (not_found, non-retryable): no such file: /tmp/missing-figure.png',
+      '- **Result:** failed',
+      '',
+      '### Step 3: send_file ✅',
+      '- **Args:** `{"path":"/tmp/fig-34-5.png"}`',
+      '- **Attempts:** 1',
+      '- **Output:** sent',
+      '- **Result:** succeeded',
+      ''
+    ].join('\n')
+  )
   write(`brain/motor/tasks/TASK-theirs999.md`, '# Task: other work\n')
 
   // ── everything else a bundle is supposed to reach ───────────────────────
@@ -356,7 +395,11 @@ async function run(): Promise<void> {
   ] as Array<[string, RegExp]>) {
     ok(`metrics: reports ${label}`, needle.test(metricsFile), metricsFile.slice(0, 400))
   }
-  ok('readme: leads with the failure', /## Failures \(1\)/.test(readme), readme.slice(0, 600))
+  ok(
+    'readme: leads with the failure, both counts apart',
+    /## Failures \(tool calls: 1, task steps: 1\)/.test(readme),
+    readme.slice(0, 600)
+  )
   ok(
     'readme: separates model-selected-now from model-that-ran',
     /Model selected at export time/.test(readme) && /models that actually ran/.test(readme)
@@ -365,6 +408,42 @@ async function run(): Promise<void> {
   ok('failures: names the tool', failuresFile.includes('pdf_extract_images'))
   ok('failures: keeps the arguments', failuresFile.includes('/tmp/book.pdf'))
   ok('failures: keeps the full error', failuresFile.includes('Command timed out after 600000ms'))
+
+  // ── THE regression this bundle shape had: a failed step inside a task that
+  //    ended SUCCEEDED was invisible at conversation level — "FAILED: 0" over
+  //    a worker whose send_file step had failed. The counts stay separate (a
+  //    turn's own steps duplicate its tool calls), but the step failure must
+  //    show up in metrics, readme, failures.md and the opinion prompt.
+  ok(
+    'metrics: counts task steps as their own line',
+    /task steps: 3 across 1 task\(s\), of which FAILED: 1/.test(metricsFile),
+    metricsFile.slice(0, 400)
+  )
+  ok(
+    'readme: lists the failed task step',
+    readme.includes('(TASK-mine123, step 2)'),
+    readme.slice(0, 900)
+  )
+  ok(
+    'failures: title carries the task step count',
+    failuresFile.includes('# Failed tool calls — 1 (failed task steps: 1)'),
+    failuresFile.slice(0, 200)
+  )
+  ok(
+    'failures: the failed step with its task id',
+    failuresFile.includes('### TASK-mine123 — step 2: `send_file`'),
+    failuresFile
+  )
+  ok('failures: keeps the step arguments', failuresFile.includes('/tmp/missing-figure.png'))
+  ok(
+    'failures: keeps the step error',
+    failuresFile.includes('tool failed (not_found, non-retryable)')
+  )
+  ok(
+    'opinion: given the failed task step',
+    materialSeen.includes('## Failed task steps (1)') && materialSeen.includes('not_found'),
+    materialSeen.slice(0, 400)
+  )
   ok('bundle: usage ledger for the day', has(`02_logs/usage/daily/${today}.md`))
   ok('bundle: provider ledger', has('02_logs/usage/providers/deepseek.md'))
   const transcript = await text('01_conversation/transcript.md')

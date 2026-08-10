@@ -442,7 +442,7 @@ export function ViewerPage(): React.JSX.Element {
                 <div className="flex shrink-0 items-center gap-2">
                   {!readOnly && !mediaType && (
                     <IconButton
-                      label={saving ? t('workspace.saving') : t('workspace.save')}
+                      label={t('workspace.save')}
                       disabled={!isDirty || saving}
                       onClick={() => void handleSave()}
                     >

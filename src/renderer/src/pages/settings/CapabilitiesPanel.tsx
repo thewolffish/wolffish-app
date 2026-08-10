@@ -250,9 +250,7 @@ function DeleteCapabilityModal({
             onClick={onConfirm}
             className="bg-red-600 text-white hover:bg-red-700"
           >
-            {deleting
-              ? t('settings.capabilities.delete.deleting')
-              : t('settings.capabilities.delete.cta')}
+            {t('settings.capabilities.delete.cta')}
           </Button>
           <Button size="md" variant="ghost" onClick={onCancel} disabled={deleting}>
             {t('settings.capabilities.delete.cancel')}

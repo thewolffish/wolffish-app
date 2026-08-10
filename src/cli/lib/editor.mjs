@@ -189,9 +189,10 @@ export async function inlineEdit(content, { label = 'document' } = {}) {
   showHelp()
 
   for (;;) {
-    const answer = await question(
-      `  ${c.dim(':save when done, :cancel to discard')} ${c.blue('>')} `
-    )
+    // Ends in `: ` like every other prompt, with no marker of its own: inside
+    // a session the borrowed reader paints the blue input bar at the start of
+    // the line, and a second marker dangling before the cursor read as clutter.
+    const answer = await question(`  ${c.dim(':save when done, :cancel to discard')}: `)
     const line = answer ?? ''
     const trimmed = line.trim()
 

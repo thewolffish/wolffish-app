@@ -1,4 +1,30 @@
-## v1.0.245 — 2026-08-10 `Latest`
+## v1.0.246 — 2026-08-10 `Latest`
+
+### Paste Anything Into an Automation
+
+An automation's instructions live in a markdown file with a grammar of its own — a line starting with `## ` begins the next automation, a dashed `---` separator is dropped, and HTML comment markers are the wrapper around a switched-off job. Paste a prompt that carries any of those — the case that surfaced this was a full prompt document with its own `## Prompt` sections — and everything after the first heading **silently vanished**, at display and at run time alike; a stray comment opener could even **swallow every automation below it**. The editor now **escapes those lines the moment it saves**: each one is respelled in the closest form the file reads as plain text, the respelling is proven against the engine's own parsers, it never grows on re-save, and it is **the same spelling the phone's editor already writes** — every surface produces identical safe bytes. The agent's own automation tools take the other road, as they always have: they **decline the prompt and say how to rephrase it** — and that guard now covers the dashed separator too.
+
+### Workers Save; Wolffish Delivers
+
+When a run spins up background workers, each worker used to carry the delivery tools — and the standing instruction that a file-producing task ends by sending the file was written for Wolffish itself, not for the help. One worker read it anyway and **dropped a file straight onto the Desktop**, unannounced. Delivery is now the master's act alone: workers **have no send_file or show_path at all** — the tools are withdrawn, not merely discouraged — their marching orders say plainly that files are **saved under the workspace and reported by path**, and Wolffish decides what actually reaches you. One voice was already the rule for answers; now it covers files too.
+
+### The Failure Report That Missed the Point
+
+Export a diagnostic bundle over a conversation whose background worker had failed and the front page could say **"FAILED: 0"** — technically true of the transcript, useless as a diagnosis, because a worker's steps never touch the conversation at all; its stumbles lived only in the task records the bundle copied but never read. The bundle now **reads every task record step by step**: the metrics gain their own **task-steps line** (counted apart on purpose — a turn's own steps duplicate its tool calls, and one summed number would double-count every failure), the failures file carries **each failed step in full** with its arguments and untruncated error, the front page lists them beside the conversation's own, and the AI opinion that rides in the bundle is **shown the same evidence**. A worker that stumbled mid-run and recovered still ends its task SUCCEEDED — which is exactly why the bundle checks steps, not statuses.
+
+### The Number You Typed Into a Menu That Wasn't Ready
+
+In the terminal, a menu's questions arrive one round-trip apart — and a line typed into that gap found no question waiting, fell through to the chat queue, and the moment the menu closed it **replayed as a message to the live agent**: a double-tapped Enter reprinted the menu as if nothing had happened, and a stray "2" became words nobody wrote. Typed-ahead lines now **wait for the flow that owns them**: the next question consumes them in the order they were typed — a double Enter walks two menu levels up, exactly as it reads — and whatever is left when the menu closes **dies with it**, with a small receipt if it carried real text rather than blank Enters. Nested prompts also stopped looking hung: the question now holds the cursor **on its own line behind a blue input bar**, instead of parking it on a bare line below a menu that looked exactly like a stall.
+
+### Buttons That Keep Their Word
+
+Press Save and half the app's buttons used to swap their label mid-flight — "Saving…", "Deleting…", or just "…" — the word jumping, the button resizing, for an operation that finishes in a blink. Every one of those swaps is gone: a working button now simply **keeps its label and dims** until the work lands, the same width from press to done. Where the wait is genuinely long — a model downloading, a channel connecting — the real progress indicators are untouched.
+
+### A Green Cloud Where a Key Already Lives
+
+The Model page's sub-nav shows a small cloud on every cloud provider; it now **tints green for providers holding a saved API key** and stays muted for the rest — one glance says which clouds are ready before you open a single panel, and it updates live as keys are saved or removed.
+
+## v1.0.245 — 2026-08-10
 
 ### The Voice-Reply Switch Found Its Home
 

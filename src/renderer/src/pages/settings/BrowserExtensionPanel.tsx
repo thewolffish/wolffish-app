@@ -134,7 +134,6 @@ export function BrowserExtensionPanel(): React.JSX.Element {
   const [testing, setTesting] = useState(false)
   const [testingKey, setTestingKey] = useState<string | null>(null)
   const [lastTestedKey, setLastTestedKey] = useState<string | null>(null)
-  const [updating, setUpdating] = useState(false)
   const [testResult, setTestResult] = useState<'success' | 'failed' | null>(null)
   const [displayBrowsers, setDisplayBrowsers] = useState<ExtensionBrowserInfo[]>([])
   const graceRef = useRef<Map<string, { info: ExtensionBrowserInfo; at: number }>>(new Map())
@@ -254,7 +253,6 @@ export function BrowserExtensionPanel(): React.JSX.Element {
 
   const handleUpdate = useCallback(async () => {
     setBusy(true)
-    setUpdating(true)
     try {
       await window.api.browserExtension.updateExtension()
       toast.show({
@@ -268,7 +266,6 @@ export function BrowserExtensionPanel(): React.JSX.Element {
       })
     } finally {
       setBusy(false)
-      setUpdating(false)
     }
   }, [t, toast])
 
@@ -519,7 +516,7 @@ export function BrowserExtensionPanel(): React.JSX.Element {
                 )}
               >
                 <RefreshIcon size={12} />
-                <span>{updating ? '…' : t('settings.services.browserExtension.updateBtn')}</span>
+                <span>{t('settings.services.browserExtension.updateBtn')}</span>
               </button>
             </div>
           </section>

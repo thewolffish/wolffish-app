@@ -277,11 +277,6 @@ export async function exportConversationDiagnostics(
     '01_conversation/transcript.md',
     renderTranscript(conversation, conversationId)
   )
-  // The failures, alone, in full, with their arguments — the first file anyone
-  // diagnosing this should open. They exist in conversation.json too, but
-  // buried under megabytes of successful turns.
-  bundle.add('conversation', '01_conversation/failures.md', renderFailures(metrics, conversation))
-
   const span = conversationSpan(conversation)
   const dates = datesInSpan(span)
 
@@ -346,12 +341,32 @@ export async function exportConversationDiagnostics(
   progress('tasks')
   const taskIds = extractTaskIds(convBlocks)
   const tasksDir = path.join(root, 'brain', 'motor', 'tasks')
+  const taskRollup: TaskRollup = { tasks: 0, steps: 0, failures: [] }
   for (const id of taskIds) {
-    await bundle.copy('tasks', path.join(tasksDir, `TASK-${id}.md`), `03_tasks/TASK-${id}.md`)
+    const abs = path.join(tasksDir, `TASK-${id}.md`)
+    if (!(await bundle.copy('tasks', abs, `03_tasks/TASK-${id}.md`))) continue
+    const raw = await readTextFile(abs)
+    if (!raw) continue
+    const parsed = parseTaskSteps(id, raw)
+    taskRollup.tasks += 1
+    taskRollup.steps += parsed.steps
+    taskRollup.failures.push(...parsed.failures)
   }
   if (taskIds.length > 0 && bundle.count('tasks') === 0) {
     bundle.warn(`${taskIds.length} task id(s) referenced but no transcript files were found`)
   }
+
+  // The failures, alone, in full, with their arguments — the first file anyone
+  // diagnosing this should open. They exist in conversation.json too, but
+  // buried under megabytes of successful turns. Written here rather than with
+  // the rest of 01_conversation because it also carries the failed task steps
+  // just collected — a worker's failure exists nowhere in the conversation's
+  // own segments.
+  bundle.add(
+    'conversation',
+    '01_conversation/failures.md',
+    renderFailures(metrics, conversation, taskRollup)
+  )
 
   // 4. Memory the agent was reading from during those days.
   progress('memory')
@@ -462,6 +477,7 @@ export async function exportConversationDiagnostics(
       conversationId,
       env,
       metrics,
+      taskRollup,
       corpusBlocks: convBlocks,
       signal: opinionSignal(options.signal)
     })
@@ -491,7 +507,7 @@ export async function exportConversationDiagnostics(
     [
       `# Metrics — ${conversation.title || 'Untitled'}`,
       '',
-      renderMetrics(metrics),
+      renderMetrics(metrics, taskRollup),
       '',
       '## Corpus event counts (this conversation only)',
       '',
@@ -511,6 +527,7 @@ export async function exportConversationDiagnostics(
       conversationId,
       environment,
       metrics,
+      taskRollup,
       // +1 for the README this call is producing, which isn't in `entries` yet.
       entries: bundle.entries,
       extraRootFiles: 1,
@@ -616,6 +633,29 @@ type FailedCall = {
   durationMs: number | null
 }
 
+type TaskStepFailure = {
+  taskId: string
+  step: number
+  tool: string
+  /** Inline JSON exactly as the task transcript recorded it — already one line. */
+  args: string
+  error: string
+}
+
+/**
+ * What the copied task transcripts (`03_tasks/`) add up to. Kept OUT of
+ * {@link Metrics} on purpose: metrics describe the conversation transcript, and
+ * a turn's own task steps duplicate its segments — summing the two views would
+ * double-count every conversation-level failure. A spawned worker's steps, by
+ * contrast, exist ONLY here: workers never write into the conversation, which
+ * is how a bundle used to report "FAILED: 0" over a failed worker step.
+ */
+type TaskRollup = {
+  tasks: number
+  steps: number
+  failures: TaskStepFailure[]
+}
+
 type Metrics = {
   messages: number
   userMessages: number
@@ -712,13 +752,21 @@ function computeMetrics(conversation: ConversationFile): Metrics {
 }
 
 /** The metrics block, in the compact form both the file and the prompt use. */
-function renderMetrics(metrics: Metrics): string {
+function renderMetrics(metrics: Metrics, taskRollup: TaskRollup): string {
   const s = metrics.stats
   const lines: string[] = []
   lines.push(
     `- messages: ${metrics.messages} (${metrics.userMessages} from the user)`,
     `- tool calls: ${metrics.toolCalls}, of which FAILED: ${metrics.failures.length}`
   )
+  if (taskRollup.tasks > 0) {
+    // A separate count on purpose: a turn's own steps duplicate the tool calls
+    // above, but a spawned worker's steps appear ONLY in this line.
+    lines.push(
+      `- task steps: ${taskRollup.steps} across ${taskRollup.tasks} task(s), ` +
+        `of which FAILED: ${taskRollup.failures.length}`
+    )
+  }
   if (metrics.modelsUsed.length > 0) {
     lines.push(
       `- models that actually ran: ${metrics.modelsUsed
@@ -782,16 +830,22 @@ function renderMetrics(metrics: Metrics): string {
  * Every failed tool call in full — arguments and untruncated error. The
  * conversation JSON has all of this, but a 2 MB file with seven failures in it
  * is not a report, and the whole point of the bundle is that the developer
- * doesn't have to go looking.
+ * doesn't have to go looking. Failed TASK steps ride along at the end for the
+ * same reason: a worker's failure is in no conversation segment at all.
  */
-function renderFailures(metrics: Metrics, conversation: ConversationFile): string {
+function renderFailures(
+  metrics: Metrics,
+  conversation: ConversationFile,
+  taskRollup: TaskRollup
+): string {
   const lines: string[] = [
-    `# Failed tool calls — ${metrics.failures.length}`,
+    `# Failed tool calls — ${metrics.failures.length}` +
+      (taskRollup.failures.length > 0 ? ` (failed task steps: ${taskRollup.failures.length})` : ''),
     '',
     `Conversation: ${conversation.title || 'Untitled'}`,
     ''
   ]
-  if (metrics.failures.length === 0) {
+  if (metrics.failures.length === 0 && taskRollup.failures.length === 0) {
     lines.push(
       '_No tool call in this conversation reported a failure._',
       '',
@@ -801,6 +855,13 @@ function renderFailures(metrics: Metrics, conversation: ConversationFile): strin
       ''
     )
     return lines.join('\n')
+  }
+  if (metrics.failures.length === 0) {
+    lines.push(
+      '_No tool call in the conversation transcript reported a failure — the failures',
+      'below happened inside task steps._',
+      ''
+    )
   }
   for (const [i, failure] of metrics.failures.entries()) {
     lines.push(
@@ -822,6 +883,38 @@ function renderFailures(metrics: Metrics, conversation: ConversationFile): strin
       '```',
       ''
     )
+  }
+  if (taskRollup.failures.length > 0) {
+    lines.push(
+      `## Failed task steps — ${taskRollup.failures.length}`,
+      '',
+      "Steps that failed inside this conversation's tasks (its own turns and any",
+      'spawned workers). A failed step here may repeat a failure above — the same',
+      "call seen from the task's side — but a worker's failed step appears ONLY",
+      'here: workers never write into the conversation transcript. The full',
+      'step-by-step records are in `03_tasks/`.',
+      ''
+    )
+    for (const f of taskRollup.failures) {
+      lines.push(
+        `### TASK-${f.taskId} — step ${f.step}: \`${f.tool}\``,
+        '',
+        `- transcript: \`03_tasks/TASK-${f.taskId}.md\``,
+        '',
+        '**Arguments**',
+        '',
+        '```json',
+        truncate(f.args || '(none)', 4000),
+        '```',
+        '',
+        '**Error**',
+        '',
+        '```',
+        truncate(f.error || '(no error text)', 4000),
+        '```',
+        ''
+      )
+    }
   }
   return lines.join('\n')
 }
@@ -939,6 +1032,37 @@ function extractTaskIds(blocks: string[]): string[] {
     for (const m of block.matchAll(/"taskId":"([A-Za-z0-9_-]+)"/g)) ids.add(m[1])
   }
   return [...ids]
+}
+
+/**
+ * Steps and failed steps of one task transcript (motor's renderTranscript
+ * format). Parsed from the markdown because the markdown IS the persistence —
+ * motor keeps no structured task file — and per STEP, not per task status: a
+ * worker that stumbles mid-run and recovers still ends SUCCEEDED, which is
+ * exactly the failure a status check would hide.
+ */
+function parseTaskSteps(
+  taskId: string,
+  raw: string
+): { steps: number; failures: TaskStepFailure[] } {
+  let steps = 0
+  const failures: TaskStepFailure[] = []
+  for (const chunk of raw.split(/\n(?=### Step \d+: )/)) {
+    const head = /^### Step (\d+): (\S+)/.exec(chunk)
+    if (!head) continue
+    steps += 1
+    if (!/^- \*\*Result:\*\* failed$/m.test(chunk)) continue
+    failures.push({
+      taskId,
+      step: Number(head[1]),
+      tool: head[2],
+      args: /^- \*\*Args:\*\* `(.*)`$/m.exec(chunk)?.[1] ?? '',
+      // The error line is the last thing before the Result line, and may span
+      // lines — capture up to the Result marker rather than one line.
+      error: (/\n- \*\*Error:\*\* ([\s\S]*?)\n- \*\*Result:\*\*/.exec(chunk)?.[1] ?? '').trim()
+    })
+  }
+  return { steps, failures }
 }
 
 /** Distinct tool names called anywhere in the conversation's segments. */
@@ -1179,6 +1303,7 @@ function renderReadme(args: {
   conversationId: string
   environment: Record<string, unknown>
   metrics: Metrics
+  taskRollup: TaskRollup
   entries: ZipEntry[]
   extraRootFiles: number
   warnings: string[]
@@ -1225,29 +1350,44 @@ function renderReadme(args: {
     '',
     '## At a glance',
     '',
-    renderMetrics(metrics),
+    renderMetrics(metrics, args.taskRollup),
     '',
     `Full breakdown in \`00_METRICS.md\`.`,
     ''
   ]
 
-  if (metrics.failures.length > 0) {
-    lines.push(
-      `## Failures (${metrics.failures.length})`,
-      '',
-      'Full arguments and error text in `01_conversation/failures.md`.',
-      ''
-    )
-    for (const failure of metrics.failures.slice(0, 12)) {
-      lines.push(
-        `- **\`${failure.tool}\`** (message #${failure.index}) — ${truncate(
-          (failure.error || failure.output || failure.status).replace(/\s+/g, ' ').trim(),
-          160
-        )}`
+  // Task-step failures are listed alongside the conversation's own, but the
+  // heading keeps the two counts apart: a turn's own steps duplicate its tool
+  // calls, so one summed number would double-count every conversation-level
+  // failure — while a worker's failed step exists ONLY as a task step.
+  const taskFailures = args.taskRollup.failures
+  if (metrics.failures.length > 0 || taskFailures.length > 0) {
+    const heading =
+      taskFailures.length > 0
+        ? metrics.failures.length > 0
+          ? `## Failures (tool calls: ${metrics.failures.length}, task steps: ${taskFailures.length})`
+          : `## Failures (task steps: ${taskFailures.length})`
+        : `## Failures (${metrics.failures.length})`
+    lines.push(heading, '', 'Full arguments and error text in `01_conversation/failures.md`.', '')
+    const items = [
+      ...metrics.failures.map(
+        (failure) =>
+          `- **\`${failure.tool}\`** (message #${failure.index}) — ${truncate(
+            (failure.error || failure.output || failure.status).replace(/\s+/g, ' ').trim(),
+            160
+          )}`
+      ),
+      ...taskFailures.map(
+        (f) =>
+          `- **\`${f.tool}\`** (TASK-${f.taskId}, step ${f.step}) — ${truncate(
+            (f.error || 'failed').replace(/\s+/g, ' ').trim(),
+            160
+          )}`
       )
-    }
-    if (metrics.failures.length > 12) {
-      lines.push(`- …and ${metrics.failures.length - 12} more.`)
+    ]
+    lines.push(...items.slice(0, 12))
+    if (items.length > 12) {
+      lines.push(`- …and ${items.length - 12} more.`)
     }
     lines.push('')
   } else {
@@ -1348,6 +1488,7 @@ async function runOpinion(
     conversationId: string
     env: DiagnosticEnv
     metrics: Metrics
+    taskRollup: TaskRollup
     corpusBlocks: string[]
     signal?: AbortSignal
   }
@@ -1406,9 +1547,10 @@ function buildOpinionPrompt(args: {
   conversationId: string
   env: DiagnosticEnv
   metrics: Metrics
+  taskRollup: TaskRollup
   corpusBlocks: string[]
 }): string {
-  const { conversation, env, metrics } = args
+  const { conversation, env, metrics, taskRollup } = args
   const head = [
     `Wolffish ${env.appVersion} on ${process.platform}, mode ${env.chatMode ?? 'single'}, ` +
       `channel ${conversation.channel ?? 'electron'}.`,
@@ -1418,7 +1560,7 @@ function buildOpinionPrompt(args: {
     '',
     '## Metrics',
     '',
-    renderMetrics(metrics),
+    renderMetrics(metrics, taskRollup),
     ''
   ].join('\n')
 
@@ -1435,7 +1577,25 @@ function buildOpinionPrompt(args: {
       )
     }
     evidence.push('')
-  } else {
+  }
+  if (taskRollup.failures.length > 0) {
+    evidence.push(
+      `## Failed task steps (${taskRollup.failures.length}) — inside this conversation's tasks`,
+      '',
+      'A step here may repeat a failed tool call above; a WORKER task step appears',
+      'only here, never in the transcript below.',
+      ''
+    )
+    for (const [i, f] of taskRollup.failures.entries()) {
+      evidence.push(
+        `${i + 1}. ${f.tool} — failed (TASK-${f.taskId}, step ${f.step})`,
+        `   args: ${truncate(f.args || '(none)', 600)}`,
+        `   error: ${truncate((f.error || '(no error text)').trim(), 900)}`
+      )
+    }
+    evidence.push('')
+  }
+  if (metrics.failures.length === 0 && taskRollup.failures.length === 0) {
     evidence.push(
       '## Failed tool calls',
       '',

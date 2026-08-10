@@ -202,6 +202,25 @@ export async function repl(client, { conversationId = null, verbose = false } = 
    */
   let pendingAsk = null
   /**
+   * Lines that arrive while a menu flow is BETWEEN questions.
+   *
+   * A menu answer resolves its promise as a microtask, and the flow's next
+   * question registers only after that continuation runs — often a daemon
+   * round-trip later. A second line typed into that gap (a double-tapped
+   * Enter, a number typed while the list is still loading) found `pendingAsk`
+   * empty and fell through to the session queue, where it replayed as CHAT
+   * the moment the menu closed. Measured on `/customizations`: the menu
+   * reprinted as if Enter had done nothing, and a stray "2" then went to the
+   * live agent as a message nobody wrote.
+   *
+   * So while a command is being pumped, unclaimed lines wait HERE instead.
+   * The flow's next question consumes them in the order they were typed —
+   * a double Enter walks two menu levels up, exactly as it reads — and
+   * whatever is left when the command finishes dies with the menu rather
+   * than becoming a message.
+   */
+  let askBacklog = []
+  /**
    * A secret typed at a nested prompt must not be echoed — and this is the only
    * place that can stop it.
    *
@@ -219,15 +238,50 @@ export async function repl(client, { conversationId = null, verbose = false } = 
   let hiddenAsk = false
   setLineReader({
     question: (prompt, resolve, { hidden = false } = {}) => {
+      // One INPUT LINE, loudly marked: a thick blue bar at column 0, the
+      // question inline after it, and the cursor right where the answer goes —
+      // immediately after the colon. The bar replaces the question's own
+      // indent; it is the "type here" signal, bolder than the chat chevron
+      // because it follows a dense menu rather than an empty screen.
+      const ask = `${c.blue(g.input)} ${prompt.replace(/^\s+/, '').replace(/\n$/, '')}`
+      // Typed ahead of the question: answer it immediately, and print the
+      // pair so the transcript still shows what was asked and what answered.
+      // Never for hidden asks — a secret is typed at its own prompt or not
+      // at all.
+      if (!hidden && askBacklog.length > 0) {
+        out(`${ask}${askBacklog[0]}`)
+        resolve(askBacklog.shift())
+        return
+      }
       if (hidden) {
         // No trailing newline: the answer is invisible, so the prompt stays on
         // its own line and the cursor sits after it, the way every password
         // prompt in a shell behaves.
-        process.stderr.write(prompt.replace(/\n$/, ''))
+        process.stderr.write(ask)
         hiddenAsk = true
         rl._writeToOutput = () => {}
-      } else {
+      } else if (running) {
+        // Mid-turn cards (an approval, an ask) arrive while the readline
+        // writer is muted to keep repaints off the token stream — a prompt
+        // painted through it would be invisible. Print the question directly.
         out(prompt.replace(/\n$/, ''))
+      } else {
+        // The question becomes the PROMPT, not a printed line. `out()` ends in
+        // a newline, which parked the cursor at column 0 of a bare line below
+        // the question — no marker, nothing blinking after the colon — so a
+        // menu waiting for a number looked exactly like a menu that had hung.
+        // Handing the question to readline keeps cursor and question on ONE
+        // line, and a backspace now repaints the question rather than
+        // reaching for the chat prompt.
+        //
+        // The cursor is on a fresh row here — the menu above was just printed.
+        // Readline may still believe it sits below the previous ask's row (a
+        // ^C-claimed ask resets nothing, and a long answer wraps), and
+        // repainting from that belief walks UP a row and clears the menu's
+        // own hint line. Say where we are.
+        rl.prevRows = 0
+        rl.setPrompt(ask)
+        rl.prompt(true)
       }
       pendingAsk = resolve
     },
@@ -360,7 +414,18 @@ export async function repl(client, { conversationId = null, verbose = false } = 
         // visible for the rest of the session.
         if (Array.isArray(rl.history) && rl.history[0] === line) rl.history.shift()
       }
+      // The ask borrowed the prompt slot; the next repaint is chat's again.
+      applyPrompt()
       answer(line)
+      return
+    }
+    // No question is waiting, but a command is mid-stride — its next question
+    // is a microtask or a round-trip away. Park the line for it; the
+    // alternative was the chat queue, which is how menu keys became messages.
+    // Mid-turn (`running`) the queue is still right: those lines get the
+    // "still working" guard, not a menu.
+    if (pumping && !running) {
+      askBacklog.push(line)
       return
     }
     queue.push(line)
@@ -388,14 +453,20 @@ export async function repl(client, { conversationId = null, verbose = false } = 
     if (pendingAsk) {
       // A menu or a card is waiting. Answer it with the same blank that means
       // "go back" everywhere else, rather than tearing the session down under
-      // a prompt the user simply changed their mind about.
+      // a prompt the user simply changed their mind about. ^C abandons what
+      // was typed ahead along with the prompt it was aimed at.
+      askBacklog = []
       const answer = pendingAsk
       pendingAsk = null
       if (hiddenAsk) {
         hiddenAsk = false
         delete rl._writeToOutput
       }
+      applyPrompt()
       out()
+      // The out() above moved to a fresh row; without this, the next repaint
+      // still thinks it owns the abandoned ask's rows and clears over them.
+      rl.prevRows = 0
       answer('')
       return
     }
@@ -458,6 +529,20 @@ export async function repl(client, { conversationId = null, verbose = false } = 
         result = await handleSlash(progress, state, input)
       } catch (error) {
         out(`${icon.fail()} ${c.red(error?.message ?? String(error))}`)
+      }
+      // The command is over; anything still parked was aimed at its menus.
+      // Blank overshoot Enters die silently, but words are worth a receipt —
+      // silently eating typed text reads as the session dropping input.
+      if (askBacklog.length > 0) {
+        const dropped = askBacklog.filter((line) => line.trim().length > 0)
+        askBacklog = []
+        if (dropped.length > 0) {
+          out(
+            c.gray(
+              `  ${icon.dot()} ignored ${c.dim(truncate(dropped.join(' · '), 40))} — typed while no prompt was waiting`
+            )
+          )
+        }
       }
       if (result === 'exit') return 'exit'
       // Anything that changed which conversation we are in has to redraw the

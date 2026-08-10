@@ -37,7 +37,7 @@ tools:
         description: 'YOU pick one-time vs recurring from the user''s wording. ONE-TIME (runs once, then deletes itself) for "in 15 min", "in 2 days", "at 3pm", "tomorrow", "remind me once": "In (15m)" / "In (2h)" / "In (2d)" (relative — minutes, hours, days) or "Once (2026-06-27 14:30)" (absolute, 24h local). RECURRING for "every", "each", "daily", "from now on": "Every (5m)" / "Every (2h)" · "Hourly (30)" · "Daily (08:00)" / "Nightly (23:00)" · "Weekday (09:00)" · "Weekly (Monday 09:30)" · "Monthly (1 09:00)" · "Cron (0 9 * * 1,3,5)" · "Startup". Default to one-time for a specific future moment.'
       instruction:
         type: string
-        description: What to do when it fires — plain natural-language instruction, exactly as you'd phrase a task to yourself. It runs as an autonomous turn with tools available and tool calls auto-approved. No markdown headings (no lines starting with "## ").
+        description: What to do when it fires — plain natural-language instruction, exactly as you'd phrase a task to yourself. It runs as an autonomous turn with tools available and tool calls auto-approved. No markdown headings (no lines starting with "## ") and no "---" separator lines.
       mode:
         type: string
         required: false
@@ -243,7 +243,8 @@ not how to do it step by step.
   irreversible actions. Anything destructive should have been agreed with the
   user first.
 - **No markdown headings** in the body (a line starting with `## ` would be read
-  as the next automation). Normal sentences and `-` bullets are fine.
+  as the next automation), and **no `---` separator lines** (the parser drops
+  them). Normal sentences and `-` bullets are fine.
 
 ## Create → test → verify, in one turn
 

@@ -1,3 +1,4 @@
+import { Button } from '@components/core/Button'
 import { cn } from '@lib/utils/cn'
 import type { DiagnosticProgress, DiagnosticResult, DiagnosticStep } from '@preload/index'
 import {
@@ -246,33 +247,22 @@ export function DiagnosticExportOverlay({
                 </div>
               </div>
               <div className="mt-3 flex gap-2">
-                <button
-                  type="button"
-                  onClick={reveal}
-                  className={cn(
-                    'flex flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-md border px-2 py-1.5 text-[11px] font-medium',
-                    'border-border text-muted hover:text-fg hover:border-muted'
-                  )}
-                >
-                  <FolderOpenIcon size={13} />
+                <Button variant="outline" size="sm" onClick={reveal} className="flex-1">
+                  <FolderOpenIcon size={14} />
                   {t('diagnostics.overlay.reveal')}
-                </button>
-                <button
-                  type="button"
+                </Button>
+                <Button
+                  variant="primary"
+                  size="sm"
                   onClick={() => void saveCopy()}
                   disabled={savingCopy}
-                  className={cn(
-                    'flex flex-1 items-center justify-center gap-1.5 rounded-md border px-2 py-1.5 text-[11px] font-medium',
-                    'border-border text-muted hover:text-fg hover:border-muted',
-                    'disabled:cursor-not-allowed disabled:opacity-50',
-                    !savingCopy && 'cursor-pointer'
-                  )}
+                  className="flex-1"
                 >
-                  <Download01Icon size={13} />
+                  <Download01Icon size={14} />
                   {copySaved
                     ? t('diagnostics.overlay.copySaved')
                     : t('diagnostics.overlay.saveCopy')}
-                </button>
+                </Button>
               </div>
             </div>
 

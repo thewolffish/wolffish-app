@@ -167,7 +167,7 @@ export function OllamaSetup(): React.JSX.Element {
               <p className="text-fg text-sm leading-relaxed">{t('ollamaSetup.notRunningHint')}</p>
               <Button size="lg" disabled={starting} onClick={() => void onStart()}>
                 <StartUp01Icon size={18} />
-                <span>{starting ? t('ollamaSetup.starting') : t('ollamaSetup.openOllama')}</span>
+                <span>{t('ollamaSetup.openOllama')}</span>
               </Button>
               <Button
                 size="lg"

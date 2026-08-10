@@ -190,7 +190,6 @@ export function ReflectionPanel(): React.JSX.Element {
                 </span>
                 <RunNowButton
                   label={t('settings.knowledge.reflection.runNow')}
-                  busy={running === 'reflection'}
                   disabled={running !== null}
                   onClick={() => void runNow('reflection')}
                 />
@@ -281,7 +280,6 @@ export function ReflectionPanel(): React.JSX.Element {
             </span>
             <RunNowButton
               label={t('settings.knowledge.reflection.runNow')}
-              busy={running === 'deepClean'}
               disabled={running !== null}
               onClick={() => void runNow('deepClean')}
             />
@@ -352,14 +350,17 @@ function OnOffToggle({
   )
 }
 
+/**
+ * The label never collapses while a run is in flight — `disabled` covers the
+ * busy window (callers pass `running !== null`), and the dim is the whole
+ * signal, so the button never changes size mid-run.
+ */
 function RunNowButton({
   label,
-  busy,
   disabled,
   onClick
 }: {
   label: string
-  busy: boolean
   disabled: boolean
   onClick: () => void
 }): React.JSX.Element {
@@ -375,7 +376,7 @@ function RunNowButton({
       )}
     >
       <PlayIcon size={12} />
-      <span>{busy ? '…' : label}</span>
+      <span>{label}</span>
     </button>
   )
 }

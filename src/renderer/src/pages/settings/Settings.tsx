@@ -223,6 +223,29 @@ export function Settings(): React.JSX.Element {
     }
   }, [])
 
+  // Cloud providers with a saved key get their cloud badge tinted in the
+  // sub-nav. provider:updated fires on every save/remove, so the set stays
+  // current while the user edits keys in the panels.
+  const [keyedProviders, setKeyedProviders] = useState<ReadonlySet<string>>(new Set())
+
+  useEffect(() => {
+    let cancelled = false
+    const reload = (): void => {
+      void window.api.provider.list().then((entries) => {
+        if (cancelled) return
+        setKeyedProviders(
+          new Set(entries.filter((e) => e.apiKey.trim().length > 0).map((e) => e.id))
+        )
+      })
+    }
+    reload()
+    const off = window.api.provider.onUpdated(reload)
+    return () => {
+      cancelled = true
+      off()
+    }
+  }, [])
+
   // Warm up the Google Workspace snapshot and the capability gate the
   // moment Settings opens, so by the time the user clicks a Services tab
   // the data is already populated and the panel renders without a flash.
@@ -307,7 +330,12 @@ export function Settings(): React.JSX.Element {
                               {isCloud && (
                                 <CloudIcon
                                   size={12}
-                                  className="text-muted ms-auto shrink-0"
+                                  className={cn(
+                                    'ms-auto shrink-0',
+                                    keyedProviders.has(p)
+                                      ? 'text-emerald-600 dark:text-emerald-400'
+                                      : 'text-muted'
+                                  )}
                                   aria-label={t('settings.model.cloudBadge')}
                                 />
                               )}

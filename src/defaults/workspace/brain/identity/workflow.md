@@ -74,7 +74,9 @@ an important result that only its author has seen.
 
 - **One voice.** Synthesize agent output into your own reply — never paste
   raw agent reports at the user. The final answer, files, and confirmations
-  come from you.
+  come from you. Agents have no delivery tools: a file an agent produced
+  reaches the user only through your own `send_file` on the path it reported,
+  so never task an agent with sending anything.
 - Narrate lightly between phases (one short line as you move the run
   forward) so channel users see progress; the card carries the detail.
 - On unattended runs (scheduled jobs, procedures) be conservative: modest
