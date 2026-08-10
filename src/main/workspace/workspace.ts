@@ -223,10 +223,16 @@ export type GoogleConfig = {
  * Speech-to-text defaults the cerebellum plugin reads on every call.
  * `defaultModel` is the Whisper model size — tiny / base / small /
  * medium / large. Empty string falls back to the plugin's hard-coded
- * default (`base`).
+ * default (`small`). `language` is the transcription language every
+ * voice note and transcription is pinned to: an ISO 639-1/Whisper code
+ * (`en`, `ar`, …), or `auto` for Whisper's own detection. Empty string
+ * falls back to the plugin default (`en`) — pinned on purpose: detection
+ * on short clips misfires (an English sentence transcribed INTO Arabic
+ * script), so autodetect is the explicit opt-in, never the default.
  */
 export type SttConfig = {
   defaultModel: string
+  language: string
 }
 
 /**
@@ -234,10 +240,17 @@ export type SttConfig = {
  * `defaultVoice` is a Kokoro voice id (e.g. `af_bella`). `defaultSpeed` is a
  * float multiplier string between `0.5` and `1.5` (e.g. `1.0`). Empty values
  * fall back to the plugin defaults (`af_bella`, `1.0`).
+ *
+ * `voiceReplies` (default ON — absent means true, like VideoConfig.director):
+ * when the user sends a voice prompt, the model is told — via the
+ * `<voice_prompts>` prompt block AND a per-iteration runtime notice — to end
+ * its reply with a spoken voice_respond. A model directive only: the harness
+ * never synthesizes or suppresses audio itself.
  */
 export type TtsConfig = {
   defaultVoice: string
   defaultSpeed: string
+  voiceReplies: boolean
 }
 
 /**
@@ -1492,19 +1505,22 @@ export async function setBraveConfig(patch: Partial<BraveConfig>): Promise<Works
   })
 }
 
-const EMPTY_STT_CONFIG: SttConfig = { defaultModel: '' }
-const EMPTY_TTS_CONFIG: TtsConfig = { defaultVoice: '', defaultSpeed: '' }
-
+// Getters normalize field-by-field (not `?? EMPTY`) so a config.json written
+// before a field existed still comes back complete — same contract as
+// getVideoConfig. voiceReplies: absent means ON.
 export async function getSttConfig(): Promise<SttConfig> {
   const config = await readConfig()
-  return config?.stt ?? EMPTY_STT_CONFIG
+  return {
+    defaultModel: config?.stt?.defaultModel ?? '',
+    language: config?.stt?.language ?? ''
+  }
 }
 
 export async function setSttConfig(patch: Partial<SttConfig>): Promise<WorkspaceConfig> {
   return patchConfig((c) => {
-    const current = c.stt ?? EMPTY_STT_CONFIG
     const next: SttConfig = {
-      defaultModel: patch.defaultModel ?? current.defaultModel
+      defaultModel: patch.defaultModel ?? c.stt?.defaultModel ?? '',
+      language: patch.language ?? c.stt?.language ?? ''
     }
     return { ...c, stt: next }
   })
@@ -1512,15 +1528,19 @@ export async function setSttConfig(patch: Partial<SttConfig>): Promise<Workspace
 
 export async function getTtsConfig(): Promise<TtsConfig> {
   const config = await readConfig()
-  return config?.tts ?? EMPTY_TTS_CONFIG
+  return {
+    defaultVoice: config?.tts?.defaultVoice ?? '',
+    defaultSpeed: config?.tts?.defaultSpeed ?? '',
+    voiceReplies: config?.tts?.voiceReplies !== false
+  }
 }
 
 export async function setTtsConfig(patch: Partial<TtsConfig>): Promise<WorkspaceConfig> {
   return patchConfig((c) => {
-    const current = c.tts ?? EMPTY_TTS_CONFIG
     const next: TtsConfig = {
-      defaultVoice: patch.defaultVoice ?? current.defaultVoice,
-      defaultSpeed: patch.defaultSpeed ?? current.defaultSpeed
+      defaultVoice: patch.defaultVoice ?? c.tts?.defaultVoice ?? '',
+      defaultSpeed: patch.defaultSpeed ?? c.tts?.defaultSpeed ?? '',
+      voiceReplies: patch.voiceReplies ?? c.tts?.voiceReplies !== false
     }
     return { ...c, tts: next }
   })

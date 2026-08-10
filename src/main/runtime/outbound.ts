@@ -52,6 +52,21 @@ export const OFFLINE_NOTICE =
   'If the task genuinely requires the internet, say so plainly, do the offline part now, and suggest retrying once the connection returns.'
 
 /**
+ * Rides every iteration of a voice-prompted turn while the Voice replies
+ * setting is ON (the Agent computes the gates once per turn — see
+ * RuntimeContext.voiceReply). The <voice_prompts> system-prompt block
+ * carries the full rule; this line restates the non-negotiable core at the
+ * most salient position in the request, because the shipped failure was a
+ * model reading the rule in a 25k-token prompt and replying in text anyway.
+ * Deliberately repeats "one" and "last": the channels dedupe a second
+ * voice_respond, and a memo followed by trailing prose reads as broken.
+ */
+export const VOICE_REPLY_NOTICE =
+  'VOICE PROMPT: the user SPOKE this message and Voice replies are ON — this turn MUST end with exactly one voice_respond call speaking your answer (in the <voice_note> lang). ' +
+  'Deliver any files/media/text the work needs first; the voice_respond comes LAST, as your wrap-up. ' +
+  'Only an explicit request in the user\'s own message ("reply in text") lifts this.'
+
+/**
  * Live runtime context, injected at the tail of the outbound clone each
  * iteration instead of into the system prompt. Two kinds of volatile fact
  * ride here: the host clock (current date/time, UTC offset, and IANA zone
@@ -93,6 +108,9 @@ export function formatRuntimeStatus(runtime: RuntimeContext, now: Date = new Dat
     // Video-task landing notice (an async generation finished while the
     // model was mid-task) — same vehicle, same cache reason.
     (runtime.videoTasks ? `${runtime.videoTasks} ` : '') +
+    // Voice-reply notice (voice-prompted turn, Voice replies ON) — same
+    // vehicle; stable across the turn, so it never churns the tail.
+    (runtime.voiceReply ? `${runtime.voiceReply} ` : '') +
     `(Automated telemetry, not a user message — do not reply to it or summarize progress because of it. ` +
     `If the task is unfinished, keep calling tools: a response without tool calls ends the task; there is no next turn.)`
   )

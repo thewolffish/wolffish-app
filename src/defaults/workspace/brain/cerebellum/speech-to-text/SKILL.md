@@ -1,6 +1,6 @@
 ---
 name: speech-to-text
-description: Transcribe audio files into text using faster-whisper (CTranslate2). Supports 99+ languages with automatic detection. Runs entirely locally — no API keys, no cloud, fully offline after setup.
+description: Transcribe audio files into text using faster-whisper (CTranslate2). Supports 99 languages — transcription is pinned to the language configured in Settings → Speech-to-Text (default English), with "auto" detection as the opt-in. Runs entirely locally — no API keys, no cloud, fully offline after setup.
 triggers:
   - transcribe
   - transcription
@@ -80,11 +80,11 @@ tools:
       language:
         type: string
         required: false
-        description: ISO 639-1 language code (e.g. "en", "ar", "fr"). Omit for automatic detection.
+        description: ISO 639-1 language code (e.g. "en", "ar", "fr"), or "auto" for detection. Omit to use the language configured in Settings → Speech-to-Text (default English).
       model:
         type: string
         required: false
-        description: "Whisper model size — one of: tiny, base, small, medium, large. Default: base."
+        description: "Whisper model size — one of: tiny, base, small, medium, large. Default: small."
         enum:
           - tiny
           - base
@@ -100,11 +100,11 @@ tools:
       language:
         type: string
         required: false
-        description: ISO 639-1 language code (e.g. "en", "ar"). Omit for automatic detection.
+        description: ISO 639-1 language code (e.g. "en", "ar"), or "auto" for detection. Omit to use the configured default language.
       model:
         type: string
         required: false
-        description: "Whisper model size — tiny, base, small, medium, large. Default: base."
+        description: "Whisper model size — tiny, base, small, medium, large. Default: small."
         enum:
           - tiny
           - base
@@ -120,11 +120,11 @@ tools:
       language:
         type: string
         required: false
-        description: ISO 639-1 language code. Omit for automatic detection.
+        description: ISO 639-1 language code, or "auto". Omit to use the configured default language.
       model:
         type: string
         required: false
-        description: "Whisper model size. Default: base."
+        description: "Whisper model size. Default: small."
   - name: stt_detect_language
     description: Detect the spoken language of an audio file without producing a full transcription. Reads only the first 30 seconds. Returns an ISO 639-1 code with confidence and the top-5 candidates.
     parameters:
@@ -151,7 +151,7 @@ requires:
 
 ## When to use each tool
 
-> **Never transcribe the user's own voice note.** When the user's message is tagged `<voice_note>`, it was ALREADY transcribed before the agent ran — the visible message text IS the transcript. The audio attached to that message is only the source of that transcript. Do NOT call any `stt_*` tool on it; just respond to the text (normally closing with a voice memo, per the core contract's voice-reply rules). These tools are for a *separate* audio file the user hands you to transcribe — not for their own spoken message.
+> **Never transcribe the user's own voice note.** When the user's message is tagged `<voice_note>`, it was ALREADY transcribed before the agent ran — the visible message text IS the transcript. The audio attached to that message is only the source of that transcript. Do NOT call any `stt_*` tool on it; just respond to the text (per the `<voice_prompts>` rules in your prompt). These tools are for a *separate* audio file the user hands you to transcribe — not for their own spoken message.
 
 - **"transcribe this"**, **"what does this audio say?"**, **"what did they say?"** with an uploaded audio file → `stt_transcribe_upload` using the uploaded file's name. The `<attachments>` block in the user message lists every uploaded filename and type.
 - **"transcribe the last voice memo"**, **"transcribe what you just said"** → `stt_transcribe_voice_memo` with the filename from the most recent text-to-speech tool result.
@@ -164,6 +164,7 @@ When the user uploads an audio file without explicit instruction (no "transcribe
 
 - After transcription, present the text naturally. If the user wants a translation, translate it yourself — the model handles translation natively, no extra tool needed.
 - For files >30 minutes warn the user that transcription may take several minutes; suggest the `tiny` or `base` model for speed.
+- The transcription language is PINNED to the configured default (Settings → Speech-to-Text, default English) — detection runs only when that setting (or an explicit `language` argument) says "auto". If a transcript comes out in the wrong language, the fix is that setting, not a bigger model.
 - Report the detected language so the user knows what was heard.
 
 ## Supported formats
@@ -175,8 +176,8 @@ MP3, WAV, M4A, OGG, FLAC, WEBM, AAC. faster-whisper decodes via PyAV (bundled ff
 | Model | Size | Speed | Accuracy | When to pick |
 |---|---|---|---|---|
 | tiny | ~75MB | fastest | low | quick previews of long audio |
-| base | ~150MB | fast | good | default for most transcription |
-| small | ~500MB | moderate | better | when accuracy matters more than speed |
+| base | ~150MB | fast | good | when speed beats accuracy |
+| small | ~500MB | moderate | better | the default — reliable language handling |
 | medium | ~1.5GB | slow | high | high-stakes transcription |
 | large | ~3GB | very slow | best | research-grade accuracy |
 

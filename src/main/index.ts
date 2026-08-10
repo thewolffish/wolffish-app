@@ -1062,11 +1062,20 @@ async function applyMobileSettings(settings: Record<string, unknown>): Promise<v
       case 'sttModel':
         await persistSttConfig({ defaultModel: str(value) })
         break
+      case 'sttLanguage':
+        await persistSttConfig({ language: str(value) })
+        break
       case 'ttsVoice':
         await persistTtsConfig({ defaultVoice: str(value) })
         break
       case 'ttsSpeed':
         await persistTtsConfig({ defaultSpeed: str(value) })
+        break
+      case 'ttsVoiceReplies':
+        // A model directive like videoDirector — persisting it is the whole
+        // job; the next turn's <voice_prompts> block and runtime notice pick
+        // it up.
+        await persistTtsConfig({ voiceReplies: value === true })
         break
       case 'screenshotMaxWidth': {
         const width = int(value)
@@ -1405,8 +1414,10 @@ const MOBILE_KEY_SERVICE: Record<string, string | undefined> = {
   imgflipPassword: 'memes',
   giphyApiKey: 'memes',
   sttModel: 'stt',
+  sttLanguage: 'stt',
   ttsVoice: 'tts',
   ttsSpeed: 'tts',
+  ttsVoiceReplies: 'tts',
   screenshotMaxWidth: 'computerUse',
   screenshotFormat: 'computerUse',
   browserScreenshotMaxWidth: 'browserExtension',
@@ -3487,7 +3498,15 @@ app.whenReady().then(async () => {
     async (_e, patch: Partial<SttConfig>): Promise<{ ok: true; config: SttConfig }> => {
       const updated = await persistSttConfig(patch)
       broadcast('services:changed', { service: 'stt' })
-      return { ok: true as const, config: updated.stt ?? { defaultModel: '' } }
+      // Normalized field-by-field: a pre-`language` config.json on disk must
+      // not hand the renderer a shape missing the field the type promises.
+      return {
+        ok: true as const,
+        config: {
+          defaultModel: updated.stt?.defaultModel ?? '',
+          language: updated.stt?.language ?? ''
+        }
+      }
     }
   )
   handle(
@@ -3559,7 +3578,11 @@ app.whenReady().then(async () => {
       broadcast('services:changed', { service: 'tts' })
       return {
         ok: true as const,
-        config: updated.tts ?? { defaultVoice: '', defaultSpeed: '' }
+        config: {
+          defaultVoice: updated.tts?.defaultVoice ?? '',
+          defaultSpeed: updated.tts?.defaultSpeed ?? '',
+          voiceReplies: updated.tts?.voiceReplies !== false
+        }
       }
     }
   )

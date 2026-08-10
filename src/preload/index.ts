@@ -278,11 +278,15 @@ export type McpApi = {
 
 export type SttConfig = {
   defaultModel: string
+  /** Pinned transcription language: ISO 639-1/Whisper code, `auto`, or '' (= the `en` default). */
+  language: string
 }
 
 export type TtsConfig = {
   defaultVoice: string
   defaultSpeed: string
+  /** Voice prompts get spoken replies (default ON) — a model directive, mirrored from workspace.ts. */
+  voiceReplies: boolean
 }
 
 export type Variable = {

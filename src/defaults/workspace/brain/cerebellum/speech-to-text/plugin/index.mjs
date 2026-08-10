@@ -40,7 +40,14 @@ let workspaceRoot = ''
 // { python: <venv python> } once the faster-whisper venv is provisioned.
 let executor = null
 let initError = null
-let defaultModel = 'base'
+// 'small', not 'base': base misdetects the language of short accented clips
+// badly enough to transcribe English speech into Arabic script. Overridden per
+// call by config.stt.defaultModel (Settings → Speech-to-Text).
+let defaultModel = 'small'
+// Configured transcription language (config.stt.language). '' = unset, which
+// resolves to PINNED ENGLISH — detection is the explicit 'auto' opt-in, never
+// the silent default (see resolveLanguage).
+let defaultLanguage = ''
 let getConversationId = () => null
 
 // Locate the shared python runtime, tolerating the dot-prefix rename bundled
@@ -77,8 +84,8 @@ const toolDefinitions = [
       type: 'object',
       properties: {
         filePath: { type: 'string', description: 'Absolute path or workspace-relative path' },
-        language: { type: 'string', description: 'ISO 639-1 language code, optional' },
-        model: { type: 'string', description: 'tiny/base/small/medium/large, default base' }
+        language: { type: 'string', description: "Whisper ISO 639-1 code or 'auto'. Omit to use the configured default (Settings → Speech-to-Text; factory default en)" },
+        model: { type: 'string', description: 'tiny/base/small/medium/large, default small' }
       },
       required: ['filePath']
     }
@@ -91,8 +98,8 @@ const toolDefinitions = [
       type: 'object',
       properties: {
         fileName: { type: 'string', description: 'Filename of the uploaded audio' },
-        language: { type: 'string', description: 'ISO 639-1 language code, optional' },
-        model: { type: 'string', description: 'tiny/base/small/medium/large, default base' }
+        language: { type: 'string', description: "Whisper ISO 639-1 code or 'auto'. Omit to use the configured default (Settings → Speech-to-Text; factory default en)" },
+        model: { type: 'string', description: 'tiny/base/small/medium/large, default small' }
       },
       required: ['fileName']
     }
@@ -104,8 +111,8 @@ const toolDefinitions = [
       type: 'object',
       properties: {
         fileName: { type: 'string', description: 'Voice memo filename (.mp3)' },
-        language: { type: 'string', description: 'ISO 639-1 language code, optional' },
-        model: { type: 'string', description: 'tiny/base/small/medium/large, default base' }
+        language: { type: 'string', description: "Whisper ISO 639-1 code or 'auto'. Omit to use the configured default (Settings → Speech-to-Text; factory default en)" },
+        model: { type: 'string', description: 'tiny/base/small/medium/large, default small' }
       },
       required: ['fileName']
     }
@@ -249,6 +256,46 @@ function pickModel(model) {
   return chosen === 'large' ? 'large-v3' : chosen
 }
 
+// Every language code faster-whisper's tokenizer accepts (SYSTRAN/faster-whisper
+// _LANGUAGE_CODES, 100 entries). Mirrored — with labels — in the desktop panel
+// (SpeechToTextPanel), the CLI settings table and the phone's services screen;
+// an unknown code here would crash the python worker, so membership is checked
+// before anything reaches --language.
+const WHISPER_LANGUAGES = new Set([
+  'af', 'am', 'ar', 'as', 'az', 'ba', 'be', 'bg', 'bn', 'bo', 'br', 'bs', 'ca', 'cs', 'cy',
+  'da', 'de', 'el', 'en', 'es', 'et', 'eu', 'fa', 'fi', 'fo', 'fr', 'gl', 'gu', 'ha', 'haw',
+  'he', 'hi', 'hr', 'ht', 'hu', 'hy', 'id', 'is', 'it', 'ja', 'jw', 'ka', 'kk', 'km', 'kn',
+  'ko', 'la', 'lb', 'ln', 'lo', 'lt', 'lv', 'mg', 'mi', 'mk', 'ml', 'mn', 'mr', 'ms', 'mt',
+  'my', 'ne', 'nl', 'nn', 'no', 'oc', 'pa', 'pl', 'ps', 'pt', 'ro', 'ru', 'sa', 'sd', 'si',
+  'sk', 'sl', 'sn', 'so', 'sq', 'sr', 'su', 'sv', 'sw', 'ta', 'te', 'tg', 'th', 'tk', 'tl',
+  'tr', 'tt', 'uk', 'ur', 'uz', 'vi', 'yi', 'yo', 'yue', 'zh'
+])
+
+/**
+ * The language a transcription runs in. An explicit per-call `language`
+ * argument wins; otherwise the configured default applies; otherwise pinned
+ * English. '' (autodetect) comes out ONLY from an explicit 'auto' — never as
+ * a fallback: on short clips Whisper's detection misfires (English speech
+ * transcribed into Arabic script was the shipped failure), so detection is
+ * strictly opt-in. Returns { ok, language } — an unknown explicit code is an
+ * error the model can act on; an unknown CONFIG value degrades to autodetect
+ * instead (a settings typo must not brick every voice note).
+ */
+function resolveLanguage(explicit) {
+  if (typeof explicit === 'string' && explicit.trim().length > 0) {
+    const code = explicit.trim().toLowerCase()
+    if (code === 'auto') return { ok: true, language: '' }
+    if (WHISPER_LANGUAGES.has(code)) return { ok: true, language: code }
+    return {
+      ok: false,
+      error: `Unknown language "${explicit}". Pass a Whisper ISO 639-1 code (e.g. en, ar, zh) or "auto".`
+    }
+  }
+  const configured = (defaultLanguage || 'en').toLowerCase()
+  if (configured === 'auto') return { ok: true, language: '' }
+  return { ok: true, language: WHISPER_LANGUAGES.has(configured) ? configured : '' }
+}
+
 // Run the bundled worker with the venv interpreter. Never rejects.
 function runScript(args, timeoutMs, label) {
   return new Promise((resolve) => {
@@ -322,11 +369,17 @@ async function transcribeFile(absPath, language, model, corpus) {
   }
 
   const chosenModel = pickModel(model)
-  corpus?.('stt.transcribing', { filePath: absPath, model: chosenModel })
+  const resolved = resolveLanguage(language)
+  if (!resolved.ok) return { success: false, error: resolved.error }
+  corpus?.('stt.transcribing', {
+    filePath: absPath,
+    model: chosenModel,
+    language: resolved.language || 'auto'
+  })
 
   const args = ['--audio', absPath, '--model-size', chosenModel, '--download-root', modelDownloadRoot()]
-  if (typeof language === 'string' && language.trim().length > 0) {
-    args.push('--language', language.trim())
+  if (resolved.language) {
+    args.push('--language', resolved.language)
   }
 
   const res = await runScript(args, 0, 'faster-whisper')
@@ -431,16 +484,20 @@ const plugin = {
   },
 
   async execute(toolName, args) {
-    // Read the default model from config on each call so changes take effect
-    // without a reload. Best-effort.
+    // Read the defaults from config on each call so Settings changes take
+    // effect without a reload. Best-effort. The truthiness guard matters: an
+    // empty-string defaultModel persisted by a partial settings write would
+    // otherwise blank the model and crash the worker.
     try {
       const cfgPath = path.join(workspaceRoot, 'config.json')
       const raw = await readFile(cfgPath, 'utf8')
       const cfg = JSON.parse(raw)
       const m = cfg?.stt?.defaultModel
-      if (typeof m === 'string') defaultModel = m
+      if (typeof m === 'string' && m.trim().length > 0) defaultModel = m
+      const l = cfg?.stt?.language
+      if (typeof l === 'string') defaultLanguage = l.trim()
     } catch {
-      // keep default
+      // keep defaults
     }
 
     switch (toolName) {

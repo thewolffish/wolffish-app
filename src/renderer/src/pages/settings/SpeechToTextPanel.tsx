@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next'
 import { CapabilityGateBody, CapabilityGateCard, useCapabilityGate } from './capabilityGate'
 import { EngineInstallCard } from './EngineInstallCard'
 import { useEngineInstall } from './useEngineInstall'
+import { WHISPER_LANGUAGES } from './whisperLanguages'
 
 // Size, speed and blurb per model all live in the locale files under
 // `settings.services.stt.models.<id>` — the sizes carry a unit word that has
@@ -13,7 +14,12 @@ import { useEngineInstall } from './useEngineInstall'
 const MODEL_IDS = ['tiny', 'base', 'small', 'medium', 'large'] as const
 
 const FORMATS = ['MP3', 'WAV', 'M4A', 'OGG', 'FLAC', 'WEBM', 'AAC']
-const DEFAULT_MODEL = 'base'
+// 'small', not 'base' — mirrors the plugin default: base misdetects short
+// accented clips badly enough to transcribe English speech into Arabic script.
+const DEFAULT_MODEL = 'small'
+// Transcription is PINNED to one language; 'auto' (Whisper detection) is the
+// explicit opt-in. '' in config means unset → the plugin pins English.
+const DEFAULT_LANGUAGE = 'en'
 
 export function SpeechToTextPanel(): React.JSX.Element {
   const { t } = useTranslation()
@@ -21,8 +27,9 @@ export function SpeechToTextPanel(): React.JSX.Element {
   const engine = useEngineInstall('stt')
   const ready = engine.installed === true
   const [model, setModel] = useState(DEFAULT_MODEL)
+  const [language, setLanguage] = useState(DEFAULT_LANGUAGE)
 
-  // Load the persisted default once on mount; persist on every
+  // Load the persisted defaults once on mount; persist on every
   // change so the cerebellum plugin (which re-reads config.json
   // before every transcribe call) picks up new selections without
   // a restart.
@@ -31,20 +38,22 @@ export function SpeechToTextPanel(): React.JSX.Element {
     void window.api.stt.getConfig().then((cfg) => {
       if (cancelled) return
       if (cfg.defaultModel) setModel(cfg.defaultModel)
+      if (cfg.language) setLanguage(cfg.language)
     })
     return () => {
       cancelled = true
     }
   }, [])
 
-  // The paired phone (or another window) can change the model too; re-seed
-  // when it does. The select saves on change, so there is no draft to guard.
+  // The paired phone (or another window) can change these too; re-seed
+  // when one does. The selects save on change, so there is no draft to guard.
   useEffect(
     () =>
       window.api.services.onChanged((payload) => {
         if (payload.service !== 'stt') return
         void window.api.stt.getConfig().then((cfg) => {
           if (cfg.defaultModel) setModel(cfg.defaultModel)
+          if (cfg.language) setLanguage(cfg.language)
         })
       }),
     []
@@ -53,6 +62,11 @@ export function SpeechToTextPanel(): React.JSX.Element {
   const onModelChange = (next: string): void => {
     setModel(next)
     void window.api.stt.setConfig({ defaultModel: next })
+  }
+
+  const onLanguageChange = (next: string): void => {
+    setLanguage(next)
+    void window.api.stt.setConfig({ language: next })
   }
 
   const modelOptions: SelectOption<string>[] = useMemo(
@@ -65,6 +79,17 @@ export function SpeechToTextPanel(): React.JSX.Element {
           speed: t(`settings.services.stt.models.${id}.speed`).toLocaleLowerCase()
         })
       })),
+    [t]
+  )
+
+  // 'auto' pinned first with a localized label; the 100 languages keep their
+  // English labels (like the Kokoro voice catalog) so the search box always
+  // matches what the list shows.
+  const languageOptions: SelectOption<string>[] = useMemo(
+    () => [
+      { value: 'auto', label: t('settings.services.stt.languageAuto') },
+      ...WHISPER_LANGUAGES.map((l) => ({ value: l.code, label: l.label }))
+    ],
     [t]
   )
 
@@ -129,10 +154,14 @@ export function SpeechToTextPanel(): React.JSX.Element {
 
               <div className="border-border/60 border-t" />
 
-              <div className="flex flex-col gap-1">
-                <span className="text-muted text-sm font-medium">
-                  {t('settings.services.stt.language')}
-                </span>
+              <div className="flex flex-col gap-2">
+                <Select<string>
+                  label={t('settings.services.stt.language')}
+                  value={language}
+                  options={languageOptions}
+                  onChange={onLanguageChange}
+                  searchable
+                />
                 <p className="text-muted text-xs">
                   {t('settings.services.stt.languageDescription')}
                 </p>

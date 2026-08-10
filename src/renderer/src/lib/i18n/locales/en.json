@@ -611,7 +611,13 @@
         "speed": "Speech rate",
         "previewHint": "Preview plays the selected Kokoro voice",
         "previewError": "Couldn't play the preview. Please try again.",
-        "voicesTitle": "Available voices"
+        "voicesTitle": "Available voices",
+        "voiceReplies": {
+          "title": "Voice replies",
+          "description": "When you send a voice prompt, Wolffish replies with a spoken voice memo. Files and text still arrive when the work needs them — the reply just ends spoken aloud. Turn this off to get text replies to voice prompts.",
+          "on": "On",
+          "off": "Off"
+        }
       },
       "stt": {
         "title": "Speech-to-Text",
@@ -622,7 +628,8 @@
         "installRequirement": "Installs the faster-whisper engine. The selected model downloads on first use.",
         "model": "Default model",
         "language": "Language",
-        "languageDescription": "Auto-detected by default. You can specify a language per transcription to improve accuracy.",
+        "languageDescription": "Every voice note and transcription is pinned to this language. Pick Auto-detect only if you switch languages often — detection can misread short recordings.",
+        "languageAuto": "Auto-detect",
         "modelsTitle": "Available models",
         "formatsTitle": "Supported formats",
         "modelOption": "{{id}} — {{size}} ({{speed}})",

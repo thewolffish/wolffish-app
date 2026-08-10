@@ -58,7 +58,7 @@ import {
   type WorkflowAgentResult,
   type WorkflowModelChoice
 } from '@main/runtime/workflow'
-import { formatRuntimeStatus } from '@main/runtime/outbound'
+import { formatRuntimeStatus, VOICE_REPLY_NOTICE } from '@main/runtime/outbound'
 import fs from 'node:fs/promises'
 import { Prefrontal } from '@main/runtime/prefrontal'
 import { RAS } from '@main/runtime/ras'
@@ -888,6 +888,22 @@ export class Agent {
     // a new band, and reset to 0 when the agent recovers — so a parked master is
     // woken a small, bounded number of times, not on every iteration.
     let noProgressBand = 0
+    // Voice-prompted turn (every surface wraps a spoken message in
+    // <voice_note …> as the FIRST bytes of the history entry) with Voice
+    // replies ON and the TTS tools present: computed ONCE per turn, then
+    // restated in the runtime tail every iteration — the <voice_prompts>
+    // system-prompt block carries the full rule, and the shipped failure was
+    // a model reading that block and replying in text anyway, so the rule
+    // also rides at the request's most salient position. Master/single turns
+    // only: a subagent never speaks to the user. Config read failure means no
+    // notice (fail-open to the system prompt's own rule), never a crash.
+    const voiceReplyNotice =
+      turn.role !== 'agent' &&
+      /^<voice_note[\s>]/.test(userContent) &&
+      !this.cerebellum.isDisabled('text-to-speech') &&
+      (await readConfig().catch(() => null))?.tts?.voiceReplies !== false
+        ? VOICE_REPLY_NOTICE
+        : undefined
     let stopReason: SegmentTurnEndReason | 'canceled' = 'end_turn'
     let lastAssistantText = ''
     let lastReasoningContent: string | undefined
@@ -1063,7 +1079,8 @@ export class Agent {
           online,
           noProgress: noProgressText,
           channelFormat: channelFormatText,
-          videoTasks: videoTasksText
+          videoTasks: videoTasksText,
+          voiceReply: voiceReplyNotice
         }
 
         let systemPrompt: string
@@ -1192,12 +1209,16 @@ export class Agent {
           // prefix hash.
           volatileStatus:
             optimizeContext &&
+            // voiceReplyNotice keeps iteration 1 in: a conversational voice
+            // turn often ends without a single tool call, so a tail deferred
+            // to iteration 2 would never render the one notice that matters.
             (iterationCount > 1 ||
               workingFoldersBlock ||
               !online ||
               noProgressText ||
               channelFormatText ||
-              videoTasksText)
+              videoTasksText ||
+              voiceReplyNotice)
               ? formatRuntimeStatus({
                   iteration: iterationCount,
                   toolsCalled: totalToolCalls,
@@ -1205,7 +1226,8 @@ export class Agent {
                   online,
                   noProgress: noProgressText,
                   channelFormat: channelFormatText,
-                  videoTasks: videoTasksText
+                  videoTasks: videoTasksText,
+                  voiceReply: voiceReplyNotice
                 }) + (workingFoldersBlock ? `\n${workingFoldersBlock}` : '')
               : undefined
         })

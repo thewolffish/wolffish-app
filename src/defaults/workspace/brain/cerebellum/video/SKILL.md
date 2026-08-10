@@ -25,18 +25,18 @@ tools:
     description: "Confirm video generation is configured and the API key works — costs nothing and spends no credits. Call this FIRST when a video request is the start of a conversation, when a previous generation failed on credentials, or any time you are unsure the service is set up; a generation attempt against an unconfigured service wastes a turn and confuses the user. Reports exactly what to tell them when something is missing."
     parameters: {}
   - name: video_generate
-    description: "Start a MiniMax H3 video generation task. ASYNC: returns a task id immediately and a live task card appears in chat on its own — do NOT restate the card's contents; add at most one short sentence, then call video_await to collect the result (typical 1.5–5 min). YOU place the media, nothing else does it for you: read every file path and https URL out of the user's message and pass each one in the parameter that matches what it IS (still image → first_frame, last_frame or reference_images; video clip → reference_videos; sound → reference_audios) and what they said it is FOR. Never leave a media URL sitting in the prompt text, and never guess a slot — when you cannot tell whether a link is an image, a clip or audio (no file extension, a share or page link, an unexplained role), call ask_user offering exactly those choices and generate only after they answer. Media inputs are local file paths (absolute, ~/ or workspace-relative) or public https URLs; files are auto-validated and auto-optimized (downscale/transcode) to fit API limits, URLs pass through untouched. Generated videos include an AI soundtrack. Costs real API credits per run — one task per user request unless they ask for variants."
+    description: "Start a MiniMax H3 video generation task. ASYNC: returns a task id immediately and a live task card appears in chat on its own — do NOT restate the card's contents; add at most one short sentence, then call video_await to collect the result (typical 1.5–5 min). YOU place the media, nothing else does it for you: read every file path and https URL out of the user's message and pass each one in the parameter that matches what it IS (still image → first_frame, last_frame or reference_images; video clip → reference_videos; sound → reference_audios) and what they said it is FOR. Never leave a media URL sitting in the prompt text, and never guess a slot — when you cannot tell whether a link is an image, a clip or audio (no file extension, a share or page link, an unexplained role), call ask_user offering exactly those choices and generate only after they answer. Media inputs are local file paths (absolute, ~/ or workspace-relative) or public https URLs; files are auto-validated and auto-optimized (downscale/transcode) to fit API limits, URLs pass through untouched. The user's format asks travel the same way — as parameters, never prompt words: a stated length goes in duration_seconds, stated quality in resolution, stated orientation in ratio; 'a 15 second vertical clip' written only in the prompt text generates the 6s 16:9 default. Generated videos include an AI soundtrack. Costs real API credits per run — one task per user request unless they ask for variants."
     parameters:
       prompt:
         type: string
-        description: "What to generate, up to 7000 chars. Rich cinematic language works best — subject, action, camera movement, lighting, mood."
+        description: "What to generate, up to 7000 chars. Rich cinematic language works best — subject, action, camera movement, lighting, mood. Scene words only: a length, resolution or aspect ratio written here does nothing — those have their own parameters."
       title:
         type: string
         description: "Short human label for the task card header (defaults to a prompt snippet)."
         required: false
       duration_seconds:
         type: number
-        description: "Clip length in seconds — integer 4 to 15. Default 6."
+        description: "Clip length in seconds — integer 4 to 15. The default 6 is ONLY for requests that name no length: when the user says '15 seconds' this MUST be 15 — a length written in the prompt text instead silently produces the 6s default. Beyond 15s is impossible in one task: say so and offer one 15s clip or a multi-clip sequence."
         required: false
       resolution:
         type: string
@@ -178,6 +178,28 @@ The tools defend the same line: a URL whose extension proves the wrong kind
 correct parameter named. Extensionless URLs are passed through untouched — which
 is exactly why the ask above is yours to make, not the tool's.
 
+## The user's specs ride as parameters too
+
+Exactly like media, format asks are parameters, never prompt words. The API
+reads `duration_seconds`, `resolution` and `ratio` — it does not read "a 15
+second vertical clip in 2K" out of the prompt; that prose generates the
+default 6 s, 768P, 16:9 video. Mine the request for specs the same way you
+mine it for media:
+
+| They said | Parameter |
+| --- | --- |
+| "15 seconds", "a short 4s clip", "as long as possible" | `duration_seconds: 15` / `4` / `15` |
+| "2K", "high quality", "max resolution" | `resolution: "2K"` |
+| "vertical", "portrait", "for Shorts/Reels/TikTok" | `ratio: "9:16"` (text-only runs — with visual inputs still omit `ratio`) |
+| "square" | `ratio: "1:1"` |
+
+Defaults (6 s, 768P, 16:9) are for requests that say nothing — never
+overrides of what the user asked. A length beyond 15 s cannot happen in one
+task: say so and offer one 15 s clip or a sequence to stitch. The
+`video_generate` result echoes the settings actually used — if they do not
+match what the user asked, `video_cancel` and resubmit before the credits
+are spent.
+
 ## The task flow (follow exactly)
 
 0. `video_check` when the service's state is unknown (first video request of a
@@ -227,3 +249,8 @@ enforces it but you:
   `video_generate` verbatim, no rewriting or added style language, however
   flat it looks. Strip only obvious non-prompt framing ("make a video
   of…"). No replay needed: they already know what they wrote.
+
+Both modes share one hard rule: directing (or verbatim forwarding) shapes
+the **prose**. A length, resolution or ratio the user stated goes in its
+parameter — a rewrite must never eat a spec, and leaving it in the prompt
+text does not send it.

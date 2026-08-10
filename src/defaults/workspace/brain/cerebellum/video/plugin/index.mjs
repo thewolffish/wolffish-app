@@ -74,7 +74,7 @@ async function generate(args) {
   })
   if (!result.ok) return { success: false, error: `video_generate: ${result.error}` }
   const lines = [
-    `Video task created: ${result.snapshot.taskId}`,
+    `Video task created: ${describe(result.snapshot)}`,
     `Task card is live in chat and updates itself — do not narrate its contents.`
   ]
   if (result.notes.length > 0) {

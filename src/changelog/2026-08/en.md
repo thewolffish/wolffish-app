@@ -1,4 +1,18 @@
-## v1.0.243 — 2026-08-10 `Latest`
+## v1.0.244 — 2026-08-10 `Latest`
+
+### The Voice Reply Grew a Switch — and Teeth
+
+The last release made a spoken prompt earn a spoken reply by default; now that default is **a switch you own**: **Voice replies**, on the Text-to-Speech card, on by default — turn it off and a voice note gets a normal typed answer instead. The bigger half of the change is that the rule itself grew teeth. Until now it lived as a paragraph in the agent's standing instructions, and the failure that surfaced was exactly the one you'd guess: a rule buried in a very long prompt gets read — and the reply comes back as silent text anyway. So the instruction is now **built from the live setting on every turn**, which means what the agent is told can never contradict what the switch says, and a voice-prompted turn additionally carries a **reminder at the tail of the request on every single step** — the position a model attends to most — saying this turn closes with one spoken memo. Files, tables and code still arrive exactly as a typed turn would deliver them; the memo speaks the answer over them as the wrap-up. Your own words still beat everything — say **"reply in text"** and it's a text turn. The switch flips from the desktop card, from `wolffish settings` in the terminal, and from your phone.
+
+### The Transcriber Stopped Guessing Your Language
+
+Speak a short sentence and automatic language detection could mishear the whole clip — the failure that forced this was an English voice note coming back **transcribed into Arabic script**. On short recordings detection is a guess dressed as a feature, so it stopped being the default: transcription is now **pinned to a language you choose** — a new **Language** setting on the Speech-to-Text card, factory-set to English, a searchable list of **100 languages**, and **Auto-detect** demoted to an explicit opt-in for people who genuinely live in two tongues. Every voice note from every surface — the in-app mic, Telegram, WhatsApp, your phone — and every transcription follows the pin; naming a language for one specific file still wins for that file. The default model moved up a size too, **from base to small**, because the smaller model's hearing was part of the problem. And the pin fails safe in both directions: a broken stored value falls back to detection rather than taking every voice note down with it, while a wrong language code in a tool call returns a correction the agent can read and act on. The same 100 languages appear everywhere the setting does — desktop, terminal, phone — so no surface can offer a language another surface refuses.
+
+### Fifteen Seconds Means Fifteen Seconds
+
+Ask for "a 15-second vertical clip" and what came back was six seconds of landscape: the generator **never reads format words out of the prompt text** — length, quality and orientation are parameters of their own, and specs left in prose silently produced the defaults. The agent now treats your specs as **orders, not scenery**: a named length goes in the duration parameter, named quality in resolution, "vertical", "portrait" or "for Reels" in the aspect ratio — and this holds in **both Director modes**, because a cinematic rewrite must never eat a spec, and a verbatim pass-through must still set the knobs. Impossible asks stopped being silent too: past the 15-second ceiling the agent says so and offers one 15-second clip or a sequence to stitch. And the moment a task is created, its confirmation **echoes the settings actually in flight** — resolution, duration, ratio — so a mismatch shows itself while cancelling still saves the credits.
+
+## v1.0.243 — 2026-08-10
 
 ### Talk to It and It Talks Back
 

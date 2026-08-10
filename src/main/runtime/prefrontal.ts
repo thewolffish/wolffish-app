@@ -109,6 +109,17 @@ export type RuntimeContext = {
    * nothing.
    */
   videoTasks?: string
+  /**
+   * Voice-reply notice for a voice-prompted turn (the last user message is
+   * a `<voice_note>` transcript) while the Voice replies setting is ON —
+   * the deterministic every-iteration restatement of "this turn ends with
+   * one voice_respond". Computed once per turn by the Agent (setting +
+   * capability + role gates live there); stable across the turn's
+   * iterations, so it rides the same volatile vehicle as noProgress with
+   * the same cache rationale. Undefined (typed turns, setting off, TTS
+   * disabled, agent role) renders nothing.
+   */
+  voiceReply?: string
 }
 
 const ALWAYS_INCLUDED: Array<{ category: ContextCategory; rel: string; tag: string }> = [
@@ -283,7 +294,8 @@ export class Prefrontal {
       await this.buildRoleBlock(role),
       opts?.localModel ? LOCAL_MODEL_PROMPT : '',
       opts?.channel ? (CHANNEL_PROMPTS[opts.channel] ?? '') : '',
-      await this.buildVideoPromptingBlock()
+      await this.buildVideoPromptingBlock(),
+      await this.buildVoicePromptingBlock(role)
     ].filter((b) => b && b.length > 0)
     return blocks.join('\n\n')
   }
@@ -303,12 +315,45 @@ export class Prefrontal {
     const director = config?.video?.director !== false
     if (director) {
       return `<video_prompting>
-Director mode is ON (a Settings toggle the user controls). When generating a video you are the DIRECTOR: expand the user's request into a full cinematic prompt — subject, action, camera movement, light, mood — before calling video_generate, and pick duration/resolution/ratio from context. Sparse prompts produce flat footage; your rewrite is where the quality comes from. AFTER submitting, show the user the optimized prompt you actually sent, as a short quoted block introduced naturally (e.g. "Directed as:") — they steer the next take by editing it. Never present the rewrite as the user's own words.
+Director mode is ON (a Settings toggle the user controls). When generating a video you are the DIRECTOR: expand the user's request into a full cinematic prompt — subject, action, camera movement, light, mood — before calling video_generate. Directing rewrites the PROSE only: specs the user stated are orders, not context — a named length goes in duration_seconds, named quality in resolution, named orientation in ratio (format words inside the prompt text change nothing) — and only what they left unstated is yours to pick. Sparse prompts produce flat footage; your rewrite is where the quality comes from. AFTER submitting, show the user the optimized prompt you actually sent, as a short quoted block introduced naturally (e.g. "Directed as:") — they steer the next take by editing it. Never present the rewrite as the user's own words.
 </video_prompting>`
     }
     return `<video_prompting>
-Director mode is OFF (a Settings toggle the user controls). When generating a video, pass the user's request to video_generate VERBATIM as the prompt — no rewriting, no embellishment, no added camera or style language, even when you are sure it would look better. Trim only what is clearly not the prompt itself (e.g. "make a video of ..." framing). You still pick duration/resolution/ratio from explicit instructions or the defaults, and you may mention that Director mode is available if a result looks flat.
+Director mode is OFF (a Settings toggle the user controls). When generating a video, pass the user's request to video_generate VERBATIM as the prompt — no rewriting, no embellishment, no added camera or style language, even when you are sure it would look better. Trim only what is clearly not the prompt itself (e.g. "make a video of ..." framing). You still SET the parameters: a length, quality or orientation the user named goes in duration_seconds/resolution/ratio (words in the prompt text alone change nothing — '15 seconds' left there produces the 6s default), defaults fill only what they left unstated. You may mention that Director mode is available if a result looks flat.
 </video_prompting>`
+  }
+
+  /**
+   * The voice-prompt directive — how to answer a `<voice_note>` message,
+   * matching the Voice replies toggle (Settings → Text-to-Speech, default
+   * ON). Same contract as the video block: read from config at prompt build
+   * (turn-stable), honored by the model alone — the harness never
+   * synthesizes or suppresses audio itself. The deterministic backstop for
+   * the ON rule is the per-iteration runtime-tail notice the Agent adds to
+   * voice-prompted turns (VOICE_REPLY_NOTICE in outbound.ts) — this block
+   * carries the full rule; the notice restates it where it cannot be
+   * missed. Empty for an agent role (a subagent never speaks to the user)
+   * and when the text-to-speech capability is disabled (no voice_respond
+   * to call — instructions for absent tools are noise).
+   */
+  private async buildVoicePromptingBlock(role?: 'master' | 'agent'): Promise<string> {
+    if (role === 'agent') return ''
+    if (this.cerebellum?.isDisabled('text-to-speech')) return ''
+    const config = await readConfig().catch(() => null)
+    const voiceReplies = config?.tts?.voiceReplies !== false
+    if (voiceReplies) {
+      return `<voice_prompts>
+Voice replies are ON (a Settings → Text-to-Speech toggle the user controls). A user message tagged <voice_note> was SPOKEN: the text is its transcript (already transcribed — NEVER call stt_* tools on its attached audio), and the lang="…" attribute is the language to reply in — authoritative, even when it differs from the user's usual language.
+When the current turn's user message is a <voice_note>, your reply MUST include audio — this is the rule, not a preference:
+- END the turn with exactly ONE voice_respond call that speaks your answer. Text and media BEFORE it are welcome when the work produces them — deliver files, tables, code, charts exactly as a typed turn would (send_file, cards, prose), then close with the voice_respond that speaks the answer or summary over them. The memo is your wrap-up, and it comes last, every time.
+- A purely conversational answer needs no text at all: the one voice_respond IS the reply — write nothing beyond a brief label like "Voice memo", and never restate the memo's content as prose (a duplicate text bubble next to the audio reads as broken).
+- voice_respond text is plain speech — no markup, no bullets, no code — and leave its voice parameter unset: the user picked their voice in Settings.
+The ONLY exception: the user's own message explicitly asks for something else ("reply in text", "write it down", dictating content for a document). Otherwise a voice prompt gets a voice reply — no matter how much text and media the work needed along the way.
+</voice_prompts>`
+    }
+    return `<voice_prompts>
+Voice replies are OFF (a Settings → Text-to-Speech toggle the user controls). A user message tagged <voice_note> was SPOKEN: the text is its transcript (already transcribed — NEVER call stt_* tools on its attached audio), and the lang="…" attribute is the language to reply in. Reply as a normal text turn — no automatic voice memo. Use voice_generate/voice_respond only when the user explicitly asks for audio.
+</voice_prompts>`
   }
 
   /**
@@ -784,6 +829,9 @@ function formatRuntimeBody(runtime: RuntimeContext | undefined): string {
     if (runtime.channelFormat) lines.push(`  ${runtime.channelFormat}`)
     // Video-task landing notice — same vehicle, same reason.
     if (runtime.videoTasks) lines.push(`  ${runtime.videoTasks}`)
+    // Voice-reply notice (voice-prompted turn, Voice replies ON) — same
+    // vehicle, same reason.
+    if (runtime.voiceReply) lines.push(`  ${runtime.voiceReply}`)
   }
   return lines.join('\n')
 }

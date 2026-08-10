@@ -380,9 +380,14 @@ export async function buildConfigSnapshot(sources: SnapshotSources): Promise<Con
         imgflipPassword: str(config.memes?.imgflip?.password),
         giphyApiKey: str(config.memes?.giphy?.apiKey)
       },
-      sttModel: str(stt.defaultModel, 'base'),
+      sttModel: str(stt.defaultModel, 'small'),
+      // Pinned transcription language ('auto' = Whisper detection). The 'en'
+      // fallback mirrors the plugin's own default for an unset config.
+      sttLanguage: str(stt.language, 'en'),
       ttsVoice: str(tts.defaultVoice, 'af_bella'),
       ttsSpeed: str(tts.defaultSpeed, '1.0'),
+      // Voice prompts get spoken replies — absent-means-on, like videoDirector.
+      ttsVoiceReplies: tts.voiceReplies !== false,
       screenshotMaxWidth: str(computerUse.screenshotMaxWidth, '1280'),
       screenshotFormat: str(computerUse.screenshotFormat, 'jpeg'),
       browserExtension: {
