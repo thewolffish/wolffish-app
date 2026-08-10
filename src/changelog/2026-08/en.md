@@ -1,4 +1,14 @@
-## v1.0.246 — 2026-08-10 `Latest`
+## v1.0.247 — 2026-08-10 `Latest`
+
+### The Failure That Read as a Normal Reply
+
+A turn that died mid-run — a provider outage, an expired key — showed its **error card** on the phone while the run was live; open the same conversation again and the failure had vanished into a clean transcript, because the stored copy of a message **never carried how the turn ended**. It does now: every message travels with its **stop reason and its error**, so the card the phone draws over a live failure is the same card waiting when you come back — a failed turn **stays visibly failed**, however you arrive at it.
+
+### On Your Phone From the First Instant
+
+Start a run the phone didn't start itself — an **automation** firing on schedule, a **Telegram or WhatsApp** message — and the phone's conversation list used to improvise: a conversation's details were pushed at every stage of a run **except its start**, exactly the moment a brand-new run most needs introducing, so until things moved along the list synthesized a stand-in row from the live turn, with no real title, icon or origin. The conversation's identity now rides **every phase of a run, start included** — an autonomous run saves its shell before its first step, and channel turns persist the prompt the same way — so the list shows the **real title, icon and origin from the moment a run begins**. And since that push now fires far more often, it learned to travel light: updating one row **reads that one conversation's file** instead of walking the entire history for a single row's worth of fields.
+
+## v1.0.246 — 2026-08-10
 
 ### Paste Anything Into an Automation
 

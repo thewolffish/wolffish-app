@@ -1682,6 +1682,14 @@ const mirrorMessageToRenderer = (
  * running; the terminal phases tell it the stored body is now behind, which
  * is what makes a run started elsewhere land on the phone without the user
  * doing anything.
+ *
+ * The metadata rides EVERY phase, `started` included: an autonomous run saves
+ * its conversation shell before its lifecycle fires (that ordering is what
+ * puts it in this app's own rail the moment it starts), and channel turns
+ * persist their prompt the same way — so the phone's list can show the real
+ * title, icon and origin from the first instant instead of synthesizing a row
+ * from the live turn until the run ends. A conversation with no file yet (an
+ * in-app first message, saved when the turn folds) simply pushes nothing.
  */
 function pushTurnToMobile(ev: {
   phase: string
@@ -1691,7 +1699,7 @@ function pushTurnToMobile(ev: {
   if (!ev.conversationId) return
   try {
     mobileChannel.pushTurnStatus(ev.conversationId, ev.phase, ev.channel ?? null)
-    if (ev.phase !== 'started') void pushConversationToMobile(ev.conversationId)
+    void pushConversationToMobile(ev.conversationId)
   } catch {
     // never let a dead tunnel disturb a turn
   }
@@ -2322,23 +2330,26 @@ function broadcastThemeUpdate(): void {
 /**
  * Push one conversation's metadata to the phone. Metadata only, matching the
  * index: the phone fetches the body when the user opens it.
+ *
+ * Reads the one file it describes rather than listing the whole directory —
+ * this now runs at every turn START as well as every end, and a walk of the
+ * full history per turn is real I/O for a single row's worth of fields.
  */
 async function pushConversationToMobile(id: string): Promise<void> {
   try {
-    const all = await listConversations()
-    const meta = all.find((row) => row.id === id)
-    if (!meta) return
+    const conv = await loadConversation(id)
+    if (!conv) return
     mobileChannel.pushConversationUpserted({
-      id: meta.id,
-      title: meta.title,
+      id: conv.id,
+      title: conv.title,
       model: null,
-      channel: meta.channel ?? null,
-      icon: meta.icon ?? null,
-      projectId: meta.projectId ?? null,
+      channel: conv.channel ?? null,
+      icon: conv.icon ?? null,
+      projectId: conv.projectId ?? null,
       sealed: false,
-      createdAt: meta.updatedAt,
-      updatedAt: meta.updatedAt,
-      messageCount: meta.messageCount,
+      createdAt: conv.updatedAt,
+      updatedAt: conv.updatedAt,
+      messageCount: conv.messages?.length ?? 0,
       stats: null,
       summary: null
     })

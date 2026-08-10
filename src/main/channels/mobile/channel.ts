@@ -2609,7 +2609,13 @@ function toWireConversation(file: ConversationFile): Record<string, unknown> {
         segments: (message as { segments?: unknown }).segments,
         approvals: (message as { approvals?: unknown }).approvals,
         toolTimings: (message as { toolTimings?: unknown }).toolTimings,
-        voicePrompt: (message as { voicePrompt?: unknown }).voicePrompt
+        voicePrompt: (message as { voicePrompt?: unknown }).voicePrompt,
+        // How the turn ended. `error` is what the phone's provider error card
+        // synthesizes from when a failure carries no structured providerErrors
+        // on its turn_end — without these a failed turn reads as a normal
+        // reply once the stored body replaces the live mirror.
+        stopReason: (message as { stopReason?: unknown }).stopReason,
+        error: (message as { error?: unknown }).error
       })
     }))
   }
