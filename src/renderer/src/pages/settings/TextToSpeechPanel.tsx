@@ -65,7 +65,6 @@ export function TextToSpeechPanel(): React.JSX.Element {
   const ready = engine.installed === true
   const [voice, setVoice] = useState(DEFAULT_VOICE)
   const [speed, setSpeed] = useState(DEFAULT_SPEED)
-  const [voiceReplies, setVoiceReplies] = useState(true)
   const [previewing, setPreviewing] = useState(false)
   const [previewLoading, setPreviewLoading] = useState(false)
   const [previewError, setPreviewError] = useState<string | null>(null)
@@ -87,7 +86,6 @@ export function TextToSpeechPanel(): React.JSX.Element {
       else void window.api.tts.setConfig({ defaultVoice: DEFAULT_VOICE })
       if (cfg.defaultSpeed && SPEED_VALUES.has(cfg.defaultSpeed)) setSpeed(cfg.defaultSpeed)
       else void window.api.tts.setConfig({ defaultSpeed: DEFAULT_SPEED })
-      setVoiceReplies(cfg.voiceReplies)
     })
     return () => {
       cancelled = true
@@ -104,7 +102,6 @@ export function TextToSpeechPanel(): React.JSX.Element {
         void window.api.tts.getConfig().then((cfg) => {
           if (cfg.defaultVoice && VOICE_IDS.has(cfg.defaultVoice)) setVoice(cfg.defaultVoice)
           if (cfg.defaultSpeed && SPEED_VALUES.has(cfg.defaultSpeed)) setSpeed(cfg.defaultSpeed)
-          setVoiceReplies(cfg.voiceReplies)
         })
       }),
     []
@@ -117,12 +114,6 @@ export function TextToSpeechPanel(): React.JSX.Element {
   const onSpeedChange = (next: string): void => {
     setSpeed(next)
     void window.api.tts.setConfig({ defaultSpeed: next })
-  }
-  const onVoiceRepliesToggle = (next: boolean): void => {
-    // No draft state — a phone-side flip re-seeds through services:changed,
-    // exactly like the video panel's Director toggle.
-    setVoiceReplies(next)
-    void window.api.tts.setConfig({ voiceReplies: next })
   }
 
   const voiceOptions: SelectOption<string>[] = useMemo(
@@ -303,8 +294,6 @@ export function TextToSpeechPanel(): React.JSX.Element {
             </div>
           </section>
 
-          <VoiceRepliesCard enabled={voiceReplies} onToggle={onVoiceRepliesToggle} />
-
           <section className="bg-surface border-border flex flex-col gap-3 rounded-2xl border p-6">
             <h2 className="text-fg text-sm font-medium">
               {t('settings.services.tts.voicesTitle')}
@@ -327,64 +316,5 @@ export function TextToSpeechPanel(): React.JSX.Element {
         </CapabilityGateBody>
       </div>
     </div>
-  )
-}
-
-/**
- * The Voice replies card: voice prompt in → spoken reply out, as a Settings
- * switch. A model directive only (the `<voice_prompts>` system-prompt block
- * and the per-iteration runtime notice tell the model to close voice-prompted
- * turns with one voice_respond) — the harness never synthesizes or suppresses
- * audio itself. Same tablist toggle as the video panel's Director card.
- */
-function VoiceRepliesCard({
-  enabled,
-  onToggle
-}: {
-  enabled: boolean
-  onToggle: (value: boolean) => void
-}): React.JSX.Element {
-  const { t } = useTranslation()
-  return (
-    <section className="bg-surface border-border flex flex-col gap-1 rounded-2xl border p-6">
-      <div className="flex items-center justify-between gap-3">
-        <h2 className="text-fg text-sm font-semibold">
-          {t('settings.services.tts.voiceReplies.title')}
-        </h2>
-        <div
-          role="tablist"
-          className="border-border bg-bg/40 inline-flex shrink-0 items-center rounded-lg border p-0.5"
-        >
-          {([false, true] as const).map((value) => {
-            const active = value === enabled
-            return (
-              <button
-                key={String(value)}
-                role="tab"
-                type="button"
-                aria-selected={active}
-                onClick={() => onToggle(value)}
-                className={cn(
-                  'rounded-md px-3 py-1 text-xs font-medium',
-                  'focus-visible:ring-accent focus-visible:ring-offset-bg focus-visible:ring-2 focus-visible:ring-offset-2',
-                  active
-                    ? 'bg-primary text-primary-fg shadow-sm'
-                    : 'text-muted hover:text-fg cursor-pointer'
-                )}
-              >
-                {t(
-                  value
-                    ? 'settings.services.tts.voiceReplies.on'
-                    : 'settings.services.tts.voiceReplies.off'
-                )}
-              </button>
-            )
-          })}
-        </div>
-      </div>
-      <p className="text-muted text-sm leading-relaxed">
-        {t('settings.services.tts.voiceReplies.description')}
-      </p>
-    </section>
   )
 }

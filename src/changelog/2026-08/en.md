@@ -1,4 +1,18 @@
-## v1.0.244 — 2026-08-10 `Latest`
+## v1.0.245 — 2026-08-10 `Latest`
+
+### The Voice-Reply Switch Found Its Home
+
+Yesterday the spoken-reply rule grew a switch on the Text-to-Speech card; today the switch lives where it belonged all along: **the Wolffish page**, with the app-wide preferences — launch at startup, start of week — because whether a voice note earns a spoken answer is a preference about *how Wolffish answers you*, not a fact about the speech engine. The terminal's `wolffish settings` moved it to the same place. And the wiring beneath it was cut down to **one honest rule**: this single switch now decides whether the voice-reply instructions exist *at all*. On — the default — and every conversation on every surface carries the **standing policy** (a spoken message closes with one spoken memo; files, tables and code still arrive first when the work makes them) along with the every-step reminder at the tail of the request — present whether or not the current message is spoken, so the rule is already standing when a voice note arrives mid-conversation instead of being re-derived turn by turn. Off, and the instructions are **gone entirely** — not flipped into a paragraph explaining what won't happen, which is what "off" used to inject — and a voice note simply gets a typed reply. Flip it from the desktop, the terminal or your phone, and the other surfaces follow live.
+
+### Settings That Say What They Change — and What They Don't
+
+The Appearance page kept its two choices behind **dropdowns with no explanation**: a control named Appearance, a control named Language, and not a word about what picking one would do. Both are now the **segmented controls** the rest of Settings speaks — **System / Light / Dark** laid out flat for the theme, **English / العربية** for the interface language — every choice visible at once, one click, no menu to open. And each carries **a plain sentence underneath** saying what it changes and, just as deliberately, what it doesn't: these are **display settings only**. The theme changes how the app looks and never touches the model; the interface language redraws menus and flips the layout right-to-left for Arabic, while the language the agent *replies* in follows, as it always has, **whatever language you write to it in**.
+
+### Start of Week, Now From the Phone
+
+The **Start of week** preference could be read from the phone but not changed there — the write path simply didn't exist. It does now, and it is **the desktop's own**: the phone's edit lands in the exact handler the desktop control calls, refuses anything that isn't Sunday or Monday, persists once, and announces itself — so an open desktop window adopts the new week start without a refetch, the same way every other phone-editable preference behaves.
+
+## v1.0.244 — 2026-08-10
 
 ### The Voice Reply Grew a Switch — and Teeth
 

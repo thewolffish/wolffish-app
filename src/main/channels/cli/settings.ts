@@ -902,18 +902,6 @@ export const CLI_SETTINGS: CliSetting[] = [
     wrap: 'defaultSpeed'
   },
   {
-    id: 'services.tts.voiceReplies',
-    group: 'services',
-    section: 'services.tts',
-    label: 'Voice replies',
-    description:
-      'When you send a voice prompt, Wolffish replies with a spoken voice memo — files and text still arrive first when the work needs them.',
-    kind: 'boolean',
-    read: 'services.ttsVoiceReplies',
-    channel: 'tts:setConfig',
-    wrap: 'voiceReplies'
-  },
-  {
     id: 'services.stt.model',
     group: 'services',
     section: 'services.stt',
@@ -1089,6 +1077,18 @@ export const CLI_SETTINGS: CliSetting[] = [
     actualRead: 'preferences.launchAtStartupActive',
     channel: 'runtime:setLaunchAtStartup',
     wrap: null
+  },
+  {
+    id: 'wolffish.voiceReplies',
+    group: 'wolffish',
+    section: 'wolffish.general',
+    label: 'Voice replies',
+    description:
+      'When you send a voice prompt, Wolffish replies with a spoken voice memo. Files and text still arrive when the work needs them — the reply just ends spoken aloud. This one switch controls whether the model is given the voice-reply instructions at all: on means every conversation carries the standing policy, off removes it entirely and voice prompts get text replies. Stored with the text-to-speech settings and synced live with the desktop Preferences page and the phone.',
+    kind: 'boolean',
+    read: 'services.ttsVoiceReplies',
+    channel: 'tts:setConfig',
+    wrap: 'voiceReplies'
   },
   {
     id: 'wolffish.blockCredentials',

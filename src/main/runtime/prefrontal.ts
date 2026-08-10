@@ -110,13 +110,14 @@ export type RuntimeContext = {
    */
   videoTasks?: string
   /**
-   * Voice-reply notice for a voice-prompted turn (the last user message is
-   * a `<voice_note>` transcript) while the Voice replies setting is ON —
-   * the deterministic every-iteration restatement of "this turn ends with
-   * one voice_respond". Computed once per turn by the Agent (setting +
-   * capability + role gates live there); stable across the turn's
-   * iterations, so it rides the same volatile vehicle as noProgress with
-   * the same cache rationale. Undefined (typed turns, setting off, TTS
+   * Voice-reply notice, present on every master/single turn while the Voice
+   * replies preference is ON — the switch alone gates it (no per-turn voice
+   * detection; the notice's wording is conditional, so it reads truthfully
+   * on typed turns). The deterministic every-iteration restatement of "a
+   * <voice_note> turn ends with one voice_respond". Computed once per turn
+   * by the Agent (preference + capability + role gates live there); stable
+   * across the turn's iterations, so it rides the same volatile vehicle as
+   * noProgress with the same cache rationale. Undefined (setting off, TTS
    * disabled, agent role) renders nothing.
    */
   voiceReply?: string
@@ -324,35 +325,32 @@ Director mode is OFF (a Settings toggle the user controls). When generating a vi
   }
 
   /**
-   * The voice-prompt directive — how to answer a `<voice_note>` message,
-   * matching the Voice replies toggle (Settings → Text-to-Speech, default
-   * ON). Same contract as the video block: read from config at prompt build
-   * (turn-stable), honored by the model alone — the harness never
-   * synthesizes or suppresses audio itself. The deterministic backstop for
-   * the ON rule is the per-iteration runtime-tail notice the Agent adds to
-   * voice-prompted turns (VOICE_REPLY_NOTICE in outbound.ts) — this block
-   * carries the full rule; the notice restates it where it cannot be
-   * missed. Empty for an agent role (a subagent never speaks to the user)
-   * and when the text-to-speech capability is disabled (no voice_respond
-   * to call — instructions for absent tools are noise).
+   * The voice-prompt directive, controlled by ONE thing: the Voice replies
+   * switch on the Preferences page (config.tts.voiceReplies, default ON).
+   * Switch ON → the <voice_prompts> instructions are ALWAYS in the prompt —
+   * every turn, every channel, voice note present or not — as a standing
+   * policy the model applies whenever a voice prompt arrives. Switch OFF →
+   * no instructions at all. Nothing here inspects the turn's content; the
+   * preference is the whole gate. Same contract as the video block: read
+   * from config at prompt build (turn-stable), honored by the model alone —
+   * the harness never synthesizes or suppresses audio itself. Empty for an
+   * agent role (a subagent never speaks to the user) and when the
+   * text-to-speech capability is disabled (no voice_respond to call —
+   * instructions for absent tools are noise).
    */
   private async buildVoicePromptingBlock(role?: 'master' | 'agent'): Promise<string> {
     if (role === 'agent') return ''
     if (this.cerebellum?.isDisabled('text-to-speech')) return ''
     const config = await readConfig().catch(() => null)
-    const voiceReplies = config?.tts?.voiceReplies !== false
-    if (voiceReplies) {
-      return `<voice_prompts>
-Voice replies are ON (a Settings → Text-to-Speech toggle the user controls). A user message tagged <voice_note> was SPOKEN: the text is its transcript (already transcribed — NEVER call stt_* tools on its attached audio), and the lang="…" attribute is the language to reply in — authoritative, even when it differs from the user's usual language.
-When the current turn's user message is a <voice_note>, your reply MUST include audio — this is the rule, not a preference:
+    if (config?.tts?.voiceReplies === false) return ''
+    return `<voice_prompts>
+Voice replies are ON (the Voice replies switch on the Preferences page — the user controls it). This is your STANDING POLICY for spoken messages:
+A user message tagged <voice_note> was SPOKEN: the text is its transcript (already transcribed — NEVER call stt_* tools on its attached audio), and the lang="…" attribute is the language to reply in — authoritative, even when it differs from the user's usual language.
+Whenever a turn's user message is a <voice_note>, your reply MUST include audio — this is the rule, not a preference:
 - END the turn with exactly ONE voice_respond call that speaks your answer. Text and media BEFORE it are welcome when the work produces them — deliver files, tables, code, charts exactly as a typed turn would (send_file, cards, prose), then close with the voice_respond that speaks the answer or summary over them. The memo is your wrap-up, and it comes last, every time.
 - A purely conversational answer needs no text at all: the one voice_respond IS the reply — write nothing beyond a brief label like "Voice memo", and never restate the memo's content as prose (a duplicate text bubble next to the audio reads as broken).
 - voice_respond text is plain speech — no markup, no bullets, no code — and leave its voice parameter unset: the user picked their voice in Settings.
-The ONLY exception: the user's own message explicitly asks for something else ("reply in text", "write it down", dictating content for a document). Otherwise a voice prompt gets a voice reply — no matter how much text and media the work needed along the way.
-</voice_prompts>`
-    }
-    return `<voice_prompts>
-Voice replies are OFF (a Settings → Text-to-Speech toggle the user controls). A user message tagged <voice_note> was SPOKEN: the text is its transcript (already transcribed — NEVER call stt_* tools on its attached audio), and the lang="…" attribute is the language to reply in. Reply as a normal text turn — no automatic voice memo. Use voice_generate/voice_respond only when the user explicitly asks for audio.
+The ONLY exception: the user's own message explicitly asks for something else ("reply in text", "write it down", dictating content for a document). Otherwise a voice prompt gets a voice reply — no matter how much text and media the work needed along the way. Typed messages are unaffected by this policy.
 </voice_prompts>`
   }
 

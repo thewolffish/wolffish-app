@@ -888,18 +888,20 @@ export class Agent {
     // a new band, and reset to 0 when the agent recovers — so a parked master is
     // woken a small, bounded number of times, not on every iteration.
     let noProgressBand = 0
-    // Voice-prompted turn (every surface wraps a spoken message in
-    // <voice_note …> as the FIRST bytes of the history entry) with Voice
-    // replies ON and the TTS tools present: computed ONCE per turn, then
-    // restated in the runtime tail every iteration — the <voice_prompts>
-    // system-prompt block carries the full rule, and the shipped failure was
-    // a model reading that block and replying in text anyway, so the rule
-    // also rides at the request's most salient position. Master/single turns
-    // only: a subagent never speaks to the user. Config read failure means no
-    // notice (fail-open to the system prompt's own rule), never a crash.
+    // Voice replies notice, controlled by the Preferences switch ALONE
+    // (config.tts.voiceReplies, default ON) — deliberately NOT by whether
+    // this turn's message happens to be a voice note: the preference decides
+    // whether the standing policy is stated, and the notice's own wording is
+    // conditional ("whenever the user message is a <voice_note>…"), so it is
+    // truthful on typed turns too. Computed ONCE per turn, restated in the
+    // runtime tail every iteration — the <voice_prompts> system-prompt block
+    // carries the full rule, and the shipped failure was a model reading
+    // that block and replying in text anyway, so the rule also rides at the
+    // request's most salient position. Master/single turns only: a subagent
+    // never speaks to the user. Config read failure means no notice
+    // (fail-open to the system prompt's own rule), never a crash.
     const voiceReplyNotice =
       turn.role !== 'agent' &&
-      /^<voice_note[\s>]/.test(userContent) &&
       !this.cerebellum.isDisabled('text-to-speech') &&
       (await readConfig().catch(() => null))?.tts?.voiceReplies !== false
         ? VOICE_REPLY_NOTICE

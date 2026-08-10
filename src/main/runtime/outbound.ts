@@ -52,19 +52,21 @@ export const OFFLINE_NOTICE =
   'If the task genuinely requires the internet, say so plainly, do the offline part now, and suggest retrying once the connection returns.'
 
 /**
- * Rides every iteration of a voice-prompted turn while the Voice replies
- * setting is ON (the Agent computes the gates once per turn — see
- * RuntimeContext.voiceReply). The <voice_prompts> system-prompt block
- * carries the full rule; this line restates the non-negotiable core at the
- * most salient position in the request, because the shipped failure was a
- * model reading the rule in a 25k-token prompt and replying in text anyway.
- * Deliberately repeats "one" and "last": the channels dedupe a second
- * voice_respond, and a memo followed by trailing prose reads as broken.
+ * Rides every iteration of every master/single turn while the Voice replies
+ * preference is ON — the switch is the ONLY gate (see
+ * RuntimeContext.voiceReply); nothing inspects the turn for a voice note,
+ * which is why the wording is conditional and stays truthful on typed
+ * turns. The <voice_prompts> system-prompt block carries the full rule;
+ * this line restates the non-negotiable core at the most salient position
+ * in the request, because the shipped failure was a model reading the rule
+ * in a 25k-token prompt and replying in text anyway. Deliberately repeats
+ * "one" and "last": the channels dedupe a second voice_respond, and a memo
+ * followed by trailing prose reads as broken.
  */
 export const VOICE_REPLY_NOTICE =
-  'VOICE PROMPT: the user SPOKE this message and Voice replies are ON — this turn MUST end with exactly one voice_respond call speaking your answer (in the <voice_note> lang). ' +
+  'Voice replies are ON: whenever the CURRENT user message is tagged <voice_note> (the user spoke it), this turn MUST end with exactly one voice_respond call speaking your answer (in the <voice_note> lang). ' +
   'Deliver any files/media/text the work needs first; the voice_respond comes LAST, as your wrap-up. ' +
-  'Only an explicit request in the user\'s own message ("reply in text") lifts this.'
+  'Only an explicit request in the user\'s own message ("reply in text") lifts this. Typed messages are unaffected.'
 
 /**
  * Live runtime context, injected at the tail of the outbound clone each

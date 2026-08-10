@@ -21,8 +21,19 @@ export function WolffishPanel(): React.JSX.Element {
     config?.llm.restrictPowerfulModels ?? true
   )
   const [weekStartsOn, setWeekStartsOnState] = useState<WeekStartsOn>(config?.weekStartsOn ?? 1)
+  // Voice replies (default ON): voice prompt in → spoken reply out. Lives in
+  // config under tts.voiceReplies but is a PREFERENCE about how Wolffish
+  // answers, so its one switch is here — the model-facing <voice_prompts>
+  // instructions are included if and only if this is on.
+  const [voiceReplies, setVoiceReplies] = useState<boolean>(true)
   const [savingKey, setSavingKey] = useState<
-    'launchAtStartup' | 'blockCredentials' | 'bypass' | 'restrictModels' | 'weekStart' | null
+    | 'launchAtStartup'
+    | 'blockCredentials'
+    | 'bypass'
+    | 'restrictModels'
+    | 'weekStart'
+    | 'voiceReplies'
+    | null
   >(null)
 
   // Seed the four config-backed switches from a fresh value set. Reused by
@@ -38,6 +49,7 @@ export function WolffishPanel(): React.JSX.Element {
     if (patch.weekStartsOn === 0 || patch.weekStartsOn === 1) {
       setWeekStartsOnState(patch.weekStartsOn)
     }
+    if (typeof patch.ttsVoiceReplies === 'boolean') setVoiceReplies(patch.ttsVoiceReplies)
   }, [])
 
   useEffect(() => {
@@ -59,10 +71,27 @@ export function WolffishPanel(): React.JSX.Element {
         weekStartsOn: s.config.weekStartsOn ?? 1
       })
     })
+    // Voice replies lives under config.tts — disk truth via its own getter,
+    // absent-means-on normalized by the main process.
+    void window.api.tts.getConfig().then((cfg) => {
+      if (!cancelled) setVoiceReplies(cfg.voiceReplies)
+    })
     return () => {
       cancelled = true
     }
   }, [seedFromPatch])
+
+  // The phone's Preferences screen (and any other window) edits the voice
+  // replies switch through tts:setConfig, which announces on the tts service
+  // channel — re-seed from disk truth when it does.
+  useEffect(
+    () =>
+      window.api.services.onChanged((payload) => {
+        if (payload.service !== 'tts') return
+        void window.api.tts.getConfig().then((cfg) => setVoiceReplies(cfg.voiceReplies))
+      }),
+    []
+  )
 
   // A paired phone edits these same settings over the tunnel, and another
   // window can edit them too. Either save announces itself with the applied
@@ -135,6 +164,17 @@ export function WolffishPanel(): React.JSX.Element {
     }
   }
 
+  const onChangeVoiceReplies = async (next: boolean): Promise<void> => {
+    if (savingKey !== null || next === voiceReplies) return
+    setSavingKey('voiceReplies')
+    try {
+      await window.api.tts.setConfig({ voiceReplies: next })
+      setVoiceReplies(next)
+    } finally {
+      setSavingKey(null)
+    }
+  }
+
   const onChangeWeekStart = async (next: WeekStartsOn): Promise<void> => {
     if (savingKey !== null || next === weekStartsOn) return
     setSavingKey('weekStart')
@@ -191,6 +231,14 @@ export function WolffishPanel(): React.JSX.Element {
             value={restrictModels}
             onChange={onChangeRestrictModels}
             disabled={savingKey === 'restrictModels'}
+          />
+          <div className="border-border/60 border-t" />
+          <SettingToggle
+            label={t('settings.wolffish.voiceReplies.label')}
+            description={t('settings.wolffish.voiceReplies.description')}
+            value={voiceReplies}
+            onChange={onChangeVoiceReplies}
+            disabled={savingKey === 'voiceReplies'}
           />
           <div className="border-border/60 border-t" />
           <WeekStartChoice

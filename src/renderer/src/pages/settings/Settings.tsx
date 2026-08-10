@@ -1,5 +1,3 @@
-import { LocaleSelector } from '@components/common/locale-selector/LocaleSelector'
-import { ThemeSelector } from '@components/common/theme-selector/ThemeSelector'
 import {
   AnthropicLogo,
   BraveLogo,
@@ -18,7 +16,7 @@ import {
   XAILogo,
   ZaiLogo
 } from '@components/core/ProviderLogos'
-import { RTL_LOCALES } from '@lib/i18n'
+import { RTL_LOCALES, type SupportedLocale } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
 import { pageTopPadding } from '@lib/utils/platform'
 import { ModelPicker } from '@pages/ModelPicker'
@@ -50,6 +48,7 @@ import { WhatsAppPanel } from '@pages/settings/WhatsAppPanel'
 import { WolffishPanel } from '@pages/settings/WolffishPanel'
 import { useFlow } from '@providers/flow/useFlow'
 import { useLocale } from '@providers/locale/useLocale'
+import { useTheme, type ThemeSource } from '@providers/theme/useTheme'
 import {
   AiMagicIcon,
   Video01Icon,
@@ -739,6 +738,8 @@ function OllamaNotAvailableNotice({
 
 function AppearancePanel(): React.JSX.Element {
   const { t } = useTranslation()
+  const { theme, setTheme } = useTheme()
+  const { locale, setLocale } = useLocale()
   return (
     <div className="flex min-h-full w-full items-start justify-center px-6 py-10">
       <div className="flex w-full max-w-2xl flex-col gap-6">
@@ -748,11 +749,80 @@ function AppearancePanel(): React.JSX.Element {
           </h1>
           <p className="text-muted text-sm leading-relaxed">{t('settings.appearance.subtitle')}</p>
         </header>
-        <section className="bg-surface border-border flex flex-col gap-5 rounded-2xl border p-6">
-          <ThemeSelector />
-          <LocaleSelector />
+        <section className="bg-surface border-border flex flex-col gap-6 rounded-2xl border p-6">
+          <AppearanceChoice<ThemeSource>
+            label={t('theme.label')}
+            description={t('settings.appearance.theme.description')}
+            value={theme}
+            options={[
+              { value: 'system', label: t('theme.system') },
+              { value: 'light', label: t('theme.light') },
+              { value: 'dark', label: t('theme.dark') }
+            ]}
+            onChange={(next) => void setTheme(next)}
+          />
+          <div className="border-border/60 border-t" />
+          <AppearanceChoice<SupportedLocale>
+            label={t('locale.label')}
+            description={t('settings.appearance.language.description')}
+            value={locale}
+            options={[
+              { value: 'en', label: t('locale.en') },
+              { value: 'ar', label: t('locale.ar') }
+            ]}
+            onChange={(next) => void setLocale(next)}
+          />
         </section>
       </div>
+    </div>
+  )
+}
+
+function AppearanceChoice<T extends string>({
+  label,
+  description,
+  value,
+  options,
+  onChange
+}: {
+  label: string
+  description: string
+  value: T
+  options: ReadonlyArray<{ value: T; label: string }>
+  onChange: (next: T) => void
+}): React.JSX.Element {
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center justify-between gap-4">
+        <span className="text-fg text-sm font-medium">{label}</span>
+        <div
+          role="tablist"
+          className="border-border bg-bg/40 inline-flex shrink-0 items-center rounded-lg border p-0.5"
+        >
+          {options.map((opt) => {
+            const active = opt.value === value
+            return (
+              <button
+                key={opt.value}
+                role="tab"
+                type="button"
+                aria-selected={active}
+                onClick={() => onChange(opt.value)}
+                className={cn(
+                  'rounded-md px-3 py-1 text-xs font-medium',
+                  'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+                  active
+                    ? 'bg-primary text-primary-fg shadow-sm'
+                    : 'text-muted hover:text-fg cursor-pointer'
+                )}
+              >
+                {opt.label}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+      <p className="text-muted text-xs leading-relaxed">{description}</p>
     </div>
   )
 }

@@ -242,10 +242,12 @@ export type SttConfig = {
  * fall back to the plugin defaults (`af_bella`, `1.0`).
  *
  * `voiceReplies` (default ON — absent means true, like VideoConfig.director):
- * when the user sends a voice prompt, the model is told — via the
- * `<voice_prompts>` prompt block AND a per-iteration runtime notice — to end
- * its reply with a spoken voice_respond. A model directive only: the harness
- * never synthesizes or suppresses audio itself.
+ * the Voice replies switch on the Preferences page. It is the ONE control
+ * over whether the voice-reply instructions exist at all: ON = every turn's
+ * prompt carries the `<voice_prompts>` standing policy plus a per-iteration
+ * runtime notice (end a `<voice_note>` turn with one spoken voice_respond);
+ * OFF = neither is included and voice prompts get text replies. A model
+ * directive only: the harness never synthesizes or suppresses audio itself.
  */
 export type TtsConfig = {
   defaultVoice: string

@@ -1141,6 +1141,14 @@ async function applyMobileSettings(settings: Record<string, unknown>): Promise<v
           updates: { ...(c.updates ?? { enabled: true }), enabled: value === true }
         }))
         break
+      case 'weekStartsOn':
+        // 0 (Sunday) or 1 (Monday) — the same two values the panel's own
+        // segmented control can send `runtime:setWeekStartsOn`.
+        if (value !== 0 && value !== 1) {
+          throw new Error(`"${String(value)}" is not a week start`)
+        }
+        await persistWeekStartsOn(value)
+        break
       // The Model screen and the composer's control cluster. Each key maps
       // onto the exact handler its own desktop control calls —
       // `provider:setMode`, `runtime:setThinkingMode`, `runtime:setLocalOnly`,
