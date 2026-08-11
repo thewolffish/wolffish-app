@@ -1,4 +1,10 @@
-## v1.0.248 — 2026-08-11 `Latest`
+## v1.0.249 — 2026-08-11 `Latest`
+
+### Copy From the Conversation, the Way Your Hands Expect
+
+Select a line of a reply, right-click it — and nothing came. The app-wide right-click menu answered only where text could be *edited* — the composer, a search field, an editor — while the conversation itself, the place most worth quoting, had no menu at all: the only roads to the clipboard were the keyboard shortcut or a message's all-or-nothing copy button. Right-click now speaks wherever text merely *sits*: **a message bubble — yours or the reply's — offers Select all and Copy**. Select all takes the message under the cursor; Copy takes **exactly what you highlighted**, and with nothing highlighted it takes the whole bubble; the expanded **Reasoning** text answers the same way, and a selection that **sweeps across several messages** copies whole from wherever you right-click it. The empty parts of the window stay silent — no menu blooms where there is nothing to take — and every editable surface keeps its fuller menu, **spelling suggestions and all**, exactly as before.
+
+## v1.0.248 — 2026-08-11
 
 ### Your Desktop's Updater, Live on the Phone
 

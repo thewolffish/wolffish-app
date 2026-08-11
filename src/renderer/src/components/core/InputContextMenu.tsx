@@ -23,6 +23,10 @@ const TEXT_INPUT_TYPES = new Set([
 type Field =
   | { kind: 'value'; el: HTMLInputElement | HTMLTextAreaElement; editable: boolean }
   | { kind: 'contenteditable'; el: HTMLElement; editable: boolean }
+  // Read-only prose (chat bubbles, reasoning, any static text). `root` is the
+  // nearest [data-select-root] ancestor — the block "Select all" selects — or
+  // null when the right-click only has a live selection to offer Copy for.
+  | { kind: 'static'; root: HTMLElement | null }
 
 /** Resolve the editable field under the event target, or null if there isn't one. */
 function resolveField(target: EventTarget | null): Field | null {
@@ -126,6 +130,35 @@ function valueItems(
   ]
 }
 
+function staticItems(root: HTMLElement | null, t: Translate): ContextMenuEntry[] {
+  const selected = window.getSelection()?.toString() ?? ''
+  const content = root?.textContent ?? ''
+  return [
+    {
+      label: t('common.contextMenu.selectAll'),
+      action: () => {
+        if (!root) return
+        const range = document.createRange()
+        range.selectNodeContents(root)
+        const sel = window.getSelection()
+        sel?.removeAllRanges()
+        sel?.addRange(range)
+      },
+      disabled: !content
+    },
+    {
+      label: t('common.contextMenu.copy'),
+      action: () => {
+        // The popup's mousedown preventDefault keeps the selection alive
+        // until this click handler runs, so re-reading it here is safe.
+        const text = window.getSelection()?.toString() || content
+        if (text) void navigator.clipboard.writeText(text)
+      },
+      disabled: !selected && !content
+    }
+  ]
+}
+
 function contentEditableItems(
   el: HTMLElement,
   editable: boolean,
@@ -196,8 +229,10 @@ function spellingItems(params: SpellcheckContextMenu, t: Translate): ContextMenu
 
 /**
  * App-wide right-click menu (spelling corrections + Select all / Copy / Paste /
- * Clear) for every text input, textarea and contenteditable surface. Mounted once
- * at the root: a single delegated listener covers fields anywhere in the tree.
+ * Clear) for every text input, textarea and contenteditable surface, plus a
+ * read-only Select all / Copy menu for static text — any [data-select-root]
+ * block (chat bubbles, reasoning) or any right-click while a selection exists.
+ * Mounted once at the root: a single delegated listener covers the whole tree.
  *
  * Spelling suggestions exist only in the main-process `context-menu` event, and the
  * page calling preventDefault on the DOM event would suppress it — so this is
@@ -218,8 +253,19 @@ export function InputContextMenu(): React.JSX.Element | null {
   // preventDefault). No preventDefault here — the main event must still fire.
   useEffect(() => {
     const onContextMenu = (e: MouseEvent): void => {
+      const position = { x: e.clientX, y: e.clientY }
       const field = resolveField(e.target)
-      pending.current = field ? { field, position: { x: e.clientX, y: e.clientY } } : null
+      if (field) {
+        pending.current = { field, position }
+        return
+      }
+      // Read-only text: chat prose and other static copy get Select all + Copy.
+      // Only surface a menu when there's a marked block to select or an existing
+      // selection to copy — right-clicks on plain chrome stay silent.
+      const root =
+        e.target instanceof Element ? e.target.closest<HTMLElement>('[data-select-root]') : null
+      const hasSelection = (window.getSelection()?.toString() ?? '').length > 0
+      pending.current = root || hasSelection ? { field: { kind: 'static', root }, position } : null
     }
     document.addEventListener('contextmenu', onContextMenu, true)
     return () => document.removeEventListener('contextmenu', onContextMenu, true)
@@ -232,6 +278,10 @@ export function InputContextMenu(): React.JSX.Element | null {
       pending.current = null
       if (!target) return
       const { field, position } = target
+      if (field.kind === 'static') {
+        setState({ position, items: staticItems(field.root, t) })
+        return
+      }
       const base =
         field.kind === 'value'
           ? valueItems(field.el, field.editable, t)

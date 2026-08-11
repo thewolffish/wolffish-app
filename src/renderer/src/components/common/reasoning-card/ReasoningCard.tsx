@@ -29,7 +29,10 @@ export function ReasoningCard({ content }: { content: string }): React.JSX.Eleme
         )}
       </button>
       {expanded && (
-        <p className="text-muted wrap-anywhere mt-2 whitespace-pre-wrap text-start text-xs leading-5">
+        <p
+          data-select-root
+          className="text-muted wrap-anywhere mt-2 whitespace-pre-wrap text-start text-xs leading-5"
+        >
           {content.trim()}
         </p>
       )}
