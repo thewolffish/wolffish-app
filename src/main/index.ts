@@ -142,12 +142,16 @@ import { cloudModelSupportsVision } from '@main/runtime/vision'
 import { detectSystem, type SystemInfo } from '@main/system'
 import {
   checkForUpdatesIfEnabled,
+  getUpdaterState,
   initUpdater,
   installUpdate,
   isUpdateReady,
   markInstalling,
-  stampPreUpdateVersion
+  onUpdaterState,
+  stampPreUpdateVersion,
+  type UpdaterState
 } from '@main/updater'
+import type { UpdaterWireState } from '@main/tunnel/protocol'
 import {
   classifyFile,
   isSupportedExtension,
@@ -1553,6 +1557,15 @@ async function readChangelogMarkdown(month: string, locale?: string): Promise<st
   return null
 }
 
+/** The updater's state minus `releaseNotes` — the wire shape the phone
+ *  renders. The notes stay home: state rides every download-percent tick. */
+const toWireUpdaterState = (state: UpdaterState): UpdaterWireState => ({
+  phase: state.phase,
+  version: state.version,
+  percent: state.percent,
+  error: state.error
+})
+
 const mobileChannel = new MobileChannel({
   agent,
   runner: turnRunner,
@@ -1598,6 +1611,33 @@ const mobileChannel = new MobileChannel({
   // list rides the snapshot, bodies are served one month at a time.
   changelogMonths: () => listChangelogMonths(),
   readChangelog: (month, locale) => readChangelogMarkdown(month, locale),
+  // The phone's updater controls land on the SAME registered handlers this
+  // app's own Updates panel and the CLI invoke, so a tap over the tunnel is
+  // the identical act — guards, state machine, graceful shutdown and all.
+  updaterState: async () => toWireUpdaterState(getUpdaterState()),
+  updaterCheck: async () => {
+    const check = ipcHandlers.get('updater:check')
+    if (!check) return { ok: false, error: 'updater unavailable' }
+    return (await check(null)) as { ok: boolean; version?: string | null; error?: string }
+  },
+  updaterInstall: async () => {
+    // Refuse cleanly when nothing verified is ready — never trip the
+    // handler's own failure path (that surfaces an error card on BOTH
+    // screens) for what can only be a stale phone tap racing a state change.
+    if (is.dev || !isUpdateReady()) return { ok: false }
+    const install = ipcHandlers.get('updater:install')
+    if (!install) return { ok: false }
+    // Answer first, install a beat later: the handler runs the full desktop
+    // sequence (installing broadcast, pre-update stamp, graceful shutdown,
+    // quitAndInstall), and the phone's reply has to leave on this tunnel
+    // before that shutdown takes the process with it. The tunnel itself
+    // survives the grace window — shutdownGracefully never stops the Mobile
+    // channel — so the phone also sees the 'installing' push before the drop.
+    setTimeout(() => {
+      void install(null)
+    }, 500)
+    return { ok: true }
+  },
   // What the OS has ACTUALLY registered, not the stored intent — the two
   // disagree whenever a registration failed, which on Linux used to be always.
   launchAtStartupActive: async () => (await readAutostartStatus()).active,
@@ -2688,6 +2728,11 @@ app.whenReady().then(async () => {
   await ensureWorkspace()
   await reconcileLocalModel()
   initUpdater()
+  // The phone's Updates screen mirrors the updater live — the same state
+  // machine the renderer panels subscribe to, one push per transition/tick.
+  onUpdaterState((state) => {
+    if (mobileChannel.hasPeer) mobileChannel.pushUpdaterState(toWireUpdaterState(state))
+  })
   agent.init().catch((err) => {
     console.error('agent.init failed:', err)
   })

@@ -99,7 +99,8 @@ import {
   type OverlaySeed,
   type ReindexStatus,
   type SyncProcedure,
-  type SyncProject
+  type SyncProject,
+  type UpdaterWireState
 } from '@main/tunnel/protocol'
 import {
   MOBILE_CAPABILITY_NAME,
@@ -264,6 +265,20 @@ export type MobileChannelDeps = SnapshotSources & {
    * phone's What's-new desktop tab shows its empty state.
    */
   readChangelog?: (month: string, locale: string) => Promise<string | null>
+  /**
+   * The self-updater, reached through the SAME registered handlers the
+   * desktop's own Updates panel and the CLI invoke (main wires these to
+   * updater:getState / updater:check / updater:install) — one implementation,
+   * three surfaces. `updaterCheck` carries the desktop's own guards: a check
+   * never disturbs an in-flight download. `updaterInstall` must answer BEFORE
+   * arming the restart, because its reply has to leave on a tunnel the
+   * shutdown is about to close; `ok: false` means nothing verified is ready.
+   * All three absent = this desktop cannot self-update, and the phone's card
+   * stays the mirror-only surface it was before the feature.
+   */
+  updaterState?: () => Promise<UpdaterWireState>
+  updaterCheck?: () => Promise<{ ok: boolean; version?: string | null; error?: string }>
+  updaterInstall?: () => Promise<{ ok: boolean }>
   /**
    * Persisted switch for model-initiated phone notifications. Absent = the
    * feature is always on (tests). Checked before anything else in the notify
@@ -1109,6 +1124,36 @@ export class MobileChannel {
       const markdown = (await this.deps.readChangelog?.(month, locale)) ?? null
       this.debug(`served changelog ${month} (${locale}) — ${markdown ? markdown.length : 0} chars`)
       return { markdown }
+    })
+
+    /**
+     * The self-updater, from the phone: seed, check, install. Thin passes
+     * into the same registered handlers the desktop's own panel and the CLI
+     * invoke (see MobileChannelDeps), so a tap over the tunnel is the
+     * identical act. A host without the deps answers the honest no — the
+     * phone hides its controls rather than offering a button that lies.
+     */
+    tunnel.onRpc(Rpc.updaterState, async () => {
+      if (!this.deps.updaterState) return { state: null }
+      return { state: await this.deps.updaterState() }
+    })
+
+    tunnel.onRpc(Rpc.updaterCheck, async () => {
+      if (!this.deps.updaterCheck) return { ok: false, error: 'this desktop cannot self-update' }
+      const result = await this.deps.updaterCheck()
+      this.log(
+        `update check from phone — ${result.ok ? (result.version ?? 'up to date') : `failed (${result.error ?? 'unknown'})`}`
+      )
+      return result
+    })
+
+    tunnel.onRpc(Rpc.updaterInstall, async () => {
+      if (!this.deps.updaterInstall) return { ok: false }
+      const result = await this.deps.updaterInstall()
+      this.log(
+        `update install from phone — ${result.ok ? 'armed, restarting' : 'refused (nothing ready)'}`
+      )
+      return result
     })
 
     /**
@@ -2454,6 +2499,19 @@ export class MobileChannel {
     if (!isEdge && now - this.lastReindexPush < REINDEX_PUSH_THROTTLE_MS) return
     this.lastReindexPush = status === null ? 0 : now
     this.tunnel?.emit(Event.reindexChanged, { status })
+  }
+
+  /**
+   * The self-updater moved — checking, downloading (percent ticks), ready,
+   * installing, error. The whole machine travels every time, exactly as the
+   * renderer's own updater:state broadcast does, so the phone renders it
+   * straight and a missed tick costs nothing. Unthrottled on purpose: the
+   * download emits per whole percent, tens of ticks over minutes, and the
+   * 'installing' edge right before this app exits must never be the one a
+   * throttle swallows.
+   */
+  pushUpdaterState(state: UpdaterWireState): void {
+    this.tunnel?.emit(Event.updaterChanged, { state })
   }
 
   // ----------------------------------------------------------------- status

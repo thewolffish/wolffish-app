@@ -119,9 +119,29 @@ let state: UpdaterState = {
   error: null
 }
 
+/**
+ * Listeners beyond the window broadcast — the Mobile channel mirrors this
+ * state to the phone's Updates screen through one. Same contract as the
+ * broadcast beside it: the whole state on every mutation.
+ */
+const stateListeners = new Set<(state: UpdaterState) => void>()
+
+export function onUpdaterState(listener: (state: UpdaterState) => void): () => void {
+  stateListeners.add(listener)
+  return () => {
+    stateListeners.delete(listener)
+  }
+}
+
+/** The live state, for a caller that is not a renderer (the phone's seed). */
+export function getUpdaterState(): UpdaterState {
+  return state
+}
+
 function setState(patch: Partial<UpdaterState>): void {
   state = { ...state, ...patch }
   broadcast<UpdaterState>('updater:state', state)
+  for (const listener of stateListeners) listener(state)
 }
 
 // Drive the renderer into the error phase. The structured error rides along in

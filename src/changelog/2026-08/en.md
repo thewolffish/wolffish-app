@@ -1,4 +1,14 @@
-## v1.0.247 — 2026-08-10 `Latest`
+## v1.0.248 — 2026-08-11 `Latest`
+
+### Your Desktop's Updater, Live on the Phone
+
+The phone's Updates screen could say what a new version changed, but the machine that actually fetches one — the desktop's **self-updater** — worked invisibly on the far end. It now **mirrors to the phone live**: checking, downloading with **a moving progress percent**, verifying, ready, installing — every move pushed the instant it happens, the same state the desktop's own panel renders, so the two screens can never tell different stories. A phone that connects **mid-download is handed the current picture up front** rather than waiting for the next tick, and a phone that meets a phase it doesn't know — an older app against a newer desktop — chooses to show **no card rather than a wrong one**.
+
+### Check and Install From Wherever You Are
+
+A mirror without hands would be scenery, so the two acts that matter became taps. **Check from the phone** and it is the desktop's own check — the exact handler its panel and the terminal invoke, guards included, so a check can never disturb a download already in flight — and a found update **starts downloading on its own**, progress ticking on your screen. **Install from the phone** and the desktop answers before it acts: the confirmation and the final "installing" push leave the line a beat before the graceful shutdown closes it, you watch the connection drop and re-form, and **the new version introduces itself the moment it reconnects**. The buttons keep their word, too: a desktop that cannot self-update at all says so honestly and the phone **hides controls that would have to lie**, while an install tap racing a state change — nothing downloaded and verified yet — is **refused quietly** instead of blooming error cards on two screens at once.
+
+## v1.0.247 — 2026-08-10
 
 ### The Failure That Read as a Normal Reply
 
