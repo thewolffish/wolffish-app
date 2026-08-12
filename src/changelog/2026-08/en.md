@@ -1,4 +1,14 @@
-## v1.0.249 — 2026-08-11 `Latest`
+## v1.0.250 — 2026-08-12 `Latest`
+
+### Your Phone Stops Being Quiet
+
+Wolffish could always buzz your phone, and almost never did. Its own instructions told it a notification was an interruption to be rationed — one per run at most, and nothing at all for a turn you happened to be watching — so work finished, automations ran, findings landed, and your pocket stayed silent; you had to go looking. That is now inverted. **Every turn ends with one notification carrying the actual result** — the number, the outcome, what's next, and a tap that opens **the very conversation it came from** — because five minutes later you are somewhere else, and a notification reaches you on **a closed app, a backgrounded app, or a phone with no signal that gets it the moment signal returns**, which no open window can. **A blocker, a failure, or a finding worth acting on no longer waits for the end** either: it goes out the instant it happens, mid-run, so the question that stopped the work reaches you while it still matters. Long work announces itself when it starts, and a scheduled digest still closes with its own. The bar for the words rose with the count, too: **"Task completed" is not a notification** — "Sheet rebuilt — 214 rows, 3 broken dates fixed" is.
+
+### Louder, Not Noisier
+
+More notifications are only better if none of them is a repeat. **A Telegram or WhatsApp reply never gets a second buzz** — that message already arrived on the same phone with its own notification — so there the push is saved for what a chat message cannot tell you: a blocker, a failure, a finding. **The same news is never sent twice**, and the one genuinely dangerous case is handled at the root: when the phone never confirms, the delivery is *unknown* rather than failed — the notification is most likely on your lock screen already — so it now **counts as sent instead of being tried again**, which was the one way a single buzz could ever become three. Small talk and bare acknowledgments still pass in silence, and **an instruction to stay quiet outranks all of it**.
+
+## v1.0.249 — 2026-08-11
 
 ### Copy From the Conversation, the Way Your Hands Expect
 

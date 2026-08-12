@@ -121,6 +121,19 @@ export type RuntimeContext = {
    * disabled, agent role) renders nothing.
    */
   voiceReply?: string
+  /**
+   * Phone-notification notice, present on every master/single turn while a
+   * phone is paired and notify_phone is registered (the mobile channel ties
+   * that registration to paired + identified + user allows, so its presence
+   * IS the availability check). Restates the agents.core.md cadence — end
+   * the turn with one, interrupt mid-turn for a major beat — at the request's
+   * most salient position, for the same reason the voice notice does.
+   * Recomputed per iteration but changes at most once per turn (the moment
+   * the first notification lands, it flips to "don't repeat it"), so it rides
+   * the same volatile vehicle with the same cache rationale as noProgress.
+   * Undefined (no phone, capability disabled, agent role) renders nothing.
+   */
+  phoneNotify?: string
 }
 
 const ALWAYS_INCLUDED: Array<{ category: ContextCategory; rel: string; tag: string }> = [
@@ -838,6 +851,9 @@ function formatRuntimeBody(runtime: RuntimeContext | undefined): string {
     // Voice-reply notice (voice-prompted turn, Voice replies ON) — same
     // vehicle, same reason.
     if (runtime.voiceReply) lines.push(`  ${runtime.voiceReply}`)
+    // Phone-notification notice (a phone is paired) — same vehicle, same
+    // reason.
+    if (runtime.phoneNotify) lines.push(`  ${runtime.phoneNotify}`)
   }
   return lines.join('\n')
 }

@@ -58,7 +58,13 @@ import {
   type WorkflowAgentResult,
   type WorkflowModelChoice
 } from '@main/runtime/workflow'
-import { formatRuntimeStatus, VOICE_REPLY_NOTICE } from '@main/runtime/outbound'
+import {
+  formatRuntimeStatus,
+  PHONE_NOTIFY_CHANNEL_NOTICE,
+  PHONE_NOTIFY_NOTICE,
+  PHONE_NOTIFY_SENT_NOTICE,
+  VOICE_REPLY_NOTICE
+} from '@main/runtime/outbound'
 import fs from 'node:fs/promises'
 import { Prefrontal } from '@main/runtime/prefrontal'
 import { RAS } from '@main/runtime/ras'
@@ -906,6 +912,36 @@ export class Agent {
       (await readConfig().catch(() => null))?.tts?.voiceReplies !== false
         ? VOICE_REPLY_NOTICE
         : undefined
+    // Phone-notification notice, gated exactly like the voice one and for the
+    // same shipped reason (a rule buried in a 25k-token prompt loses to the
+    // task at hand). Three gates, all resolved once per turn:
+    //   role      a subagent never notifies the user — `phone` is in
+    //             AGENT_EXCLUDED_CAPABILITIES, so the tool isn't even there.
+    //   presence  the mobile channel registers/withdraws the capability with
+    //             pairing + phone identity + the user's notifications switch,
+    //             so its presence IS the availability check (see
+    //             updateNotifyToolRegistration). Name hard-coded for the same
+    //             decoupling reason prefrontal's CHANNEL_CAPABILITIES is —
+    //             runtime must not import the channel layer.
+    //   disabled  `phone` is core-exposed but not locked, so the Capabilities
+    //             page can still switch it off.
+    // Fail-closed: no phone, no notice — instructions for an absent tool are
+    // noise. Mid-turn re-pairing is not tracked; it lands on the next turn.
+    const phoneNotifyAvailable =
+      turn.role !== 'agent' &&
+      !this.cerebellum.isDisabled('phone') &&
+      this.cerebellum.getCapabilities().some((c) => c.name === 'phone')
+    // Telegram/WhatsApp turns get the narrower notice: the reply itself
+    // arrives on that same phone as a message with its own notification, so a
+    // turn-end push is a second buzz for one thing. Major beats only there.
+    const phoneNotifyIdle =
+      turn.channel === 'telegram' || turn.channel === 'whatsapp'
+        ? PHONE_NOTIFY_CHANNEL_NOTICE
+        : PHONE_NOTIFY_NOTICE
+    // Flips once, the first time a notify_phone call reaches the phone this
+    // turn (or may have — see the UNCONFIRMED note at the call site). One tail
+    // transition per turn, like deliveredThisTurn.
+    let notifiedThisTurn = false
     let stopReason: SegmentTurnEndReason | 'canceled' = 'end_turn'
     let lastAssistantText = ''
     let lastReasoningContent: string | undefined
@@ -1056,6 +1092,15 @@ export class Agent {
         const videoNotices = videoTasks.drainNotices(turn.conversationId ?? null)
         const videoTasksText = videoNotices.length > 0 ? videoNotices.join(' ') : undefined
 
+        // Phone-notification notice for THIS iteration: the cadence reminder
+        // until something goes out, then the don't-repeat guard. Undefined
+        // when no phone is reachable — see phoneNotifyAvailable.
+        const phoneNotifyText = !phoneNotifyAvailable
+          ? undefined
+          : notifiedThisTurn
+            ? PHONE_NOTIFY_SENT_NOTICE
+            : phoneNotifyIdle
+
         // Escalate a SUBAGENT's runaway to its master (onNoProgress is wired only
         // for agent turns) so the master can manage it — cancel, steer, or keep
         // waiting. Once per worsening band; re-armed when the agent recovers
@@ -1082,7 +1127,8 @@ export class Agent {
           noProgress: noProgressText,
           channelFormat: channelFormatText,
           videoTasks: videoTasksText,
-          voiceReply: voiceReplyNotice
+          voiceReply: voiceReplyNotice,
+          phoneNotify: phoneNotifyText
         }
 
         let systemPrompt: string
@@ -1214,13 +1260,17 @@ export class Agent {
             // voiceReplyNotice keeps iteration 1 in: a conversational voice
             // turn often ends without a single tool call, so a tail deferred
             // to iteration 2 would never render the one notice that matters.
+            // phoneNotifyText is in for exactly the same reason — a turn that
+            // answers from knowledge alone still has to close with a
+            // notification, and it never reaches iteration 2 to be told.
             (iterationCount > 1 ||
               workingFoldersBlock ||
               !online ||
               noProgressText ||
               channelFormatText ||
               videoTasksText ||
-              voiceReplyNotice)
+              voiceReplyNotice ||
+              phoneNotifyText)
               ? formatRuntimeStatus({
                   iteration: iterationCount,
                   toolsCalled: totalToolCalls,
@@ -1229,7 +1279,8 @@ export class Agent {
                   noProgress: noProgressText,
                   channelFormat: channelFormatText,
                   videoTasks: videoTasksText,
-                  voiceReply: voiceReplyNotice
+                  voiceReply: voiceReplyNotice,
+                  phoneNotify: phoneNotifyText
                 }) + (workingFoldersBlock ? `\n${workingFoldersBlock}` : '')
               : undefined
         })
@@ -1640,6 +1691,29 @@ export class Agent {
           // the persisted segment, so cross-turn prefix caching is unaffected.
           if (result.ok) {
             for (const name of deliveredFileNames(result.output)) deliveredThisTurn.add(name)
+          }
+
+          // A phone notification landed this turn: the runtime tail switches
+          // from "close the turn with one" to "don't repeat it".
+          //
+          // An UNCONFIRMED delivery counts as landed even though it reports as
+          // a failure. That is the whole point of the phase: the relay never
+          // answered, so the notification may already be on the user's lock
+          // screen, and a tail still demanding one is exactly the pressure
+          // that turned one model call into three notifications on 2026-08-08.
+          // Every OTHER failure (a refused deeplink, the relay link down) left
+          // nothing on the phone and says so — the reminder stays up, and the
+          // tool's own answer tells the model to fix the link and call again.
+          // Matched on the sentinel word rather than imported, because runtime
+          // must not depend on the channel layer (same rule as
+          // CHANNEL_CAPABILITIES); if that wording ever drifts, the behaviour
+          // degrades to the pre-notice status quo, where the tool description
+          // and the doctrine already forbid a retry.
+          if (
+            call.name === 'notify_phone' &&
+            (result.ok || result.output.includes('UNCONFIRMED'))
+          ) {
+            notifiedThisTurn = true
           }
 
           const toolMsg: ChatMessage & { role: 'tool' } = {

@@ -13,6 +13,9 @@ import { effectivePayloadTokens } from '../compactor'
 import {
   formatClock,
   formatRuntimeStatus,
+  PHONE_NOTIFY_CHANNEL_NOTICE,
+  PHONE_NOTIFY_NOTICE,
+  PHONE_NOTIFY_SENT_NOTICE,
   shapeOutbound,
   truncateSuperseded,
   withVolatileTail
@@ -155,6 +158,64 @@ check(
 check(
   'status: offline notice when host is offline',
   formatRuntimeStatus({ iteration: 1, toolsCalled: 0, online: false }).includes('NETWORK: OFFLINE'),
+  true
+)
+
+// ---------------------------------------------------------------------------
+// Phone-notification notice — no phone, no notice; the cadence reminder until
+// one goes out, the don't-repeat guard after. The Agent owns which of the
+// three strings it passes (availability, role and channel gates live there);
+// what's asserted here is that the tail renders exactly what it's handed.
+// ---------------------------------------------------------------------------
+
+check(
+  'phone: silent when no phone is reachable',
+  formatRuntimeStatus({ iteration: 1, toolsCalled: 0 }).includes('PHONE:'),
+  false
+)
+const phoneIdle = formatRuntimeStatus({
+  iteration: 1,
+  toolsCalled: 0,
+  phoneNotify: PHONE_NOTIFY_NOTICE
+})
+check(
+  'phone: cadence notice asks for a turn-closing send',
+  phoneIdle.includes('END THIS TURN'),
+  true
+)
+check(
+  'phone: cadence notice names the current-conversation deeplink',
+  phoneIdle.includes('wolffish://chat?id=current'),
+  true
+)
+check(
+  'phone: channel notice suppresses the duplicate turn-end buzz',
+  formatRuntimeStatus({
+    iteration: 1,
+    toolsCalled: 0,
+    phoneNotify: PHONE_NOTIFY_CHANNEL_NOTICE
+  }).includes('do NOT close the turn with a duplicate notify_phone'),
+  true
+)
+const phoneSent = formatRuntimeStatus({
+  iteration: 4,
+  toolsCalled: 6,
+  phoneNotify: PHONE_NOTIFY_SENT_NOTICE
+})
+check('phone: sent notice forbids a repeat', phoneSent.includes('do not repeat it'), true)
+check('phone: sent notice drops the send instruction', phoneSent.includes('END THIS TURN'), false)
+// One tail, every notice — a phone notice must not displace the others.
+check(
+  'phone: coexists with the offline notice',
+  (() => {
+    const both = formatRuntimeStatus({
+      iteration: 2,
+      toolsCalled: 3,
+      online: false,
+      phoneNotify: PHONE_NOTIFY_NOTICE
+    })
+    return both.includes('NETWORK: OFFLINE') && both.includes('PHONE:')
+  })(),
   true
 )
 
