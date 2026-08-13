@@ -38,13 +38,24 @@ export class DeepSeekProvider {
       stream_options: { include_usage: true }
     }
 
-    // DeepSeek reasoning: coarse effort. off → disabled; high/max → enabled
-    // with reasoning_effort (low/med collapse to high, xhigh to max upstream).
+    // DeepSeek reasoning has TWO knobs that live at DIFFERENT levels:
+    //   thinking.type      — master switch (adaptive|enabled|disabled). When
+    //                        disabled the model emits zero reasoning no matter
+    //                        what effort asks for.
+    //   reasoning_effort   — TOP-LEVEL field, enum
+    //                        none|minimal|low|medium|high|xhigh|max.
+    // Nesting effort inside `thinking` (what we did until 2026-08-13) is
+    // silently dropped: `thinking` is strictly validated on `type` — a bad
+    // type 400s — but ignores unknown members, so no error was ever raised
+    // and the effort control never reached the model. Verified live against
+    // deepseek-v4-pro: nested `reasoning_effort: "banana"` returns 200, while
+    // the same value top-level 400s with the enum above.
     const effort = effortFromMode(options.thinkingMode)
     if (effort === 'off') {
       body.thinking = { type: 'disabled' }
     } else {
-      body.thinking = { type: 'enabled', reasoning_effort: effort }
+      body.thinking = { type: 'enabled' }
+      body.reasoning_effort = effort
     }
 
     if (options.tools && options.tools.length > 0) {

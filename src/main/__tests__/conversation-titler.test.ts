@@ -438,7 +438,8 @@ async function run(): Promise<void> {
       ['openai', 'gpt-5.5', 'off'],
       ['zai', 'glm-4.6', 'off'],
       ['minimax', 'minimax-m3', 'off'],
-      ['xai', 'grok-4.5', 'on'], // ['on','high'] — rejects 'none'
+      ['xai', 'grok-4.6', 'on'], // ['on','high','max'] — rejects 'none'
+      ['xai', 'grok-4.5', 'on'], // ['on','high','max'] — rejects 'none'
       ['xai', 'grok-4', 'on'], // ['on'] — always-on
       ['qwen', 'qwq-32b', 'on'], // ['on'] — always-on
       ['kimi', 'kimi-k2.7-code', 'on'], // ['on'] — always-on

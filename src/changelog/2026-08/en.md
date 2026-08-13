@@ -1,4 +1,18 @@
-## v1.0.250 — 2026-08-12 `Latest`
+## v1.0.251 — 2026-08-13 `Latest`
+
+### Grok 4.6, and a Thinking Dial That Finally Turns
+
+**Grok 4.6 joins the model list and becomes the xAI default** — 500K of context, vision, frontier-class, at the same price as the 4.5 it succeeds. It arrives alongside a correction that reaches every Grok you already use. Wolffish believed the model's thinking control was a two-position switch, low or high, so the three settings you can actually pick — **On, High and Max** — were squeezed onto two rungs and **Max quietly sent exactly what High sent**. Sweeping the parameter against the live API told a different story: it is a **five-rung ladder**, and there is a rung above High that Wolffish had never once used. The three settings now land where they belong, **Max reaching the top of the ladder at last**, and **Max became a real option on 4.5 and 4.3** rather than a setting that was absent because it was thought impossible. Two catalogue figures were corrected against the API's own answer while we were there: the 4.20 pair holds **a million tokens of context, not the 256K** we were showing.
+
+### DeepSeek's Max Was Talking to Nobody
+
+The same fault, deeper and quieter. DeepSeek's thinking effort was being sent **one level too far inside the request** — and that part of the request is checked for one thing only and shrugs at everything else, so nothing ever complained, no error was ever raised, and **the setting simply never reached the model**. The tell had been sitting in our own notes for months: High and Max measured **less than a third of a percent apart**, which is not two settings behaving similarly, it is two settings that were never sent. With the field in its correct place and measured live, the difference is the one you'd expect — **Off thinks not at all, High thinks hard, and Max thinks roughly twice as long as High** on a problem that rewards it. If you had picked Max on DeepSeek and wondered why it felt no deeper than High, that is why, and it is fixed. **DeepSeek V4 Pro** also takes its rightful place at the head of the list as the frontier model of the pair.
+
+### Your Phone Reconnects the Moment You Look at It
+
+Bring the phone app back after it has been away and you could meet ten seconds of nothing — a connection that **read as perfectly healthy and answered absolutely nothing**. The cause is that phones are suspended mid-breath: the link is torn down by the operating system with nobody left awake to notice, so the app returns believing it is connected and only finds out when something you asked for never comes back. Wolffish now **asks the question on the way in** instead of assuming an answer. Returning to the app sends a probe and **holds the link to a reply within two and a half seconds**; a link that fails to answer is replaced immediately rather than waited on, and because a connection that stopped existing is not a connection that *failed*, the retry goes out **at once instead of serving a backoff you're sitting there watching**. Even while you're away the watchdog got sharper: keepalives are now **held to an answer within ten seconds** rather than inferred from a long silence that could take the better part of two minutes to run out. And a first-time **pairing by code** that lost its connection mid-way now redials as the pairing it actually is — before, it redialled as the wrong kind and asked you to **re-pair a device that only needed to reconnect**.
+
+## v1.0.250 — 2026-08-12
 
 ### Your Phone Stops Being Quiet
 

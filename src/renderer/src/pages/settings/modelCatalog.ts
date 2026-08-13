@@ -72,7 +72,7 @@ export const DEFAULT_MODEL: Partial<Record<ProviderId, string>> = {
   stepfun: 'step-3.7-flash',
   anthropic: 'claude-opus-4-8',
   openai: 'gpt-5.5',
-  xai: 'grok-4.5',
+  xai: 'grok-4.6',
   openrouter: 'deepseek/deepseek-v4-pro'
 }
 
@@ -418,21 +418,21 @@ export const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
   ],
   deepseek: [
     {
-      name: 'deepseek-v4-flash',
-      context: '1M',
-      input: '$0.14',
-      output: '$0.28',
-      cached: '$0.003',
-      badges: ['frontier', 'fast', 'reasoning'],
-      modes: ['none', 'high', 'max']
-    },
-    {
       name: 'deepseek-v4-pro',
       context: '1M',
       input: '$0.44',
       output: '$0.87',
       cached: '$0.004',
-      badges: ['reasoning'],
+      badges: ['frontier', 'reasoning'],
+      modes: ['none', 'high', 'max']
+    },
+    {
+      name: 'deepseek-v4-flash',
+      context: '1M',
+      input: '$0.14',
+      output: '$0.28',
+      cached: '$0.003',
+      badges: ['fast', 'reasoning'],
       modes: ['none', 'high', 'max']
     }
   ],
@@ -610,13 +610,22 @@ export const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
   ],
   xai: [
     {
-      name: 'grok-4.5',
+      name: 'grok-4.6',
       context: '500K',
       input: '$2.00',
       output: '$6.00',
       cached: '$0.50',
       badges: ['frontier', 'vision', 'reasoning'],
-      modes: ['on', 'high']
+      modes: ['on', 'high', 'max']
+    },
+    {
+      name: 'grok-4.5',
+      context: '500K',
+      input: '$2.00',
+      output: '$6.00',
+      cached: '$0.30',
+      badges: ['vision', 'reasoning'],
+      modes: ['on', 'high', 'max']
     },
     {
       name: 'grok-4.3',
@@ -625,11 +634,11 @@ export const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       output: '$2.50',
       cached: '$0.20',
       badges: ['vision', 'reasoning'],
-      modes: ['none', 'high']
+      modes: ['none', 'high', 'max']
     },
     {
       name: 'grok-4.20-0309-reasoning',
-      context: '256K',
+      context: '1M',
       input: '$1.25',
       output: '$2.50',
       cached: '$0.20',
@@ -638,7 +647,7 @@ export const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
     },
     {
       name: 'grok-4.20-0309-non-reasoning',
-      context: '256K',
+      context: '1M',
       input: '$1.25',
       output: '$2.50',
       cached: '$0.20',
@@ -919,6 +928,15 @@ export const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       output: '$0.79',
       cached: null,
       badges: ['reasoning'],
+      modes: ['none', 'high']
+    },
+    {
+      name: 'x-ai/grok-4.6',
+      context: '500K',
+      input: '$2.00',
+      output: '$6.00',
+      cached: null,
+      badges: ['vision', 'reasoning'],
       modes: ['none', 'high']
     },
     {

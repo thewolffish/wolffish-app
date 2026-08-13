@@ -1228,8 +1228,8 @@ export function contextWindowForModel(model: string): number {
   if (m.includes('meta-llama/')) return 131_072
   if (m.includes('mistralai/')) return 131_072
   if (m.includes('qwen/')) return 131_072
-  // xAI / Grok
-  if (m.includes('grok-4.5')) return 500_000
+  // xAI / Grok — verified against GET /v1/models `context_length` (2026-08-13).
+  if (m.includes('grok-4.6') || m.includes('grok-4.5')) return 500_000
   if (m.includes('grok-4.3') || m.includes('grok-4.20')) return 1_000_000
   if (m.includes('grok-build')) return 256_000
   if (m.includes('grok-4')) return 256_000
@@ -1289,7 +1289,13 @@ function maxOutputForModel(model: string): number {
   // in providers/zai.ts.
   if (m.includes('glm')) return 65_536
   // xAI / Grok
-  if (m.includes('grok-4.5') || m.includes('grok-4.3') || m.includes('grok-4.20')) return 65_536
+  if (
+    m.includes('grok-4.6') ||
+    m.includes('grok-4.5') ||
+    m.includes('grok-4.3') ||
+    m.includes('grok-4.20')
+  )
+    return 65_536
   if (m.includes('grok-4') || m.includes('grok-build')) return 32_768
   if (m.includes('grok')) return 32_768
   // OpenAI

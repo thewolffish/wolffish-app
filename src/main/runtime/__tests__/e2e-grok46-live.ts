@@ -1,26 +1,31 @@
 /**
- * LIVE end-to-end verification of grok-4.5 through wolffish's real pipeline:
+ * LIVE end-to-end verification of grok-4.6 through wolffish's real pipeline:
  * Thalamus (Brain resolution, agent-role reasoning clamp, retry policy) →
  * XAIProvider (request building, SSE parsing, tool assembly) → production
  * xAI API — exercised in BOTH wolffish modes (single + workflow).
  *
+ * grok-4.6 carries the same five-rung effort ladder as 4.5 —
+ * minimal|low|medium|high|xhigh, no 'none' — so the canonical [on, high, max]
+ * scale must land on low / high / xhigh at the wire. That mapping is the point
+ * of this harness: a fetch tap records every outbound body so the effort
+ * actually sent per mode is asserted at the wire level, not inferred.
+ *
  * Key comes from XAI_API_KEY — never from ~/.wolffish (that folder is a build
- * artifact and tests must not read it). A fetch tap records each outbound
- * request body so the reasoning_effort actually sent per mode is asserted at
- * the wire level.
+ * artifact and tests must not read it).
  *
  * Run: XAI_API_KEY=... TSX_TSCONFIG_PATH=tsconfig.node.json \
  *        ELECTRON_RUN_AS_NODE=1 npx electron <tsx>/dist/cli.mjs \
- *        src/main/runtime/__tests__/e2e-grok45-live.boot.ts
+ *        src/main/runtime/__tests__/e2e-grok46-live.boot.ts
  * (electron-as-node because thalamus.ts imports electron's net module)
  */
 import assert from 'node:assert/strict'
 import { LocalProvider } from '@main/runtime/providers/local'
+import { reasoningModesFor } from '@main/runtime/reasoning'
 import { Thalamus } from '@main/runtime/thalamus'
 import type { ChatMessage, StreamChunk, ToolUse } from '@main/runtime/thalamus'
 import { WorkflowSession, type RunAgentTurn } from '@main/runtime/workflow'
 
-const MODEL = 'grok-4.5'
+const MODEL = 'grok-4.6'
 
 const apiKey = process.env.XAI_API_KEY
 if (!apiKey) {
@@ -53,7 +58,7 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   return realFetch(input, init)
 }) as typeof fetch
 
-// ── the real Thalamus, Brain pointed at grok-4.5 ─────────────────────────
+// ── the real Thalamus, Brain pointed at grok-4.6 ─────────────────────────
 const thalamus = new Thalamus(new LocalProvider())
 thalamus.setCloudProviders([{ id: 'xai', model: MODEL, apiKey }])
 thalamus.setBrain({ providerId: 'xai', model: MODEL })
@@ -109,6 +114,12 @@ function report(name: string, fn: () => void): void {
 }
 
 async function main(): Promise<void> {
+  // ════ REGISTRY ══════════════════════════════════════════════════════
+  console.log('registry — the brain button reads the same source the wire does')
+  report('grok-4.6 exposes [on, high, max]', () =>
+    assert.deepEqual(reasoningModesFor('xai', MODEL), ['on', 'high', 'max'])
+  )
+
   // ════ SINGLE MODE ═══════════════════════════════════════════════════
   console.log('single mode — plain turn (brain mode: on → wire effort low)')
   const s1 = await drive({
@@ -116,7 +127,7 @@ async function main(): Promise<void> {
     messages: [{ role: 'user', content: 'Reply with exactly: ready' }],
     thinkingMode: 'on'
   })
-  report('resolves to xai/grok-4.5', () => assert.equal(s1.activeModel, `xai/${MODEL}`))
+  report('resolves to xai/grok-4.6', () => assert.equal(s1.activeModel, `xai/${MODEL}`))
   report('no errors', () => assert.deepEqual(s1.errors, []))
   report('text answer', () => assert.match(s1.text.toLowerCase(), /ready/))
   report('reasoning streamed (always-on)', () => assert.ok(s1.reasoningChars > 0))
@@ -136,6 +147,24 @@ async function main(): Promise<void> {
   })
   report('correct answer', () => assert.match(s2.text, /667/))
   report('wire: effort high', () => assert.equal(wire.at(-1)?.reasoning_effort, 'high'))
+
+  // The rung 4.5's integration never had: canonical 'max' must reach the wire
+  // as 'xhigh' (xAI 400s on a literal 'max'), so a 400 here IS the failure.
+  console.log('single mode — max effort (canonical max → wire xhigh)')
+  const s3 = await drive({
+    system: SYSTEM,
+    messages: [
+      {
+        role: 'user',
+        content: 'How many distinct primes divide 2026? Reply with just the number.'
+      }
+    ],
+    thinkingMode: 'max'
+  })
+  report('no errors at max (xhigh accepted)', () => assert.deepEqual(s3.errors, []))
+  // 2026 = 2 × 1013, and 1013 is prime (no factor ≤ 31) → exactly 2.
+  report('correct answer', () => assert.match(s3.text, /\b2\b/))
+  report('wire: effort xhigh', () => assert.equal(wire.at(-1)?.reasoning_effort, 'xhigh'))
 
   console.log('single mode — tool-call round trip')
   const tools = [
@@ -167,7 +196,7 @@ async function main(): Promise<void> {
       role: 'tool',
       toolUseId: t1.toolCalls[0]?.id ?? 'call_0',
       toolName: 'get_current_time',
-      content: '2026-07-09T21:37:00+03:00'
+      content: '2026-08-13T21:37:00+03:00'
     }
   ]
   const t2 = await drive({ system: SYSTEM, messages: followup, thinkingMode: 'on', tools })
@@ -192,9 +221,9 @@ async function main(): Promise<void> {
 
   // ════ WORKFLOW MODE ═════════════════════════════════════════════════
   // Real WorkflowSession; runAgentTurn feeds each agent through the real
-  // thalamus with role 'agent', which clamps the master's chosen effort to the
-  // [on, high, max] registry before the request is built. grok-4.5 honours max
-  // (→ wire xhigh, the ladder's top rung) but has no 'off' rung.
+  // thalamus with role 'agent', which clamps the master's chosen effort to
+  // the model's registry entry before the request is built. grok-4.6 now
+  // honours 'max' (→ xhigh) but still has no 'off' rung.
   console.log('workflow mode — agents with clamped efforts')
   const runAgentTurn: RunAgentTurn = async (args) => {
     const res = await drive({
@@ -218,12 +247,12 @@ async function main(): Promise<void> {
     }
   }
   const session = new WorkflowSession(
-    'wf_e2e_grok45',
+    'wf_e2e_grok46',
     runAgentTurn,
     () => ({ provider: 'xai', model: MODEL }),
     () => {}
   )
-  session.plan(['verify'], 'grok-4.5 live e2e')
+  session.plan(['verify'], 'grok-4.6 live e2e')
 
   session.spawn({
     task: 'Reply with exactly: alpha done',
@@ -263,8 +292,10 @@ async function main(): Promise<void> {
     assert.ok(snap.agents.every((ag) => ag.status === 'completed'))
   })
 
-  report('every wire call targeted grok-4.5 with a valid ladder rung', () => {
-    assert.ok(wire.length >= 7, `only ${wire.length} wire calls`)
+  report('every wire call targeted grok-4.6 with a valid ladder rung', () => {
+    // 6 single-mode turns (on, high, max, tool call, tool result, vision)
+    // + 2 workflow agents.
+    assert.ok(wire.length >= 8, `only ${wire.length} wire calls`)
     const valid = new Set(['low', 'high', 'xhigh'])
     for (const w of wire) {
       assert.equal(w.model, MODEL)
@@ -272,10 +303,14 @@ async function main(): Promise<void> {
       assert.equal(w.stream, true)
     }
   })
+  report('all three rungs were exercised', () => {
+    const seen = new Set(wire.map((w) => w.reasoning_effort))
+    for (const rung of ['low', 'high', 'xhigh']) assert.ok(seen.has(rung), `never sent ${rung}`)
+  })
 
   console.log(
     failures === 0
-      ? `\nALL PASS — ${wire.length} live grok-4.5 calls through the wolffish pipeline`
+      ? `\nALL PASS — ${wire.length} live grok-4.6 calls through the wolffish pipeline`
       : `\n${failures} FAILURE(S)`
   )
   process.exit(failures === 0 ? 0 : 1)

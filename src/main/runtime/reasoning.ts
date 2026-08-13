@@ -62,16 +62,21 @@ export function reasoningModesFor(
       return []
 
     // ── xAI (Grok) ─────────────────────────────────────────────────────
-    // Verified live: grok-4.5 reasons ALWAYS-ON with a low/high effort knob —
-    // accepts reasoning_effort low/high, REJECTS 'none' AND 'max' → [on, high].
-    // grok-4.3 / grok-3-mini accept reasoning_effort none/low/high (grok-4.3
-    // REJECTS 'max') → [off, high]. grok-4 / grok-4.20-reasoning / grok-build
-    // reason always-on with no effort knob → [on]. Explicit -non-reasoning
-    // variants and grok-3 base don't reason → [].
+    // Verified live 2026-08-13 by sweeping reasoning_effort across every model
+    // in the catalogue. The knob is a FIVE-rung ladder, not a low/high pair:
+    // minimal|low|medium|high|xhigh. 'max' is not an xAI value at all (400
+    // "Invalid reasoning effort" — the enum is genuinely validated: 'banana'
+    // and 'LOW' 400 the same way), so the canonical 'max' rides xhigh.
+    //   grok-4.6 / grok-4.5  ladder minus 'none' → ALWAYS-ON [on, high, max]
+    //                        ('none' → 400 "does not support ... `none`")
+    //   grok-4.3             full ladder incl. 'none' → [off, high, max]
+    //   grok-4.20-* / grok-build  reject the parameter outright → always-on [on]
+    //   -non-reasoning variants and grok-3 base → [] (never reason)
     case 'xai':
       if (m.includes('non-reasoning')) return []
-      if (m.includes('grok-4.5')) return ['on', 'high']
-      if (m.includes('grok-4.3') || m.includes('grok-3-mini')) return ['off', 'high']
+      if (m.includes('grok-4.6') || m.includes('grok-4.5')) return ['on', 'high', 'max']
+      if (m.includes('grok-4.3')) return ['off', 'high', 'max']
+      if (m.includes('grok-3-mini')) return ['off', 'high']
       if (m.includes('grok-build') || /grok-4/.test(m)) return ['on']
       return []
 
@@ -85,11 +90,17 @@ export function reasoningModesFor(
       return []
 
     // ── DeepSeek ───────────────────────────────────────────────────────
-    // Effort, coarse. The API accepts reasoning_effort none|high|max and
-    // off/on is solid (off→0 reasoning, on→~5.7k). high vs max currently
-    // behave the same in testing (zebra puzzle n=3: 5755 vs 5775 tokens,
-    // <0.3% apart) — but we expose max anyway: it's a valid param the API
-    // accepts and may diverge from high in a future model revision.
+    // Effort is REAL on the v4 line — but only as the TOP-LEVEL
+    // `reasoning_effort` field (enum none|minimal|low|medium|high|xhigh|max).
+    // Nested inside `thinking` it is silently dropped, because `thinking` is
+    // validated on `type` alone and ignores unknown members. The provider
+    // nested it until 2026-08-13, which is why an earlier sweep here recorded
+    // "high vs max <0.3% apart": neither value ever reached the model.
+    // Re-measured live on deepseek-v4-pro with the field top-level (zebra
+    // puzzle, 64k cap, n=2): none→0 chars, high→~40k, max→~80k with both max
+    // runs above every other level's best. Effort is a ceiling the model need
+    // not spend, so high and max converge on easy turns and separate on hard
+    // ones. thinking.type stays the master switch (disabled→0 regardless).
     case 'deepseek':
       return ['off', 'high', 'max']
 
