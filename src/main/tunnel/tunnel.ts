@@ -727,15 +727,27 @@ export class Tunnel {
     const queued = this.handshakeQueue.shift()
     if (queued) return Promise.resolve(queued)
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.handshakeInbox = null
-        reject(new TunnelError('handshake timed out'))
-      }, timeoutMs)
-      this.handshakeInbox = (message) => {
+      // Only ever clear the slot while it is still OURS — the same identity
+      // guard the socket handlers use, and for the same reason.
+      //
+      // An abandoned handshake leaves its timeout armed: the cycle it belonged
+      // to was replaced (a wake probe, a keepalive that went unanswered, a
+      // retry), and nothing cancels a timer nobody is waiting on any more.
+      // Half a minute later it used to fire and null whatever inbox it found —
+      // by then, its SUCCESSOR's. The reply the successor was waiting for then
+      // arrived to an empty slot, queued behind nobody, and that handshake hung
+      // to its own timeout: thirty seconds of a reconnect that had already
+      // reached the relay and had everything it needed.
+      const inbox = (message: Uint8Array): void => {
         clearTimeout(timer)
-        this.handshakeInbox = null
+        if (this.handshakeInbox === inbox) this.handshakeInbox = null
         resolve(message)
       }
+      const timer = setTimeout(() => {
+        if (this.handshakeInbox === inbox) this.handshakeInbox = null
+        reject(new TunnelError('handshake timed out'))
+      }, timeoutMs)
+      this.handshakeInbox = inbox
     })
   }
 

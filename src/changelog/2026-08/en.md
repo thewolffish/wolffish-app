@@ -1,4 +1,10 @@
-## v1.0.251 — 2026-08-13 `Latest`
+## v1.0.252 — 2026-08-13 `Latest`
+
+### The Reconnect That Waited Half a Minute for a Reply It Already Had
+
+The wake probe that made reconnecting instant last version could, now and then, leave you watching the exact opposite: a phone that came back, reached the relay, received everything it needed — and then **sat there for a full thirty seconds before admitting it was connected**. The handshake had already succeeded; the answer simply never got handed to the side waiting for it. Every handshake arms a thirty-second deadline, and when its attempt is **replaced mid-flight** — by a wake probe, by a keepalive that went unanswered, by an ordinary retry — nothing was cancelling the deadline belonging to the attempt that had just been abandoned. Half a minute later it would fire and **empty the mailbox belonging to its own successor**, the handshake that had taken its place and was, at that very moment, waiting on a reply that had already arrived. That reply reached an empty slot and was quietly set aside; the handshake expecting it heard nothing at all and ran out its own full deadline. A handshake now **only ever clears the slot while the slot is still its own**, so an expired attempt leaves the live one untouched and the answer lands where somebody is actually waiting for it — the reconnect finishes the moment the relay replies, which is what it should have been doing all along.
+
+## v1.0.251 — 2026-08-13
 
 ### Grok 4.6, and a Thinking Dial That Finally Turns
 
