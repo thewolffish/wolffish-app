@@ -6,6 +6,7 @@ import type {
   ToolDefinition,
   UserContentBlock
 } from '@main/runtime/thalamus'
+import { openaiCompatToolContent } from '@main/runtime/tool-images'
 
 const STEPFUN_ENDPOINT = 'https://api.stepfun.ai/v1/chat/completions'
 
@@ -228,7 +229,7 @@ function toStepfunMessages(messages: ChatMessage[]): Array<Record<string, unknow
       out.push({
         role: 'tool',
         tool_call_id: m.toolUseId,
-        content: m.content
+        content: openaiCompatToolContent(m.content, m.images, m.toolName)
       })
       continue
     }

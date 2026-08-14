@@ -488,10 +488,29 @@ const plugin = {
           }
         }
 
+        // sharp failed to load — still persist the raw PNG so a later
+        // size-cap drop on the wire leaves a path the model can re-read
+        // instead of re-shooting in a loop.
         lastScreenshotSize = { width, height }
+        let savedPath = ''
+        try {
+          const root = workspaceRoot || path.join(os.homedir(), '.wolffish', 'workspace')
+          const convId = getConversationId()
+          const safe = (convId ?? 'unknown').replace(/[^A-Za-z0-9._-]/g, '_')
+          const dir = path.join(root, 'screenshots', `conv-${safe}`)
+          await fs.mkdir(dir, { recursive: true })
+          screenshotCounter++
+          const filename = `shot-${Date.now()}-${screenshotCounter}.png`
+          const filePath = path.join(dir, filename)
+          await fs.writeFile(filePath, inputBuffer)
+          savedPath = filePath
+        } catch {
+          // Non-fatal — image still returned inline via base64
+        }
+        const pathLine = savedPath ? `\n${savedPath}` : ''
         return {
           success: true,
-          output: `Screenshot captured (${width}x${height}). Viewport coordinates: x 0–${width}, y 0–${height}.`,
+          output: `Screenshot captured (${width}x${height}). Viewport coordinates: x 0–${width}, y 0–${height}.${pathLine}`,
           images: [{ mediaType: 'image/png', data: rawBase64 }]
         }
       }

@@ -1,4 +1,12 @@
-## v1.0.252 — 2026-08-13 `Latest`
+## v1.0.253 — 2026-08-14 `Latest`
+
+### The Screenshot It Described Without Ever Seeing
+
+A screenshot, a photo opened with **image_view**, a page captured in the browser — Wolffish has been taking them for a long time. What it had not been doing, on most of the models that can see, is **showing them the picture**. The tool's caption went out; the pixels stayed on the machine. Claude, ChatGPT and anything through OpenRouter already received the image. **Grok, Kimi, Qwen, MiniMax, Mimo, StepFun and GLM** were working from the label alone. They now get the photograph itself, inline, the same way an image you attach by hand already did.
+
+When a capture is **too large to send** — a raw full-page PNG that never got shrunk — it is no longer forced onto the wire to fail there. The file stays on disk, the path stays in the caption, and the model is told to open it rather than invent what it missed. And if a provider **refuses pictures inside a tool result**, the turn no longer dies: Wolffish tries again without those pictures first (ones you attached yourself stay), then without any pictures if that still fails, and **remembers what worked for the rest of the session** so the next turn does not walk into the same wall.
+
+## v1.0.252 — 2026-08-13
 
 ### The Reconnect That Waited Half a Minute for a Reply It Already Had
 

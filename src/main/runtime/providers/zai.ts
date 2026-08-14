@@ -7,6 +7,7 @@ import type {
   UserContentBlock
 } from '@main/runtime/thalamus'
 import { effortFromMode, thinkingEnabled } from '@main/runtime/reasoning'
+import { openaiCompatToolContent } from '@main/runtime/tool-images'
 
 // Z.ai (Zhipu) GLM models, OpenAI-compatible chat API. The wire format is
 // identical to Kimi/Moonshot: `reasoning_content` for thinking deltas,
@@ -240,7 +241,7 @@ function toMessages(messages: ChatMessage[]): Array<Record<string, unknown>> {
       out.push({
         role: 'tool',
         tool_call_id: m.toolUseId,
-        content: m.content
+        content: openaiCompatToolContent(m.content, m.images, m.toolName)
       })
       continue
     }

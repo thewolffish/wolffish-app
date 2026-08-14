@@ -104,13 +104,37 @@ function openrouterSupportsVision(m: string): boolean {
  * image/document blocks in user messages, or images in tool results.
  */
 export function hasVisualContent(messages: ChatMessage[]): boolean {
-  return messages.some((m) => {
-    if (m.role === 'user' && typeof m.content !== 'string') {
-      return m.content.some((b) => b.type === 'image' || b.type === 'document')
-    }
-    if (m.role === 'tool') return (m.images?.length ?? 0) > 0
-    return false
-  })
+  return messages.some((m) => messageHasVisual(m, 'all'))
+}
+
+function messageHasVisual(m: ChatMessage, scope: VisualStripScope): boolean {
+  if (scope === 'all' && m.role === 'user' && typeof m.content !== 'string') {
+    return m.content.some((b) => b.type === 'image' || b.type === 'document')
+  }
+  if (m.role === 'tool') return (m.images?.length ?? 0) > 0
+  return false
+}
+
+export const TEXT_ONLY_STRIP_REASON = 'the active model is text-only and cannot view them'
+
+/** Stage 1: only tool-result images were removed. User attachments stay. */
+export const TOOL_RESULT_MODALITY_STRIP_REASON =
+  'this provider rejected image parts inside a tool result'
+
+/** Stage 2: every remaining visual was removed after stage 1 also rejected. */
+export const REQUEST_MODALITY_STRIP_REASON = 'this provider rejected image parts in this request'
+
+export type VisualStripScope = 'tool' | 'all'
+
+/**
+ * Same predicate the live harness uses to decide "this 400/422 is a
+ * modality reject, not an auth/model-id failure." One regex so the two
+ * cannot drift.
+ */
+export const MODALITY_REJECT_PATTERN = /image|multimodal|content part|unknown variant/i
+
+export function isModalityReject(message: string): boolean {
+  return MODALITY_REJECT_PATTERN.test(message)
 }
 
 /**
@@ -118,11 +142,19 @@ export function hasVisualContent(messages: ChatMessage[]): boolean {
  * and where the original files live, so the model can reach for file
  * tools instead of hallucinating what it "saw". Returns the input array
  * unchanged (same reference) when there is nothing to strip.
+ *
+ * `reason` is interpolated into the notes for whatever this call removes.
+ * `scope` `'tool'` strips only tool-result images (user attachments stay);
+ * `'all'` (default) strips user-message images/PDFs as well.
  */
-export function stripVisualContent(messages: ChatMessage[]): ChatMessage[] {
-  if (!hasVisualContent(messages)) return messages
+export function stripVisualContent(
+  messages: ChatMessage[],
+  reason: string = TEXT_ONLY_STRIP_REASON,
+  scope: VisualStripScope = 'all'
+): ChatMessage[] {
+  if (!messages.some((m) => messageHasVisual(m, scope))) return messages
   return messages.map((m) => {
-    if (m.role === 'user' && typeof m.content !== 'string') {
+    if (scope === 'all' && m.role === 'user' && typeof m.content !== 'string') {
       let images = 0
       let documents = 0
       const kept: UserContentBlock[] = []
@@ -132,21 +164,21 @@ export function stripVisualContent(messages: ChatMessage[]): ChatMessage[] {
         else kept.push(block)
       }
       if (images === 0 && documents === 0) return m
-      kept.push({ type: 'text', text: omittedNote(images, documents) })
+      kept.push({ type: 'text', text: omittedNote(images, documents, reason) })
       return { ...m, content: kept }
     }
     if (m.role === 'tool' && m.images && m.images.length > 0) {
       const count = m.images.length
-      const note = `\n[${count} image${count === 1 ? '' : 's'} from this tool result omitted — the active model is text-only and cannot view images.]`
+      const note = `\n[${count} image${count === 1 ? '' : 's'} from this tool result omitted — ${reason}.]`
       return { ...m, images: undefined, content: m.content + note }
     }
     return m
   })
 }
 
-function omittedNote(images: number, documents: number): string {
+function omittedNote(images: number, documents: number, reason: string): string {
   const parts: string[] = []
   if (images > 0) parts.push(`${images} image${images === 1 ? '' : 's'}`)
   if (documents > 0) parts.push(`${documents} PDF document${documents === 1 ? '' : 's'}`)
-  return `[${parts.join(' and ')} omitted — the active model is text-only and cannot view them. The original files are on disk; their paths are listed in the <attachments> block of this message. Use file tools if the task needs their contents.]`
+  return `[${parts.join(' and ')} omitted — ${reason}. The original files are on disk; their paths are listed in the <attachments> block of this message. Use file tools if the task needs their contents.]`
 }

@@ -8,6 +8,7 @@ import type {
   UserContentBlock
 } from '@main/runtime/thalamus'
 import { effortFromMode } from '@main/runtime/reasoning'
+import { openaiCompatToolContent } from '@main/runtime/tool-images'
 
 const OPENAI_ENDPOINT = 'https://api.openai.com/v1/chat/completions'
 
@@ -269,23 +270,10 @@ function toOpenAIMessages(messages: ChatMessage[]): Array<Record<string, unknown
   for (const m of messages) {
     if (m.role === 'system') continue
     if (m.role === 'tool') {
-      let content: string | unknown[]
-      if (m.images && m.images.length > 0) {
-        const parts: unknown[] = [{ type: 'text', text: m.content }]
-        for (const img of m.images) {
-          parts.push({
-            type: 'image_url',
-            image_url: { url: `data:${img.mediaType};base64,${img.data}` }
-          })
-        }
-        content = parts
-      } else {
-        content = m.content
-      }
       out.push({
         role: 'tool',
         tool_call_id: m.toolUseId,
-        content
+        content: openaiCompatToolContent(m.content, m.images, m.toolName)
       })
       continue
     }

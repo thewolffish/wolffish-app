@@ -8,7 +8,15 @@
  */
 
 import type { ChatMessage } from '../thalamus'
-import { cloudModelSupportsVision, hasVisualContent, stripVisualContent } from '../vision'
+import {
+  cloudModelSupportsVision,
+  hasVisualContent,
+  isModalityReject,
+  REQUEST_MODALITY_STRIP_REASON,
+  stripVisualContent,
+  TEXT_ONLY_STRIP_REASON,
+  TOOL_RESULT_MODALITY_STRIP_REASON
+} from '../vision'
 
 let passed = 0
 let failed = 0
@@ -199,6 +207,65 @@ if (strippedTool.role === 'tool') {
 check('strip: untouched messages keep identity', stripped[0] === withVisuals[0], true)
 check('strip: assistant message keeps identity', stripped[2] === withVisuals[2], true)
 check('strip: original input not mutated', hasVisualContent(withVisuals), true)
+check(
+  'strip: default reason is text-only',
+  strippedTool.role === 'tool' && strippedTool.content.includes(TEXT_ONLY_STRIP_REASON),
+  true
+)
+
+{
+  const toolOnly = stripVisualContent(withVisuals, TOOL_RESULT_MODALITY_STRIP_REASON, 'tool')
+  const toolMsg = toolOnly[3]
+  const userMsg = toolOnly[1]
+  check(
+    'strip tool-scope: tool images gone',
+    toolMsg.role === 'tool' && toolMsg.images === undefined,
+    true
+  )
+  check(
+    'strip tool-scope: tool note is the tool-result reason',
+    toolMsg.role === 'tool' &&
+      toolMsg.content.includes(TOOL_RESULT_MODALITY_STRIP_REASON) &&
+      !toolMsg.content.includes('can still view') &&
+      !toolMsg.content.includes('text-only'),
+    true
+  )
+  check(
+    'strip tool-scope: user image blocks survive',
+    userMsg.role === 'user' &&
+      typeof userMsg.content !== 'string' &&
+      userMsg.content.some((b) => b.type === 'image'),
+    true
+  )
+  check('strip tool-scope: still has visuals (the user ones)', hasVisualContent(toolOnly), true)
+}
+
+{
+  const all = stripVisualContent(withVisuals, REQUEST_MODALITY_STRIP_REASON, 'all')
+  const toolMsg = all[3]
+  const userMsg = all[1]
+  check('strip all-scope: nothing visual remains', hasVisualContent(all), false)
+  check(
+    'strip all-scope: tool note is the request reason',
+    toolMsg.role === 'tool' &&
+      toolMsg.content.includes(REQUEST_MODALITY_STRIP_REASON) &&
+      !toolMsg.content.includes('can still view') &&
+      !toolMsg.content.includes('user message'),
+    true
+  )
+  check(
+    'strip all-scope: user note is the request reason',
+    userMsg.role === 'user' &&
+      typeof userMsg.content !== 'string' &&
+      userMsg.content.some(
+        (b) => b.type === 'text' && b.text.includes(REQUEST_MODALITY_STRIP_REASON)
+      ),
+    true
+  )
+}
+
+check('modality predicate: unknown variant', isModalityReject('unknown variant image_url'), true)
+check('modality predicate: invalid api key', isModalityReject('invalid api key'), false)
 
 // ---------------------------------------------------------------------------
 

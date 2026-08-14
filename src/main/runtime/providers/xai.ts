@@ -7,6 +7,7 @@ import type {
   UserContentBlock
 } from '@main/runtime/thalamus'
 import { effortFromMode } from '@main/runtime/reasoning'
+import { openaiCompatToolContent } from '@main/runtime/tool-images'
 
 const XAI_ENDPOINT = 'https://api.x.ai/v1/chat/completions'
 
@@ -271,7 +272,7 @@ function userContentToXAI(content: string | UserContentBlock[]): string | unknow
   return parts
 }
 
-function toXAIMessages(messages: ChatMessage[]): Array<Record<string, unknown>> {
+export function toXAIMessages(messages: ChatMessage[]): Array<Record<string, unknown>> {
   const out: Array<Record<string, unknown>> = []
   for (const m of messages) {
     if (m.role === 'system') continue
@@ -279,7 +280,7 @@ function toXAIMessages(messages: ChatMessage[]): Array<Record<string, unknown>> 
       out.push({
         role: 'tool',
         tool_call_id: m.toolUseId,
-        content: m.content
+        content: openaiCompatToolContent(m.content, m.images, m.toolName)
       })
       continue
     }

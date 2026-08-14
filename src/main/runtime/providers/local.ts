@@ -7,6 +7,7 @@ import type {
   ToolDefinition
 } from '@main/runtime/thalamus'
 import { thinkingEnabled } from '@main/runtime/reasoning'
+import { inlineOmittedNote, selectInlineImages } from '@main/runtime/tool-images'
 
 export type { ChatMessage }
 
@@ -288,18 +289,19 @@ function toOllamaTool(tool: ToolDefinition): Record<string, unknown> {
   }
 }
 
-function toOllamaMessages(messages: ChatMessage[]): Array<Record<string, unknown>> {
+export function toOllamaMessages(messages: ChatMessage[]): Array<Record<string, unknown>> {
   const out: Array<Record<string, unknown>> = []
   for (const m of messages) {
     if (m.role === 'system') continue
     if (m.role === 'tool') {
+      const { inline, omitted } = selectInlineImages(m.images ?? [], m.toolName, true)
       const msg: Record<string, unknown> = {
         role: 'tool',
-        content: m.content,
+        content: omitted > 0 ? m.content + inlineOmittedNote(omitted) : m.content,
         tool_name: m.toolName
       }
-      if (m.images && m.images.length > 0) {
-        msg.images = m.images.map((img) => img.data)
+      if (inline.length > 0) {
+        msg.images = inline.map((img) => img.data)
       }
       out.push(msg)
       continue

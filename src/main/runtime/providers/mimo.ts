@@ -7,6 +7,7 @@ import type {
   UserContentBlock
 } from '@main/runtime/thalamus'
 import { thinkingEnabled } from '@main/runtime/reasoning'
+import { openaiCompatToolContent } from '@main/runtime/tool-images'
 
 const MIMO_ENDPOINT = 'https://api.xiaomimimo.com/v1/chat/completions'
 
@@ -223,7 +224,7 @@ function toMessages(messages: ChatMessage[]): Array<Record<string, unknown>> {
       out.push({
         role: 'tool',
         tool_call_id: m.toolUseId,
-        content: m.content
+        content: openaiCompatToolContent(m.content, m.images, m.toolName)
       })
       continue
     }

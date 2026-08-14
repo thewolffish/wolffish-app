@@ -17,8 +17,13 @@ import { ZaiProvider } from '@main/runtime/providers/zai'
 import {
   cloudModelSupportsVision,
   hasVisualContent,
-  stripVisualContent
+  isModalityReject,
+  REQUEST_MODALITY_STRIP_REASON,
+  stripVisualContent,
+  TOOL_RESULT_MODALITY_STRIP_REASON,
+  type VisualStripScope
 } from '@main/runtime/vision'
+import { selectInlineImages } from '@main/runtime/tool-images'
 import { normalizeReasoningMode, reasoningModesFor } from '@main/runtime/reasoning'
 import { net } from 'electron'
 
@@ -206,6 +211,13 @@ export type ProviderHealth = {
 
 export type ThalamusOptions = {
   corpus?: Corpus
+  /**
+   * Test-only: when set, cloud instantiate() returns this streamer instead
+   * of constructing a real vendor client. Production never passes this.
+   */
+  testProvider?: {
+    stream(options: ProviderStreamOptions): AsyncGenerator<StreamChunk>
+  }
 }
 
 // Per-model cooldown after consecutive failures, exposed via getHealth()
@@ -298,12 +310,21 @@ export class Thalamus {
   private health = new Map<ProviderId, ProviderHealth>()
   private corpus: Corpus | null
   private localOnly = false
+  private testProvider: StreamableProvider | null
+  /**
+   * Session-scoped: provider:model → the strip scope that actually cured
+   * a modality 400. Written only after a stripped retry succeeds, so a
+   * false-positive 400 never poisons later turns. In-memory only — a
+   * vendor fix self-heals on next launch.
+   */
+  private toolResultModalityRejects = new Map<string, VisualStripScope>()
 
   constructor(
     private local: LocalProvider,
     options: ThalamusOptions = {}
   ) {
     this.corpus = options.corpus ?? null
+    this.testProvider = options.testProvider ?? null
   }
 
   setCorpus(corpus: Corpus): void {
@@ -375,8 +396,19 @@ export class Thalamus {
       entry.id === 'local'
         ? await this.local.supportsVision()
         : cloudModelSupportsVision(entry.id, entry.model)
-    if (vision) return options
-    return { ...options, messages: stripVisualContent(options.messages) }
+    if (!vision) {
+      return { ...options, messages: stripVisualContent(options.messages) }
+    }
+    const memoScope = this.toolResultModalityRejects.get(`${entry.id}:${entry.model}`)
+    if (memoScope) {
+      const reason =
+        memoScope === 'tool' ? TOOL_RESULT_MODALITY_STRIP_REASON : REQUEST_MODALITY_STRIP_REASON
+      return {
+        ...options,
+        messages: stripVisualContent(options.messages, reason, memoScope)
+      }
+    }
+    return options
   }
 
   /**
@@ -785,10 +817,11 @@ export class Thalamus {
     | { kind: 'committed-error'; message: string; failure?: ProviderFailure }
     | { kind: 'failed'; failure: ProviderFailure }
   > {
-    const guarded = await this.guardVisualContent(entry, shapeOutbound(options))
+    let guarded = await this.guardVisualContent(entry, shapeOutbound(options))
     const overallStartedAt = Date.now()
     let attempt = 0
     let lastFailure: ProviderFailure | null = null
+    let modalityStage: 0 | 1 | 2 = 0
 
     while (true) {
       if (options.signal?.aborted) {
@@ -852,6 +885,12 @@ export class Thalamus {
         }
 
         this.markHealthy(entry.id)
+        if (modalityStage === 1 || modalityStage === 2) {
+          this.toolResultModalityRejects.set(
+            `${entry.id}:${entry.model}`,
+            modalityStage === 1 ? 'tool' : 'all'
+          )
+        }
         const durationMs = Date.now() - startedAt
         this.emit('llm.response', {
           provider: entry.id,
@@ -903,6 +942,45 @@ export class Thalamus {
           rawMessage: extractProviderDetail(message) ?? message,
           retries: attempt,
           durationMs: Date.now() - overallStartedAt
+        }
+
+        // Two-stage modality ladder. Stage 1 strips only tool-result
+        // images (user attachments stay). Stage 2 strips everything.
+        // Bound: initial + two retries, then failed. Memo is written
+        // on success, not here — a strip that didn't cure must not
+        // poison the session.
+        const status = classified.statusCode
+        const modalityHit =
+          (status === 400 || status === 422) &&
+          isModalityReject(message) &&
+          hasVisualContent(guarded.messages)
+        if (modalityHit && modalityStage === 0) {
+          modalityStage = 1
+          const detail = extractProviderDetail(message) ?? message
+          console.log(
+            `[thalamus] modality reject on ${entry.id}/${entry.model} — retrying without tool-result images: ${detail}`
+          )
+          guarded = {
+            ...guarded,
+            messages: stripVisualContent(
+              guarded.messages,
+              TOOL_RESULT_MODALITY_STRIP_REASON,
+              'tool'
+            )
+          }
+          continue
+        }
+        if (modalityHit && modalityStage === 1) {
+          modalityStage = 2
+          const detail = extractProviderDetail(message) ?? message
+          console.log(
+            `[thalamus] modality reject on ${entry.id}/${entry.model} after tool-only strip — retrying without any images: ${detail}`
+          )
+          guarded = {
+            ...guarded,
+            messages: stripVisualContent(guarded.messages, REQUEST_MODALITY_STRIP_REASON, 'all')
+          }
+          continue
         }
 
         // Hard errors aren't worth retrying on the same provider.
@@ -986,6 +1064,9 @@ export class Thalamus {
 
   /** Construct the provider client for one cloud config + the Brain's model. */
   private instantiate(cfg: CloudProviderConfig, model: string): CascadeEntry {
+    if (this.testProvider) {
+      return { id: cfg.id, model, provider: this.testProvider }
+    }
     switch (cfg.id) {
       case 'anthropic':
         return {
@@ -1351,7 +1432,8 @@ export function estimateMessageTokens(messages: ChatMessage[]): number {
       case 'tool':
         chars += m.content.length
         if (m.images) {
-          for (const img of m.images) chars += img.data.length * 0.75
+          for (const img of selectInlineImages(m.images, m.toolName).inline)
+            chars += img.data.length * 0.75
         }
         break
     }

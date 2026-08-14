@@ -7,6 +7,7 @@ import type {
   UserContentBlock
 } from '@main/runtime/thalamus'
 import { effortFromMode } from '@main/runtime/reasoning'
+import { anthropicToolContent } from '@main/runtime/tool-images'
 
 const ANTHROPIC_VERSION = '2023-06-01'
 const ANTHROPIC_ENDPOINT = 'https://api.anthropic.com/v1/messages'
@@ -300,23 +301,10 @@ export function toAnthropicMessages(
       continue
     }
     if (m.role === 'tool') {
-      let content: string | unknown[]
-      if (m.images && m.images.length > 0) {
-        const blocks: unknown[] = [{ type: 'text', text: m.content }]
-        for (const img of m.images) {
-          blocks.push({
-            type: 'image',
-            source: { type: 'base64', media_type: img.mediaType, data: img.data }
-          })
-        }
-        content = blocks
-      } else {
-        content = m.content
-      }
       pendingToolResults.push({
         type: 'tool_result',
         tool_use_id: m.toolUseId,
-        content,
+        content: anthropicToolContent(m.content, m.images, m.toolName),
         ...(m.isError ? { is_error: true } : {})
       })
       continue
