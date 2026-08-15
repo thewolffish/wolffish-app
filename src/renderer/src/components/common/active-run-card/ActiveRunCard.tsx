@@ -18,10 +18,19 @@ import { useTranslation } from 'react-i18next'
 // and overlay render from the SAME state owned here, so the overlay can be
 // closed and reopened mid-run without losing log history.
 //
-// Procedure runs (the model-triggered procedure_run tool; job id prefixed
-// "procedure:") ride the same brainstem pool and channel but are deliberately
-// NOT surfaced — a procedure is just a saved prompt, so its background run gets
-// no card, no queue row, and no overlay. Only its failure toast below survives.
+// NOTHING is shown by default. Each family of run carries a visibility switch
+// — automations AND procedures share one, in Settings → Channels → In-app;
+// compaction and reflection have their own, in their Knowledge panels — and
+// every switch ships OFF, because a card floating over the chat for work
+// nobody asked to watch is noise. Off changes only that: the runs happen, the
+// logs are written, the panels' last-run cards still report them, and a failed
+// run still toasts.
+//
+// Automations and procedure runs (the model-triggered procedure_run tool; job
+// id prefixed "procedure:") share ONE switch because they are one question to
+// the person watching — "is something running for me right now" — and a
+// procedure is just a saved prompt run in the background. What differs is only
+// which page they live on.
 
 const MAX_LOG_ENTRIES = 50
 
@@ -29,10 +38,69 @@ const isProcedureId = (id: string): boolean => id.startsWith('procedure:')
 
 const EMPTY_SNAPSHOT: HeartbeatRunsSnapshot = { running: [], queued: [] }
 
-const visibleRuns = (snapshot: HeartbeatRunsSnapshot): HeartbeatRunsSnapshot => ({
-  running: snapshot.running.filter((run) => !isProcedureId(run.id)),
-  queued: snapshot.queued.filter((entry) => !isProcedureId(entry.id))
-})
+/**
+ * Which families draw a card. Three switches, four families: procedures ride
+ * the automations one. All off until the config lands, so the first frame
+ * after a launch can never flash a card the user switched off.
+ */
+type CardVisibility = { automation: boolean; compaction: boolean; reflection: boolean }
+
+const NOTHING_SHOWN: CardVisibility = { automation: false, compaction: false, reflection: false }
+
+const shows = (family: HeartbeatRunningJob['family'], visible: CardVisibility): boolean =>
+  family === 'procedure' ? visible.automation : visible[family]
+
+/**
+ * The three switches, live.
+ *
+ * Each is read once and then followed by the push its own writer fires, so a
+ * flip made in this window, in another one, or on the paired phone reaches the
+ * floating card without a refetch — the card is the thing the user just turned
+ * off, and it disappearing on the next run instead of now would read as broken.
+ * Reflection's push carries no payload (it announces the whole config), so that
+ * one re-pulls; the other two carry theirs.
+ */
+function useCardVisibility(): CardVisibility {
+  const [visible, setVisible] = useState<CardVisibility>(NOTHING_SHOWN)
+
+  useEffect(() => {
+    let cancelled = false
+    const merge = (patch: Partial<CardVisibility>): void => {
+      if (!cancelled) setVisible((prev) => ({ ...prev, ...patch }))
+    }
+    const pullReflection = (): void => {
+      void window.api.runtime
+        .getReflectionConfig()
+        .then((cfg) => merge({ reflection: cfg.cards === true }))
+        .catch(() => {})
+    }
+    void window.api.inapp
+      .getConfig()
+      .then((cfg) => merge({ automation: cfg.runCards === true }))
+      .catch(() => {})
+    void window.api.runtime
+      .getCompactionConfig()
+      .then((cfg) => merge({ compaction: cfg.cards === true }))
+      .catch(() => {})
+    pullReflection()
+
+    const offInApp = window.api.inapp.onConfigChange((cfg) =>
+      merge({ automation: cfg.runCards === true })
+    )
+    const offCompaction = window.api.runtime.onCompactionConfigChanged((cfg) =>
+      merge({ compaction: cfg.cards === true })
+    )
+    const offReflection = window.api.runtime.onReflectionChanged(pullReflection)
+    return () => {
+      cancelled = true
+      offInApp()
+      offCompaction()
+      offReflection()
+    }
+  }, [])
+
+  return visible
+}
 
 // Grid variant per visible card count: cards sit side by side (up to three),
 // and the queued row below spans every column. Static class strings — cn has
@@ -77,6 +145,10 @@ export function ActiveRunCard(): React.JSX.Element | null {
   const { status } = useFlow()
   // Unstamped runs follow the global mode — show the effective value.
   const globalMode = status?.config?.llm.mode === 'workflow' ? 'workflow' : 'single'
+  const visible = useCardVisibility()
+  // The whole pool, NOT what is on screen: the visibility switches are applied
+  // at render, so flipping one takes effect on the runs already in flight
+  // instead of only on the next snapshot.
   const [snapshot, setSnapshot] = useState<HeartbeatRunsSnapshot>(EMPTY_SNAPSHOT)
   // Live activity per run, keyed by the id the log entries carry (the
   // brainstem job id; label kept as a fallback key for older emitters).
@@ -88,7 +160,7 @@ export function ActiveRunCard(): React.JSX.Element | null {
     window.api.heartbeat
       .getRuns()
       .then((snap) => {
-        if (!cancelled) setSnapshot(visibleRuns(snap))
+        if (!cancelled) setSnapshot(snap)
       })
       .catch(() => {})
     return () => {
@@ -98,7 +170,7 @@ export function ActiveRunCard(): React.JSX.Element | null {
 
   useEffect(() => {
     const offRuns = window.api.heartbeat.onRunsChanged((snap) => {
-      const next = visibleRuns(snap)
+      const next = snap
       setSnapshot(next)
       // Drop log buffers whose run is gone, so a later run of the same job
       // starts with a fresh feed (and procedure/finished buffers can't pile
@@ -150,11 +222,15 @@ export function ActiveRunCard(): React.JSX.Element | null {
     }
   }, [t, toast])
 
-  const { running, queued } = snapshot
+  // What this user has asked to see, out of what is actually running.
+  const running = snapshot.running.filter((run) => shows(run.family, visible))
+  const queued = snapshot.queued.filter((entry) => shows(entry.family, visible))
   if (running.length === 0 && queued.length === 0) return null
 
   const logsFor = (job: HeartbeatRunningJob): HeartbeatLogEntry[] =>
     logsById[job.id] ?? logsById[job.label] ?? []
+  // Resolved against the VISIBLE runs, so switching a family off closes an
+  // overlay standing over one of its runs rather than orphaning it.
   const overlayJob = overlayId ? running.find((run) => run.id === overlayId) : undefined
 
   return (

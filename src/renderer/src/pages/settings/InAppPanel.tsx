@@ -6,16 +6,23 @@ import { useTranslation } from 'react-i18next'
 export function InAppPanel(): React.JSX.Element {
   const { t } = useTranslation()
 
-  const [verbose, setVerbose] = useState<boolean | null>(null)
-  const loaded = verbose !== null
+  const [config, setConfig] = useState<InAppConfig | null>(null)
+  const loaded = config !== null
 
   useEffect(() => {
     let cancelled = false
     void window.api.inapp.getConfig().then((cfg: InAppConfig) => {
-      if (!cancelled) setVerbose(cfg.verbose ?? false)
+      if (!cancelled) setConfig(cfg)
+    })
+    // The phone edits the same two switches over the tunnel, and the change
+    // arrives here as the very push this panel's own save fires — so an open
+    // panel adopts it instead of showing pre-edit values until remounted.
+    const off = window.api.inapp.onConfigChange((cfg) => {
+      if (!cancelled) setConfig(cfg)
     })
     return () => {
       cancelled = true
+      off()
     }
   }, [])
 
@@ -30,9 +37,9 @@ export function InAppPanel(): React.JSX.Element {
   // Persists immediately and is read fresh per render by the chat feed —
   // no restart. The setConfig handler broadcasts the change so an open chat
   // re-renders at once. Off (default) = clean feed.
-  const handleVerbose = useCallback(async (value: boolean) => {
-    setVerbose(value)
-    await window.api.inapp.setConfig({ verbose: value })
+  const patch = useCallback(async (next: Partial<InAppConfig>) => {
+    setConfig((prev) => (prev ? { ...prev, ...next } : prev))
+    await window.api.inapp.setConfig(next)
   }, [])
 
   return (
@@ -52,54 +59,93 @@ export function InAppPanel(): React.JSX.Element {
               replies, file-bearing tool results, and errors only. On adds the
               model/provider chip plus every tool call/result/activity and
               compaction card. Display-only — never affects history. */}
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex flex-col gap-1">
-              <span className="text-fg text-sm font-medium">
-                {t('settings.services.inapp.verbose.label')}
-              </span>
-              <p className="text-muted text-xs">
-                {t('settings.services.inapp.verbose.description')}
-              </p>
-            </div>
-            {verbose === null ? (
-              <div
-                aria-hidden="true"
-                className="bg-border/30 h-7 w-[78px] shrink-0 animate-pulse rounded-lg"
-              />
-            ) : (
-              <div
-                role="tablist"
-                className="border-border bg-bg/40 inline-flex shrink-0 items-center rounded-lg border p-0.5"
-              >
-                {toggleOptions.map((opt) => {
-                  const active = opt.value === verbose
-                  return (
-                    <button
-                      key={String(opt.value)}
-                      role="tab"
-                      type="button"
-                      aria-selected={active}
-                      disabled={!loaded}
-                      onClick={() => {
-                        if (opt.value !== verbose) void handleVerbose(opt.value)
-                      }}
-                      className={cn(
-                        'rounded-md px-3 py-1 text-xs font-medium',
-                        'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-                        active
-                          ? 'bg-primary text-primary-fg shadow-sm'
-                          : 'text-muted hover:text-fg cursor-pointer'
-                      )}
-                    >
-                      {opt.label}
-                    </button>
-                  )
-                })}
-              </div>
-            )}
-          </div>
+          <ToggleRow
+            label={t('settings.services.inapp.verbose.label')}
+            description={t('settings.services.inapp.verbose.description')}
+            value={config?.verbose === true}
+            loaded={loaded}
+            options={toggleOptions}
+            onChange={(value) => void patch({ verbose: value })}
+          />
+
+          <div className="border-border/60 border-t" />
+
+          {/* The floating card an AUTOMATION draws over the app while it runs.
+              Off (default) means the run is silent here — it still runs, still
+              logs, still reports on the Automations page. Compaction and
+              reflection runs carry the same switch in their own panels. */}
+          <ToggleRow
+            label={t('settings.services.inapp.runCards.label')}
+            description={t('settings.services.inapp.runCards.description')}
+            value={config?.runCards === true}
+            loaded={loaded}
+            options={toggleOptions}
+            onChange={(value) => void patch({ runCards: value })}
+          />
         </section>
       </div>
+    </div>
+  )
+}
+
+/** One labelled setting with the segmented on/off control every panel uses. */
+function ToggleRow({
+  label,
+  description,
+  value,
+  loaded,
+  options,
+  onChange
+}: {
+  label: string
+  description: string
+  value: boolean
+  loaded: boolean
+  options: Array<{ value: boolean; label: string }>
+  onChange: (value: boolean) => void
+}): React.JSX.Element {
+  return (
+    <div className="flex items-center justify-between gap-4">
+      <div className="flex flex-col gap-1">
+        <span className="text-fg text-sm font-medium">{label}</span>
+        <p className="text-muted text-xs">{description}</p>
+      </div>
+      {!loaded ? (
+        <div
+          aria-hidden="true"
+          className="bg-border/30 h-7 w-[78px] shrink-0 animate-pulse rounded-lg"
+        />
+      ) : (
+        <div
+          role="tablist"
+          className="border-border bg-bg/40 inline-flex shrink-0 items-center rounded-lg border p-0.5"
+        >
+          {options.map((opt) => {
+            const active = opt.value === value
+            return (
+              <button
+                key={String(opt.value)}
+                role="tab"
+                type="button"
+                aria-selected={active}
+                disabled={!loaded}
+                onClick={() => {
+                  if (opt.value !== value) onChange(opt.value)
+                }}
+                className={cn(
+                  'rounded-md px-3 py-1 text-xs font-medium',
+                  'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+                  active
+                    ? 'bg-primary text-primary-fg shadow-sm'
+                    : 'text-muted hover:text-fg cursor-pointer'
+                )}
+              >
+                {opt.label}
+              </button>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }

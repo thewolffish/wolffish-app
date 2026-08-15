@@ -253,6 +253,24 @@ export type ParsedSchedule = {
   dirs?: string[]
 }
 
+/**
+ * Which family a pooled run belongs to. The pool is shared: an automation from
+ * heartbeat.md, the built-in compaction and reflection jobs, and a
+ * model-triggered procedure all queue through the same three slots. Only the
+ * ids tell them apart, and those ids are this scheduler's naming — so the
+ * split is resolved here, once, and travels with the snapshot instead of being
+ * re-derived by every surface that draws a card.
+ */
+export type RunFamily = 'automation' | 'compaction' | 'reflection' | 'procedure'
+
+/** The family a job id names. See registerCompaction/registerReflection. */
+export function runFamily(id: string): RunFamily {
+  if (id.startsWith('procedure:')) return 'procedure'
+  if (id.startsWith('compaction-')) return 'compaction'
+  if (id.startsWith('reflection-')) return 'reflection'
+  return 'automation'
+}
+
 export type RunningJobInfo = {
   id: string
   label: string
@@ -260,6 +278,8 @@ export type RunningJobInfo = {
   startedAt: number
   /** The run's own mode (stamped marker / procedure field); null ⇒ global. */
   mode: 'single' | 'workflow' | null
+  /** Which family this run belongs to — see runFamily. */
+  family: RunFamily
 }
 
 export type QueuedJobInfo = {
@@ -268,6 +288,8 @@ export type QueuedJobInfo = {
   /** The job's own mode (stamped marker / procedure field); null ⇒ global. */
   mode: 'single' | 'workflow' | null
   queuedAt: number
+  /** Which family this run belongs to — see runFamily. */
+  family: RunFamily
 }
 
 /** Live state of the run pool: every in-flight run plus the FIFO overflow. */
@@ -417,7 +439,8 @@ export class Brainstem {
       id: q.schedule.id,
       label: q.schedule.label,
       mode: q.schedule.mode ?? null,
-      queuedAt: q.queuedAt
+      queuedAt: q.queuedAt,
+      family: runFamily(q.schedule.id)
     }))
   }
 
@@ -1066,7 +1089,8 @@ export class Brainstem {
       label: schedule.label,
       body: schedule.body,
       startedAt: start,
-      mode: schedule.mode ?? null
+      mode: schedule.mode ?? null,
+      family: runFamily(schedule.id)
     }
     this.running.set(schedule.id, info)
     this.corpus?.emit('brainstem.jobStarted', {

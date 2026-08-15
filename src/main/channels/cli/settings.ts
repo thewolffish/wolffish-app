@@ -503,6 +503,18 @@ export const CLI_SETTINGS: CliSetting[] = [
     wrap: 'verbose'
   },
   {
+    id: 'channels.inapp.runCards',
+    group: 'channels',
+    section: 'channels.inapp',
+    label: 'Run cards',
+    description:
+      'Show a live card over the app while one of your automations or procedures runs. Off (the default) keeps the screen quiet — the run still happens, still logs, and still reports on its own page. Compaction and reflection have their own switches, under Knowledge.',
+    kind: 'boolean',
+    read: 'channels.inapp.runCards',
+    channel: 'inapp:setConfig',
+    wrap: 'runCards'
+  },
+  {
     id: 'channels.cli.verbose',
     group: 'channels',
     section: 'channels.cli',
@@ -561,6 +573,18 @@ export const CLI_SETTINGS: CliSetting[] = [
     kind: 'boolean',
     read: 'channels.mobile.verbose',
     channel: 'mobile:setVerbose',
+    wrap: null
+  },
+  {
+    id: 'channels.mobile.runCards',
+    group: 'channels',
+    section: 'channels.mobile',
+    label: 'Run cards',
+    description:
+      'Show a live card on the paired phone while one of your automations or procedures runs. Off (the default) keeps the phone quiet — nothing about the run itself changes.',
+    kind: 'boolean',
+    read: 'channels.mobile.runCards',
+    channel: 'mobile:setRunCards',
     wrap: null
   },
   {
@@ -990,6 +1014,18 @@ export const CLI_SETTINGS: CliSetting[] = [
     wrap: 'weeklyHour'
   },
   {
+    id: 'knowledge.compaction.cards',
+    group: 'knowledge',
+    section: 'knowledge.compaction',
+    label: 'Compaction cards',
+    description:
+      'Show a live card while a compaction pass runs — over the chat in the app, and on the paired phone. Off (the default) hides the card only; the passes still run on their schedule.',
+    kind: 'boolean',
+    read: 'compaction.cards',
+    channel: 'runtime:setCompactionConfig',
+    wrap: 'cards'
+  },
+  {
     id: 'knowledge.reflection.hour',
     group: 'knowledge',
     section: 'knowledge.reflection',
@@ -1014,6 +1050,18 @@ export const CLI_SETTINGS: CliSetting[] = [
     read: 'reflection.quietHours',
     channel: 'runtime:setReflectionConfig',
     wrap: 'quietHours'
+  },
+  {
+    id: 'knowledge.reflection.cards',
+    group: 'knowledge',
+    section: 'knowledge.reflection',
+    label: 'Reflection cards',
+    description:
+      'Show a live card while a reflection runs — over the chat in the app, and on the paired phone. Off (the default) hides the card only; the nightly review and the deep clean still run.',
+    kind: 'boolean',
+    read: 'reflection.cards',
+    channel: 'runtime:setReflectionConfig',
+    wrap: 'cards'
   },
   {
     id: 'knowledge.reflection.scoring.inapp',

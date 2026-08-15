@@ -110,9 +110,14 @@ export type WhatsAppConfig = {
  * (default) the in-app chat shows a clean feed — agent replies,
  * file-bearing tool results, errors, and the model chip — and hides
  * tool-activity and compaction cards. Display-only; history is unaffected.
+ *
+ * `runCards` (default false) is the separate question of whether a
+ * RUNNING automation floats its live card over this app. Compaction and
+ * reflection runs have the same switch in their own panels.
  */
 export type InAppConfig = {
   verbose?: boolean
+  runCards?: boolean
 }
 
 export type WhatsAppConnectionStatus = 'disconnected' | 'connecting' | 'qr' | 'connected' | 'error'
@@ -816,6 +821,13 @@ export type RuntimeApi = {
   setCompactionConfig: (patch: Partial<CompactionConfig>) => Promise<CompactionConfig>
   getCompactionRuns: () => Promise<CompactionRuns>
   onCompactionChanged: (listener: (payload: unknown) => void) => () => void
+  /**
+   * The compaction CONFIG changed — this window, another window, or the paired
+   * phone. Distinct from onCompactionChanged, which announces a finished run:
+   * this one carries the saved config, so a panel (and the floating run card)
+   * adopts a flip made anywhere without refetching.
+   */
+  onCompactionConfigChanged: (listener: (config: CompactionConfig) => void) => () => void
   getReflectionConfig: () => Promise<ReflectionConfig>
   setReflectionConfig: (patch: Partial<ReflectionConfig>) => Promise<ReflectionConfig>
   runReflectionNow: () => Promise<'running' | 'queued' | 'coalesced'>
@@ -827,6 +839,8 @@ export type CompactionConfig = {
   dailyHour: number
   weeklyDay: number
   weeklyHour: number
+  /** Whether a running compaction job draws its floating card (default off). */
+  cards: boolean
 }
 
 /** Last completed run of a compaction job (mirrors brainstem's type). */
@@ -862,6 +876,8 @@ export type ReflectionConfig = {
   hour: number
   quietHours: number
   scoring: ReflectionScoringConfig
+  /** Whether a running reflection job draws its floating card (default off). */
+  cards: boolean
 }
 
 export type OllamaModelDetail = {
@@ -1176,6 +1192,16 @@ export type HeartbeatJobView = {
   nextRunMs: number | null
 }
 
+/**
+ * Which family a pooled run belongs to (dual decl — see brainstem's RunFamily).
+ * The run pool is shared, and each family's live card has its own visibility
+ * switch: automations in Settings → Channels → In-app, the other two in their
+ * own Knowledge panels. Procedure runs ride the automations switch — a
+ * procedure is a saved prompt run in the background, and "is something running
+ * for me" is one question, not two.
+ */
+export type RunFamily = 'automation' | 'compaction' | 'reflection' | 'procedure'
+
 export type HeartbeatRunningJob = {
   id: string
   label: string
@@ -1183,6 +1209,8 @@ export type HeartbeatRunningJob = {
   startedAt: number
   /** The run's own mode (stamped marker / procedure field); null ⇒ global. */
   mode: 'single' | 'workflow' | null
+  /** Resolved in main from the job id — never re-derived here. */
+  family: RunFamily
 }
 
 export type HeartbeatQueuedJob = {
@@ -1191,6 +1219,8 @@ export type HeartbeatQueuedJob = {
   /** The job's own mode (stamped marker / procedure field); null ⇒ global. */
   mode: 'single' | 'workflow' | null
   queuedAt: number
+  /** Resolved in main from the job id — never re-derived here. */
+  family: RunFamily
 }
 
 /** Live run-pool state: up to 3 concurrent runs plus the FIFO overflow. */
@@ -1666,6 +1696,8 @@ export type MobileStatus = {
   verbose: boolean
   /** Whether the model's notify_phone tool may send push notifications. */
   notificationsEnabled: boolean
+  /** Whether a running automation draws its live card on the PHONE. */
+  runCards: boolean
   /** Relay endpoint the tunnel dials — known before pairing, shown in the panel. */
   relayUrl: string
   /** What "reset to default" returns to, so the panel needn't hardcode it. */
@@ -1685,6 +1717,8 @@ export type MobileApi = {
   setVerbose: (verbose: boolean) => Promise<MobileStatus>
   /** Allow or forbid the model's notify_phone push notifications. */
   setNotifications: (enabled: boolean) => Promise<MobileStatus>
+  /** Show or hide the phone's floating automation-run cards. */
+  setRunCards: (enabled: boolean) => Promise<MobileStatus>
   /**
    * Point the tunnel at a different relay (null resets to the default).
    * Rejects on a malformed URL. Changing relay drops any offer or pairing —
@@ -2442,6 +2476,7 @@ const api: WolffishApi = {
     setCompactionConfig: (patch) => ipcRenderer.invoke('runtime:setCompactionConfig', patch),
     getCompactionRuns: () => ipcRenderer.invoke('runtime:getCompactionRuns'),
     onCompactionChanged: (listener) => subscribe('compaction:changed', listener),
+    onCompactionConfigChanged: (listener) => subscribe('compaction:configChanged', listener),
     getReflectionConfig: () => ipcRenderer.invoke('runtime:getReflectionConfig'),
     setReflectionConfig: (patch) => ipcRenderer.invoke('runtime:setReflectionConfig', patch),
     runReflectionNow: () => ipcRenderer.invoke('runtime:runReflectionNow'),
@@ -2503,6 +2538,7 @@ const api: WolffishApi = {
     unpair: () => ipcRenderer.invoke('mobile:unpair'),
     setVerbose: (verbose) => ipcRenderer.invoke('mobile:setVerbose', verbose),
     setNotifications: (enabled) => ipcRenderer.invoke('mobile:setNotifications', enabled),
+    setRunCards: (enabled) => ipcRenderer.invoke('mobile:setRunCards', enabled),
     setRelayUrl: (url) => ipcRenderer.invoke('mobile:setRelayUrl', url),
     onStatusChange: (callback) => subscribe('mobile:statusChange', callback)
   },

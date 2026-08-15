@@ -88,7 +88,6 @@ import {
   PUSH_WIRE_VERSION,
   Rpc,
   type AutomationJob,
-  type AutomationRun,
   type AutomationRuns,
   type ConversationMeta,
   type ConversationRating as WireRating,
@@ -202,6 +201,8 @@ export type MobileStatus = {
   verbose: boolean
   /** Whether the model's notify_phone tool may send push notifications. */
   notificationsEnabled: boolean
+  /** Whether a running automation draws its floating card on the phone. */
+  runCards: boolean
   /** Relay endpoint the tunnel dials — known before pairing, shown in the panel. */
   relayUrl: string
   /** What "reset to default" returns to, so the panel needn't hardcode it. */
@@ -212,6 +213,8 @@ export type MobileStatus = {
 export type ReflectionWirePatch = {
   hour?: number
   quietHours?: number
+  /** Whether a running reflection job draws its floating card, either side. */
+  cards?: boolean
   scoring?: Partial<Record<'inapp' | 'telegram' | 'whatsapp', boolean>>
 }
 
@@ -293,6 +296,12 @@ export type MobileChannelDeps = SnapshotSources & {
    */
   loadVerbose?: () => Promise<boolean>
   saveVerbose?: (verbose: boolean) => Promise<void>
+  /**
+   * Persisted switch for the phone's floating automation-run cards — see
+   * setRunCards. Absent = no cards, never remembered (tests).
+   */
+  loadRunCards?: () => Promise<boolean>
+  saveRunCards?: (enabled: boolean) => Promise<void>
   /** Broadcast to the renderer so the panel updates without polling. */
   onStatus?: (status: MobileStatus) => void
   /**
@@ -380,6 +389,7 @@ export class MobileChannel {
   private pairing: MobilePairing | null = null
   private tunnelState: TunnelState | null = null
   private verbose = false
+  private runCards = false
   /** Mutable: the panel can point the tunnel at a self-hosted relay. */
   private relayUrl: string
   /** Live turns the phone started, so it can abort them. */
@@ -465,6 +475,7 @@ export class MobileChannel {
     this.relayUrl = (await loadRelayUrl()) ?? this.deps.relayUrl ?? DEFAULT_RELAY_URL
     this.notificationsEnabled = (await this.deps.loadNotificationsEnabled?.()) ?? true
     this.verbose = (await this.deps.loadVerbose?.()) ?? false
+    this.runCards = (await this.deps.loadRunCards?.()) ?? false
 
     this.pairing = await loadPairing()
     // The notify_phone tool's presence IS the availability signal — see
@@ -668,6 +679,23 @@ export class MobileChannel {
     this.verbose = verbose
     await this.deps.saveVerbose?.(verbose)
     this.log(`phone feed ${verbose ? 'relays every tool call' : 'kept clean'}`)
+    this.emitStatus()
+    return this.getStatus()
+  }
+
+  /**
+   * Whether an automation running on this desktop draws its live card over
+   * whatever screen the PHONE is on. Off by default: the run pool announces
+   * itself either way (the phone still receives the pushes, the automations
+   * screen still shows what ran), this is only whether it interrupts.
+   *
+   * Persisted and status-borne like the two switches above, so the phone's own
+   * Channels screen and the desktop's Mobile panel edit one value.
+   */
+  async setRunCards(enabled: boolean): Promise<MobileStatus> {
+    this.runCards = enabled
+    await this.deps.saveRunCards?.(enabled)
+    this.log(`phone automation cards ${enabled ? 'shown' : 'hidden'}`)
     this.emitStatus()
     return this.getStatus()
   }
@@ -2536,6 +2564,7 @@ export class MobileChannel {
       storage: storageBackend(),
       verbose: this.verbose,
       notificationsEnabled: this.notificationsEnabled,
+      runCards: this.runCards,
       relayUrl: this.relayUrl,
       defaultRelayUrl: this.deps.relayUrl ?? DEFAULT_RELAY_URL
     }
@@ -2613,6 +2642,7 @@ export function sanitizeReflectionPatch(params: unknown): ReflectionWirePatch {
   ) {
     patch.quietHours = raw.quietHours
   }
+  if (typeof raw.cards === 'boolean') patch.cards = raw.cards
   if (raw.scoring && typeof raw.scoring === 'object') {
     const flags: NonNullable<ReflectionWirePatch['scoring']> = {}
     for (const surface of ['inapp', 'telegram', 'whatsapp'] as const) {
@@ -2748,49 +2778,39 @@ async function resolveWireDirectories(wire: unknown[]): Promise<string[]> {
 }
 
 /**
- * Which overlay family a brainstem job belongs to, from its id.
+ * The run pool as the phone reads it — every row, whatever family.
  *
- * The brainstem registers its own built-ins as `compaction-daily`,
- * `compaction-weekly`, `reflection-nightly` and `reflection-deepclean`;
- * everything else in the pool came from a heading in heartbeat.md, which is an
- * automation. Those ids are the scheduler's naming and nothing outside this
- * process should have to know them, so the split is resolved here and travels
- * as `kind` rather than being re-derived on the phone.
- */
-function overlayKind(id: string): AutomationRun['kind'] {
-  if (id.startsWith('compaction-')) return 'compaction'
-  if (id.startsWith('reflection-')) return 'reflection'
-  return 'automation'
-}
-
-/**
- * The run pool as the phone reads it.
+ * `kind` is the brainstem's own `family`, resolved from the job id where the
+ * ids are minted (see its `runFamily`), so no surface re-derives it. The two
+ * vocabularies are the same four words on purpose.
  *
- * Procedure runs are dropped — they share the pool but are not automations, so
- * they gate no play button and belong on no overlay card, the same filter the
- * desktop's own cards apply. What survives is widened with everything a card
- * draws: `body` (the prompt — an i18n key for the built-ins, see OverlayKind),
- * `startedAt` for the elapsed clock, and the run's own mode.
+ * Procedure runs used to be dropped here, on the grounds that they are not
+ * automations. They now travel like the rest: the phone cards them under the
+ * automations switch, because "something is running for me" is one question.
+ * A consumer that means automations SPECIFICALLY — the Automations screen's
+ * per-job status — filters `kind === 'procedure'` itself.
+ *
+ * Each row is widened with everything a card draws: `body` (the prompt — an
+ * i18n key for the built-ins, see OverlayKind), `startedAt` for the elapsed
+ * clock, and the run's own mode.
  */
 function toWireRuns(snapshot: {
   running: RunningJobInfo[]
   queued: QueuedJobInfo[]
 }): AutomationRuns {
-  const mine = <T extends { id: string }>(rows: T[]): T[] =>
-    rows.filter((row) => !row.id.startsWith('procedure:'))
   return {
-    running: mine(snapshot.running).map((row) => ({
+    running: snapshot.running.map((row) => ({
       id: row.id,
       label: row.label,
       body: row.body,
-      kind: overlayKind(row.id),
+      kind: row.family,
       startedAt: row.startedAt,
       mode: row.mode ?? null
     })),
-    queued: mine(snapshot.queued).map((row) => ({
+    queued: snapshot.queued.map((row) => ({
       id: row.id,
       label: row.label,
-      kind: overlayKind(row.id),
+      kind: row.family,
       queuedAt: row.queuedAt
     }))
   }

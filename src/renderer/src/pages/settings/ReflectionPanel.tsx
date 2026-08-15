@@ -228,6 +228,28 @@ export function ReflectionPanel(): React.JSX.Element {
               {t('settings.knowledge.reflection.quiet.description')}
             </p>
           </div>
+
+          <div className="border-border/60 border-t" />
+
+          {/* The floating card a running reflection (nightly or deep clean)
+              draws over the chat — here and on the paired phone, one switch
+              for both. Off (default) hides the card only: the review still
+              runs, and the last-run cards below still report it. */}
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between gap-4">
+              <span className="text-fg text-sm font-medium">
+                {t('settings.knowledge.reflection.cards.label')}
+              </span>
+              <OnOffToggle
+                value={config.cards === true}
+                disabled={saving}
+                onChange={(value) => void persist({ cards: value })}
+              />
+            </div>
+            <p className="text-muted text-xs leading-relaxed">
+              {t('settings.knowledge.reflection.cards.description')}
+            </p>
+          </div>
         </section>
 
         {/* Turn scoring — one card per surface */}

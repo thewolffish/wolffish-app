@@ -131,6 +131,7 @@ export function MobilePanel(): React.JSX.Element {
   const tunnel = status?.tunnel ?? null
   const offer = status?.offer ?? null
   const verbose = status?.verbose ?? null
+  const runCards = status?.runCards ?? null
   // Known before pairing: the endpoint the tunnel dials. The relay serves an
   // explanation page over plain HTTPS at the same host, so the link swaps
   // schemes rather than pointing anywhere new.
@@ -608,6 +609,53 @@ export function MobilePanel(): React.JSX.Element {
                       onClick={() => {
                         if (opt.value !== verbose)
                           void act(() => window.api.mobile.setVerbose(opt.value))
+                      }}
+                      className={cn(
+                        'rounded-md px-3 py-1 text-xs font-medium',
+                        'focus-visible:ring-accent focus-visible:ring-offset-bg focus-visible:ring-2 focus-visible:ring-offset-2',
+                        active
+                          ? 'bg-primary text-primary-fg shadow-sm'
+                          : 'text-muted hover:text-fg cursor-pointer'
+                      )}
+                    >
+                      {opt.label}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+          {/* The phone's floating automation cards — its own copy of the
+              in-app switch, off by default. Off means a background run never
+              interrupts the phone; nothing about the run itself changes, and
+              the Automations screen there still shows what ran. */}
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex flex-col gap-1">
+              <span className="text-fg text-sm font-medium">{t('settings.mobile.runCards')}</span>
+              <p className="text-muted text-xs">{t('settings.mobile.runCardsHint')}</p>
+            </div>
+            {runCards === null ? (
+              <div
+                aria-hidden="true"
+                className="bg-border/30 h-7 w-[78px] shrink-0 animate-pulse rounded-lg"
+              />
+            ) : (
+              <div
+                role="tablist"
+                className="border-border bg-bg/40 inline-flex shrink-0 items-center rounded-lg border p-0.5"
+              >
+                {toggleOptions.map((opt) => {
+                  const active = opt.value === runCards
+                  return (
+                    <button
+                      key={String(opt.value)}
+                      role="tab"
+                      type="button"
+                      aria-selected={active}
+                      disabled={busy || !loaded}
+                      onClick={() => {
+                        if (opt.value !== runCards)
+                          void act(() => window.api.mobile.setRunCards(opt.value))
                       }}
                       className={cn(
                         'rounded-md px-3 py-1 text-xs font-medium',

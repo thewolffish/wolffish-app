@@ -109,9 +109,16 @@ export type WhatsAppConfig = {
  * feed (agent replies, file-bearing tool results, errors); true = the
  * model/provider chip plus every tool call/result/activity card. Display-only
  * — never affects history persistence.
+ *
+ * `runCards` gates the floating run card an AUTOMATION draws over this
+ * app while it runs (the compaction and reflection families have their own
+ * switches, in their own panels). False is the default and the whole point:
+ * the runs still happen, are still logged, and still reach the automations
+ * screen — the card simply does not float over the chat.
  */
 export type InAppConfig = {
   verbose?: boolean
+  runCards?: boolean
 }
 
 /**
@@ -142,10 +149,17 @@ export type CliConfig = {
  * replies, file-bearing results, errors), true relays every tool call and
  * activity card. Display-only — it never affects what is stored, and never
  * affects connection logging, which is unconditional.
+ *
+ * `runCards` is the phone's own copy of the in-app switch: whether an
+ * AUTOMATION run draws a card over whatever screen the phone is on. Separate
+ * from `inapp.runCards` because the two devices are looked at
+ * differently — a card worth having on the desk is not automatically one worth
+ * having in a pocket. Default off, like the desktop's.
  */
 export type MobileChannelConfig = {
   notifications?: boolean
   verbose?: boolean
+  runCards?: boolean
 }
 
 export type BraveConfig = {
@@ -327,6 +341,13 @@ export type CompactionConfig = {
   weeklyDay: number
   /** Hour of day (0-23) for weekly consolidation. Defaults to 23. */
   weeklyHour: number
+  /**
+   * Whether a running compaction job draws its floating card — over the chat
+   * here, over whatever screen the phone is on there. One switch for both
+   * surfaces: this is housekeeping either device can see, not a per-device
+   * taste. Defaults to false; the jobs run either way.
+   */
+  cards: boolean
 }
 
 /**
@@ -357,6 +378,13 @@ export type ReflectionConfig = {
    */
   quietHours: number
   scoring: ReflectionScoringConfig
+  /**
+   * Whether a running reflection job (nightly review or monthly deep clean)
+   * draws its floating card on either surface — the compaction switch's twin,
+   * and off for the same reason. The review runs regardless; this is only
+   * whether it announces itself over the chat.
+   */
+  cards: boolean
 }
 
 export type WorkspaceConfig = {
@@ -1244,12 +1272,16 @@ export async function setWeekStartsOn(value: WeekStartsOn): Promise<WorkspaceCon
 export const DEFAULT_COMPACTION: CompactionConfig = {
   dailyHour: 23,
   weeklyDay: 0,
-  weeklyHour: 23
+  weeklyHour: 23,
+  cards: false
 }
 
 export async function getCompactionConfig(): Promise<CompactionConfig> {
   const cfg = await readConfig()
-  return cfg?.compaction ?? DEFAULT_COMPACTION
+  // Merged over the defaults rather than returned raw: `cards` shipped after
+  // the schedule did, so a config written before it has no such field and
+  // must read as "no card" instead of undefined.
+  return { ...DEFAULT_COMPACTION, ...(cfg?.compaction ?? {}) }
 }
 
 export async function setCompactionConfig(
@@ -1264,7 +1296,8 @@ export async function setCompactionConfig(
 export const DEFAULT_REFLECTION: ReflectionConfig = {
   hour: 3,
   quietHours: 12,
-  scoring: { inapp: true, telegram: true, whatsapp: true }
+  scoring: { inapp: true, telegram: true, whatsapp: true },
+  cards: false
 }
 
 /**
@@ -1279,7 +1312,8 @@ export function normalizeReflectionConfig(
   return {
     hour: raw?.hour ?? DEFAULT_REFLECTION.hour,
     quietHours: raw?.quietHours ?? DEFAULT_REFLECTION.quietHours,
-    scoring: { ...DEFAULT_REFLECTION.scoring, ...(raw?.scoring ?? {}) }
+    scoring: { ...DEFAULT_REFLECTION.scoring, ...(raw?.scoring ?? {}) },
+    cards: raw?.cards ?? DEFAULT_REFLECTION.cards
   }
 }
 
@@ -1427,19 +1461,23 @@ export async function setWhatsAppConfig(patch: Partial<WhatsAppConfig>): Promise
 }
 
 const EMPTY_INAPP_CONFIG: InAppConfig = {
-  verbose: false
+  verbose: false,
+  runCards: false
 }
 
 export async function getInAppConfig(): Promise<InAppConfig> {
   const config = await readConfig()
-  return config?.inapp ?? EMPTY_INAPP_CONFIG
+  // Merged, not returned raw: a config written before `runCards`
+  // shipped has no such field, and undefined must read as off.
+  return { ...EMPTY_INAPP_CONFIG, ...(config?.inapp ?? {}) }
 }
 
 export async function setInAppConfig(patch: Partial<InAppConfig>): Promise<WorkspaceConfig> {
   return patchConfig((c) => {
     const current = c.inapp ?? EMPTY_INAPP_CONFIG
     const next: InAppConfig = {
-      verbose: patch.verbose ?? current.verbose
+      verbose: patch.verbose ?? current.verbose,
+      runCards: patch.runCards ?? current.runCards ?? false
     }
     return { ...c, inapp: next }
   })
@@ -1465,7 +1503,8 @@ export async function setCliConfig(patch: Partial<CliConfig>): Promise<Workspace
 
 const EMPTY_MOBILE_CONFIG: MobileChannelConfig = {
   notifications: true,
-  verbose: false
+  verbose: false,
+  runCards: false
 }
 
 export async function getMobileChannelConfig(): Promise<MobileChannelConfig> {
@@ -1480,7 +1519,8 @@ export async function setMobileChannelConfig(
     const current = { ...EMPTY_MOBILE_CONFIG, ...(c.mobile ?? {}) }
     const next: MobileChannelConfig = {
       notifications: patch.notifications ?? current.notifications,
-      verbose: patch.verbose ?? current.verbose
+      verbose: patch.verbose ?? current.verbose,
+      runCards: patch.runCards ?? current.runCards
     }
     return { ...c, mobile: next }
   })

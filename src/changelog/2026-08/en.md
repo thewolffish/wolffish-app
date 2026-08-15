@@ -1,4 +1,20 @@
-## v1.0.254 — 2026-08-15 `Latest`
+## v1.0.255 — 2026-08-16 `Latest`
+
+### The Card That Stopped Showing Up Uninvited
+
+Wolffish runs work in the background on your behalf — an automation from your heartbeat, a procedure the model started, the nightly reflection, the daily and weekly compaction passes. Every one of them **floated a live card over your chat while it ran**, whether or not you had any interest in watching. At three in the morning that is nobody's problem. In the middle of your own work it is an interruption you never asked for.
+
+**Every one of those cards is now off by default, and each family has its own switch.** Automations and procedures share one, in **Settings → Channels → In-app**; compaction has its own under **Knowledge → Compaction**; reflection has its own under **Knowledge → Reflection**. Off changes exactly one thing — whether the card appears. **The run still happens, still logs, still reports on its own page**, the last-run cards in those panels still tell you what finished, and a failed run still says so. Turn a switch on and the card comes back, for that family only.
+
+The switches take effect **the instant you flip them** — on the run already in flight, not just the next one — and they follow you across surfaces: flip one in another window, or from your paired phone, and this app agrees at once instead of waiting to be reopened. All four are editable **from the phone and from the terminal**, alongside the settings they sit beside.
+
+### Your Phone Gets Its Own Answer
+
+A card worth having on your desk is not automatically one worth having in your pocket. The **paired phone carries its own switch** for automation-run cards, in **Settings → Mobile**, separate from the desktop's — so a background run can announce itself on the machine you are sitting at and stay silent on the phone in your pocket, or the reverse. It is off by default too.
+
+**Procedure runs are now shown at all.** They ride the same background pool as everything else but were previously filtered out completely — a procedure the model kicked off simply happened invisibly. They now appear like any other run, under the automations switch, because *"is something running for me right now"* is one question and not two.
+
+## v1.0.254 — 2026-08-15
 
 ### Reading the Fine Print
 

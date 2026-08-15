@@ -262,6 +262,10 @@
           "description": "A conversation is only reviewed once it has been idle this long, so unfinished or not-yet-scored work isn't judged early. Anything still warm simply waits for a later night — nothing is ever skipped — and a conversation you continue after its review gets reviewed again with the new turns and scores included."
         },
         "quietHoursOption": "{{count}}h",
+        "cards": {
+          "label": "Reflection cards",
+          "description": "Show a live card over the chat, on this desktop and the paired phone, while a reflection runs. Off (the default) hides the card only — the nightly review and the deep clean still run."
+        },
         "scoring": {
           "title": "Turn scoring",
           "subtitle": "Optional 0-10 turn scores — the strongest signal reflection learns from.",
@@ -305,6 +309,12 @@
           "label": "Weekly consolidation",
           "description": "Merges the week's episode logs into a single digest for archival."
         },
+        "cards": {
+          "label": "Compaction cards",
+          "description": "Show a live card over the chat, on this desktop and the paired phone, while a compaction pass runs. Off (the default) hides the card only — the passes still run on the schedule above."
+        },
+        "on": "On",
+        "off": "Off",
         "days": {
           "0": "Sunday",
           "1": "Monday",
@@ -666,6 +676,10 @@
         "verbose": {
           "label": "Verbose task results",
           "description": "Show every tool call and step in the chat, plus the model/provider chip. Off (the default) keeps a clean feed — only agent replies and the files it sends."
+        },
+        "runCards": {
+          "label": "Run cards",
+          "description": "Show a live card over the app while one of your automations or procedures runs. Off (the default) keeps the screen quiet — the run still happens, still logs, and still reports on its own page. Compaction and reflection have their own switches, under Knowledge."
         }
       },
       "telegram": {
@@ -1679,6 +1693,8 @@
       "notificationsHint": "Lets the agent send a push notification to your paired phone with its notify_phone tool — when a run finishes, fails, or needs you. Nothing is ever sent automatically; the agent has to deliberately call the tool, and Off makes that tool refuse.",
       "verbose": "Task results",
       "verboseHint": "Off keeps the phone's feed clean: assistant messages, file-bearing results and errors. On relays every tool call and activity. Connection logging is always on and is not affected by this.",
+      "runCards": "Run cards",
+      "runCardsHint": "Show a live card on the paired phone while one of your automations or procedures runs. Off (the default) keeps the phone quiet — nothing about the run itself changes.",
       "status": {
         "connected": "Connected",
         "connecting": "Connecting",

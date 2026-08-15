@@ -419,7 +419,14 @@ export async function buildConfigSnapshot(sources: SnapshotSources): Promise<Con
     },
 
     channels: {
-      inapp: { verbose: bool(config.inapp?.verbose) },
+      inapp: {
+        verbose: bool(config.inapp?.verbose),
+        // Whether a running automation cards over the DESKTOP's chat. The
+        // phone renders and edits it as that machine's setting, exactly as it
+        // does the in-app feed switch beside it; its own copy of the question
+        // is `mobile.runCards` below.
+        runCards: bool(config.inapp?.runCards)
+      },
       // The terminal channel. `runMode` is what decides which autostart
       // registration this machine gets, so it belongs beside the setting it
       // explains rather than hidden in config.json.
@@ -448,7 +455,10 @@ export async function buildConfigSnapshot(sources: SnapshotSources): Promise<Con
       // ON (MobileChannelConfig), the feed defaults clean.
       mobile: {
         notifications: bool(mobile.notifications, true),
-        verbose: bool(mobile.verbose)
+        verbose: bool(mobile.verbose),
+        // The phone's own floating automation cards. Off by default, and the
+        // phone is the surface that obeys it — the desktop only stores it.
+        runCards: bool(mobile.runCards)
       },
       telegram: {
         enabled: bool(telegram.enabled),
@@ -547,6 +557,9 @@ export async function buildConfigSnapshot(sources: SnapshotSources): Promise<Con
     reflection: {
       hour: int(reflection.hour, 3),
       quietHours: int(reflection.quietHours, 12),
+      // Floating run cards for the nightly review and the deep clean — one
+      // switch for both surfaces, defaulting off like the compaction twin.
+      cards: bool(reflection.cards),
       scoring: {
         inapp: bool(reflectionScoring.inapp, true),
         telegram: bool(reflectionScoring.telegram, true),
@@ -560,6 +573,9 @@ export async function buildConfigSnapshot(sources: SnapshotSources): Promise<Con
       dailyHour: int(compaction.dailyHour, 23),
       weeklyDay: int(compaction.weeklyDay, 0),
       weeklyHour: int(compaction.weeklyHour, 23),
+      // Floating run cards for the daily/weekly passes — both surfaces, off by
+      // default: housekeeping that finished is what the last-run cards report.
+      cards: bool(compaction.cards),
       ...(compactionRuns
         ? {
             runs: {

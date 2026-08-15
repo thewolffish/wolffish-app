@@ -994,6 +994,13 @@ let mobileSetCapabilityEnabled: (name: string, enabled: boolean) => Promise<bool
 }
 
 /**
+ * What an in-app config reads as when the workspace has never written one —
+ * the shape `inapp:configChange` carries, so a listener never has to guess at
+ * undefined. Mirrors EMPTY_INAPP_CONFIG in workspace.ts.
+ */
+const EMPTY_INAPP: InAppConfig = { verbose: false, runCards: false }
+
+/**
  * The phone edited a setting. Every key maps onto the exact setter
  * the desktop's own panel calls — same persistence, same cache resets — so a
  * change is live for the agent immediately, no matter which screen made it.
@@ -1302,6 +1309,15 @@ async function applyMobileSettings(settings: Record<string, unknown>): Promise<v
         agent.brainstem.setCompactionConfig(updated.compaction!)
         break
       }
+      // Whether a running compaction job draws its floating card — on BOTH
+      // surfaces, which is why it rides the same broadcast the panel's own
+      // save fires rather than living in a per-device channel config.
+      case 'compactionCards': {
+        const updated = await persistCompactionConfig({ cards: value === true })
+        agent.brainstem.setCompactionConfig(updated.compaction!)
+        broadcast('compaction:configChanged', updated.compaction!)
+        break
+      }
       // The phone's own two channel settings, edited from the phone. Routed
       // through the channel's setters rather than the config writer, because
       // each does more than persist: notifications registers or withdraws the
@@ -1313,6 +1329,12 @@ async function applyMobileSettings(settings: Record<string, unknown>): Promise<v
         break
       case 'mobileVerbose':
         await mobileChannel.setVerbose(value === true)
+        break
+      // The phone's own floating automation cards — its half of the pair the
+      // in-app switch owns here. Same setter the Mobile panel's control calls,
+      // so the desktop's segmented control moves with the phone's.
+      case 'mobileRunCards':
+        await mobileChannel.setRunCards(value === true)
         break
       /**
        * The terminal's feed preference — the one CLI setting the phone edits.
@@ -1336,10 +1358,12 @@ async function applyMobileSettings(settings: Record<string, unknown>): Promise<v
       // `inapp:setConfig` does, window push included, so an open desktop
       // chat adopts the phone's flip without a refetch. It drives the
       // phone's own chat feed too; the preference is the workspace's.
-      case 'inappVerbose': {
-        const updated = await persistInAppConfig({ verbose: value === true })
-        const next = updated.inapp ?? { verbose: false }
-        BrowserWindow.getAllWindows().forEach((w) => w.webContents.send('inapp:configChange', next))
+      case 'inappVerbose':
+      case 'inappRunCards': {
+        const patch =
+          key === 'inappVerbose' ? { verbose: value === true } : { runCards: value === true }
+        const updated = await persistInAppConfig(patch)
+        broadcast('inapp:configChange', updated.inapp ?? EMPTY_INAPP)
         break
       }
       // Telegram / WhatsApp — every editable row of the phone's Channels
@@ -1661,6 +1685,13 @@ const mobileChannel = new MobileChannel({
   loadVerbose: async () => (await getMobileChannelConfig()).verbose === true,
   saveVerbose: async (verbose) => {
     await persistMobileChannelConfig({ verbose })
+  },
+  // Whether a running automation draws its card on the PHONE — the desktop's
+  // own answer to that question lives in `inapp.runCards`, deliberately
+  // apart: the two screens are looked at differently.
+  loadRunCards: async () => (await getMobileChannelConfig()).runCards === true,
+  saveRunCards: async (enabled) => {
+    await persistMobileChannelConfig({ runCards: enabled })
   },
   onStatus: (status) => broadcast('mobile:statusChange', status),
   // A project re-file made on the phone is a write to this app's own
@@ -3090,8 +3121,12 @@ app.whenReady().then(async () => {
     'inapp:setConfig',
     async (_e, patch: Partial<InAppConfig>): Promise<{ ok: true; config: InAppConfig }> => {
       const updated = await persistInAppConfig(patch)
-      const next = updated.inapp ?? { verbose: false }
-      BrowserWindow.getAllWindows().forEach((w) => w.webContents.send('inapp:configChange', next))
+      const next = updated.inapp ?? EMPTY_INAPP
+      // broadcast(), not a bare window send: the same signal has to reach an
+      // attached terminal and the paired phone (through the config.changed
+      // hook), or a flip made here stays a secret to every surface but this
+      // window's own chat feed.
+      broadcast('inapp:configChange', next)
       return { ok: true as const, config: next }
     }
   )
@@ -3852,6 +3887,11 @@ app.whenReady().then(async () => {
     pushMobileChannelConfig()
     return status
   })
+  handle('mobile:setRunCards', async (_event, enabled: boolean) => {
+    const status = await mobileChannel.setRunCards(Boolean(enabled))
+    pushMobileChannelConfig()
+    return status
+  })
   handle('mobile:setRelayUrl', (_event, url: string | null) =>
     mobileChannel.setRelayUrl(typeof url === 'string' ? url : null)
   )
@@ -4554,6 +4594,10 @@ app.whenReady().then(async () => {
       const updated = await persistCompactionConfig(patch)
       const cfg = updated.compaction!
       agent.brainstem.setCompactionConfig(cfg)
+      // Announced like every other settings save: an open panel in another
+      // window re-seeds, the floating run card re-reads its visibility, and
+      // the generic hook in broadcast() pushes config.changed to the phone.
+      broadcast('compaction:configChanged', cfg)
       return cfg
     }
   )

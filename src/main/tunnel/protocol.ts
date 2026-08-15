@@ -670,16 +670,31 @@ export type AutomationJob = {
 /**
  * Which family a run belongs to. Resolved on the DESKTOP from the brainstem's
  * job id, so the phone never parses ids to decide what it is looking at — the
- * built-in jobs are `compaction-daily`, `reflection-nightly` and friends, and
- * that naming is the scheduler's business, not the wire's.
+ * built-in jobs are `compaction-daily`, `reflection-nightly` and friends,
+ * procedure runs are `procedure:<id>`, and that naming is the scheduler's
+ * business, not the wire's.
  *
- * It also settles how `body` reads: an automation's body is the literal prompt
- * the user wrote, while the built-in jobs carry an i18n KEY (the desktop's own
- * overlay renders `t(job.body)` and i18next passes an unknown key through).
- * Both sides need the same rule, so `kind` states it rather than leaving each
- * renderer to sniff the string.
+ * It also settles how `body` reads: an automation's or a procedure's body is
+ * the literal prompt the user wrote, while the built-in jobs carry an i18n KEY
+ * (the desktop's own overlay renders `t(job.body)` and i18next passes an
+ * unknown key through). Both sides need the same rule, so `kind` states it
+ * rather than leaving each renderer to sniff the string.
+ *
+ * `procedure` joined the list when the card switches shipped: procedure runs
+ * always rode this pool, but used to be filtered off the wire entirely because
+ * neither surface drew them. They are carded now — under the SAME switch as
+ * automations, since a procedure is a saved prompt run in the background and
+ * "is something running for me" is one question, not two. Consumers that mean
+ * *automations* specifically (the Automations screen's per-job status) must
+ * skip this kind rather than assume every row is a heading in heartbeat.md.
  */
-export const OVERLAY_KINDS = ['automation', 'compaction', 'reflection', 'reindex'] as const
+export const OVERLAY_KINDS = [
+  'automation',
+  'compaction',
+  'reflection',
+  'procedure',
+  'reindex'
+] as const
 export type OverlayKind = (typeof OVERLAY_KINDS)[number]
 
 /** One in-flight run. `body` reads per `kind` — see OverlayKind. */

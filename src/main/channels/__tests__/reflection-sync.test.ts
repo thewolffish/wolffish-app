@@ -74,6 +74,18 @@ async function run(): Promise<void> {
       sanitizeReflectionPatch({ hour: 5, quietHours: 24, scoring: { whatsapp: false } })
     ) === '{"hour":5,"quietHours":24,"scoring":{"whatsapp":false}}'
   )
+  // The card switch is a plain boolean and rides the same patch — a field
+  // silently dropped here would make the phone's toggle a no-op that snaps
+  // back on the next snapshot, with nothing to say why.
+  ok('sanitize: cards passes through', sanitizeReflectionPatch({ cards: true }).cards === true)
+  ok(
+    'sanitize: cards false passes through',
+    sanitizeReflectionPatch({ cards: false }).cards === false
+  )
+  ok(
+    'sanitize: a non-boolean cards drops',
+    sanitizeReflectionPatch({ cards: 'yes' }).cards === undefined
+  )
   ok('sanitize: hour above 23 drops', sanitizeReflectionPatch({ hour: 24 }).hour === undefined)
   ok('sanitize: negative hour drops', sanitizeReflectionPatch({ hour: -1 }).hour === undefined)
   ok('sanitize: float hour drops', sanitizeReflectionPatch({ hour: 2.5 }).hour === undefined)
