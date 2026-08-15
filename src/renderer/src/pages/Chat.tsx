@@ -5998,6 +5998,9 @@ function textHistory(
           iterToolUses.push({ id: s.toolCallId, name: s.name, args: s.args })
           hasContent = true
         } else if (s.kind === 'tool_result') {
+          // Tool-result images are deliberately not replayed — see the same
+          // note in channels/channel.ts segmentsToHistory. Pixels are scoped
+          // to the turn that produced them; the caption carries the path.
           iterToolResults.push({
             role: 'tool',
             toolUseId: s.toolCallId,

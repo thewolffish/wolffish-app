@@ -1,5 +1,5 @@
 import { type ChatMessage, type Thalamus, type ToolDefinition } from '@main/runtime/thalamus'
-import { selectInlineImages } from '@main/runtime/tool-images'
+import { estimateImageTokens, selectInlineImages } from '@main/runtime/tool-images'
 
 // ---------------------------------------------------------------------------
 // Smart Context Compaction
@@ -134,8 +134,9 @@ export function estimatePayloadTokens(
       case 'tool':
         chars += m.content.length
         if (m.images) {
+          // chars, not tokens — the whole accumulator is divided by 4 below.
           for (const img of selectInlineImages(m.images, m.toolName).inline)
-            chars += img.data.length * 0.75
+            chars += estimateImageTokens(img) * 4
         }
         break
     }

@@ -351,6 +351,15 @@ export function assistantSegmentsToHistory(msg: ConversationMessage): ChatHistor
       iterToolUses.push({ id: s.toolCallId, name: s.name, args: s.args })
       hasContent = true
     } else if (s.kind === 'tool_result') {
+      // Tool-result IMAGES are deliberately not replayed. They live only in
+      // the in-memory messages array for the turn that produced them; a
+      // segment stores the caption, never the base64. Re-hydrating them from
+      // disk here would be auto-injection through the back door — the same
+      // thing the attachment path refuses to do — and would re-bill every
+      // screenshot on every later turn. The producing tools put the file path
+      // in their caption and say the pixels are turn-scoped, so a model that
+      // still needs to see it calls image_view again. Mirrored in the
+      // renderer's textHistory (Chat.tsx).
       iterToolResults.push({
         role: 'tool',
         toolUseId: s.toolCallId,

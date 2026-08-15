@@ -1,8 +1,22 @@
-## v1.0.253 — 2026-08-14 `Latest`
+## v1.0.254 — 2026-08-15 `Latest`
+
+### Reading the Fine Print
+
+Wolffish could show a model a picture, but only ever one picture at one size: the whole frame, shrunk to fit 1024 pixels. That is enough to recognize a room or a page layout. It is useless for **a receipt, a code screenshot, a chart's axis labels, a serial number** — at that scale the text is simply gone, and the model had no way to ask for a better look.
+
+Now it does. **The model chooses the view.** It can raise the resolution when it needs to resolve small text and, far better, **crop to the part that matters and read that at native sharpness**. A crop is not only clearer, it is *cheaper* — pulling one label out of a twelve-megapixel photo costs a fraction of what the whole shrunken frame costs, because the price follows the pixels actually sent rather than the size of the file on disk. It can also ask for **lossless PNG** where JPEG smearing hurts, which is to say screenshots, interfaces, charts, anything made of text. None of this needs your attention: ask about a detail and the model decides how close it has to get. Ask for a very large view and the picture is **shrunk automatically if it would be too big to send**, instead of vanishing quietly on the way out.
+
+### What It Actually Received
+
+Ask a model whether it really saw your photo and it would hedge — for a good reason: nothing ever told it. The tool's reply said `shown at 1024x768` and left the rest to inference. It now **states plainly that the pixels are attached**, and that they last for **this turn only**, so instead of answering later questions from its own fading description it opens the image again.
+
+Two quieter repairs ride along. A provider that refuses a picture for some unrelated reason **no longer blinds a perfectly capable model for the rest of your session** — Wolffish tries again with pictures every so often rather than assuming the worst forever. And the running estimate of how much room images take up was **overstating them by roughly twenty-five times**, which in an image-heavy conversation could trigger a needless tidy-up of a context that was never actually full.
+
+## v1.0.253 — 2026-08-14
 
 ### The Screenshot It Described Without Ever Seeing
 
-A screenshot, a photo opened with **image_view**, a page captured in the browser — Wolffish has been taking them for a long time. What it had not been doing, on most of the models that can see, is **showing them the picture**. The tool's caption went out; the pixels stayed on the machine. Claude, ChatGPT and anything through OpenRouter already received the image. **Grok, Kimi, Qwen, MiniMax, Mimo, StepFun and GLM** were working from the label alone. They now get the photograph itself, inline, the same way an image you attach by hand already did.
+A screenshot, a photo opened with **image_view**, a page captured in the browser — Wolffish has been taking them for a long time. What it had not been doing, on most of the models that can see, is **showing them the picture**. The tool's caption went out; the pixels stayed on the machine. Claude, ChatGPT and anything through OpenRouter already received the image. **Grok, Kimi, Qwen, StepFun and GLM** were working from the label alone, and so were the vision variants of **MiniMax and Mimo** — the `-VL` models. They now get the photograph itself, inline. The bare MiniMax and Mimo chat models still receive the caption alone, because they cannot see at all. An image you attach by hand, meanwhile, still never loads itself into the conversation — the model opens it with **image_view** when it decides the picture matters, and it is those pixels that now travel.
 
 When a capture is **too large to send** — a raw full-page PNG that never got shrunk — it is no longer forced onto the wire to fail there. The file stays on disk, the path stays in the caption, and the model is told to open it rather than invent what it missed. And if a provider **refuses pictures inside a tool result**, the turn no longer dies: Wolffish tries again without those pictures first (ones you attached yourself stay), then without any pictures if that still fails, and **remembers what worked for the rest of the session** so the next turn does not walk into the same wall.
 

@@ -98,6 +98,15 @@ const VISUAL_HISTORY: ChatMessage[] = [
   }
 ]
 
+/**
+ * SYNTHETIC. The user-message image block below is not something the app
+ * currently produces — every attachment becomes a text reference note, so
+ * tool results are the only real source of visual content. This history
+ * exists to cover the stage-2 rung of the ladder, which is therefore
+ * unreachable in production today (see the note in thalamus.ts). Passing
+ * tests here mean stage 2 is correct if user blocks ever ship, NOT that it
+ * runs against a live provider now.
+ */
 const MIXED_HISTORY: ChatMessage[] = [
   {
     role: 'user',
@@ -160,7 +169,7 @@ function toolHasImages(opts: ProviderStreamOptions): boolean {
 
 async function main(): Promise<void> {
   const { LocalProvider } = await import('../providers/local')
-  const { Thalamus } = await import('../thalamus')
+  const { Thalamus, MODALITY_MEMO_REQUESTS } = await import('../thalamus')
   const { isModalityReject, REQUEST_MODALITY_STRIP_REASON, TOOL_RESULT_MODALITY_STRIP_REASON } =
     await import('../vision')
 
@@ -314,6 +323,32 @@ async function main(): Promise<void> {
         only.content.includes(TOOL_RESULT_MODALITY_STRIP_REASON) &&
         !only.content.includes('can still view')
     )
+  }
+
+  // ---------------------------------------------------------------------------
+  // 5b. the memo EXPIRES. "Stripping cured the 400" is not proof the model is
+  //     blind — a 400 that merely mentions an image (DashScope's sub-10px
+  //     complaint) is cured the same way. A permanent memo would silently
+  //     blind a fully capable model until relaunch, so images get probed
+  //     again after MODALITY_MEMO_REQUESTS requests.
+  // ---------------------------------------------------------------------------
+
+  {
+    const fake = new FakeProvider(['modality400', 'ok'])
+    const t = makeThalamus(fake)
+    await drive(t, VISUAL_HISTORY) // arms the memo
+    fake.behavior = ['ok']
+    // Spend every memoized use; the last one clears the entry.
+    for (let i = 0; i < MODALITY_MEMO_REQUESTS; i++) await drive(t, VISUAL_HISTORY)
+    checkTrue(
+      '5b: still pre-stripping on the last memoized request',
+      !toolHasImages(fake.payloads[fake.payloads.length - 1])
+    )
+    fake.calls = 0
+    fake.payloads = []
+    const out = await drive(t, VISUAL_HISTORY)
+    check('5b: probe turn succeeded', out.failed, false)
+    checkTrue('5b: images are sent again once the memo expires', toolHasImages(fake.payloads[0]))
   }
 
   // ---------------------------------------------------------------------------

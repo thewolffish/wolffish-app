@@ -103,11 +103,43 @@ tools:
           - overwrite
           - append
   - name: image_view
-    description: View an image file — returns the actual pixels in the tool result, downscaled to fit 1024px so any size is safe to open. Use it whenever you need to SEE image content; attached images are never auto-loaded into context. Requires a vision-capable model (on text-only models the pixels are stripped — use shell tools like exiftool/sips for metadata instead).
+    description: View an image file — returns the actual pixels in the tool result. Attached images are never auto-loaded, so this is how you SEE one. You choose the view, and the choice is a real cost/clarity trade — max_dimension sets the long edge (default 1024, which reads scenes, layout and large type; raise to 1600-2048 only when you must resolve small text), region crops in the ORIGINAL pixel grid before any resize, and format png keeps screenshots, UI, charts and text crisp while jpeg suits photographs. Prefer a tight region at a modest max_dimension over a large max_dimension on the whole frame — a crop is sharper AND cheaper, because cost tracks the pixels you send, not the size of the file. Requires a vision-capable model (on text-only models the pixels are stripped — use shell tools like exiftool/sips for metadata instead).
     parameters:
       path:
         type: string
         description: Absolute path or path starting with ~ to the image file
+      max_dimension:
+        type: integer
+        required: false
+        description: Long edge of the returned view in pixels (default 1024). Never upscales past the source, so a value larger than the image simply returns it at native size.
+      region:
+        type: object
+        required: false
+        description: Crop to inspect, in ORIGINAL image pixels, applied before the resize. Omit to view the whole frame. Out-of-bounds rectangles are clamped and the result says so.
+        properties:
+          x:
+            type: integer
+            description: Left edge in original pixels
+          y:
+            type: integer
+            description: Top edge in original pixels
+          width:
+            type: integer
+            description: Crop width in original pixels
+          height:
+            type: integer
+            description: Crop height in original pixels
+      format:
+        type: string
+        required: false
+        description: jpeg (default, best for photographs) or png (lossless, best for text and UI)
+        enum:
+          - jpeg
+          - png
+      quality:
+        type: integer
+        required: false
+        description: JPEG quality 1-100 (default 75). Ignored for png.
   - name: file_patch
     description: Find a literal string in a file and replace every occurrence.
     parameters:

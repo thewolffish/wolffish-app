@@ -43,6 +43,29 @@ export function inlineOmittedNote(count: number): string {
   )
 }
 
+/**
+ * Rough token cost of one inline image, for the context estimators only.
+ *
+ * Vendors bill images by PIXELS — Anthropic and OpenAI both land near
+ * `width * height / 750` — and all we have at this seam is encoded bytes.
+ * So this goes bytes → pixels via a per-format density, then pixels →
+ * tokens. The densities are coarse; the format SPLIT is the part that
+ * matters, because a PNG carries roughly ten times the bytes per pixel of
+ * a q75 JPEG and a single coefficient would be an order of magnitude wrong
+ * on one of them.
+ *
+ * The previous estimate charged `data.length * 0.75 / 4` — about 25x the
+ * real cost of a 1024px view. That was survivable while tool images were
+ * rare and small. Now that the model chooses its own dimensions, one
+ * browser turn full of screenshots could trip compaction on phantom tokens
+ * alone.
+ */
+export function estimateImageTokens(img: { mediaType: string; data: string }): number {
+  const bytes = decodedBase64Bytes(img.data)
+  const bytesPerPixel = img.mediaType === 'image/png' ? 1.5 : 0.15
+  return Math.ceil(bytes / bytesPerPixel / 750)
+}
+
 export type SelectInlineImagesResult = {
   inline: ToolResultImage[]
   omitted: number

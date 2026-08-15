@@ -53,11 +53,37 @@ const toolDefinitions = [
   {
     name: 'image_view',
     description:
-      'View an image file: returns the actual pixels in the tool result (downscaled to fit 1024px, so any size is safe to open). Use it whenever you need to SEE image content — attached images are never auto-loaded into context. Requires a vision-capable model; on text-only models the pixels are stripped and you should rely on shell tools (exiftool/sips) for metadata instead.',
+      'View an image file — returns the actual pixels in the tool result. Attached images are never auto-loaded, so this is how you SEE one. You choose the view, and the choice is a real cost/clarity trade — max_dimension sets the long edge (default 1024, which reads scenes, layout and large type; raise to 1600-2048 only when you must resolve small text), region crops in the ORIGINAL pixel grid before any resize, and format png keeps screenshots, UI, charts and text crisp while jpeg suits photographs. Prefer a tight region at a modest max_dimension over a large max_dimension on the whole frame — a crop is sharper AND cheaper, because cost tracks the pixels you send, not the size of the file. Requires a vision-capable model; on text-only models the pixels are stripped and you should rely on shell tools (exiftool/sips) for metadata instead.',
     parameters: {
       type: 'object',
       properties: {
-        path: { type: 'string', description: 'Absolute path or ~ prefix to the image file' }
+        path: { type: 'string', description: 'Absolute path or ~ prefix to the image file' },
+        max_dimension: {
+          type: 'integer',
+          description:
+            'Long edge of the returned view in pixels (default 1024). Never upscales past the source, so a value larger than the image simply returns it at native size.'
+        },
+        region: {
+          type: 'object',
+          description:
+            'Crop to inspect, in ORIGINAL image pixels, applied before the resize. Omit to view the whole frame. Out-of-bounds rectangles are clamped and the result says so.',
+          properties: {
+            x: { type: 'integer', description: 'Left edge in original pixels' },
+            y: { type: 'integer', description: 'Top edge in original pixels' },
+            width: { type: 'integer', description: 'Crop width in original pixels' },
+            height: { type: 'integer', description: 'Crop height in original pixels' }
+          },
+          required: ['x', 'y', 'width', 'height']
+        },
+        format: {
+          type: 'string',
+          description: 'jpeg (default, best for photographs) or png (lossless, best for text and UI)',
+          enum: ['jpeg', 'png']
+        },
+        quality: {
+          type: 'integer',
+          description: 'JPEG quality 1-100 (default 75). Ignored for png.'
+        }
       },
       required: ['path']
     }
@@ -288,6 +314,46 @@ const IMAGE_VIEW_MAX_DIMENSION = 1024
 const IMAGE_VIEW_JPEG_QUALITY = 75
 
 /**
+ * Mirrors MAX_INLINE_IMAGE_BYTES in src/main/runtime/tool-images.ts. The
+ * runtime silently drops any tool-result image above that cap and leaves
+ * a note in its place. The model picks its own dimensions here, so this
+ * is the only place that can notice an over-cap encode and step it down
+ * instead of letting the picture vanish on the way to the wire.
+ */
+const IMAGE_VIEW_WIRE_CAP_BYTES = 3 * 1024 * 1024
+
+function imageViewInt(value, min, max, fallback) {
+  const n = typeof value === 'number' ? Math.round(value) : Number.parseInt(String(value ?? ''), 10)
+  if (!Number.isFinite(n)) return fallback
+  return Math.min(max, Math.max(min, n))
+}
+
+/**
+ * The model's rectangle intersected with the real image. Returning a
+ * clamped rect rather than an error keeps a slightly-off crop useful —
+ * sharp's extract() throws on any overflow, which would cost a round trip
+ * to fix an off-by-a-few guess about an image the model has only seen
+ * downscaled. The caption reports the clamp so the coordinates can be
+ * corrected on the next call.
+ */
+function imageViewRegion(raw, srcWidth, srcHeight) {
+  if (!raw || typeof raw !== 'object' || !srcWidth || !srcHeight) return null
+  const left = imageViewInt(raw.x, 0, srcWidth - 1, 0)
+  const top = imageViewInt(raw.y, 0, srcHeight - 1, 0)
+  const width = imageViewInt(raw.width, 1, srcWidth - left, srcWidth - left)
+  const height = imageViewInt(raw.height, 1, srcHeight - top, srcHeight - top)
+  const asked = {
+    left: imageViewInt(raw.x, -1e9, 1e9, 0),
+    top: imageViewInt(raw.y, -1e9, 1e9, 0),
+    width: imageViewInt(raw.width, -1e9, 1e9, width),
+    height: imageViewInt(raw.height, -1e9, 1e9, height)
+  }
+  const clamped =
+    asked.left !== left || asked.top !== top || asked.width !== width || asked.height !== height
+  return { left, top, width, height, clamped }
+}
+
+/**
  * Attached images are never auto-injected into model context (100%
  * model-led policy) — this tool is how a vision model actually sees one.
  * Downscales via sharp (a lazily-installed runtime dep, same pattern as
@@ -295,6 +361,12 @@ const IMAGE_VIEW_JPEG_QUALITY = 75
  * StepResult images channel, exactly like the computer-use screenshot
  * tool. Decode failures (corrupt files, >268-megapixel inputs sharp
  * refuses) come back as clear errors with a shell-tool fallback.
+ *
+ * Dimensions, crop and encoding are the model's call, not this tool's —
+ * a fixed 1024px view cannot resolve a receipt or a code screenshot, and
+ * the model is the only party that knows whether this call needs to read
+ * fine print or just recognize a scene. The defaults stay at the old
+ * behaviour so an unparameterized call is unchanged.
  */
 async function imageView(args) {
   const target = resolveUserPath(args?.path)
@@ -306,21 +378,68 @@ async function imageView(args) {
   }
   try {
     const sharp = (await import('sharp')).default
-    const source = sharp(target)
-    const meta = await source.metadata()
-    const resized = await source
-      .resize(IMAGE_VIEW_MAX_DIMENSION, IMAGE_VIEW_MAX_DIMENSION, {
-        fit: 'inside',
-        withoutEnlargement: true
-      })
-      .jpeg({ quality: IMAGE_VIEW_JPEG_QUALITY })
-      .toBuffer({ resolveWithObject: true })
+    const meta = await sharp(target).metadata()
+    const srcWidth = meta.width ?? 0
+    const srcHeight = meta.height ?? 0
+
+    const format = args?.format === 'png' ? 'png' : 'jpeg'
+    const quality = imageViewInt(args?.quality, 1, 100, IMAGE_VIEW_JPEG_QUALITY)
+    const region = imageViewRegion(args?.region, srcWidth, srcHeight)
+    // No arbitrary ceiling: `withoutEnlargement` already bounds the request
+    // by the source's own resolution, and the step-down below bounds it by
+    // what the wire will carry. A cap here would just be a number to argue
+    // with later.
+    let edge = imageViewInt(args?.max_dimension, 1, 1e6, IMAGE_VIEW_MAX_DIMENSION)
+
+    let buffer
+    let info
+    let steppedDown = false
+    for (let attempt = 0; attempt < 4; attempt++) {
+      let pipeline = sharp(target)
+      if (region) {
+        pipeline = pipeline.extract({
+          left: region.left,
+          top: region.top,
+          width: region.width,
+          height: region.height
+        })
+      }
+      pipeline = pipeline.resize(edge, edge, { fit: 'inside', withoutEnlargement: true })
+      const encoded = await (format === 'png'
+        ? pipeline.png()
+        : pipeline.jpeg({ quality })
+      ).toBuffer({ resolveWithObject: true })
+      buffer = encoded.data
+      info = encoded.info
+      if (buffer.length <= IMAGE_VIEW_WIRE_CAP_BYTES) break
+      steppedDown = true
+      // Bytes fall with area, so the long edge scales by the square root of
+      // the overshoot; the 0.9 is headroom against a bad estimate on noisy
+      // sources. Floor at 256 so a pathological image still returns pixels.
+      const ratio = Math.sqrt(IMAGE_VIEW_WIRE_CAP_BYTES / buffer.length) * 0.9
+      edge = Math.max(256, Math.floor(Math.max(info.width, info.height) * ratio))
+    }
+
     const original =
-      meta.width && meta.height ? `${meta.width}x${meta.height}` : 'unknown dimensions'
+      srcWidth && srcHeight ? `${srcWidth}x${srcHeight}` : 'unknown dimensions'
+    const regionLabel = region
+      ? ` region ${region.left},${region.top} ${region.width}x${region.height}` +
+        `${region.clamped ? ' (clamped to image bounds)' : ''};`
+      : ''
+    const qualityLabel = format === 'jpeg' ? ` q${quality}` : ''
+    const stepLabel = steppedDown
+      ? `, stepped down from the requested size to stay under the ${IMAGE_VIEW_WIRE_CAP_BYTES / (1024 * 1024)}MB inline limit`
+      : ''
     return {
       success: true,
-      output: `Viewing ${target} (original ${original}, ${(stat.size / 1024).toFixed(0)}KB; shown at ${resized.info.width}x${resized.info.height}).`,
-      images: [{ mediaType: 'image/jpeg', data: resized.data.toString('base64') }]
+      output:
+        `Viewing ${target} — the pixels are attached to this result (original ${original}, ` +
+        `${(stat.size / 1024).toFixed(0)}KB;${regionLabel} sent at ${info.width}x${info.height} ` +
+        `${format}${qualityLabel}, ${(buffer.length / 1024).toFixed(0)}KB${stepLabel}).\n` +
+        `These pixels are in context for THIS turn only — later turns keep this line but not the ` +
+        `image. Call image_view again on the same path to see it once more, with a region or a ` +
+        `larger max_dimension if you need finer detail.`,
+      images: [{ mediaType: format === 'png' ? 'image/png' : 'image/jpeg', data: buffer.toString('base64') }]
     }
   } catch (err) {
     const reason = err?.message ?? String(err)

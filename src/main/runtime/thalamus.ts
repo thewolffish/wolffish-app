@@ -23,7 +23,7 @@ import {
   TOOL_RESULT_MODALITY_STRIP_REASON,
   type VisualStripScope
 } from '@main/runtime/vision'
-import { selectInlineImages } from '@main/runtime/tool-images'
+import { estimateImageTokens, selectInlineImages } from '@main/runtime/tool-images'
 import { normalizeReasoningMode, reasoningModesFor } from '@main/runtime/reasoning'
 import { net } from 'electron'
 
@@ -220,6 +220,11 @@ export type ThalamusOptions = {
   }
 }
 
+// How many requests a proven modality strip stays memoized before the next
+// one probes with images again. See toolResultModalityRejects for why it
+// expires at all rather than lasting the session.
+export const MODALITY_MEMO_REQUESTS = 20
+
 // Per-model cooldown after consecutive failures, exposed via getHealth()
 // for diagnostics only. Resolution never skips the Brain because it is in
 // cooldown — every turn re-tries the same selected model, and the retry
@@ -312,12 +317,26 @@ export class Thalamus {
   private localOnly = false
   private testProvider: StreamableProvider | null
   /**
-   * Session-scoped: provider:model → the strip scope that actually cured
-   * a modality 400. Written only after a stripped retry succeeds, so a
-   * false-positive 400 never poisons later turns. In-memory only — a
-   * vendor fix self-heals on next launch.
+   * provider:model → the strip scope that actually cured a modality 400,
+   * plus how many more requests it applies to. Written only after a
+   * stripped retry succeeds, so a strip that did not cure never poisons
+   * later turns.
+   *
+   * It expires because "the strip cured it" is not proof the model is
+   * blind. A 400 whose text merely CONTAINS the word image trips
+   * MODALITY_REJECT_PATTERN, and removing the picture cures that too —
+   * DashScope's documented sub-10px complaint is exactly this shape, and
+   * image_view can produce a sub-10px view since it never upscales. Left
+   * permanent, one such 400 would blind a fully-capable model for the rest
+   * of the session, silently. Expiring re-probes with images every
+   * MODALITY_MEMO_REQUESTS requests: a genuinely text-only-in-tool-results
+   * provider costs one extra retry per cycle, while a false positive heals
+   * itself instead of degrading every answer until relaunch.
    */
-  private toolResultModalityRejects = new Map<string, VisualStripScope>()
+  private toolResultModalityRejects = new Map<
+    string,
+    { scope: VisualStripScope; remaining: number }
+  >()
 
   constructor(
     private local: LocalProvider,
@@ -399,8 +418,13 @@ export class Thalamus {
     if (!vision) {
       return { ...options, messages: stripVisualContent(options.messages) }
     }
-    const memoScope = this.toolResultModalityRejects.get(`${entry.id}:${entry.model}`)
-    if (memoScope) {
+    const memoKey = `${entry.id}:${entry.model}`
+    const memo = this.toolResultModalityRejects.get(memoKey)
+    if (memo) {
+      // Spend one use, then let the next request probe with images again.
+      memo.remaining -= 1
+      if (memo.remaining <= 0) this.toolResultModalityRejects.delete(memoKey)
+      const memoScope = memo.scope
       const reason =
         memoScope === 'tool' ? TOOL_RESULT_MODALITY_STRIP_REASON : REQUEST_MODALITY_STRIP_REASON
       return {
@@ -886,10 +910,10 @@ export class Thalamus {
 
         this.markHealthy(entry.id)
         if (modalityStage === 1 || modalityStage === 2) {
-          this.toolResultModalityRejects.set(
-            `${entry.id}:${entry.model}`,
-            modalityStage === 1 ? 'tool' : 'all'
-          )
+          this.toolResultModalityRejects.set(`${entry.id}:${entry.model}`, {
+            scope: modalityStage === 1 ? 'tool' : 'all',
+            remaining: MODALITY_MEMO_REQUESTS
+          })
         }
         const durationMs = Date.now() - startedAt
         this.emit('llm.response', {
@@ -970,6 +994,14 @@ export class Thalamus {
           }
           continue
         }
+        // Stage 2 is forward-compat and unreachable today: it needs a user
+        // image/document block to still be present after stage 1 stripped the
+        // tool images, and nothing in the app produces one — every attachment
+        // becomes a text reference note (uploads/file-processor.ts), so the
+        // only visual content that ever exists is a tool result. It stays
+        // because anthropic.ts already decodes native image/document blocks,
+        // so the day user blocks are produced this arms itself. Kept rather
+        // than deleted; the test covering it builds a synthetic user block.
         if (modalityHit && modalityStage === 1) {
           modalityStage = 2
           const detail = extractProviderDetail(message) ?? message
@@ -1415,8 +1447,8 @@ export function estimateMessageTokens(messages: ChatMessage[]): number {
         } else {
           for (const block of m.content) {
             if (block.type === 'text') chars += block.text.length
-            else if (block.type === 'image' || block.type === 'document')
-              chars += block.data.length * 0.75
+            else if (block.type === 'image') chars += estimateImageTokens(block) * 4
+            else if (block.type === 'document') chars += block.data.length * 0.75
           }
         }
         break
@@ -1433,7 +1465,7 @@ export function estimateMessageTokens(messages: ChatMessage[]): number {
         chars += m.content.length
         if (m.images) {
           for (const img of selectInlineImages(m.images, m.toolName).inline)
-            chars += img.data.length * 0.75
+            chars += estimateImageTokens(img) * 4
         }
         break
     }
