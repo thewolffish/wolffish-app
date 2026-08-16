@@ -26,6 +26,7 @@
  *   turn footer            model · tokens · duration            (verbose)
  */
 import { c, g, icon, out, safe, shortPath, wrapText, bytes, width } from './ui.mjs'
+import { stdoutIsTty } from './tty.mjs'
 import { createMarkdownStream, renderMarkdown } from './markdown.mjs'
 
 const OUTPUT_MARKER =
@@ -93,7 +94,7 @@ export class TurnRenderer {
    */
   constructor({
     verbose = false,
-    raw = !process.stdout.isTTY,
+    raw = !stdoutIsTty(),
     fileOffset = 0,
     replay = false,
     showTools = '--tools'

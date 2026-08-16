@@ -44,7 +44,12 @@ export default defineConfig(
     // straight off disk and run under ELECTRON_RUN_AS_NODE, with no build
     // step to strip annotations. Only the TypeScript-shaped rules are off —
     // everything else (unused vars, correctness, prettier) still applies.
-    files: ['src/cli/**/*.mjs'],
+    //
+    // electron-builder hooks in build/ are the same kind of file for the same
+    // reason: Node loads them directly, so there is nothing to strip
+    // annotations. Exempting the rule rather than adding them to `ignores`
+    // (where scripts/ sits) keeps every non-TypeScript rule on them.
+    files: ['src/cli/**/*.mjs', 'build/**/*.mjs'],
     rules: {
       '@typescript-eslint/explicit-function-return-type': 'off'
     }

@@ -7,6 +7,8 @@
  * equivalent, so a conversation reads the same in a terminal as it does in the
  * app — the same information, the same order, without the chrome.
  */
+import { stdinIsRawCapable, stdinIsTty, stdoutIsTty, terminalColumns } from './tty.mjs'
+import { setConsoleEcho } from './console-ctl.mjs'
 import os from 'node:os'
 
 const FORCE_COLOR = process.env.FORCE_COLOR === '1'
@@ -15,7 +17,7 @@ const NO_COLOR =
   process.env.TERM === 'dumb' ||
   process.argv.includes('--no-color')
 
-let colorEnabled = FORCE_COLOR || (!NO_COLOR && process.stdout.isTTY === true)
+let colorEnabled = FORCE_COLOR || (!NO_COLOR && stdoutIsTty())
 
 export function setColor(enabled) {
   colorEnabled = enabled
@@ -186,7 +188,7 @@ export const c = {
 }
 
 export function width() {
-  return Math.max(40, Math.min(process.stdout.columns || 100, 120))
+  return Math.max(40, Math.min(terminalColumns() || 100, 120))
 }
 
 /**
@@ -200,8 +202,10 @@ export function width() {
  */
 export function terminalSize() {
   return {
-    columns: process.stdout.columns || 80,
-    rows: process.stdout.rows || 24
+    columns: terminalColumns() || 80,
+    // LINES, like COLUMNS, is the Windows launcher reporting a console this
+    // process cannot measure for itself.
+    rows: process.stdout.rows || Number.parseInt(process.env.LINES ?? '', 10) || 24
   }
 }
 
@@ -418,7 +422,7 @@ export function shortPath(p) {
 /** A spinner that quietly does nothing when stdout isn't a terminal. */
 export function spinner(label) {
   const frames = g.spinner
-  if (!process.stdout.isTTY) {
+  if (!stdoutIsTty()) {
     // Piped or redirected: a spinner would write thousands of carriage
     // returns into the captured output. The no-op keeps every call site free
     // of `if (isTTY)` branches.
@@ -466,7 +470,7 @@ export function setLineReader(readline) {
 
 /** True when someone can actually answer a prompt. */
 export function interactive() {
-  return owner !== null || process.stdin.isTTY === true
+  return owner !== null || stdinIsTty()
 }
 
 /**
@@ -493,7 +497,9 @@ export function cmd(rest) {
  * the whole of the handover.
  */
 export async function handOverTerminal(run) {
-  const raw = process.stdin.isTTY === true
+  // Raw-capable, not merely interactive: under the Windows launcher stdin is a
+  // pipe, so there is no termios to hand over and setRawMode would throw.
+  const raw = stdinIsRawCapable()
   owner?.pause()
   if (raw) process.stdin.setRawMode(false)
   try {
@@ -576,7 +582,7 @@ export function withProgress(client) {
 }
 
 /** Read one line, with the prompt on stderr so stdout stays pipeable. */
-export function question(prompt, { hidden = false } = {}) {
+export async function question(prompt, { hidden = false } = {}) {
   // Borrowed readline: it already owns the terminal, its own history and its
   // own echo.
   if (owner && !hidden) {
@@ -602,11 +608,24 @@ export function question(prompt, { hidden = false } = {}) {
       owner.question(safe(prompt), (answer) => resolve(answer), { hidden: true })
     })
   }
+  // Masking without raw mode: under the Windows launcher stdin is a pipe and
+  // the CONSOLE is echoing, so ask the launcher to stop. Awaited before the
+  // prompt is printed — echo has to be off BEFORE the first keystroke, not
+  // shortly after it.
+  let consoleMasked = false
+  if (hidden && !stdinIsRawCapable()) consoleMasked = await setConsoleEcho(false)
+
   return new Promise((resolve) => {
     const stdin = process.stdin
     owner?.pause()
+    // Neither masking route available: say so rather than quietly echoing a
+    // secret into the scrollback, which is the one outcome this prompt exists
+    // to prevent.
+    if (hidden && !stdinIsRawCapable() && !consoleMasked) {
+      process.stderr.write(`\n${c.yellow('(input will be visible in this terminal)')}\n`)
+    }
     process.stderr.write(safe(prompt))
-    if (hidden && stdin.isTTY) {
+    if (hidden && stdinIsRawCapable()) {
       // Raw mode so nothing echoes — used for API keys and bot tokens, which
       // must not end up in a scrollback buffer or a screen recording.
       stdin.setRawMode(true)
@@ -648,6 +667,12 @@ export function question(prompt, { hidden = false } = {}) {
       if (index < 0) return
       stdin.removeListener('data', onData)
       stdin.pause()
+      if (consoleMasked) {
+        // The Enter was never echoed either, so the cursor is still sitting
+        // after the prompt.
+        void setConsoleEcho(true)
+        process.stderr.write('\n')
+      }
       owner?.resume()
       resolve(buffer.slice(0, index))
     }
@@ -657,7 +682,7 @@ export function question(prompt, { hidden = false } = {}) {
 }
 
 export async function confirm(prompt, fallback = false) {
-  if (!process.stdin.isTTY) return fallback
+  if (!stdinIsTty()) return fallback
   const answer = (await question(`${prompt} ${c.dim(fallback ? '[Y/n]' : '[y/N]')} `))
     .trim()
     .toLowerCase()

@@ -47,6 +47,8 @@ import {
 import { pair } from './pair.mjs'
 import { service } from './service.mjs'
 import { basename } from '../lib/render.mjs'
+import { stdinIsRawCapable, stdoutIsTty } from '../lib/tty.mjs'
+import { setConsoleEcho } from '../lib/console-ctl.mjs'
 
 /**
  * Arabic-Indic and Eastern Arabic-Indic digits, as ASCII — the same tolerance
@@ -176,8 +178,17 @@ export async function repl(client, { conversationId = null, verbose = false } = 
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
-    prompt: c.blue('› '),
+    // Through the glyph proxy, not a literal '›'. A legacy console on codepage
+    // 437 renders that UTF-8 as `ÔÇ║`, and the prompt is the one string on
+    // screen at all times — it was the entire visible output of a session that
+    // printed nothing else.
+    prompt: c.blue(`${g.chevron} `),
     historySize: 500,
+    // Genuinely `isTTY`, not stdinIsTty(): terminal mode means readline drives
+    // raw-mode line editing, and under the Windows launcher stdin is a pipe
+    // that cannot do raw mode. Line mode there is not a downgrade in practice —
+    // the launcher forwards COOKED console input, so Windows' own editing
+    // (backspace, F3, F7 history) has already been applied to every line.
     terminal: process.stdin.isTTY === true
   })
 
@@ -254,12 +265,35 @@ export async function repl(client, { conversationId = null, verbose = false } = 
         return
       }
       if (hidden) {
-        // No trailing newline: the answer is invisible, so the prompt stays on
-        // its own line and the cursor sits after it, the way every password
-        // prompt in a shell behaves.
-        process.stderr.write(ask)
+        // Mute FIRST, synchronously, before anything invites typing.
         hiddenAsk = true
         rl._writeToOutput = () => {}
+
+        // Muting the writer is only half the answer, and on Windows it is the
+        // half that does nothing: under the launcher readline is not in
+        // terminal mode, so it never painted the line — the CONSOLE echoes it.
+        // Ask the launcher to stop, and if it cannot, say so instead of
+        // letting the token land in the scrollback believing it is hidden.
+        //
+        // The prompt is printed only AFTER that round-trip returns. Printing it
+        // first and masking after leaves a window — a named-pipe connect, so
+        // milliseconds, but unbounded if the server is between accepts — in
+        // which the user has been asked for a secret and the console is still
+        // echoing. Nobody types before the prompt appears, so withholding it is
+        // what makes the gap unreachable. ui.mjs orders it the same way.
+        //
+        // No trailing newline on `ask`: the answer is invisible, so the prompt
+        // stays on its own line with the cursor after it, the way every
+        // password prompt in a shell behaves.
+        if (!stdinIsRawCapable()) {
+          void (async () => {
+            const masked = await setConsoleEcho(false)
+            if (!masked) process.stderr.write(`\n${c.yellow('(input will be visible)')}\n`)
+            process.stderr.write(ask)
+          })()
+        } else {
+          process.stderr.write(ask)
+        }
       } else if (running) {
         // Mid-turn cards (an approval, an ask) arrive while the readline
         // writer is muted to keep repaints off the token stream — a prompt
@@ -311,7 +345,7 @@ export async function repl(client, { conversationId = null, verbose = false } = 
     if (payload.phase !== 'started') return
     if (payload.channel === 'cli') return
     if (running) return
-    if (process.stdout.isTTY) process.stdout.write('\r\x1b[K')
+    if (stdoutIsTty()) process.stdout.write('\r\x1b[K')
     out(
       c.gray(
         `  ${icon.dot()} ${payload.channel ?? 'another surface'} started a turn — ${payload.title ?? 'Untitled'}`
@@ -331,7 +365,7 @@ export async function repl(client, { conversationId = null, verbose = false } = 
     .then((pending) => {
       const rows = Array.isArray(pending) ? pending : (pending?.requests ?? [])
       if (!rows.length) return
-      if (process.stdout.isTTY) process.stdout.write('\r\x1b[K')
+      if (stdoutIsTty()) process.stdout.write('\r\x1b[K')
       out()
       out(
         `${icon.gate()} ${c.yellow(`${rows.length} request${rows.length === 1 ? '' : 's'} waiting from an earlier session`)}`
@@ -362,12 +396,16 @@ export async function repl(client, { conversationId = null, verbose = false } = 
     // with it. Inline, a long title eats the width you type into and moves the
     // cursor column every time you switch — and the name is context you glance
     // at, not something you want your text starting after.
+    // g.chevron, never a literal — see the prompt on createInterface above.
+    // These two were missed the first time and they are the ones that actually
+    // repaint, so a console on codepage 437 still printed `ÔÇ║` at every turn.
+    const chevron = c.blue(`${g.chevron} `)
     if (!state.conversationId) {
-      rl.setPrompt(c.blue('› '))
+      rl.setPrompt(chevron)
       return
     }
     const label = truncate(state.title ?? shortConversationId(state.conversationId), 60)
-    rl.setPrompt(`${c.gray(label)}\n${c.blue('› ')}`)
+    rl.setPrompt(`${c.gray(label)}\n${chevron}`)
   }
 
   applyPrompt()
@@ -407,6 +445,7 @@ export async function repl(client, { conversationId = null, verbose = false } = 
       if (hiddenAsk) {
         hiddenAsk = false
         delete rl._writeToOutput
+        if (!stdinIsRawCapable()) void setConsoleEcho(true)
         // The Enter that ended the line was swallowed with everything else.
         process.stderr.write('\n')
         // History is the second copy of a secret people forget about — it is
@@ -461,6 +500,7 @@ export async function repl(client, { conversationId = null, verbose = false } = 
       if (hiddenAsk) {
         hiddenAsk = false
         delete rl._writeToOutput
+        if (!stdinIsRawCapable()) void setConsoleEcho(true)
       }
       applyPrompt()
       out()
@@ -643,7 +683,7 @@ export async function repl(client, { conversationId = null, verbose = false } = 
  * noise in somebody's file.
  */
 function printBanner({ snapshot, state, status, version }) {
-  if (!process.stdout.isTTY) return
+  if (!stdoutIsTty()) return
 
   out()
   for (const line of wordmark()) out(c.cyan(line))

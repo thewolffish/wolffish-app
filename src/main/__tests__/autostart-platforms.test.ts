@@ -338,6 +338,116 @@ async function main(): Promise<void> {
     }
   }
 
+  // ── windows: the shim delegates to the console launcher ───────────────────
+  // The app binary is GUI-subsystem: a console that runs it directly gets no
+  // usable stdout, which is why `wolffish` printed a blank line and returned.
+  // When the packaged launcher is beside the binary the shim must hand over to
+  // it and stop invoking the app itself — the ELECTRON_RUN_AS_NODE form asserted
+  // above is the DEV fallback, and shipping it is the bug.
+  const launcherHome = path.join(TMP, 'launcher-home')
+  const launcherInstall = path.join(TMP, 'launcher-install')
+  fs.mkdirSync(launcherHome, { recursive: true })
+  fs.mkdirSync(launcherInstall, { recursive: true })
+  fs.writeFileSync(path.join(launcherInstall, 'wolffish-cli.exe'), 'MZ')
+  await asPlatform('win32', launcherHome, () =>
+    cliPath.installCliPath(
+      path.join(launcherInstall, 'wolffish.exe'),
+      path.join(launcherInstall, 'resources', 'cli', 'wolffish.mjs')
+    )
+  )
+  check('windows: shim hands off to wolffish-cli.exe when it is packaged', () => {
+    const body = fs.readFileSync(
+      path.join(launcherHome, '.wolffish', 'bin', 'wolffish.cmd'),
+      'utf8'
+    )
+    assert.ok(body.includes('wolffish-cli.exe'), `never reached the launcher:\n${body}`)
+    assert.ok(
+      !body.includes('ELECTRON_RUN_AS_NODE'),
+      'still starting the GUI binary itself — output would go nowhere'
+    )
+    assert.ok(body.includes('%*'), 'must forward arguments')
+    assert.ok(body.includes('%ERRORLEVEL%'), 'must propagate the exit code')
+  })
+
+  // ── windows: Git Bash needs a shim of its own ─────────────────────────────
+  // PATHEXT is a cmd.exe convention. Bash looking for `wolffish` never
+  // considers `wolffish.cmd`, so Git Bash users — a large share of Windows
+  // developers — got "command not found" with the directory sitting on PATH.
+  // Windows therefore writes BOTH: cmd resolves the .cmd and cannot execute
+  // the extensionless file, bash resolves the extensionless file and never
+  // looks for the .cmd.
+  const bashShim = path.join(launcherHome, '.wolffish', 'bin', 'wolffish')
+  check('windows: an extensionless shim is written for Git Bash', () => {
+    assert.ok(fs.existsSync(bashShim), 'Git Bash would report command not found')
+    assert.ok(fs.existsSync(path.join(launcherHome, '.wolffish', 'bin', 'wolffish.cmd')))
+  })
+  check('windows: the Git Bash shim is a sh script MSYS will execute', () => {
+    const body = fs.readFileSync(bashShim, 'utf8')
+    // MSYS decides a file is executable from the `#!` magic, not a mode bit
+    // NTFS does not really carry — so the shebang is load-bearing here.
+    assert.ok(body.startsWith('#!/bin/sh'), 'without the shebang MSYS will not run it')
+    assert.ok(body.includes('"$@"'), 'must forward arguments quoted')
+    assert.ok(body.includes('wolffish-cli.exe'), 'must reach the console launcher')
+  })
+  check('windows: the Git Bash shim uses forward slashes', () => {
+    const body = fs.readFileSync(bashShim, 'utf8')
+    const launcherLine = body.split('\n').find((line) => line.includes('wolffish-cli.exe'))
+    assert.ok(
+      launcherLine && !launcherLine.includes('\\'),
+      `a backslash is an escape inside a shell string: ${launcherLine}`
+    )
+  })
+  check('windows: winpty is used for a terminal, never for a pipe', () => {
+    const body = fs.readFileSync(bashShim, 'utf8')
+    // mintty is a pty over pipes, not a Windows console, so the launcher has
+    // no console to hand the child; winpty allocates one. But applying it to a
+    // redirect would corrupt `wolffish -p ... | grep`, so it is gated on both
+    // ends genuinely being terminals.
+    assert.ok(body.includes('winpty'), 'an interactive session would lose colour and prompts')
+    assert.ok(body.includes('[ -t 0 ]') && body.includes('[ -t 1 ]'), 'winpty must be gated')
+    assert.ok(body.includes('command -v winpty'), 'must degrade where winpty is absent')
+  })
+  // Through the real uninstall, because removing only the .cmd leaves
+  // `wolffish` working in Git Bash and Remove looks like a no-op.
+  await asPlatform('win32', launcherHome, () => cliPath.uninstallCliPath())
+  check('windows: uninstall removes BOTH shims', () => {
+    assert.ok(!fs.existsSync(bashShim), 'Git Bash would still resolve the command')
+    assert.ok(!fs.existsSync(path.join(launcherHome, '.wolffish', 'bin', 'wolffish.cmd')))
+  })
+
+  // ── windows: the cwd is not a PATH entry ──────────────────────────────────
+  // `where.exe` searches the current directory BEFORE PATH, and the app's
+  // shortcut starts it in the install root — where the packaged GUI binary is
+  // called `wolffish.exe`. So every Windows install resolved the name to a
+  // 200 MB executable that is obviously not the shim, and the panel accused a
+  // stranger of taking the name while the shim sat on PATH working fine. The
+  // cwd here is that install root, exactly as the shortcut leaves it.
+  const cwdHome = path.join(TMP, 'cwd-trap')
+  const installRoot = path.join(TMP, 'Programs', 'Wolffish')
+  fs.mkdirSync(installRoot, { recursive: true })
+  fs.mkdirSync(cwdHome, { recursive: true })
+  fs.writeFileSync(path.join(installRoot, 'wolffish.exe'), Buffer.alloc(9000))
+  const originalCwd = process.cwd()
+  const cwdTrapStatus = await asPlatform('win32', cwdHome, async () => {
+    await cliPath.installCliPath(path.join(installRoot, 'wolffish.exe'), '/res/cli.mjs')
+    const binDir = path.join(cwdHome, '.wolffish', 'bin')
+    process.chdir(installRoot)
+    try {
+      return await cliPath.cliPathStatus(binDir)
+    } finally {
+      process.chdir(originalCwd)
+    }
+  })
+  check('windows: the shim wins the name even when the cwd holds wolffish.exe', () => {
+    assert.equal(
+      cwdTrapStatus.resolved,
+      path.join(cwdHome, '.wolffish', 'bin', 'wolffish.cmd'),
+      'resolved something other than the shim'
+    )
+    assert.equal(cwdTrapStatus.shadowedBy, null, 'cried wolf about the app shadowing its own CLI')
+    assert.ok(cwdTrapStatus.installed, 'reported not-installed for a shim on the caller PATH')
+  })
+
   // ── the footprint rule, and the upgrade sweep ─────────────────────────────
   // "uninstall must be rm -rf ~/.wolffish" is a project hard rule, so the CLI
   // install must not write a single byte outside that tree.
@@ -546,6 +656,98 @@ async function main(): Promise<void> {
     )
     const body = fs.readFileSync(path.join(nativeHome, '.wolffish', 'bin', 'wolffish'), 'utf8')
     assert.ok(body.includes('/opt/Wolffish/resources/cli/wolffish.mjs'), body)
+  })
+
+  // ── what the CLI is allowed to believe about its own stdio ────────────────
+  // On packaged Windows the CLI runs GUI-subsystem and is not attached to a
+  // console, so libuv leaves every isTTY undefined even while the user is
+  // typing at it. wolffish-cli.exe passes the truth in as environment; these
+  // helpers are the only place that is read.
+  const tty = await import('../../cli/lib/tty.mjs')
+  const ttyEnvKeys = ['WOLFFISH_TTY_STDIN', 'WOLFFISH_TTY_STDOUT', 'COLUMNS']
+  const savedTtyEnv: Record<string, string | undefined> = {}
+  for (const key of ttyEnvKeys) {
+    savedTtyEnv[key] = process.env[key]
+    delete process.env[key]
+  }
+
+  check('stdio: with no launcher env, nothing is claimed to be a terminal', () => {
+    // This test process is itself piped, so isTTY is false throughout.
+    assert.equal(tty.stdoutIsTty(), false)
+    assert.equal(tty.stdinIsTty(), false)
+  })
+
+  process.env.WOLFFISH_TTY_STDOUT = '1'
+  process.env.WOLFFISH_TTY_STDIN = '1'
+  process.env.COLUMNS = '137'
+  check('stdio: the launcher can say what libuv cannot work out', () => {
+    assert.equal(tty.stdoutIsTty(), true, 'colour and spinners would stay off')
+    assert.equal(tty.stdinIsTty(), true, 'every prompt would refuse to prompt')
+    assert.equal(tty.terminalColumns(), 137, 'width would fall back to a guess')
+  })
+  check('stdio: raw mode is never claimed — the launcher feeds a pipe', () => {
+    // The distinction that keeps setRawMode from throwing: stdin is readable
+    // and interactive, but it is not a TTY stream and never will be.
+    assert.equal(tty.stdinIsRawCapable(), false)
+  })
+  for (const key of ttyEnvKeys) {
+    if (savedTtyEnv[key] === undefined) delete process.env[key]
+    else process.env[key] = savedTtyEnv[key]
+  }
+
+  // `type log.txt | wolffish -p "why?"` — the documented usage — dropped the
+  // file on Windows and asked the model an empty question, because Node does
+  // not define S_IFIFO there and so `stat.isFIFO()` is false for every pipe
+  // that has ever existed. The mode bits are right on both platforms.
+  check('stdio: a pipe is recognised by mode, not by the unusable isFIFO()', () => {
+    assert.equal(tty.modeIsFifo(0o010000), true, 'a real cmd pipe mode')
+    assert.equal(tty.modeIsFifo(0o100666), false, 'a redirected file is not a pipe')
+    assert.equal(tty.modeIsFifo(0o020666), false, 'a console char device is not a pipe')
+  })
+
+  // ── no glyph may skip the transliteration chokepoint ──────────────────────
+  // `safe()` and the `g` proxy exist so a legacy console never receives a byte
+  // it cannot draw — but they only protect text that goes THROUGH them. A
+  // literal glyph written straight to a stream, or baked into a readline
+  // prompt, bypasses both silently.
+  //
+  // This is asserted at the source because it bit twice in one sitting: the
+  // session prompt was a literal '›' (printing `ÔÇ║` as the only thing on
+  // screen), and fixing the one on createInterface left two more in
+  // applyPrompt — which are the ones that actually repaint.
+  const cliRoot = path.join(import.meta.dirname, '..', '..', 'cli')
+  function mjsFiles(dir: string): string[] {
+    return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const full = path.join(dir, entry.name)
+      if (entry.isDirectory()) return mjsFiles(full)
+      return entry.name.endsWith('.mjs') ? [full] : []
+    })
+  }
+  const RAW_GLYPH = [
+    // a prompt handed to readline, or a direct stream write, holding a literal
+    // character outside ASCII
+    /(?:setPrompt|prompt:|process\.std(?:out|err)\.write)\(\s*(['"`])((?:(?!\1)[\s\S])*?)\1/g
+  ]
+  const offenders: string[] = []
+  for (const file of mjsFiles(cliRoot)) {
+    const body = fs.readFileSync(file, 'utf8')
+    for (const pattern of RAW_GLYPH) {
+      pattern.lastIndex = 0
+      let match: RegExpExecArray | null
+      while ((match = pattern.exec(body)) !== null) {
+        // eslint-disable-next-line no-control-regex
+        if (/[^\x00-\x7f]/.test(match[2])) {
+          offenders.push(`${path.relative(cliRoot, file)}: ${match[0].slice(0, 60)}`)
+        }
+      }
+    }
+  }
+  check('glyphs: no literal non-ASCII in a prompt or a direct stream write', () => {
+    assert.deepEqual(
+      offenders,
+      [],
+      `these bypass safe()/g and will print mojibake:\n${offenders.join('\n')}`
+    )
   })
 
   // ── the CLI's console-capability detection ────────────────────────────────

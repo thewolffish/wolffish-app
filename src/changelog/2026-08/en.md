@@ -1,4 +1,18 @@
-## v1.0.255 — 2026-08-16 `Latest`
+## v1.0.256 — 2026-08-16 `Latest`
+
+### The Terminal Command That Never Said Anything
+
+Every Windows user who typed `wolffish` got the same answer: nothing. A blank line, and the prompt straight back. **Not an error — silence.** Help, status, a whole conversation, all of it went somewhere the terminal could not show you. The reason is that Wolffish ships as a windowed application, and Windows hands a windowed program no way to write into the console that started it — a detail no wrapper can paper over, however much the old one tried to.
+
+There is now **a small console companion beside the app**, whose only job is to hold a real terminal open and hand it to Wolffish. With it, the command finally behaves like a command. **`wolffish` opens a session and stays open** — it used to print its prompt and exit before you could reach the keyboard. `wolffish -p "..."` asks and answers. **Piping works in both directions**: `type notes.txt | wolffish -p "what changed?"` now genuinely sends the file, which on Windows it never once did, and `wolffish --help | findstr` filters what it should. Colour, box-drawing and the true width of your window come back. And **a secret you type at a prompt is hidden again** rather than left sitting in your scrollback.
+
+The settings panel also stops **accusing another program of having taken the name**. It had been reading the wrong answer out of Windows and reporting a conflict that was never there — the command was correctly installed the whole time.
+
+### And Git Bash Finds It Too
+
+A great many Windows developers live in Git Bash, and Git Bash could not see the command at all. It looks for a file named exactly `wolffish`, while Windows' own shells look for `wolffish.cmd`. The folder was on the path; the command simply did not exist as far as bash was concerned. **Wolffish now installs both**, so cmd, PowerShell and Git Bash each find the one they are looking for and neither trips over the other's. Inside Git Bash a session gets **a real terminal bridged in**, so colours, prompts and typing all behave — while pipes and redirects are left exactly as they were.
+
+## v1.0.255 — 2026-08-16
 
 ### The Card That Stopped Showing Up Uninvited
 

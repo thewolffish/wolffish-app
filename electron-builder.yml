@@ -2,6 +2,10 @@ appId: sh.wolffi.app
 productName: Wolffish
 directories:
   buildResources: build
+# Compiles build/win-cli-launcher/wolffish-cli.exe on Windows; a no-op
+# elsewhere. See build/before-pack.js for why this is a hook and not an npm
+# script.
+beforePack: build/before-pack.mjs
 files:
   - '!**/.vscode/*'
   - '!src/*'
@@ -29,6 +33,15 @@ win:
   executableName: wolffish
   icon: resources/icons-win/icons/icon.ico
   target: nsis
+  # The `wolffish` command's console half. The app binary is GUI-subsystem, so
+  # a console that runs it directly gets no usable stdout and the CLI prints
+  # nothing at all; this launcher is console-subsystem and hands the child real
+  # handles. It has to land BESIDE wolffish.exe — it finds the binary and the
+  # client entry relative to itself — which is why it is extraFiles (app root)
+  # and not extraResources. Compiled by the beforePack hook.
+  extraFiles:
+    - from: build/win-cli-launcher/wolffish-cli.exe
+      to: wolffish-cli.exe
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
   shortcutName: ${productName}

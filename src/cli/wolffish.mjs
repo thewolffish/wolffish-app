@@ -12,6 +12,7 @@
  * the state you asked about, 2 you used the command wrong.
  */
 import { fstatSync } from 'node:fs'
+import { modeIsFifo } from './lib/tty.mjs'
 import { connect, daemonExecPath, daemonPid, DaemonClient } from './lib/client.mjs'
 
 /**
@@ -189,12 +190,20 @@ function parseArgs(argv) {
  * enough: stdin redirected from a terminal-less parent (a shell script, a
  * service manager, a CI job) is neither a TTY nor a pipe that will ever reach
  * EOF, and reading it there hangs the command forever with no output.
+ *
+ * The Windows launcher makes the pipe test insufficient in the other
+ * direction. There stdin IS a pipe — but one carrying live keystrokes from a
+ * console, not piped-in context, and it reaches EOF only when the user closes
+ * the terminal. Reading it would hang exactly the interactive session it was
+ * meant to serve, so the launcher's own flag settles it first.
  */
 async function readStdin() {
-  if (process.stdin.isTTY) return ''
+  if (process.stdin.isTTY || process.env.WOLFFISH_TTY_STDIN === '1') return ''
   try {
     const stat = fstatSync(0)
-    if (!stat.isFIFO() && !stat.isFile()) return ''
+    // `modeIsFifo`, not `stat.isFIFO()` — the latter is false for every pipe on
+    // Windows. See its definition in lib/tty.mjs.
+    if (!modeIsFifo(stat.mode) && !stat.isFile()) return ''
   } catch {
     return ''
   }

@@ -246,7 +246,11 @@ export async function startDaemon({ quiet = false } = {}) {
   // the daemon is spawned detached with its output thrown away.
   args.push('--no-sandbox')
 
-  if (!quiet) process.stderr.write('Starting the Wolffish daemon…\n')
+  // ASCII, not an ellipsis character. This is the earliest thing the CLI ever
+  // prints — before ui.mjs is necessarily loaded, and on a console whose
+  // codepage has not been established — and a lone U+2026 written straight to
+  // stderr bypasses the transliteration chokepoint that keeps the rest safe.
+  if (!quiet) process.stderr.write('Starting the Wolffish daemon...\n')
   const child = spawn(execPath, args, {
     detached: true,
     stdio: 'ignore',
