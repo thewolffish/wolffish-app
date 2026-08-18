@@ -1,4 +1,10 @@
-## v1.0.256 — 2026-08-16 `Latest`
+## v1.0.257 — 2026-08-18 `Latest`
+
+### Step Zero of Pairing
+
+Pairing your phone has always assumed the one thing the panel never helped with: **the app already being on the phone**. Wolffish Mobile lives on **the App Store and Google Play**, but the panel that pairs it never said so, let alone where — you were left to search a store by name and hope the right result came up. **Settings → Mobile now carries a "Get the app" card** holding the two links themselves — **the App Store for iPhone and iPad, Google Play for Android** — so the path finally reads the way it runs: install, open, scan, with nothing to hunt for in between. And the project's README on GitHub hands out the same two badges, for anyone who arrives that way first.
+
+## v1.0.256 — 2026-08-16
 
 ### The Terminal Command That Never Said Anything
 
