@@ -473,6 +473,39 @@ export function MobilePanel(): React.JSX.Element {
           </section>
         )}
 
+        {/* The stores' permanent links — installing the app is step zero of
+            pairing, so the panel hands them over instead of sending the user
+            hunting. */}
+        <section className="bg-surface border-border flex flex-col gap-5 rounded-2xl border p-6">
+          <div className="flex flex-col gap-1">
+            <span className="text-fg text-sm font-medium">{t('settings.mobile.getApp.title')}</span>
+            <p className="text-muted text-xs leading-relaxed">{t('settings.mobile.getApp.body')}</p>
+          </div>
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex min-w-0 items-center gap-3">
+              <AppleIcon size={18} className="text-muted shrink-0" />
+              <span className="text-fg text-sm font-medium">{t('settings.mobile.getApp.ios')}</span>
+            </div>
+            <ExternalLink
+              href="https://apps.apple.com/us/app/wolffish/id6792797989"
+              label={t('settings.mobile.getApp.appStore')}
+            />
+          </div>
+          <div className="border-border/60 border-t" />
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex min-w-0 items-center gap-3">
+              <AndroidIcon size={18} className="text-muted shrink-0" />
+              <span className="text-fg text-sm font-medium">
+                {t('settings.mobile.getApp.android')}
+              </span>
+            </div>
+            <ExternalLink
+              href="https://play.google.com/store/apps/details?id=sh.wolffi.mobile"
+              label={t('settings.mobile.getApp.googlePlay')}
+            />
+          </div>
+        </section>
+
         {/* The relay, a card of its own — nothing about it hides in code.
             Power users point this at a self-hosted deployment; the next
             pairing carries the new address to the phone. */}

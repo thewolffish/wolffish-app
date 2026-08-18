@@ -1674,6 +1674,14 @@
         "relayTitle": "Forwarded by a blind relay",
         "relayBody": "The relay only helps the two devices find each other and passes sealed bytes along. It cannot read, alter or replay them, and it stores nothing — no database, no logs, no accounts, no message history."
       },
+      "getApp": {
+        "title": "Get the app",
+        "body": "Wolffish for your phone, on both stores. Install it, open it, and pair it here.",
+        "ios": "iPhone and iPad",
+        "android": "Android",
+        "appStore": "App Store",
+        "googlePlay": "Google Play"
+      },
       "openRelay": "Open in browser",
       "relayConfig": {
         "body": "Where the two devices meet to exchange sealed frames. Any deployment of the open-source relay works — run your own, point this at it, and the next pairing carries it to your phone.",
