@@ -1,4 +1,16 @@
-## v1.0.258 — 2026-08-19 `Latest`
+## v1.0.259 — 2026-08-19 `Latest`
+
+### See What Wolffish Sees
+
+Wolffish works inside your real browser — reading pages, filling forms, clicking through whole flows — and until now the only way to watch was to sit at the desktop with **detailed task results** switched on. Every screenshot it took along the way was for **its own eyes**: on your phone, on Telegram or WhatsApp, a long browser task was a wall of silence with an answer at the end.
+
+Now Wolffish **shows you the moments that matter, as they happen**. When it reaches a milestone — the results page it was hunting for, a form filled in just before an important submit, the confirmation right after, the final state that proves the job is done — it sends that screenshot into **the conversation you're actually in**: an image in the app, a real photo on **Telegram and WhatsApp**, delivered mid-task with a one-line caption. Surprises get the same treatment — an error page, a login wall — so when it reports a blocker, you **see** the blocker. And it is deliberately not a firehose: routine navigation and scrolling stay private, so the handful of shots that do arrive are the ones that tell the story.
+
+### Workflow Runs Show Their Pages Too
+
+In a workflow run the browsing is often done by agents — and only the master speaks to you. Agents now put their **milestone screenshots on the record**, flagged as worth seeing, and the master **relays the telling ones** into your chat as the run progresses. The live card has always shown you *that* things are moving; now you also see *what* they look like.
+
+## v1.0.258 — 2026-08-19
 
 ### Queued Behind Nothing At All
 

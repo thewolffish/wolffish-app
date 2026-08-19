@@ -460,7 +460,7 @@ tools:
         required: false
   # Screenshots & Visual
   - name: ext_screenshot
-    description: Take a screenshot of the current page or a specific element. Returns the image inline.
+    description: Take a screenshot of the current page or a specific element. Returns the image inline for your own eyes and saves it to a file whose path is on the result's last line — send_file that path when the moment is worth showing the user.
     parameters:
       format:
         type: string
@@ -920,7 +920,7 @@ confirm_patterns:
     reason: Modifying browser cookies
   - pattern: 'ext_navigate\s.*(?:bank|paypal|venmo|stripe\.com|checkout|payment)'
     reason: Navigating to a financial or payment site
-version: 1.7.1
+version: 1.7.2
 ---
 
 # Browser Extension
@@ -986,6 +986,7 @@ The tab group's name is yours to write, and it is the only thing the user sees w
 - Pick the emoji and wording yourself; there is no fixed vocabulary. Short is better — tab groups show roughly 24 characters. `📖 Reading docs`, `🛒 Checking out`, `✍️ Writing reply`, `📸 Capturing page`.
 - **Reset when you're done**: `ext_set_activity` with no arguments puts it back to plain `Wolffish`.
 - It's cosmetic — a browser without tab-group support just skips it, and it never fails a task.
+- The label is desktop-only: a user on Telegram, WhatsApp, or the mobile app never sees it. For them, delivered screenshots are how you show what's happening — see **Screenshots** below.
 
 ## When no browser is connected
 
@@ -994,9 +995,19 @@ If `ext_*` tools report that the extension is not connected, the browser is prob
 - Launch first, ask second: this is a normal recovery step, not something to check in about.
 - If it launches but the extension never connects, the extension isn't installed in that browser — say so, and offer to try another with `ext_launch_browser {browser: "chrome"}`.
 
-## Screenshots
+## Screenshots — and showing the user what you see
 
-`ext_screenshot` returns the image inline. Use `fullPage: true` for full scrollable page captures, or `selector` for a specific element.
+`ext_screenshot` returns the image inline **and** saves it to a file — the result's last line is the saved path. Use `fullPage: true` for full scrollable page captures, or `selector` for a specific element.
+
+The inline image is for your eyes only: tool results are invisible outside the verbose in-app feed, and a user on Telegram, WhatsApp, or the mobile app cannot see the browser at all. Showing them what's happening is yours to do, and one call does it on every surface — **`send_file` the saved path**, and it renders as an image in the in-app chat and arrives as a real photo on Telegram/WhatsApp, mid-task, the moment you send it.
+
+**Send the important shots, not the stream.** On any real task — several steps, several pages, or work the user handed off and walked away from — a few well-chosen screenshots ARE the status updates, each introduced by a one-line caption in your prose:
+
+- **Milestones** — the result page that matters, a filled form just before a significant submit, the confirmation right after it, the final state that proves the task is done.
+- **Surprises** — an unexpected page, an error state, a login wall or CAPTCHA. When you report a blocker, show it.
+- **Things the user would want to eyeball** — the price you found, the listing you picked, a draft about to be posted in their name.
+
+Routine navigation, scroll steps, and near-identical retakes stay private — a feed of every capture is noise that buries the shot that mattered. How many is right is your judgment per task: a quick lookup usually needs none; a long autonomous run earns a handful. (Workflow agents have no `send_file`: list the milestone shots' paths in your report, flagged as worth showing, and the master delivers.)
 
 ## Debugger Mode — prefer it for everything
 

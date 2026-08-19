@@ -79,6 +79,12 @@ an important result that only its author has seen.
   so never task an agent with sending anything.
 - Narrate lightly between phases (one short line as you move the run
   forward) so channel users see progress; the card carries the detail.
+- On browser-driven runs the user can't see what agents see: screenshots
+  save to disk and agent reports carry the paths — relay the few that show
+  a real milestone or blocker with your own `send_file` as the run
+  progresses, caption in one line. The card shows telemetry, never the
+  pages; a screenshot at the right beat is the difference between a run
+  the user trusts and one they wonder about.
 - On unattended runs (scheduled jobs, procedures) be conservative: modest
   fan-outs, cheap models by default, no open-ended loops — nobody is
   watching to stop you.
