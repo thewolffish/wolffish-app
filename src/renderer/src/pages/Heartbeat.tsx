@@ -783,8 +783,20 @@ export function Heartbeat(): React.JSX.Element {
         const res = await window.api.heartbeat.runJob(job.label)
         if (res.started) {
           toast.show({ tone: 'success', message: t('heartbeat.runStarted') })
+        } else if (res.ok && res.state === 'coalesced') {
+          // Folded into a fire of this same job already in flight — it is NOT
+          // waiting for a slot, so saying "queued" would promise a second run
+          // that never comes.
+          toast.show({ tone: 'info', message: t('heartbeat.runCoalesced') })
         } else if (res.ok) {
-          toast.show({ tone: 'info', message: t('heartbeat.runQueued') })
+          // The three pool slots are shared with compaction, reflection and
+          // procedure runs, none of which draw a card unless their switch is
+          // on — so name the count, or a full pool reads as "nothing is
+          // running, why is it queued?".
+          toast.show({
+            tone: 'info',
+            message: t('heartbeat.runQueued', { count: res.running ?? 0 })
+          })
         } else {
           toast.show({ tone: 'error', message: t('heartbeat.runError') })
         }

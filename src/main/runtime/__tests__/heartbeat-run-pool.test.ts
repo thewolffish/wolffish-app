@@ -5,6 +5,11 @@
  * its slot without wedging the pool, and every transition pushes an
  * onRunsChanged snapshot.
  *
+ * Then the two ways a slot used to be held by nothing at all — the reasons a
+ * manual run reported "queued" while the pool looked empty: an automation id
+ * shifting under a live run (positional ids, a run that outlives the reload)
+ * aliasing one job onto another, and a throwing listener skipping the release.
+ *
  * Drives the pool through runDetached (the procedures path) with a fake agent
  * whose processAutonomous blocks on a per-label gate, so the test controls
  * exactly when each "run" finishes. Also asserts the brainstem job id is
@@ -159,6 +164,86 @@ async function run(): Promise<void> {
     ended.filter((e) => e.endsWith(':completed')).length === 4,
     ended.join(' ')
   )
+
+  // ── An edit under a live run can't alias one automation onto another ───
+  //
+  // parseHeartbeat numbers automation ids POSITIONALLY per kind, and a run in
+  // flight deliberately survives a scheduler reload. Delete the first of two
+  // "Daily" jobs while it runs and the survivor inherits its id — which used
+  // to make every manual fire of the survivor coalesce into a run that was
+  // never its own: reported as waiting, never started, forever.
+  const ws2 = path.join(TEST_HOME, 'ws2')
+  fs.mkdirSync(path.join(ws2, 'brain', 'brainstem'), { recursive: true })
+  const hbPath = path.join(ws2, 'brain', 'brainstem', 'heartbeat.md')
+  const write = (...blocks: string[]): void =>
+    fs.writeFileSync(hbPath, blocks.map((b) => `## ${b}\n\nBody of ${b}.\n`).join('\n'))
+
+  write('Daily (08:00)', 'Daily (20:00)')
+  const bs2 = new Brainstem({ workspaceRoot: ws2 })
+  const gates2 = new Map<string, () => void>()
+  bs2.setAgent({
+    processAutonomous: (opts: { jobLabel: string }) =>
+      new Promise((resolve) => {
+        gates2.set(opts.jobLabel, () =>
+          resolve({ success: true, response: '', toolCalls: 0, conversationId: 'x' })
+        )
+      })
+  } as unknown as import('@main/runtime/agent').Agent)
+  await bs2.startScheduler(false)
+
+  const first = bs2.runJobNow('Daily (08:00)')
+  ok('the first Daily starts', first.ok && first.started && first.state === 'running')
+  write('Daily (20:00)') // the running job leaves the file; ids shift under it
+  await bs2.reloadScheduler()
+  ok(
+    'the run survives the reload',
+    bs2
+      .getRunningJobs()
+      .map((r) => r.label)
+      .join(',') === 'Daily (08:00)'
+  )
+  const second = bs2.runJobNow('Daily (20:00)')
+  ok(
+    'THE OTHER AUTOMATION STILL STARTS',
+    second.ok && second.started && second.state === 'running',
+    JSON.stringify(second)
+  )
+  ok(
+    'both run side by side',
+    bs2
+      .getRunningJobs()
+      .map((r) => r.label)
+      .sort()
+      .join(',') === 'Daily (08:00),Daily (20:00)'
+  )
+  // Same job twice still coalesces — label identity dedupes, id identity doesn't.
+  const again = bs2.runJobNow('Daily (20:00)')
+  ok('a re-fire of the SAME job still coalesces', again.ok && again.state === 'coalesced')
+  for (const open of gates2.values()) open()
+  await sleep(60)
+
+  // ── A throwing listener can't leak the slot it was announcing ──────────
+  //
+  // onJobStarted is an IPC broadcast to windows that may be tearing down.
+  // When it threw before the try was entered, the release never ran and the
+  // slot was held for the life of the process — three of those and every
+  // later fire reports "queued" behind runs that ended long ago.
+  const bs3 = new Brainstem({ workspaceRoot: ws2 })
+  bs3.setAgent({
+    processAutonomous: () =>
+      Promise.resolve({ success: true, response: '', toolCalls: 0, conversationId: 'x' })
+  } as unknown as import('@main/runtime/agent').Agent)
+  bs3.setListener({
+    onJobStarted: () => {
+      throw new Error('Object has been destroyed')
+    }
+  })
+  await bs3.startScheduler(false)
+  const hostile = bs3.runJobNow('Daily (20:00)')
+  ok('a run whose announcement throws still counts as started', hostile.started)
+  await sleep(60)
+  ok('THE SLOT IS RELEASED', bs3.getRunningJobs().length === 0)
+  ok('and the next fire is not stuck behind a ghost', bs3.runJobNow('Daily (20:00)').started)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed > 0 ? 1 : 0)

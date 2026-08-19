@@ -373,7 +373,13 @@ export type AutomationsHost = {
   /** Every automation currently running (up to the pool's cap), oldest first. */
   getRunningJobs: () => Array<{ id: string; label: string; body: string; startedAt: number }>
   /** Run an automation immediately by id or heading label (fire-and-forget). */
-  runJobNow: (idOrLabel: string) => { ok: boolean; started: boolean; error?: string }
+  runJobNow: (idOrLabel: string) => {
+    ok: boolean
+    started: boolean
+    state?: 'running' | 'queued' | 'coalesced'
+    running?: number
+    error?: string
+  }
 }
 
 /**

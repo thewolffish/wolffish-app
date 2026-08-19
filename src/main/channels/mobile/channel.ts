@@ -1513,7 +1513,11 @@ export class MobileChannel {
       const result = this.deps.agent.brainstem.runJobNow(label)
       this.log(
         `automation "${label}" run requested from the phone — ` +
-          (result.started ? 'started' : result.ok ? 'queued' : `refused: ${result.error}`)
+          (result.started
+            ? 'started'
+            : result.ok
+              ? `${result.state ?? 'queued'} (${result.running ?? 0} runs hold the pool)`
+              : `refused: ${result.error}`)
       )
       return result
     })

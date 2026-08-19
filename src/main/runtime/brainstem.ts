@@ -271,6 +271,27 @@ export function runFamily(id: string): RunFamily {
   return 'automation'
 }
 
+/**
+ * The identity the run pool holds a slot under and coalesces fires on.
+ *
+ * NOT the job id, for automations. parseHeartbeat numbers ids POSITIONALLY per
+ * kind (`daily`, `daily-2`, `every-3`) in file order, so every id below an
+ * edit shifts the moment a same-kind job is added, removed, or toggled off.
+ * A run in flight deliberately survives a scheduler reload — which means a
+ * mid-run edit can hand a RUNNING job's id to a DIFFERENT automation, and from
+ * then on every fire of that other job coalesces into a run that was never its
+ * own: it reports "already running", never starts, and stays that way until
+ * the impostor finishes. The heading LABEL is the identity that survives a
+ * reload — jobStatuses already keys its history on it for exactly this reason.
+ * The built-in families mint their own unique, stable ids and keep them.
+ *
+ * The id still travels in the snapshot (RunningJobInfo.id) — it is what routes
+ * live log entries to the right card — so only pool bookkeeping moves here.
+ */
+function runKey(schedule: ParsedSchedule): string {
+  return runFamily(schedule.id) === 'automation' ? `label:${schedule.label}` : schedule.id
+}
+
 export type RunningJobInfo = {
   id: string
   label: string
@@ -1028,7 +1049,8 @@ export class Brainstem {
     handler: () => Promise<void>,
     onComplete?: () => void
   ): 'running' | 'queued' | 'coalesced' {
-    if (this.running.has(schedule.id) || this.queue.some((q) => q.schedule.id === schedule.id)) {
+    const key = runKey(schedule)
+    if (this.running.has(key) || this.queue.some((q) => runKey(q.schedule) === key)) {
       this.corpus?.emit('brainstem.jobCoalesced', { job: schedule.id, label: schedule.label })
       this.listener?.onJobLog?.({
         id: schedule.id,
@@ -1038,9 +1060,16 @@ export class Brainstem {
       })
       return 'coalesced'
     }
-    this.queue.push({ schedule, handler, onComplete, queuedAt: Date.now() })
+    const item = { schedule, handler, onComplete, queuedAt: Date.now() }
+    this.queue.push(item)
     this.pump()
-    return this.running.has(schedule.id) ? 'running' : 'queued'
+    // Whether a slot TOOK it — not whether it is still in flight. A run that
+    // dies in its own first tick (a handler that throws before its first
+    // await, an announcement that throws) has already released the slot by
+    // the time we get here, and asking `running` would call that "queued":
+    // a wait that will never end, on a run that already reported its failure.
+    // Membership of the queue is the exact question, and it cannot race.
+    return this.queue.includes(item) ? 'queued' : 'running'
   }
 
   /**
@@ -1092,21 +1121,29 @@ export class Brainstem {
       mode: schedule.mode ?? null,
       family: runFamily(schedule.id)
     }
-    this.running.set(schedule.id, info)
-    this.corpus?.emit('brainstem.jobStarted', {
-      job: schedule.id,
-      type: schedule.kind,
-      label: schedule.label,
-      timestamp: new Date(start).toISOString()
-    })
-    this.listener?.onJobStarted?.(info)
-    this.listener?.onJobLog?.({
-      id: schedule.id,
-      timestamp: start,
-      kind: 'started',
-      summary: `Started "${schedule.label}"`
-    })
+    const key = runKey(schedule)
+    this.running.set(key, info)
+    // From here to the `finally` that frees the slot, EVERYTHING runs inside
+    // the try. The announcements below are external code — a corpus listener,
+    // an IPC broadcast to windows that may be tearing down — and a throw from
+    // any of them used to escape before the try was entered, which skipped the
+    // release and leaked the slot for the life of the process. Three of those
+    // and the pool is permanently full: every later fire reports "queued" and
+    // waits behind runs that ended long ago.
     try {
+      this.corpus?.emit('brainstem.jobStarted', {
+        job: schedule.id,
+        type: schedule.kind,
+        label: schedule.label,
+        timestamp: new Date(start).toISOString()
+      })
+      this.listener?.onJobStarted?.(info)
+      this.listener?.onJobLog?.({
+        id: schedule.id,
+        timestamp: start,
+        kind: 'started',
+        summary: `Started "${schedule.label}"`
+      })
       await handler()
       this.corpus?.emit('brainstem.jobCompleted', {
         job: schedule.id,
@@ -1152,7 +1189,7 @@ export class Brainstem {
         bumpRun: true
       })
     } finally {
-      this.running.delete(schedule.id)
+      this.running.delete(key)
     }
   }
 
@@ -1353,10 +1390,23 @@ export class Brainstem {
    * exact heading label (e.g. "Every (5m)"). Goes through the very same pool a
    * cron fire uses (up to MAX_CONCURRENT_JOBS at once, overflow queued) and
    * produces the same sealed conversation + listener events. Fire-and-forget:
-   * returns as soon as the run is accepted; started=false means it's waiting
-   * (queued behind a full pool, or coalesced into an existing run).
+   * returns as soon as the run is accepted; started=false means it's waiting.
+   *
+   * `state` says WHICH kind of waiting, because the two are different promises
+   * to the person who pressed the button: 'queued' will run on its own once a
+   * slot frees, 'coalesced' will not — this fire was folded into a run of the
+   * same job that is already in flight. `running` is how many runs hold the
+   * pool right now, so a caller can say what the wait is actually behind
+   * (compaction, reflection and procedure runs share these slots and draw no
+   * card by default, which is why a full pool reads as "nothing is running").
    */
-  runJobNow(idOrLabel: string): { ok: boolean; started: boolean; error?: string } {
+  runJobNow(idOrLabel: string): {
+    ok: boolean
+    started: boolean
+    state?: 'running' | 'queued' | 'coalesced'
+    running?: number
+    error?: string
+  } {
     const job = this.findJob(idOrLabel)
     if (!job) {
       return { ok: false, started: false, error: `No automation matches "${idOrLabel}".` }
@@ -1389,14 +1439,17 @@ export class Brainstem {
       dirs: job.dirs ?? []
     }
     const state = this.enqueue(schedule, handler)
+    const running = this.running.size
     if (state === 'coalesced') {
       return {
         ok: true,
         started: false,
+        state,
+        running,
         error: `"${job.label}" is already running or queued — it'll run shortly.`
       }
     }
-    return { ok: true, started: state === 'running' }
+    return { ok: true, started: state === 'running', state, running }
   }
 
   /**

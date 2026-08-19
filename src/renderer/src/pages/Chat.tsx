@@ -2832,8 +2832,8 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
           {!hasMessages && (
             <div className="text-fg flex flex-col items-center gap-4 text-center">
               {/* Project mode swaps the wolffish hero for the project's own
-                  identity: emoji icon, title, and a two-line instructions
-                  preview — the base every conversation here starts from. */}
+                  identity: emoji icon, title, and the instructions themselves —
+                  the base every conversation here starts from. */}
               {sessionProject ? (
                 <span aria-hidden className="text-6xl leading-none">
                   {sessionProject.icon || '📁'}
@@ -2853,17 +2853,33 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                     ? sessionProject.title.trim() || t('projects.untitled')
                     : t('chat.empty.title')}
                 </h2>
-                <p
-                  dir="auto"
-                  className={cn(
-                    'text-muted text-sm leading-relaxed',
-                    sessionProject && 'line-clamp-2 max-w-md'
-                  )}
-                >
-                  {sessionProject
-                    ? sessionProject.instructions.trim() || t('projects.noInstructions')
-                    : t('chat.empty.subtitle')}
-                </p>
+                {sessionProject ? (
+                  // The instructions in full, in the same capped code block the
+                  // Projects cards draw — a prompt is the thing you actually
+                  // came here to read, and two clamped lines never showed it.
+                  // `overscroll-contain` keeps its wheel from chaining into the
+                  // conversation scroller once it hits an end.
+                  sessionProject.instructions.trim() ? (
+                    <pre
+                      dir="auto"
+                      className={cn(
+                        'bg-bg border-border text-muted w-full max-w-md',
+                        'max-h-40 overflow-auto overscroll-contain rounded-lg border px-3 py-2',
+                        'text-start font-mono text-xs leading-relaxed wrap-break-word whitespace-pre-wrap'
+                      )}
+                    >
+                      {sessionProject.instructions.trim()}
+                    </pre>
+                  ) : (
+                    <p className="text-muted max-w-md text-sm leading-relaxed">
+                      {t('projects.noInstructions')}
+                    </p>
+                  )
+                ) : (
+                  <p dir="auto" className="text-muted text-sm leading-relaxed">
+                    {t('chat.empty.subtitle')}
+                  </p>
+                )}
               </div>
               {!hasAnyModel && (
                 <div

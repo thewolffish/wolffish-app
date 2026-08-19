@@ -1,4 +1,22 @@
-## v1.0.257 — 2026-08-18 `Latest`
+## v1.0.258 — 2026-08-19 `Latest`
+
+### Queued Behind Nothing At All
+
+Press **Run now** on an automation and you could be told it was queued — waiting for a free slot — while the Heartbeat page in front of you showed **nothing running whatsoever**. That was not a display glitch: the run really was waiting, and in the worst case it would wait forever. Two separate faults were holding slots that no work occupied.
+
+The first was a mix-up of identity. An automation was tracked by its position in your heartbeat file rather than by its name, so **editing that file while a run was in flight could hand one automation's identity to another** — and from then on every press of that other job's button was folded into a run that was never its own. It reported "already running", never started, and stayed that way until the impostor happened to finish. Automations are now tracked **by their heading, which an edit does not move**.
+
+The second was quieter and worse. When a run announced itself to a window that was in the middle of closing, the announcement could fail — and the failure escaped before the slot had been booked for release. **The slot then stayed held for the life of the app.** Three of those and the pool was permanently full: every automation, procedure, compaction and reflection run from that moment on queued behind work that had finished hours earlier, and only quitting Wolffish cleared it. A slot is now **released no matter how its announcement goes**.
+
+### Told What You Are Actually Waiting For
+
+"Queued" had been doing the work of two very different answers. **Waiting for a slot** means it will run on its own, shortly, with nothing more required of you. **Folded into a run already going** means there will be no second run at all — the button did nothing, by design. Wolffish now says which, in the app, on your phone and in the terminal alike. A waiting automation also tells you **how many runs are holding the pool**, which is a number worth having: compaction, reflection and procedure runs share those same slots and draw no card unless you have asked them to, and that is exactly why a full pool used to read as "but nothing is running". The model working on your behalf is told the same thing just as plainly, so it stops **re-firing an automation that was already lined up** or checking on it in a loop.
+
+### The Project Prompt You Came To Read
+
+A new conversation inside a project used to greet you with the project's name and **the first two lines of its instructions**, trailing off into an ellipsis. Those instructions are the entire reason the conversation behaves the way it does, and two lines is rarely enough to recall what you told it. The empty chat now shows the **instructions in full**, in the same scrollable block the Projects page uses — there to be read before you type, rather than a hint that you wrote something once.
+
+## v1.0.257 — 2026-08-18
 
 ### Step Zero of Pairing
 

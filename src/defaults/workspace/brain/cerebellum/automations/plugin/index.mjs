@@ -392,10 +392,19 @@ async function runAutomation(args) {
 
   const outcome = automations.runJobNow(job.id)
   if (!outcome.ok) return { success: false, error: `automation_run: ${outcome.error ?? 'could not run.'}` }
+  // Accepted but not started, in two flavours that need OPPOSITE advice: a
+  // queued fire runs by itself the moment a slot frees (re-running it only
+  // coalesces and wastes a turn), while a coalesced one is already covered by
+  // a fire of this same job in flight. Neither is a failure, and neither is
+  // worth waiting on.
   if (!outcome.started) {
+    const waiting =
+      outcome.state === 'coalesced'
+        ? `"${job.label}" is already in flight — this fire joined it rather than starting a second run.`
+        : `"${job.label}" is queued — every run slot is busy (${outcome.running ?? 3} in progress; automations, procedures, compaction and reflection share the pool). It starts on its own as soon as one frees.`
     return {
       success: true,
-      output: `Did not start "${job.label}": ${outcome.error ?? 'another automation is running.'} Try again once it's free.`
+      output: `${waiting} Do NOT re-run it or poll automation_check in a loop — tell the user it is lined up, and check once later only if they ask how it went.`
     }
   }
   return {

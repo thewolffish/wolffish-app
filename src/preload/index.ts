@@ -1241,7 +1241,15 @@ export type HeartbeatApi = {
   /** Snapshot of the run pool — every running job plus the queued overflow. */
   getRuns: () => Promise<HeartbeatRunsSnapshot>
   /** Run an automation on demand by id or exact heading label, bypassing its schedule. */
-  runJob: (idOrLabel: string) => Promise<{ ok: boolean; started: boolean; error?: string }>
+  runJob: (idOrLabel: string) => Promise<{
+    ok: boolean
+    started: boolean
+    /** Which kind of wait: 'queued' runs on its own, 'coalesced' never will. */
+    state?: 'running' | 'queued' | 'coalesced'
+    /** Runs holding the shared pool right now — what a queued fire waits behind. */
+    running?: number
+    error?: string
+  }>
   /**
    * Per-job "Edited …" stamps (heading label → epoch ms), maintained in main
    * by diffing the file at every scheduler reload — so edits stamp no matter
