@@ -2749,7 +2749,12 @@ function resolveShellPath(): void {
 }
 
 app.whenReady().then(async () => {
-  electronApp.setAppUserModelId('com.wolffish.app')
+  // Must stay identical to `appId` in electron-builder.yml: the NSIS installer
+  // stamps that value onto the Start Menu and Desktop shortcuts, and Windows
+  // only matches a running window to its own shortcut — and only raises toasts
+  // at all — when the two agree. A YAML file cannot import this constant, so the
+  // two are kept in sync by hand.
+  electronApp.setAppUserModelId('sh.wolffi.app')
 
   if (is.dev && process.platform === 'darwin') {
     app.dock?.setIcon(dockIcon)
