@@ -1,4 +1,34 @@
-## v1.0.259 — 2026-08-19 `Latest`
+## v1.0.260 — 2026-08-21 `Latest`
+
+### Computer Use That Proves Its Aim
+
+Controlling your screen used to be an act of faith: take a screenshot, guess the button's pixels, click, hope. That whole loop has been rebuilt around **verification instead of hope**. Every screenshot now carries a **crosshair marking exactly where the cursor is**. A small or crowded target is no longer squinted at — a new **zoom** re-captures just that region at **native resolution**, so a tiny control becomes dozens of pixels wide before it is ever clicked. And every click, move, and scroll comes back with a **magnified close-up proving precisely where it landed** — a miss is visible immediately and corrected in the close-up itself, with surgical precision, instead of by guessing again on the full frame.
+
+The hands got better along with the eyes. A new **drag** action handles drag-and-drop, sliders, and text selection. Shortcuts can be written the way you'd say them — **`cmd+shift+s`** in one breath. **Arabic, emoji, and long text arrive exactly as written** instead of being mangled key by key. Multi-monitor setups need no arithmetic at all any more — coordinates always mean the image you're looking at, on whichever display it came from — and **ultrawide screens stay readable** instead of compressing into a blur. While all this happens, the display being controlled shows a **soft blue glow** so you always know Wolffish is at the wheel — the glow is invisible in its own screenshots, and it fades away on its own when the work stops. One honest warning completes the picture: if your selected Brain model **cannot see images at all**, the Computer Use panel now says so plainly instead of letting a blind model click by imagination.
+
+Long screen sessions also stopped paying for their own history: **older screenshots are retired from the model's context** as fresh ones arrive, so the model grounds its next click on the current screen — not a stale frame from twenty actions ago — and a long session stays fast and affordable.
+
+### The Composer Is One Card
+
+The chat input has been redrawn as **a single quiet card**: the message box *is* the surface, and every control now lives inside it — New Chat and your project on the top edge; the model switch and usage meter tucked into the footer; attach, folder, mic, and a round **Send** at the end. What used to be a row of separately boxed buttons is now one calm shape that reads like the modern composers you know. Nothing moved home behind your back — every control kept its exact behavior, only the chrome around it dissolved.
+
+### Learning From Your Words, Not Your Grades
+
+The 0-10 turn scoring is **retired everywhere** — the rating bar above the composer, the "rate this reply" invitations on Telegram and WhatsApp, the bare-number votes, the terminal's `/rate`. Grading every answer was homework, and the numbers told the nightly reflection less than what you already say naturally in conversation. Reflection now reads exactly that — **your own words in the transcript** — when it reviews each settled conversation at night and folds the lessons into the playbook it carries into every future turn. A number you typed will simply be a message again, on every surface.
+
+### Skills It Builds Now Carry Proof
+
+Wolffish can author brand-new tools for itself — and now it both **offers to** when it spots you repeating a pattern, and is **held to a standard** when it does. Every skill it creates is stamped as its own work and wears a **Wolffish badge** in Settings → Capabilities, distinct from Official and imported ones. More importantly, a freshly built (or freshly edited) skill is visibly **Untested** until one of its tools **succeeds in a real call** — the badge cannot be talked away, only earned, and it clears live the moment the first genuine call passes. A skill that claims to be ready now has to prove it.
+
+### It Knows You've Been Away
+
+Come back to a conversation after three weeks and Wolffish used to answer as if you'd never left — treating the transcript's "today", prices, and running state as still current, because nothing ever told it that time had passed. Now, when you resume a conversation after a real gap, the model is told **how long it has been** — "about 3 weeks ago", with the exact timestamp — and reminded that the older turns spoke from an older *now*, so it **re-checks what matters** instead of confidently quoting the past.
+
+### No More Stray Gibberish at the End
+
+Certain models occasionally "say nothing" by writing their internal end-of-sequence marker as visible text — a literal `<|eos|>` sitting in your chat, or stuck to the end of a conversation title. Wolffish never rewrites what a model says, so it fixes this where it belongs: it **notices the leak and tells the model**, which stops doing it and clears up any confusion. Ending a turn in genuine silence is now explicitly recognized as valid, so the model is never pressured into filler — or gibberish — when everything has already been said. Alongside this, the link to your paired phone became more patient: a connection that was merely **busy for a moment is no longer dropped** as dead, ending a whole class of needless mid-use reconnects.
+
+## v1.0.259 — 2026-08-19
 
 ### See What Wolffish Sees
 

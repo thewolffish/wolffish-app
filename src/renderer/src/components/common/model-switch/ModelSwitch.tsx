@@ -313,11 +313,13 @@ export function ModelSwitch({
       interactive ? 'cursor-pointer' : 'cursor-default'
     )
 
+  // Quiet footer chips (the composer card supplies the surface): the active
+  // runtime reads as a soft primary tint, the inactive one as muted text.
   const tabClass = (active: boolean): string =>
     cn(
-      'flex w-24 flex-col items-center gap-0.5 rounded-md px-1.5 py-1',
+      'flex h-7 items-center gap-1.5 rounded-lg px-2',
       'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-      active ? 'bg-primary text-primary-fg' : cn('text-muted', !disabled && 'hover:text-fg'),
+      active ? 'bg-primary/10 text-primary' : cn('text-muted', !disabled && 'hover:text-fg'),
       disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
     )
 
@@ -331,7 +333,7 @@ export function ModelSwitch({
       <div
         role="tablist"
         aria-label={t('chat.modeToggle.ariaLabel')}
-        className="border-border bg-surface inline-flex items-center gap-0.5 rounded-lg border p-0.5"
+        className="inline-flex items-center gap-0.5"
       >
         <button
           role="tab"
@@ -361,7 +363,7 @@ export function ModelSwitch({
         >
           <OllamaLogo size={14} />
           <span
-            className="max-w-full truncate text-[10px] leading-tight font-medium"
+            className="max-w-28 truncate text-[11px] leading-tight font-medium"
             dir={shownLocal ? 'ltr' : 'auto'}
           >
             {localName}
@@ -391,7 +393,7 @@ export function ModelSwitch({
         >
           <CloudLogo size={14} />
           <span
-            className="max-w-full truncate text-[10px] leading-tight font-medium"
+            className="max-w-28 truncate text-[11px] leading-tight font-medium"
             dir={activeCloud ? 'ltr' : 'auto'}
           >
             {cloudName}

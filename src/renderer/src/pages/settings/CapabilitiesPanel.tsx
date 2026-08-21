@@ -19,7 +19,9 @@ import {
   Loading03Icon,
   Refresh01Icon,
   SecurityCheckIcon,
-  SquareLock02Icon
+  SparklesIcon,
+  SquareLock02Icon,
+  TestTube01Icon
 } from 'hugeicons-react'
 
 export function CapabilitiesPanel(): React.JSX.Element {
@@ -505,12 +507,33 @@ function CapabilityRow({
                   <SecurityCheckIcon size={11} />
                   {t('settings.capabilities.official')}
                 </Badge>
+              ) : cap.wolffish ? (
+                // Authored by Wolffish itself via skill_create — its own badge,
+                // neither Official (bundled) nor Unknown (hand-imported).
+                <Badge
+                  variant="default"
+                  size="sm"
+                  className="!bg-primary/10 !text-primary !ring-primary/30"
+                >
+                  <SparklesIcon size={11} />
+                  {t('settings.capabilities.wolffish')}
+                </Badge>
               ) : (
                 <Badge variant="default" size="sm">
                   <HelpCircleIcon size={11} />
                   {t('settings.capabilities.unknown')}
                 </Badge>
               ))}
+
+            {/* A Wolffish-authored skill that hasn't passed a real tool call
+                since creation/last edit — clears automatically on the first
+                successful call (cerebellum:capabilitiesChanged refreshes it). */}
+            {cap.enabled && isOk && cap.wolffish && !cap.tested && (
+              <Badge variant="warning" size="sm" title={t('settings.capabilities.untestedHint')}>
+                <TestTube01Icon size={11} />
+                {t('settings.capabilities.untested')}
+              </Badge>
+            )}
           </div>
         </div>
 

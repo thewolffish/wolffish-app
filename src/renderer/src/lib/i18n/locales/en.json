@@ -252,29 +252,19 @@
       },
       "reflection": {
         "title": "Reflection",
-        "subtitle": "Every night, Wolffish reviews its finished conversations — your scores, what worked, what failed — and distills the lessons into a playbook it carries into every future turn.",
+        "subtitle": "Every night, Wolffish reviews its finished conversations — what worked, what failed — and distills the lessons into a playbook it carries into every future turn.",
         "nightly": {
           "label": "Nightly reflection",
-          "description": "Reviews every conversation that has settled since the last pass — automations included — scoring each one and extracting what worked, what failed, and what you liked. Your 0-10 scores are the ground truth; the lessons fold into the playbook carried into every turn. Missed fires (asleep, app closed) run on the next launch."
+          "description": "Reviews every conversation that has settled since the last pass — automations included — scoring each one and extracting what worked, what failed, and what you liked. The lessons fold into the playbook carried into every turn. Missed fires (asleep, app closed) run on the next launch."
         },
         "quiet": {
           "label": "Review after quiet for",
-          "description": "A conversation is only reviewed once it has been idle this long, so unfinished or not-yet-scored work isn't judged early. Anything still warm simply waits for a later night — nothing is ever skipped — and a conversation you continue after its review gets reviewed again with the new turns and scores included."
+          "description": "A conversation is only reviewed once it has been idle this long, so unfinished work isn't judged early. Anything still warm simply waits for a later night — nothing is ever skipped — and a conversation you continue after its review gets reviewed again with the new turns included."
         },
         "quietHoursOption": "{{count}}h",
         "cards": {
           "label": "Reflection cards",
           "description": "Show a live card over the chat, on this desktop and the paired phone, while a reflection runs. Off (the default) hides the card only — the nightly review and the deep clean still run."
-        },
-        "scoring": {
-          "title": "Turn scoring",
-          "subtitle": "Optional 0-10 turn scores — the strongest signal reflection learns from.",
-          "inapp": "In-app",
-          "inappHint": "Shows a 0-10 rating bar above the chat composer after each completed turn.",
-          "telegram": "Telegram",
-          "telegramHint": "A reply that is just a number 0-10 scores the last turn instead of sending a message.",
-          "whatsapp": "WhatsApp",
-          "whatsappHint": "A reply that is just a number 0-10 scores the last turn instead of sending a message."
         },
         "deepClean": {
           "label": "Monthly deep reflection",
@@ -347,6 +337,9 @@
       "error": "Error",
       "official": "Official",
       "unknown": "Unknown",
+      "wolffish": "Wolffish",
+      "untested": "Untested",
+      "untestedHint": "Created by Wolffish and not yet verified — this clears automatically after its first successful tool call.",
       "core": "Core",
       "alwaysOn": "Always on",
       "lockedHint": "Core capability — always on and can't be disabled.",
@@ -1215,12 +1208,14 @@
         "permAccessibility": "Accessibility",
         "permScreenRecording": "Screen Recording",
         "recheckPermissions": "Recheck permissions",
+        "visionWarningTitle": "Your current model cannot see the screen",
+        "visionWarning": "The selected Brain model ({{model}}) does not accept images, so screenshots never reach it and it cannot click accurately. Switch to a vision-capable model before using Computer Use.",
         "howItWorksTitle": "How it works",
         "howItWorks": {
-          "step1": "The agent takes a screenshot to see what's on your screen.",
-          "step2": "It analyzes the image and decides the next action (click, type, scroll, etc.).",
-          "step3": "After each action it takes another screenshot to verify the result.",
-          "step4": "This loop continues until the task is complete."
+          "step1": "The agent takes a screenshot to see what's on your screen — with a crosshair marking the cursor.",
+          "step2": "It zooms into small targets at native resolution before clicking, so it never guesses.",
+          "step3": "Every click returns a magnified close-up proving exactly where it landed, and the agent corrects itself if it missed.",
+          "step4": "This verified loop continues until the task is complete."
         }
       },
       "browserExtension": {
@@ -1739,10 +1734,6 @@
     "empty": "No changelog entries yet."
   },
   "chat": {
-    "rating": {
-      "label": "Rate this turn",
-      "rateAs": "Rate {{score}} out of 10"
-    },
     "placeholder": "Message Wolffish",
     "send": "Send",
     "stop": "Stop",
@@ -2263,7 +2254,7 @@
       "activity": "Activity",
       "waiting": "Waiting for output…",
       "compactionDaily": "Curate today's episodes into the long-term knowledge files — merge, dedupe, and update.",
-      "reflection": "Review settled conversations — scores, wins, failures — and fold the lessons into the playbook.",
+      "reflection": "Review settled conversations — wins, failures — and fold the lessons into the playbook.",
       "deepClean": "Deep reflection: challenge the playbook and knowledge files — merge duplicates, prune stale or contradicted entries.",
       "compactionWeekly": "Consolidate the past week's episodes into a digest."
     },

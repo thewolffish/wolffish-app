@@ -174,20 +174,9 @@ export const Rpc = {
    */
   approvalRespond: 'desktop.chat.approvalRespond',
   /**
-   * Score one completed turn 0-10 — the phone's rating bar making the same
-   * write the desktop's own bar makes. Params: `{ conversationId, messageId,
-   * score }`, where `messageId` names the assistant message being scored and
-   * null means "the newest assistant message on disk" (the channel-vote rule).
-   * Answers `{ rating }` — the applied `{ messageId, score, at, source }`, or
-   * null when there was nothing to score (unknown conversation, no assistant
-   * message under that id), which is how the phone learns to take its
-   * optimistic segment back down.
-   */
-  rateTurn: 'desktop.chat.rate',
-  /**
-   * Update the reflection schedule / turn-scoring config. The body is a
-   * partial ReflectionConfig-shaped patch ({ hour?, quietHours?, scoring? });
-   * the answer is the desktop's complete post-write config. Callers render
+   * Update the reflection schedule config. The body is a partial
+   * ReflectionConfig-shaped patch ({ hour?, quietHours?, cards? }); the
+   * answer is the desktop's complete post-write config. Callers render
    * the answer, never their own optimism — both screens can only ever show
    * what the desktop actually persisted.
    */
@@ -382,19 +371,6 @@ export const Event = {
    * answers with `Rpc.approvalRespond`.
    */
   approvalRequest: 'approval.request',
-  /**
-   * A turn was scored on ANY surface — the desktop's own rating bar, a
-   * bare-number Telegram/WhatsApp reply, or this phone's vote echoing back.
-   * Payload `{ conversationId, rating: { messageId, score, at, source } }`,
-   * which the phone writes straight into its copy exactly as the desktop
-   * folds the same change into an open chat.
-   *
-   * This push is the ONLY way a score reaches the phone before its next body
-   * fetch: a ratings-only write moves nothing else on the conversation — no
-   * reindex, no updated_at — so neither conversation.upserted nor the
-   * staleness check that follows it ever fires for one.
-   */
-  turnScored: 'turn.scored',
   /** Any config section changed on the desktop. */
   configChanged: 'config.changed',
   /**
@@ -504,21 +480,6 @@ export type ConversationMeta = {
   /** Serialized desktop stats blob; mobile renders it verbatim. */
   stats: unknown | null
   summary: string | null
-}
-
-/**
- * One user score for one completed turn, keyed by the turn's assistant
- * message id — the desktop's ConversationRating on the wire. Travels both
- * ways: on the conversation body (the whole array, so an opened chat shows
- * every score it already carries) and on `turn.scored` (one entry, the live
- * change). `source` names the surface the vote was cast on.
- */
-export type ConversationRating = {
-  messageId: string
-  /** Integer 0-10. */
-  score: number
-  at: number
-  source: string
 }
 
 /** One message as the phone stores it. */

@@ -82,6 +82,19 @@ export type RuntimeContext = {
    */
   online?: boolean
   /**
+   * Conversation-resumed notice — pre-rendered by formatLastMessageNotice
+   * when the conversation's previous persisted message is old enough
+   * (≥ RESUME_NOTICE_MIN_GAP_MS) that the model must be told time has
+   * passed: relative gap ("about 3 weeks ago") plus the full timestamp.
+   * Replayed history carries no timestamps, so without this a user
+   * returning days or months later is answered as if mid-conversation.
+   * Computed ONCE per turn (byte-stable across iterations) and travels
+   * the same vehicle as the counters — volatile tail (optimized) or
+   * `<runtime>` block (legacy). Undefined (active conversation, fresh or
+   * conversation-less turn) renders nothing.
+   */
+  lastMessage?: string
+  /**
    * No-progress notice for this iteration (the model has been re-issuing the
    * same tool call to no effect — see no-progress-guard). Purely informational;
    * the model decides what to do. Travels the same vehicle as the counters —
@@ -100,6 +113,15 @@ export type RuntimeContext = {
    * nothing.
    */
   channelFormat?: string
+  /**
+   * Control-token notice for this iteration — this conversation's previous
+   * model call ended its user-visible text in a literal tokenizer control
+   * token (e.g. a plain-text `<|eos|>`), which reached the user as gibberish,
+   * so the model can stop doing that and, if needed, clear it up.
+   * Observe-and-notify: nothing rewrites model output. Same vehicle and
+   * cache rationale as noProgress. Undefined renders nothing.
+   */
+  controlToken?: string
   /**
    * Async video-task landing notice — VideoTaskManager reporting that a
    * generation task reached a terminal state while the model was doing
@@ -246,7 +268,7 @@ const VARIABLE_VALUE_MAX_CHARS = 400
 // authority these lessons carry — must come from code, not from content the
 // merge could mangle: learned tendencies to apply by default, never rules
 // that outrank the user's live instruction.
-const PLAYBOOK_FRAMING = `Your playbook — lessons distilled nightly from your own reviewed conversations and the user's 0-10 turn scores. Recall it naturally before and while acting, the way practice shapes habit: check Recipes when a task matches one, respect Avoid before repeating a known failure, and lean on Do / User likes to shape tone and approach. These are evidence-dated tendencies, not laws — the newest entry wins a conflict, and the user's live instruction always outranks the playbook.`
+const PLAYBOOK_FRAMING = `Your playbook — lessons distilled nightly from your own reviewed conversations. Recall it naturally before and while acting, the way practice shapes habit: check Recipes when a task matches one, respect Avoid before repeating a known failure, and lean on Do / User likes to shape tone and approach. These are evidence-dated tendencies, not laws — the newest entry wins a conflict, and the user's live instruction always outranks the playbook.`
 
 // <workflow_models> caps: enough for a realistic multi-provider setup while
 // keeping the master's overlay lean (the block is per-turn pinned prompt text).
@@ -832,6 +854,12 @@ function formatRuntimeBody(runtime: RuntimeContext | undefined): string {
   if (runtime && runtime.renderCounters !== false) {
     lines.push(`  Tool iteration this turn: ${runtime.iteration}`)
     lines.push(`  Tools called this turn: ${runtime.toolsCalled}`)
+    // Conversation-resumed notice — same vehicle rule as the counters
+    // (legacy in-prompt here, volatile tail on the optimized path); keeping
+    // it inside the renderCounters gate is load-bearing: on the optimized
+    // path the prompt is pinned and must stay byte-identical across turns,
+    // and this string changes every turn the gap grows.
+    if (runtime.lastMessage) lines.push(`  ${runtime.lastMessage}`)
     // Gated on renderCounters (legacy path only) — in the optimized path the
     // prompt is pinned, so this per-turn fact rides the volatile tail via
     // formatRuntimeStatus instead, never touching the cached prefix.
@@ -846,6 +874,9 @@ function formatRuntimeBody(runtime: RuntimeContext | undefined): string {
     // Channel-format notice (prose delivered to a phone with raw markup) —
     // same vehicle, same reason.
     if (runtime.channelFormat) lines.push(`  ${runtime.channelFormat}`)
+    // Control-token notice (a control token leaked into user-visible text) —
+    // same vehicle, same reason.
+    if (runtime.controlToken) lines.push(`  ${runtime.controlToken}`)
     // Video-task landing notice — same vehicle, same reason.
     if (runtime.videoTasks) lines.push(`  ${runtime.videoTasks}`)
     // Voice-reply notice (voice-prompted turn, Voice replies ON) — same

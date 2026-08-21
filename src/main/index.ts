@@ -28,13 +28,10 @@ import {
   loadConversation,
   mergeConversationOnto,
   mintMessageId,
-  rateConversationTurn,
   updateConversation,
   type ConversationFile,
   type ConversationMessage,
-  type ConversationMeta,
-  type ConversationRating,
-  type ConversationRatingSource
+  type ConversationMeta
 } from '@main/conversations'
 import { turnScope } from '@main/runtime/corpus'
 import type { TaskSnapshot } from '@main/runtime/broca'
@@ -122,7 +119,7 @@ import type { ApprovalDecision } from '@main/runtime/amygdala'
 import { previewSchedule } from '@main/runtime/brainstem'
 import { COMPACTION_THRESHOLD } from '@main/runtime/compactor'
 import type { AskUserResponse } from '@main/runtime/cerebellum'
-import { LOCKED_CAPABILITIES } from '@main/runtime/cerebellum'
+import { LOCKED_CAPABILITIES, WOLFFISH_AUTHOR } from '@main/runtime/cerebellum'
 import {
   isKnowledgeTarget,
   KNOWLEDGE_TARGETS,
@@ -905,47 +902,6 @@ agent.corpus.on('conversation.deleted', ({ id }) => broadcast('conversation:dele
 // at all (renames, imports, rebuilds). Fires after the cortex row is
 // committed.
 agent.corpus.on('conversation.indexed', () => broadcast('conversation:changed', {}))
-// Relay turn scores to the renderer so an open chat reflects a vote cast on
-// ANY surface — a bare-number Telegram/WhatsApp reply lands on the in-app
-// rating bar live (a ratings-only write reindexes nothing, so no
-// conversation:changed ever fires for it). Payload-targeted like
-// messageMirror; the file's ratings[] stays the single source of truth, this
-// is just the change push.
-agent.corpus.on('conversation.rated', ({ conversation, messageId, score, at, source }) =>
-  broadcast('conversation:ratingChanged', {
-    conversationId: conversation,
-    rating: { messageId, score, at, source }
-  })
-)
-
-/**
- * Record one turn score, from whichever surface cast it — the in-app bar's
- * IPC, the phone's rate RPC. Write first, announce second, and only when the
- * write actually landed: the corpus event is what moves every OTHER open
- * surface (this app's rating bar, the phone's), so announcing a vote the file
- * refused would paint a score nothing holds.
- *
- * Channels keep their own emit at their own call sites (they resolve the
- * target message differently — a bare-number reply scores the newest turn),
- * but land on this same writer underneath.
- */
-async function recordTurnRating(
-  conversationId: string,
-  messageId: string | null,
-  score: number,
-  source: ConversationRatingSource
-): Promise<ConversationRating | null> {
-  const rating = await rateConversationTurn(conversationId, messageId, score, source)
-  if (!rating) return null
-  agent.corpus.emit('conversation.rated', {
-    conversation: conversationId,
-    messageId: rating.messageId,
-    score: rating.score,
-    at: rating.at,
-    source
-  })
-  return rating
-}
 // Full rebuilds + the startup catch-up index via indexWalkedSync directly, so
 // no conversation.indexed fires while they run — a list fetched mid-rebuild
 // can be partial (see the getReindexStatus guard in conversation:list). Push
@@ -1528,9 +1484,9 @@ async function applyWhatsAppConfigPatch(patch: Partial<WhatsAppConfig>): Promise
 /**
  * Persist a reflection patch and fan the change out — one path however the
  * change arrives (settings IPC or the phone's tunnel RPC). The renderer
- * broadcast keeps an open ReflectionPanel and the Chat rating bar current,
- * and doubles (via the generic hook in broadcast()) as the config.changed
- * push that tells the phone to refresh.
+ * broadcast keeps an open ReflectionPanel current, and doubles (via the
+ * generic hook in broadcast()) as the config.changed push that tells the
+ * phone to refresh.
  */
 async function applyReflectionPatch(
   patch: import('@main/workspace/workspace').ReflectionPatch
@@ -1595,25 +1551,10 @@ const mobileChannel = new MobileChannel({
   runner: turnRunner,
   serializeCapabilities: () => mobileSerializeCapabilities(),
   // The phone's reflection controls write through to the same config the
-  // settings panel edits; run-now rides the same brainstem queue. The wire
-  // patch may carry a PARTIAL scoring map; the workspace stores the full
-  // record, so the gaps are filled from the config on disk before persisting.
-  applyReflectionConfig: async (patch) => {
-    const scoring = patch.scoring
-      ? {
-          ...normalizeReflectionConfig((await readConfig())?.reflection).scoring,
-          ...patch.scoring
-        }
-      : undefined
-    return applyReflectionPatch({ ...patch, ...(scoring ? { scoring } : {}) })
-  },
+  // settings panel edits; run-now rides the same brainstem queue.
+  applyReflectionConfig: async (patch) => applyReflectionPatch(patch),
   runReflectionJob: async (kind) =>
     kind === 'deepClean' ? agent.brainstem.runDeepCleanNow() : agent.brainstem.runReflectionNow(),
-  // A vote cast on the phone is a vote cast in this app: same writer, same
-  // corpus announcement, so it lands on an open desktop chat's rating bar in
-  // the announcement's own latency. Only the recorded `source` differs.
-  rateTurn: (conversationId, messageId, score) =>
-    recordTurnRating(conversationId, messageId, score, 'mobile'),
   // The phone's capability toggle takes the exact same path as a click in
   // this app's own settings panel — write, guards, broadcast and all.
   applyCapability: (name, enabled) => mobileSetCapabilityEnabled(name, enabled),
@@ -1955,9 +1896,9 @@ agent.cerebellum.setVideoTasksHost({
   list: () => videoTasks.listFor(agent.cerebellum.getCurrentConversationId())
 })
 // Every snapshot change reaches the renderer so an open conversation's task
-// card updates live even after its turn ended (the rating-flow pattern: the
-// renderer folds the push into its in-memory copy, so its next whole-file
-// save carries it). High-frequency-adjacent → MOBILE_CONFIG_SILENT below.
+// card updates live even after its turn ended — the renderer folds the push
+// into its in-memory copy, so its next whole-file save carries it.
+// High-frequency-adjacent → MOBILE_CONFIG_SILENT below.
 videoTasks.onSnapshot((snapshot) => broadcast('task:changed', snapshot))
 // Terminal fallback: when a task outlives its turn (the model moved on, the
 // turn was cancelled, the app restarted), the manager still has to finish
@@ -2447,7 +2388,6 @@ const MOBILE_CONFIG_SILENT = new Set([
   'conversation:changed',
   'conversation:deleted',
   'conversation:messageMirror',
-  'conversation:ratingChanged',
   'conversation:summaryUpdated',
   'diagnostics:progress',
   'heartbeat:jobLog',
@@ -2805,9 +2745,9 @@ app.whenReady().then(async () => {
     agent.brainstem.setCompactionConfig(cfg.compaction)
   }
 
-  // Reflection schedule + turn-scoring config. normalize merges partial
-  // stored values over the defaults, so a pre-feature config still yields a
-  // complete ReflectionConfig.
+  // Reflection schedule config. normalize merges partial stored values over
+  // the defaults, so a pre-feature config still yields a complete
+  // ReflectionConfig.
   agent.brainstem.setReflectionConfig(normalizeReflectionConfig(cfg?.reflection))
 
   // Auto-launch: REPAIR a registration the user already asked for — never
@@ -3810,6 +3750,8 @@ app.whenReady().then(async () => {
       requires: string[]
       official: boolean
       core: boolean
+      wolffish: boolean
+      tested: boolean
       enabled: boolean
       error?: string
     }>
@@ -3828,6 +3770,10 @@ app.whenReady().then(async () => {
         requires: c.requires,
         official: bundled.has(c.name),
         core: LOCKED_CAPABILITIES.has(c.name),
+        wolffish: c.author === WOLFFISH_AUTHOR,
+        // `tested` is tracked only for Wolffish-authored plugin skills; for
+        // everything else the concept doesn't apply, so it reads as true.
+        tested: c.tested !== false,
         enabled: !agent.cerebellum.isDisabled(c.name),
         error: c.error
       }))
@@ -3913,22 +3859,18 @@ app.whenReady().then(async () => {
   agent.corpus.on('conversation.deleted', (event) => {
     if (event?.id) mobileChannel.pushConversationDeleted(event.id)
   })
-  // A score cast anywhere reaches the phone's rating bar the way it reaches
-  // this app's — one targeted push carrying the rating itself. Nothing else
-  // announces it: a ratings-only write reindexes nothing and moves no
-  // updated_at, so neither the list push nor the phone's staleness check
-  // would ever describe it.
-  agent.corpus.on('conversation.rated', ({ conversation, messageId, score, at, source }) => {
-    mobileChannel.pushTurnScored(conversation, { messageId, score, at, source })
-    mobileChannel.pushUsageChanged()
-  })
   // Every recorded turn moves the ledger — from ANY channel, not just runs
-  // the phone can see. Without this the phone's Usage screen only advanced
-  // when a turn happened to be scored.
+  // the phone can see.
   agent.corpus.on('usage.recorded', () => mobileChannel.pushUsageChanged())
   // Brainstem runs rewrite the last-run records the phone's Knowledge screen
   // shows; the generic broadcast hook never sees them (no renderer IPC fires).
   agent.corpus.on('brainstem.jobCompleted', () => mobileChannel.pushConfigChanged('brainstem'))
+  // A Wolffish-authored skill just passed its first real call — refresh the
+  // capabilities panel so its Untested badge clears live, mid-turn, without
+  // waiting for a manual resync.
+  agent.corpus.on('capability.tested', () => {
+    void serializeCapabilities().then((caps) => broadcast('cerebellum:capabilitiesChanged', caps))
+  })
 
   handle('cerebellum:listCapabilities', async () => {
     await agent.init()
@@ -4028,6 +3970,8 @@ app.whenReady().then(async () => {
         enabled: !agent.cerebellum.isDisabled(c.name),
         official: Boolean(c.inProcess) || bundled.has(c.name),
         core: LOCKED_CAPABILITIES.has(c.name),
+        wolffish: c.author === WOLFFISH_AUTHOR,
+        tested: c.tested !== false,
         inProcess: Boolean(c.inProcess),
         dir: c.dir,
         error: c.error
@@ -4612,8 +4556,7 @@ app.whenReady().then(async () => {
   handle(
     'runtime:setReflectionConfig',
     async (_e, patch: import('@main/workspace/workspace').ReflectionPatch) => {
-      // Shared with the phone's tunnel RPC — persist, reschedule, announce
-      // (the reflection:changed broadcast covers the Chat rating bar too).
+      // Shared with the phone's tunnel RPC — persist, reschedule, announce.
       return applyReflectionPatch(patch)
     }
   )
@@ -4630,27 +4573,6 @@ app.whenReady().then(async () => {
   handle('task:cancel', async (_e, payload: { taskId: string }) => {
     return videoTasks.cancel(payload.taskId)
   })
-  handle(
-    'conversation:rate',
-    async (
-      _e,
-      payload: {
-        conversationId: string
-        messageId: string | null
-        score: number
-        /**
-         * Which surface is voting. The renderer omits it and means itself; the
-         * terminal names itself, so the ledger the reflection reads says where
-         * the judgement actually came from.
-         */
-        source?: ConversationRatingSource
-      }
-    ) => {
-      const source: ConversationRatingSource = payload.source === 'cli' ? 'cli' : 'inapp'
-      return recordTurnRating(payload.conversationId, payload.messageId, payload.score, source)
-    }
-  )
-
   handle('updater:install', async () => {
     if (is.dev || updateInstallInProgress) return
     // Bail before tearing anything down if there's no verified artifact —

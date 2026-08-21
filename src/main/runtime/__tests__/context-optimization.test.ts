@@ -12,10 +12,13 @@
 import { effectivePayloadTokens } from '../compactor'
 import {
   formatClock,
+  formatLastMessageNotice,
   formatRuntimeStatus,
+  formatTimeGap,
   PHONE_NOTIFY_CHANNEL_NOTICE,
   PHONE_NOTIFY_NOTICE,
   PHONE_NOTIFY_SENT_NOTICE,
+  RESUME_NOTICE_MIN_GAP_MS,
   shapeOutbound,
   truncateSuperseded,
   withVolatileTail
@@ -238,6 +241,62 @@ check(
   formatClock(new Date('2026-06-15T11:34:00Z'), 'America/Los_Angeles'),
   'Mon 2026-06-15 04:34 (GMT-07:00, America/Los_Angeles)'
 )
+
+// ---------------------------------------------------------------------------
+// Conversation-resumed notice — the gap floor, coarse relative rendering,
+// and the tail carrying whatever the Agent hands it. Replayed history has
+// no timestamps, so this line is the model's only way to know the user is
+// back after days/weeks/months.
+// ---------------------------------------------------------------------------
+
+const MIN = 60_000
+const HOUR = 60 * MIN
+const DAY = 24 * HOUR
+
+check('gap: minutes', formatTimeGap(45 * MIN), '45 minutes ago')
+check('gap: single hour', formatTimeGap(62 * MIN), 'about 1 hour ago')
+check('gap: hours run to two days', formatTimeGap(36 * HOUR), 'about 36 hours ago')
+check('gap: days', formatTimeGap(3 * DAY), '3 days ago')
+check('gap: weeks', formatTimeGap(21 * DAY), 'about 3 weeks ago')
+check('gap: months', formatTimeGap(90 * DAY), 'about 3 months ago')
+check('gap: first year stays coarse', formatTimeGap(400 * DAY), 'over a year ago')
+check('gap: years', formatTimeGap(3 * 365 * DAY), 'about 3 years ago')
+
+const resumeNow = new Date('2026-06-15T11:34:00Z')
+check(
+  'resume: silent with no previous message',
+  formatLastMessageNotice(null, resumeNow, 'Asia/Riyadh'),
+  undefined
+)
+check(
+  'resume: silent inside an active exchange (below the 30min floor)',
+  formatLastMessageNotice(
+    resumeNow.getTime() - (RESUME_NOTICE_MIN_GAP_MS - 1),
+    resumeNow,
+    'Asia/Riyadh'
+  ),
+  undefined
+)
+const resumed = formatLastMessageNotice(resumeNow.getTime() - 21 * DAY, resumeNow, 'Asia/Riyadh')
+check('resume: carries the relative gap', resumed?.includes('about 3 weeks ago'), true)
+check(
+  'resume: carries the previous message full timestamp',
+  resumed?.includes('Mon 2026-05-25 14:34 (GMT+03:00, Asia/Riyadh)'),
+  true
+)
+check(
+  'resume: warns that the transcript speaks from an older now',
+  resumed?.includes('older "now"'),
+  true
+)
+check(
+  'status: renders the resume notice it is handed',
+  formatRuntimeStatus({ iteration: 1, toolsCalled: 0, lastMessage: resumed }).includes(
+    'CONVERSATION RESUMED'
+  ),
+  true
+)
+check('status: no resume notice by default', status.includes('CONVERSATION RESUMED'), false)
 
 // ---------------------------------------------------------------------------
 // truncateSuperseded — outbound truncation, cardinal-rule guarantees

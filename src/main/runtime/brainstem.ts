@@ -1732,7 +1732,7 @@ export class Brainstem {
   }
 
   getReflectionConfig(): ReflectionConfig {
-    return { ...this.reflectionConfig, scoring: { ...this.reflectionConfig.scoring } }
+    return { ...this.reflectionConfig }
   }
 
   private startReflectionScheduler(): void {

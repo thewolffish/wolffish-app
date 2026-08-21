@@ -98,19 +98,21 @@ export function NewChatButton({
         aria-label={t('chat.newChat')}
         aria-expanded={cardVisible}
         className={cn(
-          'flex w-14 flex-col items-center gap-0.5 rounded-md px-1.5 py-1',
+          'flex h-7 w-7 items-center justify-center rounded-lg',
           'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-          'text-muted cursor-pointer hover:text-fg'
+          'text-muted hover:bg-border/40 cursor-pointer hover:text-fg'
         )}
       >
-        <PlusSignIcon size={14} />
-        <span className="text-[10px] leading-tight font-medium">{t('chat.newChatShort')}</span>
+        <PlusSignIcon size={16} />
       </button>
 
       {cardVisible && (
         <div
           role="dialog"
-          className="border-border bg-surface absolute bottom-full inset-s-0 z-50 mb-2 flex w-80 max-w-[90vw] flex-col gap-1.5 rounded-xl border p-1.5 shadow-xl"
+          /* End-anchored: the button rides the composer card's end edge, so
+             the card must open inward (toward the start side) to stay on
+             screen. */
+          className="border-border bg-surface absolute bottom-full inset-e-0 z-50 mb-2 flex w-80 max-w-[90vw] flex-col gap-1.5 rounded-xl border p-1.5 shadow-xl"
         >
           <div className="flex max-h-64 flex-col gap-1.5 overflow-y-auto">
             {projects.map((p) => {

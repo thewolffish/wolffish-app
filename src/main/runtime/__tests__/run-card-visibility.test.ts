@@ -123,11 +123,10 @@ async function main(): Promise<void> {
 
     // The neighbouring write is the one that used to reset things: reflection
     // rebuilds its whole section on every patch (see normalizeReflectionConfig).
-    await setReflectionConfig({ scoring: { telegram: false } })
-    const afterScoring = await getReflectionConfig()
-    ok('scoring a surface leaves the card switch alone', afterScoring.cards === true)
-    ok('scoring writes what it was asked to', afterScoring.scoring.telegram === false)
-    ok('scoring leaves the other surfaces alone', afterScoring.scoring.inapp === true)
+    await setReflectionConfig({ quietHours: 8 })
+    const afterQuiet = await getReflectionConfig()
+    ok('a quiet-gate write leaves the card switch alone', afterQuiet.cards === true)
+    ok('a quiet-gate write writes what it was asked to', afterQuiet.quietHours === 8)
 
     await setInAppConfig({ verbose: false })
     ok('writing verbose leaves the card switch alone', (await getInAppConfig()).runCards === true)

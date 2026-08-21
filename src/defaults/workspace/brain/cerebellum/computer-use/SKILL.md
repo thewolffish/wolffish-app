@@ -1,6 +1,6 @@
 ---
 name: computer-use
-description: Desktop automation — take screenshots, move/click mouse, type text, press keys. Used for visual tasks where the agent needs to see and interact with the user's screen.
+description: Desktop automation — see the screen and control mouse/keyboard with a verified-aim loop. Screenshots, native-resolution zoom for precise targeting, clicks that return a magnified proof of where they landed, typing, shortcuts, scrolling, drag-and-drop.
 triggers:
   - screenshot
   - click
@@ -72,6 +72,8 @@ triggers:
   - pixel
   - coordinate
   - position
+  - zoom in
+  - magnify
   - what is on screen
   - see my screen
   - look at my screen
@@ -83,32 +85,38 @@ requires:
   - node
 tools:
   - name: computer_screenshot
-    description: Take a screenshot of the full screen. Returns the screenshot as an image the model can see. Always call this first to understand the current screen state before taking any action.
+    description: 'See the screen. Captures the chosen display (default 0 = primary) and returns the image plus a Frame line stating its exact pixel size and the cursor position (marked with a magenta crosshair). This image becomes the CURRENT FRAME. Every mouse coordinate you give afterwards must be a pixel position read from the current frame, with (0,0) at its top-left — translation to real screen position (display scaling, Retina, monitor offsets) is fully automatic, so never use screen-resolution values and never add display offsets yourself. Screenshot again whenever the screen may have changed (after clicks that open things, typing, scrolling, app switches, page loads) — acting on an outdated image is the main cause of wrong clicks. If the target is small, crowded, or you are not certain of its exact position, do not guess: zoom into it with computer_zoom first. If this tool ever reports that its image was omitted because the active model cannot view images, computer use is impossible — stop immediately and tell the user to switch to a vision-capable model.'
     parameters:
       display_index:
         type: number
         required: false
-        description: Index of the display to capture (default 0 for primary monitor)
-  - name: computer_mouse_move
-    description: Move the mouse cursor to absolute x,y pixel coordinates on screen.
+        description: 'Index of the display to capture (default 0 = primary). Use computer_list_displays to see all of them, and screenshot each index in turn to find the app you need.'
+  - name: computer_zoom
+    description: 'Magnify a rectangular region of the current frame, captured fresh at up to native resolution — the precision instrument for small targets and small text. Pass the region in current-frame pixels; you get back a sharp close-up that becomes the NEW current frame, so you then click using the close-up''s own coordinates (far more accurate than clicking from the full screenshot). Recommended flow for any small target: screenshot → locate it roughly → zoom a region around it (for example 300x200) → click its exact pixel in the zoom. To act outside the zoomed region, take a fresh computer_screenshot first.'
     parameters:
       x:
         type: number
-        description: X coordinate (pixels from left edge)
+        description: 'Left edge of the region, in current-frame pixels'
       y:
         type: number
-        description: Y coordinate (pixels from top edge)
+        description: 'Top edge of the region, in current-frame pixels'
+      width:
+        type: number
+        description: 'Region width in current-frame pixels'
+      height:
+        type: number
+        description: 'Region height in current-frame pixels'
   - name: computer_mouse_click
-    description: Click the mouse at the current cursor position, or at specified x,y coordinates.
+    description: 'Click at (x, y) in CURRENT-FRAME pixels — or omit both to click at the cursor''s present position (use that after aiming with computer_mouse_move). The result includes a magnified close-up taken right after the click with a crosshair on the exact point pressed: CHECK IT. If the crosshair is not on your intended target, the click missed — the close-up is now the current frame, so click again using its coordinates to correct with surgical precision. If the click should change the screen (open a menu, dialog, page), follow up with computer_screenshot to see the result; clicking a window of another app also focuses that app. Never click coordinates you have not read from the current frame.'
     parameters:
       x:
         type: number
         required: false
-        description: X coordinate to click at (moves cursor first if provided)
+        description: 'X in current-frame pixels (omit x and y to click at the current cursor position)'
       y:
         type: number
         required: false
-        description: Y coordinate to click at (moves cursor first if provided)
+        description: 'Y in current-frame pixels (omit x and y to click at the current cursor position)'
       button:
         type: string
         required: false
@@ -116,13 +124,45 @@ tools:
           - left
           - right
           - middle
-        description: Mouse button to click (default left)
+        description: 'Mouse button to click (default left)'
       double:
         type: boolean
         required: false
-        description: Double-click instead of single click
+        description: 'Double-click instead of single click'
+  - name: computer_mouse_move
+    description: 'Aim without clicking: moves the cursor to (x, y) in current-frame pixels and returns a magnified close-up with a crosshair at the new position so you can verify the aim before committing. The close-up becomes the current frame — if the aim is off, move again using its finer coordinates; once the crosshair sits exactly on the target, call computer_mouse_click with no coordinates to press that exact point. Also useful to trigger hover states (tooltips, hover menus).'
+    parameters:
+      x:
+        type: number
+        description: 'X in current-frame pixels'
+      y:
+        type: number
+        description: 'Y in current-frame pixels'
+  - name: computer_mouse_drag
+    description: 'Press and hold at the start point, glide to the end point, and release — for drag-and-drop, sliders, resizing, and selecting text. All four coordinates are current-frame pixels, so for a precise drag first zoom into a region that contains BOTH endpoints and drag within that zoom; when source and destination are far apart, do a rough long drag first, then a short corrective drag inside one zoom. The dragged object ends up at the release point. Returns a magnified close-up of the release point (which becomes the current frame); take a computer_screenshot afterwards to confirm the result.'
+    parameters:
+      start_x:
+        type: number
+        description: 'Drag start X in current-frame pixels'
+      start_y:
+        type: number
+        description: 'Drag start Y in current-frame pixels'
+      end_x:
+        type: number
+        description: 'Drag end X in current-frame pixels'
+      end_y:
+        type: number
+        description: 'Drag end Y in current-frame pixels'
+      button:
+        type: string
+        required: false
+        enum:
+          - left
+          - right
+          - middle
+        description: 'Mouse button to hold (default left)'
   - name: computer_mouse_scroll
-    description: Scroll the mouse wheel in a given direction.
+    description: 'Scroll the mouse wheel. Direction ''down'' reveals content below. Scrolling affects whatever is UNDER the cursor, so pass x,y (current-frame pixels) to scroll a specific pane or list. The result includes a magnified view of the area under the cursor after the scroll, which becomes the current frame — when scrolling to find an item, look for it there and click it directly in the magnifier''s coordinates the moment it appears, scrolling again in small amounts otherwise. Pre-scroll coordinates are stale; take a fresh computer_screenshot for the wider picture.'
     parameters:
       direction:
         type: string
@@ -131,39 +171,49 @@ tools:
           - down
           - left
           - right
-        description: Scroll direction
+        description: 'Scroll direction (''down'' reveals content below)'
       amount:
         type: number
         required: false
-        description: Number of scroll units (default 3)
+        description: 'Wheel notches to scroll (default 3)'
+      x:
+        type: number
+        required: false
+        description: 'Optional: move the cursor here first, in current-frame pixels'
+      y:
+        type: number
+        required: false
+        description: 'Optional: move the cursor here first, in current-frame pixels'
   - name: computer_keyboard_type
-    description: Type a string of text at the current cursor position. Use for entering text into fields, search boxes, editors, etc.
+    description: 'Type text into the focused control. Click the target field first and make sure it has focus (a screenshot shows the caret), or the text goes somewhere else. Long or non-ASCII text (Arabic, emoji, accents) is pasted via the clipboard automatically so it arrives exactly as written. This does not press Enter — use computer_keyboard_press for that. Never type passwords or secrets unless the user explicitly provided them in the current conversation.'
     parameters:
       text:
         type: string
-        description: The text to type
+        description: 'The text to type'
   - name: computer_keyboard_press
-    description: "Press a key or key combination. Use for shortcuts, navigation, and special keys. Key names: enter, tab, escape, backspace, delete, space, up, down, left, right, home, end, pageup, pagedown, f1-f12, plus any single character."
+    description: 'Press one key or a shortcut. Accepts a single key (enter, tab, escape, backspace, delete, space, up/down/left/right, home, end, pageup, pagedown, f1-f12, letters, digits, punctuation) or a combo in one string like ''cmd+s'', ''ctrl+shift+t'', ''alt+f4'' (a separate comma-separated modifiers parameter also works). Use cmd on macOS and ctrl on Windows/Linux. Shortcuts go to the FOCUSED app — click its window first if unsure. Prefer a reliable shortcut over clicking when both work (Enter to submit, Esc to dismiss, cmd+l for the address bar).'
     parameters:
       key:
         type: string
-        description: "Key to press (e.g. enter, tab, escape, a, f5)"
+        description: 'Key or combo string (e.g. enter, tab, ''cmd+shift+4'')'
       modifiers:
         type: string
         required: false
-        description: "Comma-separated modifier keys to hold: ctrl, alt, shift, meta, cmd"
+        description: 'Comma-separated modifier keys to hold: ctrl, alt, shift, meta, cmd'
   - name: computer_list_displays
-    description: List all connected displays with resolution, scale factor, and position. Use this when you need to find which display an app is on, or when the primary display screenshot doesn't show what you expect.
+    description: 'List all connected displays with resolution, scale factor, position, and which one is primary. When the app you need is not on the display-0 screenshot, capture each display_index in turn until you find it, then keep using that index. Coordinates never need display offsets — they always refer to the latest returned image.'
     parameters: {}
   - name: computer_wait
-    description: Wait for a specified duration. Useful between actions to allow UI transitions, page loads, or animations to complete. No cap — you decide. A wait cannot be interrupted once in flight, so split very long waits into several computer_wait calls.
+    description: 'Wait for a specified duration before the next action — use 500-2000ms after actions that trigger animations, page loads, or dialogs. No cap; a wait cannot be interrupted once in flight, so split very long waits into several computer_wait calls.'
     parameters:
       ms:
         type: number
-        description: Milliseconds to wait. No cap; split very long waits across multiple calls.
+        description: 'Milliseconds to wait. No cap; split very long waits across multiple calls.'
 confirm_patterns:
   - pattern: computer_mouse_click
     reason: Clicking on screen
+  - pattern: computer_mouse_drag
+    reason: Dragging on screen
   - pattern: computer_keyboard_type
     reason: Typing text
   - pattern: computer_keyboard_press
@@ -179,79 +229,107 @@ danger_patterns:
     reason: Typing potentially dangerous or sensitive text
 ---
 
-# Computer Use — Screenshot-Driven Desktop Automation
+# Computer Use — Verified-Aim Desktop Automation
 
-You can see and control the user's desktop through screenshots and input actions.
+The agent sees and controls the desktop through a closed feedback loop designed for
+surgical accuracy with any vision-capable model:
+
+1. **One coordinate space, owned by the plugin.** Every image the tools return
+   (screenshot, zoom, or click magnifier) becomes the *current frame*. The model
+   always gives coordinates as pixels read off the latest image; the plugin does all
+   translation to real screen position — screenshot downscaling, Retina/HiDPI scale
+   factors, and multi-monitor offsets. The model never does coordinate math, which
+   removes the entire class of "right target, wrong space" misses.
+2. **A crosshair marks the cursor** on every returned image, so the model always
+   knows where the pointer actually is.
+3. **Zoom for small targets.** `computer_zoom` re-captures a chosen region at native
+   resolution (up to 4x magnification). The zoomed image becomes the frame, so tiny
+   controls are clicked in a space where they are dozens of pixels wide.
+4. **Every click returns proof.** `computer_mouse_click`, `computer_mouse_move`, and
+   `computer_mouse_drag` return a 2x-magnified close-up with the crosshair on the
+   exact pixel acted on. A miss is visible immediately and corrected in the
+   close-up's own finer coordinate space instead of by re-guessing on the full
+   screenshot.
+
+This mirrors the practices Anthropic uses for Claude's own computer use: act on the
+latest image only, verify after every action, zoom rather than squint, prefer
+keyboard shortcuts when they are more reliable than pointing.
+
+**Computer use requires a vision-capable model.** If the active Brain model cannot
+accept images (for example DeepSeek's chat API, which is text-only), the runtime
+strips the screenshots and the tools tell the model to stop and ask the user to
+switch models — a text-only model cannot click accurately and is not allowed to
+guess.
 
 ## Required Setup (macOS)
 
-macOS sandboxes screen and input access behind system permissions. **All three must be granted to Wolffish before computer-use tools will work.** These are one-time grants that persist across restarts.
+macOS sandboxes screen and input access behind system permissions. **All three must
+be granted to Wolffish before computer-use tools will work.** These are one-time
+grants that persist across restarts.
 
 | Permission | What it unlocks | System Settings path | Error when missing |
 |---|---|---|---|
-| **Screen Recording** | `computer_screenshot`, `computer_list_displays` | Privacy & Security › Screen Recording › enable **Wolffish** | `Failed to get sources` |
-| **Accessibility** | `computer_mouse_click`, `computer_mouse_move`, `computer_mouse_scroll`, `computer_keyboard_type`, `computer_keyboard_press` | Privacy & Security › Accessibility › enable **Wolffish** | `not permitted` / `assistive access` |
+| **Screen Recording** | `computer_screenshot`, `computer_zoom`, magnifier images | Privacy & Security › Screen Recording › enable **Wolffish** | `Failed to get sources` |
+| **Accessibility** | mouse and keyboard tools | Privacy & Security › Accessibility › enable **Wolffish** | `not permitted` / `assistive access` |
 | **Automation** | `osascript` commands (activate apps, list windows) via `shell_exec` | Privacy & Security › Automation › allow **Wolffish** to control target apps | `Not authorized to send Apple events` |
 
-After granting **Screen Recording**, Wolffish must be restarted for the change to take effect (macOS requirement). Accessibility and Automation take effect immediately.
+After granting **Screen Recording**, Wolffish must be restarted for the change to
+take effect (macOS requirement). Accessibility and Automation take effect
+immediately.
 
-**Windows and Linux** do not require these permissions — computer-use tools work out of the box.
+**Windows and Linux (X11)** do not require these permissions — computer-use tools
+work out of the box. Wayland is not supported by the automation library.
 
 ### If a permission is missing
 
-macOS will silently fail the tool call rather than showing a prompt. The tool returns one of the error strings above, and retrying will never succeed. When you see one of these errors:
+macOS silently fails the tool call rather than showing a prompt. The tool returns
+one of the error strings above, and retrying will never succeed. The agent is
+expected to stop using computer-use tools, name the missing permission and its
+System Settings path, finish any non-visual parts of the task, and resume when the
+user has granted it (restarting Wolffish if it was Screen Recording).
 
-1. Stop using computer-use tools immediately — do not retry.
-2. Tell the user which permission is missing and the exact System Settings path.
-3. Finish any non-computer-use parts of the task.
-4. Ask the user to grant the permission (and restart Wolffish if it was Screen Recording), then come back and ask you to continue.
+## Screen Glow
 
-## Workflow
+While the agent controls the screen, the active display shows a soft blue
+border glow — the human-facing signal that computer use is running there, on
+that monitor. It pulses briefly on every screenshot and zoom capture as
+feedback that the screen was just captured.
 
-1. **Always screenshot first.** Before any action, call `computer_screenshot` to see the current state of the screen. Never guess what's on screen — always look.
-
-2. **Use coordinates from the screenshot.** When you see an element you want to interact with (button, text field, icon), estimate its x,y pixel coordinates from the screenshot and use those coordinates in your click/type actions.
-
-3. **Act, then verify.** After every action (click, type, scroll), take another screenshot to confirm the result. Did the right thing happen? Did a dialog appear? Did the page load?
-
-4. **If something looks wrong, stop.** If the screen doesn't show what you expected, tell the user what happened and ask for guidance. Don't blindly retry.
-
-## Guidelines
-
-- **Start simple.** Screenshot → identify target → single click/type → screenshot to verify. Don't chain many actions without checking.
-- **Wait for transitions.** After clicking a button that triggers a page load, animation, or dialog, call `computer_wait` with 500–2000ms before the next screenshot. There's no cap — when waiting on a genuinely long task (a build, an export, a render), wait as long as you need. The only caveat: a wait can't be interrupted once it's in flight, so split very long waits into several sequential `computer_wait` calls rather than one giant sleep.
-- **Never type passwords or secrets** unless the user explicitly provides them in the current message. If you need credentials, ask the user to type them directly.
-- **Use keyboard shortcuts** when they're more reliable than clicking (e.g. Cmd+C to copy, Ctrl+A to select all).
-- **Cap your actions.** If you've taken more than 15 actions without completing the task, pause and ask the user if you're on the right track.
-- **Platform awareness.** Use `meta`/`cmd` modifier on macOS, `ctrl` on Windows/Linux for standard shortcuts.
+The glow is pure harness logic, invisible to the model in every sense: the
+overlay window is content-protected so it never appears in captures (on Linux
+it hides for the instant of each capture instead), it is click-through and
+non-focusable so input synthesis is unaffected, and no tool exposes it. It
+follows whichever display the agent works on, and it removes itself after 12
+seconds without computer-use activity — which covers task completion,
+cancellation, and termination with no extra bookkeeping.
 
 ## Multiple Displays
 
-Users often have 2–3 monitors. The app you need to control may not be on the primary display. **Detecting and handling this correctly is critical — clicking with the wrong coordinates will silently land on the wrong monitor.**
+`computer_screenshot` captures display 0 (primary) by default. When the target app
+is elsewhere, `computer_list_displays` shows every monitor and the agent screenshots
+each `display_index` until it finds the app, then stays on that index. Coordinate
+translation to the right monitor — including monitors with negative origins or
+different DPI — is automatic. There is deliberately no manual offset arithmetic
+anywhere in the contract.
 
-### Discovery
+## Configuration
 
-1. **Start with `computer_screenshot` (no args).** This captures display 0 (primary).
-2. **If the target app isn't visible**, call `computer_list_displays` to see all monitors with their bounds.
-3. **Scan each display** with `computer_screenshot` using `display_index` (0, 1, 2, ...) until you find the app.
-4. **Lock onto that display** for the rest of the task — take all subsequent screenshots from the same `display_index`.
+`config.json → computerUse`:
 
-### Coordinate translation (critical)
+- `screenshotMaxWidth` — full-screenshot width cap in pixels (default 1280).
+  Zoom and magnifier images are unaffected; they always render from the
+  native-resolution capture.
+- `screenshotFormat` — `jpeg` (default) or `png` for full screenshots. Zoom and
+  magnifier images are always PNG for crisp text.
 
-Mouse tools use **global** screen coordinates. Screenshots show **local** coordinates relative to that display's origin.
+Screenshots and zooms are also saved under `screenshots/conv-<id>/` in the
+workspace for chat rendering and channel (Telegram/WhatsApp) delivery.
 
-- **Primary display (bounds 0,0):** Local and global are the same. No translation needed.
-- **Any other display:** The screenshot output includes the global offset, e.g. `This display starts at global (3648, 0) — add (3648, 0) to all coordinates.` **You must add this offset to every coordinate before clicking.**
+## Safety
 
-Example: You see a button at local (200, 300) on a display with bounds (3648, 0). Click at **(3848, 300)**, not (200, 300). If you forget, your click lands on the primary monitor and nothing happens on the target display.
-
-### Keeping focus on the right monitor
-
-- **Before your first click**, use `osascript` or `shell_exec` to activate the target app so it has keyboard focus: `osascript -e 'tell application "Google Chrome" to activate'`
-- **Keyboard shortcuts (Cmd+L, Cmd+A, etc.) go to the focused app**, not to a specific display. Always activate the target app first if you're about to use keyboard input.
-- **Don't switch displays mid-task** unless you need to. Every display switch means a new offset to track.
-- **After switching displays**, always take a fresh screenshot to re-anchor your coordinates. Never reuse coordinates from a screenshot of a different display.
-
-## Coordinate System
-
-Use the image pixel coordinates from the screenshot — top-left is (0,0), X increases rightward, Y increases downward. The screenshot output tells you the valid range (e.g. x 0–1280, y 0–827). Coordinates are automatically translated to screen position, so never use screen resolution values — always use coordinates within the image dimensions. On multi-display setups, the display offset is also applied automatically after each screenshot.
+- Clicking, dragging, typing, key presses, and scrolling are approval-gated
+  (`confirm_patterns`); screenshots, zooms, and display listing are read-only.
+- Typing text matching sensitive patterns (passwords, destructive commands) is
+  flagged as destructive.
+- The agent must never type credentials it was not explicitly given in the
+  current conversation.

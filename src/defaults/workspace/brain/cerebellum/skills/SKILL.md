@@ -65,19 +65,19 @@ tools:
         type: string
         description: Exact name of the custom skill to delete.
   - name: skill_create
-    description: Create a new skill and load it live. Provide the full SKILL.md, optionally plugin code and a package.json.
+    description: 'Author a brand-new skill for yourself and load it live — from a pure procedure (SKILL.md only) to plugin tools (index.mjs), npm dependencies (package.json), and bundled workers in other languages (extra_files). Read skill_read_source("skills") FIRST for the format and golden rules. The created skill is stamped author wolffish and stays marked UNTESTED until one of its tools succeeds for real — test every tool in this same turn (fix + skill_reload until it passes) before telling the user it is ready.'
     parameters:
       skill_md:
         type: string
-        description: Full SKILL.md contents — YAML frontmatter (--- delimited) with name + description, then a markdown body.
+        description: Full SKILL.md contents — YAML frontmatter (--- delimited) with name + description (+ optional triggers), then a markdown body. Don't hand-write a tools block — it is derived from the plugin.
       plugin_code:
         type: string
         required: false
-        description: Full plugin/index.mjs contents (ES module, `export default` a plugin object). Required if the frontmatter declares any tools.
+        description: Full plugin/index.mjs contents (ES module, `export default { name, tools, execute }`). Required if the skill exposes any tools.
       package_json:
         type: string
         required: false
-        description: Full package.json contents declaring npm dependencies. Only needed if the plugin imports npm packages.
+        description: Full package.json contents declaring npm dependencies (installed automatically on first tool call). Only needed if the plugin imports npm packages; with one present, declare the frontmatter tools yourself.
       extra_files:
         type: array
         required: false
@@ -123,8 +123,11 @@ The tools:
   search before creating** — don't reinvent a skill that's already installed.
 - `skill_read_source <name> [file]` — read a skill's actual source (SKILL.md,
   plugin code, bundled files). Use it before amending a skill, and to **learn
-  from the official ones** — e.g. read `speech-to-text` to copy its
-  Python-worker pattern, or read `shell` to see how a real plugin is built.
+  from the official ones — they are your gold standard**: read `shell` for the
+  canonical plugin shape, `speech-to-text` for the bundled-Python-worker and
+  managed-venv pattern, and any official skill whose domain resembles what
+  you're about to build. Match their structure, result shapes, and error
+  handling rather than inventing your own.
 - `skill_enable <name>` / `skill_disable <name>` — toggle a skill on/off.
   Reversible; works on official and custom skills alike (except `skills`).
 - `skill_delete <name>` — permanently remove a **custom** skill. Official skills
@@ -146,6 +149,12 @@ write a quick script for a single request, do that. A skill is for an ability
 you'll reuse — it costs context (its description ships to the model) and adds
 surface area. When in doubt, do the task directly first; promote it to a skill
 once it's clearly recurring.
+
+**Offer it.** The user may not know you can build permanent tools for
+yourself. When you notice a recurring pattern — the third time you hand-roll
+the same transformation, a workflow they clearly repeat — say so in one line
+("I can make this a permanent skill so it's one call next time — want me to?")
+and build it if they agree, or immediately when they ask outright.
 
 ## The three kinds of skill
 
@@ -402,6 +411,18 @@ folder under `brain/cerebellum/`, and reloads. The new tools become callable
 **on your very next step — in the same turn**, so you create and immediately
 test without handing back to the user.
 
+Provenance and the tested state, both automatic:
+
+- Every skill you create is stamped `author: wolffish` in its frontmatter —
+  don't write that key yourself, it's set for you. In Settings → Capabilities
+  it shows a **Wolffish** badge (bundled skills show *Official*; hand-imported
+  ones *Unknown*), and `skill_list` tags it *wolffish-authored*.
+- A tool-bearing skill you create (or later edit) is **UNTESTED** until the
+  runtime observes one of its tools succeed in a real call — an amber badge in
+  the panel, an `UNTESTED` tag in `skill_list`. The first successful call
+  clears it automatically; editing the SKILL.md or plugin re-arms it. You
+  cannot clear it by claiming the skill works — only by a passing call.
+
 Arguments:
 
 - `skill_md` — the full SKILL.md text (required).
@@ -553,6 +574,12 @@ seen it work.** Plugin code is real code; it has bugs. Because a created or
 edited skill becomes callable on your *next step in the same turn*, you can —
 and must — close the loop yourself before telling the user it's ready. Never
 hand back a freshly minted tool you haven't run.
+
+The runtime enforces the honest version of this: your created skills carry an
+**UNTESTED** marker that only a real successful tool call clears (and any edit
+re-arms). So the test loop below isn't etiquette — it's how the skill reaches
+its finished state at all. A skill still tagged UNTESTED at the end of your
+turn is, visibly to the user, unfinished work.
 
 The loop, all within one turn:
 

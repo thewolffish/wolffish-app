@@ -70,9 +70,8 @@ async function run(): Promise<void> {
   // ------------------------------------------------------------- sanitizer
   ok(
     'sanitize: a well-formed patch passes whole',
-    JSON.stringify(
-      sanitizeReflectionPatch({ hour: 5, quietHours: 24, scoring: { whatsapp: false } })
-    ) === '{"hour":5,"quietHours":24,"scoring":{"whatsapp":false}}'
+    JSON.stringify(sanitizeReflectionPatch({ hour: 5, quietHours: 24, cards: true })) ===
+      '{"hour":5,"quietHours":24,"cards":true}'
   )
   // The card switch is a plain boolean and rides the same patch — a field
   // silently dropped here would make the phone's toggle a no-op that snaps
@@ -99,13 +98,8 @@ async function run(): Promise<void> {
     sanitizeReflectionPatch({ quietHours: 49 }).quietHours === undefined
   )
   ok(
-    'sanitize: non-boolean scoring flag drops, boolean sibling survives',
-    JSON.stringify(sanitizeReflectionPatch({ scoring: { inapp: 'yes', telegram: true } })) ===
-      '{"scoring":{"telegram":true}}'
-  )
-  ok(
-    'sanitize: unknown scoring surface is ignored',
-    JSON.stringify(sanitizeReflectionPatch({ scoring: { discord: true } })) === '{}'
+    'sanitize: a retired scoring map is ignored',
+    JSON.stringify(sanitizeReflectionPatch({ scoring: { inapp: true } })) === '{}'
   )
   ok(
     'sanitize: a malformed field costs itself, not the patch',
@@ -120,7 +114,7 @@ async function run(): Promise<void> {
   const canonical = {
     hour: 5,
     quietHours: 24,
-    scoring: { inapp: true, telegram: true, whatsapp: false }
+    cards: false
   }
   const applied: unknown[] = []
   const ran: string[] = []
@@ -153,11 +147,11 @@ async function run(): Promise<void> {
   const answer = await call(Rpc.setReflectionConfig, {
     hour: 5,
     quietHours: 99,
-    scoring: { whatsapp: false, discord: true }
+    cards: false
   })
   ok(
     'set: dep receives the sanitized patch only',
-    JSON.stringify(applied[0]) === '{"hour":5,"scoring":{"whatsapp":false}}',
+    JSON.stringify(applied[0]) === '{"hour":5,"cards":false}',
     JSON.stringify(applied[0])
   )
   ok(

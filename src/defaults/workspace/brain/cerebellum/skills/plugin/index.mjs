@@ -106,7 +106,7 @@ const toolDefinitions = [
   {
     name: 'skill_create',
     description:
-      'Create a brand-new skill for Wolffish and load it live. Provide the full SKILL.md text (with YAML frontmatter); optionally provide plugin_code (an ES-module index.mjs) to back tools, and package_json to declare npm dependencies. The new skill is validated, written under brain/cerebellum/, and reloaded — its tools become available on your next turn. Read the "skills" procedure for the exact format before calling this.',
+      'Author a brand-new skill for yourself and load it live — anything from a pure procedure (SKILL.md only) to plugin tools (index.mjs), npm dependencies (package.json), and bundled workers in other languages (extra_files). Read skill_read_source("skills") FIRST for the exact format and golden rules. The skill is validated, written under brain/cerebellum/, stamped author: wolffish, and reloaded — its tools are callable on your very next step, and it stays marked UNTESTED until one of them succeeds for real: test every tool in this same turn (fix + skill_reload until it passes) before telling the user it is ready.',
     parameters: {
       type: 'object',
       properties: {
@@ -165,8 +165,10 @@ async function listSkills() {
   for (const c of sorted) {
     const tags = []
     if (c.official) tags.push('official')
+    else if (c.wolffish) tags.push('wolffish-authored')
     else tags.push('custom')
     if (c.core) tags.push('core')
+    if (c.wolffish && c.tested === false) tags.push('UNTESTED')
     if (!c.enabled) tags.push('disabled')
     if (c.status !== 'ok') tags.push(`error: ${c.error ?? 'unknown'}`)
     const toolCount = c.tools.length
@@ -175,7 +177,7 @@ async function listSkills() {
   }
   lines.push('')
   lines.push(
-    'Legend: *custom* skills can be disabled or deleted; *official* skills can be disabled but not deleted; *core* skills are load-bearing and can be neither disabled nor deleted.'
+    'Legend: *custom* skills can be disabled or deleted; *official* skills can be disabled but not deleted; *core* skills are load-bearing and can be neither disabled nor deleted; *wolffish-authored* skills are ones you created yourself. UNTESTED marks a wolffish-authored skill that has not passed a real tool call since it was created or last edited — call its tools (fix + skill_reload until they succeed) to clear it.'
   )
   return { success: true, output: lines.join('\n') }
 }
@@ -213,7 +215,7 @@ async function searchSkills(args) {
 
   const lines = [`## ${hits.length} skill(s) matching "${args.query}"`, '']
   for (const c of hits) {
-    const status = c.official ? 'official' : 'custom'
+    const status = c.official ? 'official' : c.wolffish ? 'wolffish-authored' : 'custom'
     const en = c.enabled ? '' : ', disabled'
     lines.push(`- **${c.name}** [${status}${en}] — ${c.description || '(no description)'}`)
     const matchedTools = c.tools.filter((t) =>
@@ -332,8 +334,10 @@ async function readSource(args) {
         tree.push(`${prefix}… (more)`)
         return
       }
-      // node_modules is lazily installed and huge — never list it.
-      if (e.name === 'node_modules' || e.name === '.DS_Store') continue
+      // node_modules is lazily installed and huge — never list it. The
+      // tested-state marker is runtime bookkeeping, not source.
+      if (e.name === 'node_modules' || e.name === '.DS_Store' || e.name === '.wolffish-tested')
+        continue
       const full = path.join(dir, e.name)
       if (e.isDirectory()) {
         tree.push(`${prefix}${e.name}/`)
@@ -476,6 +480,12 @@ async function createSkill(args) {
     }
   }
 
+  // Every skill created through this tool is authored by Wolffish itself —
+  // stamp the frontmatter so it shows the Wolffish badge (not Unknown) and
+  // enters tested-state tracking (untested until its first successful call).
+  // The stamp is the source of truth: any hand-written author is replaced.
+  skillMd = setFrontmatterAuthor(skillMd, 'wolffish')
+
   // Tools register from the SKILL.md frontmatter `tools:` block — the plugin
   // code alone registers nothing. Rather than make the model duplicate its
   // tools by hand (the #1 papercut), we AUTO-DERIVE the frontmatter tools from
@@ -585,18 +595,25 @@ async function createSkill(args) {
 
     const toolNote =
       result.hasPlugin && result.toolCount
-        ? `${result.toolCount} tool${result.toolCount === 1 ? '' : 's'} now available on your next turn`
+        ? `${result.toolCount} tool${result.toolCount === 1 ? '' : 's'} callable on your very next step`
         : 'a procedure-only skill (no tools) — read its body on demand with skill_read_source; to keep it standing, point to it from agents.md'
     const derivedNote =
       autoDerivedTools > 0
         ? ` (auto-added a frontmatter tools: block from your plugin — next time you can declare it yourself for full control)`
         : ''
     const depNote = hasPackageJson
-      ? ' npm dependencies install automatically the first time one of its tools runs.'
+      ? ' Its npm dependencies install automatically on the first tool call, so that call doubles as the install check.'
       : ''
+    // A tool-bearing skill is born UNTESTED — the badge clears only when the
+    // runtime observes a successful real call. Say so loudly: the model must
+    // close the loop in this same turn, not report a half-finished skill.
+    const testNote =
+      result.hasPlugin && result.toolCount
+        ? ` NOT DONE YET: it is marked UNTESTED until one of its tools succeeds for real. Call each new tool NOW with realistic input, inspect the output, fix + skill_reload until it passes — only then tell the user it is ready.`
+        : ''
     return {
       success: true,
-      output: `Created skill "${result.name}" — ${toolNote}${derivedNote}.${depNote}`
+      output: `Created skill "${result.name}" — ${toolNote}${derivedNote}.${depNote}${testNote}`
     }
   } catch (err) {
     return { success: false, error: `skill_create error: ${err instanceof Error ? err.message : String(err)}` }
@@ -803,21 +820,22 @@ function injectFrontmatterTools(skillMd, descriptors) {
 }
 
 /**
- * Remove any existing top-level `tools:` block from the frontmatter (the
- * `tools:` line plus its indented children), so re-injecting a derived block
- * can't create a duplicate mapping key. Only touches the frontmatter region.
+ * Remove an existing top-level `<key>:` block from the frontmatter (the key's
+ * line plus any indented children), so re-injecting a canonical value can't
+ * create a duplicate mapping key. Only touches the frontmatter region.
  */
-function stripFrontmatterTools(skillMd) {
+function stripFrontmatterKey(skillMd, key) {
   if (!skillMd.startsWith('---')) return skillMd
   const closeIdx = skillMd.indexOf('\n---', 3)
   if (closeIdx < 0) return skillMd
   const fm = skillMd.slice(3, closeIdx) // between opening --- and closing \n---
   const tail = skillMd.slice(closeIdx) // \n---\n...body
   const lines = fm.split('\n')
+  const keyRe = new RegExp(`^${key}\\s*:`)
   const kept = []
   for (let i = 0; i < lines.length; i++) {
-    if (/^tools\s*:/.test(lines[i])) {
-      // skip the tools: line and any following indented (block items) lines
+    if (keyRe.test(lines[i])) {
+      // skip the key's line and any following indented (block items) lines
       while (i + 1 < lines.length && /^\s+\S/.test(lines[i + 1])) i++
       continue
     }
@@ -828,7 +846,18 @@ function stripFrontmatterTools(skillMd) {
 
 /** Strip any model-written `tools:` block and inject the derived one. */
 function setFrontmatterTools(skillMd, descriptors) {
-  return injectFrontmatterTools(stripFrontmatterTools(skillMd), descriptors)
+  return injectFrontmatterTools(stripFrontmatterKey(skillMd, 'tools'), descriptors)
+}
+
+/**
+ * Stamp the frontmatter `author:` (replacing any existing value) — the
+ * provenance marker behind the Wolffish badge and tested-state tracking.
+ */
+function setFrontmatterAuthor(skillMd, author) {
+  const stripped = stripFrontmatterKey(skillMd, 'author')
+  const closeIdx = stripped.indexOf('\n---', 3)
+  const at = closeIdx < 0 ? stripped.length : closeIdx
+  return `${stripped.slice(0, at)}\nauthor: ${author}${stripped.slice(at)}`
 }
 
 /**

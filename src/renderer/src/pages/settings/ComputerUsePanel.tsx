@@ -1,7 +1,7 @@
 import { Button } from '@components/core/Button'
 import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn'
-import type { ComputerUseConfig, ComputerUsePermissions } from '@preload/index'
+import type { ComputerUseConfig, ComputerUsePermissions, ModelCapabilities } from '@preload/index'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -22,6 +22,7 @@ export function ComputerUsePanel(): React.JSX.Element {
   const [config, setConfig] = useState<ComputerUseConfig | null>(null)
   const [savedConfig, setSavedConfig] = useState<ComputerUseConfig | null>(null)
   const [permissions, setPermissions] = useState<ComputerUsePermissions | null>(null)
+  const [modelCaps, setModelCaps] = useState<ModelCapabilities | null>(null)
   const [busy, setBusy] = useState(false)
   const loaded = config !== null
   const dirty =
@@ -38,15 +39,17 @@ export function ComputerUsePanel(): React.JSX.Element {
   useEffect(() => {
     let cancelled = false
     void (async () => {
-      const [cfg, perms] = await Promise.all([
+      const [cfg, perms, caps] = await Promise.all([
         window.api.computerUse.getConfig(),
-        window.api.computerUse.checkPermissions()
+        window.api.computerUse.checkPermissions(),
+        window.api.model.capabilities().catch(() => null)
       ])
       if (cancelled) return
       setConfig(cfg)
       setSavedConfig(cfg)
       savedConfigRef.current = cfg
       setPermissions(perms)
+      setModelCaps(caps)
     })()
     return () => {
       cancelled = true
@@ -126,6 +129,16 @@ export function ComputerUsePanel(): React.JSX.Element {
         <CapabilityGateBody gate={gate}>
           {loaded && (
             <>
+              {modelCaps !== null && modelCaps.model !== null && !modelCaps.supportsVision && (
+                <section className="border-amber-500/30 bg-amber-500/5 flex flex-col gap-1 rounded-2xl border p-5">
+                  <h2 className="text-fg text-sm font-semibold">
+                    {t('settings.services.computerUse.visionWarningTitle')}
+                  </h2>
+                  <p className="text-muted text-sm leading-relaxed">
+                    {t('settings.services.computerUse.visionWarning', { model: modelCaps.model })}
+                  </p>
+                </section>
+              )}
               <section className="bg-surface border-border flex flex-col gap-5 rounded-2xl border p-6">
                 {/* Screenshot resolution */}
                 <div className="flex flex-col gap-2">

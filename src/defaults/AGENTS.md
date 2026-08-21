@@ -193,9 +193,9 @@ brain/
 │   │                          EVERY system prompt. playbook.md.bak = previous
 │   │                          version, the one-copy restore if a merge degrades it.
 │   ├── YYYY-MM-DD.md          per-conversation review blocks written by the nightly
-│   │                          reflection (user 0-10 scores + the model's own review).
-│   └── reviewed.json          which conversations were reviewed (+ scores) — the
-│                              nightly job's bookkeeping; 7-day rolling window.
+│   │                          reflection (the model's own review + self-score).
+│   └── reviewed.json          which conversations were reviewed (+ self-scores) —
+│                              the nightly job's bookkeeping; 7-day rolling window.
 │
 ├── brainstem/             SCHEDULING.
 │   └── heartbeat.md           cron-like jobs; each `##` heading is one scheduled task.
@@ -303,7 +303,7 @@ place on disk. This is the mental model behind the folder layout.
 | **Amygdala** | Safety-gate every tool call (safe/confirm/block) | — (uses SKILL patterns) |
 | **Motor** | Execute tools, retry, log each step | `brain/motor/tasks/` |
 | **Basal ganglia** | Record raw tool outcomes (telemetry; recall + insula stats) | `brain/basalganglia/` |
-| **Reflection** | Nightly self-review of finished conversations (user 0-10 scores = ground truth) → playbook distillate in every prompt; monthly deep-reflection audit of playbook + knowledge | `brain/reflection/` |
+| **Reflection** | Nightly self-review of finished conversations → playbook distillate in every prompt; monthly deep-reflection audit of playbook + knowledge | `brain/reflection/` |
 | **Hypothalamus** | Monitor vitals (context, tokens, RAM, disk) | — (samples runtime) |
 | **Brainstem** | Run cron jobs + watch files for the index | `brain/brainstem/heartbeat.md` |
 | **Corpus** | Typed event bus connecting every module | `brain/corpus/` (daily log) |
@@ -358,7 +358,7 @@ so hidden — `ls -a` to see them). Drop a folder in, and the agent learns a ski
 | | `.github` | GitHub API — ~60 `github_*` tools (repos, issues, PRs, Actions, releases, gists, …) |
 | | `.google` | Workspace — `google_gmail_*`, `google_drive_*`, `google_calendar_*`, `google_sheets_*`, contacts, tasks |
 | | `.notion` | Pages, databases, blocks — `notion_search/read_page/create_page/…` |
-| **Desktop** | `.computer-use` | Screen control — `computer_screenshot`, `computer_mouse_click`, `computer_keyboard_type`, … |
+| **Desktop** | `.computer-use` | Screen control with a verified-aim loop — `computer_screenshot`, `computer_zoom`, `computer_mouse_click`, `computer_mouse_drag`, `computer_keyboard_type`, … |
 | **Meta** | `.skills` | The agent manages/authors its own capabilities — `skill_list`, `skill_search`, `skill_read_source`, `skill_enable`, `skill_disable`, `skill_delete`, `skill_create`, `skill_reload` |
 | | `.automations` | The agent manages its scheduled heartbeat jobs — `automation_list`, `automation_create`, `automation_edit`, `automation_delete`, `automation_check`, `automation_run` |
 | | `.introspect` | The agent inspects itself — `wolffish_status`, `channel_status`, `wolffish_performance`, `wolffish_memory`, `wolffish_recall`, `wolffish_list_files` |
@@ -432,11 +432,10 @@ chat switcher.
   append-only) — hand edits remain first-class and survive curation. Each rewrite
   keeps the previous version as `<file>.md.bak`.
 - *Reflection* (`brain/reflection/`) — behavioural lessons, kept separate from facts:
-  the nightly reflection reviews finished conversations (the user's 0-10 turn scores
-  are ground truth; a bare-number reply on Telegram/WhatsApp is a score, and the
-  in-app chat shows a 0-10 bar after each turn), writes dated review blocks, and
-  rewrites `playbook.md` — the distillate injected into EVERY system prompt. A
-  monthly deep-reflection pass audits playbook + knowledge adversarially (Settings →
+  the nightly reflection reviews finished conversations (the user's own words in the
+  transcript are the signal), writes dated review blocks, and rewrites
+  `playbook.md` — the distillate injected into EVERY system prompt. A monthly
+  deep-reflection pass audits playbook + knowledge adversarially (Settings →
   Knowledge → Reflection).
 
 **Safety (amygdala).** Every tool call is classified using the `danger_patterns` /

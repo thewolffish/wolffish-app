@@ -11,6 +11,11 @@ import { diskWriter } from '@main/io/diskWriter'
 import { net } from 'electron'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { deliveredFileNames } from '@main/runtime/agent/delivered-files'
+import {
+  armControlTokenNotice,
+  drainControlTokenNotice,
+  trailingControlToken
+} from '@main/runtime/agent/control-token-guard'
 import { emptyTurnNudge, MAX_EMPTY_TURN_NUDGES } from '@main/runtime/agent/empty-turn-guard'
 import {
   NoProgressTracker,
@@ -59,6 +64,7 @@ import {
   type WorkflowModelChoice
 } from '@main/runtime/workflow'
 import {
+  formatLastMessageNotice,
   formatRuntimeStatus,
   PHONE_NOTIFY_CHANNEL_NOTICE,
   PHONE_NOTIFY_NOTICE,
@@ -202,6 +208,17 @@ export type AgentTurnOptions = {
   contextFiles?: string[] | null
   /** Which of the two owns them — the overlay names it so the model knows. */
   contextFilesOwner?: 'automation' | 'procedure'
+  /**
+   * Timestamp (ms epoch) of the conversation's previous persisted message —
+   * the one BEFORE this turn's own user message. Computed by the TurnRunner
+   * from the on-disk transcript (lastConversationMessageAt, which excludes
+   * the current userMessageId so channel pre-dispatch persists don't zero
+   * the gap). When the gap is large enough, the runtime tail tells the
+   * model the conversation is resuming after days/weeks/months — replayed
+   * history carries no timestamps, so this is its only temporal anchor.
+   * Absent/null (fresh conversation, subagent, autonomous run) → no notice.
+   */
+  lastMessageAt?: number | null
   /**
    * Delivery channel for this turn's user-facing prose. Threaded into the
    * system prompt so the model writes in the channel's native text
@@ -912,6 +929,15 @@ export class Agent {
       (await readConfig().catch(() => null))?.tts?.voiceReplies !== false
         ? VOICE_REPLY_NOTICE
         : undefined
+    // Conversation-resumed notice: the previous persisted message's age,
+    // rendered once per turn (now = turn start, so the string — and with it
+    // the volatile tail — stays byte-stable across the turn's iterations).
+    // Undefined for an active conversation (< the notice's gap floor), a
+    // fresh conversation, or any caller that didn't thread lastMessageAt
+    // (subagents, autonomous runs). Master/single turns only: a subagent's
+    // task brief has no "we last spoke" to resume.
+    const lastMessageNotice =
+      turn.role !== 'agent' ? formatLastMessageNotice(turn.lastMessageAt) : undefined
     // Phone-notification notice, gated exactly like the voice one and for the
     // same shipped reason (a rule buried in a 25k-token prompt loses to the
     // task at hand). Three gates, all resolved once per turn:
@@ -1086,6 +1112,14 @@ export class Agent {
         const channelNotices = turn.formatNotices?.() ?? []
         const channelFormatText = channelNotices.length > 0 ? channelNotices.join(' ') : undefined
 
+        // Control-token notice — this conversation's previous model call ended
+        // its visible text in a literal tokenizer control token, which the user
+        // saw as-is (observe-and-notify: the model repairs its own behaviour;
+        // nothing rewrites its output). Drained once per iteration; rides the
+        // same volatile vehicle as the no-progress notice so it never perturbs
+        // the cached prompt prefix. Undefined (the common case) renders nothing.
+        const controlTokenText = drainControlTokenNotice(turn.conversationId ?? null)
+
         // Async video-task landings the model has not consumed (it moved on
         // instead of calling video_await). Rides the same volatile vehicle;
         // drained once per iteration so a landing is announced exactly once.
@@ -1124,8 +1158,10 @@ export class Agent {
           renderCounters: !optimizeContext,
           deliveredFiles: [...deliveredThisTurn],
           online,
+          lastMessage: lastMessageNotice,
           noProgress: noProgressText,
           channelFormat: channelFormatText,
+          controlToken: controlTokenText,
           videoTasks: videoTasksText,
           voiceReply: voiceReplyNotice,
           phoneNotify: phoneNotifyText
@@ -1263,11 +1299,20 @@ export class Agent {
             // phoneNotifyText is in for exactly the same reason — a turn that
             // answers from knowledge alone still has to close with a
             // notification, and it never reaches iteration 2 to be told.
+            // lastMessageNotice too: a "welcome back after 3 weeks" turn is
+            // typically pure conversation, and the gap must inform the very
+            // first reply, not the second iteration that never comes.
+            // controlTokenText keeps iteration 1 in for the same reason: the
+            // leak is typically a turn's FINAL call, so the armed notice
+            // arrives at the NEXT turn's first iteration — deferring the tail
+            // to iteration 2 would drop the one notice this guard exists for.
             (iterationCount > 1 ||
               workingFoldersBlock ||
               !online ||
+              lastMessageNotice ||
               noProgressText ||
               channelFormatText ||
+              controlTokenText ||
               videoTasksText ||
               voiceReplyNotice ||
               phoneNotifyText)
@@ -1276,8 +1321,10 @@ export class Agent {
                   toolsCalled: totalToolCalls,
                   deliveredFiles: [...deliveredThisTurn],
                   online,
+                  lastMessage: lastMessageNotice,
                   noProgress: noProgressText,
                   channelFormat: channelFormatText,
+                  controlToken: controlTokenText,
                   videoTasks: videoTasksText,
                   voiceReply: voiceReplyNotice,
                   phoneNotify: phoneNotifyText
@@ -1416,6 +1463,18 @@ export class Agent {
         }
 
         if (parsed.thinking) lastReasoningContent = parsed.thinking
+
+        // Control-token watch: a model that "says nothing" by typing its
+        // end-of-sequence marker (observed: grok-4.6 emitting a literal
+        // `<|eos|>`) has just sent the user visible gibberish. Observe-and-
+        // notify only — the text streams on untouched; the armed notice tells
+        // the model on its next call (this turn's next iteration, or the
+        // conversation's next turn) and the model decides what to do. Worker
+        // text never reaches the user, so agent roles don't arm.
+        if (turn.role !== 'agent') {
+          const leakedToken = trailingControlToken(parsed.text)
+          if (leakedToken) armControlTokenNotice(turn.conversationId ?? null, leakedToken)
+        }
 
         if (parsed.toolCalls.length === 0) {
           if (parsed.stopReason === 'max_tokens') {

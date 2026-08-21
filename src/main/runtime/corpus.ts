@@ -136,6 +136,8 @@ export type CorpusEvents = {
   'dependency.npm.installing': { capability: string; deps: string[] }
   'dependency.npm.installed': { capability: string }
   'dependency.npm.failed': { capability: string; error?: string }
+  /** A Wolffish-authored skill passed its first real tool call since creation/edit. */
+  'capability.tested': { capability: string }
 
   'security.credentialBlocked': { type: string; messageDiscarded: true }
 
@@ -175,20 +177,10 @@ export type CorpusEvents = {
 
   'reflection.reviewed': {
     conversation: string
-    userScore: number | null
     selfScore: number | null
   }
   'reflection.playbookUpdated': { day: string; bytes: number }
   'reflection.deepCleaned': { changedFiles: string[] }
-
-  'conversation.rated': {
-    conversation: string
-    /** Assistant message the score applies to — lets the renderer key its overlay. */
-    messageId: string
-    score: number
-    at: number
-    source: string
-  }
 
   'feedback.recorded': {
     action: string

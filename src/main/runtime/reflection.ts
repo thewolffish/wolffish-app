@@ -17,8 +17,8 @@ import path from 'node:path'
  *
  * This is the seam that makes "self-improving" real rather than nominal.
  * The basal ganglia records WHAT happened (tool telemetry); reflection
- * decides what it MEANT: what the user liked (their 0-10 turn scores are
- * ground truth), what failed and why (root causes, not raw errors), and
+ * decides what it MEANT: what the user liked (their words in the transcript
+ * are the signal), what failed and why (root causes, not raw errors), and
  * what to do differently. Lessons are distilled into ONE always-in-context
  * file — brain/reflection/playbook.md — rewritten (never appended) after
  * every run, so the distillate self-heals instead of self-dumping.
@@ -28,6 +28,8 @@ import path from 'node:path'
  *      `quietHours` gets one review call (automation runs included: the
  *      agent can fumble unattended, and the automation prompt IS user
  *      input). Output blocks append to reflection/YYYY-MM-DD.md.
+ *      (Conversation files from before mid-2026 may carry a `ratings`
+ *      array from the retired turn-scoring feature — it is ignored.)
  *   2. Playbook merge — one call folds the new lessons into the existing
  *      playbook: dedupe, resolve contradictions newest-wins, decay stale
  *      inferred entries, keep it inside a hard size envelope.
@@ -88,7 +90,7 @@ const KNOWLEDGE_FILES: readonly KnowledgeFile[] = [
 
 export const REFLECTION_SYSTEM_PROMPT = `You are the reflection pass of a personal AI agent, reviewing ONE finished conversation the agent had with its user (or ran unattended as an automation). Your output becomes the agent's long-term training signal, so honesty beats flattery and evidence beats speculation.
 
-Score honestly. The user's own 0-10 scores (when present in the transcript) are ground truth; your self-score must reflect what actually happened, not effort. A turn that annoyed the user, wasted work, or failed silently is a low score even if tools "succeeded".
+Score honestly. Your self-score must reflect what actually happened, not effort — the user's own words in the transcript are the strongest evidence. A turn that annoyed the user, wasted work, or failed silently is a low score even if tools "succeeded".
 
 Extract only lessons this conversation actually EARNED:
 - A "win" needs explicit user appreciation or a clearly better-than-usual outcome worth repeating — name the trigger so it can be reused.
@@ -101,7 +103,7 @@ Output EXACTLY this block, nothing before or after (omit any line you have nothi
 
 ## <conversation title>
 - outcome: <one plain sentence — what was attempted and how it actually ended>
-- score: user=<0-10 average of user scores, or "none"> self=<0-10>
+- score: self=<0-10>
 - win: <specific repeatable thing that worked + its trigger>
 - fail: <root cause → the generalized fix/avoidance>
 - pref: <new durable user preference, only if not already in the playbook you were shown>
@@ -109,7 +111,7 @@ Output EXACTLY this block, nothing before or after (omit any line you have nothi
 
 export const PLAYBOOK_MERGE_SYSTEM_PROMPT = `You maintain the PLAYBOOK of a personal AI agent: the distilled record of what its user likes and dislikes and what has been learned to work or fail. The playbook is injected into every future conversation, so every line must earn its place — this is a living document you REWRITE, not a log you append to.
 
-You receive the current playbook plus new reflection blocks (per-conversation reviews with user scores). Produce the complete new playbook.
+You receive the current playbook plus new reflection blocks (per-conversation reviews). Produce the complete new playbook.
 
 Rules:
 - Structure — EXACTLY these five sections, in this order, and no others (re-home anything else into the closest fit; never invent your own section scheme):
@@ -119,10 +121,9 @@ Rules:
   ## User likes
   ## User dislikes
   ## Recipes
-- Every entry is one tight line: the lesson, then "(source, YYYY-MM-DD)" where source is one of: user-said, user-scored, inferred. When new evidence reinforces an existing entry, keep ONE line and refresh its date. Merge near-duplicates aggressively.
+- Every entry is one tight line: the lesson, then "(source, YYYY-MM-DD)" where source is one of: user-said, inferred. Treat a legacy "user-scored" tag in the current playbook as user-said. When new evidence reinforces an existing entry, keep ONE line and refresh its date. Merge near-duplicates aggressively.
 - Contradictions: the newest evidence wins; drop the old line (add "(changed YYYY-MM-DD)" if the reversal itself matters).
-- Decay: DELETE "inferred" entries whose date is older than 30 days unless tonight's blocks reinforce them. "user-said" and "user-scored" entries persist until contradicted.
-- Lessons backed by low user scores (0-4) go to Avoid / User dislikes; high scores (8-10) justify Do / User likes.
+- Decay: DELETE "inferred" entries whose date is older than 30 days unless tonight's blocks reinforce them. "user-said" entries persist until contradicted.
 - A failure lesson with user-visible impact AND a durable fix (e.g. "auth expired silently → alert the user on their notification channel") MUST land in Avoid or Do — never discard it as operational noise. It leaves the playbook only when later evidence shows it fixed or wrong.
 - Recipes are short imperative playbooks for recurring tasks ("Daily digest: check memory for past editions first; no repeats; Arabic for LinkedIn"). Only recurring, only proven.
 - HARD LIMIT: total output under ${PLAYBOOK_MAX_CHARS} characters. Over budget → compress wording first, then drop the weakest inferred entries. Never pad; a short honest playbook beats a full noisy one.
@@ -135,7 +136,7 @@ export const DEEPCLEAN_SYSTEM_PROMPT = `You are the monthly ADVERSARIAL AUDITOR 
 You receive the current playbook, the five long-term knowledge files, and the recent reflection history. Attack them:
 - Stale: entries whose evidence is old and unreinforced in the reflection history.
 - Over-general: "always/never" rules built on one incident — weaken or delete.
-- Contradicted: entries the recent history or user scores argue against.
+- Contradicted: entries the recent history argues against.
 - Redundant: near-duplicates across entries or across files — merge to one canonical line.
 - Misfiled or corrupted: facts attached to the wrong person/project, orphan fragments, junk headers with no content.
 - Wrong register: telemetry or one-off session trivia masquerading as durable knowledge.
@@ -208,7 +209,6 @@ type ReviewedEntry = {
   at: number
   /** The conversation's updatedAt as of the review — continued conversations re-review. */
   updatedAt: number
-  userScore: number | null
   selfScore: number | null
   /** Set when the conversation was marked reviewed without an LLM call. */
   skipped?: string
@@ -245,20 +245,7 @@ function pruneReviewedIndex(index: ReviewedIndex, now: number): void {
 
 // ── Transcript rendering ──────────────────────────────────────────────
 
-function ratingByMessageId(conv: ConversationFile): Map<string, number> {
-  const map = new Map<string, number>()
-  for (const r of conv.ratings ?? []) map.set(r.messageId, r.score)
-  return map
-}
-
-export function averageUserScore(conv: ConversationFile): number | null {
-  const ratings = conv.ratings ?? []
-  if (ratings.length === 0) return null
-  const sum = ratings.reduce((acc, r) => acc + r.score, 0)
-  return Math.round((sum / ratings.length) * 10) / 10
-}
-
-function renderMessage(msg: ConversationMessage, score: number | undefined): string {
+function renderMessage(msg: ConversationMessage): string {
   const parts: string[] = []
   const text = msg.content?.trim()
   if (text) parts.push(cap(text, MESSAGE_MAX_CHARS))
@@ -286,19 +273,16 @@ function renderMessage(msg: ConversationMessage, score: number | undefined): str
   if (msg.role === 'assistant' && msg.error) {
     parts.push(`[turn error: ${cap(oneLine(msg.error), 300)}]`)
   }
-  if (score !== undefined) parts.push(`[USER SCORED THIS REPLY: ${score}/10]`)
   return `${msg.role}:\n${parts.join('\n')}`
 }
 
 /**
  * Render one conversation for the review call: provenance header, the
- * rolling summary when one exists, then the transcript with tool outcomes
- * and the user's per-turn scores inlined where they landed. Over budget,
- * the MIDDLE is dropped — openings carry the ask, endings carry the
- * resolution and the scores.
+ * rolling summary when one exists, then the transcript with tool outcomes.
+ * Over budget, the MIDDLE is dropped — openings carry the ask, endings
+ * carry the resolution.
  */
 export function renderConversationForReflection(conv: ConversationFile): string {
-  const scores = ratingByMessageId(conv)
   const origin =
     conv.channel === 'heartbeat' || conv.channel === 'procedure'
       ? `${conv.channel} automation — ran unattended; the opening user message is the automation's own prompt, which the user authored when they set it up`
@@ -307,13 +291,10 @@ export function renderConversationForReflection(conv: ConversationFile): string 
     `Conversation: ${conv.title}`,
     `Origin: ${origin}`,
     `Started: ${new Date(conv.createdAt).toISOString()}`,
-    `Messages: ${conv.messages.length}`,
-    averageUserScore(conv) !== null
-      ? `User turn scores present — they are ground truth.`
-      : `No user scores for this conversation.`
+    `Messages: ${conv.messages.length}`
   ].join('\n')
 
-  const rendered = conv.messages.map((m) => renderMessage(m, m.id ? scores.get(m.id) : undefined))
+  const rendered = conv.messages.map((m) => renderMessage(m))
   let body = rendered.join('\n\n')
   if (body.length > TRANSCRIPT_MAX_CHARS) {
     // Keep head and tail whole messages; drop from the middle.
@@ -450,7 +431,6 @@ export async function runNightlyReflection(
       index[meta.id] = {
         at: Date.now(),
         updatedAt: meta.updatedAt,
-        userScore: null,
         selfScore: null,
         skipped: 'no reviewable exchange'
       }
@@ -483,20 +463,18 @@ export async function runNightlyReflection(
     await appendReflectionBlock(workspaceRoot, day, block)
 
     const selfScore = parseSelfScore(result.text)
-    const userScore = averageUserScore(conv)
     index[meta.id] = {
       at: Date.now(),
       updatedAt: meta.updatedAt,
-      userScore,
       selfScore
     }
-    corpus?.emit('reflection.reviewed', { conversation: conv.id, userScore, selfScore })
+    corpus?.emit('reflection.reviewed', { conversation: conv.id, selfScore })
     reviewed += 1
     blocks.push(result.text.trim())
     cardLines.push(
-      `- ${conv.title} — user ${userScore ?? '—'} / self ${selfScore ?? '—'}${conv.channel && conv.channel !== 'electron' ? ` (${conv.channel})` : ''}`
+      `- ${conv.title} — self ${selfScore ?? '—'}${conv.channel && conv.channel !== 'electron' ? ` (${conv.channel})` : ''}`
     )
-    log(`reviewed "${conv.title}" (user ${userScore ?? '—'}, self ${selfScore ?? '—'})`)
+    log(`reviewed "${conv.title}" (self ${selfScore ?? '—'})`)
   }
 
   pruneReviewedIndex(index, now)

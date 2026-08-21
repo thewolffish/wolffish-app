@@ -64,6 +64,8 @@ const TITLE_SYSTEM =
   `(avoid "General Question", "Help Request", "New Chat", "Assistance Needed")\n` +
   `- is neither too long nor too short: aim for 3 to 6 words, up to ~60 characters\n` +
   `- uses Title Case, with no surrounding quotes, no trailing punctuation, and no emoji\n` +
+  `- is plain human text: never append tokenizer control tokens (no <| … |> markers) — ` +
+  `the title is displayed to a person exactly as you write it\n` +
   `Reply with ONLY the title text — nothing else.`
 
 /**

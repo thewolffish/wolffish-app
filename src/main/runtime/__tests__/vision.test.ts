@@ -12,6 +12,7 @@ import {
   cloudModelSupportsVision,
   hasVisualContent,
   isModalityReject,
+  limitToolResultImages,
   REQUEST_MODALITY_STRIP_REASON,
   stripVisualContent,
   TEXT_ONLY_STRIP_REASON,
@@ -266,6 +267,90 @@ check(
 
 check('modality predicate: unknown variant', isModalityReject('unknown variant image_url'), true)
 check('modality predicate: invalid api key', isModalityReject('invalid api key'), false)
+
+// ---------------------------------------------------------------------------
+// limitToolResultImages — batched retention of the newest tool images
+// ---------------------------------------------------------------------------
+
+{
+  const img = { mediaType: 'image/png', data: 'x' }
+  const shot = (i: number, images: number): ChatMessage => ({
+    role: 'tool',
+    toolUseId: `t${i}`,
+    toolName: 'computer_screenshot',
+    content: `shot ${i}`,
+    images: Array.from({ length: images }, () => ({ ...img }))
+  })
+  const userWithImage: ChatMessage = {
+    role: 'user',
+    content: [
+      { type: 'text', text: 'look' },
+      { type: 'image', mediaType: 'image/png', data: 'u' }
+    ]
+  }
+
+  const countToolImages = (ms: ChatMessage[]): number =>
+    ms.reduce((n, m) => n + (m.role === 'tool' ? (m.images?.length ?? 0) : 0), 0)
+
+  // keep=6, batch=4: 9 total images → droppable 3 < batch → untouched (same ref)
+  const nine = [userWithImage, ...Array.from({ length: 9 }, (_, i) => shot(i, 1))]
+  check(
+    'limit: below batch threshold is a no-op (same reference)',
+    limitToolResultImages(nine),
+    nine
+  )
+
+  // 10 total → droppable 4 → exactly the 4 oldest dropped, newest 6 kept
+  const ten = [userWithImage, ...Array.from({ length: 10 }, (_, i) => shot(i, 1))]
+  const pruned = limitToolResultImages(ten)
+  check('limit: 10 images prune to 6', countToolImages(pruned), 6)
+  check(
+    'limit: oldest dropped first with a note',
+    pruned[1].role === 'tool' &&
+      pruned[1].images === undefined &&
+      pruned[1].content.includes('omitted to keep context lean'),
+    true
+  )
+  check(
+    'limit: newest untouched, no note',
+    pruned[10].role === 'tool' &&
+      pruned[10].images?.length === 1 &&
+      !pruned[10].content.includes('omitted'),
+    true
+  )
+  check(
+    'limit: user images never touched',
+    pruned[0].role === 'user' &&
+      typeof pruned[0].content !== 'string' &&
+      pruned[0].content.some((b) => b.type === 'image'),
+    true
+  )
+
+  // 13 total → droppable 7 → still only one batch (4) dropped, 9 remain
+  const thirteen = [...Array.from({ length: 13 }, (_, i) => shot(i, 1))]
+  check('limit: batches amortize (13 → 9)', countToolImages(limitToolResultImages(thirteen)), 9)
+
+  // 14 total → droppable 8 → two batches dropped, 6 remain
+  const fourteen = [...Array.from({ length: 14 }, (_, i) => shot(i, 1))]
+  check('limit: next boundary (14 → 6)', countToolImages(limitToolResultImages(fourteen)), 6)
+
+  // multi-image tool result split across the drop boundary keeps the tail
+  const multi = [shot(0, 3), shot(1, 3), shot(2, 3), shot(3, 3)] // 12 total → drop 4 → 8 remain
+  const multiPruned = limitToolResultImages(multi)
+  check('limit: multi-image drop count', countToolImages(multiPruned), 8)
+  check(
+    'limit: boundary message keeps its newer images',
+    multiPruned[1].role === 'tool' && multiPruned[1].images?.length === 2,
+    true
+  )
+
+  // determinism: same history prunes to byte-identical shape
+  check(
+    'limit: deterministic over identical histories',
+    JSON.stringify(limitToolResultImages(ten)) === JSON.stringify(limitToolResultImages(ten)),
+    true
+  )
+}
 
 // ---------------------------------------------------------------------------
 

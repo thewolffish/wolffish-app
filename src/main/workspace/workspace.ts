@@ -350,19 +350,6 @@ export type CompactionConfig = {
   cards: boolean
 }
 
-/**
- * Which surfaces accept a turn score (the 0-10 rating). In-app renders a
- * rating bar under a completed turn; on Telegram/WhatsApp a bare-number
- * reply (0-10) is captured as a score instead of dispatched as a message.
- * Per-surface so the channel voting can be turned off where it annoys
- * (a numeric answer to a numeric question would be swallowed as a score).
- */
-export type ReflectionScoringConfig = {
-  inapp: boolean
-  telegram: boolean
-  whatsapp: boolean
-}
-
 export type ReflectionConfig = {
   /**
    * Hour of day (0-23) the nightly reflection fires. Defaults to 3. The
@@ -373,11 +360,9 @@ export type ReflectionConfig = {
   hour: number
   /**
    * A conversation is only reviewed once it has been quiet for this many
-   * hours — a conversation still warm may not be done (or scored) yet.
-   * Defaults to 12.
+   * hours — a conversation still warm may not be done yet. Defaults to 12.
    */
   quietHours: number
-  scoring: ReflectionScoringConfig
   /**
    * Whether a running reflection job (nightly review or monthly deep clean)
    * draws its floating card on either surface — the compaction switch's twin,
@@ -423,8 +408,8 @@ export type WorkspaceConfig = {
   }
   // Optional so configs written before this field shipped still parse.
   safety?: SafetyConfig
-  // Nightly self-review (reflection), turn scoring, and the monthly deep
-  // clean. Optional so configs written before the feature shipped parse.
+  // Nightly self-review (reflection) and the monthly deep clean. Optional
+  // so configs written before the feature shipped parse.
   reflection?: ReflectionConfig
   // Context optimization (prompt caching). On by default; set
   // enabled: false to restore the legacy per-iteration prompt rebuild
@@ -1296,15 +1281,14 @@ export async function setCompactionConfig(
 export const DEFAULT_REFLECTION: ReflectionConfig = {
   hour: 3,
   quietHours: 12,
-  scoring: { inapp: true, telegram: true, whatsapp: true },
   cards: false
 }
 
 /**
- * Merge a possibly-partial stored value over the defaults (nested scoring
- * included). Constructed field-by-field so retired keys in an older stored
- * config (e.g. the removed `enabled` switch) are dropped rather than
- * carried forward.
+ * Merge a possibly-partial stored value over the defaults. Constructed
+ * field-by-field so retired keys in an older stored config (e.g. the removed
+ * `enabled` switch, or the retired turn-scoring `scoring` map) are dropped
+ * rather than carried forward.
  */
 export function normalizeReflectionConfig(
   raw: Partial<ReflectionConfig> | undefined | null
@@ -1312,7 +1296,6 @@ export function normalizeReflectionConfig(
   return {
     hour: raw?.hour ?? DEFAULT_REFLECTION.hour,
     quietHours: raw?.quietHours ?? DEFAULT_REFLECTION.quietHours,
-    scoring: { ...DEFAULT_REFLECTION.scoring, ...(raw?.scoring ?? {}) },
     cards: raw?.cards ?? DEFAULT_REFLECTION.cards
   }
 }
@@ -1322,14 +1305,8 @@ export async function getReflectionConfig(): Promise<ReflectionConfig> {
   return normalizeReflectionConfig(cfg?.reflection)
 }
 
-/**
- * A partial reflection edit. Distinct from Partial<ReflectionConfig> only in
- * `scoring`, which may itself be partial — the setter merges flag by flag, so
- * a caller flipping one surface needn't know (or guess) the other two.
- */
-export type ReflectionPatch = Partial<Omit<ReflectionConfig, 'scoring'>> & {
-  scoring?: Partial<ReflectionScoringConfig>
-}
+/** A partial reflection edit. */
+export type ReflectionPatch = Partial<ReflectionConfig>
 
 export async function setReflectionConfig(patch: ReflectionPatch): Promise<WorkspaceConfig> {
   return patchConfig((c) => {
@@ -1338,11 +1315,7 @@ export async function setReflectionConfig(patch: ReflectionPatch): Promise<Works
       ...c,
       // Re-normalized so only known fields persist — a stale caller can't
       // write retired keys back into the stored config.
-      reflection: normalizeReflectionConfig({
-        ...current,
-        ...patch,
-        scoring: { ...current.scoring, ...(patch.scoring ?? {}) }
-      })
+      reflection: normalizeReflectionConfig({ ...current, ...patch })
     }
   })
 }

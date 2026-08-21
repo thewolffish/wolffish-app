@@ -262,7 +262,6 @@ export async function buildConfigSnapshot(sources: SnapshotSources): Promise<Con
   const mcp = (config.mcp ?? {}) as Cfg
   const compaction = (config.compaction ?? {}) as Cfg
   const reflection = (config.reflection ?? {}) as Cfg
-  const reflectionScoring = (reflection.scoring ?? {}) as Cfg
   const safety = (config.safety ?? {}) as Cfg
   const disabledCapabilities: string[] = Array.isArray(config.disabledCapabilities)
     ? config.disabledCapabilities
@@ -552,19 +551,14 @@ export async function buildConfigSnapshot(sources: SnapshotSources): Promise<Con
       syncedAt: new Date().toISOString()
     },
 
-    // Defaults mirror DEFAULT_REFLECTION (3 / 12 / every surface on), not
-    // invented ones — an unset config must read the same on both screens.
+    // Defaults mirror DEFAULT_REFLECTION (3 / 12), not invented ones — an
+    // unset config must read the same on both screens.
     reflection: {
       hour: int(reflection.hour, 3),
       quietHours: int(reflection.quietHours, 12),
       // Floating run cards for the nightly review and the deep clean — one
       // switch for both surfaces, defaulting off like the compaction twin.
-      cards: bool(reflection.cards),
-      scoring: {
-        inapp: bool(reflectionScoring.inapp, true),
-        telegram: bool(reflectionScoring.telegram, true),
-        whatsapp: bool(reflectionScoring.whatsapp, true)
-      }
+      cards: bool(reflection.cards)
     },
 
     compaction: {

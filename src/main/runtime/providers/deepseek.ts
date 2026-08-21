@@ -7,6 +7,7 @@ import type {
   UserContentBlock
 } from '@main/runtime/thalamus'
 import { effortFromMode } from '@main/runtime/reasoning'
+import { openaiCompatToolContent } from '@main/runtime/tool-images'
 
 const DEEPSEEK_ENDPOINT = 'https://api.deepseek.com/chat/completions'
 
@@ -280,10 +281,15 @@ function toMessages(messages: ChatMessage[]): Array<Record<string, unknown>> {
       const id = m.toolUseId
       if (!id || !declaredCallIds.has(id) || resultedCallIds.has(id)) continue
       resultedCallIds.add(id)
+      // DeepSeek's API is text-only today, so the thalamus vision gate
+      // strips tool images before they reach this encoder — but the day
+      // DeepSeek ships a vision model, flipping the vision.ts allowlist is
+      // all it takes for screenshots to flow (same shape as every other
+      // OpenAI-compat provider here).
       out.push({
         role: 'tool',
         tool_call_id: id,
-        content: m.content
+        content: openaiCompatToolContent(m.content, m.images, m.toolName)
       })
       continue
     }

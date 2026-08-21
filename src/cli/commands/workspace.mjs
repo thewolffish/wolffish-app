@@ -77,11 +77,6 @@ export async function conversations(client, args, flags = {}, resume = null) {
     if (!rest[0]) return usageLine('wolffish conversations diagnose <id>')
     return exportDiagnostics(client, rest[0])
   }
-  if (sub === 'rate') {
-    if (!rest[0] || rest[1] === undefined)
-      return usageLine('wolffish conversations rate <id> <0-10>')
-    return rateConversation(client, rest[0], rest[1])
-  }
   if (sub === 'resume' || sub === 'open' || sub === 'continue') {
     if (!resume) return usageLine('wolffish resume <id>')
     const id = rest[0] ? await resolveConversationId(client, rest[0]) : null
@@ -96,7 +91,7 @@ export async function conversations(client, args, flags = {}, resume = null) {
   if (asId) return showConversation(client, asId, { verbose: flags.verbose, json: flags.json })
 
   out(c.red(`unknown: ${cmd(`conversations ${sub}`)}`))
-  out(c.gray('  list · show · resume · diagnose · rate · rm'))
+  out(c.gray('  list · show · resume · diagnose · rm'))
   return 2
 }
 
@@ -508,17 +503,9 @@ export async function showConversation(
     c.gray(`  ${conversation.id} · ${shown}${verbose ? '' : ` · ${showTools} for every tool call`}`)
   )
 
-  // Scores belong ON the turn they judge — a transcript that lists them
-  // separately makes the reader match ids by eye.
-  const scores = new Map((conversation.ratings ?? []).map((r) => [r.messageId, r.score]))
   const lines = captureOutput(() => {
     for (const message of messages) {
       renderStoredMessage(message, { verbose, showTools })
-      const score = message.id ? scores.get(message.id) : undefined
-      // Not the chevron: that glyph prefixes a USER MESSAGE in this same
-      // transcript, and reusing it makes a score read like something someone
-      // said. A star is a judgement.
-      if (score !== undefined) out(c.gray(`  ${g.current} you scored this ${score}/10`))
     }
   })
 
@@ -531,44 +518,12 @@ export async function showConversation(
 }
 
 /**
- * Score a conversation's last answer. The same ledger the in-app rating bar
- * writes, which is what the nightly reflection reads.
- */
-/**
  * A project by id, id-prefix or title — the same forgiving match every other
  * `<thing> <id>` argument in this CLI takes.
  */
 export async function resolveProjectId(client, needle) {
   const found = await findIn(client, 'projects:list', needle)
   return found?.id ?? null
-}
-
-export async function rateConversation(client, id, rawScore) {
-  const resolved = await resolveConversationId(client, id)
-  if (!resolved) {
-    err(c.red(`no conversation matching "${id}"`))
-    return 1
-  }
-  const score = Number.parseInt(String(rawScore), 10)
-  if (!Number.isFinite(score) || score < 0 || score > 10) {
-    return usageLine('wolffish conversations rate <id> <0-10>')
-  }
-  const rating = await client
-    .invoke('conversation:rate', {
-      conversationId: resolved,
-      messageId: null,
-      score,
-      // Named, so the reflection's ledger records where the judgement came
-      // from rather than attributing it to a window nobody opened.
-      source: 'cli'
-    })
-    .catch(() => null)
-  if (!rating) {
-    out(c.gray('  nothing rateable in that conversation — it has no finished answer'))
-    return 1
-  }
-  out(`${icon.ok()} scored ${c.bold(`${score}/10`)}`)
-  return 0
 }
 
 /**

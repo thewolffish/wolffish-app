@@ -105,7 +105,7 @@ async function snapshotPaths(): Promise<Set<string>> {
       tts: {},
       computerUse: {},
       browserExtension: {},
-      reflection: { scoring: {} },
+      reflection: {},
       compaction: {},
       mcp: { servers: [] },
       notion: { connections: [] },
@@ -341,13 +341,10 @@ async function main(): Promise<void> {
     assert.deepEqual(bare, [], 'a row must read as words, never as a key')
   })
 
-  // A dotted wrap is how a nested partial (`{ scoring: { inapp: true } }`)
+  // A dotted wrap is how a nested partial (`{ giphy: { apiKey: 'k' } }`)
   // reaches a handler. Getting it wrong writes a top-level key the handler
   // ignores — a save that reports success and changes nothing.
   check('a dotted wrap builds the nested partial the handler expects', () => {
-    const scoring = CLI_SETTINGS.find((s) => s.id === 'knowledge.reflection.scoring.inapp')
-    assert.ok(scoring)
-    assert.deepEqual(settingArgs(scoring, true), [{ scoring: { inapp: true } }])
     const giphy = CLI_SETTINGS.find((s) => s.id === 'services.memes.giphyApiKey')
     assert.ok(giphy)
     assert.deepEqual(settingArgs(giphy, 'k'), [{ giphy: { apiKey: 'k' } }])

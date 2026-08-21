@@ -9,7 +9,6 @@ import {
 } from '@main/channels/channel'
 import { queueConversationSummarization } from '@main/conversation-summarizer'
 import type { TurnRunner } from '@main/channels/turn-runner'
-import { parseTurnScore, tryCaptureChannelScore } from '@main/channels/turn-score'
 import {
   getConversationIdForJid,
   setConversationIdForJid
@@ -84,7 +83,6 @@ import type { LocalProvider } from '@main/runtime/providers/local'
 import { composeAttachmentContext } from '@main/uploads/compose-attachments'
 import { saveUploadFromBuffer } from '@main/uploads/uploads'
 import {
-  getReflectionConfig,
   getWhatsAppConfig,
   readConfig,
   setBrain as persistBrain,
@@ -1175,15 +1173,11 @@ export class WhatsAppChannel {
 
       this.agent.corpus.emit('whatsapp.message.received', { remoteJid: jid, body })
 
-      void this.handleInboundMessage(jid, body, msg.key)
+      void this.handleInboundMessage(jid, body)
     }
   }
 
-  private async handleInboundMessage(
-    jid: string,
-    text: string,
-    msgKey?: WAMessage['key']
-  ): Promise<void> {
+  private async handleInboundMessage(jid: string, text: string): Promise<void> {
     const trimmed = text.trim()
     const lower = trimmed.toLowerCase()
 
@@ -1411,34 +1405,6 @@ export class WhatsAppChannel {
     if (active?.pendingAsk && active.pendingAskResolve) {
       await this.resolvePendingAsk(jid, active, trimmed)
       return
-    }
-
-    // Turn scoring: a bare 0-10 reply is the user's score for this chat's
-    // last completed turn — captured for the nightly reflection, never
-    // dispatched as a message. AFTER the picker and ask_user checks (a "3"
-    // answering a numbered card keeps meaning option 3), before the
-    // busy/queue path. Falls through as a normal message when scoring is
-    // off, the chat is unbound, or nothing is rateable yet.
-    if (parseTurnScore(trimmed) !== null) {
-      const boundId = await getConversationIdForJid(jid).catch(() => null)
-      const rating = await tryCaptureChannelScore('whatsapp', boundId, trimmed, getReflectionConfig)
-      if (rating) {
-        this.agent.corpus.emit('conversation.rated', {
-          conversation: boundId!,
-          messageId: rating.messageId,
-          score: rating.score,
-          at: rating.at,
-          source: 'whatsapp'
-        })
-        // ✍ = "noted": react to the vote instead of sending a bubble.
-        // Best-effort — the score is already recorded.
-        if (msgKey && this.sock) {
-          await this.sock
-            .sendMessage(jid, { react: { text: '✍️', key: msgKey } })
-            .catch(() => undefined)
-        }
-        return
-      }
     }
 
     // Busy check — one turn at a time PER CHAT. Other chats (and other
@@ -2305,20 +2271,6 @@ export class WhatsAppChannel {
                   .then(() => {
                     if (assistant) queueConversationSummarization(finished.conversation.id)
                   })
-                  .catch(() => undefined)
-              }
-
-              // Turn-score invite — the channel twin of the in-app rating
-              // bar: one minimal line after each completed reply telling the
-              // user how to score it. The same per-channel toggle that gates
-              // vote capture gates this invite, so off = fully silent.
-              if (assistant) {
-                void getReflectionConfig()
-                  .then((cfg) =>
-                    cfg.scoring.whatsapp
-                      ? this.safeSend(jid, '_Rate this reply: send 0-10_')
-                      : undefined
-                  )
                   .catch(() => undefined)
               }
 

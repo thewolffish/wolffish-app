@@ -516,24 +516,6 @@ export type ConversationFile = {
   summarizedThroughMessage?: number | null
   /** Id of the first message NOT covered by `summary` — survives id-keyed merges that insert before the mark (dual decl — see src/main/conversations.ts). */
   summarizedThroughMessageId?: string | null
-  /** Per-turn 0-10 user scores, keyed by assistant message id (dual decl — see src/main/conversations.ts). */
-  ratings?: ConversationRating[]
-}
-
-/**
- * Which surface cast the score. `cli` is a real source, not a synonym for
- * `inapp`: the reflection reads this ledger, and a terminal-only install whose
- * every score claimed to come from a window nobody opened would be describing
- * a machine that does not exist.
- */
-export type ConversationRatingSource = 'inapp' | 'telegram' | 'whatsapp' | 'mobile' | 'cli'
-
-/** A user's 0-10 score for one completed turn (dual decl — see src/main/conversations.ts). */
-export type ConversationRating = {
-  messageId: string
-  score: number
-  at: number
-  source: ConversationRatingSource
 }
 
 export type ConversationMeta = {
@@ -864,18 +846,10 @@ export type CompactionRuns = {
   deepClean?: CompactionRunRecord | null
 }
 
-/** Mirrors workspace's ReflectionScoringConfig (dual decl). */
-export type ReflectionScoringConfig = {
-  inapp: boolean
-  telegram: boolean
-  whatsapp: boolean
-}
-
 /** Mirrors workspace's ReflectionConfig (dual decl). Reflection + deep clean are core — no off switches, only the hour. */
 export type ReflectionConfig = {
   hour: number
   quietHours: number
-  scoring: ReflectionScoringConfig
   /** Whether a running reflection job draws its floating card (default off). */
   cards: boolean
 }
@@ -1037,7 +1011,7 @@ export type TaskApi = {
    * transitions, artifact download — including after the owning turn ended.
    * The renderer upserts the snapshot into the matching `task` segment and
    * folds it into its in-memory conversation so the next whole-file save
-   * carries it (the rating-changed pattern).
+   * carries it.
    */
   onChanged: (listener: (snapshot: TaskSnapshot) => void) => () => void
 }
@@ -1049,16 +1023,6 @@ export type ConversationApi = {
   /** ok:false ⇒ refused (conversation has a turn in flight). */
   delete: (id: string) => Promise<{ ok: boolean }>
   create: (model: string | null) => Promise<ConversationFile>
-  /**
-   * Score a completed turn 0-10 (the rating bar). Null messageId scores the
-   * most recent assistant turn on disk. Returns the applied rating, or null
-   * when nothing was rateable.
-   */
-  rate: (payload: {
-    conversationId: string
-    messageId: string | null
-    score: number
-  }) => Promise<ConversationRating | null>
   /**
    * Fired when the main-side rolling summarizer persisted a new prefix
    * summary. The renderer folds it into its in-memory conversation so the
@@ -1088,16 +1052,6 @@ export type ConversationApi = {
    */
   onMessageMirror: (
     listener: (payload: { conversationId: string; message: ConversationMessage }) => void
-  ) => () => void
-  /**
-   * Fired when a turn score was recorded on ANY surface (in-app bar, or a
-   * bare-number Telegram/WhatsApp reply). The conversation file's ratings[]
-   * is the single source of truth; this push lets an open chat fold the vote
-   * into its rating-bar overlay without a reload. Payload-targeted, so only
-   * the named conversation reacts.
-   */
-  onRatingChanged: (
-    listener: (payload: { conversationId: string; rating: ConversationRating }) => void
   ) => () => void
 }
 
@@ -1547,6 +1501,13 @@ export type CapabilityEntry = {
   official: boolean
   /** A locked core capability — shows the Core badge, sorts last, can't be disabled. */
   core: boolean
+  /** Authored by Wolffish itself (skill_create) — shows the Wolffish badge. */
+  wolffish: boolean
+  /**
+   * False only for a Wolffish-authored plugin skill that hasn't passed a real
+   * tool call since it was created or last edited — shows an Untested badge.
+   */
+  tested: boolean
   enabled: boolean
   error?: string
 }
@@ -2376,12 +2337,10 @@ const api: WolffishApi = {
     save: (conv) => ipcRenderer.invoke('conversation:save', conv),
     delete: (id) => ipcRenderer.invoke('conversation:delete', id),
     create: (model) => ipcRenderer.invoke('conversation:create', model),
-    rate: (payload) => ipcRenderer.invoke('conversation:rate', payload),
     onSummaryUpdated: (listener) => subscribe('conversation:summaryUpdated', listener),
     onDeleted: (listener) => subscribe('conversation:deleted', listener),
     onChanged: (listener) => subscribe('conversation:changed', listener),
-    onMessageMirror: (listener) => subscribe('conversation:messageMirror', listener),
-    onRatingChanged: (listener) => subscribe('conversation:ratingChanged', listener)
+    onMessageMirror: (listener) => subscribe('conversation:messageMirror', listener)
   },
   task: {
     cancel: (taskId) => ipcRenderer.invoke('task:cancel', { taskId }),

@@ -50,36 +50,6 @@ import { basename } from '../lib/render.mjs'
 import { stdinIsRawCapable, stdoutIsTty } from '../lib/tty.mjs'
 import { setConsoleEcho } from '../lib/console-ctl.mjs'
 
-/**
- * Arabic-Indic and Eastern Arabic-Indic digits, as ASCII — the same tolerance
- * `parseTurnScore` gives a channel vote, so `/rate ٨` and `/rate 8` agree.
- */
-function normalizeDigits(text) {
-  return String(text).replace(/[\u0660-\u0669\u06f0-\u06f9]/g, (ch) => {
-    const code = ch.codePointAt(0)
-    return String((code - (code >= 0x06f0 ? 0x06f0 : 0x0660)) % 10)
-  })
-}
-
-/** A word for a number, so a score reads as a judgement rather than a datum. */
-const SCORE_WORDS = (score) =>
-  score <= 2 ? '· that one missed' : score <= 5 ? '· noted' : score <= 8 ? '· good' : '· nailed it'
-
-/** The most recent score in a conversation, or null. */
-async function lastRating(client, conversationId) {
-  const conv = await client.invoke('conversation:load', conversationId).catch(() => null)
-  const ratings = conv?.ratings ?? []
-  if (ratings.length === 0) return null
-  // The newest ASSISTANT message's rating, not the newest rating: re-scoring an
-  // older turn must not make it look like the last answer was the one judged.
-  for (let i = conv.messages.length - 1; i >= 0; i--) {
-    const message = conv.messages[i]
-    if (message.role !== 'assistant' || !message.id) continue
-    return ratings.find((rating) => rating.messageId === message.id) ?? null
-  }
-  return null
-}
-
 /** Conversations per page. Enough to scan without scrolling a normal window. */
 const PAGE_SIZE = 25
 
@@ -100,7 +70,6 @@ const SLASH_HELP = [
   ['/info', 'title, context used, cost'],
   ['/cancel', 'stop the running turn'],
   ['/pending', 'answer approvals parked by an earlier session'],
-  ['/rate <0-10>', 'score the last answer (optional — it tunes the agent)'],
 
   ['CONVERSATIONS', null],
   ['/conversations', 'list them, newest first'],
@@ -154,15 +123,7 @@ export async function repl(client, { conversationId = null, verbose = false } = 
     // cumulative on purpose: after `/more`, `/switch 3` must still mean the
     // third row the user read, not the third row of the newest page.
     listing: [],
-    pageSize: PAGE_SIZE,
-    /**
-     * Turns this session has already scored, and whether the "you can score
-     * this" line has been said. Rating is optional, so the invitation is
-     * offered ONCE and never again — a prompt that reappears after every
-     * answer is not an option, it is a toll.
-     */
-    ratedMessageIds: new Set(),
-    ratingHintShown: false
+    pageSize: PAGE_SIZE
   }
 
   const [snapshot, cliConfig, status] = await Promise.all([
@@ -626,22 +587,6 @@ export async function repl(client, { conversationId = null, verbose = false } = 
       state.conversationId = result.conversationId
       state.pendingAttachments = []
       state.files.push(...result.files)
-      /**
-       * Say once that the answer can be scored, then never again.
-       *
-       * The desktop can afford a persistent rating bar because it costs no
-       * lines; a terminal cannot, and a line after every answer would be the
-       * loudest thing in a clean feed. So this is a single, quiet invitation
-       * on the first completed turn of a session — after that, `/rate` is in
-       * `/help` like everything else, and the feed stays the feed.
-       *
-       * It is printed, never asked. Nothing waits on it, and the next thing
-       * typed is the next message.
-       */
-      if (!state.ratingHintShown && !result.error) {
-        state.ratingHintShown = true
-        out(c.gray(`  ${icon.dot()} /rate 0-10 scores that answer — optional, it tunes the agent`))
-      }
       // The title is written by the titler DURING the turn, so it only exists
       // to be read once the turn is over. Fetch it for a conversation this
       // turn created, so the prompt names it from the very next line.
@@ -1180,81 +1125,6 @@ async function handleSlash(client, state, input) {
      * failing closed — the right call, but it left the turn frozen with no
      * route back to the question. This redraws the parked card and answers it.
      */
-    /**
-     * Score the last answer, 0-10 — the in-app rating bar, as one word.
-     *
-     * The score is ALWAYS in the same input as the command: `/rate 8`. That is
-     * the whole design, and it is a deliberate departure from the channels.
-     * Telegram and WhatsApp capture a bare "8" as a vote and swallow it
-     * (turn-score.ts), which is workable in a chat app where the alternative is
-     * a keyboard full of buttons — and wrong here. A terminal is where people
-     * type `8` meaning "the eighth one", `10` meaning a number they want
-     * explained, and whole sentences that start with a digit. Nothing typed at
-     * this prompt is ever read as a score; a message is always a message.
-     *
-     * For the same reason `/rate` alone does NOT open a prompt. Claiming the
-     * next line would put the user one keystroke away from having their next
-     * message eaten by a rating they never asked to give. It reports instead.
-     *
-     * Rating is optional and stays optional: nothing blocks on it, nothing
-     * asks twice, and re-rating a turn simply replaces the score.
-     */
-    case 'rate':
-    case 'score': {
-      if (!state.conversationId) {
-        out(c.gray('  nothing to rate yet — send a message first'))
-        return null
-      }
-      const raw = (args[0] ?? '').trim()
-
-      // Bare `/rate`: say where things stand, and how to change it. No prompt.
-      if (!raw) {
-        const current = await lastRating(client, state.conversationId)
-        if (current) {
-          out(
-            `  last answer scored ${c.bold(`${current.score}/10`)} ${c.gray(`· ${relativeTime(current.at)}`)}`
-          )
-          out(c.gray('  /rate <0-10> to change it'))
-        } else {
-          out(c.gray('  the last answer is not scored'))
-          out(c.gray('  /rate 0-10 — 0 is useless, 10 is exactly right. Optional.'))
-        }
-        return null
-      }
-
-      // Same digit tolerance the channels give a vote, so an Arabic keyboard
-      // scores the same way.
-      const score = Number.parseInt(normalizeDigits(raw), 10)
-      if (
-        !Number.isFinite(score) ||
-        score < 0 ||
-        score > 10 ||
-        !/^[0-9\u0660-\u0669\u06f0-\u06f9]{1,2}$/.test(raw)
-      ) {
-        out(c.red(`  "${raw}" is not a score`))
-        out(c.gray('  /rate <0-10>'))
-        return null
-      }
-      const rating = await client
-        .invoke('conversation:rate', {
-          conversationId: state.conversationId,
-          // Null means "the most recent assistant turn on disk", which from a
-          // terminal is always the one just read.
-          messageId: null,
-          score,
-          source: 'cli'
-        })
-        .catch(() => null)
-      if (!rating) {
-        out(c.gray('  nothing rateable yet — the turn has to finish first'))
-        return null
-      }
-      // Scored turns stop being nudged about.
-      state.ratedMessageIds.add(rating.messageId)
-      out(`${icon.ok()} scored ${c.bold(`${score}/10`)} ${c.gray(SCORE_WORDS(score))}`)
-      return null
-    }
-
     case 'pending': {
       const rows = await client.invoke('cli:pendingRequests').catch(() => [])
       const list = Array.isArray(rows) ? rows : (rows?.requests ?? [])
@@ -1425,26 +1295,6 @@ async function printConversationSummary(client, conversationId) {
     }
     if (all.turns) rows.push(['turns', String(all.turns)])
     if (all.cost) rows.push(['cost', `$${Number(all.cost).toFixed(4)}`])
-  }
-
-  /**
-   * The score, where someone would look for it. A rating that can be given and
-   * never read back is a write-only field — you cannot tell whether the last
-   * one landed, or what you said about this conversation an hour ago.
-   */
-  const ratings = conv.ratings ?? []
-  if (ratings.length > 0) {
-    const assistantTurns = (conv.messages ?? []).filter((m) => m.role === 'assistant').length
-    const newest = ratings.reduce((best, r) => (r.at > (best?.at ?? 0) ? r : best), null)
-    rows.push([
-      'scored',
-      `${c.bold(`${newest.score}/10`)}` +
-        c.gray(
-          ratings.length > 1
-            ? `  ${ratings.length} of ${assistantTurns} turns rated`
-            : `  1 of ${assistantTurns} turns rated`
-        )
-    ])
   }
 
   if (conv.model) rows.push(['model', conv.model])

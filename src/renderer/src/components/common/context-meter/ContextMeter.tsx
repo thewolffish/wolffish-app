@@ -12,6 +12,7 @@ import {
   XAILogo,
   ZaiLogo
 } from '@components/core/ProviderLogos'
+import { cn } from '@lib/utils/cn'
 import { formatCompact } from '@lib/utils/format'
 import type { WorkflowAgentView, WorkflowSnapshot } from '@main/runtime/broca'
 import type { ConversationStats, ConversationTurnStats } from '@preload/index'
@@ -182,7 +183,7 @@ function roundedRectPath(w: number, h: number, r: number, inset: number): string
 // fills clockwise with `percent`. The unfilled track is the border color (so
 // at 0% it reads like the neighbouring cards); the filled part is the context
 // level (green → amber → red). Sized to the card (width × height) so it can
-// match a slightly taller neighbour like the New Chat button.
+// match the composer footer's chip-height controls beside it.
 function SquareFrame({
   width,
   height,
@@ -194,8 +195,8 @@ function SquareFrame({
   percent: number
   color: string | undefined
 }): React.JSX.Element {
-  // 1px stroke so the gauge frame reads as the same weight as the 1px CSS
-  // borders on the neighbouring cards (New Chat, mic, etc.).
+  // 1px stroke so the gauge frame reads as the same weight as the composer
+  // card's own 1px border around it.
   const strokeWidth = 1
   const cornerRadius = 8
   const inset = strokeWidth / 2
@@ -473,17 +474,26 @@ export function ContextMeter({
         }}
         onFocus={onEnter}
         onBlur={onLeave}
-        className="bg-surface relative flex h-[42.5px] w-15.5 shrink-0 cursor-default items-center justify-center rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
+        className={cn(
+          'relative flex h-7 shrink-0 cursor-default items-center justify-center rounded-lg',
+          shownElapsedMs !== null ? 'w-17' : 'w-9',
+          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg'
+        )}
       >
-        {/* The gauge frame (colored by context) is the card border. Fixed
-            62×42.5 to match the New Chat button. Before any turn runs there's
-            no elapsed time, so show just the stats icon (sized like the
-            attach/folder/mic icons); once a turn runs, a small icon stacks
-            over the elapsed time — mirroring New Chat's plus + label. */}
-        <SquareFrame width={62} height={42.5} percent={percent} color={color} />
+        {/* The gauge frame (colored by context) is the trigger's border,
+            drawn at the composer footer's chip height. Before any turn runs
+            there's no elapsed time, so show just the stats icon in a small
+            square; once a turn runs the frame widens to a slim pill with the
+            icon and the elapsed time side by side. */}
+        <SquareFrame
+          width={shownElapsedMs !== null ? 68 : 36}
+          height={28}
+          percent={percent}
+          color={color}
+        />
         {shownElapsedMs !== null ? (
-          <span className="relative z-10 flex flex-col items-center gap-0.5 leading-none">
-            <ChartHistogramIcon size={14} className="text-muted" />
+          <span className="relative z-10 flex items-center gap-1 leading-none">
+            <ChartHistogramIcon size={12} className="text-muted" />
             <span
               className="text-fg whitespace-nowrap text-[10px] font-medium leading-none tabular-nums"
               dir="ltr"
@@ -492,7 +502,7 @@ export function ContextMeter({
             </span>
           </span>
         ) : (
-          <ChartHistogramIcon size={18} className="text-muted relative z-10" />
+          <ChartHistogramIcon size={14} className="text-muted relative z-10" />
         )}
       </button>
 

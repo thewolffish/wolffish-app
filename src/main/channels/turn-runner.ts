@@ -1,5 +1,5 @@
 import { turnRouter, type TurnSink } from '@main/channels/channel'
-import type { ConversationChannel } from '@main/conversations'
+import { lastConversationMessageAt, type ConversationChannel } from '@main/conversations'
 import { ensureConversationTitle, TITLE_DEADLINE_REASON } from '@main/conversation-titler'
 import type { Agent } from '@main/runtime/agent'
 import { turnScope, type CorpusEvent } from '@main/runtime/corpus'
@@ -183,6 +183,17 @@ export class TurnRunner {
    * freshly generated one).
    */
   private readonly titledCache = new Map<string, string>()
+  /**
+   * When each conversation's most recent turn ENDED in this process, keyed by
+   * conversation id. The in-session floor under the on-disk last-message
+   * probe: an in-app fold is persisted by the renderer moments AFTER
+   * agent.respond returns, so a turn queued right behind its predecessor can
+   * read a transcript that doesn't have the last exchange yet — and would
+   * claim a stale hours-old gap to the model. If a turn for this conversation
+   * ended in-process at T, "we last talked" is at least T, whatever the disk
+   * says.
+   */
+  private readonly lastTurnEndedAt = new Map<string, number>()
   private blockCredentials: boolean = false
   private locale: 'en' | 'ar' = 'en'
   private lifecycleListener: ((ev: TurnLifecycleEvent) => void) | null = null
@@ -368,6 +379,20 @@ export class TurnRunner {
 
       opts.onTurnStarted?.({ turnId, controller })
 
+      // "When did we last talk" probe for the conversation-resumed runtime
+      // notice: newest persisted message EXCLUDING this turn's own user
+      // message (channels persist it before dispatching — see
+      // lastConversationMessageAt). Kicked off here so the disk read runs
+      // under the titling await instead of adding latency; resolved to a
+      // value right before agent.respond. Sequenced after prevChain so a
+      // queued turn reads the transcript its predecessor left, and floored
+      // by lastTurnEndedAt for the fold-persist lag that read can still
+      // race. Best-effort: a failed read means no notice, never a failed
+      // turn.
+      const lastMessageAtProbe = conversationId
+        ? lastConversationMessageAt(conversationId, opts.userMessageId).catch(() => null)
+        : Promise.resolve(null)
+
       const offs: Array<() => void> = []
       for (const eventName of TURN_RELAYED_EVENTS) {
         const off = agent.corpus.on(eventName, (payload) => {
@@ -465,6 +490,13 @@ export class TurnRunner {
         }
       }
 
+      // Disk truth floored by in-process truth (see lastTurnEndedAt).
+      const diskLastMessageAt = (await lastMessageAtProbe) ?? 0
+      const sessionLastEndedAt = conversationId
+        ? (this.lastTurnEndedAt.get(conversationId) ?? 0)
+        : 0
+      const lastMessageAt = Math.max(diskLastMessageAt, sessionLastEndedAt) || null
+
       try {
         // The turnScope entry is what keys everything per-turn downstream:
         // the corpus relays above, approval/ask routing in turnRouter, and
@@ -480,6 +512,7 @@ export class TurnRunner {
             contextFiles: opts.contextFiles,
             contextFilesOwner: 'procedure',
             projectId: opts.projectId,
+            lastMessageAt,
             signal: controller.signal,
             onSegment: (segment) => sink.onSegment(segment),
             thinkingMode: opts.thinkingMode,
@@ -508,6 +541,10 @@ export class TurnRunner {
           error: humanized
         })
       } finally {
+        // Recorded on EVERY exit (done, canceled, error) — the user was here
+        // seconds ago in all three, and the queued successor turn reads this
+        // map strictly after this finally runs (it awaits our promise tail).
+        if (conversationId) this.lastTurnEndedAt.set(conversationId, Date.now())
         for (const off of offs) off()
         turnRouter.unregister(turnId)
         opts.onTurnEnded?.({ turnId })

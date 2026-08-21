@@ -80,7 +80,7 @@ tools:
       source:
         type: string
         required: false
-        enum: [user-said, user-scored, inferred]
+        enum: [user-said, inferred]
         description: 'Playbook only — where the lesson came from (default user-said). Stamped with today''s date automatically; inferred entries decay after 30 days.'
   - name: knowledge_edit
     description: 'Amend an existing entry in place — the correction path when a belief is stale or partly wrong. `find` must match exactly one entry; copy it verbatim from knowledge_read.'

@@ -139,6 +139,10 @@ export function formatRuntimeStatus(runtime: RuntimeContext, now: Date = new Dat
   return (
     `[runtime] Current date/time: ${formatClock(now)}. ` +
     `Tool iteration this turn: ${runtime.iteration}. Tools called this turn: ${runtime.toolsCalled}. ` +
+    // Conversation-resumed notice (the previous message is ≥30min old) sits
+    // right after the clock so the two temporal facts read as one: what time
+    // it is now, and how long ago the transcript above stopped being "now".
+    (runtime.lastMessage ? `${runtime.lastMessage} ` : '') +
     (delivered ? `${delivered} ` : '') +
     (runtime.online === false ? `${OFFLINE_NOTICE} ` : '') +
     // No-progress notice rides here — after every cache breakpoint — so its
@@ -147,6 +151,9 @@ export function formatRuntimeStatus(runtime: RuntimeContext, now: Date = new Dat
     // Channel-format notice (a prose block already delivered to the user's
     // phone carried raw markup) — same vehicle, same cache reason.
     (runtime.channelFormat ? `${runtime.channelFormat} ` : '') +
+    // Control-token notice (the model's previous reply ended in a literal
+    // control token the user saw as text) — same vehicle, same cache reason.
+    (runtime.controlToken ? `${runtime.controlToken} ` : '') +
     // Video-task landing notice (an async generation finished while the
     // model was mid-task) — same vehicle, same cache reason.
     (runtime.videoTasks ? `${runtime.videoTasks} ` : '') +
@@ -200,6 +207,71 @@ function resolveHostTimeZone(): string {
   } catch {
     return 'UTC'
   }
+}
+
+/**
+ * Below this gap the conversation-resumed notice renders nothing: replies
+ * inside an active exchange carry no temporal information worth tail tokens,
+ * and suppressing them keeps iteration 1 of ordinary turns as lean as today.
+ * At or above it, the user demonstrably stepped away and came back — the
+ * transcript's "now" and the actual now have separated far enough that the
+ * model must be told, because replayed history carries no timestamps at all.
+ */
+export const RESUME_NOTICE_MIN_GAP_MS = 30 * 60_000
+
+/**
+ * Coarse human-scale rendering of a time gap — "42 minutes ago", "about 5
+ * hours ago", "3 days ago", "about 2 months ago". Deliberately imprecise
+ * past the hour scale: the notice's job is orders of magnitude (is the user
+ * back after lunch, after a weekend, or after a quarter?), and false
+ * precision ("37 days ago") reads worse than honest coarseness. Pure, so it
+ * unit-tests deterministically.
+ */
+export function formatTimeGap(ms: number): string {
+  const MINUTE = 60_000
+  const HOUR = 3_600_000
+  const DAY = 86_400_000
+  const ago = (n: number, unit: string, about = false): string =>
+    `${about ? 'about ' : ''}${n} ${unit}${n === 1 ? '' : 's'} ago`
+  if (ms < HOUR) return ago(Math.max(1, Math.round(ms / MINUTE)), 'minute')
+  if (ms < 2 * DAY) return ago(Math.max(1, Math.round(ms / HOUR)), 'hour', true)
+  if (ms < 14 * DAY) return ago(Math.round(ms / DAY), 'day')
+  if (ms < 61 * DAY) return ago(Math.round(ms / (7 * DAY)), 'week', true)
+  if (ms < 365 * DAY) return ago(Math.max(2, Math.round(ms / (30.44 * DAY))), 'month', true)
+  const years = ms / (365.25 * DAY)
+  return years < 2 ? 'over a year ago' : ago(Math.round(years), 'year', true)
+}
+
+/**
+ * The conversation-resumed notice: when the previous persisted message in
+ * this conversation is RESUME_NOTICE_MIN_GAP_MS or older, tell the model —
+ * relative gap first (the salient fact), then the full timestamp via
+ * formatClock (same format as the tail's own clock, so the two lines are
+ * directly comparable). Undefined below the threshold or with no previous
+ * message, so the common case renders nothing.
+ *
+ * This exists because replayed history is timeless: without it, a user
+ * returning after three weeks gets answers that treat the transcript's
+ * "today", prices, and running state as still current. Computed ONCE per
+ * turn by the Agent (now = turn start) so the string is byte-stable across
+ * the turn's iterations, like the voice and phone notices.
+ */
+export function formatLastMessageNotice(
+  lastMessageAt: number | null | undefined,
+  now: Date = new Date(),
+  timeZone: string = resolveHostTimeZone()
+): string | undefined {
+  if (typeof lastMessageAt !== 'number' || !Number.isFinite(lastMessageAt) || lastMessageAt <= 0) {
+    return undefined
+  }
+  const gapMs = now.getTime() - lastMessageAt
+  if (gapMs < RESUME_NOTICE_MIN_GAP_MS) return undefined
+  return (
+    `CONVERSATION RESUMED: the previous message in this conversation was ${formatTimeGap(gapMs)} — ` +
+    `${formatClock(new Date(lastMessageAt), timeZone)}. ` +
+    `The user is writing from the present; the turns above spoke from that older "now", so treat their ` +
+    `time-sensitive content (dates, "today", running state, fresh data) as dated and re-check what matters.`
+  )
 }
 
 /**

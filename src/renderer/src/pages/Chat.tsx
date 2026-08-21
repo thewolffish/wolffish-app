@@ -23,7 +23,6 @@ import { Sidebar } from '@components/common/sidebar/Sidebar'
 import { SpreadsheetViewer } from '@components/common/spreadsheet-viewer/SpreadsheetViewer'
 import { ToolCard } from '@components/common/tool-card/ToolCard'
 import { TurnFooter } from '@components/common/turn-footer/TurnFooter'
-import { TurnRating } from '@components/common/turn-rating/TurnRating'
 import { UpdateCard } from '@components/common/update-card/UpdateCard'
 import { VideoPlayer } from '@components/common/video-player/VideoPlayer'
 import { TaskCard } from '@components/common/task-card/TaskCard'
@@ -55,7 +54,6 @@ import type {
   AskUserResponse,
   ChatHistoryMessage,
   ConversationFile,
-  ConversationRating,
   ConversationStats,
   ConversationTurnStats,
   MessageAttachment,
@@ -394,33 +392,6 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
   const busy = streaming || remoteRunning
 
   /**
-   * Turn scoring (the 0-10 rating bar above the composer). Gated by the
-   * in-app toggle in Settings → Knowledge → Reflection; scores persist onto
-   * the conversation file and become the nightly reflection's ground-truth
-   * signal. `turnRatings` overlays this session's votes on whatever the
-   * loaded conversation already carried.
-   */
-  const [scoringEnabled, setScoringEnabled] = useState(false)
-  const [turnRatings, setTurnRatings] = useState<Record<string, number>>({})
-  useEffect(() => {
-    let cancelled = false
-    const load = (): void => {
-      void window.api.runtime
-        .getReflectionConfig()
-        .then((cfg) => {
-          if (!cancelled) setScoringEnabled(cfg.scoring.inapp)
-        })
-        .catch(() => undefined)
-    }
-    load()
-    const off = window.api.runtime.onReflectionChanged(load)
-    return () => {
-      cancelled = true
-      off()
-    }
-  }, [])
-
-  /**
    * The feed, plus a pending bubble while a channel run is live and hasn't
    * mirrored its assistant message yet — otherwise the transcript would end
    * on the user's message and look finished. Once the mirror lands (or the
@@ -719,98 +690,6 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
   // The onTurnEvent closure is created once, so reading the token state
   // directly there would see stale (turn-start) values — the ref does not.
   const turnStatsRef = useRef<TurnStats>(emptyTurnStats())
-
-  // In-flight in-app votes. A disk fold landing mid-IPC must not flip the
-  // just-clicked segment back to a stale copy; resolve/revert releases the hold.
-  const pendingVotesRef = useRef(new Set<string>())
-
-  /**
-   * Fold persisted scores into the reactive `turnRatings` overlay. Called at
-   * every point a fresh copy of the truth arrives — conversation load, the
-   * conversation:changed disk sync, the conversation:ratingChanged push — NOT
-   * keyed on `messages`: a sidebar open seeds the full feed before the async
-   * load sets conversationRef, and the load then changes no message identity,
-   * so a messages-keyed effect never saw a reopened conversation's scores
-   * (the "scored on Telegram, looks unscored on desktop" bug). Overwrites:
-   * the file's ratings[] is the single source of truth, so a phone re-vote
-   * replaces what this surface shows; only in-flight local votes hold.
-   */
-  const foldRatings = useCallback((ratings: ConversationRating[] | null | undefined): void => {
-    if (!ratings?.length) return
-    setTurnRatings((prev) => {
-      let changed = false
-      const next = { ...prev }
-      for (const r of ratings) {
-        if (pendingVotesRef.current.has(r.messageId)) continue
-        if (next[r.messageId] === r.score) continue
-        next[r.messageId] = r.score
-        changed = true
-      }
-      return changed ? next : prev
-    })
-  }, [])
-
-  // The bar targets the last completed assistant message of an idle chat
-  // that has a persisted conversation to attach the score to — and only for
-  // as long as that turn has NO score. Once a score is in the bar retires:
-  // an already-answered strip sitting over the composer until the next turn
-  // reads as nagging, and re-voting on the turn you just rated is not worth
-  // the standing prompt.
-  //
-  // The unscored check is `turnRatings`, which is the file's ratings[] as
-  // this surface sees it — folded in on load, on the conversation:changed
-  // sync, and on the conversation:ratingChanged push. So the bar retires for
-  // a vote cast on ANY surface, not just this one: this bar's own optimistic
-  // write, the phone's rate RPC, a bare-number Telegram or WhatsApp reply.
-  // One source of truth, one condition.
-  const lastFeedMessage = messages[messages.length - 1]
-  const ratableMessage =
-    scoringEnabled &&
-    !busy &&
-    activeConversationId !== null &&
-    lastFeedMessage &&
-    isAssistant(lastFeedMessage) &&
-    lastFeedMessage.status !== 'streaming' &&
-    turnRatings[lastFeedMessage.id] === undefined
-      ? lastFeedMessage
-      : null
-  const rateTurn = useCallback((messageId: string, score: number): void => {
-    const conv = conversationRef.current
-    if (!conv) return
-    // Optimistic paint, held against disk folds until the write settles.
-    pendingVotesRef.current.add(messageId)
-    setTurnRatings((prev) => ({ ...prev, [messageId]: score }))
-    // The write never landed — fall back to what the file truly holds: the
-    // prior persisted score on a failed re-vote, unscored otherwise.
-    const revert = (): void => {
-      const persisted = conversationRef.current?.ratings?.find((r) => r.messageId === messageId)
-      setTurnRatings((prev) => {
-        const next = { ...prev }
-        if (persisted) next[messageId] = persisted.score
-        else delete next[messageId]
-        return next
-      })
-    }
-    void window.api.conversation
-      .rate({ conversationId: conv.id, messageId, score })
-      .then((rating) => {
-        if (!rating) {
-          revert()
-          return
-        }
-        // Fold into the in-memory copy so the next whole-file save carries it.
-        if (conversationRef.current?.id === conv.id) {
-          const rest = (conversationRef.current.ratings ?? []).filter(
-            (r) => r.messageId !== messageId
-          )
-          conversationRef.current.ratings = [...rest, rating]
-        }
-      })
-      .catch(revert)
-      .finally(() => {
-        pendingVotesRef.current.delete(messageId)
-      })
-  }, [])
 
   // ── Voice recording ───────────────────────────────────────────
   type RecorderPhase = 'idle' | 'recording' | 'review'
@@ -1190,10 +1069,6 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
         // newer effect run is now in flight and owns conversationRef.
         if (!conv || conversationIdRef.current !== targetId) return
         conversationRef.current = conv
-        // Scores live on the file, and the descriptor-seeded feed usually
-        // makes the setMessages below a no-op — fold them here, at the load
-        // itself, or a reopened conversation shows its rating bar unscored.
-        foldRatings(conv.ratings)
         // A turn still in flight for the OUTGOING conversation must not
         // bleed into this one (its llm.response events would overwrite the
         // restored meter and its done would persist the wrong reading here).
@@ -1320,7 +1195,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
         setFilesOpen(false)
       })
     }
-  }, [activeConversationId, resetTurnStats, foldRatings])
+  }, [activeConversationId, resetTurnStats])
 
   // Pull in messages another surface appended to the conversation we have open
   // — you answer on your phone while this chat sits on screen. Nothing else
@@ -1348,9 +1223,6 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
       if (pendingTurnIdRef.current !== null) return
       const conv = await window.api.conversation.load(targetId)
       if (cancelled || !conv || conversationIdRef.current !== targetId) return
-      // This load is the freshest copy of the file we'll hold — carry its
-      // scores along with its messages (a channel vote rides the same disk).
-      foldRatings(conv.ratings)
       setMessages((prev) => {
         const persistedPrev = prev.filter(isPersistedMessage)
         // Id-keyed diff when both sides are fully id'd (every post-migration
@@ -1396,7 +1268,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
       if (timer) clearTimeout(timer)
       off()
     }
-  }, [activeConversationId, foldRatings])
+  }, [activeConversationId])
 
   // Live mirror of an IN-FLIGHT Telegram/WhatsApp turn. The channel streams
   // throttled snapshots of its in-progress assistant message (main-side
@@ -1428,34 +1300,13 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     })
   }, [activeConversationId])
 
-  // A turn score cast on ANY surface while this conversation is open — the
-  // usual case is a bare-number Telegram/WhatsApp reply landing on a chat
-  // that's on screen. A vote writes only ratings[] (no reindex, so no
-  // conversation:changed and no sync()); this targeted push is the only way
-  // it reaches an open feed. Folds into the in-memory copy too, so our next
-  // whole-file save carries the vote instead of racing it (the merge's
-  // fresher-at rule backstops the race either way).
-  useEffect(() => {
-    if (!activeConversationId) return
-    const targetId = activeConversationId
-    return window.api.conversation.onRatingChanged(({ conversationId, rating }) => {
-      if (conversationId !== targetId || conversationIdRef.current !== targetId) return
-      foldRatings([rating])
-      const conv = conversationRef.current
-      if (conv && conv.id === targetId) {
-        const rest = (conv.ratings ?? []).filter((r) => r.messageId !== rating.messageId)
-        conv.ratings = [...rest, rating].sort((a, b) => a.at - b.at)
-      }
-    })
-  }, [activeConversationId, foldRatings])
-
   // Async-task snapshots (video generation) keep flowing AFTER the owning
   // turn ends — poll transitions, artifact download. Fold each push into the
   // matching `task` segment in both the reactive messages and the in-memory
   // conversation copy, so the card updates live and the next whole-file save
-  // carries the new state (the rating-changed pattern). During streaming the
-  // same snapshot also arrives as a broca segment; both paths upsert by
-  // taskId, so double delivery is idempotent.
+  // carries the new state. During streaming the same snapshot also arrives
+  // as a broca segment; both paths upsert by taskId, so double delivery is
+  // idempotent.
   useEffect(() => {
     if (!activeConversationId) return
     const targetId = activeConversationId
@@ -1907,7 +1758,6 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
         const loaded = await window.api.conversation.load(activeConversationId)
         if (loaded) {
           conversationRef.current = loaded
-          foldRatings(loaded.ratings)
         } else {
           const now = Date.now()
           conversationRef.current = {
@@ -1942,8 +1792,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     activeCloudModel,
     setActiveConversationId,
     descriptor.projectId,
-    descriptor.icon,
-    foldRatings
+    descriptor.icon
   ])
 
   const sendContent = useCallback(
@@ -2967,26 +2816,13 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
           else void send()
         }}
         className={cn(
-          'bg-bg/80 relative z-40 p-4 backdrop-blur',
+          'bg-bg/80 relative z-40 p-3 backdrop-blur',
           !busy && 'border-t border-border/60'
         )}
       >
         {busy && <div className="rainbow-border" />}
-        {(queuedPrompts.length > 0 ||
-          pendingAttachments.length > 0 ||
-          staging ||
-          ratableMessage !== null) && (
+        {(queuedPrompts.length > 0 || pendingAttachments.length > 0 || staging) && (
           <div className="pointer-events-none absolute inset-x-0 bottom-full flex flex-col gap-2 px-4 pb-2">
-            {/* Turn score bar — an idle chat's last completed turn is
-                rateable 0-10. Mutually exclusive with queued prompts in
-                practice (those only exist while busy). Always unscored: a
-                turn that has a score has no bar (see ratableMessage), so
-                the click both records the vote and dismisses the strip. */}
-            {ratableMessage !== null && (
-              <div className="pointer-events-auto mx-auto">
-                <TurnRating score={null} onRate={(score) => rateTurn(ratableMessage.id, score)} />
-              </div>
-            )}
             {/* Queued prompts live HERE, above the composer — never in the
                 feed. A message only enters the feed once its turn is sent. */}
             {queuedPrompts.length > 0 && (
@@ -3014,22 +2850,100 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
             )}
           </div>
         )}
-        <div className="relative flex w-full items-end gap-1">
-          {/* Full-width composer, three zones. START: session/config controls
-                (new chat, meter, cloud/local + model). MIDDLE: the
-                textarea — it lives in the trailing group but takes `order-first`
-                there, so it renders between the two button clusters and grows
-                (flex-1) to fill the gap, giving the row breathing room. END:
-                message actions (attach, folder, mic) as light ghost icons +
-                the primary send. */}
-          <div className="flex shrink-0 items-end gap-1">
-            <div className="border-border bg-surface inline-flex shrink-0 items-center rounded-lg border p-0.5">
+        {/* One surface, Codex/Claude-style: the prompt IS the composer. The
+            card carries the border/background that used to belong to the
+            textarea; every control now rides INSIDE it. Top zone: the
+            textarea (or the recorder strip that swaps in for it) with the
+            expand + New Chat / Project controls on its end edge. Bottom
+            zone: model + usage at the start, message actions + send at the
+            end. Every control keeps its exact behavior — only the chrome
+            moved inside the input. */}
+        <div className="border-border bg-surface focus-within:border-muted relative flex w-full flex-col rounded-xl border">
+          <div className="flex w-full items-start">
+            {recPhase === 'idle' ? (
+              <textarea
+                ref={textareaRef}
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault()
+                    // Mid-turn this queues instead of sending — send()
+                    // branches on `busy`.
+                    void send()
+                  }
+                }}
+                rows={1}
+                placeholder={busy ? t('chat.queue.placeholder') : t('chat.placeholder')}
+                dir={isRtl ? 'rtl' : 'ltr'}
+                className={cn(
+                  'text-fg placeholder:text-muted max-h-40 min-h-[38px] min-w-0 flex-1 resize-none bg-transparent px-3.5 pt-2.5 pb-0.5 text-sm outline-none',
+                  placeholderAlign
+                )}
+              />
+            ) : recPhase === 'recording' ? (
+              <div className="flex min-h-[38px] min-w-0 flex-1 items-center gap-3 px-3.5">
+                <span className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-red-500" />
+                <span className="text-fg tabular-nums text-sm font-medium">
+                  {formatRecTime(recElapsed)}
+                </span>
+                <span className="text-muted flex-1 text-xs">{t('chat.voice.recording')}</span>
+                {/* Ends the RECORDING, not the turn — while a turn runs the
+                    red turn-Stop sits right beside it, so it needs its own
+                    label. */}
+                <button
+                  type="button"
+                  onClick={stopRecording}
+                  className="bg-red-600 text-white flex h-7 w-7 items-center justify-center rounded-full hover:bg-red-700"
+                  aria-label={t('chat.voice.stopRecording')}
+                  title={t('chat.voice.stopRecording')}
+                >
+                  <StopCircleIcon size={14} />
+                </button>
+              </div>
+            ) : (
+              <div className="flex min-h-[38px] min-w-0 flex-1 items-center gap-2 px-3.5">
+                <button
+                  type="button"
+                  onClick={togglePlayback}
+                  className="text-muted hover:text-fg flex h-7 w-7 shrink-0 items-center justify-center rounded-md"
+                  aria-label={recPlaying ? t('chat.voice.pause') : t('chat.voice.play')}
+                >
+                  {recPlaying ? <PauseIcon size={14} /> : <PlayIcon size={14} />}
+                </button>
+                <span className="text-fg tabular-nums text-sm font-medium">
+                  {formatRecTime(recElapsed)}
+                </span>
+                <div className="flex-1" />
+                <button
+                  type="button"
+                  onClick={discardRecording}
+                  className="text-muted hover:text-fg flex h-7 w-7 shrink-0 items-center justify-center rounded-md"
+                  aria-label={t('chat.voice.delete')}
+                  title={t('chat.voice.delete')}
+                >
+                  <Delete02Icon size={14} />
+                </button>
+                {/* Mid-turn this queues the take rather than sending it —
+                    the icon swaps to a clock to say so. */}
+                <button
+                  type="button"
+                  onClick={() => void sendRecording()}
+                  className="bg-primary text-primary-fg flex h-7 w-7 shrink-0 items-center justify-center rounded-full hover:brightness-110"
+                  aria-label={busy ? t('chat.voice.queue') : t('chat.voice.send')}
+                  title={busy ? t('chat.voice.queue') : t('chat.voice.send')}
+                >
+                  {busy ? <Clock01Icon size={14} /> : <ArrowUp02Icon size={14} />}
+                </button>
+              </div>
+            )}
+            <div className="flex shrink-0 items-center gap-0.5 pe-1.5 pt-1.5">
               {/* Always enabled — New Chat opens a SEPARATE session, so a
-                    streaming conversation keeps running untouched while the
-                    user starts the next task. In project mode the slot becomes
-                    the Project button instead: the project's emoji + label,
-                    opening the manage dialog (edit / files / new conversation
-                    / exit). */}
+                  streaming conversation keeps running untouched while the
+                  user starts the next task. In project mode the slot becomes
+                  the Project button instead: the project's emoji, opening
+                  the manage dialog (edit / files / new conversation /
+                  exit). */}
               {sessionProject ? (
                 <button
                   type="button"
@@ -3037,16 +2951,13 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                   title={sessionProject.title.trim() || t('projects.untitled')}
                   aria-label={t('projects.project')}
                   className={cn(
-                    'flex w-14 flex-col items-center gap-0.5 rounded-md px-1.5 py-1',
+                    'flex h-7 w-7 shrink-0 items-center justify-center rounded-lg',
                     'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-                    'text-muted cursor-pointer hover:text-fg'
+                    'hover:bg-border/40 cursor-pointer'
                   )}
                 >
                   <span aria-hidden className="text-sm leading-none">
                     {sessionProject.icon || '📁'}
-                  </span>
-                  <span className="text-[10px] leading-tight font-medium">
-                    {t('projects.project')}
                   </span>
                 </button>
               ) : (
@@ -3056,37 +2967,8 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                 />
               )}
             </div>
-            {recPhase === 'idle' && (
-              <ContextMeter
-                used={contextTokens ?? 0}
-                budget={contextBudget ?? 0}
-                compactionAt={compactionAt}
-                locale={locale}
-                turnStartedAt={turnStartedAt}
-                turnEndedAt={turnEndedAt}
-                turnInputTokens={inputTokens}
-                turnOutputTokens={outputTokens}
-                turnCacheReadTokens={cacheReadTokens}
-                turnCacheWriteTokens={cacheWriteTokens}
-                lastTurn={convStats?.lastTurn ?? null}
-                allTime={convStats?.allTime ?? null}
-                sideSpend={sideSpend}
-                workflow={workflowSpend}
-                lastCall={lastCall}
-                usageUnavailable={usageUnavailable}
-                meterModel={meterModel}
-                activeModel={activeModelName}
-                provider={
-                  lastCall?.provider ??
-                  convStats?.lastTurn?.provider ??
-                  (localOnly ? 'local' : activeCloudProvider)
-                }
-                logsCount={timelineEventCount}
-                filesCount={conversationFiles.length}
-                onOpenTimeline={() => setTimelineOpen(true)}
-                onOpenFiles={() => setFilesOpen(true)}
-              />
-            )}
+          </div>
+          <div className="flex w-full items-center gap-1 px-1.5 pb-1.5">
             {/* Reasoning effort and chat mode ride INSIDE this card's chip
                 rows now (two rows above the model search) — one panel for
                 every model knob instead of three composer pills. */}
@@ -3119,8 +3001,50 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                 await refreshStatus()
               }}
             />
-          </div>
-          <div className="flex min-w-0 flex-1 items-end gap-1">
+            {recPhase === 'idle' && (
+              <ContextMeter
+                used={contextTokens ?? 0}
+                budget={contextBudget ?? 0}
+                compactionAt={compactionAt}
+                locale={locale}
+                turnStartedAt={turnStartedAt}
+                turnEndedAt={turnEndedAt}
+                turnInputTokens={inputTokens}
+                turnOutputTokens={outputTokens}
+                turnCacheReadTokens={cacheReadTokens}
+                turnCacheWriteTokens={cacheWriteTokens}
+                lastTurn={convStats?.lastTurn ?? null}
+                allTime={convStats?.allTime ?? null}
+                sideSpend={sideSpend}
+                workflow={workflowSpend}
+                lastCall={lastCall}
+                usageUnavailable={usageUnavailable}
+                meterModel={meterModel}
+                activeModel={activeModelName}
+                provider={
+                  lastCall?.provider ??
+                  convStats?.lastTurn?.provider ??
+                  (localOnly ? 'local' : activeCloudProvider)
+                }
+                logsCount={timelineEventCount}
+                filesCount={conversationFiles.length}
+                onOpenTimeline={() => setTimelineOpen(true)}
+                onOpenFiles={() => setFilesOpen(true)}
+              />
+            )}
+            <div className="min-w-0 flex-1" />
+            {/* Expands the draft into the full-screen CodeMirror editor —
+                leads the end-edge cluster; gone while the recorder owns the
+                top zone. */}
+            {recPhase === 'idle' && (
+              <button
+                type="button"
+                onClick={() => setDraftExpanded(true)}
+                className="text-muted hover:text-fg hover:bg-border/40 flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-lg"
+              >
+                <ArrowExpandIcon size={14} />
+              </button>
+            )}
             <button
               type="button"
               onClick={() => void exportChatPdf()}
@@ -3128,14 +3052,14 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
               title={t('chat.downloadPdf')}
               aria-label={t('chat.downloadPdf')}
               className={cn(
-                'flex h-[42.5px] w-10 shrink-0 items-center justify-center rounded-lg border',
-                'border-border bg-surface text-muted enabled:hover:text-fg enabled:hover:border-muted',
+                'flex h-7 w-7 shrink-0 items-center justify-center rounded-lg',
+                'text-muted enabled:hover:text-fg enabled:hover:bg-border/40',
                 'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
                 'disabled:cursor-not-allowed disabled:opacity-50',
                 !busy && !exportingPdf && canExportPdf && 'cursor-pointer'
               )}
             >
-              <Download01Icon size={18} />
+              <Download01Icon size={16} />
             </button>
             {/* Picking a folder stays live mid-turn — it rides the next queued
                 prompt, same as an attachment. Removing is locked while the turn
@@ -3155,13 +3079,13 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
               title={t('chat.attachFile')}
               aria-label={t('chat.attachFile')}
               className={cn(
-                'flex h-[42.5px] w-10 shrink-0 items-center justify-center rounded-lg border',
-                'border-border bg-surface text-muted enabled:hover:text-fg enabled:hover:border-muted',
+                'flex h-7 w-7 shrink-0 items-center justify-center rounded-lg',
+                'text-muted hover:text-fg hover:bg-border/40',
                 'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
                 'cursor-pointer'
               )}
             >
-              <Image02Icon size={18} />
+              <Image02Icon size={16} />
             </button>
             {/* Recording stays live mid-turn, like attaching: the take is
                 queued instead of sent, and goes out when the turn ends. */}
@@ -3178,14 +3102,14 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
               }
               aria-label={busy ? t('chat.voice.queue') : t('chat.voice.record')}
               className={cn(
-                'flex h-[42.5px] w-10 shrink-0 items-center justify-center rounded-lg border',
-                'border-border bg-surface text-muted enabled:hover:text-fg enabled:hover:border-muted',
+                'flex h-7 w-7 shrink-0 items-center justify-center rounded-lg',
+                'text-muted enabled:hover:text-fg enabled:hover:bg-border/40',
                 'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
                 'disabled:cursor-not-allowed disabled:opacity-50',
                 micAvailable && recPhase === 'idle' && 'cursor-pointer'
               )}
             >
-              <Mic01Icon size={18} />
+              <Mic01Icon size={16} />
             </button>
             {/* Mid-turn the composer keeps a primary send: it QUEUES the
                 draft (send() branches on `busy`) while the red submit
@@ -3202,13 +3126,13 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                 title={staging ? t('chat.upload.copyingWait') : t('chat.queue.add')}
                 aria-label={t('chat.queue.add')}
                 className={cn(
-                  'flex h-[42.5px] w-10 shrink-0 cursor-pointer items-center justify-center rounded-lg',
+                  'flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-full',
                   'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
                   'disabled:cursor-not-allowed disabled:opacity-50',
                   'bg-primary text-primary-fg enabled:hover:brightness-110'
                 )}
               >
-                <ArrowUp02Icon size={18} />
+                <ArrowUp02Icon size={16} />
               </button>
             )}
             {/* The recorder hides Send (the review row has its own) but never
@@ -3227,7 +3151,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                 title={!busy && staging ? t('chat.upload.copyingWait') : undefined}
                 aria-label={busy ? t('chat.stop') : t('chat.send')}
                 className={cn(
-                  'flex h-[42.5px] w-10 shrink-0 cursor-pointer items-center justify-center rounded-lg',
+                  'flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-full',
                   'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
                   'disabled:cursor-not-allowed disabled:opacity-50',
                   busy
@@ -3235,96 +3159,8 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                     : 'bg-primary text-primary-fg enabled:hover:brightness-110'
                 )}
               >
-                {busy ? <StopCircleIcon size={18} /> : <ArrowUp02Icon size={18} />}
+                {busy ? <StopCircleIcon size={16} /> : <ArrowUp02Icon size={16} />}
               </button>
-            )}
-            {recPhase === 'idle' ? (
-              <div className="relative order-first flex min-w-0 flex-1 flex-col">
-                <textarea
-                  ref={textareaRef}
-                  value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault()
-                      // Mid-turn this queues instead of sending — send()
-                      // branches on `busy`.
-                      void send()
-                    }
-                  }}
-                  rows={1}
-                  placeholder={busy ? t('chat.queue.placeholder') : t('chat.placeholder')}
-                  dir={isRtl ? 'rtl' : 'ltr'}
-                  className={cn(
-                    'bg-surface text-fg border-border placeholder:text-muted enabled:hover:border-muted',
-                    'min-h-[42.5px] max-h-40 w-full resize-none rounded-lg border px-3 py-2 text-sm',
-                    'focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-                    placeholderAlign
-                  )}
-                />
-                <button
-                  type="button"
-                  onClick={() => setDraftExpanded(true)}
-                  className="text-muted hover:text-fg absolute inset-e-2.5 top-1/2 z-10 -translate-y-1/2 cursor-pointer opacity-50 hover:opacity-100"
-                >
-                  <ArrowExpandIcon size={14} />
-                </button>
-              </div>
-            ) : recPhase === 'recording' ? (
-              <div className="bg-surface border-border order-first flex min-h-[42.5px] flex-1 items-center gap-3 rounded-lg border px-3">
-                <span className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-red-500" />
-                <span className="text-fg tabular-nums text-sm font-medium">
-                  {formatRecTime(recElapsed)}
-                </span>
-                <span className="text-muted flex-1 text-xs">{t('chat.voice.recording')}</span>
-                {/* Ends the RECORDING, not the turn — while a turn runs the
-                    red turn-Stop sits right beside it, so it needs its own
-                    label. */}
-                <button
-                  type="button"
-                  onClick={stopRecording}
-                  className="bg-red-600 text-white flex h-7 w-7 items-center justify-center rounded-md hover:bg-red-700"
-                  aria-label={t('chat.voice.stopRecording')}
-                  title={t('chat.voice.stopRecording')}
-                >
-                  <StopCircleIcon size={14} />
-                </button>
-              </div>
-            ) : (
-              <div className="bg-surface border-border order-first flex min-h-[42.5px] flex-1 items-center gap-2 rounded-lg border px-3">
-                <button
-                  type="button"
-                  onClick={togglePlayback}
-                  className="text-muted hover:text-fg flex h-7 w-7 shrink-0 items-center justify-center rounded-md"
-                  aria-label={recPlaying ? t('chat.voice.pause') : t('chat.voice.play')}
-                >
-                  {recPlaying ? <PauseIcon size={14} /> : <PlayIcon size={14} />}
-                </button>
-                <span className="text-fg tabular-nums text-sm font-medium">
-                  {formatRecTime(recElapsed)}
-                </span>
-                <div className="flex-1" />
-                <button
-                  type="button"
-                  onClick={discardRecording}
-                  className="text-muted hover:text-fg flex h-7 w-7 shrink-0 items-center justify-center rounded-md"
-                  aria-label={t('chat.voice.delete')}
-                  title={t('chat.voice.delete')}
-                >
-                  <Delete02Icon size={14} />
-                </button>
-                {/* Mid-turn this queues the take rather than sending it —
-                    the icon swaps to a clock to say so. */}
-                <button
-                  type="button"
-                  onClick={() => void sendRecording()}
-                  className="bg-primary text-primary-fg flex h-7 w-7 shrink-0 items-center justify-center rounded-md hover:brightness-110"
-                  aria-label={busy ? t('chat.voice.queue') : t('chat.voice.send')}
-                  title={busy ? t('chat.voice.queue') : t('chat.voice.send')}
-                >
-                  {busy ? <Clock01Icon size={14} /> : <ArrowUp02Icon size={14} />}
-                </button>
-              </div>
             )}
           </div>
         </div>
@@ -3768,14 +3604,14 @@ function WorkingFolderButton({
         title={hasFolders ? t('chat.workingFolder') : t('chat.selectFolder')}
         aria-label={hasFolders ? t('chat.workingFolder') : t('chat.selectFolder')}
         className={cn(
-          'flex h-[42.5px] w-10 shrink-0 cursor-pointer items-center justify-center rounded-lg border',
+          'flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-lg',
           'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
           hasFolders
-            ? 'border-primary/40 bg-primary/10 text-primary hover:border-primary/60'
-            : 'border-border bg-surface text-muted hover:text-fg hover:border-muted'
+            ? 'bg-primary/10 text-primary hover:bg-primary/20'
+            : 'text-muted hover:text-fg hover:bg-border/40'
         )}
       >
-        <Folder01Icon size={18} />
+        <Folder01Icon size={16} />
       </button>
       {cardVisible && (
         <div className="border-border bg-surface text-fg absolute bottom-full inset-e-0 z-20 mb-2 rounded-lg border px-2 py-2 text-xs shadow-md min-w-50 max-w-70">

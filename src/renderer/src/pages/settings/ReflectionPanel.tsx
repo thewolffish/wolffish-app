@@ -4,13 +4,7 @@ import { cn } from '@lib/utils/cn'
 import { formatCompact } from '@lib/utils/format'
 import type { CompactionRunRecord, CompactionRuns, ReflectionConfig } from '@preload/index'
 import { useLocale } from '@providers/locale/useLocale'
-import {
-  Activity04Icon,
-  BubbleChatIcon,
-  ComputerIcon,
-  PlayIcon,
-  Refresh01Icon
-} from 'hugeicons-react'
+import { Activity04Icon, PlayIcon, Refresh01Icon } from 'hugeicons-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -21,14 +15,10 @@ const HOUR_OPTIONS: SelectOption<string>[] = Array.from({ length: 24 }, (_, i) =
 
 const QUIET_HOUR_CHOICES = [1, 2, 3, 6, 12, 24, 48]
 
-type ScoringChannel = 'inapp' | 'telegram' | 'whatsapp'
-const SCORING_CHANNELS: ScoringChannel[] = ['inapp', 'telegram', 'whatsapp']
-
 /**
  * Settings → Knowledge → Reflection. The nightly self-review (schedule +
- * quiet gate), the per-surface 0-10 turn scoring toggles, and the monthly
- * deep reflection audit — plus last-run cards for both jobs, mirroring the compaction
- * panel's layout language.
+ * quiet gate) and the monthly deep reflection audit — plus last-run cards
+ * for both jobs, mirroring the compaction panel's layout language.
  */
 export function ReflectionPanel(): React.JSX.Element {
   const { t } = useTranslation()
@@ -249,47 +239,6 @@ export function ReflectionPanel(): React.JSX.Element {
             <p className="text-muted text-xs leading-relaxed">
               {t('settings.knowledge.reflection.cards.description')}
             </p>
-          </div>
-        </section>
-
-        {/* Turn scoring — one card per surface */}
-        <section className="flex flex-col gap-3">
-          <div className="flex flex-col gap-1">
-            <h2 className="text-fg text-sm font-semibold">
-              {t('settings.knowledge.reflection.scoring.title')}
-            </h2>
-            <p className="text-muted text-xs leading-relaxed">
-              {t('settings.knowledge.reflection.scoring.subtitle')}
-            </p>
-          </div>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            {SCORING_CHANNELS.map((channel) => (
-              <div
-                key={channel}
-                className="bg-surface border-border flex flex-col gap-3 rounded-2xl border p-4"
-              >
-                <div className="flex items-center gap-2">
-                  {channel === 'inapp' ? (
-                    <ComputerIcon size={16} className="text-muted" />
-                  ) : (
-                    <BubbleChatIcon size={16} className="text-muted" />
-                  )}
-                  <span className="text-fg text-sm font-medium">
-                    {t(`settings.knowledge.reflection.scoring.${channel}`)}
-                  </span>
-                </div>
-                <p className="text-muted min-h-8 text-[11px] leading-relaxed">
-                  {t(`settings.knowledge.reflection.scoring.${channel}Hint`)}
-                </p>
-                <OnOffToggle
-                  value={config.scoring[channel]}
-                  disabled={saving}
-                  onChange={(value) =>
-                    void persist({ scoring: { ...config.scoring, [channel]: value } })
-                  }
-                />
-              </div>
-            ))}
           </div>
         </section>
 

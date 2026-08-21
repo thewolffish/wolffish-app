@@ -101,30 +101,6 @@ export type TimelineEntry = {
   detail?: string
 }
 
-/**
- * Which surface cast the score. `cli` is a real source, not a synonym for
- * `inapp`: the reflection reads this ledger, and a terminal-only install whose
- * every score claimed to come from a window nobody opened would be describing
- * a machine that does not exist.
- */
-export type ConversationRatingSource = 'inapp' | 'telegram' | 'whatsapp' | 'mobile' | 'cli'
-
-/**
- * A user's 0-10 score for one completed turn, keyed by the turn's assistant
- * message id (dual decl — see src/preload/index.ts). One rating per message:
- * re-scoring the same turn replaces the entry. The nightly reflection reads
- * these as its ground-truth signal — the user's judgement outranks the
- * model's own self-assessment.
- */
-export type ConversationRating = {
-  /** Id of the assistant message (the turn) the score applies to. */
-  messageId: string
-  /** Integer 0-10. */
-  score: number
-  at: number
-  source: ConversationRatingSource
-}
-
 /** Frozen roll-up of the most recent completed turn (dual decl — see src/preload/index.ts). */
 export type ConversationTurnStats = {
   endedAt: number
@@ -222,8 +198,6 @@ export type ConversationFile = {
    * summarizer hasn't touched since the field shipped.
    */
   summarizedThroughMessageId?: string | null
-  /** Per-turn 0-10 user scores, keyed by assistant message id. */
-  ratings?: ConversationRating[]
 }
 
 export type ConversationMeta = {
@@ -390,6 +364,33 @@ export async function loadConversation(id: string): Promise<ConversationFile | n
   } catch {
     return null
   }
+}
+
+/**
+ * Timestamp of the newest persisted message in a conversation, EXCLUDING the
+ * message with `excludeMessageId` — the turn runner's "when did we last talk"
+ * probe behind the conversation-resumed runtime notice.
+ *
+ * The exclusion is what makes the answer uniform across writers: channels
+ * persist the CURRENT inbound message before dispatching its turn (so the
+ * newest message on disk is the one being answered, gap ≈ 0), while the in-app
+ * renderer persists only at end of turn (so it isn't there yet). Passing the
+ * turn's own userMessageId skips it wherever it happens to be, leaving the
+ * genuine previous exchange either way. Missing file, empty transcript, or a
+ * transcript that is only the current message → null (no previous exchange).
+ */
+export async function lastConversationMessageAt(
+  id: string,
+  excludeMessageId?: string
+): Promise<number | null> {
+  const conv = await loadConversation(id)
+  if (!conv) return null
+  let latest = 0
+  for (const m of conv.messages ?? []) {
+    if (excludeMessageId && m.id === excludeMessageId) continue
+    if (typeof m.timestamp === 'number' && m.timestamp > latest) latest = m.timestamp
+  }
+  return latest > 0 ? latest : null
 }
 
 /**
@@ -639,78 +640,7 @@ export function mergeConversationOnto(
   if (incoming.title === 'Untitled' && disk.title && disk.title !== 'Untitled') {
     merged.title = disk.title
   }
-  // Ratings: id-keyed union, same spirit as messages. A renderer whole-file
-  // save that doesn't know about a channel-written score must not erase it;
-  // when both sides hold a vote for the same turn the FRESHER one wins.
-  merged.ratings = mergeRatings(disk.ratings, incoming.ratings)
   return merged
-}
-
-function mergeRatings(
-  disk: ConversationRating[] | undefined,
-  incoming: ConversationRating[] | undefined
-): ConversationRating[] | undefined {
-  if (!disk?.length) return incoming
-  if (!incoming?.length) return disk
-  const byId = new Map<string, ConversationRating>()
-  for (const r of disk) if (r?.messageId) byId.set(r.messageId, r)
-  // Same turn on both sides → the later `at` wins, whichever copy carries it.
-  // Writer identity can't arbitrate this: a renderer whole-file save loaded
-  // BEFORE a phone re-vote landed would hand mergeRatings the older score as
-  // "incoming" — incoming-always-wins would resurrect it over the re-vote.
-  // Ties (the common round-trip of one unchanged vote) keep incoming.
-  for (const r of incoming) {
-    if (!r?.messageId) continue
-    const prior = byId.get(r.messageId)
-    if (!prior || r.at >= prior.at) byId.set(r.messageId, r)
-  }
-  return [...byId.values()].sort((a, b) => a.at - b.at)
-}
-
-/**
- * Record a 0-10 score for a turn. `messageId` null means "the most recent
- * assistant message on disk" — the channel vote path, where the user replies
- * with a bare number and the freshest persisted turn is the one they mean.
- * RMW inside the file's write queue, so a vote landing during an end-of-turn
- * persist can't be lost. Returns the applied rating, or null when there is
- * nothing rateable (no conversation / no assistant message with an id).
- */
-export async function rateConversationTurn(
-  conversationId: string,
-  messageId: string | null,
-  score: number,
-  source: ConversationRatingSource
-): Promise<ConversationRating | null> {
-  const clamped = Math.max(0, Math.min(10, Math.round(score)))
-  let applied: ConversationRating | null = null
-  await updateConversation(conversationId, (conv) => {
-    if (!conv) return null
-    let targetId = messageId
-    if (!targetId) {
-      for (let i = conv.messages.length - 1; i >= 0; i--) {
-        const m = conv.messages[i]
-        if (m.role === 'assistant' && m.id) {
-          targetId = m.id
-          break
-        }
-      }
-    }
-    if (!targetId) return null
-    // Guard the explicit-id path too: a stale renderer copy could name a
-    // message the merged file no longer holds.
-    if (!conv.messages.some((m) => m.id === targetId && m.role === 'assistant')) return null
-    const rating: ConversationRating = {
-      messageId: targetId,
-      score: clamped,
-      at: Date.now(),
-      source
-    }
-    const rest = (conv.ratings ?? []).filter((r) => r.messageId !== targetId)
-    conv.ratings = [...rest, rating].sort((a, b) => a.at - b.at)
-    applied = rating
-    return conv
-  })
-  return applied
 }
 
 export async function deleteConversation(id: string): Promise<void> {

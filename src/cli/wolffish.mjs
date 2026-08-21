@@ -94,7 +94,7 @@ ${c.gray('CHAT')}
   wolffish resume [id]              continue a past conversation
 
 ${c.gray('THE APP, IN THE TERMINAL')}
-  wolffish conversations            list · show · resume · diagnose · rate · rm
+  wolffish conversations            list · show · resume · diagnose · rm
   wolffish conversations show <id>  read it back ${c.gray('· --tools · --clean · --last <n>')}
   wolffish projects                 browse ${c.gray('·')} new ${c.gray('·')} show ${c.gray('·')} edit ${c.gray('·')} rename ${c.gray('·')} rm
   wolffish procedures               browse ${c.gray('·')} new ${c.gray('·')} run ${c.gray('·')} edit ${c.gray('·')} mode ${c.gray('·')} project ${c.gray('·')} rm

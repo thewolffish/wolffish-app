@@ -45,7 +45,6 @@ import {
   updateConversation,
   type ConversationFile,
   type ConversationMessage,
-  type ConversationRating,
   type MessageAttachment
 } from '@main/conversations'
 import {
@@ -90,7 +89,6 @@ import {
   type AutomationJob,
   type AutomationRuns,
   type ConversationMeta,
-  type ConversationRating as WireRating,
   type DiagnosticProgress,
   type DiagnosticResult,
   type NotifyFrame,
@@ -215,7 +213,6 @@ export type ReflectionWirePatch = {
   quietHours?: number
   /** Whether a running reflection job draws its floating card, either side. */
   cards?: boolean
-  scoring?: Partial<Record<'inapp' | 'telegram' | 'whatsapp', boolean>>
 }
 
 export type MobileChannelDeps = SnapshotSources & {
@@ -231,19 +228,6 @@ export type MobileChannelDeps = SnapshotSources & {
   runReflectionJob?: (
     kind: 'reflection' | 'deepClean'
   ) => Promise<'running' | 'queued' | 'coalesced'>
-  /**
-   * Record a phone-cast turn score, through the very path the in-app rating
-   * bar's IPC takes: the same RMW write on the conversation file and the same
-   * corpus announcement, so a vote from the phone reaches an open desktop
-   * chat exactly as one cast there does. Resolves to the applied rating, or
-   * null when there was nothing to score. Absent = this host does not accept
-   * phone votes.
-   */
-  rateTurn?: (
-    conversationId: string,
-    messageId: string | null,
-    score: number
-  ) => Promise<ConversationRating | null>
   /**
    * Apply a phone-edited settings patch through the same setters the
    * desktop's own panels use. Whitelisted inside; throws on unknown keys.
@@ -977,8 +961,8 @@ export class MobileChannel {
      * channel turns and autonomous runs.
      *
      * Without it a phone opening a conversation this desktop is still writing
-     * renders it idle: live composer, no stop, and a rating bar offering to
-     * score a turn that has not finished.
+     * renders it idle: live composer and no stop, over a turn that has not
+     * finished.
      */
     tunnel.onRpc(Rpc.activeRuns, async () => {
       const ids = [...this.deps.runner.activeRuns(), ...this.deps.agent.activeAutonomousRuns()].map(
@@ -1304,35 +1288,10 @@ export class MobileChannel {
     })
 
     /**
-     * The phone scored a completed turn. The wire is data: a score outside
-     * 0-10 is clamped by the writer, and a `messageId` naming a message this
-     * file no longer holds answers `{ rating: null }` rather than guessing —
-     * the phone takes its optimistic segment back down on exactly that answer.
-     * Null messageId keeps the channel-vote meaning ("the newest assistant
-     * message"), which is what a phone that voted from a stale screen needs.
-     */
-    tunnel.onRpc(Rpc.rateTurn, async (params) => {
-      const rate = this.deps.rateTurn
-      if (!rate) throw new Error('turn scoring not served here')
-      const conversationId = String(params.conversationId ?? '')
-      if (!conversationId) throw new Error('rate: no conversation')
-      const score = Number(params.score)
-      if (!Number.isFinite(score)) throw new Error(`rate: not a score: ${String(params.score)}`)
-      const messageId = typeof params.messageId === 'string' ? params.messageId : null
-      const rating = await rate(conversationId, messageId, score)
-      this.log(
-        rating
-          ? `turn scored ${rating.score}/10 from the phone (${conversationId})`
-          : `turn score from the phone had nothing to land on (${conversationId})`
-      )
-      return { rating }
-    })
-
-    /**
-     * The phone edits the reflection schedule/scoring. The wire shape is
-     * data, not policy: every field is re-derived here and anything malformed
-     * costs itself rather than the whole patch. The answer is the desktop's
-     * own post-write config — the phone renders that, so the two screens can
+     * The phone edits the reflection schedule. The wire shape is data, not
+     * policy: every field is re-derived here and anything malformed costs
+     * itself rather than the whole patch. The answer is the desktop's own
+     * post-write config — the phone renders that, so the two screens can
      * never disagree about what was saved.
      */
     tunnel.onRpc(Rpc.setReflectionConfig, async (params) => {
@@ -2452,17 +2411,6 @@ export class MobileChannel {
     return this.tunnel?.connected ?? false
   }
 
-  /**
-   * A turn was scored, wherever the vote came from — this app's rating bar, a
-   * bare-number Telegram/WhatsApp reply, or the phone itself. The whole rating
-   * travels, so the phone applies it rather than refetching a body: a
-   * ratings-only write bumps no updated_at, so no other push describes it and
-   * the phone's staleness check would never ask.
-   */
-  pushTurnScored(conversationId: string, rating: WireRating): void {
-    this.tunnel?.emit(Event.turnScored, { conversationId, rating })
-  }
-
   /** Any settings change — the phone refreshes the affected screen. */
   pushConfigChanged(section?: string): void {
     this.debug(`push config change (${section ?? 'all'})`)
@@ -2622,7 +2570,7 @@ export function normalizeRelayUrl(raw: string | null): string | null {
 
 /**
  * A reflection patch from the wire, reduced to the fields that are real: an
- * integer hour 0-23, an integer quiet window 1-48 h, boolean scoring flags.
+ * integer hour 0-23, an integer quiet window 1-48 h, a boolean cards flag.
  * Malformed fields are dropped rather than clamped — clamping would persist a
  * value the user never chose, while dropping costs that field alone and the
  * authoritative answer corrects the screen that sent it.
@@ -2647,14 +2595,6 @@ export function sanitizeReflectionPatch(params: unknown): ReflectionWirePatch {
     patch.quietHours = raw.quietHours
   }
   if (typeof raw.cards === 'boolean') patch.cards = raw.cards
-  if (raw.scoring && typeof raw.scoring === 'object') {
-    const flags: NonNullable<ReflectionWirePatch['scoring']> = {}
-    for (const surface of ['inapp', 'telegram', 'whatsapp'] as const) {
-      const value = (raw.scoring as Record<string, unknown>)[surface]
-      if (typeof value === 'boolean') flags[surface] = value
-    }
-    if (Object.keys(flags).length > 0) patch.scoring = flags
-  }
   return patch
 }
 
@@ -2677,10 +2617,6 @@ function toWireConversation(file: ConversationFile): Record<string, unknown> {
     createdAt: file.createdAt,
     updatedAt: file.updatedAt,
     stats: (file as { stats?: unknown }).stats ?? null,
-    // Every score this conversation carries, so an opened chat shows them at
-    // once. They ride the body rather than the index because that is where
-    // the message ids they key on are: the index is metadata alone.
-    ratings: file.ratings ?? [],
     messages: (file.messages ?? []).map((message) => ({
       id: message.id,
       role: message.role,

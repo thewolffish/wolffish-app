@@ -60,7 +60,7 @@ export type CliSetting = {
   /**
    * How the value reaches the handler. `null` = passed bare
    * (`runtime:setLocalOnly(true)`); a dotted string = wrapped into that shape
-   * (`'scoring.inapp'` → `[{ scoring: { inapp: true } }]`), which is how every
+   * (`'giphy.apiKey'` → `[{ giphy: { apiKey: 'k' } }]`), which is how every
    * `*:setConfig` handler takes a partial.
    */
   wrap: string | null
@@ -1031,7 +1031,7 @@ export const CLI_SETTINGS: CliSetting[] = [
     section: 'knowledge.reflection',
     label: 'Nightly reflection',
     description:
-      'Reviews every conversation that has settled since the last pass — automations included — scoring each one and extracting what worked, what failed, and what you liked. Your 0-10 scores are the ground truth; the lessons fold into the playbook carried into every turn. Missed fires (asleep, app closed) run on the next launch.',
+      'Reviews every conversation that has settled since the last pass — automations included — scoring each one and extracting what worked, what failed, and what you liked. The lessons fold into the playbook carried into every turn. Missed fires (asleep, app closed) run on the next launch.',
     kind: 'enum',
     options: HOURS,
     read: 'reflection.hour',
@@ -1044,7 +1044,7 @@ export const CLI_SETTINGS: CliSetting[] = [
     section: 'knowledge.reflection',
     label: 'Review after quiet for',
     description:
-      "A conversation is only reviewed once it has been idle this long, so unfinished or not-yet-scored work isn't judged early. Anything still warm simply waits for a later night — nothing is ever skipped — and a conversation you continue after its review gets reviewed again with the new turns and scores included.",
+      "A conversation is only reviewed once it has been idle this long, so unfinished work isn't judged early. Anything still warm simply waits for a later night — nothing is ever skipped — and a conversation you continue after its review gets reviewed again with the new turns included.",
     kind: 'number',
     hint: 'hours',
     read: 'reflection.quietHours',
@@ -1062,41 +1062,6 @@ export const CLI_SETTINGS: CliSetting[] = [
     read: 'reflection.cards',
     channel: 'runtime:setReflectionConfig',
     wrap: 'cards'
-  },
-  {
-    id: 'knowledge.reflection.scoring.inapp',
-    group: 'knowledge',
-    section: 'knowledge.reflection',
-    label: 'Turn scoring · in-app',
-    description: 'Shows a 0-10 rating bar above the chat composer after each completed turn.',
-    kind: 'boolean',
-    read: 'reflection.scoring.inapp',
-    channel: 'runtime:setReflectionConfig',
-    wrap: 'scoring.inapp'
-  },
-  {
-    id: 'knowledge.reflection.scoring.telegram',
-    group: 'knowledge',
-    section: 'knowledge.reflection',
-    label: 'Turn scoring · Telegram',
-    description:
-      'A reply that is just a number 0-10 scores the last turn instead of sending a message.',
-    kind: 'boolean',
-    read: 'reflection.scoring.telegram',
-    channel: 'runtime:setReflectionConfig',
-    wrap: 'scoring.telegram'
-  },
-  {
-    id: 'knowledge.reflection.scoring.whatsapp',
-    group: 'knowledge',
-    section: 'knowledge.reflection',
-    label: 'Turn scoring · WhatsApp',
-    description:
-      'A reply that is just a number 0-10 scores the last turn instead of sending a message.',
-    kind: 'boolean',
-    read: 'reflection.scoring.whatsapp',
-    channel: 'runtime:setReflectionConfig',
-    wrap: 'scoring.whatsapp'
   },
 
   // ── Updates ──────────────────────────────────────────────────────────────
@@ -1273,7 +1238,7 @@ export function coerceSettingValue(
 
 /**
  * Build the handler arguments. `wrap` may be dotted, so a nested partial like
- * `{ scoring: { inapp: true } }` needs no special case at the call site.
+ * `{ giphy: { apiKey: 'k' } }` needs no special case at the call site.
  */
 export function settingArgs(setting: CliSetting, value: unknown): unknown[] {
   if (setting.argsFor) return setting.argsFor(value)

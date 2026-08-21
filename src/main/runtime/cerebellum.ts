@@ -95,7 +95,25 @@ export type SkillFrontmatter = {
   confirm_patterns?: Array<{ pattern: string; reason: string }>
   requires?: string[]
   packages?: Record<string, string>
+  /**
+   * Who authored this capability. `skill_create` stamps "wolffish" here so
+   * self-authored skills are distinguishable from bundled (official) and
+   * hand-imported (unknown) ones — the settings panel shows a Wolffish badge
+   * and the tested-state tracking below applies only to these.
+   */
+  author?: string
 }
+
+/** The `author` value skill_create stamps into self-authored skills. */
+export const WOLFFISH_AUTHOR = 'wolffish'
+
+/**
+ * Marker recording that a Wolffish-authored capability passed a real tool
+ * call. Lives in the capability folder, holds a hash of SKILL.md + the plugin
+ * entry file at the moment the call succeeded — so editing either file
+ * invalidates it and the skill drops back to "untested" until it passes again.
+ */
+const TESTED_MARKER_FILE = '.wolffish-tested'
 
 export type CapabilityStatus = 'ok' | 'error'
 
@@ -134,6 +152,17 @@ export type Capability = {
    * hide them — they're core features, not external plugins.
    */
   inProcess?: boolean
+  /** Frontmatter `author` — "wolffish" for self-authored skills. */
+  author?: string
+  /**
+   * Tested state, tracked ONLY for Wolffish-authored plugin capabilities:
+   * `false` until a tool of this capability succeeds for real (then the
+   * marker is stamped and this flips to `true`); editing SKILL.md or the
+   * plugin entry invalidates the marker on the next reload. `undefined` for
+   * everything else — bundled, hand-imported, in-process, and pure skills,
+   * where the concept doesn't apply.
+   */
+  tested?: boolean
 }
 
 export type ToolResultImage = {
@@ -277,6 +306,13 @@ export type ManagedCapability = {
   official: boolean
   /** A locked core capability (see LOCKED_CAPABILITIES) — cannot be disabled. */
   core: boolean
+  /** Authored by Wolffish itself (skill_create) — shows the Wolffish badge. */
+  wolffish: boolean
+  /**
+   * True unless this is a Wolffish-authored plugin capability that has not
+   * yet passed a real tool call since it was created or last edited.
+   */
+  tested: boolean
   inProcess: boolean
   dir: string
   error?: string
@@ -1686,10 +1722,43 @@ export class Cerebellum {
       if (result.success && name.endsWith('_install')) {
         refreshPath()
       }
+      // A Wolffish-authored skill earns its "tested" state here — the first
+      // successful REAL call of one of its tools since creation/last edit.
+      // Observed by the framework, driven by the model: the create flow tells
+      // the model to test immediately, and this is what clears the badge.
+      if (result.success) {
+        await this.markCapabilityTested(capName)
+      }
       return result
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       return { success: false, error: message }
+    }
+  }
+
+  /**
+   * Stamp a Wolffish-authored capability as tested after a successful tool
+   * call. Writes the marker (hash of SKILL.md + plugin entry, so any later
+   * edit invalidates it), flips the in-memory flag, and announces the change
+   * so the settings panel can refresh its badge live. Best-effort — a failed
+   * stamp never fails the tool call; the skill just stays "untested" until
+   * the next successful call retries it. No-op for everything that isn't a
+   * currently-untested Wolffish-authored plugin capability.
+   */
+  private async markCapabilityTested(capName: string): Promise<void> {
+    const cap = this.capabilities.get(capName)
+    if (!cap || cap.tested !== false || !cap.pluginEntryPath) return
+    try {
+      const skillMd = await fs.readFile(path.join(cap.dir, 'SKILL.md'), 'utf8')
+      const pluginSource = await fs.readFile(cap.pluginEntryPath, 'utf8')
+      await diskWriter.writeFileAtomic(
+        path.join(cap.dir, TESTED_MARKER_FILE),
+        hashString(`${skillMd}\0${pluginSource}`)
+      )
+      cap.tested = true
+      this.options.corpus?.emit('capability.tested', { capability: capName })
+    } catch {
+      // best-effort — stays untested, next successful call tries again
     }
   }
 
@@ -2261,6 +2330,23 @@ export class Cerebellum {
 
     const npmDependencies = await readNpmDependencies(capDir)
 
+    // Tested state exists only for Wolffish-authored plugin capabilities: the
+    // marker holds a hash of SKILL.md + the plugin entry as of the last
+    // successful call, so a fresh creation OR any edit since then reads as
+    // untested — the skill must pass a real call again before the badge clears.
+    const author = typeof frontmatter.author === 'string' ? frontmatter.author.trim() : undefined
+    let tested: boolean | undefined
+    if (author === WOLFFISH_AUTHOR && hasPlugin && pluginEntryPath) {
+      tested = false
+      try {
+        const marker = (await fs.readFile(path.join(capDir, TESTED_MARKER_FILE), 'utf8')).trim()
+        const pluginSource = await fs.readFile(pluginEntryPath, 'utf8')
+        tested = marker === hashString(`${raw}\0${pluginSource}`)
+      } catch {
+        tested = false
+      }
+    }
+
     const cap: Capability = {
       name,
       dir: capDir,
@@ -2273,7 +2359,9 @@ export class Cerebellum {
       requires: frontmatter.requires ?? [],
       packages: (frontmatter.packages ?? {}) as Record<string, string>,
       npmDependencies,
-      pluginEntryPath
+      pluginEntryPath,
+      author,
+      tested
     }
 
     return cap

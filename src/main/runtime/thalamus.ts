@@ -18,6 +18,7 @@ import {
   cloudModelSupportsVision,
   hasVisualContent,
   isModalityReject,
+  limitToolResultImages,
   REQUEST_MODALITY_STRIP_REASON,
   stripVisualContent,
   TOOL_RESULT_MODALITY_STRIP_REASON,
@@ -411,6 +412,11 @@ export class Thalamus {
     options: ProviderStreamOptions
   ): Promise<ProviderStreamOptions> {
     if (!hasVisualContent(options.messages)) return options
+    // Long screen-control sessions accumulate dozens of near-identical
+    // screenshots; models mis-ground clicks on stale frames and the images
+    // dominate cost. Keep only the newest few (batched, cache-friendly).
+    const limited = limitToolResultImages(options.messages)
+    if (limited !== options.messages) options = { ...options, messages: limited }
     const vision =
       entry.id === 'local'
         ? await this.local.supportsVision()

@@ -13,11 +13,22 @@ export const MAX_EMPTY_TURN_NUDGES = 2
 /**
  * The nudge shown to the model when it ends its turn on nothing. Phrased as a
  * system aside so it reads as a runtime correction, not user speech, and gives
- * the model both exits: wrap up if done, or continue if not.
+ * the model all three exits: wrap up if done, continue if not — or stay silent
+ * if silence is genuinely right. The third exit is load-bearing: a turn whose
+ * closing message already went out (telemetry acknowledgements, a post-tool
+ * continuation with nothing to add) has no honest way to end EXCEPT empty, and
+ * a nudge that only offers "summarize or continue" pressures the model into
+ * filler — or into faking emptiness by typing its end-of-sequence control
+ * token as text (observed: grok-4.6 emitting a literal `<|eos|>` to the user).
+ * Naming silence as valid keeps the choice with the model; the nudge budget
+ * above still bounds a genuinely glitched dropout.
  */
 const EMPTY_TURN_NUDGE_TEXT =
   '[System: You ended your turn without any output or tool call. If the task is ' +
-  'complete, reply with a brief summary of what was done. Otherwise, continue the ' +
+  'complete, reply with a brief summary of what was done. If your closing message ' +
+  'was already delivered earlier this turn and there is genuinely nothing left to ' +
+  'say, end with no output again and the turn will close cleanly — never fill the ' +
+  'silence with filler text or a control token. Otherwise, continue the ' +
   'next step now — either call the appropriate tool(s) or give your final answer.]'
 
 /**

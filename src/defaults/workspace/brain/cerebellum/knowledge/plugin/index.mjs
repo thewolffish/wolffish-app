@@ -59,7 +59,7 @@ const toolDefinitions = [
         },
         source: {
           type: 'string',
-          enum: ['user-said', 'user-scored', 'inferred'],
+          enum: ['user-said', 'inferred'],
           description:
             "Playbook only — where the lesson came from (default user-said). Today's date is stamped automatically; inferred entries decay after 30 days unless reinforced."
         }

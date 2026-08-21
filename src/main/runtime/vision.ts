@@ -169,10 +169,63 @@ export function stripVisualContent(
     }
     if (m.role === 'tool' && m.images && m.images.length > 0) {
       const count = m.images.length
-      const note = `\n[${count} image${count === 1 ? '' : 's'} from this tool result omitted — ${reason}.]`
+      // The imperative matters: a blind model that is merely informed its
+      // screenshot was removed will happily keep clicking from imagination
+      // (observed live with DeepSeek driving computer_screenshot). Telling
+      // it what to do instead turns silent flailing into an actionable stop.
+      const note =
+        `\n[${count} image${count === 1 ? '' : 's'} from this tool result omitted — ${reason}. ` +
+        `You cannot see this image, so do not guess at its contents. If the task depends on seeing it ` +
+        `(screenshots, screen control, visual checks), stop that part now and tell the user to switch ` +
+        `to a vision-capable model.]`
       return { ...m, images: undefined, content: m.content + note }
     }
     return m
+  })
+}
+
+/** Newest tool-result images kept in full once pruning starts. */
+export const TOOL_IMAGES_KEEP = 6
+
+/**
+ * Older images are dropped in batches of this size, not one per turn: each
+ * drop rewrites an early message and breaks the provider prompt-cache
+ * prefix, so amortizing the damage to one rewrite per BATCH new images
+ * keeps long computer-use sessions cacheable.
+ */
+export const TOOL_IMAGES_PRUNE_BATCH = 4
+
+/**
+ * Keep only the newest tool-result images in the request; older ones are
+ * replaced by a text note. Two reasons, both observed in long screen-control
+ * sessions: dozens of near-identical screenshots make the model ground its
+ * next click on a stale frame, and they dominate token cost. User-attached
+ * images are never touched. Deterministic over message order, so identical
+ * histories encode identically. Returns the input array unchanged (same
+ * reference) when nothing is pruned.
+ */
+export function limitToolResultImages(
+  messages: ChatMessage[],
+  keep: number = TOOL_IMAGES_KEEP,
+  batch: number = TOOL_IMAGES_PRUNE_BATCH
+): ChatMessage[] {
+  let total = 0
+  for (const m of messages) {
+    if (m.role === 'tool') total += m.images?.length ?? 0
+  }
+  const droppable = total - keep
+  if (droppable < batch) return messages
+  let toDrop = Math.floor(droppable / batch) * batch
+  return messages.map((m) => {
+    if (toDrop <= 0 || m.role !== 'tool' || !m.images || m.images.length === 0) return m
+    const n = Math.min(toDrop, m.images.length)
+    toDrop -= n
+    const kept = m.images.slice(n)
+    const note =
+      `\n[${n} older image${n === 1 ? '' : 's'} from this tool result omitted to keep context lean — ` +
+      `only the newest images in the conversation are retained. The screen has changed since; ` +
+      `take a fresh screenshot (or re-view the file) instead of acting from memory of this image.]`
+    return { ...m, images: kept.length > 0 ? kept : undefined, content: m.content + note }
   })
 }
 
