@@ -1,4 +1,14 @@
-## v1.0.260 — 2026-08-21 `Latest`
+## v1.0.261 — 2026-08-22 `Latest`
+
+### DeepSeek Learns to See
+
+DeepSeek released its first vision model — **DeepSeek-V4-Flash-Vision-Exp** — and Wolffish supports it from day one. Choose it as your Brain and DeepSeek finally **sees what you send**: the photos and screenshots you attach to a message, and — the part that matters most — the screenshots its own tools capture, which means **computer use and browser control now genuinely work on DeepSeek** instead of being a blind model clicking from imagination. Every path was **verified live against the real API** before shipping: it reads attached images, it reads tool screenshots, and it keeps the full V4-Flash character — the same **1M context**, the same thinking modes, at the same price. The model shows up in Settings wearing its **vision badge**, and the no-vision warning in the Computer Use panel clears itself the moment you pick it.
+
+### DeepSeek Prices, As They Really Are
+
+DeepSeek moved its whole lineup to **peak and off-peak billing** — off-peak hours cost exactly half — and the pricing table in Settings had quietly fallen behind. It now shows the **true current ranges** for every DeepSeek model, low end first, so what you read next to a model is what you would actually pay.
+
+## v1.0.260 — 2026-08-21
 
 ### Computer Use That Proves Its Aim
 

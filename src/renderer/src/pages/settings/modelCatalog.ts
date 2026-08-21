@@ -416,23 +416,34 @@ export const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       modes: ['none', 'on']
     }
   ],
+  // DeepSeek bills peak/off-peak since 2026-08-16 (peak 01:00-04:00 and
+  // 06:00-10:00 UTC; off-peak is half) — shown as ranges, low end first.
   deepseek: [
     {
       name: 'deepseek-v4-pro',
       context: '1M',
-      input: '$0.44',
-      output: '$0.87',
-      cached: '$0.004',
+      input: '$0.66–1.32',
+      output: '$1.98–3.96',
+      cached: '$0.022–0.044',
       badges: ['frontier', 'reasoning'],
       modes: ['none', 'high', 'max']
     },
     {
       name: 'deepseek-v4-flash',
       context: '1M',
-      input: '$0.14',
-      output: '$0.28',
-      cached: '$0.003',
+      input: '$0.22–0.44',
+      output: '$0.66–1.32',
+      cached: '$0.007–0.014',
       badges: ['fast', 'reasoning'],
+      modes: ['none', 'high', 'max']
+    },
+    {
+      name: 'deepseek-v4-flash-vision-exp',
+      context: '1M',
+      input: '$0.22–0.44',
+      output: '$0.66–1.32',
+      cached: '$0.007–0.014',
+      badges: ['fast', 'vision', 'reasoning'],
       modes: ['none', 'high', 'max']
     }
   ],

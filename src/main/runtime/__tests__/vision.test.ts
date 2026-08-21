@@ -36,11 +36,13 @@ function check(label: string, actual: unknown, expected: unknown): void {
 // ---------------------------------------------------------------------------
 
 const CASES: Array<[provider: string, model: string, vision: boolean]> = [
-  // deepseek — text-only across the lineup (the original bug)
+  // deepseek — text-only chat lineup (the original bug); the vision-exp
+  // drop of 2026-08-21 rides the `vision` name marker
   ['deepseek', 'deepseek-v4-pro', false],
   ['deepseek', 'deepseek-v4-flash', false],
   ['deepseek', 'deepseek-chat', false],
   ['deepseek', 'deepseek-reasoner', false],
+  ['deepseek', 'deepseek-v4-flash-vision-exp', true],
   // anthropic — every Claude chat model accepts images
   ['anthropic', 'claude-sonnet-4-5', true],
   ['anthropic', 'claude-fable-5', true],

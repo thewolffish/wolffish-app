@@ -8,8 +8,8 @@ import type { ChatMessage, UserContentBlock } from '@main/runtime/thalamus'
  * never reach it.
  *
  * Text-only provider APIs hard-reject multimodal content parts. DeepSeek,
- * for example, answers HTTP 400 `unknown variant image_url, expected text`
- * the moment an image part appears in `messages`, which kills the entire
+ * for example, answers HTTP 400 `This model does not support image` the
+ * moment an image part appears in `messages`, which kills the entire
  * turn. There is no reliable cross-provider capability endpoint, and model
  * catalogs change faster than any exhaustive table could track — so this
  * module only recognizes the *well-known* vision families and treats
@@ -38,8 +38,11 @@ export function cloudModelSupportsVision(provider: string, model: string): boole
     case 'openai':
       return openaiSupportsVision(m)
     case 'deepseek':
-      // DeepSeek's chat API is text-only across the lineup — content
-      // parts other than `text` are rejected with HTTP 400.
+      // DeepSeek's chat models are text-only — image parts are rejected
+      // with HTTP 400 "This model does not support image" (re-verified
+      // live 2026-08-22). The one exception, deepseek-v4-flash-vision-exp
+      // (image parts verified live same day), carries the `vision` name
+      // marker and is accepted above before this case is reached.
       return false
     case 'xai':
       // grok-2-vision and friends are caught by the markers above;
