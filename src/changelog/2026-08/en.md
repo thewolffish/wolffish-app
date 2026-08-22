@@ -1,4 +1,14 @@
-## v1.0.261 — 2026-08-22 `Latest`
+## v1.0.262 — 2026-08-22 `Latest`
+
+### Clicks That Cannot Lie
+
+A screen session that missed a 16-pixel close button three times — and then talked itself into believing it had clicked it — was dissected frame by frame, and every hole it slipped through is now closed. **Zoom tells you when it is not really zooming**: magnify too wide a region and the result warns that the view is barely sharper than the screenshot, and names the exact narrower region that would give a true 3x close-up. The cursor is no longer marked by a ring alone: in every aiming view, thin **hairlines run across the whole image through the exact cursor pixel**, so "the crosshair is on it" is something you can see, not something a model can imagine — and the post-click close-up is now **3x magnified** instead of 2x. Above all, every click now returns an **objective change report**: the screen is captured before and after the press and the pixels compared, so the result states plainly whether anything actually changed — a click that hit dead space is called a miss in numbers, not left to wishful reading. Because a slow page or a second monitor can hide a real effect, the model is also explicitly forbidden from **re-clicking send-style buttons on the report alone** — verify first, then act. And clicks can now carry the **name of their target** ("the ✕ on the GitHub tab"), which comes back in the verification so the model checks the right thing.
+
+### The Indicator Is Now in the Model's Hands
+
+The blue glow got a redesign and a new owner. It now reliably wraps **all four edges** of the controlled display — the vanishing bottom border turned out to be a macOS quirk that shoved the overlay window off the screen, found and fixed — with a **narrower, livelier band** that breathes while work is underway and flashes on each capture. In the **center of the screen** sits a small translucent notice — **"Wolffish is capturing your screen"**, in your app's language, Arabic included — so there is never any doubt about what is happening. And the switch moved to where responsibility belongs: **Wolffish itself turns the indicator on before its first look at your screen and off as its final act** — finished or given up — instead of a timer quietly fading it away. On means watched, off means not: the signal now says exactly what it means.
+
+## v1.0.261 — 2026-08-22
 
 ### DeepSeek Learns to See
 

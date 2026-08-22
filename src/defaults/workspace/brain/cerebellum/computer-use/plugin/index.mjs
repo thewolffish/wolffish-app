@@ -16,19 +16,37 @@ const JPEG_QUALITY = 85
 
 // Magnifier patch: the close-up returned by move/click/drag so the model can
 // verify exactly where the cursor landed. Sized in logical pixels, rendered
-// at 2x so one image pixel = half a logical pixel (sub-pixel aim on any DPI).
-const MAG_W = 240
-const MAG_H = 150
-const MAG_SCALE = 2
+// at 3x — a 16px control becomes ~48px in the image, big enough for any
+// vision model to judge whether the crosshair is truly on it.
+const MAG_W = 200
+const MAG_H = 125
+const MAG_SCALE = 3
 
-// Zoom output stays within a comfortable model-viewable width.
+// Zoom output stays within a comfortable model-viewable width; when the base
+// cap would leave the zoom under the useful-magnification floor, the output
+// may widen up to ZOOM_WIDE_OUT to claw back toward 2x. Below 2x a zoom is
+// barely better than the screenshot it came from — the aim errors that
+// motivated this redesign all happened in 1.1-1.3x "zooms".
 const ZOOM_MAX_OUT = 1200
+const ZOOM_WIDE_OUT = 1600
+const ZOOM_MAX_OUT_H = 1600
 const ZOOM_MAX_FACTOR = 4
+const ZOOM_TARGET_FACTOR = 2
 
-// The screen glow hides itself after this long without any computer-use
-// activity — one rule that covers completion, cancellation, and termination
-// alike, with no dependency on turn lifecycle hooks.
-const OVERLAY_IDLE_HIDE_MS = 12_000
+// Click verification: fraction of pixels that must differ before/after a
+// click for the plugin to report the screen visibly changed. The patch is
+// the magnifier region around the cursor (diffed at native resolution so a
+// toggled checkbox counts); the display check catches effects that land
+// farther away (menus, dialogs, closed windows).
+const CHANGE_PATCH_MIN_PCT = 0.2
+const CHANGE_DISPLAY_MIN_PCT = 0.2
+
+// The screen glow's lifecycle is 100% model-owned: computer_glow_on turns it
+// on (mandated FIRST action of a session), computer_glow_off turns it off
+// (mandated LAST action, success or surrender). There is no idle timer and
+// no harness-side clearing — while on, it only follows the display being
+// controlled.
+const OVERLAY_FADE_MS = 650
 
 /**
  * The coordinate frame the model is currently working in: the most recent
@@ -149,6 +167,23 @@ async function readConfig() {
   } catch {
     return {}
   }
+}
+
+// The app's UI locale ('en' | 'ar'), used only for the human-facing glow
+// overlay text. Cached so overlay creation can stay synchronous; refreshed
+// fire-and-forget at init and on every keep-alive, matching how the rest of
+// the main process treats config.json's top-level `locale`.
+let appLocale = 'en'
+
+function refreshAppLocale() {
+  if (!workspaceRoot) return
+  fs.readFile(path.join(workspaceRoot, 'config.json'), 'utf8')
+    .then((raw) => {
+      appLocale = JSON.parse(raw)?.locale === 'ar' ? 'ar' : 'en'
+    })
+    .catch(() => {
+      // Keep the previous (or default 'en') locale.
+    })
 }
 
 async function checkPermissions() {
@@ -297,116 +332,228 @@ function cursorDip() {
 const overlay = {
   win: null,
   displayId: null,
-  hideTimer: null
+  assertBounds: null,
+  wantedBounds: null,
+  locale: null
 }
 
-function overlayHtml() {
+// Human-facing status line shown in the glow's pill, per app UI locale.
+const OVERLAY_TEXT = {
+  en: { dir: 'ltr', text: 'Wolffish is capturing your screen' },
+  ar: { dir: 'rtl', text: 'وولفيش يلتقط شاشتك' }
+}
+
+function overlayHtml(locale) {
+  const t = OVERLAY_TEXT[locale] ?? OVERLAY_TEXT.en
+  // The glow is four edge gradients rather than one giant inset box-shadow:
+  // blurred shadows on a display-sized transparent surface render per
+  // compositor tile and can drop edges; plain gradients never do. The
+  // breathing and pulse layers animate opacity only (pre-painted layers,
+  // compositor-cheap — no per-frame shadow repaints).
+  const edges = (a, b) =>
+    `linear-gradient(to bottom, rgba(59,130,246,${a}), rgba(59,130,246,${b}) 55%, rgba(59,130,246,0)),` +
+    `linear-gradient(to top, rgba(59,130,246,${a}), rgba(59,130,246,${b}) 55%, rgba(59,130,246,0)),` +
+    `linear-gradient(to right, rgba(59,130,246,${a}), rgba(59,130,246,${b}) 55%, rgba(59,130,246,0)),` +
+    `linear-gradient(to left, rgba(59,130,246,${a}), rgba(59,130,246,${b}) 55%, rgba(59,130,246,0))`
+  const layer =
+    'position:fixed;inset:0;background-repeat:no-repeat;' +
+    'background-size:100% 22px,100% 22px,22px 100%,22px 100%;' +
+    'background-position:top,bottom,left,right;'
   const html =
-    '<!doctype html><html><head><meta charset="utf-8"><style>' +
+    `<!doctype html><html dir="${t.dir}"><head><meta charset="utf-8"><style>` +
     'html,body{margin:0;width:100vw;height:100vh;background:transparent;overflow:hidden;pointer-events:none}' +
-    '#g{position:fixed;inset:0;box-shadow:inset 0 0 34px 6px rgba(59,130,246,.32),inset 0 0 10px 2px rgba(96,165,250,.42)}' +
-    '#g.pulse{animation:p .7s ease-out}' +
-    '@keyframes p{' +
-    '0%{box-shadow:inset 0 0 34px 6px rgba(59,130,246,.32),inset 0 0 10px 2px rgba(96,165,250,.42)}' +
-    '30%{box-shadow:inset 0 0 64px 16px rgba(59,130,246,.72),inset 0 0 18px 5px rgba(147,197,253,.88)}' +
-    '100%{box-shadow:inset 0 0 34px 6px rgba(59,130,246,.32),inset 0 0 10px 2px rgba(96,165,250,.42)}' +
-    '}</style></head><body><div id="g"></div><scr' +
-    'ipt>window.pulse=function(){var g=document.getElementById("g");g.classList.remove("pulse");void g.offsetWidth;g.classList.add("pulse")}</scr' +
+    'body{opacity:0;animation:fi .45s ease-out forwards}' +
+    'body.bye{animation:fo .6s ease-in forwards}' +
+    `#base{${layer}background-image:${edges(0.4, 0.12)}}` +
+    `#breathe{${layer}background-image:${edges(0.62, 0.2)};opacity:0;animation:br 3.2s ease-in-out infinite}` +
+    `#pulse{${layer}background-image:${edges(0.9, 0.34)};opacity:0}` +
+    '#pulse.on{animation:pu .8s ease-out}' +
+    '#chip{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);display:flex;align-items:center;gap:8px;' +
+    'padding:7px 16px;border-radius:999px;background:rgba(8,15,33,.42);' +
+    'backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);' +
+    'border:1px solid rgba(96,165,250,.3);color:rgba(226,236,255,.62);' +
+    "font:500 13px/1.2 -apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;letter-spacing:.2px}" +
+    '#dot{width:7px;height:7px;border-radius:50%;background:#60A5FA;box-shadow:0 0 8px 2px rgba(96,165,250,.55);' +
+    'animation:db 2.4s ease-in-out infinite}' +
+    '@keyframes fi{to{opacity:1}}' +
+    '@keyframes fo{to{opacity:0}}' +
+    '@keyframes br{0%,100%{opacity:.12}50%{opacity:1}}' +
+    '@keyframes pu{0%{opacity:.95}100%{opacity:0}}' +
+    '@keyframes db{0%,100%{opacity:.45}50%{opacity:1}}' +
+    '</style></head><body>' +
+    '<div id="base"></div><div id="breathe"></div><div id="pulse"></div>' +
+    `<div id="chip"><div id="dot"></div><span>${t.text}</span></div>` +
+    '<scr' +
+    'ipt>window.pulse=function(){var p=document.getElementById("pulse");p.classList.remove("on");void p.offsetWidth;p.classList.add("on")};' +
+    'window.bye=function(){document.body.classList.add("bye")}</scr' +
     'ipt></body></html>'
   return 'data:text/html;charset=utf-8,' + encodeURIComponent(html)
 }
 
-function hideOverlay() {
-  if (overlay.hideTimer) {
-    clearTimeout(overlay.hideTimer)
-    overlay.hideTimer = null
-  }
+function hideOverlay(immediate = false) {
   const win = overlay.win
   overlay.win = null
   overlay.displayId = null
-  if (win && !win.isDestroyed()) {
+  overlay.assertBounds = null
+  overlay.wantedBounds = null
+  overlay.locale = null
+  if (!win || win.isDestroyed()) return
+  const destroy = () => {
     try {
-      win.destroy()
+      if (!win.isDestroyed()) win.destroy()
     } catch {
       // Already gone — nothing to clean up.
     }
   }
+  // Linux has no content protection, and a detached fading window is out of
+  // overlayBeforeCapture's reach — it would leak into captures. Destroy
+  // immediately there; the fade is macOS/Windows-only polish.
+  if (immediate || process.platform === 'linux') {
+    destroy()
+    return
+  }
+  // Fade out gently, then destroy. The window is already detached from the
+  // overlay state, so a new glow can appear meanwhile without conflict.
+  try {
+    win.webContents.executeJavaScript('window.bye && window.bye()').catch(() => {})
+    const t = setTimeout(destroy, OVERLAY_FADE_MS + 150)
+    if (typeof t.unref === 'function') t.unref()
+  } catch {
+    destroy()
+  }
+}
+
+function createOverlayWindow(display) {
+  const b = display.bounds
+  const win = new electronBrowserWindow({
+    x: b.x,
+    y: b.y,
+    width: b.width,
+    height: b.height,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: false,
+    focusable: false,
+    skipTaskbar: true,
+    hasShadow: false,
+    alwaysOnTop: true,
+    fullscreenable: false,
+    show: false,
+    title: 'wolffish-screen-glow',
+    // Without this, macOS constrainFrameRect re-clamps the frameless
+    // window to a screen's visible frame some time after show — verified
+    // live: the overlay was shoved off the display, which is exactly why
+    // the glow's bottom border went missing. This flag disables the
+    // clamp; the snap-back below heals any move the OS still makes.
+    enableLargerThanScreen: true,
+    roundedCorners: false,
+    webPreferences: { contextIsolation: true, nodeIntegration: false }
+  })
+  win.setAlwaysOnTop(true, 'screen-saver')
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  win.setIgnoreMouseEvents(true)
+  // Excluded from every capture path (macOS sharingType none / Windows
+  // WDA_EXCLUDEFROMCAPTURE): the human sees the glow, screenshots don't.
+  win.setContentProtection(true)
+  win.loadURL(overlayHtml(appLocale))
+  win.showInactive()
+  const wanted = { x: b.x, y: b.y, width: b.width, height: b.height }
+  const snap = () => {
+    try {
+      if (win.isDestroyed()) return
+      const cur = win.getBounds()
+      if (cur.x !== wanted.x || cur.y !== wanted.y || cur.width !== wanted.width || cur.height !== wanted.height) {
+        win.setBounds(wanted)
+      }
+    } catch {
+      // Cosmetic only.
+    }
+  }
+  win.setBounds(wanted)
+  win.on('move', snap)
+  win.on('resize', snap)
+  overlay.win = win
+  overlay.displayId = display.id
+  overlay.assertBounds = snap
+  overlay.wantedBounds = wanted
+  overlay.locale = appLocale
+  console.log(`[computer-use] screen glow shown on display ${display.id} (${display.bounds.width}x${display.bounds.height})`)
 }
 
 /**
- * Show (or move) the glow on the given display and re-arm the idle-hide
- * timer. Every screen-touching tool calls this, so the glow tracks the
- * active display and disappears on its own once the session goes quiet.
- * Never throws — overlay trouble must not fail a tool call.
+ * Show the glow on the given display (or move it there). Called by the
+ * model-facing computer_glow_on, and by overlayFollow while the glow is on.
+ * Returns whether the glow is showing. Never throws — overlay trouble must
+ * not fail a tool call.
  */
-function overlayKeepAlive(display, holdMs = OVERLAY_IDLE_HIDE_MS) {
+function overlayShow(display) {
   try {
-    if (!electronBrowserWindow || !display) return
-    if (overlay.win && (overlay.win.isDestroyed() || overlay.displayId !== display.id)) {
-      hideOverlay()
+    if (!electronBrowserWindow || !display) return false
+    refreshAppLocale()
+    // Recreate rather than fight the OS when the display's geometry changed
+    // (resolution or arrangement) — the snap-back listeners would otherwise
+    // pin the stale bounds forever.
+    const db = display.bounds
+    const geometryChanged =
+      overlay.wantedBounds &&
+      overlay.displayId === display.id &&
+      (overlay.wantedBounds.x !== db.x ||
+        overlay.wantedBounds.y !== db.y ||
+        overlay.wantedBounds.width !== db.width ||
+        overlay.wantedBounds.height !== db.height)
+    if (overlay.win && (overlay.win.isDestroyed() || overlay.displayId !== display.id || geometryChanged)) {
+      hideOverlay(true)
     }
     if (!overlay.win) {
-      const b = display.bounds
-      const win = new electronBrowserWindow({
-        x: b.x,
-        y: b.y,
-        width: b.width,
-        height: b.height,
-        frame: false,
-        transparent: true,
-        resizable: false,
-        movable: false,
-        focusable: false,
-        skipTaskbar: true,
-        hasShadow: false,
-        alwaysOnTop: true,
-        fullscreenable: false,
-        show: false,
-        title: 'wolffish-screen-glow',
-        webPreferences: { contextIsolation: true, nodeIntegration: false }
-      })
-      win.setAlwaysOnTop(true, 'screen-saver')
-      win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
-      win.setIgnoreMouseEvents(true)
-      // Excluded from every capture path (macOS sharingType none / Windows
-      // WDA_EXCLUDEFROMCAPTURE): the human sees the glow, screenshots don't.
-      win.setContentProtection(true)
-      win.loadURL(overlayHtml())
-      win.showInactive()
-      overlay.win = win
-      overlay.displayId = display.id
-      console.log(`[computer-use] screen glow shown on display ${display.id} (${display.bounds.width}x${display.bounds.height})`)
+      createOverlayWindow(display)
+    } else {
+      if (overlay.assertBounds) {
+        // Re-assert full-display coverage: cheap, and it heals any late
+        // OS-side reposition that slipped past the listeners.
+        overlay.assertBounds()
+      }
+      if (overlay.locale !== appLocale && !overlay.win.isDestroyed()) {
+        // The app's UI language changed mid-session — swap the chip text in
+        // place instead of waiting for the next overlay recreation.
+        overlay.locale = appLocale
+        const t = OVERLAY_TEXT[appLocale] ?? OVERLAY_TEXT.en
+        overlay.win.webContents
+          .executeJavaScript(
+            `document.documentElement.setAttribute('dir', ${JSON.stringify(t.dir)});` +
+              `var s = document.querySelector('#chip span'); if (s) s.textContent = ${JSON.stringify(t.text)};`
+          )
+          .catch(() => {})
+      }
     }
-    if (overlay.hideTimer) clearTimeout(overlay.hideTimer)
-    overlay.hideTimer = setTimeout(hideOverlay, holdMs)
-    if (typeof overlay.hideTimer.unref === 'function') overlay.hideTimer.unref()
+    return !!overlay.win
   } catch (err) {
     // Glow is cosmetic — never let it break automation. But say why it
     // failed, or a missing glow is undiagnosable.
     console.log(`[computer-use] screen glow failed: ${err?.message ?? String(err)}`)
-  }
-}
-
-/** Keep-alive on whichever display holds the cursor (typing, key presses). */
-function overlayKeepAliveAtCursor(holdMs = OVERLAY_IDLE_HIDE_MS) {
-  try {
-    const cur = cursorDip()
-    if (!cur) return
-    overlayKeepAlive(electronScreen.getDisplayNearestPoint(cur), holdMs)
-  } catch {
-    // Cosmetic only.
+    return false
   }
 }
 
 /**
- * Extend the glow if it is already showing (computer_wait mid-session) —
- * a bare wait never summons the glow on its own.
+ * While the glow is ON (model turned it on), keep it over the display being
+ * controlled. Never creates the glow — the lifecycle is 100% model-owned via
+ * computer_glow_on / computer_glow_off.
  */
-function overlayExtend(holdMs) {
-  if (!overlay.win || overlay.win.isDestroyed()) return
-  if (overlay.hideTimer) clearTimeout(overlay.hideTimer)
-  overlay.hideTimer = setTimeout(hideOverlay, holdMs)
-  if (typeof overlay.hideTimer.unref === 'function') overlay.hideTimer.unref()
+function overlayFollow(display) {
+  if (!overlay.win) return
+  overlayShow(display)
+}
+
+/** Follow onto whichever display holds the cursor (typing, key presses). */
+function overlayFollowAtCursor() {
+  try {
+    const cur = cursorDip()
+    if (!cur) return
+    overlayFollow(electronScreen.getDisplayNearestPoint(cur))
+  } catch {
+    // Cosmetic only.
+  }
 }
 
 /** One subtle brighten-and-fade pulse: feedback that a capture happened. */
@@ -449,18 +596,40 @@ function overlayAfterCapture() {
  * Crosshair marker composited onto every returned image at the cursor
  * position: white outer ring + magenta inner ring + center dot + ticks,
  * visible on light and dark backgrounds alike.
+ *
+ * With `hairlines`, thin magenta lines additionally run from the image
+ * edges to the ring on both axes. In aiming frames (zoom, magnifier) this
+ * is what makes the cursor position unambiguous: the fat ring can visually
+ * swallow a small control that is actually 10-20px away — the live failure
+ * mode behind "the crosshair is on the ✕" hallucinations — while a hairline
+ * either passes through the target or visibly does not.
  */
-function crosshairSvg(imgW, imgH, cx, cy) {
+function crosshairSvg(imgW, imgH, cx, cy, hairlines = false) {
   const c = '#FF1B8D'
+  const hair = hairlines
+    ? `<g opacity="0.55" stroke="#FFFFFF" stroke-width="3">` +
+      `<line x1="0" y1="${cy}" x2="${cx - 22}" y2="${cy}"/>` +
+      `<line x1="${cx + 22}" y1="${cy}" x2="${imgW}" y2="${cy}"/>` +
+      `<line x1="${cx}" y1="0" x2="${cx}" y2="${cy - 22}"/>` +
+      `<line x1="${cx}" y1="${cy + 22}" x2="${cx}" y2="${imgH}"/>` +
+      `</g>` +
+      `<g stroke="${c}" stroke-width="1.2">` +
+      `<line x1="0" y1="${cy}" x2="${cx - 22}" y2="${cy}"/>` +
+      `<line x1="${cx + 22}" y1="${cy}" x2="${imgW}" y2="${cy}"/>` +
+      `<line x1="${cx}" y1="0" x2="${cx}" y2="${cy - 22}"/>` +
+      `<line x1="${cx}" y1="${cy + 22}" x2="${cx}" y2="${imgH}"/>` +
+      `</g>`
+    : ''
   return Buffer.from(
     `<svg xmlns="http://www.w3.org/2000/svg" width="${imgW}" height="${imgH}">` +
       `<g fill="none">` +
-      `<circle cx="${cx}" cy="${cy}" r="11" stroke="#FFFFFF" stroke-width="5" opacity="0.9"/>` +
-      `<circle cx="${cx}" cy="${cy}" r="11" stroke="${c}" stroke-width="2.5"/>` +
-      `<line x1="${cx - 19}" y1="${cy}" x2="${cx - 7}" y2="${cy}" stroke="${c}" stroke-width="2.5"/>` +
-      `<line x1="${cx + 7}" y1="${cy}" x2="${cx + 19}" y2="${cy}" stroke="${c}" stroke-width="2.5"/>` +
-      `<line x1="${cx}" y1="${cy - 19}" x2="${cx}" y2="${cy - 7}" stroke="${c}" stroke-width="2.5"/>` +
-      `<line x1="${cx}" y1="${cy + 7}" x2="${cx}" y2="${cy + 19}" stroke="${c}" stroke-width="2.5"/>` +
+      hair +
+      `<circle cx="${cx}" cy="${cy}" r="9" stroke="#FFFFFF" stroke-width="4" opacity="0.9"/>` +
+      `<circle cx="${cx}" cy="${cy}" r="9" stroke="${c}" stroke-width="2"/>` +
+      `<line x1="${cx - 16}" y1="${cy}" x2="${cx - 6}" y2="${cy}" stroke="${c}" stroke-width="2"/>` +
+      `<line x1="${cx + 6}" y1="${cy}" x2="${cx + 16}" y2="${cy}" stroke="${c}" stroke-width="2"/>` +
+      `<line x1="${cx}" y1="${cy - 16}" x2="${cx}" y2="${cy - 6}" stroke="${c}" stroke-width="2"/>` +
+      `<line x1="${cx}" y1="${cy + 6}" x2="${cx}" y2="${cy + 16}" stroke="${c}" stroke-width="2"/>` +
       `<circle cx="${cx}" cy="${cy}" r="1.6" fill="${c}"/>` +
       `</g></svg>`
   )
@@ -482,16 +651,54 @@ async function savePersistedImage(buffer, ext, prefix) {
 }
 
 /**
+ * Percentage of pixels that differ between the same crop of two captures.
+ * Greyscale at a reduced size with a generous per-pixel threshold, so
+ * capture noise and antialiasing never register while any real UI change
+ * (a closed tab, an opened menu, a toggled control) does.
+ */
+async function regionChangePct(prePng, postPng, crop) {
+  // Patch diffs run at native resolution — a 16px checkmark toggling must
+  // register, and downscaling would dilute it below any threshold. The
+  // full-display diff (crop == null) downscales for speed; it only needs to
+  // catch big effects like menus and closed windows.
+  const prep = (png) => {
+    let p = sharp(png)
+    if (crop) {
+      p = p.extract(crop)
+      if (crop.width > 640) p = p.resize({ width: 640 })
+    } else {
+      p = p.resize({ width: 256 })
+    }
+    return p.greyscale().raw().toBuffer({ resolveWithObject: true })
+  }
+  const threshold = crop ? 20 : 26
+  const [a, b] = await Promise.all([prep(prePng), prep(postPng)])
+  if (a.info.width !== b.info.width || a.info.height !== b.info.height) return null
+  const n = Math.min(a.data.length, b.data.length)
+  if (n === 0) return null
+  let changed = 0
+  for (let i = 0; i < n; i++) {
+    if (Math.abs(a.data[i] - b.data[i]) > threshold) changed++
+  }
+  return (changed / n) * 100
+}
+
+/**
  * Capture a magnified close-up centered on the cursor, crosshair drawn at
  * the exact cursor pixel. Returned after move/click/drag as visual proof of
  * where the action landed, and installed as the new current frame so the
  * model can correct its aim in the close-up's own (finer) coordinates.
+ *
+ * When `preShot` (a captureNative result plus displayId, taken just before
+ * the action) is provided, the fresh capture is also diffed against it and
+ * the note reports objectively whether the screen changed — the model gets
+ * hard evidence instead of having to judge a close-up it can misread.
  */
-async function renderMagnifier() {
+async function renderMagnifier(preShot = null) {
   const cur = cursorDip()
   if (!cur) throw new Error('Could not read cursor position.')
   const display = electronScreen.getDisplayNearestPoint(cur)
-  overlayKeepAlive(display)
+  overlayFollow(display)
   const { png, nativeW, nativeH } = await captureNative(display)
 
   const b = display.bounds
@@ -523,7 +730,7 @@ async function renderMagnifier() {
   const buffer = await sharp(png)
     .extract(crop)
     .resize({ width: outW, height: outH, fit: 'fill' })
-    .composite([{ input: crosshairSvg(outW, outH, cxImg, cyImg), left: 0, top: 0 }])
+    .composite([{ input: crosshairSvg(outW, outH, cxImg, cyImg, true), left: 0, top: 0 }])
     .png()
     .toBuffer()
 
@@ -537,12 +744,45 @@ async function renderMagnifier() {
     displayId: display.id
   })
 
+  // Objective did-anything-change verdict, computed from pixels rather than
+  // model eyesight. Patch = the magnifier region; display = the whole screen.
+  let changeLine = ''
+  if (preShot && preShot.displayId === display.id && preShot.nativeW === nativeW && preShot.nativeH === nativeH) {
+    try {
+      const [patchPct, displayPct] = await Promise.all([
+        regionChangePct(preShot.png, png, crop),
+        regionChangePct(preShot.png, png, null)
+      ])
+      if (patchPct !== null && displayPct !== null) {
+        const changed = patchPct >= CHANGE_PATCH_MIN_PCT || displayPct >= CHANGE_DISPLAY_MIN_PCT
+        changeLine = changed
+          ? ` Screen change detected: ${patchPct.toFixed(1)}% of the area around the cursor changed` +
+            ` (${displayPct.toFixed(1)}% of this display) — animation or video can also trigger this, so confirm with the` +
+            ` magnifier/screenshot that it is the change YOU intended.`
+          : ` NO visible change was detected on this display within ~0.4s of the click (${patchPct.toFixed(2)}% around the cursor,` +
+            ` ${displayPct.toFixed(2)}% of the display). An immediate local effect (a control toggling, a menu opening, a tab closing)` +
+            ` would normally register here — if you expected one, treat this as a MISS: re-locate the target (fresh screenshot →` +
+            ` tight zoom → computer_mouse_move) instead of reporting success. But slow-loading results, effects on another display,` +
+            ` or very small low-contrast changes can evade this check — if the effect may simply be slow (page load, form submit),` +
+            ` wait and take a computer_screenshot to confirm, and NEVER re-click a side-effectful control (send, submit, buy, delete)` +
+            ` on this line alone.`
+      }
+    } catch {
+      // Diffing is best-effort — the magnifier alone is still useful.
+    }
+  }
+
+  const savedPath = await savePersistedImage(buffer, 'png', 'mag')
+
   return {
     image: { mediaType: 'image/png', data: buffer.toString('base64') },
+    changeLine,
     note:
       `The ${outW}x${outH} magnifier below (${MAG_SCALE}x zoom around the cursor) is now the current frame — ` +
-      `the crosshair marks the exact cursor position. To adjust by a small amount, use coordinates read from ` +
-      `this magnifier. For anything else, take a fresh computer_screenshot first.`
+      `the ring and the thin magenta hairlines running to the image edges mark the exact cursor position ` +
+      `(they are drawn by the tool, not part of the UI). To adjust by a small amount, use coordinates read from ` +
+      `this magnifier. For anything else, take a fresh computer_screenshot first.` +
+      (savedPath ? `\n${savedPath}` : '')
   }
 }
 
@@ -559,7 +799,7 @@ async function takeScreenshot(args) {
     const displayIndex = Number(args?.display_index) || 0
     const { displays, display } = getDisplayByIndex(displayIndex)
 
-    overlayKeepAlive(display)
+    overlayFollow(display)
     const { png, nativeW, nativeH } = await captureNative(display)
 
     // Very wide displays (ultrawides) would compress unreadably at the
@@ -680,7 +920,7 @@ async function zoomRegion(args) {
       electronScreen.getDisplayNearestPoint({ x: Math.round(lx + lw / 2), y: Math.round(ly + lh / 2) })
     const b = display.bounds
 
-    overlayKeepAlive(display)
+    overlayFollow(display)
     const { png, nativeW, nativeH } = await captureNative(display)
     const fx = nativeW / display.size.width
     const fy = nativeH / display.size.height
@@ -695,7 +935,16 @@ async function zoomRegion(args) {
 
     // Small regions magnify (up to 4x); a region wider than the output cap
     // is re-rendered downscaled to fit — still a fresh native-based view.
-    const factor = Math.min(ZOOM_MAX_FACTOR, ZOOM_MAX_OUT / lw)
+    // When the base cap would leave the zoom under 2x, widen the output up
+    // to ZOOM_WIDE_OUT to claw back magnification: sub-2x zooms are where
+    // small-target clicks go wrong. Tall regions are capped by height too,
+    // so a narrow column can never explode into a several-thousand-pixel
+    // image.
+    let factor = Math.min(ZOOM_MAX_FACTOR, ZOOM_MAX_OUT / lw)
+    if (factor < ZOOM_TARGET_FACTOR) {
+      factor = Math.min(ZOOM_TARGET_FACTOR, ZOOM_WIDE_OUT / lw)
+    }
+    factor = Math.min(factor, ZOOM_MAX_OUT_H / lh)
     const outW = Math.round(lw * factor)
     const outH = Math.round(lh * factor)
 
@@ -716,8 +965,11 @@ async function zoomRegion(args) {
     if (cur && cur.x >= lx && cur.x < lx + lw && cur.y >= ly && cur.y < ly + lh) {
       const cx = Math.round((cur.x - lx) / newFrame.scale)
       const cy = Math.round((cur.y - ly) / newFrame.scale)
-      pipeline = pipeline.composite([{ input: crosshairSvg(outW, outH, cx, cy), left: 0, top: 0 }])
-      cursorLine = ` Cursor at (${cx}, ${cy}), marked with the crosshair.`
+      pipeline = pipeline.composite([{ input: crosshairSvg(outW, outH, cx, cy, true), left: 0, top: 0 }])
+      cursorLine =
+        ` Cursor at (${cx}, ${cy}), marked with the crosshair and hairlines — that is only where the CURSOR sits,` +
+        ` not proof it is on your target: never click the cursor's position because it "looks close"; read your` +
+        ` target's own pixel coordinates from this image.`
     }
 
     const buffer = await pipeline.png().toBuffer()
@@ -726,12 +978,27 @@ async function zoomRegion(args) {
     const savedPath = await savePersistedImage(buffer, 'png', 'zoom')
     const pathLine = savedPath ? `\n${savedPath}` : ''
 
+    // A weak zoom is the setup for a missed click — say so, with the exact
+    // region size that would fix it (in THIS new frame's own pixels).
+    // Gate at 1.95 rather than 2.0 so toFixed(1) can never render the
+    // self-contradiction "this zoom is only 2.0x".
+    let weakLine = ''
+    if (factor < ZOOM_TARGET_FACTOR - 0.05) {
+      const suggestW = Math.max(40, Math.min(outW, Math.floor(ZOOM_MAX_OUT / (3 * newFrame.scale))))
+      const suggestH = Math.max(24, Math.min(outH, Math.floor(ZOOM_MAX_OUT_H / (3 * newFrame.scale))))
+      weakLine =
+        ` WARNING: this zoom is only ${factor.toFixed(1)}x — barely sharper than the screenshot, NOT enough to aim at` +
+        ` small controls (close buttons, checkboxes, small icons). Zoom again into a narrower slice of THIS frame` +
+        ` around your target — a region of at most ${suggestW}x${suggestH} gives you 3x.`
+    }
+
     return {
       success: true,
       output:
         `Frame ${outW}x${outH} — ${factor.toFixed(1)}x zoom into the region you selected, captured fresh at native resolution.${cursorLine} ` +
         `Coordinates now refer to THIS zoomed image (x 0-${outW - 1}, y 0-${outH - 1}) — click your target using them for maximum precision. ` +
         `To act outside this region, take a fresh computer_screenshot first.` +
+        weakLine +
         pathLine,
       images: [{ mediaType: 'image/png', data: buffer.toString('base64') }]
     }
@@ -762,16 +1029,20 @@ async function mouseMove(args) {
   }
   const boundsError = validateFrameCoords(x, y)
   if (boundsError) return { success: false, error: boundsError }
+  const target = typeof args?.target === 'string' && args.target.trim().length > 0 ? args.target.trim() : null
 
   try {
     const dip = await moveCursorTo(x, y)
     const mag = await renderMagnifier()
+    const aimWhat = target ? `"${target}"` : 'your target'
     return {
       success: true,
       output:
-        `Moved cursor to (${x}, ${y}) in the previous frame → screen (${dip.x}, ${dip.y}). ` +
-        `Check the magnifier: if the crosshair sits exactly on your target, click it with computer_mouse_click (no coordinates). ` +
-        `If it is off, move again using magnifier coordinates. ${mag.note}`,
+        `Moved cursor to (${x}, ${y}) in the previous frame → screen (${dip.x}, ${dip.y}).` +
+        (target ? ` Target: "${target}".` : '') +
+        ` Check the magnifier: the hairlines must pass through the CENTER of ${aimWhat} — "close" is not on it. ` +
+        `If they do, click with computer_mouse_click (no coordinates). ` +
+        `If they are off by any amount, move again using coordinates read from the magnifier. ${mag.note}`,
       images: [mag.image]
     }
   } catch (err) {
@@ -799,6 +1070,7 @@ async function mouseClick(args) {
   const y = hasCoords ? Number(args.y) : null
   const { button, label } = resolveButton(args?.button)
   const isDouble = args?.double === true
+  const target = typeof args?.target === 'string' && args.target.trim().length > 0 ? args.target.trim() : null
 
   if (hasCoords) {
     if (!Number.isFinite(x) || !Number.isFinite(y)) {
@@ -815,19 +1087,43 @@ async function mouseClick(args) {
       where = `at (${x}, ${y}) in the previous frame → screen (${dip.x}, ${dip.y})`
     }
 
+    // Let hover states settle, then capture the before picture — the
+    // post-click capture is diffed against it so the result can state
+    // objectively whether the click changed anything on screen.
+    await sleep(150)
+    let preShot = null
+    try {
+      const cur = cursorDip()
+      if (cur) {
+        const preDisplay = electronScreen.getDisplayNearestPoint(cur)
+        preShot = { ...(await captureNative(preDisplay)), displayId: preDisplay.id }
+      }
+    } catch {
+      // Verification is best-effort — the click itself must still happen.
+    }
+
     if (isDouble) {
       await nutMouse.doubleClick(button)
     } else {
       await nutMouse.click(button)
     }
-    await sleep(120)
+    // With a before-capture in hand, give the UI a little longer to paint the
+    // click's effect before sampling — quick-but-not-instant reactions
+    // (ripples, row removals, dropdowns) must land inside the diff window.
+    await sleep(preShot ? 300 : 120)
 
-    const mag = await renderMagnifier()
+    const mag = await renderMagnifier(preShot)
     const clickType = isDouble ? 'Double-clicked' : 'Clicked'
+    const targetLine = target ? ` Target: "${target}".` : ''
+    const verifyWhat = target ? `"${target}"` : 'the target you meant'
+    const changeLine =
+      mag.changeLine ||
+      ' Change measurement was unavailable for this click — verify the result with the magnifier and a fresh screenshot.'
     return {
       success: true,
       output:
-        `${clickType} ${label} ${where}. Verify in the magnifier that the crosshair is on the target you meant — ` +
+        `${clickType} ${label} ${where}.${targetLine}${changeLine} ` +
+        `Verify in the magnifier that the crosshair is on ${verifyWhat} — ` +
         `if it shows empty space or a different control under the crosshair, the target was NOT clicked: do not ` +
         `report success; re-locate it (fresh screenshot, then zoom) and click again. ` +
         `If this click should change the screen (menu, dialog, page), take a computer_screenshot to see the result. ${mag.note}`,
@@ -956,7 +1252,7 @@ async function keyboardType(args) {
   if (text.length === 0) {
     return { success: false, error: 'text is required and must be non-empty' }
   }
-  overlayKeepAliveAtCursor()
+  overlayFollowAtCursor()
 
   try {
     // Short ASCII goes through real keystrokes. Anything long or non-ASCII
@@ -996,7 +1292,7 @@ async function keyboardPress(args) {
   if (rawKey.length === 0) {
     return { success: false, error: 'key is required' }
   }
-  overlayKeepAliveAtCursor()
+  overlayFollowAtCursor()
 
   // Accept both forms: key:'s' + modifiers:'cmd', and a single combo string
   // key:'cmd+s'. A bare '+' key press still works.
@@ -1049,6 +1345,39 @@ async function keyboardPress(args) {
   }
 }
 
+async function glowOn(args) {
+  try {
+    if (!electronScreen || !electronBrowserWindow) {
+      return { success: false, error: 'Screen indicator unavailable (Electron APIs not loaded).' }
+    }
+    const displayIndex = Number(args?.display_index) || 0
+    const { display } = getDisplayByIndex(displayIndex)
+    if (!overlayShow(display)) {
+      return { success: false, error: 'Screen indicator could not be shown — continue the task and tell the user the indicator is unavailable.' }
+    }
+    return {
+      success: true,
+      output:
+        `Screen indicator ON — display ${displayIndex} now shows the blue glow and the capture notice. ` +
+        `It follows your actions across displays and stays on until you call computer_glow_off, ` +
+        `which MUST be your last action when you finish — or give up on — controlling the screen.`
+    }
+  } catch (err) {
+    return { success: false, error: `Screen indicator failed: ${err?.message ?? String(err)}` }
+  }
+}
+
+async function glowOff() {
+  const wasOn = !!overlay.win
+  hideOverlay()
+  return {
+    success: true,
+    output: wasOn
+      ? 'Screen indicator OFF — the user can see the session is over.'
+      : 'Screen indicator was already off.'
+  }
+}
+
 async function waitMs(args) {
   // No cap — the model decides the duration (see SKILL.md). A wait cannot be
   // interrupted once in flight, so very long waits should be split into
@@ -1056,9 +1385,8 @@ async function waitMs(args) {
   // waits 0ms.
   const requested = Number(args?.ms)
   const ms = Number.isFinite(requested) && requested > 0 ? requested : 0
-  // Keep the glow alive across the whole wait (plus the normal idle margin)
-  // so a long deliberate pause does not read as a finished session.
-  overlayExtend(ms + OVERLAY_IDLE_HIDE_MS)
+  // The glow (if the model turned it on) simply stays on through the wait —
+  // its lifecycle is model-owned, nothing here needs to extend it.
   await new Promise((r) => setTimeout(r, ms))
   return { success: true, output: `Waited ${ms}ms` }
 }
@@ -1081,6 +1409,8 @@ async function listDisplays() {
 }
 
 const TOOL_MAP = {
+  computer_glow_on: glowOn,
+  computer_glow_off: glowOff,
   computer_screenshot: takeScreenshot,
   computer_zoom: zoomRegion,
   computer_list_displays: listDisplays,
@@ -1096,6 +1426,27 @@ const TOOL_MAP = {
 // Kept in sync with the SKILL.md frontmatter, which is the model-facing
 // schema; this mirror exists for tooling that inspects the plugin directly.
 const toolDefinitions = [
+  {
+    name: 'computer_glow_on',
+    description:
+      'Turn ON the screen indicator (blue edge glow + centered capture notice). MUST be the FIRST action of every computer-use session, before the first screenshot. Stays on until computer_glow_off.',
+    parameters: {
+      type: 'object',
+      properties: {
+        display_index: {
+          type: 'number',
+          description: 'Display to show it on first (default 0). It follows your actions across displays afterwards.'
+        }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'computer_glow_off',
+    description:
+      'Turn OFF the screen indicator. MUST be the LAST action when you finish — or give up on — controlling the screen. Nothing turns it off automatically.',
+    parameters: { type: 'object', properties: {}, required: [] }
+  },
   {
     name: 'computer_screenshot',
     description:
@@ -1139,7 +1490,8 @@ const toolDefinitions = [
       type: 'object',
       properties: {
         x: { type: 'number', description: 'X in current-frame pixels' },
-        y: { type: 'number', description: 'Y in current-frame pixels' }
+        y: { type: 'number', description: 'Y in current-frame pixels' },
+        target: { type: 'string', description: 'What you are aiming at (short phrase), echoed back for verification' }
       },
       required: ['x', 'y']
     }
@@ -1147,14 +1499,15 @@ const toolDefinitions = [
   {
     name: 'computer_mouse_click',
     description:
-      'Click at x,y in current-frame pixels (or at the current cursor position when omitted). Returns a magnified view proving where the click landed.',
+      'Click at x,y in current-frame pixels (or at the current cursor position when omitted). Returns a magnified view proving where the click landed, plus an objective report of whether the screen changed.',
     parameters: {
       type: 'object',
       properties: {
         x: { type: 'number', description: 'X in current-frame pixels (omit both to click in place)' },
         y: { type: 'number', description: 'Y in current-frame pixels (omit both to click in place)' },
         button: { type: 'string', enum: ['left', 'right', 'middle'], description: 'Mouse button (default left)' },
-        double: { type: 'boolean', description: 'Double-click instead of single click' }
+        double: { type: 'boolean', description: 'Double-click instead of single click' },
+        target: { type: 'string', description: 'What you are clicking (short phrase), echoed back for verification' }
       },
       required: []
     }
@@ -1224,6 +1577,10 @@ const toolDefinitions = [
 
 function describeAction(toolName, args) {
   switch (toolName) {
+    case 'computer_glow_on':
+      return { title: 'Show screen indicator', description: 'Show the glow and capture notice on the controlled display', risk: 'low' }
+    case 'computer_glow_off':
+      return { title: 'Hide screen indicator', description: 'Hide the glow and capture notice', risk: 'low' }
     case 'computer_screenshot':
       return { title: 'Take screenshot', description: 'Capture the current screen', risk: 'low' }
     case 'computer_zoom':
@@ -1237,14 +1594,16 @@ function describeAction(toolName, args) {
     case 'computer_mouse_move': {
       const x = args?.x ?? '?'
       const y = args?.y ?? '?'
-      return { title: 'Move cursor', description: `Move mouse to (${x}, ${y})`, risk: 'low' }
+      const at = typeof args?.target === 'string' && args.target ? ` — ${args.target}` : ''
+      return { title: 'Move cursor', description: `Move mouse to (${x}, ${y})${at}`, risk: 'low' }
     }
     case 'computer_mouse_click': {
       const x = args?.x ?? 'current'
       const y = args?.y ?? 'current'
       const btn = args?.button ?? 'left'
       const dbl = args?.double ? 'Double-click' : 'Click'
-      return { title: `${dbl} ${btn}`, description: `${dbl} ${btn} button at (${x}, ${y})`, risk: 'medium' }
+      const at = typeof args?.target === 'string' && args.target ? ` — ${args.target}` : ''
+      return { title: `${dbl} ${btn}`, description: `${dbl} ${btn} button at (${x}, ${y})${at}`, risk: 'medium' }
     }
     case 'computer_mouse_drag':
       return {
@@ -1285,6 +1644,9 @@ const plugin = {
     if (context.getCurrentConversationId) {
       getConversationId = context.getCurrentConversationId
     }
+    // Warm the overlay-locale cache so the first glow of a session already
+    // shows the right language.
+    refreshAppLocale()
 
     // On macOS, prompt for Accessibility permission
     if (process.platform === 'darwin') {
@@ -1303,6 +1665,16 @@ const plugin = {
       electronDesktopCapturer = electron.desktopCapturer
       electronClipboard = electron.clipboard
       electronBrowserWindow = electron.BrowserWindow
+
+      // A plugin reload orphans any glow the previous generation left on
+      // screen — with no idle timer, it would otherwise stay up forever.
+      try {
+        for (const w of electronBrowserWindow.getAllWindows()) {
+          if (w.getTitle?.() === 'wolffish-screen-glow') w.destroy()
+        }
+      } catch {
+        // Cosmetic only.
+      }
     } catch {
       // Will fall back to error in takeScreenshot
     }
