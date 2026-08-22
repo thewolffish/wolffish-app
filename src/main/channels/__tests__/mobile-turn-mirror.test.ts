@@ -233,7 +233,9 @@ async function run(): Promise<void> {
 
   // ------------------------------------------------------- the oversize guard
   // An event is one frame; a push past the relay's record cap closes the
-  // tunnel rather than arriving late. Too big degrades to the bare nudge.
+  // tunnel rather than arriving late. Too big is TRIMMED to fit — withholding
+  // was the old degrade, and it is how a long tool-heavy turn went dark on
+  // the phone for its whole remaining runtime.
   pushes.length = 0
   channel.pushMessageAppended('conv-x', {
     id: 'm_1_aaaaaa',
@@ -241,9 +243,81 @@ async function run(): Promise<void> {
     content: 'x'.repeat(512 * 1024)
   })
   const guarded = appended().at(-1)
+  const guardedMessage = guarded?.payload.message as { id?: string; content?: string } | undefined
   ok(
-    'an oversized mirror degrades to a nudge instead of being sent',
-    guarded !== undefined && guarded.payload.message === undefined
+    'an oversized mirror is trimmed and sent, never withheld',
+    guardedMessage !== undefined && guardedMessage.id === 'm_1_aaaaaa',
+    JSON.stringify(Object.keys(guarded?.payload ?? {}))
+  )
+  ok(
+    '... under the wire budget',
+    Buffer.byteLength(JSON.stringify(guardedMessage ?? {})) <= 384 * 1024,
+    String(Buffer.byteLength(JSON.stringify(guardedMessage ?? {})))
+  )
+
+  // The bulk of a real oversized snapshot is tool payloads — a few huge ones
+  // (a gmail dump) get their long strings capped, and when sheer COUNT is the
+  // problem the oldest payloads are elided outright while the newest stay
+  // whole: the live edge is what the user is watching. Card structure (every
+  // segment, in order) survives both.
+  pushes.length = 0
+  const bigResult = (n: number, size: number): Record<string, unknown> => ({
+    kind: 'tool_result',
+    turnId: 't',
+    segmentId: `sr${n}`,
+    toolCallId: `c${n}`,
+    status: 'success',
+    output: `payload-${n} ` + 'y'.repeat(size)
+  })
+  channel.pushMessageAppended('conv-x', {
+    id: 'm_1_aaaaaa',
+    role: 'assistant',
+    content: 'the prose stays',
+    segments: [bigResult(1, 200 * 1024), bigResult(2, 200 * 1024), bigResult(3, 200 * 1024)]
+  })
+  const trimmed = appended().at(-1)?.payload.message as {
+    content?: string
+    segments?: Array<{ kind: string; segmentId: string; output?: string }>
+  }
+  ok(
+    'a trimmed mirror keeps every segment in order',
+    (trimmed?.segments ?? []).map((s) => s.segmentId).join(',') === 'sr1,sr2,sr3',
+    JSON.stringify(trimmed?.segments?.map((s) => s.segmentId))
+  )
+  ok('... and the prose untouched', trimmed?.content === 'the prose stays')
+  ok(
+    '... with each huge payload capped, its head readable',
+    (trimmed?.segments ?? []).every(
+      (s) => (s.output ?? '').startsWith('payload-') && (s.output ?? '').length < 4096
+    ),
+    JSON.stringify(trimmed?.segments?.map((s) => (s.output ?? '').length))
+  )
+
+  pushes.length = 0
+  const many = Array.from({ length: 300 }, (_, i) => bigResult(i, 2_000))
+  channel.pushMessageAppended('conv-x', {
+    id: 'm_1_aaaaaa',
+    role: 'assistant',
+    content: 'still the prose',
+    segments: many
+  })
+  const elided = appended().at(-1)?.payload.message as {
+    segments?: Array<{ segmentId: string; output?: string }>
+  }
+  ok(
+    'when count is the bulk, every card still survives',
+    elided?.segments?.length === 300,
+    String(elided?.segments?.length)
+  )
+  ok(
+    '... newest payloads whole, oldest elided',
+    (elided?.segments?.at(-1)?.output ?? '').startsWith('payload-299') &&
+      (elided?.segments?.at(-1)?.output ?? '').length > 1_500 &&
+      (elided?.segments?.[0]?.output ?? '').includes('shortened to fit the phone'),
+    JSON.stringify([
+      elided?.segments?.[0]?.output?.slice(0, 32),
+      elided?.segments?.at(-1)?.output?.slice(0, 16)
+    ])
   )
 
   // ------------------------------------------------------------- the prompt
@@ -274,10 +348,10 @@ async function run(): Promise<void> {
   )
   const degraded = appended().at(-1)
   ok(
-    'an oversized mirror still carries the prompt with its nudge',
-    degraded?.payload.message === undefined &&
+    'an oversized mirror still carries the prompt beside its trimmed message',
+    (degraded?.payload.message as { id?: string } | undefined)?.id === 'm_1_aaaaaa' &&
       (degraded?.payload.userMessage as { id?: string } | undefined)?.id === PROMPT.id,
-    JSON.stringify(degraded?.payload)
+    JSON.stringify(Object.keys(degraded?.payload ?? {}))
   )
 
   pushes.length = 0
@@ -294,6 +368,192 @@ async function run(): Promise<void> {
   ok(
     'a bare nudge stays bare — no empty prompt field on the wire',
     appended().at(-1) !== undefined && !('userMessage' in (appended().at(-1)?.payload ?? {}))
+  )
+
+  // ------------------------------------------------ the turn-so-far (rejoin)
+  // Pushes only describe what happens next. A phone that joins — or, the
+  // ordinary case, RELAUNCHES after iOS reclaimed it — mid-turn has missed
+  // every one of them, and across a long tool call the next tick is minutes
+  // away. Rpc.turnMirror is the recovery: the newest snapshot, the prompt it
+  // answers, and the cards the turn is parked on, from the cache every mirror
+  // tick maintains.
+  ;(channel as unknown as { tunnel: unknown }).tunnel = { ...fakeTunnel, connected: true }
+  const rendererTicks: Array<{ conversationId: string; message: { content?: string } }> = []
+  channel.setMessageMirror((conversationId, message) => {
+    if (message) rendererTicks.push({ conversationId, message })
+  })
+  const sent2 = (await call(Rpc.sendMessage, {
+    conversationId: null,
+    messageId: 'm_1754300000001_abc124',
+    text: 'sweep my inbox'
+  })) as { conversationId: string }
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  const turn2 = sinks.get(sent2.conversationId)
+  if (!turn2) {
+    ok('the runner received a sink for the second send', false)
+    return
+  }
+  turn2.onSegment({ kind: 'text', turnId: 'turn_1', segmentId: 's1', delta: 'Scanning.' })
+  const soFar = (await call(Rpc.turnMirror, { conversationId: sent2.conversationId })) as {
+    message: { id?: string; content?: string } | null
+    userMessage?: { content?: string }
+    asks: unknown[]
+  }
+  ok(
+    'turnMirror serves the turn-so-far mid-turn',
+    soFar.message?.content === 'Scanning.',
+    JSON.stringify(soFar.message)
+  )
+  ok(
+    'the renderer-side accessor answers from the same cache',
+    channel.turnMirrorFor(sent2.conversationId)?.content === 'Scanning.',
+    JSON.stringify(channel.turnMirrorFor(sent2.conversationId))
+  )
+  ok(
+    '... with the prompt the turn is answering',
+    soFar.userMessage?.content === 'sweep my inbox',
+    JSON.stringify(soFar.userMessage)
+  )
+  ok(
+    'a phone-run turn also mirrors into the renderer, in full',
+    rendererTicks.some(
+      (tick) => tick.conversationId === sent2.conversationId && tick.message.content === 'Scanning.'
+    ),
+    JSON.stringify(rendererTicks.length)
+  )
+
+  // Park the turn on a question: the card must be re-servable, because a
+  // relaunched phone lost the original push and nothing re-sends it — the
+  // desktop would otherwise wait on an answer no one can see to give.
+  const asked = (
+    turn2 as unknown as {
+      onAskUserRequest: (req: unknown) => Promise<{ kind: string }>
+    }
+  ).onAskUserRequest({
+    id: 'ask_test_1',
+    toolCallId: 'call_ask_1',
+    questions: [{ question: 'How aggressive?', options: [] }]
+  })
+  const parked = (await call(Rpc.turnMirror, { conversationId: sent2.conversationId })) as {
+    asks: Array<{ id?: string; toolCallId?: string; questions?: unknown[] }>
+  }
+  ok(
+    'a parked question rides the turn-so-far',
+    parked.asks.length === 1 &&
+      parked.asks[0]?.id === 'ask_test_1' &&
+      parked.asks[0]?.toolCallId === 'call_ask_1',
+    JSON.stringify(parked.asks)
+  )
+  await call(Rpc.askRespond, { id: 'ask_test_1', response: { kind: 'canceled' } })
+  await asked
+
+  turn2.onDone()
+  await new Promise((resolve) => setTimeout(resolve, 100))
+  const afterFold = (await call(Rpc.turnMirror, { conversationId: sent2.conversationId })) as {
+    message: unknown
+    asks: unknown[]
+  }
+  ok(
+    'a finished turn has no turn-so-far — the stored body is the truth now',
+    afterFold.message === null && afterFold.asks.length === 0,
+    JSON.stringify(afterFold)
+  )
+  ok(
+    '... and the renderer-side accessor agrees',
+    channel.turnMirrorFor(sent2.conversationId) === null
+  )
+
+  // ---------------------------------------------------- oversize body serving
+  // A finished tool-heavy turn can outgrow the relay's one-frame record cap,
+  // and an inline answer past it does not arrive late — it closes the tunnel,
+  // after which every open of the conversation kills the link again. Chunked
+  // pickup serves the COMPLETE body in fileRead-shaped windows; a phone too
+  // old to ask for chunks gets it trimmed to one frame instead.
+  const WIRE_CEILING = 768 * 1024
+  const inline = (await call(Rpc.conversationBody, {
+    id: sent2.conversationId,
+    chunked: true
+  })) as { chunked?: boolean; messages?: unknown[] }
+  ok(
+    'a small body is served inline even when the phone offers to chunk',
+    inline.chunked === undefined && Array.isArray(inline.messages),
+    JSON.stringify(Object.keys(inline))
+  )
+
+  const { updateConversation } = await import('@main/conversations')
+  const BIG = 'y'.repeat(900 * 1024)
+  await updateConversation(sent2.conversationId, (disk) => {
+    if (!disk) return null
+    disk.messages.push({
+      id: 'm_9999999_bigone',
+      role: 'assistant',
+      content: BIG,
+      timestamp: Date.now()
+    })
+    return disk
+  })
+  const spooled = (await call(Rpc.conversationBody, {
+    id: sent2.conversationId,
+    chunked: true
+  })) as { chunked?: boolean; bodyId?: string; sizeBytes?: number; updatedAt?: number }
+  ok(
+    'an oversize body answers a spool handle instead of one giant frame',
+    spooled.chunked === true &&
+      typeof spooled.bodyId === 'string' &&
+      (spooled.sizeBytes ?? 0) > WIRE_CEILING,
+    JSON.stringify(spooled)
+  )
+  let assembled = Buffer.alloc(0)
+  let windowsUnderCap = true
+  while (assembled.length < (spooled.sizeBytes ?? 0)) {
+    const chunk = (await call(Rpc.conversationBodyChunk, {
+      bodyId: spooled.bodyId,
+      offset: assembled.length,
+      length: 256 * 1024
+    })) as { data: string; sizeBytes: number }
+    const bytes = Buffer.from(chunk.data, 'base64url')
+    if (bytes.length === 0) break
+    if (bytes.length > 256 * 1024) windowsUnderCap = false
+    assembled = Buffer.concat([assembled, bytes])
+  }
+  ok('every window stays under the chunk cap', windowsUnderCap)
+  ok(
+    'the windows reassemble to exactly the promised size',
+    assembled.length === spooled.sizeBytes,
+    `${assembled.length} vs ${spooled.sizeBytes}`
+  )
+  const pulledBody = JSON.parse(assembled.toString('utf8')) as {
+    messages?: Array<{ id?: string; content?: string }>
+  }
+  ok(
+    'the reassembled body is the COMPLETE conversation, nothing trimmed',
+    pulledBody.messages?.at(-1)?.content === BIG,
+    String(pulledBody.messages?.at(-1)?.content?.length)
+  )
+
+  const legacyBody = (await call(Rpc.conversationBody, { id: sent2.conversationId })) as {
+    chunked?: boolean
+    messages?: Array<{ content?: string }>
+  }
+  ok(
+    'a phone that cannot chunk gets the body trimmed to one frame, never a dead tunnel',
+    legacyBody.chunked === undefined &&
+      Array.isArray(legacyBody.messages) &&
+      Buffer.byteLength(JSON.stringify(legacyBody)) <= WIRE_CEILING,
+    String(Buffer.byteLength(JSON.stringify(legacyBody)))
+  )
+
+  const missing = await call(Rpc.conversationBodyChunk, {
+    bodyId: 'no-such-spool',
+    offset: 0
+  }).then(
+    () => null,
+    (error: Error) => error.message
+  )
+  ok(
+    'an expired or unknown spool is an error, not silence',
+    typeof missing === 'string' && missing.includes('no-such-spool'),
+    String(missing)
   )
 
   // ------------------------------------------- what the in-app channel mirrors

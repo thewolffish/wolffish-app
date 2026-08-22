@@ -1727,6 +1727,20 @@ cliChannel.setMessageMirror(mirrorMessageToRenderer)
 // — and this is what makes that feed fill in live instead of sitting on the
 // prompt until the run ends.
 agent.setAutonomousMessageMirror(mirrorMessageToRenderer)
+// Phone-run turns mirror INTO the renderer — the last quarter of the mirror
+// matrix, and the one that was missing: a turn started on the phone streamed
+// to the phone alone, so the desktop's own window showed a thinking shimmer
+// over a blank conversation for the whole run and the transcript landed all
+// at once at the end-of-turn save. Renderer half only — the phone half is the
+// mobile channel's own sink, and routing through mirrorMessageToRenderer
+// would push every snapshot to the phone twice.
+mobileChannel.setMessageMirror((conversationId, message) => {
+  try {
+    if (message) broadcast('conversation:messageMirror', { conversationId, message })
+  } catch {
+    // a broken renderer bridge must never affect the phone's turn
+  }
+})
 // In-app turns mirror the OTHER way: their renderer already streams
 // (chat:segment), so the snapshot goes only to the paired phone — as a FULL
 // message (prose + segments, stable id) the phone upserts into its cached
@@ -5453,6 +5467,18 @@ app.whenReady().then(async () => {
     // automation works would render its conversation idle and editable.
     ...agent.activeAutonomousRuns()
   ])
+
+  // The turn-so-far for one running conversation — the newest live-mirror
+  // snapshot of the assistant message being written. chat:activeRuns says a
+  // run EXISTS; this says what it has produced. A window opened (or reloaded)
+  // mid-run seeds its feed from it instead of showing a bare thinking bubble
+  // until the next mirror tick, which across a long tool call is minutes
+  // away. Served from the mobile channel's mirror cache, which every
+  // channel's mirror feeds — a run started on the phone, Telegram, the CLI
+  // or an automation all answer here.
+  handle('chat:turnMirror', (_e, conversationId: string) =>
+    mobileChannel.turnMirrorFor(String(conversationId ?? ''))
+  )
 
   handle('chat:approvalRespond', (_e, payload: { id: string; decision: ApprovalDecision }) =>
     electronChannel.respondApproval(payload)

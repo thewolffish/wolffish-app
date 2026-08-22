@@ -975,6 +975,14 @@ export type ChatApi = {
   cancel: (payload?: { conversationId?: string | null }) => Promise<{ canceled: boolean }>
   /** Conversations running RIGHT NOW, any channel (window cold-start seed). */
   activeRuns: () => Promise<ChatActiveRun[]>
+  /**
+   * The newest live-mirror snapshot of one running conversation's in-progress
+   * assistant message, or null when nothing is cached (no run, or the turn
+   * has produced nothing yet). activeRuns says a run exists; this is what it
+   * has written so far — the seed that lets a window opened mid-run draw the
+   * turn instead of a bare thinking bubble until the next mirror tick.
+   */
+  turnMirror: (conversationId: string) => Promise<ConversationMessage | null>
   respondApproval: (payload: { id: string; decision: ApprovalDecision }) => Promise<{ ok: boolean }>
   respondAsk: (payload: { id: string; response: AskUserResponse }) => Promise<{ ok: boolean }>
   /** Save-dialog + Chromium print of a renderer-built transcript HTML. */
@@ -2319,6 +2327,7 @@ const api: WolffishApi = {
     send: (payload) => ipcRenderer.invoke('chat:send', payload),
     cancel: (payload) => ipcRenderer.invoke('chat:cancel', payload),
     activeRuns: () => ipcRenderer.invoke('chat:activeRuns'),
+    turnMirror: (conversationId) => ipcRenderer.invoke('chat:turnMirror', conversationId),
     respondApproval: (payload) => ipcRenderer.invoke('chat:approvalRespond', payload),
     respondAsk: (payload) => ipcRenderer.invoke('chat:askRespond', payload),
     exportPdf: (payload) => ipcRenderer.invoke('chat:exportPdf', payload),

@@ -1300,6 +1300,36 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     })
   }, [activeConversationId])
 
+  // The mirror above only carries what happens NEXT. A window opened — or
+  // reloaded — while a run is already in flight has missed every tick so
+  // far, and across a long tool call the next one is minutes away; until it
+  // lands, the conversation reads as the prompt plus a bare thinking bubble
+  // over a turn that may be twelve minutes of prose and cards deep (the
+  // 2026-08-22 Gmail sweep). Seed the feed from main's cached turn-so-far —
+  // the renderer's half of the phone's Rpc.turnMirror recovery. Append-only
+  // under the same stable id: a live tick or the fold's saved copy that got
+  // here first is fresher and wins by already holding the slot.
+  useEffect(() => {
+    if (!activeConversationId || !remoteRunning) return
+    const targetId = activeConversationId
+    let cancelled = false
+    void window.api.chat
+      .turnMirror(targetId)
+      .then((message) => {
+        // `cancelled` also covers the run ENDING while the call was in
+        // flight (remoteRunning flips and re-runs this effect): a snapshot
+        // applied after the fold could shadow the saved copy under its id.
+        if (cancelled || !message || conversationIdRef.current !== targetId) return
+        if (pendingTurnIdRef.current !== null) return
+        const mapped = mapConversationMessage(message)
+        setMessages((prev) => (prev.some((m) => m.id === mapped.id) ? prev : [...prev, mapped]))
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [activeConversationId, remoteRunning])
+
   // Async-task snapshots (video generation) keep flowing AFTER the owning
   // turn ends — poll transitions, artifact download. Fold each push into the
   // matching `task` segment in both the reactive messages and the in-memory

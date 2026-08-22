@@ -33,8 +33,10 @@ import {
   buildAssistantMessage,
   replayWindow,
   stubStaleToolResults,
-  type AssistantAccumulator
+  type AssistantAccumulator,
+  type MirrorMessageListener
 } from '@main/channels/channel'
+import { fitMirrorMessage, fitWireMessages } from '@main/channels/mirror-budget'
 import { extractTranscript, extractVoiceLanguage } from '@main/channels/stt-result'
 import {
   createConversation,
@@ -145,11 +147,31 @@ const NOTIFY_RESULT_TIMEOUT_MS = 10_000
  * Ceiling on one mirrored message, well under the relay's 1 MiB record cap.
  * Events are single frames — nothing chunks them — so an oversized push is not
  * a slow push, it is a closed connection (CloseCode.MessageTooLarge). A turn
- * that accumulates that much (a few large tool outputs) falls back to the bare
- * nudge, and the phone reads the body from disk once the turn ends as it always
- * could.
+ * that accumulates more (a few large tool outputs) is TRIMMED to fit — tool
+ * payloads shortened oldest-first, the live edge kept whole — never withheld:
+ * withholding is how a 12-minute Gmail sweep once went dark on the phone for
+ * its whole remaining runtime, and a phone relaunched mid-turn came back to a
+ * blank conversation. The saved transcript restores every byte at the fold.
  */
 const MIRROR_MAX_BYTES = 384 * 1024
+
+/**
+ * Ceiling on one served conversation body, under the same 1 MiB record cap
+ * with room for the RPC envelope, encryption overhead and the metadata
+ * columns riding beside the messages. A body that outgrew it used to go out
+ * anyway — and the relay answered by CLOSING the tunnel, after which every
+ * open of that conversation killed the link again. Over this, messages are
+ * served trimmed (fitWireMessages) rather than the connection lost.
+ */
+const WIRE_BODY_MAX_BYTES = 768 * 1024
+
+/** How long a spooled oversize body waits for its chunked pickup. Refreshed
+ *  on every read, so only an abandoned pull ever expires mid-transfer. */
+const BODY_SPOOL_TTL_MS = 2 * 60_000
+
+/** Concurrent spools kept at most — one per open conversation, and a phone
+ *  opens one at a time; the cap is a leak guard, not a feature. */
+const BODY_SPOOL_MAX = 4
 
 /**
  * What a non-verbose phone is shown WHILE a turn runs: assistant prose,
@@ -397,10 +419,97 @@ export class MobileChannel {
   >()
   private readonly pendingAsks = new Map<
     string,
-    { turnId: string; conversationId: string; resolve: (response: AskUserResponse) => void }
+    {
+      turnId: string
+      conversationId: string
+      resolve: (response: AskUserResponse) => void
+      /** The card as it was pushed, re-served to a phone that rejoins mid-park
+       *  (a relaunched app has lost the original push and nothing re-sends it). */
+      card: { toolCallId: string; questions: AskUserRequest['questions'] }
+    }
   >()
+  /**
+   * The newest mirror snapshot per conversation with a turn in flight — the
+   * fitted message exactly as the last push carried it (or would have, had a
+   * phone been connected), plus the prompt it answers. This is what
+   * Rpc.turnMirror serves: a phone that connects — or RECONNECTS after iOS
+   * killed it — mid-turn has missed every push so far, and across a long tool
+   * call the next one is minutes away; this cache is the only copy of the
+   * turn-so-far anywhere outside the accumulator. Written on every mirror
+   * tick whether or not a phone is listening, dropped when the turn ends.
+   */
+  private readonly lastMirrors = new Map<
+    string,
+    { message: ConversationMessage; userMessage?: ConversationMessage }
+  >()
+  /**
+   * Live out-of-window mirror INTO the renderer — the exact counterpart of
+   * ElectronChannel.setMessageMirror, pointed the other way. A phone-run turn
+   * used to reach the desktop's own window only at the end-of-turn save, so
+   * an open conversation there sat on a thinking shimmer for the whole run
+   * while the phone showed prose and cards. index.ts wires this to the same
+   * `conversation:messageMirror` broadcast the Telegram/WhatsApp mirrors use;
+   * the renderer upserts by the stable message id, so the saved copy replaces
+   * the snapshot rather than joining it.
+   */
+  private rendererMirror: MirrorMessageListener | null = null
+
+  setMessageMirror(listener: MirrorMessageListener | null): void {
+    this.rendererMirror = listener
+  }
+
+  /**
+   * The cached turn-so-far for one conversation, for surfaces on THIS
+   * machine — the renderer's counterpart of Rpc.turnMirror. A window opened
+   * (or reloaded) mid-run has the same problem a rejoining phone does: the
+   * assistant message is not on disk until the fold, and the next mirror
+   * tick can be a long tool call away. The cache is fed by every channel's
+   * mirror (this channel's own sinks, and the telegram/whatsapp/cli/
+   * autonomous/in-app mirrors routed through pushMessageAppended), so it
+   * answers for a run started anywhere.
+   */
+  turnMirrorFor(conversationId: string): ConversationMessage | null {
+    return this.lastMirrors.get(conversationId)?.message ?? null
+  }
+
+  /** Park one serialized body for chunked pickup; returns its handle. */
+  private spoolBody(buffer: Buffer): string {
+    const now = Date.now()
+    for (const [key, entry] of this.bodySpools) {
+      if (entry.expiresAt <= now) this.bodySpools.delete(key)
+    }
+    // Insertion order is age order — evict the oldest past the cap.
+    while (this.bodySpools.size >= BODY_SPOOL_MAX) {
+      const oldest = this.bodySpools.keys().next().value
+      if (oldest === undefined) break
+      this.bodySpools.delete(oldest)
+    }
+    const bodyId = randomBytes(8).toString('hex')
+    this.bodySpools.set(bodyId, { buffer, expiresAt: now + BODY_SPOOL_TTL_MS })
+    return bodyId
+  }
+
+  /** A live spool by id, its TTL refreshed — or null when expired/unknown. */
+  private bodySpool(bodyId: string): { buffer: Buffer } | null {
+    const entry = this.bodySpools.get(bodyId)
+    if (!entry) return null
+    if (entry.expiresAt <= Date.now()) {
+      this.bodySpools.delete(bodyId)
+      return null
+    }
+    entry.expiresAt = Date.now() + BODY_SPOOL_TTL_MS
+    return entry
+  }
   /** Chunked uploads in flight, keyed by upload id. */
   private readonly uploads = new Map<string, PendingUpload>()
+  /**
+   * Serialized oversize conversation bodies awaiting chunked pickup
+   * (Rpc.conversationBodyChunk), keyed by a per-serve id. TTL-reaped rather
+   * than freed on the last read, so a phone that retries a pull mid-way
+   * never finds the spool half-gone; the cap bounds memory to a handful of
+   * bodies for the length of one TTL.
+   */
+  private readonly bodySpools = new Map<string, { buffer: Buffer; expiresAt: number }>()
   /**
    * When the last reindex tick went out, so the throttle has something to
    * measure against. Zero means "no rebuild is being reported" — which is both
@@ -971,6 +1080,59 @@ export class MobileChannel {
       return { conversationIds: [...new Set(ids)] }
     })
 
+    /**
+     * The turn-so-far for one conversation — the newest mirror snapshot (with
+     * the prompt it answers) plus every card the turn is still parked on.
+     *
+     * This is the recovery path for a phone that joins or REJOINS a turn in
+     * flight: pushes only describe what happens next, the assistant message
+     * is not on disk until the fold, and across a long tool call the next
+     * mirror tick is minutes away — so without this, a phone relaunched
+     * mid-turn (iOS reclaiming a backgrounded app is the ordinary case)
+     * renders a running conversation as blank thinking words, and a question
+     * the turn is parked on is lost until the tunnel drops. Served from the
+     * same cache every mirror tick maintains, so it costs a map read.
+     */
+    tunnel.onRpc(Rpc.turnMirror, async (params) => {
+      const conversationId = String(params.conversationId ?? '')
+      const cached = this.lastMirrors.get(conversationId)
+      const asks = [...this.pendingAsks.entries()]
+        .filter(([, entry]) => entry.conversationId === conversationId)
+        .map(([id, entry]) => ({
+          id,
+          toolCallId: entry.card.toolCallId,
+          questions: entry.card.questions
+        }))
+      const approvals = [...this.pendingApprovals.entries()]
+        .filter(([, entry]) => entry.conversationId === conversationId)
+        .flatMap(([id, entry]) => {
+          const stored = entry.approvals.get(id)
+          if (!stored || stored.decision) return []
+          return [
+            {
+              id,
+              toolCallId: stored.toolCallId,
+              tool: stored.tool,
+              args: stored.args,
+              level: stored.level,
+              reason: stored.reason,
+              description: stored.description
+            }
+          ]
+        })
+      this.debug(
+        `served turn mirror for ${conversationId} — ` +
+          `${cached ? 'snapshot' : 'no snapshot'}, ${asks.length} ask(s), ` +
+          `${approvals.length} approval(s)`
+      )
+      return {
+        message: cached?.message ?? null,
+        ...(cached?.userMessage !== undefined ? { userMessage: cached.userMessage } : {}),
+        asks,
+        approvals
+      }
+    })
+
     tunnel.onRpc(Rpc.configSnapshot, async () => {
       const snapshot = await buildConfigSnapshot(this.deps)
       this.debug(`served config snapshot (${Object.keys(snapshot).length} sections)`)
@@ -1103,7 +1265,18 @@ export class MobileChannel {
       return { ok: true, projectId }
     })
 
-    /** One conversation, fetched when the phone opens it. */
+    /**
+     * One conversation, fetched when the phone opens it.
+     *
+     * The answer is normally one frame, and a frame past the relay's record
+     * cap closes the tunnel — after which every open of this conversation
+     * kills the link again. A body over the ceiling is therefore never sent
+     * whole: a phone that asked with `chunked: true` gets a spool handle and
+     * pulls the COMPLETE body through conversationBodyChunk (the same
+     * base64url windows fileRead serves); an older phone gets it trimmed to
+     * one frame (fitWireMessages) — shorter old tool dumps, never a dead
+     * tunnel.
+     */
     tunnel.onRpc(Rpc.conversationBody, async (params) => {
       const id = String(params.id ?? '')
       const file = await loadConversation(id)
@@ -1111,8 +1284,47 @@ export class MobileChannel {
         this.log(`conversation body requested for unknown id ${id}`)
         throw new Error(`unknown conversation ${id}`)
       }
+      const wire = toWireConversation(file)
+      let json: Buffer | null = null
+      try {
+        json = Buffer.from(JSON.stringify(wire))
+      } catch {
+        json = null
+      }
+      if (json && json.byteLength <= WIRE_BODY_MAX_BYTES) {
+        this.debug(`served conversation ${id} (${file.messages?.length ?? 0} messages)`)
+        return wire
+      }
+      if (json && params.chunked === true) {
+        const bodyId = this.spoolBody(json)
+        this.debug(
+          `serving conversation ${id} chunked — ${json.byteLength} bytes as body ${bodyId}`
+        )
+        return { chunked: true, bodyId, sizeBytes: json.byteLength, updatedAt: file.updatedAt }
+      }
+      const fitted = fitWireMessages(file.messages ?? [], WIRE_BODY_MAX_BYTES)
+      this.log(`conversation ${id} served trimmed — body over the wire ceiling`)
       this.debug(`served conversation ${id} (${file.messages?.length ?? 0} messages)`)
-      return toWireConversation(file)
+      return toWireConversation({ ...file, messages: fitted })
+    })
+
+    /**
+     * One window of a spooled oversize body. Same contract as fileRead —
+     * base64url data, CHUNK_SIZE-capped windows, `sizeBytes` on every answer
+     * — so the phone reads both with one loop shape. The spool outlives the
+     * last read until its TTL, so a retried pull never finds it half-gone.
+     */
+    tunnel.onRpc(Rpc.conversationBodyChunk, async (params) => {
+      const bodyId = String(params.bodyId ?? '')
+      const spool = this.bodySpool(bodyId)
+      if (!spool) throw new Error(`unknown body ${bodyId} — request the conversation again`)
+      const offset = clampCount(params.offset, 0)
+      const length = Math.min(clampCount(params.length, CHUNK_SIZE), CHUNK_SIZE)
+      const window = Math.max(0, Math.min(length, spool.buffer.byteLength - offset))
+      return {
+        data: spool.buffer.subarray(offset, offset + window).toString('base64url'),
+        sizeBytes: spool.buffer.byteLength
+      }
     })
 
     tunnel.onRpc(Rpc.usage, async () => {
@@ -1927,7 +2139,7 @@ export class MobileChannel {
       userMessageId: userMessage.id,
       projectId: conversation.projectId ?? null,
       makeSink: ({ turnId, conversationId: sinkConversationId }) =>
-        this.createSink(turnId, sinkConversationId ?? conversationId)
+        this.createSink(turnId, sinkConversationId ?? conversationId, userMessage)
     })
     this.turns.set(conversationId, { turnId: handle.turnId, controller: handle.controller })
     this.log(`turn ${handle.turnId} started from the phone in ${conversationId}`)
@@ -2079,7 +2291,11 @@ export class MobileChannel {
    * the phone's post-turn refetch would pull a transcript that stops before
    * the answer it just watched stream.
    */
-  private createSink(turnId: string, conversationId: string): TurnSink {
+  private createSink(
+    turnId: string,
+    conversationId: string,
+    userMessage?: ConversationMessage
+  ): TurnSink {
     let seq = 0
     const acc: AssistantAccumulator = {
       assistantMessageId: mintMessageId(),
@@ -2122,12 +2338,24 @@ export class MobileChannel {
       // by a second send into the same conversation — must not push a stale
       // snapshot over the message that replaced it.
       if (this.turns.get(conversationId)?.turnId !== turnId) return
+      lastMirrorAt = Date.now()
+      // The desktop's own window first, with the FULL accumulator: it renders
+      // every segment its own turns produce and has no relay record cap, so
+      // neither the phone's clean-feed setting nor the wire budget applies.
+      try {
+        const full = buildAssistantMessage(acc)
+        if (full) this.rendererMirror?.(conversationId, full, userMessage)
+      } catch {
+        // a broken renderer bridge must never affect the turn
+      }
       const message = buildAssistantMessage(
         this.verbose ? acc : { ...acc, segments: acc.segments.filter(isCleanFeedSegment) }
       )
       if (!message) return
-      lastMirrorAt = Date.now()
-      this.pushMessageAppended(conversationId, message)
+      // The prompt rides every tick, exactly as the in-app mirror sends it: a
+      // phone that pairs — or relaunches — mid-turn only ever sees ticks, and
+      // the answer without its question is the gap this closes.
+      this.pushMessageAppended(conversationId, message, userMessage)
     }
     const scheduleMirror = (immediate: boolean): void => {
       const sinceLast = Date.now() - lastMirrorAt
@@ -2252,7 +2480,12 @@ export class MobileChannel {
             resolve({ kind: 'unsupported' })
             return
           }
-          this.pendingAsks.set(req.id, { turnId, conversationId, resolve })
+          this.pendingAsks.set(req.id, {
+            turnId,
+            conversationId,
+            resolve,
+            card: { toolCallId: req.toolCallId, questions: req.questions }
+          })
           scheduleMirror(true)
           this.log(`ask_user put to the phone — ${req.questions.length} question(s)`)
           this.tunnel?.emit(Event.askRequest, {
@@ -2359,39 +2592,69 @@ export class MobileChannel {
    * A message the phone should show, or — with no message — a bare nudge to
    * re-read the conversation once nothing is being written into it.
    *
-   * Oversized snapshots degrade to that nudge rather than being sent. An event
-   * is one frame with no chunking behind it, so a push past the relay's record
-   * cap does not arrive late, it closes the tunnel; the phone reading the body
-   * from disk a moment later is strictly better than that.
+   * An event is one frame with no chunking behind it, so a push past the
+   * relay's record cap does not arrive late, it closes the tunnel. An
+   * oversized snapshot is therefore TRIMMED to the budget (fitMirrorMessage:
+   * tool payloads shortened oldest-first, the live edge kept whole, the id
+   * kept always) rather than sent — and rather than WITHHELD, which was the
+   * old degrade and is how a long tool-heavy turn went dark on the phone for
+   * its whole remaining runtime. Only a message that defeats even the trimmer
+   * (unserializable, or an envelope no budget can hold) falls back to the
+   * nudge.
+   *
+   * Every full snapshot that passes through here is also CACHED as the
+   * conversation's turn-so-far, connected phone or not — Rpc.turnMirror
+   * serves it to a phone that joins or rejoins mid-turn, which is the one
+   * moment nothing else can redraw the run.
    *
    * `userMessage` — the prompt this turn is answering — travels on BOTH paths.
    * It is a couple of hundred bytes and it is the half of the exchange the
    * phone cannot get anywhere else while the turn runs, so it must not be
-   * dropped along with an assistant snapshot that outgrew the budget: those
-   * are exactly the long turns where the gap is most visible.
+   * dropped along with an assistant snapshot that needed trimming: those are
+   * exactly the long turns where the gap is most visible.
    */
   pushMessageAppended(conversationId: string, message: unknown, userMessage?: unknown): void {
     const prompt = userMessage === undefined ? {} : { userMessage }
-    if (message !== undefined && !this.withinMirrorBudget(conversationId, message)) {
-      this.tunnel?.emit(Event.messageAppended, { conversationId, ...prompt })
+    if (message !== undefined) {
+      const fitted = this.fitMirror(conversationId, message)
+      if (fitted === null) {
+        this.tunnel?.emit(Event.messageAppended, { conversationId, ...prompt })
+        return
+      }
+      this.lastMirrors.set(conversationId, {
+        message: fitted,
+        ...(userMessage !== undefined ? { userMessage: userMessage as ConversationMessage } : {})
+      })
+      this.tunnel?.emit(Event.messageAppended, { conversationId, message: fitted, ...prompt })
       return
     }
-    this.tunnel?.emit(Event.messageAppended, { conversationId, message, ...prompt })
+    this.tunnel?.emit(Event.messageAppended, { conversationId, ...prompt })
   }
 
-  private withinMirrorBudget(conversationId: string, message: unknown): boolean {
+  /** The snapshot within the wire budget — trimmed when it must be, null only
+   *  when nothing sendable can be made of it. */
+  private fitMirror(conversationId: string, message: unknown): ConversationMessage | null {
     let size = 0
     try {
       size = Buffer.byteLength(JSON.stringify(message) ?? '')
     } catch {
-      return false // unserializable is not sendable either
+      return null // unserializable is not sendable either
     }
-    if (size <= MIRROR_MAX_BYTES) return true
-    this.debug(`mirror for ${conversationId} withheld — ${size} bytes over budget`)
-    return false
+    if (size <= MIRROR_MAX_BYTES) return message as ConversationMessage
+    const fitted = fitMirrorMessage(message as ConversationMessage, MIRROR_MAX_BYTES)
+    if (fitted === null) {
+      this.debug(`mirror for ${conversationId} withheld — ${size} bytes and untrimmable`)
+      return null
+    }
+    this.debug(`mirror for ${conversationId} trimmed to fit — ${size} bytes over budget`)
+    return fitted
   }
 
   pushTurnStatus(conversationId: string, state: string, detail?: unknown): void {
+    // Every state this carries is a turn boundary — started, done, canceled,
+    // error — and at a boundary the cached turn-so-far is over: a finished
+    // turn's truth is the stored body, a fresh turn's first tick re-caches.
+    this.lastMirrors.delete(conversationId)
     this.tunnel?.emit(Event.turnStatus, { conversationId, state, detail })
   }
 
