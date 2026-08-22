@@ -25,6 +25,21 @@ function getBridge() {
   return globalThis.__wolffishExtensionBridge ?? null
 }
 
+// One stale-extension reload request per window, not one per failing call: a
+// task that hits several unsupported commands in a burst must not bounce the
+// extension over and over while it is already reloading.
+let lastStaleReloadAt = 0
+function requestStaleReload(bridge) {
+  const now = Date.now()
+  if (now - lastStaleReloadAt < 60_000) return
+  lastStaleReloadAt = now
+  try {
+    bridge.requestReload?.()
+  } catch {
+    // an older desktop bridge without requestReload — nothing to do
+  }
+}
+
 function stripDataUrl(dataUrl) {
   const idx = dataUrl.indexOf(',')
   return idx >= 0 ? dataUrl.slice(idx + 1) : dataUrl
@@ -428,6 +443,29 @@ const plugin = {
       })
 
       if (!response.success) {
+        // "Unknown command" from the extension means the browser is running a
+        // STALE build: the desktop only ever sends commands the current
+        // extension defines, but Chrome keeps an unpacked extension's old
+        // service worker alive across app updates — even when its manifest
+        // version still matches. Ask the browser to reload the extension
+        // (rate-limited; the reload takes about a second) and answer in a way
+        // the agent can act on. For ext_set_activity — a cosmetic tab-group
+        // label — a hard failure retried three times was the 2026-08-22
+        // failure mode; skipping the label is the correct outcome.
+        if (/^Unknown command:/i.test(response.error ?? '')) {
+          requestStaleReload(bridge)
+          if (toolName === 'ext_set_activity') {
+            return {
+              success: true,
+              output:
+                'Activity label skipped: this browser is running an outdated build of the Wolffish extension (a reload was just requested). Do not retry — carry on with the task.'
+            }
+          }
+          return {
+            success: false,
+            error: `${toolName} is not supported by the outdated Wolffish extension build loaded in this browser. A reload was just requested — retry once in a few seconds. If it still fails, ask the user to reload the Wolffish extension from their browser's extensions page.`
+          }
+        }
         return { success: false, error: response.error ?? 'Extension command failed' }
       }
 

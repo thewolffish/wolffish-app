@@ -882,7 +882,13 @@ export class ExtensionServer {
       getConfig: () => getBrowserExtensionConfig(),
       listBrowsers: () => this.listBrowsers(),
       useBrowser: (query: string, conversationId?: string | null) =>
-        this.useBrowser(query, conversationId)
+        this.useBrowser(query, conversationId),
+      // Lets the plugin heal a STALE loaded extension. The connect-time
+      // version check only reloads on a version mismatch, but Chrome can keep
+      // running an old service worker whose manifest still matches the synced
+      // folder — and the one reliable symptom of that is the extension
+      // answering "Unknown command" for a command this build defines.
+      requestReload: (target?: string | null) => this.requestReload(target)
     }
     void debug('INFO', 'bridge exposed on globalThis')
   }

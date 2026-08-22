@@ -152,7 +152,10 @@ async function gmailLabels(args) {
   const base = buildBase(args)
   if (!base) return MISSING_ACCOUNT_ERROR
   const acc = base[3]
-  return run([...base, 'gmail', 'labels'], 0, stampCount(acc))
+  // `labels` grew subcommands in gogcli v0.34 (list/get/create/rename/…);
+  // the bare form now answers `expected one of "list", …` instead of
+  // listing. This tool lists — say so.
+  return run([...base, 'gmail', 'labels', 'list'], 0, stampCount(acc))
 }
 
 function buildQueryOrIds(base, subcmd, args) {
@@ -223,7 +226,8 @@ async function driveList(args) {
   const base = buildBase(args)
   if (!base) return MISSING_ACCOUNT_ERROR
   const acc = base[3]
-  const cmdArgs = [...base, 'drive', 'list']
+  // gogcli v0.34 renamed `drive list` to `drive ls`.
+  const cmdArgs = [...base, 'drive', 'ls']
   if (args?.parent) cmdArgs.push('--parent', args.parent)
   if (args?.max) cmdArgs.push('--max', String(args.max))
   return run(cmdArgs, 0, stampCount(acc))
@@ -495,7 +499,7 @@ const toolDefinitions = [
         account: {
           type: 'string',
           description:
-            'Account email to use (defaults to the primary account). Pass to switch between authorized Google accounts on a per-call basis.'
+            'Account email to use. REQUIRED — there is no default: call google_accounts first and pass one of the emails it lists. Never invent or placeholder this value.'
         },
         query: { type: 'string', description: 'Gmail search query' },
         max: { type: 'number', description: 'Maximum results (default 10)' }
@@ -512,7 +516,7 @@ const toolDefinitions = [
         account: {
           type: 'string',
           description:
-            'Account email to use (defaults to the primary account). Pass to switch between authorized Google accounts on a per-call basis.'
+            'Account email to use. REQUIRED — there is no default: call google_accounts first and pass one of the emails it lists. Never invent or placeholder this value.'
         },
         id: { type: 'string', description: 'Thread or message ID' }
       },
@@ -528,7 +532,7 @@ const toolDefinitions = [
         account: {
           type: 'string',
           description:
-            'Account email to use (defaults to the primary account). Pass to switch between authorized Google accounts on a per-call basis.'
+            'Account email to use. REQUIRED — there is no default: call google_accounts first and pass one of the emails it lists. Never invent or placeholder this value.'
         },
         to: { type: 'string', description: 'Recipient (comma-separated for multiple)' },
         subject: { type: 'string', description: 'Subject line' },
@@ -549,7 +553,7 @@ const toolDefinitions = [
         account: {
           type: 'string',
           description:
-            'Account email to use (defaults to the primary account). Pass to switch between authorized Google accounts on a per-call basis.'
+            'Account email to use. REQUIRED — there is no default: call google_accounts first and pass one of the emails it lists. Never invent or placeholder this value.'
         }
       },
       required: []
@@ -654,7 +658,7 @@ const toolDefinitions = [
         account: {
           type: 'string',
           description:
-            'Account email to use (defaults to the primary account). Pass to switch between authorized Google accounts on a per-call basis.'
+            'Account email to use. REQUIRED — there is no default: call google_accounts first and pass one of the emails it lists. Never invent or placeholder this value.'
         },
         parent: { type: 'string', description: 'Parent folder ID (omit for root)' },
         max: { type: 'number', description: 'Maximum results (default 20)' }
@@ -671,7 +675,7 @@ const toolDefinitions = [
         account: {
           type: 'string',
           description:
-            'Account email to use (defaults to the primary account). Pass to switch between authorized Google accounts on a per-call basis.'
+            'Account email to use. REQUIRED — there is no default: call google_accounts first and pass one of the emails it lists. Never invent or placeholder this value.'
         },
         query: { type: 'string', description: 'Search query' },
         max: { type: 'number', description: 'Maximum results (default 20)' }
@@ -688,7 +692,7 @@ const toolDefinitions = [
         account: {
           type: 'string',
           description:
-            'Account email to use (defaults to the primary account). Pass to switch between authorized Google accounts on a per-call basis.'
+            'Account email to use. REQUIRED — there is no default: call google_accounts first and pass one of the emails it lists. Never invent or placeholder this value.'
         },
         path: { type: 'string', description: 'Local file path' },
         parent: { type: 'string', description: 'Parent folder ID' },
@@ -744,7 +748,7 @@ const toolDefinitions = [
         account: {
           type: 'string',
           description:
-            'Account email to use (defaults to the primary account). Pass to switch between authorized Google accounts on a per-call basis.'
+            'Account email to use. REQUIRED — there is no default: call google_accounts first and pass one of the emails it lists. Never invent or placeholder this value.'
         },
         range: { type: 'string', description: '"today", "tomorrow", "week"' },
         days: { type: 'number', description: 'Days ahead to look' },
@@ -816,7 +820,7 @@ const toolDefinitions = [
         account: {
           type: 'string',
           description:
-            'Account email to use (defaults to the primary account). Pass to switch between authorized Google accounts on a per-call basis.'
+            'Account email to use. REQUIRED — there is no default: call google_accounts first and pass one of the emails it lists. Never invent or placeholder this value.'
         },
         query: { type: 'string', description: 'Search query' },
         max: { type: 'number', description: 'Maximum results (default 20)' }
@@ -834,7 +838,7 @@ const toolDefinitions = [
         account: {
           type: 'string',
           description:
-            'Account email to use (defaults to the primary account). Pass to switch between authorized Google accounts on a per-call basis.'
+            'Account email to use. REQUIRED — there is no default: call google_accounts first and pass one of the emails it lists. Never invent or placeholder this value.'
         },
         task_list_id: { type: 'string', description: 'Task list ID (omit to list all lists)' },
         max: { type: 'number', description: 'Maximum results (default 20)' },
@@ -911,7 +915,7 @@ const toolDefinitions = [
         account: {
           type: 'string',
           description:
-            'Account email to use (defaults to the primary account). Pass to switch between authorized Google accounts on a per-call basis.'
+            'Account email to use. REQUIRED — there is no default: call google_accounts first and pass one of the emails it lists. Never invent or placeholder this value.'
         },
         spreadsheet_id: { type: 'string', description: 'Spreadsheet ID' },
         range: { type: 'string', description: 'A1 notation range (e.g. "Sheet1!A1:D10")' }
@@ -928,7 +932,7 @@ const toolDefinitions = [
         account: {
           type: 'string',
           description:
-            'Account email to use (defaults to the primary account). Pass to switch between authorized Google accounts on a per-call basis.'
+            'Account email to use. REQUIRED — there is no default: call google_accounts first and pass one of the emails it lists. Never invent or placeholder this value.'
         },
         spreadsheet_id: { type: 'string', description: 'Spreadsheet ID' },
         range: { type: 'string', description: 'A1 notation range to write to' },
