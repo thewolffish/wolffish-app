@@ -1,4 +1,22 @@
-## v1.0.262 — 2026-08-22 `Latest`
+## v1.0.263 — 2026-08-22 `Latest`
+
+### The Conversation That Never Goes Dark
+
+A sixteen-minute inbox cleanup vanished mid-run — prose, tool cards, even the questions Wolffish had asked — leaving both the phone and the desktop staring at a lone thinking shimmer until the run was stopped, when everything reappeared at once. That whole class of disappearance is now closed. The live view of a working turn used to be **silently withheld** the moment it outgrew its wire budget; it is now **trimmed to fit and always delivered** — older tool payloads shorten first, the words being written stay whole, and the saved transcript restores every byte the moment the turn ends. A phone that **rejoins mid-run** — iOS reclaiming a backgrounded app is the everyday case — no longer returns to a blank screen: it asks the desktop for the **turn-so-far** and redraws the prose, the cards, the prompt, and any **question still waiting for your answer**, which previously could be lost so thoroughly that the run would wait forever on a card nobody could see. And the desktop finally watches phone-started runs **live**: a turn begun on your phone now streams into the desktop window as it happens — and a window opened mid-run picks up the story instead of a spinner.
+
+### Big Conversations Arrive Whole
+
+A long, tool-heavy conversation could grow past what the secure tunnel allows in a single frame — and an oversized answer does not arrive late, it **closes the connection**, after which every attempt to open that conversation kills the link again. Transcripts of any size now travel to your phone **in chunks and arrive complete**, byte for byte. An older phone build that cannot chunk yet receives the transcript **trimmed to fit instead of a dead tunnel** — degraded gracefully, never broken.
+
+### Google Workspace, Repaired and Pinned
+
+The Google tools had quietly drifted out of step with the CLI underneath them: **creating calendar events was entirely broken**, task lists, sheets reads and writes used vanished syntax, listing Gmail labels failed with a cryptic parser error, and **deleting a Drive file, calendar event, or task could never succeed at all** — the CLI silently refused every non-interactive delete. All of it is fixed and now **verified command-by-command against the real binary**, on both the version machines already have and the newest release. The installer no longer fetches "whatever is latest": it is **pinned to the exact audited version**, so the CLI can never again change syntax underneath a shipped release — upgrades now happen deliberately, audit first. And if an ancient installation ever does mismatch, the error now **names the fix** — update from Settings — instead of sending the model guessing at shell commands.
+
+### A Browser Extension That Heals Itself
+
+Browsers keep an extension's old code running long after an update lands on disk — while reporting a version that looks current, so nothing ever told it to reload. Wolffish now treats the one reliable symptom, an "Unknown command" reply, as proof of a **stale build**: it asks the browser to **reload the extension automatically**, and the cosmetic tab-label call that used to fail a task three times over now simply skips with a note. Extension **v0.1.58** ships alongside, and every connected browser converges on it at the next handshake.
+
+## v1.0.262 — 2026-08-22
 
 ### Clicks That Cannot Lie
 

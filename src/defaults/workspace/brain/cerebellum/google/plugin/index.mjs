@@ -34,6 +34,22 @@ function run(args, timeout = 0, transform) {
           return
         }
         const msg = stderr?.trim() || err.message || String(err)
+        // A parse-shaped error (unknown flag / unexpected argument /
+        // expected "…") means the installed gogcli's syntax differs from
+        // what this plugin was audited against — an ancient install, or a
+        // future gogcli that moved again. Raw parser errors send the model
+        // guessing at CLI syntax (the 2026-08-22 sweep drifted into broken
+        // shell pipelines exactly that way); name the actual fix instead.
+        if (/unknown flag|unexpected argument|expected "/i.test(msg)) {
+          resolve({
+            success: false,
+            error:
+              `${msg}\n\nThe installed gogcli version does not match this integration. ` +
+              'Ask the user to open Wolffish → Settings → Services → Google Workspace ' +
+              'and click Update, then retry. Do not guess alternative CLI syntax.'
+          })
+          return
+        }
         resolve({ success: false, error: msg })
         return
       }
@@ -269,7 +285,10 @@ async function driveDelete(args) {
   const base = buildBase(args)
   if (!base) return MISSING_ACCOUNT_ERROR
   if (!args?.file_id) return { success: false, error: 'file_id is required' }
-  return run([...base, 'drive', 'delete', args.file_id])
+  // --force skips the interactive confirmation gogcli refuses to proceed
+  // without under --no-input; the file goes to trash (never --permanent),
+  // and Wolffish's own approval gate is the safety layer in front of this.
+  return run([...base, 'drive', 'delete', args.file_id, '--force'])
 }
 
 async function driveMkdir(args) {
@@ -286,7 +305,12 @@ async function calendarEvents(args) {
   if (!base) return MISSING_ACCOUNT_ERROR
   const acc = base[3]
   const cmdArgs = [...base, 'calendar', 'events']
-  if (args?.range) cmdArgs.push('--range', args.range)
+  // gogcli v0.34 dropped `--range` for dedicated flags — map the tool's
+  // relative vocabulary onto them ("today"/"week" have their own switches;
+  // "tomorrow" is a relative --from plus a one-day window).
+  if (args?.range === 'today') cmdArgs.push('--today')
+  else if (args?.range === 'week') cmdArgs.push('--week')
+  else if (args?.range === 'tomorrow') cmdArgs.push('--from', 'tomorrow', '--days', '1')
   if (args?.days) cmdArgs.push('--days', String(args.days))
   if (args?.from) cmdArgs.push('--from', args.from)
   if (args?.to) cmdArgs.push('--to', args.to)
@@ -300,15 +324,18 @@ async function calendarCreate(args) {
   if (!args?.summary) return { success: false, error: 'summary is required' }
   if (!args?.start) return { success: false, error: 'start is required' }
   if (!args?.end) return { success: false, error: 'end is required' }
+  // gogcli v0.34: `create <calendarId>` is a required positional ('primary'
+  // is the account's default calendar), and start/end travel as --from/--to.
   const cmdArgs = [
     ...base,
     'calendar',
     'create',
+    args?.calendar_id || 'primary',
     '--summary',
     args.summary,
-    '--start',
+    '--from',
     args.start,
-    '--end',
+    '--to',
     args.end
   ]
   if (args?.description) cmdArgs.push('--description', args.description)
@@ -339,7 +366,9 @@ async function calendarDelete(args) {
   if (!base) return MISSING_ACCOUNT_ERROR
   if (!args?.calendar_id) return { success: false, error: 'calendar_id is required' }
   if (!args?.event_id) return { success: false, error: 'event_id is required' }
-  const cmdArgs = [...base, 'calendar', 'delete', args.calendar_id, args.event_id]
+  // --force: gogcli refuses destructive commands without it under --no-input;
+  // Wolffish's approval gate is the safety layer in front of this.
+  const cmdArgs = [...base, 'calendar', 'delete', args.calendar_id, args.event_id, '--force']
   if (args?.send_updates) cmdArgs.push('--send-updates', args.send_updates)
   return run(cmdArgs)
 }
@@ -360,7 +389,8 @@ async function tasksList(args) {
   const acc = base[3]
   const cmdArgs = [...base, 'tasks']
   if (args?.task_list_id) {
-    cmdArgs.push('list', '--task-list', args.task_list_id)
+    // gogcli v0.34: the task list is a positional (`tasks list <tasklistId>`).
+    cmdArgs.push('list', args.task_list_id)
     if (args?.show_completed) cmdArgs.push('--show-completed')
   } else {
     cmdArgs.push('lists')
@@ -374,15 +404,8 @@ async function tasksAdd(args) {
   if (!base) return MISSING_ACCOUNT_ERROR
   if (!args?.task_list_id) return { success: false, error: 'task_list_id is required' }
   if (!args?.title) return { success: false, error: 'title is required' }
-  const cmdArgs = [
-    ...base,
-    'tasks',
-    'add',
-    '--task-list',
-    args.task_list_id,
-    '--title',
-    args.title
-  ]
+  // gogcli v0.34: the task list is a positional (`tasks add <tasklistId>`).
+  const cmdArgs = [...base, 'tasks', 'add', args.task_list_id, '--title', args.title]
   if (args?.notes) cmdArgs.push('--notes', args.notes)
   if (args?.due) cmdArgs.push('--due', args.due)
   return run(cmdArgs)
@@ -401,7 +424,8 @@ async function tasksDelete(args) {
   if (!base) return MISSING_ACCOUNT_ERROR
   if (!args?.task_list_id) return { success: false, error: 'task_list_id is required' }
   if (!args?.task_id) return { success: false, error: 'task_id is required' }
-  return run([...base, 'tasks', 'delete', args.task_list_id, args.task_id])
+  // --force: same non-interactive confirmation rule as the other deletes.
+  return run([...base, 'tasks', 'delete', args.task_list_id, args.task_id, '--force'])
 }
 
 async function contactsCreate(args) {
@@ -423,7 +447,8 @@ async function sheetsRead(args) {
   if (!base) return MISSING_ACCOUNT_ERROR
   if (!args?.spreadsheet_id) return { success: false, error: 'spreadsheet_id is required' }
   if (!args?.range) return { success: false, error: 'range is required' }
-  return run([...base, 'sheets', 'read', args.spreadsheet_id, '--range', args.range])
+  // gogcli v0.34: the range is a positional (`sheets get <id> <range>`).
+  return run([...base, 'sheets', 'read', args.spreadsheet_id, args.range])
 }
 
 async function sheetsWrite(args) {
@@ -432,14 +457,15 @@ async function sheetsWrite(args) {
   if (!args?.spreadsheet_id) return { success: false, error: 'spreadsheet_id is required' }
   if (!args?.range) return { success: false, error: 'range is required' }
   if (!args?.values) return { success: false, error: 'values is required' }
+  // gogcli v0.34: `sheets update <id> <range>` with the 2D array on
+  // --values-json (positional values are comma/pipe text, wrong for JSON).
   const cmdArgs = [
     ...base,
     'sheets',
-    'write',
+    'update',
     args.spreadsheet_id,
-    '--range',
     args.range,
-    '--values',
+    '--values-json',
     JSON.stringify(args.values)
   ]
   return run(cmdArgs)

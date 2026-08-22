@@ -118,6 +118,21 @@ async function checkGog(): Promise<{ installed: boolean; version: string | null 
   }
 }
 
+/**
+ * The gogcli release this app installs — PINNED, deliberately not `latest`.
+ *
+ * The google plugin hardcodes gogcli's command syntax, and gogcli moves:
+ * `latest` is how the 2026-08-22 sweep ended up driving a binary whose
+ * `gmail labels`/`drive list`/`calendar`/`tasks`/`sheets` shapes the plugin
+ * no longer matched. Installs must land on the version the plugin was
+ * audited against. To upgrade: bump this tag, re-run every plugin
+ * invocation shape against the new binary (a fake `--account` surfaces
+ * parse drift as `unknown flag`/`expected …` while real shapes fail at
+ * auth), fix the plugin where it drifted, then ship both together.
+ * v0.37.0 and v0.34.1 both pass the current plugin's full shape audit.
+ */
+const GOG_PINNED_TAG = 'v0.37.0'
+
 async function fetchLatestAsset(): Promise<{
   url: string
   name: string
@@ -129,9 +144,14 @@ async function fetchLatestAsset(): Promise<{
   const ext = platform === 'windows' ? '.zip' : '.tar.gz'
   const suffix = `_${platform}_${arch}${ext}`
 
-  const res = await fetch('https://api.github.com/repos/steipete/gogcli/releases/latest', {
-    headers: { 'User-Agent': 'wolffish', Accept: 'application/vnd.github+json' }
-  })
+  // openclaw/gogcli — the repo moved from steipete/gogcli; the old name only
+  // works while GitHub's rename redirect survives, so use the real home.
+  const res = await fetch(
+    `https://api.github.com/repos/openclaw/gogcli/releases/tags/${GOG_PINNED_TAG}`,
+    {
+      headers: { 'User-Agent': 'wolffish', Accept: 'application/vnd.github+json' }
+    }
+  )
   if (!res.ok) throw new Error(`GitHub API error: HTTP ${res.status}`)
   const release = (await res.json()) as {
     tag_name?: string
