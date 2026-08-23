@@ -1472,8 +1472,11 @@ function showProcedure(procedure) {
  * concluded it was gone and dumped the user back at the list on every
  * successful rename.
  */
-function openAutomation(client, initialLabel) {
+async function openAutomation(client, initialLabel) {
   let label = initialLabel
+  // Fetched once for the card's project row — the menu's own actions cannot
+  // rebind the project, so a session-stale title is the worst case.
+  const projects = await client.invoke('projects:list').catch(() => [])
   return browseOne({
     reload: async () => {
       // The save this menu just made told the daemon to re-parse the schedule
@@ -1487,7 +1490,8 @@ function openAutomation(client, initialLabel) {
         await new Promise((resolve) => setTimeout(resolve, 250))
       }
     },
-    show: showAutomation,
+    show: (current) =>
+      showAutomation(current, { projectLabel: projectLabelFrom(projects, current?.project) }),
     actions: [
       { label: 'Run it now', run: () => automations(client, ['run', label]) },
       // Editing ONE job, rather than the whole file. The heading is the
@@ -1889,8 +1893,10 @@ export async function automations(client, args, { json = false } = {}) {
   }
 
   switch (verb) {
-    case 'show':
-      return showAutomation(job)
+    case 'show': {
+      const projects = await client.invoke('projects:list').catch(() => [])
+      return showAutomation(job, { projectLabel: projectLabelFrom(projects, job.project) })
+    }
     case 'run': {
       const result = await client.invoke('heartbeat:runJob', job.label)
       if (result?.ok === false) {
@@ -1932,13 +1938,31 @@ export async function automations(client, args, { json = false } = {}) {
   }
 }
 
-function showAutomation(job) {
+/**
+ * The human name for a project id, from an already-fetched projects list.
+ * A card whose whole job is answering "which project does this run under?"
+ * should say the project's name, not print a UUID.
+ */
+function projectLabelFrom(projects, id) {
+  if (!id) return null
+  const found = (projects ?? []).find((project) => project.id === id)
+  return found ? `${found.icon ? found.icon + ' ' : ''}${found.title}` : null
+}
+
+function showAutomation(job, { projectLabel = null } = {}) {
   heading(`${job.icon ? job.icon + ' ' : ''}${job.label ?? 'Automation'}`)
   keyValue([
     ['schedule', job.cron ?? job.schedule ?? '—'],
     ['next run', job.nextRunMs ? new Date(job.nextRunMs).toLocaleString() : c.gray('—')],
     ['mode', job.mode ?? c.gray('follows the global mode')],
-    ['project', job.project ? c.gray(job.project) : c.gray('none')]
+    [
+      'project',
+      job.project
+        ? projectLabel
+          ? `${projectLabel} ${c.gray(String(job.project).slice(0, 8))}`
+          : c.gray(job.project)
+        : c.gray('none')
+    ]
   ])
   // `body`, not `prompt` — an automation's instruction is `ParsedSchedule.body`
   // and reading a field the type does not have renders nothing, silently.

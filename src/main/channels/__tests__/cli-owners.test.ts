@@ -377,6 +377,22 @@ async function main(): Promise<void> {
     autoShown
   )
 
+  // A `project:` marker must surface on the card as the PROJECT'S NAME —
+  // getActiveJobs used to drop the field entirely, so the card said
+  // "project none" over a job whose marker was plainly in the file.
+  const bound = await client.invoke('projects:create', { title: 'Mentor Miller' })
+  const heartbeatBound = fs
+    .readFileSync(path.join(ws, 'brain', 'brainstem', 'heartbeat.md'), 'utf8')
+    .replace('icon: 🌅', `icon: 🌅\nproject: ${bound.id}`)
+  fs.writeFileSync(path.join(ws, 'brain', 'brainstem', 'heartbeat.md'), heartbeatBound)
+  const boundShown = await quiet(() => cli.automations(client, ['show', 'Daily']))
+  check(
+    'automations show names the bound project, not "none"',
+    /Mentor Miller/.test(boundShown) && !/project\s+none/.test(boundShown),
+    boundShown
+  )
+  await client.invoke('projects:delete', bound.id)
+
   await quiet(() => cli.automations(client, ['files', 'Daily (08:00)', 'rm', 'notes.md']))
   const heartbeat3 = fs.readFileSync(path.join(ws, 'brain', 'brainstem', 'heartbeat.md'), 'utf8')
   check('automation file detached', !/^file: /m.test(heartbeat3), heartbeat3)

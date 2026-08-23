@@ -1,4 +1,10 @@
-## v1.0.265 — 2026-08-23 `Latest`
+## v1.0.266 — 2026-08-23 `Latest`
+
+### The Automation Card Stops Saying "None"
+
+An automation plainly bound to a project — the `project:` marker sitting right there in the schedule file — showed **"project none"** on its terminal card, no icon in the list, and zero attached files, which read exactly like a binding that had silently fallen off. The binding was never broken: runs always executed under their project, with its files and overlay. The daemon simply **dropped those fields from what it sent** — the internal job carried project, icon, files and folders, and the wire projection forgot all four. Every consumer of the job list now receives the whole job, so the icon and attachment counts are back everywhere. And the card answers the actual question: instead of a bare UUID it names the project — **"💉 Mentor Miller"** — with the short id beside it, falling back to the raw id only when the project list cannot be read, and saying "none" only when the job is truly unbound.
+
+## v1.0.265 — 2026-08-23
 
 ### An Automation Can Hold Any Prompt Now
 

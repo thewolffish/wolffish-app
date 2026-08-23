@@ -704,9 +704,22 @@ export class Brainstem {
     label: string
     body: string
     mode: 'single' | 'workflow' | null
+    /** Project binding (`project:` marker); null ⇒ unbound. */
+    project: string | null
+    /** Emoji from the `icon:` marker; null ⇒ none. */
+    icon: string | null
+    /** Attached file paths (`file:` markers). */
+    files: string[]
+    /** Working directories (`dir:` markers). */
+    dirs: string[]
     /** The absolute moment a `once` job fires; null for every cron kind. */
     runAt: number | null
   }> {
+    // The registered jobs carry every marker, and the runner honours them —
+    // but this projection used to drop project/icon/files/dirs, so every
+    // consumer of `heartbeat:getJobs` (the terminal's automation card and
+    // list) rendered "project none", no icon and zero attachments over a job
+    // whose markers were plainly in the file. Project the whole job.
     return [...this.jobs.values()].map((j) => ({
       id: j.id,
       type: j.type,
@@ -714,6 +727,10 @@ export class Brainstem {
       label: j.label,
       body: j.body,
       mode: j.mode ?? null,
+      project: j.project ?? null,
+      icon: j.icon ?? null,
+      files: j.files ?? [],
+      dirs: j.dirs ?? [],
       runAt: j.runAt ?? null
     }))
   }
