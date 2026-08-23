@@ -8,18 +8,23 @@
  * entries printed an error and returned — which is exactly what "I press the
  * number and nothing happens" looks like from the outside.
  *
- * So editing now has three tiers, in order:
+ * So editing now has four tiers, in order:
  *
- *   1. `$WOLFFISH_EDITOR`, `$VISUAL` or `$EDITOR` — whatever you already chose.
- *   2. An editor that is actually installed. macOS ships `nano` and `vi`, every
- *      Linux ships `vi`, Windows ships `notepad`, so this tier essentially
- *      always resolves. It says which one it opened, once, so the handover is
- *      never a surprise.
- *   3. A built-in line editor. No spawn, no terminal handover, no dependency —
+ *   1. `$WOLFFISH_EDITOR` — an explicit choice made FOR this CLI, honoured
+ *      verbatim, flags and all.
+ *   2. The friendly default: `nano` on macOS and Linux, `notepad` (then
+ *      Microsoft's nano-like `edit`) on Windows. Deliberately AHEAD of
+ *      `$EDITOR`: that variable is usually set once, years ago, to vim — and
+ *      landing someone who just pressed "Edit the prompt" inside a modal
+ *      editor they cannot leave is the exact dead end this order removes.
+ *      Anyone who wants vim here says so with `$WOLFFISH_EDITOR`.
+ *   3. `$VISUAL` / `$EDITOR` — respected when the default editor is not
+ *      installed, because a configured editor still beats a guessed one.
+ *   4. A built-in line editor. No spawn, no terminal handover, no dependency —
  *      it works inside an SSH session on a box with nothing installed, and it
  *      borrows the session's own line reader like every other prompt here.
  *
- * Tier 3 is the one that makes the promise true rather than probable.
+ * Tier 4 is the one that makes the promise true rather than probable.
  */
 import { spawn } from 'node:child_process'
 import fs from 'node:fs/promises'
@@ -29,17 +34,28 @@ import path from 'node:path'
 import { c, g, handOverTerminal, icon, interactive, out, question, wrapText } from './ui.mjs'
 
 /**
- * Editors worth opening unasked, best first.
+ * The default editors — the ones opened even when `$EDITOR` says otherwise.
+ *
+ * `nano` is modeless, labels its own keys on screen, and ships with macOS and
+ * effectively every Linux. On Windows, `notepad` is the everyone-knows-it
+ * choice and — being a GUI app — works even under the launcher, where the CLI
+ * process has no console of its own; `edit` is Microsoft's new nano-like
+ * terminal editor (in the box from Windows 11 24H2) and steps in where notepad
+ * is somehow absent (Server Core).
+ */
+const DEFAULTS = process.platform === 'win32' ? ['notepad', 'edit'] : ['nano']
+
+/**
+ * Editors worth opening when neither the default nor `$EDITOR` resolves.
  *
  * Modal editors come last: someone who has not chosen an editor is unlikely to
  * know `:wq`, and landing them in vim is its own kind of dead end. GUI editors
  * (`code`, `subl`) are deliberately absent — without `--wait` they return
  * instantly and the edit is silently lost, and guessing that flag on someone's
- * behalf is how a save turns into a no-op. Name one in `$EDITOR` and it is
- * honoured verbatim, flags and all.
+ * behalf is how a save turns into a no-op. Name one in `$WOLFFISH_EDITOR` and
+ * it is honoured verbatim, flags and all.
  */
-const CANDIDATES =
-  process.platform === 'win32' ? ['notepad'] : ['nano', 'micro', 'pico', 'vim', 'vi', 'ed']
+const FALLBACKS = process.platform === 'win32' ? [] : ['micro', 'pico', 'vim', 'vi', 'ed']
 
 /** `which`, without the subprocess. */
 function onPath(command) {
@@ -69,16 +85,32 @@ function onPath(command) {
 
 /**
  * Which editor this machine will use, and where the choice came from.
- * Returns null only when nothing at all is installed — then tier 3 takes over.
+ * Returns null only when nothing at all is installed — then the built-in
+ * editor takes over.
  */
 export function resolveEditor() {
-  const configured = process.env.WOLFFISH_EDITOR || process.env.VISUAL || process.env.EDITOR || ''
-  if (configured.trim()) {
-    const [bin, ...args] = configured.trim().split(/\s+/)
-    return { bin, args, name: configured.trim(), chosen: true }
+  const forced = (process.env.WOLFFISH_EDITOR ?? '').trim()
+  if (forced) {
+    const [bin, ...args] = forced.split(/\s+/)
+    return { bin, args, name: forced, chosen: true, source: '$WOLFFISH_EDITOR' }
   }
-  for (const candidate of CANDIDATES) {
-    if (onPath(candidate)) return { bin: candidate, args: [], name: candidate, chosen: false }
+  // The friendly default OUTRANKS $EDITOR — see the header. nano on POSIX,
+  // notepad/edit on Windows, and the resolve order is what makes that true.
+  for (const candidate of DEFAULTS) {
+    if (onPath(candidate)) {
+      return { bin: candidate, args: [], name: candidate, chosen: false, source: 'default' }
+    }
+  }
+  const configured = (process.env.VISUAL || process.env.EDITOR || '').trim()
+  if (configured) {
+    const [bin, ...args] = configured.split(/\s+/)
+    const source = process.env.VISUAL?.trim() ? '$VISUAL' : '$EDITOR'
+    return { bin, args, name: configured, chosen: true, source }
+  }
+  for (const candidate of FALLBACKS) {
+    if (onPath(candidate)) {
+      return { bin: candidate, args: [], name: candidate, chosen: false, source: 'detected' }
+    }
   }
   return null
 }
@@ -108,7 +140,10 @@ export async function editText(content, fileName, { label = null } = {}) {
 
   if (!editor.chosen && !announced) {
     announced = true
-    out(c.gray(`  opening ${editor.name} — set $EDITOR to use a different one`))
+    // $WOLFFISH_EDITOR, not $EDITOR: the default now outranks $EDITOR, so
+    // pointing at the variable this resolver no longer prefers would be a hint
+    // that does not work.
+    out(c.gray(`  opening ${editor.name} — set $WOLFFISH_EDITOR to use a different one`))
   }
 
   const scratch = path.join(
@@ -120,6 +155,7 @@ export async function editText(content, fileName, { label = null } = {}) {
   // The editor takes the whole terminal, so readline stands down first and
   // gets raw mode back afterwards — otherwise the session returns from vim
   // with a prompt that echoes nothing.
+  const startedAt = Date.now()
   const code = await handOverTerminal(
     () =>
       new Promise((resolve) => {
@@ -144,7 +180,24 @@ export async function editText(content, fileName, { label = null } = {}) {
     return null
   }
 
-  const edited = await fs.readFile(scratch, 'utf8')
+  let edited = await fs.readFile(scratch, 'utf8')
+
+  // Windows 11's tabbed Notepad: launched while another window is open, the
+  // new process hands the file to the existing window and exits at once — so
+  // "the editor closed" is true and "the user finished editing" is not, and
+  // the unchanged file would read as a silent no-op edit. An instant exit with
+  // nothing changed is that handoff's exact signature; wait for the human.
+  if (
+    /(^|[\\/])notepad(\.exe)?$/i.test(editor.bin) &&
+    Date.now() - startedAt < 1500 &&
+    edited === (content ?? '') &&
+    interactive()
+  ) {
+    out(c.yellow('  notepad opened the file in an already-open window'))
+    await question(`  ${c.dim('save and close it there, then press Enter')}: `)
+    edited = await fs.readFile(scratch, 'utf8').catch(() => edited)
+  }
+
   await fs.rm(path.dirname(scratch), { recursive: true, force: true }).catch(() => undefined)
   return edited
 }
@@ -314,7 +367,12 @@ export function editorSummary() {
     return { name: 'built-in', detail: 'nothing installed — the built-in editor is used' }
   return {
     name: editor.name,
-    detail: editor.chosen ? 'from $EDITOR' : 'detected — set $EDITOR to change'
+    detail:
+      editor.source === 'default'
+        ? 'the default — set $WOLFFISH_EDITOR to change'
+        : editor.chosen
+          ? `from ${editor.source}`
+          : 'detected — set $WOLFFISH_EDITOR to change'
   }
 }
 

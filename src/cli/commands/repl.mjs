@@ -47,8 +47,9 @@ import {
 import { pair } from './pair.mjs'
 import { service } from './service.mjs'
 import { basename } from '../lib/render.mjs'
-import { stdinIsRawCapable, stdoutIsTty } from '../lib/tty.mjs'
+import { stdinIsRawCapable, stdinIsTty, stdoutIsTty } from '../lib/tty.mjs'
 import { setConsoleEcho } from '../lib/console-ctl.mjs'
+import { attachComposer } from '../lib/composer.mjs'
 
 /** Conversations per page. Enough to scan without scrolling a normal window. */
 const PAGE_SIZE = 25
@@ -208,8 +209,79 @@ export async function repl(client, { conversationId = null, verbose = false } = 
    * and draws nothing while it does.
    */
   let hiddenAsk = false
+  /** A turn is streaming — declared here because the composer reads it. */
+  let running = false
+
+  /**
+   * The multi-line composer: bracketed paste and Shift+Enter, on top of this
+   * same readline. Only where stdin can do raw mode — under the Windows
+   * launcher the input is a cooked pipe with no keystrokes to intercept, and
+   * pasted blocks are joined further down instead (see the burst join in the
+   * line handler).
+   */
+  const composer =
+    process.stdin.isTTY === true
+      ? attachComposer(rl, {
+          contPrompt: () => c.gray(`${g.dot} `),
+          // While a turn streams the renderer owns the screen, and during a
+          // hidden ask nothing may paint at all — soft newlines would draw
+          // rows into both, so they are inert until the prompt is back.
+          isBusy: () => running || hiddenAsk,
+          onRestorePrompt: () => applyPrompt()
+        })
+      : null
+  composer?.enable()
+
+  /** Resolve one line typed at a nested prompt, restoring whatever it muted. */
+  const concludeAsk = (ask, answer, { silent = false } = {}) => {
+    pendingAsk = null
+    if (ask.hidden) {
+      hiddenAsk = false
+      delete rl._writeToOutput
+      if (!stdinIsRawCapable()) void setConsoleEcho(true)
+      // The Enter that ended the line was swallowed with everything else.
+      if (!silent) process.stderr.write('\n')
+      // History is the second copy of a secret people forget about — it is
+      // one arrow-up away, and it is written to disk by nothing here but is
+      // visible for the rest of the session.
+      if (typeof answer === 'string' && Array.isArray(rl.history) && rl.history[0] === answer) {
+        rl.history.shift()
+      }
+    }
+    // The ask borrowed the prompt slot; the next repaint is chat's again.
+    applyPrompt()
+    ask.resolve(answer)
+  }
+
+  /**
+   * One line, delivered to the ask that is waiting for it.
+   *
+   * Single-line asks resolve immediately. A MULTILINE ask (the cooked-input
+   * form of "paste a new prompt" — raw terminals get the composer instead)
+   * collects lines until a lone `.`, cancelling on a blank first line; the ask
+   * stays pending between lines, which is exactly what lets a pasted block's
+   * burst of line events land inside ONE answer instead of leaking into the
+   * menus behind it.
+   */
+  const feedAskLine = (line) => {
+    const ask = pendingAsk
+    if (!ask.multiline) {
+      concludeAsk(ask, line)
+      return
+    }
+    if (ask.collected.length === 0 && line.trim() === '') {
+      concludeAsk(ask, null)
+      return
+    }
+    if (line.trim() === '.') {
+      concludeAsk(ask, ask.collected.join('\n'))
+      return
+    }
+    ask.collected.push(line)
+  }
+
   setLineReader({
-    question: (prompt, resolve, { hidden = false } = {}) => {
+    question: (prompt, resolve, { hidden = false, multiline = false } = {}) => {
       // One INPUT LINE, loudly marked: a thick blue bar at column 0, the
       // question inline after it, and the cursor right where the answer goes —
       // immediately after the colon. The bar replaces the question's own
@@ -221,6 +293,14 @@ export async function repl(client, { conversationId = null, verbose = false } = 
       // Never for hidden asks — a secret is typed at its own prompt or not
       // at all.
       if (!hidden && askBacklog.length > 0) {
+        if (multiline) {
+          // The parked lines flow into the collector in typed order — the
+          // very burst a cooked-mode paste produces.
+          out(ask)
+          pendingAsk = { resolve, hidden: false, multiline: true, collected: [] }
+          while (askBacklog.length > 0 && pendingAsk) feedAskLine(askBacklog.shift())
+          return
+        }
         out(`${ask}${askBacklog[0]}`)
         resolve(askBacklog.shift())
         return
@@ -278,11 +358,15 @@ export async function repl(client, { conversationId = null, verbose = false } = 
         rl.setPrompt(ask)
         rl.prompt(true)
       }
-      pendingAsk = resolve
+      pendingAsk = { resolve, hidden, multiline, collected: [] }
     },
     pause: () => rl.pause(),
     resume: () => rl.resume(),
-    prompt: () => rl.prompt(true)
+    prompt: () => rl.prompt(true),
+    // The editor handover in ui.mjs stands these down alongside raw mode, so a
+    // spawned nano never inherits the composer's terminal key encodings.
+    suspendInput: () => composer?.suspend(),
+    resumeInput: () => composer?.resume()
   })
 
   /**
@@ -371,7 +455,6 @@ export async function repl(client, { conversationId = null, verbose = false } = 
 
   applyPrompt()
 
-  let running = false
   rl.prompt()
 
   /**
@@ -395,28 +478,29 @@ export async function repl(client, { conversationId = null, verbose = false } = 
     finished = resolve
   })
 
+  /**
+   * The launcher's cooked pipe delivers a pasted block as one chunk that
+   * readline splits into a synchronous burst of line events — which used to
+   * mean "send the first line as a message, drop the rest at the busy guard".
+   * Lines landing in the same instant are one paste, so they are joined back
+   * into one message. Gated to the launcher's interactive console (stdin is a
+   * TTY by proxy but not raw-capable): a genuinely piped script keeps its
+   * line-at-a-time semantics untouched.
+   */
+  const joinPastedBursts = process.stdin.isTTY !== true && stdinIsTty()
+  let burst = null
+
   rl.on('line', (line) => {
+    // A finished compose joins its frozen rows to this line before ANYTHING
+    // reads it — whatever consumes the line must see the whole message, never
+    // just its last row.
+    if (composer?.isActive()) line = composer.finish(line)
     // A menu is waiting — it claims this line, and the session never sees it.
     // Checked before anything else, including the blank guard: blank is a
     // meaningful answer to a menu ("go back"), and swallowing it here is what
     // would make the one key every menu documents do nothing.
     if (pendingAsk) {
-      const answer = pendingAsk
-      pendingAsk = null
-      if (hiddenAsk) {
-        hiddenAsk = false
-        delete rl._writeToOutput
-        if (!stdinIsRawCapable()) void setConsoleEcho(true)
-        // The Enter that ended the line was swallowed with everything else.
-        process.stderr.write('\n')
-        // History is the second copy of a secret people forget about — it is
-        // one arrow-up away, and it is written to disk by nothing here but is
-        // visible for the rest of the session.
-        if (Array.isArray(rl.history) && rl.history[0] === line) rl.history.shift()
-      }
-      // The ask borrowed the prompt slot; the next repaint is chat's again.
-      applyPrompt()
-      answer(line)
+      feedAskLine(line)
       return
     }
     // No question is waiting, but a command is mid-stride — its next question
@@ -426,6 +510,20 @@ export async function repl(client, { conversationId = null, verbose = false } = 
     // "still working" guard, not a menu.
     if (pumping && !running) {
       askBacklog.push(line)
+      return
+    }
+    if (joinPastedBursts) {
+      if (burst) {
+        burst.push(line)
+        return
+      }
+      burst = [line]
+      setImmediate(() => {
+        const joined = burst.join('\n')
+        burst = null
+        queue.push(joined)
+        void pump()
+      })
       return
     }
     queue.push(line)
@@ -454,21 +552,26 @@ export async function repl(client, { conversationId = null, verbose = false } = 
       // A menu or a card is waiting. Answer it with the same blank that means
       // "go back" everywhere else, rather than tearing the session down under
       // a prompt the user simply changed their mind about. ^C abandons what
-      // was typed ahead along with the prompt it was aimed at.
+      // was typed ahead along with the prompt it was aimed at — frozen compose
+      // rows included, since they were being typed INTO this ask.
       askBacklog = []
-      const answer = pendingAsk
-      pendingAsk = null
-      if (hiddenAsk) {
-        hiddenAsk = false
-        delete rl._writeToOutput
-        if (!stdinIsRawCapable()) void setConsoleEcho(true)
-      }
-      applyPrompt()
+      composer?.abandon()
+      const ask = pendingAsk
+      concludeAsk(ask, ask.multiline ? null : '', { silent: true })
       out()
       // The out() above moved to a fresh row; without this, the next repaint
       // still thinks it owns the abandoned ask's rows and clears over them.
       rl.prevRows = 0
-      answer('')
+      return
+    }
+    if (composer?.isActive()) {
+      // A half-composed message is on screen. ^C means "never mind", not
+      // "leave" — drop the frozen rows and hand back a clean prompt.
+      composer.abandon()
+      out()
+      out(c.gray('  (discarded the unsent lines)'))
+      rl.prevRows = 0
+      rl.prompt()
       return
     }
     // Nothing to abandon. One press clears the line and says so; a second
@@ -605,6 +708,9 @@ export async function repl(client, { conversationId = null, verbose = false } = 
   }
 
   await done
+  // Hand the terminal back the way it was found — bracketed paste off, kitty
+  // keys popped — before readline lets go of raw mode.
+  composer?.disable()
   rl.close()
   return 0
 }
@@ -692,6 +798,11 @@ function printBanner({ snapshot, state, status, version }) {
 
   out()
   out(c.gray('  /help  commands      /settings  configure      /conversations  past chats'))
+  // Only promised where the composer actually runs — under the launcher's
+  // cooked pipe there are no keystrokes to read, so the promise would be false.
+  if (process.stdin.isTTY === true) {
+    out(c.gray('  Shift+Enter starts a new line · pasting multi-line text is safe — Enter sends'))
+  }
   out(c.gray('  Ctrl-C stops a turn · Ctrl-D leaves · the agent keeps running without you'))
   out()
 }

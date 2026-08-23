@@ -1,4 +1,18 @@
-## v1.0.263 — 2026-08-22 `Latest`
+## v1.0.264 — 2026-08-23 `Latest`
+
+### The Terminal Learns to Take a Real Prompt
+
+Typing anything longer than a sentence into the terminal used to be a trap: pasting a multi-line prompt **fired its first line at the agent mid-paste** and scattered the rest, and Shift+Enter just sent the message. The chat input is now a genuine multi-line composer. **Paste is safe** — a pasted block of any size lands whole, every line visible on its own row, and nothing is sent until you press Enter. **Shift+Enter starts a new line** on terminals that speak the modern key protocol — iTerm2, Ghostty, kitty, WezTerm and friends — and **Option+Enter or Ctrl+J do the same everywhere**. Changed your mind? **Ctrl-C discards the draft** instead of ending the session. On the Windows console, where keystrokes cannot be intercepted, a pasted block is stitched back into **one message** instead of being sent line by line. And pasted text is scrubbed of stray control characters, so a hostile paste can never script your terminal.
+
+### Edits Open in nano, Not vim
+
+Every "Edit" in the terminal — a project's instructions, a procedure's prompt, heartbeat.md — now opens **nano by default** on macOS and Linux and **Notepad on Windows**, even when an `$EDITOR=vim` set years ago says otherwise: a modal editor you cannot leave is exactly the wrong place to land someone who just wanted to tweak a prompt. Want vim anyway? Set **`$WOLFFISH_EDITOR`** and it is honoured verbatim, flags and all. Windows 11's tabbed Notepad — which hands the file to an already-open window and returns instantly, silently losing the edit — is now detected and **waited out** instead.
+
+### Copy and Paste for Every Prompt
+
+Projects, procedures, automations and the three customization documents all gained the same pair of commands: **copy** puts the instructions or prompt on your system clipboard — pbcopy on macOS, the real clipboard on Windows and Linux, and **over SSH it fills the clipboard on the machine you are sitting at** — and **paste** opens a multi-line input that takes the whole replacement in one go and overwrites the field, exactly as it says. Pasting an automation's prompt is surgical: the **schedule heading and the attached file and folder markers are preserved byte for byte** — only the prompt changes. Scripts get all of it for free too: `cat new-prompt.md | wolffish procedures paste <id>` is a one-liner.
+
+## v1.0.263 — 2026-08-22
 
 ### The Conversation That Never Goes Dark
 

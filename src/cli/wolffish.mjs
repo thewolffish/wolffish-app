@@ -96,10 +96,10 @@ ${c.gray('CHAT')}
 ${c.gray('THE APP, IN THE TERMINAL')}
   wolffish conversations            list · show · resume · diagnose · rm
   wolffish conversations show <id>  read it back ${c.gray('· --tools · --clean · --last <n>')}
-  wolffish projects                 browse ${c.gray('·')} new ${c.gray('·')} show ${c.gray('·')} edit ${c.gray('·')} rename ${c.gray('·')} rm
-  wolffish procedures               browse ${c.gray('·')} new ${c.gray('·')} run ${c.gray('·')} edit ${c.gray('·')} mode ${c.gray('·')} project ${c.gray('·')} rm
-  wolffish automations              browse ${c.gray('·')} show <label> ${c.gray('·')} run <label> ${c.gray('·')} edit
-  wolffish customizations           soul · user · agents ${c.gray('(view; edit <name> to change)')}
+  wolffish projects                 browse ${c.gray('·')} new ${c.gray('·')} show ${c.gray('·')} edit ${c.gray('·')} copy ${c.gray('·')} paste ${c.gray('·')} rename ${c.gray('·')} rm
+  wolffish procedures               browse ${c.gray('·')} new ${c.gray('·')} run ${c.gray('·')} edit ${c.gray('·')} copy ${c.gray('·')} paste ${c.gray('·')} mode ${c.gray('·')} rm
+  wolffish automations              browse ${c.gray('·')} show <label> ${c.gray('·')} run <label> ${c.gray('·')} edit ${c.gray('·')} copy ${c.gray('·')} paste
+  wolffish customizations           soul · user · agents ${c.gray('(view; edit · copy · paste <name>)')}
   wolffish settings                 page ${g.chevron} card ${g.chevron} setting, interactively
 
 ${c.gray('FILES AND FOLDERS — projects, procedures and automations alike')}

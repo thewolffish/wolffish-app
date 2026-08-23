@@ -9,6 +9,7 @@
  */
 import { stdinIsRawCapable, stdinIsTty, stdoutIsTty, terminalColumns } from './tty.mjs'
 import { setConsoleEcho } from './console-ctl.mjs'
+import { readMultilineRaw } from './composer.mjs'
 import os from 'node:os'
 
 const FORCE_COLOR = process.env.FORCE_COLOR === '1'
@@ -500,6 +501,9 @@ export async function handOverTerminal(run) {
   // Raw-capable, not merely interactive: under the Windows launcher stdin is a
   // pipe, so there is no termios to hand over and setRawMode would throw.
   const raw = stdinIsRawCapable()
+  // The composer's terminal modes (bracketed paste, kitty keys) are part of
+  // the handover too: nano must not receive key encodings it never asked for.
+  owner?.suspendInput?.()
   owner?.pause()
   if (raw) process.stdin.setRawMode(false)
   try {
@@ -507,6 +511,7 @@ export async function handOverTerminal(run) {
   } finally {
     if (raw && owner) process.stdin.setRawMode(true)
     owner?.resume()
+    owner?.resumeInput?.()
     owner?.prompt?.(true)
   }
 }
@@ -688,6 +693,97 @@ export async function confirm(prompt, fallback = false) {
     .toLowerCase()
   if (answer === '') return fallback
   return answer === 'y' || answer === 'yes'
+}
+
+/**
+ * What to tell someone before a multi-line prompt opens, for the input this
+ * terminal actually has. Raw terminals get the composer (Shift+Enter, safe
+ * paste); the Windows launcher's cooked pipe cannot see keystrokes, so there a
+ * lone `.` line is the full stop — the one convention that works over any
+ * line-based input.
+ */
+export function multilineHint() {
+  return stdinIsRawCapable()
+    ? 'paste, or type — Shift+Enter (or Ctrl+J) starts a new line, Enter saves, blank cancels'
+    : 'paste or type lines — finish with a single "." on its own line, a blank first line cancels'
+}
+
+/**
+ * Read a whole multi-line text — a prompt, a set of instructions — as ONE
+ * answer. Returns the text, or null when the user backed out.
+ *
+ * Four inputs, one contract:
+ *  - a session on a raw terminal: the composer already makes `question()`
+ *    multi-line (paste lands whole, Shift+Enter breaks lines, Enter submits);
+ *  - a session on the launcher's cooked pipe: the session's reader collects
+ *    lines until a lone `.` (see the multiline ask in repl.mjs);
+ *  - a bare shell prompt on a raw terminal: a throwaway composer;
+ *  - piped stdin: read to EOF, so `cat new-prompt.md | wolffish … paste <id>`
+ *    is a one-liner.
+ */
+export async function questionMultiline(prompt) {
+  const meaningful = (answer) =>
+    answer != null && String(answer).trim().length > 0 ? String(answer) : null
+  if (owner && stdinIsRawCapable()) return meaningful(await question(prompt))
+  if (owner) {
+    return new Promise((resolve) => {
+      owner.question(safe(prompt), (answer) => resolve(meaningful(answer)), { multiline: true })
+    })
+  }
+  if (stdinIsRawCapable()) {
+    return meaningful(
+      await readMultilineRaw(safe(prompt), { contPrompt: () => c.gray(`${g.dot} `) })
+    )
+  }
+  return meaningful(await readMultilineCooked(prompt))
+}
+
+/**
+ * The no-composer collector: whole lines until a lone `.`, a blank first line
+ * (only when someone is TYPING — a piped file legitimately starts blank), or
+ * end of input. Keeps its own carry buffer across reads, because a pasted
+ * block arrives as one chunk holding many lines and the single-line reader
+ * above would drop everything after the first terminator.
+ */
+async function readMultilineCooked(prompt) {
+  return new Promise((resolve) => {
+    const stdin = process.stdin
+    const typed = stdinIsTty()
+    process.stderr.write(safe(prompt))
+    let buffer = ''
+    const lines = []
+    const finish = (value) => {
+      stdin.removeListener('data', onData)
+      stdin.removeListener('end', onEnd)
+      stdin.pause()
+      resolve(value)
+    }
+    const onEnd = () => {
+      if (buffer.length > 0) lines.push(buffer)
+      finish(lines.join('\n'))
+    }
+    const onData = (chunk) => {
+      buffer += chunk.toString('utf8')
+      for (;;) {
+        const index = buffer.search(/[\r\n]/)
+        if (index < 0) return
+        const line = buffer.slice(0, index)
+        buffer = buffer.slice(index + (buffer.slice(index, index + 2) === '\r\n' ? 2 : 1))
+        if (typed && lines.length === 0 && line.trim() === '') {
+          finish(null)
+          return
+        }
+        if (line.trim() === '.') {
+          finish(lines.join('\n'))
+          return
+        }
+        lines.push(line)
+      }
+    }
+    stdin.on('data', onData)
+    stdin.on('end', onEnd)
+    stdin.resume()
+  })
 }
 
 export const icon = {

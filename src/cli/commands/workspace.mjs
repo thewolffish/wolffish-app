@@ -21,9 +21,11 @@ import {
   icon,
   interactive,
   keyValue,
+  multilineHint,
   out,
   pad,
   question,
+  questionMultiline,
   captureOutput,
   relativeTime,
   shortPath,
@@ -32,6 +34,7 @@ import {
   wrapText
 } from '../lib/ui.mjs'
 import { editText } from '../lib/editor.mjs'
+import { copyToClipboard } from '../lib/clipboard.mjs'
 import { basename, renderStoredMessage } from '../lib/render.mjs'
 import { renderMarkdown } from '../lib/markdown.mjs'
 import { runTurn } from '../lib/turn.mjs'
@@ -842,6 +845,15 @@ export async function projects(client, args, { json = false } = {}) {
       out(`${icon.ok()} updated ${project.title}`)
       return 0
     }
+    case 'copy':
+      return copyOwnedText('instructions', project.instructions)
+    case 'paste': {
+      const text = await pasteOwnedText('instructions', project.instructions)
+      if (text === null) return 0
+      await client.invoke('projects:update', { id: project.id, instructions: text })
+      out(`${icon.ok()} replaced the instructions of ${project.title}`)
+      return 0
+    }
     case 'rename': {
       const title = tail.join(' ').trim()
       if (!title) return usageLine('wolffish projects rename <id> "<title>"')
@@ -874,7 +886,7 @@ export async function projects(client, args, { json = false } = {}) {
       return 0
     default:
       out(c.red(`unknown: ${cmd(`projects ${verb}`)}`))
-      out(c.gray('  list · new · show · edit · rename · icon · files · dirs · rm'))
+      out(c.gray('  list · new · show · edit · copy · paste · rename · icon · files · dirs · rm'))
       return 2
   }
 }
@@ -1035,6 +1047,65 @@ async function iconInteractive(client, channel, entry) {
   out(`${icon.ok()} ${answer} ${entry.title}`)
 }
 
+// ─── Copying and pasting the text a thing runs on ───────────────────────────
+
+/**
+ * `copy` and `paste`, the same pair on every surface that carries an editable
+ * prompt: a project's instructions, a procedure's prompt, an automation's
+ * body, the three customization documents.
+ *
+ * They exist because an editor round-trip is the WRONG shape for the two
+ * commonest moves: getting the text OUT (into the app, a doc, another
+ * machine), and dropping a rewritten version IN. Copy lands on the system
+ * clipboard; paste opens a multi-line prompt that takes the entire replacement
+ * in one go — pasted or typed, every line visible — and overwrites the whole
+ * field, which is exactly what it says it does.
+ */
+async function copyOwnedText(label, text) {
+  const value = String(text ?? '')
+  if (!value.trim()) {
+    out(c.gray(`  nothing to copy — the ${label} is empty`))
+    return 0
+  }
+  const result = await copyToClipboard(value)
+  if (!result.ok) {
+    out(`${icon.fail()} ${c.red(result.error)}`)
+    return 1
+  }
+  const lines = value.split('\n').length
+  out(
+    `${icon.ok()} copied the ${label} ` +
+      c.gray(`— ${lines} ${lines === 1 ? 'line' : 'lines'}, via ${result.how}`)
+  )
+  if (result.note) out(c.gray(`  ${result.note}`))
+  return 0
+}
+
+/**
+ * Ask for the replacement text. Returns it, or null when the user backed out —
+ * and null MUST mean "change nothing", never "save empty": wiping a prompt is
+ * spelled Delete, not a cancelled paste.
+ */
+async function pasteOwnedText(label, current) {
+  out(`  ${c.bold(`Paste new ${label}`)} ${c.gray('— replaces the whole thing')}`)
+  const existing = String(current ?? '').trim()
+  if (existing) {
+    const lines = existing.split('\n').length
+    out(
+      c.gray(
+        `  replacing the current ${lines} ${lines === 1 ? 'line' : 'lines'} — copy first if you want them back`
+      )
+    )
+  }
+  out(c.gray(`  ${multilineHint()}`))
+  const answer = await questionMultiline(`  ${c.dim(`new ${label}`)}: `)
+  if (answer == null || answer.trim().length === 0) {
+    out(c.gray('  cancelled — nothing changed'))
+    return null
+  }
+  return answer.replace(/\s+$/, '')
+}
+
 /** One project, with everything the Projects page offers for it. */
 function openProject(client, id) {
   return browseOne({
@@ -1042,6 +1113,11 @@ function openProject(client, id) {
     show: showProject,
     actions: [
       { label: 'Edit the instructions', run: () => projects(client, ['edit', id]) },
+      { label: 'Copy the instructions', run: () => projects(client, ['copy', id]) },
+      {
+        label: 'Paste new instructions (replaces them)',
+        run: () => projects(client, ['paste', id])
+      },
       { label: 'Attach files', run: () => attachFilesInteractive(client, 'project', id) },
       { label: 'Add working folders', run: () => attachFoldersInteractive(client, 'project', id) },
       { label: 'Remove a file', run: () => detachFileInteractive(client, 'project', id) },
@@ -1066,6 +1142,8 @@ function openProject(client, id) {
 
 const KNOWN_PROJECT_VERBS = new Set([
   'edit',
+  'copy',
+  'paste',
   'rename',
   'icon',
   'files',
@@ -1114,6 +1192,8 @@ function openProcedure(client, id, { verbose = false, onRun = null } = {}) {
     actions: [
       { label: 'Run it now', run: () => procedures(client, ['run', id], { verbose, onRun }) },
       { label: 'Edit the prompt', run: () => procedures(client, ['edit', id]) },
+      { label: 'Copy the prompt', run: () => procedures(client, ['copy', id]) },
+      { label: 'Paste a new prompt (replaces it)', run: () => procedures(client, ['paste', id]) },
       { label: 'Attach files', run: () => attachFilesInteractive(client, 'procedure', id) },
       {
         label: 'Add working folders',
@@ -1172,6 +1252,8 @@ async function bindProjectInteractive(client, id) {
 
 const KNOWN_PROCEDURE_VERBS = new Set([
   'edit',
+  'copy',
+  'paste',
   'rename',
   'icon',
   'mode',
@@ -1280,6 +1362,15 @@ export async function procedures(
       out(`${icon.ok()} updated ${procedure.title}`)
       return 0
     }
+    case 'copy':
+      return copyOwnedText('prompt', procedure.prompt)
+    case 'paste': {
+      const text = await pasteOwnedText('prompt', procedure.prompt)
+      if (text === null) return 0
+      await client.invoke('procedures:update', { id: procedure.id, prompt: text })
+      out(`${icon.ok()} replaced the prompt of ${procedure.title}`)
+      return 0
+    }
     case 'rename': {
       const title = tail.join(' ').trim()
       if (!title) return usageLine('wolffish procedures rename <id> "<title>"')
@@ -1335,7 +1426,7 @@ export async function procedures(
       out(c.red(`unknown: ${cmd(`procedures ${verb}`)}`))
       out(
         c.gray(
-          '  list · new · show · run · edit · rename · icon · mode · project · files · dirs · rm'
+          '  list · new · show · run · edit · copy · paste · rename · icon · mode · project · files · dirs · rm'
         )
       )
       return 2
@@ -1395,6 +1486,11 @@ function openAutomation(client, label) {
       // spliced back at exactly the offsets it came from so nothing else in the
       // file can drift.
       { label: 'Edit this automation', run: () => editAutomation(client, label) },
+      { label: 'Copy the prompt', run: () => automations(client, ['copy', label]) },
+      {
+        label: 'Paste a new prompt (replaces it)',
+        run: () => automations(client, ['paste', label])
+      },
       {
         label: 'Attach files',
         run: () => attachFilesInteractive(client, 'automation', label)
@@ -1488,6 +1584,70 @@ async function editAutomation(client, label) {
   return 0
 }
 
+/**
+ * A job block split into its HEAD — the `## heading` line plus the leading
+ * marker lines (`mode:`, `project:`, `icon:`, and the repeatable `file:` /
+ * `dir:`) — and its BODY, the prompt the model actually receives.
+ *
+ * The boundary rules are `splitMarkers` in brainstem.ts, verbatim: markers are
+ * LEADING lines only, blank lines may sit between them, and the body begins at
+ * the first non-blank line that is not a marker. That function names the
+ * renderer, the phone and the automations plugin as its mirrors — this is the
+ * CLI's mirror of the same rule; keep all of them in sync. Exported for the
+ * test.
+ */
+export function splitAutomationBlock(block) {
+  const lines = String(block).split('\n')
+  const head = [lines[0] ?? '']
+  let pendingBlanks = []
+  let i = 1
+  for (; i < lines.length; i++) {
+    const line = lines[i].trim()
+    if (line === '') {
+      pendingBlanks.push(lines[i])
+      continue
+    }
+    if (
+      /^mode:\s*(single|workflow)\s*$/i.test(line) ||
+      /^project:\s*\S+\s*$/i.test(line) ||
+      /^icon:\s*\S+\s*$/i.test(line) ||
+      /^file:\s*.+$/i.test(line) ||
+      /^dir:\s*.+$/i.test(line)
+    ) {
+      head.push(...pendingBlanks, lines[i])
+      pendingBlanks = []
+      continue
+    }
+    break
+  }
+  return { head: head.join('\n'), body: lines.slice(i).join('\n').trim() }
+}
+
+/**
+ * Replace ONE job's prompt with pasted text, and nothing else: the heading
+ * (which IS the schedule) and every marker line stay exactly where they were.
+ * Editing the whole block is what `edit` is for; paste is the safe fast path.
+ */
+async function pasteAutomationPrompt(client, label) {
+  const raw = await client.invoke('viewer:readFile', HEARTBEAT_PATH)
+  const range = findJobBlock(raw, label)
+  if (!range) {
+    out(c.red(`  "${label}" is not in heartbeat.md any more`))
+    return 1
+  }
+  const { head, body } = splitAutomationBlock(raw.slice(range.start, range.end))
+  out(
+    c.gray('  the schedule heading and the file:/dir: markers are kept — only the prompt changes')
+  )
+  const text = await pasteOwnedText('prompt', body)
+  if (text === null) return 0
+  const next =
+    raw.slice(0, range.start) + head.trimEnd() + '\n\n' + text + '\n\n' + raw.slice(range.end)
+  await client.invoke('viewer:writeFile', HEARTBEAT_PATH, next)
+  out(`${icon.ok()} saved — the scheduler reloads on the file change`)
+  return 0
+}
+
 async function deleteAutomation(client, label) {
   const raw = await client.invoke('viewer:readFile', HEARTBEAT_PATH)
   const range = findJobBlock(raw, label)
@@ -1503,6 +1663,8 @@ async function deleteAutomation(client, label) {
 
 const KNOWN_AUTOMATION_VERBS = new Set([
   'edit',
+  'copy',
+  'paste',
   'run',
   'files',
   'dirs',
@@ -1597,6 +1759,12 @@ export async function automations(client, args, { json = false } = {}) {
       // how you move a job, and the splice is by offset, so a renamed heading
       // lands correctly instead of being written back under the old name.
       return editAutomation(client, job.label)
+    case 'copy':
+      // `body` is the prompt with the markers already split off — the same
+      // text the PROMPT section prints.
+      return copyOwnedText('prompt', job.body)
+    case 'paste':
+      return pasteAutomationPrompt(client, job.label)
     case 'rm':
     case 'delete':
       if (!(await confirm(`  delete ${c.bold(job.label)}?`, false))) return 0
@@ -1608,7 +1776,11 @@ export async function automations(client, args, { json = false } = {}) {
       return ownedFolders(client, 'automation', job.label, tail, job.label)
     default:
       out(c.red(`unknown: ${cmd(`automations ${verb}`)}`))
-      out(c.gray('  list · show <label> · run <label> · edit [label] · files · dirs · rm <label>'))
+      out(
+        c.gray(
+          '  list · show <label> · run <label> · edit [label] · copy <label> · paste <label> · files · dirs · rm <label>'
+        )
+      )
       return 2
   }
 }
@@ -1675,7 +1847,14 @@ const DOCS = {
  */
 export async function customizations(client, args, { json = false } = {}) {
   const [first, ...rest] = args
-  const verb = first === 'show' || first === 'view' || first === 'edit' ? first : null
+  const verb =
+    first === 'show' ||
+    first === 'view' ||
+    first === 'edit' ||
+    first === 'copy' ||
+    first === 'paste'
+      ? first
+      : null
   const name = verb ? rest[0] : first
 
   if (!name) {
@@ -1692,6 +1871,8 @@ export async function customizations(client, args, { json = false } = {}) {
       out()
       out(c.gray(`  ${cmd('customizations <name>')}        print it`))
       out(c.gray(`  ${cmd('customizations edit <name>')}   change it`))
+      out(c.gray(`  ${cmd('customizations copy <name>')}   copy it to the clipboard`))
+      out(c.gray(`  ${cmd('customizations paste <name>')}  replace it with pasted text`))
       return 0
     }
     // Numbered, like every other list here — these are three documents you
@@ -1713,10 +1894,12 @@ export async function customizations(client, args, { json = false } = {}) {
     })
   }
   if (verb === 'edit') return editDoc(client, name)
+  if (verb === 'copy') return copyDoc(client, name)
+  if (verb === 'paste') return pasteDoc(client, name)
   return showDoc(client, name)
 }
 
-/** One shaping document: read it, change it, or start over. */
+/** One shaping document: read it, change it, move its text in or out. */
 function openDoc(client, name) {
   const doc = DOCS[name]
   return browseOne({
@@ -1727,7 +1910,9 @@ function openDoc(client, name) {
     },
     actions: [
       { label: 'Read it', run: () => showDoc(client, name) },
-      { label: 'Edit it', run: () => editDoc(client, name) }
+      { label: 'Edit it', run: () => editDoc(client, name) },
+      { label: 'Copy it', run: () => copyDoc(client, name) },
+      { label: 'Paste a replacement (overwrites it)', run: () => pasteDoc(client, name) }
     ]
   })
 }
@@ -1775,6 +1960,37 @@ export async function editDoc(client, name) {
     return 0
   }
   await client.invoke('viewer:writeFile', doc.path, edited)
+  out(`${icon.ok()} saved ${doc.title} ${c.gray(doc.path)}`)
+  return 0
+}
+
+async function copyDoc(client, name) {
+  const doc = DOCS[name]
+  if (!doc) {
+    out(c.red(`unknown document: ${name}`))
+    out(c.gray(`  one of: ${Object.keys(DOCS).join(', ')}`))
+    return 2
+  }
+  const text = await client.invoke('viewer:readFile', doc.path).catch(() => null)
+  if (text === null) {
+    out(c.red(`cannot read ${doc.path}`))
+    return 1
+  }
+  return copyOwnedText(`${doc.title} document`, text)
+}
+
+async function pasteDoc(client, name) {
+  const doc = DOCS[name]
+  if (!doc) {
+    out(c.red(`unknown document: ${name}`))
+    out(c.gray(`  one of: ${Object.keys(DOCS).join(', ')}`))
+    return 2
+  }
+  const current = await client.invoke('viewer:readFile', doc.path).catch(() => '')
+  const text = await pasteOwnedText(`${doc.title} document`, current)
+  if (text === null) return 0
+  // Text files end in a newline; the composer's answer does not carry one.
+  await client.invoke('viewer:writeFile', doc.path, text + '\n')
   out(`${icon.ok()} saved ${doc.title} ${c.gray(doc.path)}`)
   return 0
 }
