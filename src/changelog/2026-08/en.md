@@ -1,4 +1,14 @@
-## v1.0.264 — 2026-08-23 `Latest`
+## v1.0.265 — 2026-08-23 `Latest`
+
+### An Automation Can Hold Any Prompt Now
+
+A carefully written automation prompt with its own `## ` section headings quietly destroyed itself on save — in the schedule file every `## ` line marks where one job ends and the next begins, so the prompt's outline **shattered the automation into orphan fragments**: the job kept only the text before its first section, the rest sat in the file as debris, and a second attempt just doubled the mess. Traced on a real machine and closed everywhere it can happen. **Pasting a prompt now demotes its `## ` headings one level automatically** — `### ` reads as the same outline and the scheduler leaves it alone — with a clear note saying how many were adjusted; an HTML comment marker, which has no safe form inside a job, is **refused outright instead of corrupting the file**. And the nano/vim editing path gets the same protection: saving a block that gained extra `## ` rows now **asks** — demote them, keep the split deliberately, or cancel — instead of silently splitting your automation apart.
+
+### The Menu Stops Losing Its Place
+
+Two lies the automations screen told after a save are gone. Saving or renaming a job used to **throw you back to the list**: the menu kept looking the job up under its old name, concluded it had vanished, and bailed — it now follows a renamed schedule to its new heading and waits out the daemon's own reload instead of trusting the first read after a write. And that same post-save instant could paint **"Automations (0)" over a file holding live jobs**. An empty list is now only believed once the file agrees it should be empty — and if the file plainly holds job headings that no longer parse as schedules, the screen **says exactly that**, which is the difference between "you have no automations" and "your automations are there but broken".
+
+## v1.0.264 — 2026-08-23
 
 ### The Terminal Learns to Take a Real Prompt
 

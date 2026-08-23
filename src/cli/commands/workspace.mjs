@@ -1466,16 +1466,26 @@ function showProcedure(procedure) {
 // ─── Automations ────────────────────────────────────────────────────────────
 
 /**
- * One automation. Its identity is its heading, so everything here is keyed by
- * label — and "edit" still means the whole file, because renaming the heading
- * IS rescheduling it and a scoped editor would have to write the block back
- * under a name the user may have just changed.
+ * One automation. Its identity is its heading — kept in a MUTABLE binding,
+ * because "edit" hands the heading over with the body (renaming it IS
+ * rescheduling), and a menu that kept looking the job up under the old name
+ * concluded it was gone and dumped the user back at the list on every
+ * successful rename.
  */
-function openAutomation(client, label) {
+function openAutomation(client, initialLabel) {
+  let label = initialLabel
   return browseOne({
     reload: async () => {
-      const jobs = await client.invoke('heartbeat:getJobs')
-      return jobs.find((job) => job.label === label) ?? null
+      // The save this menu just made told the daemon to re-parse the schedule
+      // file; a read fired straight after can catch the registry mid-swap and
+      // come back without the job. Settle briefly before concluding it is
+      // gone — "gone" here means being thrown out to the list.
+      for (let attempt = 0; ; attempt++) {
+        const jobs = await client.invoke('heartbeat:getJobs')
+        const found = jobs.find((job) => job.label === label) ?? null
+        if (found || attempt >= 3) return found
+        await new Promise((resolve) => setTimeout(resolve, 250))
+      }
     },
     show: showAutomation,
     actions: [
@@ -1484,8 +1494,17 @@ function openAutomation(client, label) {
       // schedule, so it is handed over WITH the body — changing it reschedules
       // the job, which is the intended way to move one, and the block is
       // spliced back at exactly the offsets it came from so nothing else in the
-      // file can drift.
-      { label: 'Edit this automation', run: () => editAutomation(client, label) },
+      // file can drift. `onRelabel` keeps this menu pointed at the job when
+      // the heading changes.
+      {
+        label: 'Edit this automation',
+        run: () =>
+          editAutomation(client, label, {
+            onRelabel: (next) => {
+              label = next
+            }
+          })
+      },
       { label: 'Copy the prompt', run: () => automations(client, ['copy', label]) },
       {
         label: 'Paste a new prompt (replaces it)',
@@ -1520,6 +1539,37 @@ function openAutomation(client, label) {
 }
 
 const HEARTBEAT_PATH = 'brain/brainstem/heartbeat.md'
+
+/**
+ * The job list, with two honesty guards a plain `heartbeat:getJobs` lacks.
+ *
+ * A save tells the daemon to re-parse the schedule file, and a list read
+ * fired straight after can catch the registry mid-swap — which painted
+ * "Automations (0)" over a file holding two live jobs. So an empty answer is
+ * only believed once the FILE agrees it should be empty; while the file
+ * plainly holds `## ` headings, the read is retried briefly, and if none of
+ * them ever parse, that is said out loud instead of shrugging "none yet" —
+ * the difference between "you have no automations" and "your automations are
+ * there but broken" is the whole diagnosis.
+ */
+async function loadJobsSettled(client) {
+  const jobs = await client.invoke('heartbeat:getJobs')
+  if (jobs.length > 0) return jobs
+  const raw = await client.invoke('viewer:readFile', HEARTBEAT_PATH).catch(() => '')
+  const headings = (raw.replace(/<!--[\s\S]*?-->/g, '').match(/^##\s/gm) ?? []).length
+  if (headings === 0) return jobs
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 250))
+    const again = await client.invoke('heartbeat:getJobs')
+    if (again.length > 0) return again
+  }
+  out(
+    c.yellow(
+      `  heartbeat.md holds ${headings} "## " heading${headings === 1 ? '' : 's'} but none parse as schedules — check the forms with ${cmd('automations edit')}`
+    )
+  )
+  return []
+}
 
 /**
  * Where one job's block lives in heartbeat.md, as a character range.
@@ -1559,7 +1609,7 @@ export function findJobBlock(raw, label) {
   return null
 }
 
-async function editAutomation(client, label) {
+async function editAutomation(client, label, { onRelabel = null } = {}) {
   const raw = await client.invoke('viewer:readFile', HEARTBEAT_PATH)
   const range = findJobBlock(raw, label)
   if (!range) {
@@ -1578,9 +1628,70 @@ async function editAutomation(client, label) {
     out(c.yellow('  that would empty the job — use Delete instead'))
     return 1
   }
-  const next = raw.slice(0, range.start) + edited.trimEnd() + '\n\n' + raw.slice(range.end)
+
+  /**
+   * A prompt pasted INTO the editor often carries its own `## ` section
+   * headings — and in this file every `## ` row is a job boundary, so saving
+   * them as-is shatters the automation: the body ends at the first one and
+   * the sections become orphan pseudo-jobs that don't even parse as
+   * schedules (measured — this is exactly how a pasted brief "lost"
+   * everything after its first section). The first `## ` row is the
+   * schedule; extras are demoted to `### ` unless the split is confirmed as
+   * deliberate.
+   */
+  let final = edited
+  const headingRows = (final.match(/^##(?=\s)/gm) ?? []).length
+  if (headingRows > 1) {
+    out(
+      c.yellow(
+        `  the edited block holds ${headingRows} "## " rows — only the first is this job's schedule; the others would split off as separate jobs`
+      )
+    )
+    const pick = interactive()
+      ? (
+          await question(
+            `  ${c.dim('Enter demotes them to "### " · k keeps the split · c cancels')}: `
+          )
+        )
+          .trim()
+          .toLowerCase()
+      : ''
+    if (pick === 'c' || pick === 'cancel') {
+      out(c.gray('  cancelled — nothing saved'))
+      return 0
+    }
+    if (pick !== 'k' && pick !== 'keep') {
+      let seenSchedule = false
+      final = final
+        .split('\n')
+        .map((row) => {
+          if (!/^##\s/.test(row)) return row
+          if (!seenSchedule) {
+            seenSchedule = true
+            return row
+          }
+          return '#' + row
+        })
+        .join('\n')
+      out(
+        c.gray(
+          `  demoted ${headingRows - 1} to "### " — the text reads the same, the job stays whole`
+        )
+      )
+    }
+  }
+
+  const next = raw.slice(0, range.start) + final.trimEnd() + '\n\n' + raw.slice(range.end)
   await client.invoke('viewer:writeFile', HEARTBEAT_PATH, next)
   out(`${icon.ok()} saved — the scheduler reloads on the file change`)
+
+  // A changed heading is a rename: tell the caller, so an open menu keeps
+  // following the job instead of losing it.
+  const newLabel = /^##\s+(.+?)\s*$/m.exec(final)?.[1] ?? null
+  if (newLabel && newLabel !== label) {
+    out(c.gray(`  now scheduled as "${newLabel}"`))
+    onRelabel?.(newLabel)
+  }
   return 0
 }
 
@@ -1624,6 +1735,27 @@ export function splitAutomationBlock(block) {
 }
 
 /**
+ * A prompt made safe to live inside one heartbeat.md job.
+ *
+ * In this file a `## ` row IS a job boundary and `<!--` opens a disable
+ * comment — so a pasted prompt whose own outline uses `## ` headings
+ * shattered its automation on save: the body ended at the first section
+ * heading and the remaining sections sat in the file as orphan pseudo-jobs
+ * (measured on a real paste). Headings are demoted one level — `### ` reads
+ * as the same outline and the parser leaves it alone. A comment opener has no
+ * safe form at all (it can swallow every job to the next `-->`), so that one
+ * refuses instead. Exported for the test.
+ */
+export function sanitizeAutomationBody(text) {
+  const value = String(text)
+  return {
+    text: value.replace(/^##(?=\s)/gm, '###'),
+    demoted: (value.match(/^##(?=\s)/gm) ?? []).length,
+    commentMarker: value.includes('<!--')
+  }
+}
+
+/**
  * Replace ONE job's prompt with pasted text, and nothing else: the heading
  * (which IS the schedule) and every marker line stay exactly where they were.
  * Editing the whole block is what `edit` is for; paste is the safe fast path.
@@ -1641,8 +1773,23 @@ async function pasteAutomationPrompt(client, label) {
   )
   const text = await pasteOwnedText('prompt', body)
   if (text === null) return 0
+  const safe = sanitizeAutomationBody(text)
+  if (safe.commentMarker) {
+    out(
+      `${icon.fail()} ${c.red('the prompt contains "<!--" — heartbeat.md uses HTML comments to switch blocks off, so it cannot ride inside a job body')}`
+    )
+    out(c.gray('  remove the comment marker and paste again — nothing was changed'))
+    return 1
+  }
+  if (safe.demoted > 0) {
+    out(
+      c.yellow(
+        `  demoted ${safe.demoted} "## " heading${safe.demoted === 1 ? '' : 's'} to "### " — a "## " row is a job boundary in heartbeat.md and would have split this automation apart`
+      )
+    )
+  }
   const next =
-    raw.slice(0, range.start) + head.trimEnd() + '\n\n' + text + '\n\n' + raw.slice(range.end)
+    raw.slice(0, range.start) + head.trimEnd() + '\n\n' + safe.text + '\n\n' + raw.slice(range.end)
   await client.invoke('viewer:writeFile', HEARTBEAT_PATH, next)
   out(`${icon.ok()} saved — the scheduler reloads on the file change`)
   return 0
@@ -1691,7 +1838,7 @@ export async function automations(client, args, { json = false } = {}) {
     return browseList({
       title: 'Automations',
       empty: `none - ${cmd('automations edit')}`,
-      load: () => client.invoke('heartbeat:getJobs'),
+      load: () => loadJobsSettled(client),
       columns: ['label', 'schedule', 'files', 'folders', 'next run'],
       row: (job) => [
         `${job.icon ? job.icon + ' ' : ''}${job.label ?? '—'}`,

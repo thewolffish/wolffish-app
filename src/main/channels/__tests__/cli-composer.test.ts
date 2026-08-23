@@ -56,7 +56,9 @@ function harness(attachComposer: any, { busy = false }: { busy?: boolean } = {})
 
 async function main(): Promise<void> {
   const { attachComposer, sanitizePaste } = await import(path.join(APP, 'src/cli/lib/composer.mjs'))
-  const { splitAutomationBlock } = await import(path.join(APP, 'src/cli/commands/workspace.mjs'))
+  const { splitAutomationBlock, sanitizeAutomationBody } = await import(
+    path.join(APP, 'src/cli/commands/workspace.mjs')
+  )
 
   // ── Shift+Enter and friends compose instead of sending ────────────────────
   {
@@ -208,6 +210,34 @@ async function main(): Promise<void> {
     check(
       'a body-less block keeps its marker in the head',
       head === '## Empty (09:00)\nfile: /x/y.md' && body === ''
+    )
+  }
+
+  // ── sanitizeAutomationBody: a pasted prompt's own outline must not shatter
+  //    the job — `## ` rows are job boundaries in heartbeat.md ───────────────
+  {
+    const body =
+      '# Title\n\n## 0. Preconditions\ntext\n\n## 7. Cursor format\n### already deep\n#### deeper\nnot ## a heading'
+    const safe = sanitizeAutomationBody(body)
+    check(
+      '## rows demoted to ### and counted',
+      safe.demoted === 2 &&
+        safe.text.includes('### 0. Preconditions') &&
+        safe.text.includes('### 7. Cursor format'),
+      safe
+    )
+    check(
+      '# title, ###+, and mid-line ## left alone',
+      safe.text.includes('# Title') &&
+        safe.text.includes('### already deep') &&
+        safe.text.includes('#### deeper') &&
+        safe.text.includes('not ## a heading')
+    )
+    check('no job-boundary rows survive in the safe body', !/^##\s/m.test(safe.text))
+    check('a clean body reports zero demotions', sanitizeAutomationBody('plain text').demoted === 0)
+    check(
+      'a "<!--" marker is flagged as unsafe',
+      sanitizeAutomationBody('a <!-- b').commentMarker === true
     )
   }
 
