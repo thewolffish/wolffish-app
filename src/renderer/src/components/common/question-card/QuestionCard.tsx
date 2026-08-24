@@ -176,6 +176,12 @@ export function QuestionCard({
   const [otherTexts, setOtherTexts] = useState<Record<number, string>>({})
   // The chip row scrolls horizontally (it never wraps) — keep the active
   // question's chip in view as answering auto-advances past the edge.
+  // Row-local scroll ONLY — never scrollIntoView, which walks every
+  // scrollable ancestor: this effect fires on mount too, so a card sitting
+  // mid-transcript (a reopened conversation with an answered multi-question
+  // card in its history) would drag the whole feed up to itself instead of
+  // leaving it pinned to the bottom. scrollBy deltas are visual, so the same
+  // math holds under the card's dir="rtl".
   const chipsRef = useRef<HTMLDivElement | null>(null)
   useEffect(() => {
     const row = chipsRef.current
@@ -183,7 +189,13 @@ export function QuestionCard({
     const chip = row.children[Math.min(activeIdx, row.children.length - 1)] as
       | HTMLElement
       | undefined
-    chip?.scrollIntoView({ behavior: 'smooth', inline: 'nearest', block: 'nearest' })
+    if (!chip) return
+    const rowBox = row.getBoundingClientRect()
+    const chipBox = chip.getBoundingClientRect()
+    const pastEnd = chipBox.right - rowBox.right
+    const beforeStart = chipBox.left - rowBox.left
+    if (pastEnd > 0) row.scrollBy({ left: pastEnd, behavior: 'smooth' })
+    else if (beforeStart < 0) row.scrollBy({ left: beforeStart, behavior: 'smooth' })
   }, [activeIdx])
 
   const fallbacks: OtherFallbacks = {
@@ -263,7 +275,7 @@ export function QuestionCard({
           {/* One line, never wraps: the row grows to the chips' total width
               and scrolls horizontally inside the available card width. The
               scrollbar is hidden (still scrollable by wheel/drag + the
-              scrollIntoView effect) — the global stylesheet otherwise
+              chip-follow effect) — the global stylesheet otherwise
               reserves an 8px gutter inside the scroller. The count label is
               pinned to its own chip-height (h-6) line box at the top of the
               row, so its text centers on the CHIPS themselves — exact even

@@ -1,4 +1,10 @@
-## v1.0.267 — 2026-08-24 `Latest`
+## v1.0.268 — 2026-08-24 `Latest`
+
+### The Feed Opens Where You Left It
+
+Opening a conversation whose history holds a **multi-question card** used to land you somewhere strange: instead of the newest message, the feed **dragged itself up to that card**, parked mid-transcript on a question you had long since answered. The card's little question chips scroll sideways in their own row, and the code that keeps the active chip in view was reaching past that row and scrolling **the whole transcript** along with it — firing the moment the card appeared, including the moment an old conversation's history mounted. The chip-follow now moves **only the chip row itself**, in either text direction, and a reopened conversation lands where it always should: **pinned to the bottom, on the newest message**.
+
+## v1.0.267 — 2026-08-24
 
 ### The Chat Is All Yours Now
 
