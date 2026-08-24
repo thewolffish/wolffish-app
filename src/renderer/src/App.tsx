@@ -5,7 +5,7 @@ import { FlowProvider } from '@providers/flow/FlowProvider'
 import { useFlow, type Screen } from '@providers/flow/useFlow'
 import { ChatSessionsProvider } from '@providers/sessions/ChatSessionsProvider'
 import { useSessions } from '@providers/sessions/useSessions'
-import { ConversationsSidebar } from '@components/common/sidebar/ConversationsSidebar'
+import { FloatingChrome } from '@components/common/floating-chrome/FloatingChrome'
 import { ToastProvider } from '@components/core/toast/ToastProvider'
 import { InputContextMenu } from '@components/core/InputContextMenu'
 import { useNetworkToasts } from '@hooks/use-network-toasts/useNetworkToasts'
@@ -32,10 +32,10 @@ import { Agents } from '@pages/Agents'
 // while it runs the chat screen is swapped for its own overlay. (Background
 // automation/procedure runs do NOT block — they surface as the floating
 // ActiveRunCard instead.) Tracked here — not inside Chat — so the overlay
-// renders once at app level and the conversations rail hides behind the same
-// chatVisible gate. When Chat owned this state the rail (a fixed z-30 element
-// gated only at app level) kept floating over the overlay, and every mounted
-// session rendered its own duplicate copy.
+// renders once at app level and the floating chrome hides behind the same
+// chatVisible gate. When Chat owned this state the old conversations rail (a
+// fixed z-30 element gated only at app level) kept floating over the overlay,
+// and every mounted session rendered its own duplicate copy.
 function useReindexActive(): boolean {
   const [active, setActive] = useState(false)
   useEffect(() => {
@@ -165,14 +165,15 @@ function Screens(): React.JSX.Element {
             </div>
           )
         })}
-      {/* ONE app-level conversations rail — mounted whenever the chat is,
-          hidden (not unmounted) when it isn't. Rendering it per-Chat-instance
-          made opening an unloaded conversation spawn a fresh session whose new
-          rail reset to empty and re-fetched — a visible flicker on every
-          switch. A single persistent instance never remounts. */}
+      {/* ONE app-level floating chrome (glass discs + conversations sheet +
+          project dialog) — mounted whenever the chat is, hidden (not
+          unmounted) when it isn't. Same discipline as the old conversations
+          rail: rendering per-Chat-instance would duplicate state and reset it
+          on every conversation switch. A single persistent instance never
+          remounts. */}
       {chatMounted && (
         <div className={chatVisible ? 'contents' : 'hidden'}>
-          <ConversationsSidebar />
+          <FloatingChrome />
         </div>
       )}
     </>

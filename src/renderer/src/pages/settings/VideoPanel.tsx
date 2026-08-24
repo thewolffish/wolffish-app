@@ -2,6 +2,7 @@ import { Button } from '@components/core/Button'
 import { Input } from '@components/core/Input'
 import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn'
+import { PanelBackChevron } from '@pages/settings/drillNav'
 import type { VideoServiceStatus } from '@preload/index'
 import { useFlow } from '@providers/flow/useFlow'
 import {
@@ -146,9 +147,12 @@ export function VideoPanel(): React.JSX.Element {
       <div className="flex w-full max-w-2xl flex-col gap-6">
         <header className="flex flex-col gap-2">
           <div className="flex items-center justify-between gap-3">
-            <h1 className="text-fg text-2xl font-semibold tracking-tight">
-              {t('settings.services.video.title')}
-            </h1>
+            <div className="flex items-center gap-1.5">
+              <PanelBackChevron />
+              <h1 className="text-fg text-2xl font-semibold tracking-tight">
+                {t('settings.services.video.title')}
+              </h1>
+            </div>
             <a
               href={MINIMAX_PLATFORM_URL}
               target="_blank"

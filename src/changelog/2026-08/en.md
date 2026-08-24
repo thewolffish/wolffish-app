@@ -1,4 +1,14 @@
-## v1.0.266 — 2026-08-23 `Latest`
+## v1.0.267 — 2026-08-24 `Latest`
+
+### The Chat Is All Yours Now
+
+Both rails that used to frame the chat are gone — the icon strip on one side, the conversations list pinned to the other — and the transcript now runs **edge to edge**, framed by nothing but two small **glass discs** floating over it, the same chrome the mobile app settled on. The leading disc opens a **navigation sheet**: every page — Settings, Heartbeat, Projects, Procedures and the rest — in a fixed strip up top, and beneath it the **full cross-channel conversations list**, live-updating as turns start and finish anywhere, growing as you scroll instead of rendering hundreds of rows at once. In a project, the sheet shows **that project's conversations** under its name. The trailing disc is **New Chat**, with the same hover card of project shortcuts it had on the composer — and in project mode it becomes the **project's emoji**, opening the manage dialog exactly as before. Every control kept its behavior; only the walls came down.
+
+### Settings You Can Search
+
+The Models and Services tabs traded their long sidebar sub-lists for **card grids**: one card per provider or service, each with its icon, a one-line description, and — for cloud providers — the green badge that says a key is saved. A **search box** filters the grid as you type, opening a card drills into the familiar panel with a **back chevron** to return, and Settings now opens on **Channels**, where the **Browser extension** has moved — it is a place Wolffish talks to you, not a service bolted on. The terminal's settings menu follows the same map, so `wolffish settings` and the desktop never disagree about where a thing lives.
+
+## v1.0.266 — 2026-08-23
 
 ### The Automation Card Stops Saying "None"
 

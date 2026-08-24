@@ -1533,12 +1533,12 @@ export const ACTIONS = [
   { section: 'services.video', label: 'Test the key', run: testVideo },
   { section: 'services.memes', label: 'Test Giphy and Imgflip', run: testMemes },
   {
-    section: 'services.browserExtension',
+    section: 'channels.browser',
     label: 'Connection and install path',
     view: true,
     run: extensionStatus
   },
-  { section: 'services.browserExtension', label: 'Test the connection', run: testExtension },
+  { section: 'channels.browser', label: 'Test the connection', run: testExtension },
   {
     section: 'services.tts',
     label: 'Engine — status and install',

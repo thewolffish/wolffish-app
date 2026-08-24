@@ -2,6 +2,7 @@ import { Button } from '@components/core/Button'
 import { Input } from '@components/core/Input'
 import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn'
+import { PanelBackChevron } from '@pages/settings/drillNav'
 import type { GitHubConnection, GitHubErrorKind } from '@preload/index'
 import {
   AlertCircleIcon,
@@ -404,9 +405,12 @@ export function GitHubPanel(): React.JSX.Element {
       <div className="flex w-full max-w-2xl flex-col gap-6">
         <header className="flex flex-col gap-2">
           <div className="flex items-center justify-between gap-3">
-            <h1 className="text-fg text-2xl font-semibold tracking-tight">
-              {t('settings.services.github.title')}
-            </h1>
+            <div className="flex items-center gap-1.5">
+              <PanelBackChevron />
+              <h1 className="text-fg text-2xl font-semibold tracking-tight">
+                {t('settings.services.github.title')}
+              </h1>
+            </div>
             <a
               href={TOKENS_URL}
               target="_blank"

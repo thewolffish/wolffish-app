@@ -412,6 +412,10 @@
         }
       },
       "cloudBadge": "Cloud API",
+      "titleWithCount": "Models ({{count}})",
+      "subtitle": "Model providers Wolffish can think with — local through Ollama, or cloud with an API key.",
+      "searchPlaceholder": "Search providers",
+      "noMatches": "No providers match your search.",
       "ollamaNotAvailable": {
         "subtitle": "Ollama is not running or not installed.",
         "description": "Install or start Ollama to browse and download local models.",
@@ -474,7 +478,8 @@
         "telegram": "Telegram",
         "whatsapp": "WhatsApp",
         "mobile": "Mobile",
-        "cli": "CLI"
+        "cli": "CLI",
+        "browser": "Browser"
       },
       "cli": {
         "title": "CLI",
@@ -568,6 +573,10 @@
       }
     },
     "services": {
+      "titleWithCount": "Services ({{count}})",
+      "subtitle": "Tools and integrations that extend what Wolffish can do.",
+      "searchPlaceholder": "Search services",
+      "noMatches": "No services match your search.",
       "tabs": {
         "tts": "Text-to-Speech",
         "stt": "Speech-to-Text",
@@ -577,7 +586,6 @@
         "google": "Google Workspace",
         "memes": "Memes",
         "computerUse": "Computer Use",
-        "browserExtension": "Browser Extension",
         "video": "Video generation"
       },
       "gate": {

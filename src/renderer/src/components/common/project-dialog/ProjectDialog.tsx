@@ -272,13 +272,14 @@ function ProjectDialogBody({
       footer={
         <div className="flex w-full items-center gap-2">
           {onExitProject && (
-            // Same treatment as the model panels' remove-connection button.
+            // Muted, not destructive-red: closing a project is a benign mode
+            // switch — the ghost variant's own neutral hover applies.
             <Button
               variant="ghost"
               size="sm"
               onClick={onExitProject}
               disabled={busy}
-              className="text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40 dark:text-red-400 dark:hover:bg-red-900/30"
+              className="text-muted disabled:cursor-not-allowed disabled:opacity-40"
             >
               {t('projects.exit')}
             </Button>

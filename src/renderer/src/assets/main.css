@@ -210,6 +210,37 @@ textarea,
   --hljs-deletion-bg: #67060c;
 }
 
+/* Conversations sheet: enter-only slide from the leading edge, transform only
+   (no opacity/color transitions — those are banned for perf). Exit is an
+   instant unmount, matching every other overlay in the app. The RTL variant
+   exists because translateX doesn't mirror with the writing direction; the
+   easing matches the mobile sheet's Easing.out(cubic). */
+@keyframes wf-sheet-in {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes wf-sheet-in-rtl {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+.wf-sheet-panel {
+  animation: wf-sheet-in 200ms cubic-bezier(0.33, 1, 0.68, 1);
+}
+
+[dir='rtl'] .wf-sheet-panel {
+  animation-name: wf-sheet-in-rtl;
+}
+
 @keyframes rainbow-slide {
   0% {
     background-position: 0% 0;

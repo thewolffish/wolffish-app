@@ -81,7 +81,14 @@ import { useTranslation } from 'react-i18next'
 import type { IconType } from 'react-icons'
 
 import { prefetchCapabilityGate } from '@pages/settings/capabilityGate'
-import { consumeNextTab, onTabRequest, type TabKey } from '@pages/settings/settingsNav'
+import { PanelBackChevron } from '@pages/settings/drillNav'
+import { SettingsCardGrid } from '@pages/settings/SettingsCardGrid'
+import {
+  consumeNextTab,
+  DrillBackContext,
+  onTabRequest,
+  type TabKey
+} from '@pages/settings/settingsNav'
 export type { TabKey } from '@pages/settings/settingsNav'
 
 type Tab = {
@@ -91,8 +98,8 @@ type Tab = {
 }
 
 const TABS: Tab[] = [
-  { key: 'model', icon: <NeuralNetworkIcon size={18} />, labelKey: 'settings.tabs.model' },
   { key: 'channels', icon: <BubbleChatIcon size={18} />, labelKey: 'settings.tabs.channels' },
+  { key: 'model', icon: <NeuralNetworkIcon size={18} />, labelKey: 'settings.tabs.model' },
   { key: 'services', icon: <PuzzleIcon size={18} />, labelKey: 'settings.tabs.services' },
   { key: 'mcp', icon: <McpServerIcon size={18} />, labelKey: 'settings.tabs.mcp' },
   { key: 'variables', icon: <Key01Icon size={18} />, labelKey: 'settings.tabs.variables' },
@@ -109,9 +116,10 @@ const TAB_KEYS = new Set<string>(TABS.map((t) => t.key))
 
 type SettingsSnapshot = {
   tab: TabKey
-  provider: Provider
+  // null means the tab's card grid; a value means that card is drilled open.
+  provider: Provider | null
   channel: Channel
-  service: Service
+  service: Service | null
   knowledgeTab: KnowledgeTab
 }
 
@@ -123,17 +131,12 @@ function restoreSnapshot(
   if (memo) return memo
   const s = cfg?.lastSettingsState
   const result: SettingsSnapshot = {
-    tab: s?.tab && TAB_KEYS.has(s.tab) ? (s.tab as TabKey) : 'model',
+    tab: s?.tab && TAB_KEYS.has(s.tab) ? (s.tab as TabKey) : 'channels',
     provider:
-      s?.provider && PROVIDERS.includes(s.provider as Provider)
-        ? (s.provider as Provider)
-        : 'ollama',
+      s?.provider && PROVIDERS.includes(s.provider as Provider) ? (s.provider as Provider) : null,
     channel:
       s?.channel && CHANNELS.includes(s.channel as Channel) ? (s.channel as Channel) : 'inapp',
-    service:
-      s?.service && SERVICES.includes(s.service as Service)
-        ? (s.service as Service)
-        : 'browserExtension',
+    service: s?.service && SERVICES.includes(s.service as Service) ? (s.service as Service) : null,
     knowledgeTab:
       s?.knowledgeTab && KNOWLEDGE_TABS.includes(s.knowledgeTab as KnowledgeTab)
         ? (s.knowledgeTab as KnowledgeTab)
@@ -159,15 +162,27 @@ export function Settings(): React.JSX.Element {
   const [active, setActiveRaw] = useState<TabKey>(() => {
     return consumeNextTab() ?? snapshot.tab
   })
-  const [provider, setProviderRaw] = useState<Provider>(snapshot.provider)
+  const [provider, setProviderRaw] = useState<Provider | null>(snapshot.provider)
   const [channel, setChannelRaw] = useState<Channel>(snapshot.channel)
-  const [service, setServiceRaw] = useState<Service>(snapshot.service)
+  const [service, setServiceRaw] = useState<Service | null>(snapshot.service)
   const [knowledgeTab, setKnowledgeTabRaw] = useState<KnowledgeTab>(snapshot.knowledgeTab)
 
   const setActive = useCallback(
     (key: TabKey) => {
       setActiveRaw(key)
-      memo = { ...(memo ?? snapshot), tab: key }
+      const next: SettingsSnapshot = { ...(memo ?? snapshot), tab: key }
+      // Activating Models or Services always lands on the card grid — the
+      // sidebar tab is the way back out of a drilled-open card.
+      if (key === 'model') {
+        next.provider = null
+        setProviderRaw(null)
+        persistField('provider', '')
+      } else if (key === 'services') {
+        next.service = null
+        setServiceRaw(null)
+        persistField('service', '')
+      }
+      memo = next
       persistField('tab', key)
     },
     [snapshot]
@@ -176,10 +191,10 @@ export function Settings(): React.JSX.Element {
   // The provider panels link to the Brain page for model selection.
 
   const setProvider = useCallback(
-    (p: Provider) => {
+    (p: Provider | null) => {
       setProviderRaw(p)
       memo = { ...(memo ?? snapshot), provider: p }
-      persistField('provider', p)
+      persistField('provider', p ?? '')
     },
     [snapshot]
   )
@@ -194,10 +209,10 @@ export function Settings(): React.JSX.Element {
   )
 
   const setService = useCallback(
-    (s: Service) => {
+    (s: Service | null) => {
       setServiceRaw(s)
       memo = { ...(memo ?? snapshot), service: s }
-      persistField('service', s)
+      persistField('service', s ?? '')
     },
     [snapshot]
   )
@@ -223,8 +238,8 @@ export function Settings(): React.JSX.Element {
     }
   }, [])
 
-  // Cloud providers with a saved key get their cloud badge tinted in the
-  // sub-nav. provider:updated fires on every save/remove, so the set stays
+  // Cloud providers with a saved key get their cloud badge tinted on the
+  // grid card. provider:updated fires on every save/remove, so the set stays
   // current while the user edits keys in the panels.
   const [keyedProviders, setKeyedProviders] = useState<ReadonlySet<string>>(new Set())
 
@@ -247,7 +262,7 @@ export function Settings(): React.JSX.Element {
   }, [])
 
   // Warm up the Google Workspace snapshot and the capability gate the
-  // moment Settings opens, so by the time the user clicks a Services tab
+  // moment Settings opens, so by the time the user opens a service card
   // the data is already populated and the panel renders without a flash.
   useEffect(() => {
     void prefetchGooglePanel().catch(() => {})
@@ -256,6 +271,12 @@ export function Settings(): React.JSX.Element {
 
   // Nested panels (capability gate cards) can ask to jump to another tab.
   useEffect(() => onTabRequest(setActive), [setActive])
+
+  const ServicePanel = service !== null ? SERVICE_PANELS[service] : null
+
+  // Stable context values for the drilled panels' title-row back chevrons.
+  const backToProviders = useCallback(() => setProvider(null), [setProvider])
+  const backToServices = useCallback(() => setService(null), [setService])
 
   return (
     <main className={cn('bg-bg flex h-full w-full', pageTopPadding)}>
@@ -295,58 +316,10 @@ export function Settings(): React.JSX.Element {
                   <span>{t(tab.labelKey)}</span>
                 </button>
 
-                {/* Nested sub-tabs (Models and Channels have them). The
-                    grid-rows trick gives us a smooth height collapse without
-                    measuring, and the 200ms ease keeps it subtle. */}
-                {tab.key === 'model' && (
-                  <div
-                    className={cn(
-                      'grid transition-[grid-template-rows] duration-200 ease-out',
-                      isActive ? 'mt-1 grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'
-                    )}
-                  >
-                    <div className="overflow-hidden">
-                      <div className="flex flex-col gap-0.5 ps-7 pe-1 py-1">
-                        {PROVIDERS.map((p) => {
-                          const subActive = isActive && provider === p
-                          const Logo = PROVIDER_ICONS[p]
-                          const isCloud = p !== 'ollama'
-                          return (
-                            <button
-                              key={p}
-                              type="button"
-                              tabIndex={isActive ? 0 : -1}
-                              onClick={() => setProvider(p)}
-                              className={cn(
-                                'flex items-center gap-2 rounded-lg px-3 py-1.5 text-start text-sm cursor-pointer whitespace-nowrap',
-                                'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-                                subActive
-                                  ? 'bg-border/50 text-fg font-medium'
-                                  : 'text-muted hover:bg-border/30 hover:text-fg'
-                              )}
-                            >
-                              <Logo size={14} />
-                              <span>{t(`settings.model.providers.${p}`)}</span>
-                              {isCloud && (
-                                <CloudIcon
-                                  size={12}
-                                  className={cn(
-                                    'ms-auto shrink-0',
-                                    keyedProviders.has(p)
-                                      ? 'text-emerald-600 dark:text-emerald-400'
-                                      : 'text-muted'
-                                  )}
-                                  aria-label={t('settings.model.cloudBadge')}
-                                />
-                              )}
-                            </button>
-                          )
-                        })}
-                      </div>
-                    </div>
-                  </div>
-                )}
-
+                {/* Nested sub-tabs (Channels and Knowledge have them; Models
+                    and Services are card grids instead). The grid-rows trick
+                    gives us a smooth height collapse without measuring, and
+                    the 200ms ease keeps it subtle. */}
                 {tab.key === 'channels' && (
                   <div
                     className={cn(
@@ -375,42 +348,6 @@ export function Settings(): React.JSX.Element {
                             >
                               <NavIcon icon={Icon} />
                               <span>{t(`settings.channels.tabs.${ch}`)}</span>
-                            </button>
-                          )
-                        })}
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {tab.key === 'services' && (
-                  <div
-                    className={cn(
-                      'grid transition-[grid-template-rows] duration-200 ease-out',
-                      isActive ? 'mt-1 grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'
-                    )}
-                  >
-                    <div className="overflow-hidden">
-                      <div className="flex flex-col gap-0.5 ps-7 pe-1 py-1">
-                        {SERVICES.map((s) => {
-                          const subActive = isActive && service === s
-                          const Icon = SERVICE_ICONS[s]
-                          return (
-                            <button
-                              key={s}
-                              type="button"
-                              tabIndex={isActive ? 0 : -1}
-                              onClick={() => setService(s)}
-                              className={cn(
-                                'flex items-center gap-2 rounded-lg px-3 py-1.5 text-start text-sm cursor-pointer whitespace-nowrap',
-                                'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-                                subActive
-                                  ? 'bg-border/50 text-fg font-medium'
-                                  : 'text-muted hover:bg-border/30 hover:text-fg'
-                              )}
-                            >
-                              <NavIcon icon={Icon} />
-                              <span>{t(`settings.services.tabs.${s}`)}</span>
                             </button>
                           )
                         })}
@@ -486,52 +423,70 @@ export function Settings(): React.JSX.Element {
         <TabPanel active={active === 'data'}>
           <DataPanel />
         </TabPanel>
-        <TabPanel active={active === 'model' && provider === 'ollama'}>
-          {ollamaReachable === false ? (
-            <OllamaNotAvailableNotice goTo={goTo} t={t} />
-          ) : (
-            <ModelPicker />
-          )}
-        </TabPanel>
-        <TabPanel active={active === 'model' && provider === 'anthropic'}>
-          <CloudProviderPanel provider="anthropic" />
-        </TabPanel>
-        <TabPanel active={active === 'model' && provider === 'openai'}>
-          <CloudProviderPanel provider="openai" />
-        </TabPanel>
-        <TabPanel active={active === 'model' && provider === 'zai'}>
-          <CloudProviderPanel provider="zai" />
-        </TabPanel>
-        <TabPanel active={active === 'model' && provider === 'deepseek'}>
-          <CloudProviderPanel provider="deepseek" />
-        </TabPanel>
-        <TabPanel active={active === 'model' && provider === 'mimo'}>
-          <CloudProviderPanel provider="mimo" />
-        </TabPanel>
-        <TabPanel active={active === 'model' && provider === 'kimi'}>
-          <CloudProviderPanel provider="kimi" />
-        </TabPanel>
-        <TabPanel active={active === 'model' && provider === 'minimax'}>
-          <CloudProviderPanel provider="minimax" />
-        </TabPanel>
-        <TabPanel active={active === 'model' && provider === 'xai'}>
-          <CloudProviderPanel provider="xai" />
-        </TabPanel>
-        <TabPanel active={active === 'model' && provider === 'qwen'}>
-          <CloudProviderPanel provider="qwen" />
-        </TabPanel>
-        <TabPanel active={active === 'model' && provider === 'stepfun'}>
-          <CloudProviderPanel provider="stepfun" />
-        </TabPanel>
-        <TabPanel active={active === 'model' && provider === 'openrouter'}>
-          <CloudProviderPanel provider="openrouter" />
-        </TabPanel>
-        <TabPanel active={active === 'services' && service === 'tts'}>
-          <TextToSpeechPanel />
-        </TabPanel>
-        <TabPanel active={active === 'services' && service === 'stt'}>
-          <SpeechToTextPanel />
-        </TabPanel>
+        {active === 'model' && provider === null && (
+          <SettingsCardGrid
+            title={t('settings.model.titleWithCount', { count: PROVIDERS.length })}
+            subtitle={t('settings.model.subtitle')}
+            searchPlaceholder={t('settings.model.searchPlaceholder')}
+            emptyLabel={t('settings.model.noMatches')}
+            cards={PROVIDERS.map((p) => {
+              const Logo = PROVIDER_ICONS[p]
+              return {
+                id: p,
+                title: t(`settings.model.providers.${p}`),
+                description: t(`settings.model.providers.descriptions.${p}`),
+                glyph: <Logo size={20} />,
+                badge:
+                  p === 'ollama' ? undefined : (
+                    <CloudIcon
+                      size={14}
+                      className={cn(
+                        'shrink-0',
+                        keyedProviders.has(p)
+                          ? 'text-emerald-600 dark:text-emerald-400'
+                          : 'text-muted'
+                      )}
+                      aria-label={t('settings.model.cloudBadge')}
+                    />
+                  )
+              }
+            })}
+            onOpen={(id) => setProvider(id as Provider)}
+          />
+        )}
+        {active === 'model' && provider !== null && (
+          <DrillBackContext.Provider value={backToProviders}>
+            {provider === 'ollama' ? (
+              ollamaReachable === false ? (
+                <OllamaNotAvailableNotice goTo={goTo} t={t} />
+              ) : (
+                <ModelPicker />
+              )
+            ) : (
+              <CloudProviderPanel provider={provider} />
+            )}
+          </DrillBackContext.Provider>
+        )}
+        {active === 'services' && service === null && (
+          <SettingsCardGrid
+            title={t('settings.services.titleWithCount', { count: SERVICES.length })}
+            subtitle={t('settings.services.subtitle')}
+            searchPlaceholder={t('settings.services.searchPlaceholder')}
+            emptyLabel={t('settings.services.noMatches')}
+            cards={SERVICES.map((s) => ({
+              id: s,
+              title: t(`settings.services.tabs.${s}`),
+              description: t(`settings.services.${s}.subtitle`),
+              glyph: <CardGlyph icon={SERVICE_ICONS[s]} />
+            }))}
+            onOpen={(id) => setService(id as Service)}
+          />
+        )}
+        {active === 'services' && ServicePanel && (
+          <DrillBackContext.Provider value={backToServices}>
+            <ServicePanel />
+          </DrillBackContext.Provider>
+        )}
         <TabPanel active={active === 'channels' && channel === 'mobile'}>
           <MobilePanel />
         </TabPanel>
@@ -547,32 +502,11 @@ export function Settings(): React.JSX.Element {
         <TabPanel active={active === 'channels' && channel === 'cli'}>
           <CliPanel />
         </TabPanel>
-        <TabPanel active={active === 'mcp'}>
-          <McpPanel />
-        </TabPanel>
-        <TabPanel active={active === 'services' && service === 'browserExtension'}>
+        <TabPanel active={active === 'channels' && channel === 'browser'}>
           <BrowserExtensionPanel />
         </TabPanel>
-        <TabPanel active={active === 'services' && service === 'brave'}>
-          <BravePanel />
-        </TabPanel>
-        <TabPanel active={active === 'services' && service === 'google'}>
-          <GooglePanel />
-        </TabPanel>
-        <TabPanel active={active === 'services' && service === 'memes'}>
-          <MemesPanel />
-        </TabPanel>
-        <TabPanel active={active === 'services' && service === 'video'}>
-          <VideoPanel />
-        </TabPanel>
-        <TabPanel active={active === 'services' && service === 'notion'}>
-          <NotionPanel />
-        </TabPanel>
-        <TabPanel active={active === 'services' && service === 'github'}>
-          <GitHubPanel />
-        </TabPanel>
-        <TabPanel active={active === 'services' && service === 'computerUse'}>
-          <ComputerUsePanel />
+        <TabPanel active={active === 'mcp'}>
+          <McpPanel />
         </TabPanel>
       </div>
     </main>
@@ -603,7 +537,10 @@ type Provider =
   | 'qwen'
   | 'stepfun'
   | 'zai'
+// Ollama leads the grid — the local, no-key option comes before any cloud
+// provider card.
 const PROVIDERS: Provider[] = [
+  'ollama',
   'qwen',
   'mimo',
   'zai',
@@ -614,8 +551,7 @@ const PROVIDERS: Provider[] = [
   'anthropic',
   'xai',
   'openai',
-  'openrouter',
-  'ollama'
+  'openrouter'
 ]
 
 const PROVIDER_ICONS: Record<
@@ -670,13 +606,16 @@ function NavIcon({ icon: Icon }: { icon: NavIconComponent }): React.JSX.Element 
   )
 }
 
-type Channel = 'inapp' | 'cli' | 'mobile' | 'telegram' | 'whatsapp'
-const CHANNELS: Channel[] = ['inapp', 'cli', 'mobile', 'telegram', 'whatsapp']
+type Channel = 'inapp' | 'cli' | 'mobile' | 'browser' | 'telegram' | 'whatsapp'
+// Wolffish's own surfaces first (In-App, CLI, Mobile, Browser), then the
+// external messengers.
+const CHANNELS: Channel[] = ['inapp', 'cli', 'mobile', 'browser', 'telegram', 'whatsapp']
 
 const CHANNEL_ICONS: Record<Channel, NavIconComponent> = {
   inapp: ComputerIcon,
   cli: ComputerTerminal01Icon,
   mobile: SmartPhone01Icon,
+  browser: BrowserIcon,
   telegram: TelegramLogo,
   whatsapp: WhatsappIcon
 }
@@ -685,7 +624,6 @@ type KnowledgeTab = 'compaction' | 'reflection'
 const KNOWLEDGE_TABS: KnowledgeTab[] = ['compaction', 'reflection']
 
 type Service =
-  | 'browserExtension'
   | 'brave'
   | 'notion'
   | 'github'
@@ -697,9 +635,10 @@ type Service =
   | 'computerUse'
 
 // Every service, always. Pages that depend on a cerebellum capability
-// gate themselves with an alert card instead of vanishing from the nav.
+// gate themselves with an alert card instead of vanishing from the grid.
+// A new service is one entry here plus SERVICE_ICONS and SERVICE_PANELS —
+// the grid picks it up from there.
 const SERVICES: Service[] = [
-  'browserExtension',
   'brave',
   'google',
   'memes',
@@ -712,7 +651,6 @@ const SERVICES: Service[] = [
 ]
 
 const SERVICE_ICONS: Record<Service, NavIconComponent> = {
-  browserExtension: BrowserIcon,
   brave: BraveLogo,
   notion: NotionLogo,
   github: GithubIcon,
@@ -722,6 +660,34 @@ const SERVICE_ICONS: Record<Service, NavIconComponent> = {
   tts: VolumeHighIcon,
   stt: Mic01Icon,
   computerUse: ComputerIcon
+}
+
+const SERVICE_PANELS: Record<Service, React.ComponentType> = {
+  brave: BravePanel,
+  notion: NotionPanel,
+  github: GitHubPanel,
+  google: GooglePanel,
+  memes: MemesPanel,
+  video: VideoPanel,
+  tts: TextToSpeechPanel,
+  stt: SpeechToTextPanel,
+  computerUse: ComputerUsePanel
+}
+
+/**
+ * Card-sized glyph. Brand marks and line icons disagree on optical size the
+ * same way they do in the nav (see NAV_ICON_SIZE_OVERRIDES) — reuse those
+ * measured ratios, scaled up to the card size, inside a fixed box.
+ */
+const CARD_ICON_SIZE = 20
+function CardGlyph({ icon: Icon }: { icon: NavIconComponent }): React.JSX.Element {
+  const navSize = NAV_ICON_SIZE_OVERRIDES.get(Icon)
+  const size = navSize ? Math.round((navSize / NAV_ICON_SIZE) * CARD_ICON_SIZE) : CARD_ICON_SIZE
+  return (
+    <span className="flex h-5 w-5 items-center justify-center">
+      <Icon size={size} />
+    </span>
+  )
 }
 
 function OllamaNotAvailableNotice({
@@ -735,9 +701,12 @@ function OllamaNotAvailableNotice({
     <div className="flex min-h-full w-full items-start justify-center px-6 py-10">
       <div className="flex w-full max-w-2xl flex-col gap-6">
         <header className="flex flex-col gap-2">
-          <h1 className="text-fg text-2xl font-semibold tracking-tight">
-            {t('settings.model.providers.ollama')}
-          </h1>
+          <div className="flex items-center gap-1.5">
+            <PanelBackChevron />
+            <h1 className="text-fg text-2xl font-semibold tracking-tight">
+              {t('settings.model.providers.ollama')}
+            </h1>
+          </div>
           <p className="text-muted text-sm leading-relaxed">
             {t('settings.model.ollamaNotAvailable.subtitle')}
           </p>

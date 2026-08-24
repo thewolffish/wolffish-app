@@ -10,16 +10,13 @@ import { HtmlFileViewer } from '@components/common/html-file-viewer/HtmlFileView
 import { ImageViewer } from '@components/common/image-viewer/ImageViewer'
 import { MarkdownFileViewer } from '@components/common/markdown-file-viewer/MarkdownFileViewer'
 import { ModelSwitch } from '@components/common/model-switch/ModelSwitch'
-import { NewChatButton } from '@components/common/new-chat-button/NewChatButton'
 import { PageViewer } from '@components/common/page-viewer/PageViewer'
 import { PathCard } from '@components/common/path-card/PathCard'
 import { canonicalPath } from '@components/common/path-card/pathStat'
 import { PdfViewer } from '@components/common/pdf-viewer/PdfViewer'
-import { ProjectDialog } from '@components/common/project-dialog/ProjectDialog'
 import { ProviderErrorCards } from '@components/common/provider-error-card/ProviderErrorCard'
 import { QuestionCard } from '@components/common/question-card/QuestionCard'
 import { ReasoningCard } from '@components/common/reasoning-card/ReasoningCard'
-import { Sidebar } from '@components/common/sidebar/Sidebar'
 import { SpreadsheetViewer } from '@components/common/spreadsheet-viewer/SpreadsheetViewer'
 import { ToolCard } from '@components/common/tool-card/ToolCard'
 import { TurnFooter } from '@components/common/turn-footer/TurnFooter'
@@ -76,7 +73,6 @@ import { useSessions, type SessionDescriptor } from '@providers/sessions/useSess
 import { useTheme } from '@providers/theme/useTheme'
 import iconTransparent from '@resources/images/icon_transparent.png'
 import {
-  AngelIcon,
   ArrowExpandIcon,
   ArrowUp02Icon,
   BubbleChatIcon,
@@ -85,19 +81,14 @@ import {
   CloudUploadIcon,
   Delete02Icon,
   Download01Icon,
-  FileEditIcon,
   Folder01Icon,
-  HeartCheckIcon,
   Image02Icon,
   Mic01Icon,
   PauseIcon,
   PlayIcon,
-  PlayListIcon,
   PlusSignIcon,
-  Robot01Icon,
   Settings02Icon,
   StopCircleIcon,
-  UserIcon,
   WorkflowSquare03Icon
 } from 'hugeicons-react'
 import {
@@ -193,21 +184,13 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
   const toast = useToast()
   const isRtl = RTL_LOCALES.has(locale)
   const { goTo, status, refreshStatus } = useFlow()
-  const {
-    newSession,
-    reportSession,
-    markSending,
-    consumeProcedure,
-    activeProject,
-    setActiveProject,
-    runStatuses
-  } = useSessions()
+  const { reportSession, markSending, consumeProcedure, activeProject, runStatuses } = useSessions()
   // Project mode: THIS session runs inside the globally active project. The
   // binding is per-session (descriptor), so a backgrounded plain chat never
-  // borrows another session's project chrome.
+  // borrows another session's project chrome. (The project button and manage
+  // dialog live in the app-level FloatingChrome now, alongside New Chat.)
   const sessionProject =
     activeProject !== null && descriptor.projectId === activeProject.id ? activeProject : null
-  const [projectDialogOpen, setProjectDialogOpen] = useState(false)
   // Per-session conversation state. Each mounted Chat instance owns ONE
   // conversation for its whole life: a fresh session starts null and gets an
   // id on first send; an opened conversation starts seeded. Switching
@@ -600,8 +583,8 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
   )
 
   // Clears the context meter + per-turn token/timing readouts back to empty.
-  // Every path that opens a fresh chat runs this: the New Chat button here
-  // (onNewChat), and — via the activeConversationId→null effect below —
+  // Every path that opens a fresh chat runs this via the
+  // activeConversationId→null effect below — the floating New Chat disc,
   // History's New Chat, Procedures' Play, and deleting the active
   // conversation. Keeping it in one place stops those entry points from
   // drifting apart (History's button used to leave the meter stale).
@@ -635,14 +618,6 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     setTurnStartedAt,
     setTurnEndedAt
   ])
-
-  // New Chat spawns (or refocuses) a fresh SESSION — this instance keeps its
-  // conversation and any in-flight turn untouched. A session that never
-  // received a conversation just resets in place via the provider's
-  // blank-session reuse.
-  const onNewChat = useCallback(() => {
-    newSession()
-  }, [newSession])
 
   const scrollerRef = useRef<HTMLDivElement>(null)
   const pendingTurnIdRef = useRef<string | null>(null)
@@ -857,23 +832,6 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     })
   }, [visible, recPhase, stopRecording])
   // ── End voice recording ───────────────────────────────────────
-
-  // Publish the live action-bar (composer) height as a CSS variable so the
-  // app-level conversations rail can end exactly at its top
-  // instead of running full-height behind it. The action bar is the scroller's
-  // next sibling; a ResizeObserver tracks it as the textarea grows / the
-  // recorder swaps in. Only the VISIBLE session writes the var.
-  useLayoutEffect(() => {
-    if (!visible) return
-    const el = scrollerRef.current?.nextElementSibling as HTMLElement | null
-    if (!el) return
-    const apply = (): void =>
-      document.documentElement.style.setProperty('--wf-actionbar-h', `${el.offsetHeight}px`)
-    apply()
-    const ro = new ResizeObserver(apply)
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [visible, recPhase])
 
   // Re-sync model-dependent UI whenever the active model changes — the local
   // model, the local-only toggle, OR the cloud Brain (activeCloudModel). Two
@@ -1170,9 +1128,8 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     } else {
       // Fresh chat (New Chat / Procedures Play / active-conversation delete):
       // wipe the meter + per-turn stats so no stale reading carries over from
-      // the conversation we just left. onNewChat also does this synchronously
-      // to avoid a one-frame flash on the Chat page; here it covers the entry
-      // points that can't reach this component's state directly.
+      // the conversation we just left — this effect covers every entry point,
+      // none of which can reach this component's state directly.
       conversationRef.current = null
       queueMicrotask(() => {
         // Same in-flight guard as the load branch — a stray turn from the
@@ -2623,68 +2580,10 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
           {t('chat.dropToAttach')}
         </div>
       )}
-      {/* Navigation stays live while turns stream — conversations run
-          concurrently now, and every session keeps itself alive hidden. Only
-          the composer of a PROCESSING conversation is gated (below). */}
-      <Sidebar
-        items={[
-          {
-            key: 'soul',
-            icon: AngelIcon,
-            label: t('chat.soul'),
-            onClick: () => goTo('soul')
-          },
-          {
-            key: 'user',
-            icon: UserIcon,
-            label: t('chat.user'),
-            onClick: () => goTo('user')
-          },
-          {
-            key: 'agents',
-            icon: Robot01Icon,
-            label: t('chat.agents'),
-            onClick: () => goTo('agents')
-          },
-          {
-            key: 'heartbeat',
-            icon: HeartCheckIcon,
-            label: t('chat.heartbeat'),
-            onClick: () => goTo('heartbeat')
-          },
-          {
-            key: 'procedures',
-            icon: PlayListIcon,
-            label: t('chat.procedures'),
-            onClick: () => goTo('procedures')
-          },
-          {
-            key: 'projects',
-            icon: Folder01Icon,
-            label: t('chat.projects'),
-            onClick: () => goTo('projects')
-          },
-          {
-            key: 'viewer',
-            icon: FileEditIcon,
-            label: t('chat.workspace'),
-            onClick: () => goTo('viewer')
-          },
-          {
-            key: 'conversations',
-            icon: Clock01Icon,
-            label: t('chat.conversations'),
-            onClick: () => goTo('history')
-          },
-          {
-            key: 'settings',
-            icon: Settings02Icon,
-            label: t('chat.settings'),
-            onClick: () => goTo('settings')
-          }
-        ]}
-      />
-
+      {/* Navigation lives in the app-level FloatingChrome (glass discs +
+          conversations sheet) laid over this transcript — no rails, no
+          header. It stays live while turns stream; only the composer of a
+          PROCESSING conversation is gated (below). */}
       <div
         ref={scrollerRef}
         className="relative flex flex-1 flex-col-reverse overflow-y-auto px-6 py-8"
@@ -2742,7 +2641,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                     <pre
                       dir="auto"
                       className={cn(
-                        'bg-bg border-border text-muted w-full max-w-md',
+                        'bg-surface border-border text-muted w-full max-w-md',
                         'max-h-40 overflow-auto overscroll-contain rounded-lg border px-3 py-2',
                         'text-start font-mono text-xs leading-relaxed wrap-break-word whitespace-pre-wrap'
                       )}
@@ -2882,12 +2781,11 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
         )}
         {/* One surface, Codex/Claude-style: the prompt IS the composer. The
             card carries the border/background that used to belong to the
-            textarea; every control now rides INSIDE it. Top zone: the
-            textarea (or the recorder strip that swaps in for it) with the
-            expand + New Chat / Project controls on its end edge. Bottom
+            textarea; every control rides INSIDE it. Top zone: just the
+            textarea (or the recorder strip that swaps in for it) — New Chat
+            and the Project button moved up to the floating chrome. Bottom
             zone: model + usage at the start, message actions + send at the
-            end. Every control keeps its exact behavior — only the chrome
-            moved inside the input. */}
+            end. */}
         <div className="border-border bg-surface focus-within:border-muted relative flex w-full flex-col rounded-xl border">
           <div className="flex w-full items-start">
             {recPhase === 'idle' ? (
@@ -2967,36 +2865,6 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                 </button>
               </div>
             )}
-            <div className="flex shrink-0 items-center gap-0.5 pe-1.5 pt-1.5">
-              {/* Always enabled — New Chat opens a SEPARATE session, so a
-                  streaming conversation keeps running untouched while the
-                  user starts the next task. In project mode the slot becomes
-                  the Project button instead: the project's emoji, opening
-                  the manage dialog (edit / files / new conversation /
-                  exit). */}
-              {sessionProject ? (
-                <button
-                  type="button"
-                  onClick={() => setProjectDialogOpen(true)}
-                  title={sessionProject.title.trim() || t('projects.untitled')}
-                  aria-label={t('projects.project')}
-                  className={cn(
-                    'flex h-7 w-7 shrink-0 items-center justify-center rounded-lg',
-                    'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-                    'hover:bg-border/40 cursor-pointer'
-                  )}
-                >
-                  <span aria-hidden className="text-sm leading-none">
-                    {sessionProject.icon || '📁'}
-                  </span>
-                </button>
-              ) : (
-                <NewChatButton
-                  onNew={onNewChat}
-                  onNewInProject={(projectId) => newSession({ projectId })}
-                />
-              )}
-            </div>
           </div>
           <div className="flex w-full items-center gap-1 px-1.5 pb-1.5">
             {/* Reasoning effort and chat mode ride INSIDE this card's chip
@@ -3310,24 +3178,6 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
           </div>,
           document.body
         )}
-      <ProjectDialog
-        project={projectDialogOpen ? sessionProject : null}
-        onClose={() => setProjectDialogOpen(false)}
-        onChanged={setActiveProject}
-        busy={busy}
-        onNewConversation={(p) => {
-          setProjectDialogOpen(false)
-          newSession({ projectId: p.id })
-        }}
-        // Close = leave project mode and land in a fresh plain chat, right
-        // here — no detour to the Projects page. newSession() without a
-        // projectId both spawns/refocuses the blank session and clears the
-        // active project (syncProjectFor(null)).
-        onExitProject={() => {
-          setProjectDialogOpen(false)
-          newSession()
-        }}
-      />
     </main>
   )
 }

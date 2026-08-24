@@ -2,6 +2,7 @@ import { Button } from '@components/core/Button'
 import { Input } from '@components/core/Input'
 import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn'
+import { PanelBackChevron } from '@pages/settings/drillNav'
 import type { MemesErrorKind, MemesStatus } from '@preload/index'
 import { EyeIcon, ViewOffIcon } from 'hugeicons-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -185,9 +186,12 @@ export function MemesPanel(): React.JSX.Element {
     <div className="flex min-h-full w-full items-start justify-center px-6 py-10">
       <div className="flex w-full max-w-2xl flex-col gap-6">
         <header className="flex flex-col gap-2">
-          <h1 className="text-fg text-2xl font-semibold tracking-tight">
-            {t('settings.services.memes.title')}
-          </h1>
+          <div className="flex items-center gap-1.5">
+            <PanelBackChevron />
+            <h1 className="text-fg text-2xl font-semibold tracking-tight">
+              {t('settings.services.memes.title')}
+            </h1>
+          </div>
           <p className="text-muted text-sm leading-relaxed">
             {t('settings.services.memes.subtitle')}
           </p>

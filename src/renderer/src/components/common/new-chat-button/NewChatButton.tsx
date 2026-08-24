@@ -1,3 +1,4 @@
+import { glassButtonClass } from '@components/common/floating-chrome/glass'
 import { cn } from '@lib/utils/cn'
 import type { Project } from '@preload/index'
 import { PlusSignIcon } from 'hugeicons-react'
@@ -5,12 +6,13 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 /**
- * Composer New-chat button with a hover card (the ContextMeter recipe:
- * 150ms open / 200ms close timers, Escape + outside-click dismiss). Clicking
- * the button creates a plain no-project conversation, exactly as before;
- * hovering reveals the projects as cards — picking one starts the new
- * conversation inside that project. Projects load lazily on first reveal;
- * with none, the card never shows and this stays a plain New button.
+ * The floating New-chat glass disc (top-trailing corner, FloatingChrome) with
+ * a hover card (the ContextMeter recipe: 150ms open / 200ms close timers,
+ * Escape + outside-click dismiss). Clicking the disc creates a plain
+ * no-project conversation, exactly as before; hovering reveals the projects
+ * as cards — picking one starts the new conversation inside that project.
+ * Projects load lazily on first reveal; with none, the card never shows and
+ * this stays a plain New button.
  */
 export function NewChatButton({
   onNew,
@@ -82,7 +84,7 @@ export function NewChatButton({
   return (
     <span
       ref={rootRef}
-      className="relative inline-flex shrink-0"
+      className="pointer-events-auto relative inline-flex shrink-0"
       onMouseEnter={onEnter}
       onMouseLeave={onLeave}
     >
@@ -97,22 +99,18 @@ export function NewChatButton({
         title={t('chat.newChat')}
         aria-label={t('chat.newChat')}
         aria-expanded={cardVisible}
-        className={cn(
-          'flex h-7 w-7 items-center justify-center rounded-lg',
-          'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-          'text-muted hover:bg-border/40 cursor-pointer hover:text-fg'
-        )}
+        className={glassButtonClass}
       >
-        <PlusSignIcon size={16} />
+        <PlusSignIcon size={18} />
       </button>
 
       {cardVisible && (
         <div
           role="dialog"
-          /* End-anchored: the button rides the composer card's end edge, so
-             the card must open inward (toward the start side) to stay on
-             screen. */
-          className="border-border bg-surface absolute bottom-full inset-e-0 z-50 mb-2 flex w-80 max-w-[90vw] flex-col gap-1.5 rounded-xl border p-1.5 shadow-xl"
+          /* End-anchored under the disc: it floats at the window's top-end
+             corner, so the card opens downward and inward (toward the start
+             side) to stay on screen. */
+          className="border-border bg-surface absolute top-full inset-e-0 z-50 mt-2 flex w-80 max-w-[90vw] flex-col gap-1.5 rounded-xl border p-1.5 shadow-xl"
         >
           <div className="flex max-h-64 flex-col gap-1.5 overflow-y-auto">
             {projects.map((p) => {

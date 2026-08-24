@@ -1,3 +1,13 @@
+import { createContext } from 'react'
+
+/**
+ * Set by Settings around a panel drilled open from a card grid (Services and
+ * Models); null everywhere else, so PanelBackChevron (drillNav.tsx) collapses
+ * to nothing when the same panel renders outside a drill (ModelPicker during
+ * onboarding, a channel sub-tab, and so on).
+ */
+export const DrillBackContext = createContext<(() => void) | null>(null)
+
 export type TabKey =
   | 'appearance'
   | 'model'

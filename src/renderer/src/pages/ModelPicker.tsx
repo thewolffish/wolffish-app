@@ -3,6 +3,7 @@ import { Num } from '@components/core/Num'
 import { useOnline } from '@hooks/use-online/useOnline'
 import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
+import { PanelBackChevron } from '@pages/settings/drillNav'
 import { formatBytesL, formatDurationL, formatGBL, ltrIsolate } from '@lib/utils/format'
 import type {
   ModelEntry,
@@ -498,9 +499,12 @@ export function ModelPicker(): React.JSX.Element {
       <div className="flex min-h-full w-full items-center justify-center px-6 py-10">
         <div className="flex w-full max-w-2xl flex-col gap-6">
           <header className="flex flex-col items-center gap-2 text-center">
-            <h1 className="text-fg text-2xl font-semibold tracking-tight">
-              {t('modelPicker.title')}
-            </h1>
+            <div className="flex items-center gap-1.5">
+              <PanelBackChevron />
+              <h1 className="text-fg text-2xl font-semibold tracking-tight">
+                {t('modelPicker.title')}
+              </h1>
+            </div>
             <p className="text-muted text-sm leading-relaxed">{t('modelPicker.tagline')}</p>
           </header>
 

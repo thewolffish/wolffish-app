@@ -103,8 +103,8 @@ export const CLI_SETTING_GROUPS: Array<{
   label: string
   interactive?: true
 }> = [
-  { id: 'model', label: 'Models' },
   { id: 'channels', label: 'Channels' },
+  { id: 'model', label: 'Models' },
   { id: 'services', label: 'Services' },
   { id: 'mcp', label: 'MCP', interactive: true },
   { id: 'variables', label: 'Variables', interactive: true },
@@ -148,7 +148,7 @@ export const CLI_SETTING_SECTIONS: CliSettingSection[] = [
     label: 'Ollama'
   },
 
-  // Channels — the desktop's five sub-tabs, in its order.
+  // Channels — the desktop's six sub-tabs, in its order.
   {
     id: 'channels.inapp',
     group: 'channels',
@@ -161,6 +161,11 @@ export const CLI_SETTING_SECTIONS: CliSettingSection[] = [
     label: 'Mobile'
   },
   {
+    id: 'channels.browser',
+    group: 'channels',
+    label: 'Browser'
+  },
+  {
     id: 'channels.telegram',
     group: 'channels',
     label: 'Telegram'
@@ -171,12 +176,7 @@ export const CLI_SETTING_SECTIONS: CliSettingSection[] = [
     label: 'WhatsApp'
   },
 
-  // Services — the desktop's ten sub-tabs, in its order.
-  {
-    id: 'services.browserExtension',
-    group: 'services',
-    label: 'Browser Extension'
-  },
+  // Services — the desktop's nine cards, in its grid order.
   {
     id: 'services.brave',
     group: 'services',
@@ -741,11 +741,13 @@ export const CLI_SETTINGS: CliSetting[] = [
     wrap: 'hideAutomationsFromResume'
   },
 
-  // ── Services ─────────────────────────────────────────────────────────────
+  // Browser — the extension card, a channel on the desktop. The `read`
+  // paths keep the snapshot's `services.browserExtension` shape: that is the
+  // phone's wire contract, not this table's taxonomy.
   {
-    id: 'services.browserExtension.port',
-    group: 'services',
-    section: 'services.browserExtension',
+    id: 'channels.browser.port',
+    group: 'channels',
+    section: 'channels.browser',
     label: 'WebSocket Port',
     description:
       "The port the extension connects to. Default is 23151. Change only if there's a conflict.",
@@ -755,9 +757,9 @@ export const CLI_SETTINGS: CliSetting[] = [
     wrap: 'port'
   },
   {
-    id: 'services.browserExtension.screenshotMaxWidth',
-    group: 'services',
-    section: 'services.browserExtension',
+    id: 'channels.browser.screenshotMaxWidth',
+    group: 'channels',
+    section: 'channels.browser',
     label: 'Screenshot resolution',
     description: 'Maximum width in pixels. Lower values use less tokens but reduce detail.',
     kind: 'number',
@@ -767,9 +769,9 @@ export const CLI_SETTINGS: CliSetting[] = [
     wrap: 'screenshotMaxWidth'
   },
   {
-    id: 'services.browserExtension.screenshotFormat',
-    group: 'services',
-    section: 'services.browserExtension',
+    id: 'channels.browser.screenshotFormat',
+    group: 'channels',
+    section: 'channels.browser',
     label: 'Screenshot format',
     description: 'JPEG is smaller and faster. PNG is lossless and better for text-heavy screens.',
     kind: 'enum',
@@ -779,9 +781,9 @@ export const CLI_SETTINGS: CliSetting[] = [
     wrap: 'screenshotFormat'
   },
   {
-    id: 'services.browserExtension.screenshotQuality',
-    group: 'services',
-    section: 'services.browserExtension',
+    id: 'channels.browser.screenshotQuality',
+    group: 'channels',
+    section: 'channels.browser',
     label: 'Screenshot quality',
     description: 'JPEG quality, 1-100. Higher is sharper and larger.',
     kind: 'number',
@@ -790,6 +792,8 @@ export const CLI_SETTINGS: CliSetting[] = [
     channel: 'browserExtension:setConfig',
     wrap: 'screenshotQuality'
   },
+
+  // ── Services ─────────────────────────────────────────────────────────────
   {
     id: 'services.brave.enabled',
     group: 'services',

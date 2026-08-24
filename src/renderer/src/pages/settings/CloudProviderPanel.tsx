@@ -2,6 +2,7 @@ import { Button } from '@components/core/Button'
 import { Input } from '@components/core/Input'
 import { useToast } from '@components/core/toast/useToast'
 import { cn } from '@lib/utils/cn'
+import { PanelBackChevron } from '@pages/settings/drillNav'
 import {
   BADGE_STYLES,
   DEFAULT_MODEL,
@@ -249,6 +250,7 @@ export function CloudProviderPanel({ provider }: { provider: ProviderId }): Reac
         <header className="flex flex-col gap-2">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
+              <PanelBackChevron />
               <Logo size={24} className="text-fg shrink-0" />
               <h1 className="text-fg text-2xl font-semibold tracking-tight">
                 {t('settings.model.cloud.title', { provider: providerLabel })}
