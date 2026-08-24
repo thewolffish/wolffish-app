@@ -52,7 +52,7 @@ const NAV: {
 ]
 
 /**
- * Leading-edge navigation sheet — the desktop port of the mobile app's
+ * Leading-edge conversations sheet — the desktop port of the mobile app's
  * ConversationsSheet. A fixed strip of page rows on top (never scrolls), a
  * divider, then the full cross-channel conversations list as the only
  * scroller, windowed PAGE rows at a time ("infinite" growth on reach-the-end;
