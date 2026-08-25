@@ -239,7 +239,13 @@ function filePathForId(id: string): string {
   return path.join(conversationsDir(), `${conversationDirName(id)}.json`)
 }
 
-function idFromFilename(filename: string): string | null {
+/**
+ * The conversation id a stored filename names, or null for anything else in
+ * the directory (upload/voice subdirectories, strays). Exported for the
+ * corpus's post-write signal: `conversation.indexed` carries a workspace-
+ * relative PATH, and the mobile push it feeds needs the id back out of it.
+ */
+export function idFromFilename(filename: string): string | null {
   const match = filename.match(/^conv-(.+)\.json$/)
   return match ? match[1] : null
 }

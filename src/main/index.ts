@@ -24,6 +24,7 @@ import {
   countConversationsSince,
   createConversation,
   deleteConversation,
+  idFromFilename,
   listConversations,
   loadConversation,
   mergeConversationOnto,
@@ -901,7 +902,26 @@ agent.corpus.on('conversation.deleted', ({ id }) => broadcast('conversation:dele
 // create/rename/delete path — including the ones that emit no turn lifecycle
 // at all (renames, imports, rebuilds). Fires after the cortex row is
 // committed.
-agent.corpus.on('conversation.indexed', () => broadcast('conversation:changed', {}))
+//
+// The phone rides the same signal, and for it this one is LOAD-BEARING: it is
+// the only push that always fires AFTER a conversation file hits disk. The
+// turn lifecycle's own metadata push cannot promise that — `done` is emitted
+// before the sink's persist resolves, and an in-app turn is saved by the
+// renderer moments after that — so the metadata it carries can describe the
+// PRE-turn file. The phone then fetches a transcript without the answer it
+// just watched, stamps it current, and with no later signal sits stale until
+// the conversation is reopened. This push carries the post-save updatedAt,
+// which is exactly what flips the phone's staleness check and triggers its
+// refetch.
+agent.corpus.on('conversation.indexed', ({ rel }) => {
+  broadcast('conversation:changed', {})
+  // hasPeer-gated: this fires on every conversation save forever, and the
+  // push starts with a file read — I/O nobody should pay with no phone
+  // listening.
+  if (!mobileChannel.hasPeer) return
+  const id = idFromFilename(rel.split('/').pop() ?? '')
+  if (id) void pushConversationToMobile(id)
+})
 // Full rebuilds + the startup catch-up index via indexWalkedSync directly, so
 // no conversation.indexed fires while they run — a list fetched mid-rebuild
 // can be partial (see the getReindexStatus guard in conversation:list). Push
