@@ -11,7 +11,7 @@ Wolffish is a local-first, markdown-powered personal AI desktop agent built with
 Built around a 15-module runtime modeled after the human brain, from memory consolidation to safety gating. Every piece of state lives in readable markdown files. To change what the agent does, you edit markdown — not code.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE.md)
-[![Version](https://img.shields.io/badge/version-1.0.268-green.svg)](https://wolffi.sh)
+[![Version](https://img.shields.io/badge/version-1.0.269-green.svg)](https://wolffi.sh)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)]()
 
 ---
@@ -124,24 +124,24 @@ Source: [thewolffish/wolffish-mobile](https://github.com/thewolffish/wolffish-mo
 
 Wolffish maps human brain regions to software modules. Each module handles exactly one function and communicates through a typed event bus called the **corpus** (modeled after the corpus callosum).
 
-| Module            | Function                                  | Brain Analogy               |
-| ----------------- | ----------------------------------------- | --------------------------- |
-| **Thalamus**      | Routes input to LLM providers             | Sensory gateway             |
-| **Prefrontal**    | Assembles context for the LLM             | Executive function          |
-| **RAS**           | Filters relevant content by attention     | Reticular Activating System |
-| **Cortex**        | Fast retrieval index (SQLite FTS5)        | Pattern matching            |
-| **Hippocampus**   | Memory storage and consolidation          | Memory center               |
-| **Cerebellum**    | Discovers and loads capabilities          | Motor coordination          |
-| **Wernicke**      | Parses LLM output and extracts tool calls | Language comprehension      |
-| **Broca**         | Streams responses to the UI               | Language production         |
-| **Amygdala**      | Safety gate for dangerous operations      | Threat detection            |
-| **Motor**         | Executes tasks with retry logic           | Motor cortex                |
-| **Basal Ganglia** | Records raw tool outcomes (telemetry)     | Reward processing           |
-| **Reflection**    | Nightly self-review + playbook distilled into every prompt | Sleep consolidation |
-| **Hypothalamus**  | Monitors system health (RAM, disk, CPU)   | Homeostasis                 |
-| **Brainstem**     | Runs background processes and cron jobs   | Autonomic functions         |
-| **Corpus**        | Event bus connecting all modules          | Corpus callosum             |
-| **Insula**        | Self-awareness and introspection          | Interoception               |
+| Module            | Function                                                   | Brain Analogy               |
+| ----------------- | ---------------------------------------------------------- | --------------------------- |
+| **Thalamus**      | Routes input to LLM providers                              | Sensory gateway             |
+| **Prefrontal**    | Assembles context for the LLM                              | Executive function          |
+| **RAS**           | Filters relevant content by attention                      | Reticular Activating System |
+| **Cortex**        | Fast retrieval index (SQLite FTS5)                         | Pattern matching            |
+| **Hippocampus**   | Memory storage and consolidation                           | Memory center               |
+| **Cerebellum**    | Discovers and loads capabilities                           | Motor coordination          |
+| **Wernicke**      | Parses LLM output and extracts tool calls                  | Language comprehension      |
+| **Broca**         | Streams responses to the UI                                | Language production         |
+| **Amygdala**      | Safety gate for dangerous operations                       | Threat detection            |
+| **Motor**         | Executes tasks with retry logic                            | Motor cortex                |
+| **Basal Ganglia** | Records raw tool outcomes (telemetry)                      | Reward processing           |
+| **Reflection**    | Nightly self-review + playbook distilled into every prompt | Sleep consolidation         |
+| **Hypothalamus**  | Monitors system health (RAM, disk, CPU)                    | Homeostasis                 |
+| **Brainstem**     | Runs background processes and cron jobs                    | Autonomic functions         |
+| **Corpus**        | Event bus connecting all modules                           | Corpus callosum             |
+| **Insula**        | Self-awareness and introspection                           | Interoception               |
 
 > See [ARCH.md](ARCH.md) for the full architectural deep dive.
 
@@ -192,16 +192,16 @@ A capability is a self-contained folder in `brain/cerebellum/` that gives wolffi
 
 **Built-in capabilities (20+):**
 
-| Category      | Capabilities                                     |
-| ------------- | ------------------------------------------------ |
-| **System**    | Shell, Filesystem, Package Manager, Node.js      |
-| **Web**       | Web Search, Browser (headless automation)        |
-| **Documents** | Word (.docx), PDF, Spreadsheet (.xlsx/.csv)      |
-| **Media**     | FFmpeg, Speech-to-Text (Whisper), Text-to-Speech |
-| **Code**      | Git, GitHub (OAuth API)                          |
-| **Services**  | Google (Gmail, Drive, Calendar, Sheets), Notion  |
-| **Desktop**   | Computer Use (screenshots, mouse, keyboard)      |
-| **Fun**       | Memes, GIF Search                                |
+| Category      | Capabilities                                                                |
+| ------------- | --------------------------------------------------------------------------- |
+| **System**    | Shell, Filesystem, Package Manager, Node.js                                 |
+| **Web**       | Web Search, Browser (headless automation)                                   |
+| **Documents** | Word (.docx), PDF, Spreadsheet (.xlsx/.csv)                                 |
+| **Media**     | FFmpeg, Speech-to-Text (Whisper), Text-to-Speech                            |
+| **Code**      | Git, GitHub (OAuth API)                                                     |
+| **Services**  | Google (Gmail, Drive, Calendar, Sheets), Notion                             |
+| **Desktop**   | Computer Use (screenshots, mouse, keyboard)                                 |
+| **Fun**       | Memes, GIF Search                                                           |
 | **Meta**      | Introspect, Skills (self-extension), Automations (scheduled heartbeat jobs) |
 
 ---
@@ -346,11 +346,11 @@ All configuration lives in `~/.wolffish/workspace/config.json`:
 
 ### Brain Files
 
-| File                           | Purpose                                                    |
-| ------------------------------ | ---------------------------------------------------------- |
-| `brain/identity/soul.md`       | Agent personality — tone, verbosity, behavioral guidelines |
-| `brain/identity/user.md`       | About you — name, role, tech stack, projects, preferences  |
-| `brain/prefrontal/agents.md`   | Operational manual — tool rules, procedures, constraints   |
+| File                           | Purpose                                                      |
+| ------------------------------ | ------------------------------------------------------------ |
+| `brain/identity/soul.md`       | Agent personality — tone, verbosity, behavioral guidelines   |
+| `brain/identity/user.md`       | About you — name, role, tech stack, projects, preferences    |
+| `brain/prefrontal/agents.md`   | Operational manual — tool rules, procedures, constraints     |
 | `brain/brainstem/heartbeat.md` | Scheduled background jobs (managed by the Automations skill) |
 
 Edit any of these markdown files to change how your agent behaves.
