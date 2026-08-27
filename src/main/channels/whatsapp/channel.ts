@@ -71,6 +71,7 @@ import {
 import { compressVideoToLimit } from '@main/channels/video-compress'
 import {
   upsertTaskSegment,
+  appendTextSegment,
   upsertWorkflowSegment,
   WORKFLOW_TOOL_NAMES,
   type Segment,
@@ -2479,6 +2480,7 @@ export class WhatsAppChannel {
     // per run/task or a long run persists hundreds of full snapshots.
     if (segment.kind === 'workflow') upsertWorkflowSegment(active.segments, segment)
     else if (segment.kind === 'task') upsertTaskSegment(active.segments, segment)
+    else if (segment.kind === 'text') appendTextSegment(active.segments, segment)
     else active.segments.push(segment)
 
     if (segment.kind === 'workflow') {

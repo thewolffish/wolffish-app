@@ -120,7 +120,12 @@ import {
 import { Tunnel, type TunnelState } from '@main/tunnel/tunnel'
 import type { TurnRunner } from '@main/channels/turn-runner'
 import type { TurnSink } from '@main/channels/channel'
-import { upsertTaskSegment, upsertWorkflowSegment, type Segment } from '@main/runtime/broca'
+import {
+  appendTextSegment,
+  upsertTaskSegment,
+  upsertWorkflowSegment,
+  type Segment
+} from '@main/runtime/broca'
 import type { ApprovalDecision, ApprovalRequest } from '@main/runtime/amygdala'
 import type { AskUserAnswer, AskUserRequest, AskUserResponse } from '@main/runtime/cerebellum'
 import type { ChatHistoryMessage } from '@preload/index'
@@ -2388,6 +2393,7 @@ export class MobileChannel {
         // stream of them is one card, not a card per tick.
         if (segment.kind === 'workflow') upsertWorkflowSegment(acc.segments, segment)
         else if (segment.kind === 'task') upsertTaskSegment(acc.segments, segment)
+        else if (segment.kind === 'text') appendTextSegment(acc.segments, segment)
         else acc.segments.push(segment)
         if (segment.kind === 'turn_end') acc.stopReason = segment.stopReason
         if (segment.kind === 'text') {

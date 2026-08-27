@@ -30,6 +30,7 @@ import { Brainstem } from '@main/runtime/brainstem'
 import {
   Broca,
   upsertTaskSegment,
+  appendTextSegment,
   upsertWorkflowSegment,
   WORKFLOW_TOOL_NAMES,
   type Segment,
@@ -2239,6 +2240,7 @@ export class Agent {
       // persist path.
       if (seg.kind === 'workflow') upsertWorkflowSegment(segments, seg)
       else if (seg.kind === 'task') upsertTaskSegment(segments, seg)
+      else if (seg.kind === 'text') appendTextSegment(segments, seg)
       else segments.push(seg)
       if (seg.kind === 'text') acc.assistantContent += seg.delta
       if (seg.kind === 'turn_end') acc.stopReason = seg.stopReason

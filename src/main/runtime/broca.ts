@@ -202,6 +202,38 @@ export function upsertTaskSegment(
   segments.push(segment)
 }
 
+/**
+ * Append a text segment, folding it into the previous one when both are
+ * adjacent parts of the same prose run — same author (worker or main line,
+ * same worker id) with nothing between them. Shared by every surface that
+ * accumulates segments, exactly like the snapshot upserts above.
+ *
+ * Without this, a streamed reply persisted one segment PER MODEL TICK — a
+ * few characters each. One heartbeat automation's reply landed as 2,441
+ * text segments (~250 KB of segment envelope wrapped around a 10 KB
+ * answer), and every later reader — this app's own renderer, the wire to
+ * the phone, the phone's store — paid O(ticks) forever after. Folded here,
+ * a prose run is ONE segment; boundaries stay boundaries, and the first
+ * tick's segmentId keeps naming the run so nothing keyed on it moves.
+ */
+export function appendTextSegment(
+  segments: Segment[],
+  segment: Extract<Segment, { kind: 'text' }>
+): void {
+  const last = segments[segments.length - 1]
+  if (
+    last &&
+    last.kind === 'text' &&
+    last.turnId === segment.turnId &&
+    Boolean(last.worker) === Boolean(segment.worker) &&
+    last.worker?.id === segment.worker?.id
+  ) {
+    segments[segments.length - 1] = { ...last, delta: last.delta + segment.delta }
+    return
+  }
+  segments.push(segment)
+}
+
 export type Segment =
   | { kind: 'text'; turnId: string; segmentId: string; delta: string; worker?: SegmentWorker }
   | {

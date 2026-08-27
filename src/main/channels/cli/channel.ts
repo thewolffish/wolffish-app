@@ -44,7 +44,12 @@ import {
 } from '@main/conversations'
 import type { Agent } from '@main/runtime/agent'
 import type { ApprovalDecision, ApprovalRequest } from '@main/runtime/amygdala'
-import { upsertTaskSegment, upsertWorkflowSegment, type Segment } from '@main/runtime/broca'
+import {
+  appendTextSegment,
+  upsertTaskSegment,
+  upsertWorkflowSegment,
+  type Segment
+} from '@main/runtime/broca'
 import type { AskUserRequest, AskUserResponse } from '@main/runtime/cerebellum'
 import { queueConversationSummarization } from '@main/conversation-summarizer'
 import { turnScope, type CorpusEvents } from '@main/runtime/corpus'
@@ -478,6 +483,7 @@ export class CliChannel {
         if ('worker' in segment && segment.worker) return
         if (segment.kind === 'workflow') upsertWorkflowSegment(acc.segments, segment)
         else if (segment.kind === 'task') upsertTaskSegment(acc.segments, segment)
+        else if (segment.kind === 'text') appendTextSegment(acc.segments, segment)
         else acc.segments.push(segment)
         if (segment.kind === 'turn_end') acc.stopReason = segment.stopReason
         if (segment.kind === 'text') acc.assistantContent += segment.delta
