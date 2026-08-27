@@ -231,11 +231,26 @@ async function run(): Promise<void> {
     pushes.some((p) => p.topic === Event.turnStatus && p.payload.state === 'done')
   )
 
+  /** Close one pacing generation: mirrors are byte-paced per turn (a big
+   *  snapshot buys a wait before the next), and every scenario below stands
+   *  alone — as in production, where a turn boundary clears the pace record
+   *  and its pending flush. The GLOBAL rail deliberately keeps charging
+   *  across boundaries (bytes already on the wire don't vanish with a turn),
+   *  so scenario isolation resets it by hand. */
+  const endTurn = (id: string): void => {
+    channel.pushTurnStatus(id, 'done')
+    ;(channel as unknown as { mirrorRail: { sentAt: number; sentBytes: number } }).mirrorRail = {
+      sentAt: 0,
+      sentBytes: 0
+    }
+  }
+
   // ------------------------------------------------------- the oversize guard
   // An event is one frame; a push past the relay's record cap closes the
   // tunnel rather than arriving late. Too big is TRIMMED to fit — withholding
   // was the old degrade, and it is how a long tool-heavy turn went dark on
   // the phone for its whole remaining runtime.
+  endTurn('conv-x')
   pushes.length = 0
   channel.pushMessageAppended('conv-x', {
     id: 'm_1_aaaaaa',
@@ -260,6 +275,7 @@ async function run(): Promise<void> {
   // problem the oldest payloads are elided outright while the newest stay
   // whole: the live edge is what the user is watching. Card structure (every
   // segment, in order) survives both.
+  endTurn('conv-x')
   pushes.length = 0
   const bigResult = (n: number, size: number): Record<string, unknown> => ({
     kind: 'tool_result',
@@ -293,6 +309,7 @@ async function run(): Promise<void> {
     JSON.stringify(trimmed?.segments?.map((s) => (s.output ?? '').length))
   )
 
+  endTurn('conv-x')
   pushes.length = 0
   const many = Array.from({ length: 300 }, (_, i) => bigResult(i, 2_000))
   channel.pushMessageAppended('conv-x', {
@@ -327,6 +344,7 @@ async function run(): Promise<void> {
   // ends — and a phone that pairs mid-turn sees nothing but mirror ticks.
   const PROMPT = { id: 'm_9_ccccc1', role: 'user', content: 'make me a pdf', timestamp: 9 }
 
+  endTurn('conv-x')
   pushes.length = 0
   channel.pushMessageAppended(
     'conv-x',
@@ -340,6 +358,7 @@ async function run(): Promise<void> {
     JSON.stringify(withPrompt?.payload.userMessage)
   )
 
+  endTurn('conv-x')
   pushes.length = 0
   channel.pushMessageAppended(
     'conv-x',
@@ -369,6 +388,146 @@ async function run(): Promise<void> {
     'a bare nudge stays bare — no empty prompt field on the wire',
     appended().at(-1) !== undefined && !('userMessage' in (appended().at(-1)?.payload ?? {}))
   )
+
+  // ---------------------------------------------------------- mirror pacing
+  // The rail's byte budget. The 500ms throttle bounds mirrors in TIME; the
+  // pacing bounds them in BYTES — a snapshot's own size sets the earliest
+  // moment of the next send, so a monster turn cannot put 768 KB/s on a
+  // socket the phone drains at link speed for minutes after the turn ended.
+  // Ordinary turns (snapshots under ~24 KB) never hit it: their window is
+  // shorter than the throttle that already spaces them.
+  const paceMsg = (label: string, pad: number): Record<string, unknown> => ({
+    id: 'm_1_pace01',
+    role: 'assistant',
+    content: `${label} ` + 'p'.repeat(pad)
+  })
+
+  // The oversize scenarios above charged the global rail with a 384 KB send.
+  endTurn('conv-x')
+  pushes.length = 0
+  // ~30 KB buys a ~940ms window at 32 KB/s.
+  channel.pushMessageAppended('conv-pace', paceMsg('first', 30 * 1024))
+  ok('the first mirror of a turn goes out immediately', appended().length === 1)
+  channel.pushMessageAppended('conv-pace', paceMsg('second', 30 * 1024))
+  channel.pushMessageAppended('conv-pace', paceMsg('third', 30 * 1024))
+  ok(
+    'ticks inside the pace window are deferred, not queued behind each other',
+    appended().length === 1,
+    String(appended().length)
+  )
+  await new Promise((resolve) => setTimeout(resolve, 1400))
+  const paced = appended()
+  ok(
+    'the trailing flush sends the NEWEST snapshot once the window opens',
+    paced.length === 2 &&
+      ((paced.at(-1)?.payload.message as { content?: string })?.content ?? '').startsWith('third'),
+    JSON.stringify([
+      paced.length,
+      (paced.at(-1)?.payload.message as { content?: string })?.content?.slice(0, 12)
+    ])
+  )
+  ok(
+    'a deferred tick still refreshes the rejoin cache ahead of its send',
+    channel.turnMirrorFor('conv-pace')?.content?.startsWith('third') === true
+  )
+
+  endTurn('conv-pace')
+  pushes.length = 0
+  channel.pushMessageAppended('conv-park', paceMsg('big', 300 * 1024))
+  channel.pushMessageAppended('conv-park', paceMsg('anchor', 100), undefined, { urgent: true })
+  ok(
+    "an urgent flush — a parked card's anchor — never waits out the pacing",
+    appended().length === 2 &&
+      ((appended().at(-1)?.payload.message as { content?: string })?.content ?? '').startsWith(
+        'anchor'
+      ),
+    String(appended().length)
+  )
+
+  endTurn('conv-park')
+  pushes.length = 0
+  channel.pushMessageAppended('conv-end', paceMsg('one', 30 * 1024))
+  channel.pushMessageAppended('conv-end', paceMsg('two', 30 * 1024))
+  endTurn('conv-end')
+  await new Promise((resolve) => setTimeout(resolve, 1400))
+  ok(
+    'a turn boundary drops the pending flush — no mirror lands after done',
+    appended().length === 1,
+    String(appended().length)
+  )
+
+  // Two conversations share ONE socket: the rail's budget is global, so a
+  // second turn's mirror queues behind the first's bytes instead of doubling
+  // the rate — the two-concurrent-automations case.
+  endTurn('conv-end')
+  pushes.length = 0
+  channel.pushMessageAppended('conv-twin-a', paceMsg('atlas', 30 * 1024))
+  channel.pushMessageAppended('conv-twin-b', paceMsg('borealis', 30 * 1024))
+  ok(
+    'concurrent conversations split the byte budget — the second defers',
+    appended().length === 1,
+    String(appended().length)
+  )
+  await new Promise((resolve) => setTimeout(resolve, 1400))
+  const twins = appended()
+  ok(
+    "... and the second conversation's snapshot follows once the rail is clear",
+    twins.length === 2 &&
+      ((twins.at(-1)?.payload.message as { content?: string })?.content ?? '').startsWith(
+        'borealis'
+      ),
+    String(twins.length)
+  )
+  endTurn('conv-twin-a')
+  endTurn('conv-twin-b')
+
+  // A congested local socket defers even a first, window-open mirror; the
+  // flush retries until the buffer drains.
+  const realTunnel = (channel as unknown as { tunnel: unknown }).tunnel
+  ;(channel as unknown as { tunnel: unknown }).tunnel = {
+    ...fakeTunnel,
+    outboundBufferedBytes: 600 * 1024
+  }
+  pushes.length = 0
+  channel.pushMessageAppended('conv-gate', paceMsg('gated', 1024))
+  ok('a congested socket defers even a fresh mirror', appended().length === 0)
+  ok(
+    '... which still refreshes the rejoin cache',
+    channel.turnMirrorFor('conv-gate')?.content?.startsWith('gated') === true
+  )
+  ;(channel as unknown as { tunnel: unknown }).tunnel = realTunnel
+  await new Promise((resolve) => setTimeout(resolve, 600))
+  ok(
+    '... and the flush delivers it once the buffer drains',
+    appended().length === 1,
+    String(appended().length)
+  )
+  endTurn('conv-gate')
+
+  // The delta-hole guard. A snapshot resets the phone's tail on the promise
+  // that it contains every delta sent before it. The trailing flush would
+  // break that promise whenever deltas kept streaming after its snapshot was
+  // cached — so it must skip instead, and let the next fresh tick send.
+  pushes.length = 0
+  channel.pushMessageAppended('conv-hole', paceMsg('alpha', 30 * 1024))
+  channel.pushMessageDelta('conv-hole', 'word ', 1)
+  channel.pushMessageAppended('conv-hole', paceMsg('beta', 30 * 1024))
+  channel.pushMessageDelta('conv-hole', 'more ', 2)
+  await new Promise((resolve) => setTimeout(resolve, 1400))
+  ok(
+    'a cached snapshot older than the newest delta is never flushed',
+    appended().length === 1,
+    String(appended().length)
+  )
+  channel.pushMessageAppended('conv-hole', paceMsg('gamma', 30 * 1024))
+  const holed = appended()
+  ok(
+    '... and the next fresh tick sends immediately into the open window',
+    holed.length === 2 &&
+      ((holed.at(-1)?.payload.message as { content?: string })?.content ?? '').startsWith('gamma'),
+    String(holed.length)
+  )
+  endTurn('conv-hole')
 
   // ------------------------------------------------ the turn-so-far (rejoin)
   // Pushes only describe what happens next. A phone that joins — or, the

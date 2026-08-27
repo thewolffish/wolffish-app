@@ -161,6 +161,46 @@ const NOTIFY_RESULT_TIMEOUT_MS = 10_000
 const MIRROR_MAX_BYTES = 384 * 1024
 
 /**
+ * Byte budget for the mirror rail — the sustained rate the full-snapshot
+ * pushes may ask of the tunnel, per conversation. The 500ms throttle bounds
+ * mirrors in TIME; nothing bounded them in BYTES, and a long turn's snapshot
+ * grows without limit until every emit is a six-figure payload twice a second
+ * (768 KB/s at the ceiling) on a single FIFO socket the relay forwards
+ * fire-and-forget. A phone link slower than that never catches up: the queue
+ * grows for the whole run, every other event sits behind it, and the phone
+ * replays the backlog for minutes after the desktop finished — the reply
+ * still "streaming" a word a second long after the turn ended.
+ *
+ * So a mirror's own size sets the earliest moment of the NEXT one: under
+ * 16 KB keeps the 500ms cadence (every ordinary turn — nothing changes),
+ * a 125 KB automation monster drops to one every ~4s, the ceiling to one
+ * every 12s. Nothing is lost to the slower cadence: a skipped tick's content
+ * rides the next snapshot (each is a superset of the last), the trailing
+ * flush below sends the newest cached snapshot the moment the window opens,
+ * and phone-run turns keep their token-by-token feel from the delta rail,
+ * whose cost is the prose itself.
+ *
+ * The budget is charged GLOBALLY as well as per conversation — the socket is
+ * one pipe, and two automations overlapping would otherwise each claim the
+ * full rate and rebuild the very backlog this bounds. The number leaves
+ * interactive headroom (deltas, card events, file chunks) even on a 3G-grade
+ * ~50 KB/s link.
+ */
+const MIRROR_BYTES_PER_SEC = 32 * 1024
+
+/**
+ * Local-socket backlog above which even a due mirror waits. bufferedAmount
+ * sees only the desktop→relay hop — what the relay is still holding for a
+ * slow phone drains out of sight — so this is a supplement to the byte
+ * pacing above, not the mechanism: it catches this machine's own uplink
+ * filling, which no wall-clock budget can.
+ */
+const MIRROR_BACKLOG_MAX_BYTES = 512 * 1024
+
+/** Re-check cadence while a due mirror waits out a congested socket. */
+const MIRROR_RETRY_MS = 250
+
+/**
  * Ceiling on one served conversation body, under the same 1 MiB record cap
  * with room for the RPC envelope, encryption overhead and the metadata
  * columns riding beside the messages. A body that outgrew it used to go out
@@ -445,8 +485,39 @@ export class MobileChannel {
    */
   private readonly lastMirrors = new Map<
     string,
-    { message: ConversationMessage; userMessage?: ConversationMessage }
+    /** deltaSeq: how many text deltas had been pushed when this snapshot was
+     *  cached — the trailing flush's staleness check (see mirrorDeltaSeq). */
+    { message: ConversationMessage; userMessage?: ConversationMessage; deltaSeq?: number }
   >()
+  /**
+   * Mirror pacing per conversation: when the last snapshot was actually SENT
+   * and how big it was — its size decides the earliest next send — plus the
+   * trailing timer that pushes the newest cached snapshot once the window
+   * opens. A deferred tick loses nothing: lastMirrors above always holds the
+   * freshest fitted snapshot, and the flush sends THAT, so the phone's next
+   * mirror is a superset of every one skipped under it.
+   */
+  private readonly mirrorPace = new Map<
+    string,
+    { sentAt: number; sentBytes: number; timer: NodeJS.Timeout | null }
+  >()
+  /**
+   * The whole rail's last send — every conversation's mirrors share one
+   * socket, so the byte budget is charged here as well as per conversation:
+   * concurrent turns split the rate instead of stacking it.
+   */
+  private mirrorRail = { sentAt: 0, sentBytes: 0 }
+  /**
+   * Text deltas pushed per conversation, counted so the trailing flush can
+   * tell whether its cached snapshot is already BEHIND the delta rail. A
+   * snapshot is only allowed to reset the phone's tail when it contains
+   * every delta sent before it (prompt.ts composes on that promise); one
+   * cached before the newest delta would punch that delta's words out of
+   * the visible prose. Such a flush is skipped — the phone holds the words
+   * as tail, and the next fresh tick sends a snapshot that truly contains
+   * them.
+   */
+  private readonly mirrorDeltaSeq = new Map<string, number>()
   /**
    * Live out-of-window mirror INTO the renderer — the exact counterpart of
    * ElectronChannel.setMessageMirror, pointed the other way. A phone-run turn
@@ -610,6 +681,7 @@ export class MobileChannel {
     this.pendingNotifies.clear()
     this.drainTurnRequests(null, 'channel stopped')
     this.clearOffer()
+    this.clearMirrorPacing()
     await this.abortAllUploads()
     this.tunnel?.stop()
     this.tunnel = null
@@ -873,6 +945,7 @@ export class MobileChannel {
     display: { payload: string | null; code: string | null }
   ): Promise<void> {
     this.clearOffer()
+    this.clearMirrorPacing()
     this.tunnel?.stop()
     this.tunnel = null
 
@@ -915,6 +988,7 @@ export class MobileChannel {
    */
   async disconnect(): Promise<MobileStatus> {
     this.clearOffer()
+    this.clearMirrorPacing()
     this.tunnel?.stop()
     this.tunnel = null
     this.tunnelState = null
@@ -927,6 +1001,9 @@ export class MobileChannel {
   async unpair(): Promise<MobileStatus> {
     this.drainTurnRequests(null, 'phone unpaired')
     this.clearOffer()
+    this.clearMirrorPacing()
+    this.lastMirrors.clear()
+    this.mirrorDeltaSeq.clear()
     this.tunnel?.stop()
     this.tunnel = null
     this.tunnelState = null
@@ -2338,7 +2415,7 @@ export class MobileChannel {
      */
     let lastMirrorAt = 0
     let mirrorTimer: NodeJS.Timeout | null = null
-    const emitMirror = (): void => {
+    const emitMirror = (urgent: boolean): void => {
       // A trailing tick from a turn already released — finished, or preempted
       // by a second send into the same conversation — must not push a stale
       // snapshot over the message that replaced it.
@@ -2359,8 +2436,10 @@ export class MobileChannel {
       if (!message) return
       // The prompt rides every tick, exactly as the in-app mirror sends it: a
       // phone that pairs — or relaunches — mid-turn only ever sees ticks, and
-      // the answer without its question is the gap this closes.
-      this.pushMessageAppended(conversationId, message, userMessage)
+      // the answer without its question is the gap this closes. `urgent` is
+      // the immediate flush — a parked card's anchor — which must not sit out
+      // the byte pacing either.
+      this.pushMessageAppended(conversationId, message, userMessage, { urgent })
     }
     const scheduleMirror = (immediate: boolean): void => {
       const sinceLast = Date.now() - lastMirrorAt
@@ -2369,13 +2448,13 @@ export class MobileChannel {
           clearTimeout(mirrorTimer)
           mirrorTimer = null
         }
-        emitMirror()
+        emitMirror(immediate)
         return
       }
       if (mirrorTimer) return
       mirrorTimer = setTimeout(() => {
         mirrorTimer = null
-        emitMirror()
+        emitMirror(false)
       }, MIRROR_THROTTLE_MS - sinceLast)
       mirrorTimer.unref?.()
     }
@@ -2581,6 +2660,9 @@ export class MobileChannel {
 
   /** Streaming assistant output for whichever conversation the phone has open. */
   pushMessageDelta(conversationId: string, text: string, seq: number): void {
+    // Counted before the emit so a snapshot cached in the same tick reads the
+    // count INCLUDING this delta exactly when it includes its text.
+    this.mirrorDeltaSeq.set(conversationId, (this.mirrorDeltaSeq.get(conversationId) ?? 0) + 1)
     this.tunnel?.emit(Event.messageDelta, { conversationId, text, seq })
   }
 
@@ -2619,7 +2701,12 @@ export class MobileChannel {
    * dropped along with an assistant snapshot that needed trimming: those are
    * exactly the long turns where the gap is most visible.
    */
-  pushMessageAppended(conversationId: string, message: unknown, userMessage?: unknown): void {
+  pushMessageAppended(
+    conversationId: string,
+    message: unknown,
+    userMessage?: unknown,
+    opts?: { urgent?: boolean }
+  ): void {
     const prompt = userMessage === undefined ? {} : { userMessage }
     if (message !== undefined) {
       const fitted = this.fitMirror(conversationId, message)
@@ -2628,38 +2715,141 @@ export class MobileChannel {
         return
       }
       this.lastMirrors.set(conversationId, {
-        message: fitted,
+        message: fitted.message,
+        deltaSeq: this.mirrorDeltaSeq.get(conversationId) ?? 0,
         ...(userMessage !== undefined ? { userMessage: userMessage as ConversationMessage } : {})
       })
-      this.tunnel?.emit(Event.messageAppended, { conversationId, message: fitted, ...prompt })
+      // Urgent flushes (a parked approval/ask needs its anchor segment on the
+      // phone BEFORE the request event) go regardless; everything else pays
+      // the byte pacing. A deferred tick is not lost — the trailing flush
+      // sends the newest cached snapshot when the window opens.
+      if (!opts?.urgent && this.deferMirror(conversationId)) return
+      this.mirrorPace.set(conversationId, {
+        sentAt: Date.now(),
+        sentBytes: fitted.bytes,
+        timer: this.clearMirrorTimer(conversationId)
+      })
+      this.mirrorRail = { sentAt: Date.now(), sentBytes: fitted.bytes }
+      this.tunnel?.emit(Event.messageAppended, {
+        conversationId,
+        message: fitted.message,
+        ...prompt
+      })
       return
     }
     this.tunnel?.emit(Event.messageAppended, { conversationId, ...prompt })
   }
 
+  /** Cancel a conversation's pending mirror flush, if any. Returns null for
+   *  the convenience of writing the cleared field in one expression. */
+  private clearMirrorTimer(conversationId: string): null {
+    const pace = this.mirrorPace.get(conversationId)
+    if (pace?.timer) clearTimeout(pace.timer)
+    if (pace) pace.timer = null
+    return null
+  }
+
+  /**
+   * Drop every pacing record and pending flush — the tunnel they were pacing
+   * is going away. The turn-so-far cache is NOT touched here: a disconnect
+   * keeps the pairing, and the rejoin serves lastMirrors to the returning
+   * phone. Only unpair forgets that too, with the rest of the relationship.
+   */
+  private clearMirrorPacing(): void {
+    for (const pace of this.mirrorPace.values()) {
+      if (pace.timer) clearTimeout(pace.timer)
+    }
+    this.mirrorPace.clear()
+    this.mirrorRail = { sentAt: 0, sentBytes: 0 }
+  }
+
+  /**
+   * True when this mirror tick must wait — still inside the pace window its
+   * predecessor's size bought, or behind a congested local socket. Arms the
+   * trailing flush so the newest snapshot still goes out the moment it may.
+   */
+  private deferMirror(conversationId: string): boolean {
+    const pace = this.mirrorPace.get(conversationId)
+    const congested = (this.tunnel?.outboundBufferedBytes ?? 0) > MIRROR_BACKLOG_MAX_BYTES
+    const paceWait = (sent: { sentAt: number; sentBytes: number } | undefined): number =>
+      sent
+        ? sent.sentAt + Math.ceil((sent.sentBytes * 1000) / MIRROR_BYTES_PER_SEC) - Date.now()
+        : 0
+    // The stricter of two windows: this conversation's own, and the whole
+    // rail's — one socket, so concurrent turns split the budget rather than
+    // each claiming it.
+    const waitMs = Math.max(paceWait(pace), paceWait(this.mirrorRail))
+    if (!congested && waitMs <= 0) return false
+    const delay = congested ? Math.max(waitMs, MIRROR_RETRY_MS) : waitMs
+    const entry = pace ?? { sentAt: 0, sentBytes: 0, timer: null }
+    if (!pace) this.mirrorPace.set(conversationId, entry)
+    if (!entry.timer) {
+      entry.timer = setTimeout(() => this.flushPacedMirror(conversationId), delay)
+      entry.timer.unref?.()
+    }
+    return true
+  }
+
+  /** The trailing edge of the pacing: push the newest cached snapshot, or
+   *  nothing if the turn has since ended — the stored body is the truth then. */
+  private flushPacedMirror(conversationId: string): void {
+    this.clearMirrorTimer(conversationId)
+    const cached = this.lastMirrors.get(conversationId)
+    if (!cached) return
+    // A snapshot cached BEFORE the newest delta must not go out: on the
+    // phone a mirror resets the tail on the promise that it contains every
+    // delta sent before it, and this one would arrive after deltas it does
+    // not contain — their words would vanish from the visible prose. The
+    // phone already holds them as tail; the next tick caches a snapshot
+    // that truly contains them and sends into a now-open window.
+    if ((this.mirrorDeltaSeq.get(conversationId) ?? 0) !== (cached.deltaSeq ?? 0)) return
+    try {
+      // Re-enters the paced path: a still-congested socket re-arms the timer,
+      // an open window sends.
+      this.pushMessageAppended(conversationId, cached.message, cached.userMessage)
+    } catch {
+      // a socket that died between the check and the send costs one mirror,
+      // never the process — the reconnect path re-serves the turn-so-far
+    }
+  }
+
   /** The snapshot within the wire budget — trimmed when it must be, null only
    *  when nothing sendable can be made of it. */
-  private fitMirror(conversationId: string, message: unknown): ConversationMessage | null {
+  private fitMirror(
+    conversationId: string,
+    message: unknown
+  ): { message: ConversationMessage; bytes: number } | null {
     let size = 0
     try {
       size = Buffer.byteLength(JSON.stringify(message) ?? '')
     } catch {
       return null // unserializable is not sendable either
     }
-    if (size <= MIRROR_MAX_BYTES) return message as ConversationMessage
+    if (size <= MIRROR_MAX_BYTES) return { message: message as ConversationMessage, bytes: size }
     const fitted = fitMirrorMessage(message as ConversationMessage, MIRROR_MAX_BYTES)
     if (fitted === null) {
       this.debug(`mirror for ${conversationId} withheld — ${size} bytes and untrimmable`)
       return null
     }
     this.debug(`mirror for ${conversationId} trimmed to fit — ${size} bytes over budget`)
-    return fitted
+    let fittedBytes = MIRROR_MAX_BYTES
+    try {
+      fittedBytes = Buffer.byteLength(JSON.stringify(fitted) ?? '')
+    } catch {
+      // sized a moment ago; the ceiling stands in if it will not size again
+    }
+    return { message: fitted, bytes: fittedBytes }
   }
 
   pushTurnStatus(conversationId: string, state: string, detail?: unknown): void {
     // Every state this carries is a turn boundary — started, done, canceled,
     // error — and at a boundary the cached turn-so-far is over: a finished
     // turn's truth is the stored body, a fresh turn's first tick re-caches.
+    // The pace record and its pending flush go with it: a mirror sent after
+    // the boundary would re-open the live overlay the phone just settled.
+    this.clearMirrorTimer(conversationId)
+    this.mirrorPace.delete(conversationId)
+    this.mirrorDeltaSeq.delete(conversationId)
     this.lastMirrors.delete(conversationId)
     this.tunnel?.emit(Event.turnStatus, { conversationId, state, detail })
   }

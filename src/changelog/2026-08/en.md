@@ -1,4 +1,10 @@
-## v1.0.270 — 2026-08-27 `Latest`
+## v1.0.271 — 2026-08-27 `Latest`
+
+### The Phone Is Never Minutes Behind Again
+
+While a turn ran, this app sent the paired phone a full snapshot of the reply-so-far twice a second, however large the reply had grown — on a long automation run that is hundreds of kilobytes every half-second, down one connection. A phone on a slower network could never keep up: the backlog grew for the whole run, and the reply kept "streaming" there **a word at a time, minutes after the desktop had finished**. Snapshots now **pay for their own size** — a small one keeps the half-second rhythm every ordinary chat has always had, a heavy one waits in proportion, and overlapping runs **share one budget** instead of stacking on the same wire. Nothing is lost to the pacing: every snapshot carries the whole reply so far, the newest one goes out the moment the wire has room, the live word-by-word text rides beside them untouched, and a question or approval waiting on you still lands instantly. The phone stays seconds behind at worst — and everything else it does, other chats and settings and files, stops queuing behind a monster turn.
+
+## v1.0.270 — 2026-08-27
 
 ### Replies Are Saved as Paragraphs, Not Confetti
 
