@@ -1,4 +1,10 @@
-## v1.0.269 — 2026-08-25 `Latest`
+## v1.0.270 — 2026-08-27 `Latest`
+
+### Replies Are Saved as Paragraphs, Not Confetti
+
+Every streamed reply was being stored one fragment per instant of writing — a few characters each. A single automation answer could carry **thousands of them**, wrapping a ten-kilobyte reply in a quarter-megabyte of packaging that every reader paid for afterwards: this window redrawing it, the paired phone downloading and storing it, every later open re-parsing it. Prose now **folds into whole paragraphs as it streams**, across every surface that writes conversations — chats here, Telegram, WhatsApp, the terminal, and the automations that run on their own. Transcripts hold the same words at a fraction of the weight, and nothing about how they read changes.
+
+## v1.0.269 — 2026-08-25
 
 ### Your Phone Hears Every Save
 
