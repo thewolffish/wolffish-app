@@ -1,4 +1,10 @@
-## v1.0.271 — 2026-08-27 `Latest`
+## v1.0.272 — 2026-08-27 `Latest`
+
+### The Chrome Finds Its Height on Windows
+
+The chat's two glass discs — and the strip of pages atop the conversations sheet — floated at a height chosen for macOS, where the app hides the system titlebar and has to clear the traffic lights. Windows and Linux keep their **native titlebar above the app**, so the same offset left the discs hanging in dead air, visibly lower than the back button every other page already places correctly. The floating chrome now **sits at each platform's own height**: on Windows and Linux the discs and the sheet's pages ride up to match the tighter layout, and the discs take **a touch more breathing room from the window edges**. macOS keeps its geometry exactly as it was.
+
+## v1.0.271 — 2026-08-27
 
 ### The Phone Is Never Minutes Behind Again
 

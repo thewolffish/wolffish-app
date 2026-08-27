@@ -9,6 +9,7 @@ import {
   type ConversationRow
 } from '@lib/conversation-rows'
 import { cn } from '@lib/utils/cn'
+import { isMac } from '@lib/utils/platform'
 import type { ConversationMeta, Project } from '@preload/index'
 import { useFlow, type Screen } from '@providers/flow/useFlow'
 import { useSessions } from '@providers/sessions/useSessions'
@@ -210,8 +211,9 @@ export function ConversationsSheet({ onClose }: { onClose: () => void }): React.
       >
         {/* Fixed page rows — deliberately NOT part of the scroller, so the
             way out of chat never scrolls away behind a long history. pt-12
-            clears the titlebar drag strip (and macOS traffic lights). */}
-        <nav className="flex shrink-0 flex-col gap-0.5 px-2.5 pt-12 pb-1">
+            clears the macOS traffic lights; Windows/Linux keep their native
+            titlebar above the webview, so the rows sit higher. */}
+        <nav className={cn('flex shrink-0 flex-col gap-0.5 px-2.5 pb-1', isMac ? 'pt-12' : 'pt-6')}>
           {NAV.map(({ key, screen, icon: Icon, labelKey }) => (
             <button
               key={key}

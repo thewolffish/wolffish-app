@@ -2,6 +2,8 @@ import { ConversationsSheet } from '@components/common/floating-chrome/Conversat
 import { glassButtonClass } from '@components/common/floating-chrome/glass'
 import { NewChatButton } from '@components/common/new-chat-button/NewChatButton'
 import { ProjectDialog } from '@components/common/project-dialog/ProjectDialog'
+import { cn } from '@lib/utils/cn'
+import { isMac } from '@lib/utils/platform'
 import { useSessions } from '@providers/sessions/useSessions'
 import { Menu01Icon } from 'hugeicons-react'
 import { useState } from 'react'
@@ -38,7 +40,15 @@ export function FloatingChrome(): React.JSX.Element {
 
   return (
     <>
-      <div className="pointer-events-none fixed inset-x-0 top-12 z-30 flex items-center justify-between px-3">
+      {/* macOS clears the traffic lights at top-12/px-3; Windows/Linux keep
+          their native titlebar above the webview, so the discs ride higher and
+          get a touch more breathing room from the window edges. */}
+      <div
+        className={cn(
+          'pointer-events-none fixed inset-x-0 z-30 flex items-center justify-between',
+          isMac ? 'top-12 px-3' : 'top-6 px-4'
+        )}
+      >
         <button
           type="button"
           onClick={() => setSheetOpen(true)}
