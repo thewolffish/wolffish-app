@@ -1,4 +1,14 @@
-## v1.0.272 — 2026-08-27 `Latest`
+## v1.0.273 — 2026-08-28 `Latest`
+
+### Voice Notes on WhatsApp Actually Play Now
+
+A spoken reply the agent sent to WhatsApp as a push-to-talk voice note arrived — and **tapping it played nothing**: WhatsApp plays voice notes in one format only, **OGG/Opus**, and the app was handing it the TTS file as-is, usually an MP3. The agent now knows the rule. Voice notes meant to be heard on WhatsApp are **always OGG/Opus**; the agent **converts them with the app's own bundled ffmpeg** the moment the audio would otherwise be MP3 or WAV, and an MP3 goes out untouched only when you asked for a file to save or share, not a note to play. Every voice reply, spoken memo, or audio you tap and hear in WhatsApp **plays now**.
+
+### The Agent Owns Its Own Management — and Reaches for It
+
+Three capabilities run Wolffish itself: **automations** (the heartbeat), **projects** (shared context), and **procedures** (saved prompts). Until now the agent had to hear a capability's own name; say "change the daily", "add my files", or "save that as" and it could miss the intent entirely, or answer by editing the underlying markdown by hand. These skills now declare themselves owned. The agent recognizes **the intent in the way you actually phrase things** — "make it run automatically", "that job didn't run", "which project am I in", "the one I use for X" — and reaches for the capability's own tools first, touching files only as a fallback. Requests you speak are now answered by the right tool, in one go.
+
+## v1.0.272 — 2026-08-27
 
 ### The Chrome Finds Its Height on Windows
 

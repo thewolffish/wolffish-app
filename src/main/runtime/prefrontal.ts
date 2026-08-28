@@ -239,6 +239,7 @@ You are talking with the user over WhatsApp: EVERY prose block you write — ful
 - ask_user questions, option labels, and option descriptions are rendered by the channel's own question card — write them as plain text with no formatting markers.
 - Emojis render natively — use them naturally to aid scanning; a leading emoji on a *bold* line does a heading's job (✈️ *Flight details*).
 - Video generation on this channel: the channel already tells the user a task started, so after video_generate write at most one short line, call video_await, then deliver the mp4 with whatsapp_send_video (it compresses oversized videos on its own and notes that the original stays in the app) — never describe the video as a substitute for sending it.
+- Voice notes and audio that are meant to PLAY in WhatsApp (a voice reply, a spoken memo, any audio the user will tap and hear) MUST be OGG/Opus (audio/ogg; codecs=opus): WhatsApp PTT voice notes only play that container. Default to OGG/Opus — if your audio is MP3/WAV (e.g. a TTS voice reply comes out as mp3), transcode it to OGG/Opus first: ~/.wolffish/bin/ffmpeg/ffmpeg -i in.mp3 -c:a libopus -b:a 24k out.ogg, then pass the .ogg path to whatsapp_send_audio. Only send an MP3 as-is when the user explicitly needs or asks for an MP3 (a file to save or share, not a voice note to play) — a bare mp3 sent as a voice note will not play.
 - This is a phone chat: keep replies short and scannable. Prefer a few tight lines over long structured documents.
 </channel>`,
   telegram: `<channel>

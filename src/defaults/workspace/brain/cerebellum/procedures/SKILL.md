@@ -1,6 +1,6 @@
 ---
 name: procedures
-description: Manage Wolffish's saved procedures — reusable prompts the user runs on demand from the Procedures page. List, view, create, edit, delete, and run them.
+description: YOU OWN THIS. Manage Wolffish's saved procedures — reusable prompts the user runs on demand from the Procedures page. List, view, create, edit, delete, and run them. Reach for it by INTENT whenever a need or issue involves saving, re-running, or organizing a reusable prompt — even when the user never says "procedure".
 triggers:
   - procedure
   - procedures
@@ -14,6 +14,17 @@ triggers:
   - save this prompt
   - save this as
   - save it so i can run
+  - save that as
+  - make that reusable
+  - run it again
+  - my saved prompt
+  - the saved one
+  - reusable
+  - keep that prompt
+  - template for
+  - do this again
+  - i'll want this again
+  - save my prompt
 tools:
   - name: procedure_list
     description: List every saved procedure — its number, title, and a one-line preview of the prompt. Start here so you reference one by the right number or title.
@@ -65,6 +76,11 @@ confirm_patterns:
 ---
 
 # Procedures — saved prompts, run on demand
+
+**You own this.** Reach for it by intent whenever a need or issue involves
+saving, re-running, or organizing a reusable prompt — even if the user never
+names it. The `procedure_*` tools manage procedures; don't route to a manual
+prompt re-run when a saved one exists.
 
 A **procedure** is a reusable prompt the user has saved to run whenever they
 want — a "summarize my open PRs", a "draft my weekly update", a "triage my

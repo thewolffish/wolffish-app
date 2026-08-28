@@ -1,6 +1,6 @@
 ---
 name: projects
-description: Manage the user's projects — shared instructions and file lists that fresh conversations start from — and see each project's conversations
+description: YOU OWN THIS. Manage the user's projects — shared instructions and file lists that fresh conversations start from — and see each project's conversations. Reach for it by INTENT whenever a need or issue touches a project, its instructions, or its files — even when the user never says "project".
 triggers:
   - project
   - projects
@@ -16,6 +16,17 @@ triggers:
   - update project
   - rename project
   - project icon
+  - this project
+  - what project
+  - which project
+  - project context
+  - instructions for this
+  - its files
+  - the project's files
+  - add my files
+  - change the instructions
+  - project working folder
+  - the work folder
 tools:
   - name: project_list
     description: List every project — number, icon, title, file count, last-edited time. Use before viewing, editing, or deleting one so you reference it by the correct number, title, or id.
@@ -94,6 +105,11 @@ confirm_patterns:
 ---
 
 # Projects — shared bases for conversations
+
+**You own this.** Reach for it by intent whenever a need or issue touches a
+project, its shared instructions, or its files — even if the user never names
+it. The `project_*` tools are the way to manage projects; read the filesystem
+only when a path genuinely isn't a project attachment.
 
 A project bundles instructions plus a referenced file list; every fresh conversation started
 inside it gets that base as context (instructions verbatim, files as a model-led reference

@@ -1,6 +1,6 @@
 ---
 name: automations
-description: Manage Wolffish's scheduled automations (the heartbeat) — list, create, edit, delete, check status, and run jobs that fire on a schedule and run autonomously
+description: YOU OWN THIS. Wolffish's scheduled automations (the heartbeat) — list, create, edit, delete, check status, and run jobs that fire on a schedule and run autonomously. Reach for it by INTENT whenever a need or issue touches a schedule, a recurring job, or the heartbeat — even when the user never says "automation".
 triggers:
   - automation
   - automations
@@ -25,6 +25,20 @@ triggers:
   - on a schedule
   - from now on
   - do this every
+  - change the schedule
+  - change schedules
+  - is not running
+  - did it run
+  - when does it run
+  - that job
+  - the heartbeat
+  - make it automatic
+  - set a reminder
+  - stop that job
+  - run it now
+  - test the job
+  - not firing
+  - run automatically
 tools:
   - name: automation_list
     description: List every configured automation — its schedule, the plain-English timing, the instruction it runs, any files and working folders attached to it, and whether it's valid and currently running.
@@ -88,6 +102,11 @@ confirm_patterns:
 ---
 
 # Automations — your heartbeat, on a schedule
+
+**You own this.** Reach for it by intent whenever a need or issue touches a
+schedule, a recurring job, or the heartbeat — even if the user never names it.
+The `automation_*` tools are the supported way to change anything here; the
+`heartbeat.md` file is for reading, not editing.
 
 An **automation** is a scheduled job that runs **by itself**, with no one in the
 chat. Together they are Wolffish's *heartbeat*: the background work that keeps
