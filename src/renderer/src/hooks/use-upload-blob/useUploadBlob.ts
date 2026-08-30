@@ -36,7 +36,8 @@ export function useUploadBlob(
       // few hundred ms. A genuinely missing file still ends in the error state.
       for (let attempt = 0; ; attempt++) {
         try {
-          const buffer: ArrayBuffer = await window.api.upload.readFile(filePath)
+          const buffer = await window.api.upload.readFile(filePath)
+          if (!buffer) throw new Error(`missing upload: ${filePath}`)
           if (cancelled) return
           const blob = new Blob([buffer], { type: mimeType })
           const objectUrl = URL.createObjectURL(blob)

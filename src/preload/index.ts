@@ -2172,7 +2172,7 @@ export type UploadApi = {
     buffer: ArrayBuffer
     fileName: string
   }) => Promise<UploadedFileMetadata>
-  readFile: (relativePath: string) => Promise<ArrayBuffer>
+  readFile: (relativePath: string) => Promise<ArrayBuffer | null>
   exists: (relativePath: string) => Promise<boolean>
   getMetadata: (relativePath: string) => Promise<UploadFileMeta | null>
   isSupported: (fileName: string) => Promise<boolean>

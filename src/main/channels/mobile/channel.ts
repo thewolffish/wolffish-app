@@ -229,6 +229,11 @@ const BODY_SPOOL_MAX = 4
 function isCleanFeedSegment(segment: Segment): boolean {
   return (
     segment.kind === 'text' ||
+    // In-place thinking is the reply's provenance, not tool mechanics — the
+    // in-app feed and the phone's stored bodies show it regardless of
+    // verbose, so the live mirror must too or the cards pop in only after
+    // the turn persists.
+    segment.kind === 'reasoning' ||
     segment.kind === 'tool_result' ||
     segment.kind === 'task' ||
     segment.kind === 'separator' ||
@@ -2472,7 +2477,8 @@ export class MobileChannel {
         // stream of them is one card, not a card per tick.
         if (segment.kind === 'workflow') upsertWorkflowSegment(acc.segments, segment)
         else if (segment.kind === 'task') upsertTaskSegment(acc.segments, segment)
-        else if (segment.kind === 'text') appendTextSegment(acc.segments, segment)
+        else if (segment.kind === 'text' || segment.kind === 'reasoning')
+          appendTextSegment(acc.segments, segment)
         else acc.segments.push(segment)
         if (segment.kind === 'turn_end') acc.stopReason = segment.stopReason
         if (segment.kind === 'text') {

@@ -2240,7 +2240,7 @@ export class Agent {
       // persist path.
       if (seg.kind === 'workflow') upsertWorkflowSegment(segments, seg)
       else if (seg.kind === 'task') upsertTaskSegment(segments, seg)
-      else if (seg.kind === 'text') appendTextSegment(segments, seg)
+      else if (seg.kind === 'text' || seg.kind === 'reasoning') appendTextSegment(segments, seg)
       else segments.push(seg)
       if (seg.kind === 'text') acc.assistantContent += seg.delta
       if (seg.kind === 'turn_end') acc.stopReason = seg.stopReason
@@ -2253,6 +2253,9 @@ export class Agent {
         textAccum += seg.delta
         return
       }
+      // Reasoning ticks are display-only — flushing the text log per tick
+      // would shred the job log into fragments.
+      if (seg.kind === 'reasoning') return
       flushText()
       if (seg.kind === 'tool_call') {
         listener.onJobLog({

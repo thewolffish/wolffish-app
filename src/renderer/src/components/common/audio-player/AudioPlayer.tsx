@@ -285,10 +285,11 @@ function useAudioBlob(
 
     void (async () => {
       try {
-        const buffer: ArrayBuffer =
+        const buffer =
           source === 'voice'
             ? await window.api.voice.readFile(filePath)
             : await window.api.upload.readFile(filePath)
+        if (!buffer) throw new Error(`missing upload: ${filePath}`)
         if (cancelled) return
         const blob = new Blob([buffer], { type: mimeType })
         const objectUrl = URL.createObjectURL(blob)

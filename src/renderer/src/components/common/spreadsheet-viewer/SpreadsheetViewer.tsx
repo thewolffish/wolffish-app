@@ -53,7 +53,8 @@ function Active({ filePath, fileName }: { filePath: string; fileName: string }):
     let cancelled = false
     void (async () => {
       try {
-        const buffer: ArrayBuffer = await window.api.upload.readFile(filePath)
+        const buffer = await window.api.upload.readFile(filePath)
+        if (!buffer) throw new Error(`missing upload: ${filePath}`)
         const wb = XLSX.read(new Uint8Array(buffer), { type: 'array' })
         if (cancelled) return
         setWorkbook(wb)

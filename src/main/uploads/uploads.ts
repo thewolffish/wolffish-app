@@ -351,11 +351,21 @@ export async function uploadExists(relativePath: string): Promise<boolean> {
  * Read an uploaded file's bytes. The renderer wraps the buffer in a Blob
  * and `URL.createObjectURL` to feed `<img>`, `<audio>`, `<video>` — same
  * pattern voice memos already use.
+ *
+ * Returns null (never throws) for a path that doesn't resolve or a file
+ * that isn't readable: a since-deleted file is a designed-for state every
+ * caller already renders as a "deleted" placeholder, and a thrown
+ * ipcMain.handle error would only spam Electron's "Error occurred in
+ * handler" log in the main console for it.
  */
-export async function readUpload(relativePath: string): Promise<Buffer> {
+export async function readUpload(relativePath: string): Promise<Buffer | null> {
   const abs = resolveUploadPath(relativePath)
-  if (!abs) throw new Error(`Path outside uploads/: ${relativePath}`)
-  return fs.readFile(abs)
+  if (!abs) return null
+  try {
+    return await fs.readFile(abs)
+  } catch {
+    return null
+  }
 }
 
 /**

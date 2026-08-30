@@ -29,9 +29,12 @@ import { c, g, icon, out, safe, shortPath, wrapText, bytes, width } from './ui.m
 import { stdoutIsTty } from './tty.mjs'
 import { createMarkdownStream, renderMarkdown } from './markdown.mjs'
 
+// Line-anchored: a real marker stands on its own line (send_file emits it as
+// the whole output); output that merely QUOTES the marker template mid-line —
+// a grep/cat over code or docs — must never render as a delivered file.
 const OUTPUT_MARKER =
-  /\[wolffish-output:\s*([^\]]+?)\s+\((image|audio|video|document|file|chart)\)\]/g
-const PATH_MARKER = /\[wolffish-path:\s*([^\]]+?)\s+\((folder|file)\)\]/g
+  /^[ \t]*\[wolffish-output:[ \t]*([^\]\n]+?)[ \t]+\((image|audio|video|document|file|chart)\)\][ \t]*$/gm
+const PATH_MARKER = /^[ \t]*\[wolffish-path:[ \t]*([^\]\n]+?)[ \t]+\((folder|file)\)\][ \t]*$/gm
 
 /**
  * Tool results that are purely a delivery marker carry no other information,

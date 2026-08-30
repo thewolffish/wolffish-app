@@ -60,7 +60,8 @@ export function controlTokenNotice(token: string): string {
     `a tokenizer control token, and it was delivered to the user exactly as written. ` +
     `To the user it is meaningless clutter; they cannot be expected to know what it is. ` +
     `Never write control tokens as visible text. When everything is delivered and there ` +
-    `is nothing left to say, end with no output at all instead. If the stray token may ` +
+    `is nothing left to say, end with no output at all instead — a completely empty ` +
+    `reply, zero characters, never a typed placeholder such as "(no output)". If the stray token may ` +
     `have confused the user, clear it up briefly in your next reply; if you wrote it ` +
     `deliberately as content (for example, quoting a token to explain it), disregard this.`
   )

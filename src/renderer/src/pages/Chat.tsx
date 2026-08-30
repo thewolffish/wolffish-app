@@ -4213,6 +4213,13 @@ function renderSegments(
   const blocks: ReactNode[] = []
   let textBuffer = ''
   let textRun = 0
+  let reasoningBuffer = ''
+  let reasoningRun = 0
+  // In-place reasoning (kind 'reasoning') supersedes the legacy turn_end copy:
+  // when any exists in this message, the turn_end card is skipped or the final
+  // iteration's thinking would render twice (broca dual-publishes it for the
+  // mobile/CLI surfaces that only know turn_end).
+  const hasReasoningSegments = segments.some((s) => s.kind === 'reasoning' && !s.worker)
   // Generic guard: every file path already rendered as a player/viewer in this
   // message. Prevents the same file showing twice when it's reachable from more
   // than one detector (e.g. a voice result that also matches the generic media
@@ -4224,7 +4231,22 @@ function renderSegments(
     return true
   }
 
-  const flushText = (): void => {
+  // A run of streamed thinking flushes as one collapsed ReasoningCard at its
+  // true position — above the prose/tool activity that thinking produced. At
+  // most one of textBuffer/reasoningBuffer is ever non-empty (each branch
+  // flushes the other before accumulating), so flushText draining both below
+  // can never reorder them.
+  const flushReasoning = (): void => {
+    if (reasoningBuffer.trim().length === 0) {
+      reasoningBuffer = ''
+      return
+    }
+    reasoningRun += 1
+    blocks.push(<ReasoningCard key={`rs-${reasoningRun}`} content={reasoningBuffer} />)
+    reasoningBuffer = ''
+  }
+
+  const flushTextOnly = (): void => {
     if (textBuffer.length === 0) return
     textRun += 1
     // A standalone wolffish-media image (e.g. a generated meme/GIF) renders as
@@ -4261,6 +4283,11 @@ function renderSegments(
     textBuffer = ''
   }
 
+  const flushText = (): void => {
+    flushTextOnly()
+    flushReasoning()
+  }
+
   // Voice replies: a turn surfaces at most ONE voice_respond memo — the LAST
   // one. The model occasionally replies, then redoes the reply; only the final
   // voice_respond is the real answer, so earlier ones are superseded.
@@ -4292,7 +4319,16 @@ function renderSegments(
       // was the master's input, not the user's; the workflow card is today's
       // subagent surface).
       if (seg.worker) continue
+      // A pending thinking run preceded this prose — its card goes above.
+      flushReasoning()
       textBuffer += seg.delta
+    } else if (seg.kind === 'reasoning') {
+      if (seg.worker) continue // LEGACY orchestrator-mode segments — see text branch
+      // Prose already buffered belongs to the previous iteration — it goes
+      // above this thinking run. Text only: draining the reasoning buffer here
+      // would split one streamed run into a card per tick.
+      flushTextOnly()
+      reasoningBuffer += seg.delta
     } else if (seg.kind === 'workflow') {
       // The workflow card: one full-width, deterministic, collapsible block
       // per run. Snapshots are upserted by workflowId on append, so exactly
@@ -4700,7 +4736,10 @@ function renderSegments(
       } else if (seg.stopReason === 'error') {
         blocks.push(<TurnFooter key={seg.segmentId} stopReason={seg.stopReason} />)
       }
-      if (seg.reasoningContent?.trim()) {
+      // LEGACY: conversations persisted before in-place reasoning segments
+      // carry the final iteration's thinking only here. When the message has
+      // reasoning segments, this is a duplicate of the last one — skip it.
+      if (seg.reasoningContent?.trim() && !hasReasoningSegments) {
         blocks.push(<ReasoningCard key={`r-${seg.segmentId}`} content={seg.reasoningContent} />)
       }
     }
@@ -4966,8 +5005,14 @@ function extractToolResultImage(result?: ToolResultSegment): string | null {
   // send_file's transport — the model's own explicit delivery act. Bare
   // workspace paths, {path} JSON and media_url fields are mere generation
   // (a screenshot tool naming its output file); the harness never delivers
-  // a file the model didn't send.
-  const marker = result.output.match(/\[wolffish-output:\s*([^\]]+?)\s+\(image\)\]/)
+  // a file the model didn't send. Line-anchored (here and in every delivery
+  // extractor below): a real marker stands on its own line — send_file emits
+  // it as the whole output — while a result that merely QUOTES the marker
+  // template mid-line (a grep/cat over code or docs that mention it) must
+  // never mint a phantom viewer for a placeholder path.
+  const marker = result.output.match(
+    /^[ \t]*\[wolffish-output:[ \t]*([^\]\n]+?)[ \t]+\(image\)\][ \t]*$/m
+  )
   return marker ? marker[1].trim() : null
 }
 
@@ -5031,7 +5076,7 @@ function extractToolResultDocuments(
   // file (e.g. browser_pdf returning {"path": …}) is mere generation, and
   // auto-attaching it delivered the file mid-turn before the model's own
   // send_file. Delivery is 100% the model's call.
-  const markerRegex = /\[wolffish-output:\s*([^\]]+?)\s+\(document\)\]/g
+  const markerRegex = /^[ \t]*\[wolffish-output:[ \t]*([^\]\n]+?)[ \t]+\(document\)\][ \t]*$/gm
   let marker: RegExpExecArray | null
   while ((marker = markerRegex.exec(output)) !== null) {
     const markerPath = marker[1].trim()
@@ -5055,7 +5100,9 @@ function extractToolResultMedia(
   result?: ToolResultSegment
 ): { path: string; type: 'audio' | 'video' } | null {
   if (!result?.output || result.status !== 'success') return null
-  const marker = result.output.match(/\[wolffish-output:\s*([^\]]+?)\s+\((audio|video)\)\]/)
+  const marker = result.output.match(
+    /^[ \t]*\[wolffish-output:[ \t]*([^\]\n]+?)[ \t]+\((audio|video)\)\][ \t]*$/m
+  )
   if (marker) {
     return { path: marker[1].trim(), type: marker[2] as 'audio' | 'video' }
   }
@@ -5073,7 +5120,7 @@ function extractToolResultGenericFiles(result?: ToolResultSegment): string[] {
   if (!result?.output || result.status !== 'success') return []
   const paths: string[] = []
   const seen = new Set<string>()
-  const markerRegex = /\[wolffish-output:\s*([^\]]+?)\s+\(file\)\]/g
+  const markerRegex = /^[ \t]*\[wolffish-output:[ \t]*([^\]\n]+?)[ \t]+\(file\)\][ \t]*$/gm
   let match: RegExpExecArray | null
   while ((match = markerRegex.exec(result.output)) !== null) {
     const p = match[1].trim()
@@ -5095,7 +5142,7 @@ function extractToolResultCharts(result?: ToolResultSegment): string[] {
   if (!result?.output || result.status !== 'success') return []
   const paths: string[] = []
   const seen = new Set<string>()
-  const markerRegex = /\[wolffish-output:\s*([^\]]+?)\s+\(chart\)\]/g
+  const markerRegex = /^[ \t]*\[wolffish-output:[ \t]*([^\]\n]+?)[ \t]+\(chart\)\][ \t]*$/gm
   let match: RegExpExecArray | null
   while ((match = markerRegex.exec(result.output)) !== null) {
     const p = match[1].trim()
@@ -5122,7 +5169,8 @@ function extractToolResultPaths(
   if (!result?.output || result.status !== 'success') return []
   const out: { path: string; kind?: 'folder' | 'file' }[] = []
   const seen = new Set<string>()
-  const markerRegex = /\[wolffish-path:\s*([^\]]+?)(?:\s+\((folder|file)\))?\s*\]/g
+  const markerRegex =
+    /^[ \t]*\[wolffish-path:[ \t]*([^\]\n]+?)(?:[ \t]+\((folder|file)\))?[ \t]*\][ \t]*$/gm
   let match: RegExpExecArray | null
   while ((match = markerRegex.exec(result.output)) !== null) {
     const p = match[1].trim()
@@ -5750,18 +5798,19 @@ function textHistory(
 }
 
 /**
- * Merge consecutive text-delta segments (same turn) into one segment.
- * Replay joins deltas anyway, and the UI renders joined text identically —
- * only the on-disk shape changes.
+ * Merge consecutive text-delta and reasoning-delta segments (same turn, same
+ * kind) into one segment each. Replay joins deltas anyway, and the UI renders
+ * joined runs identically — only the on-disk shape changes.
  */
 function coalesceTextSegments(segments: Segment[]): Segment[] {
   const out: Segment[] = []
   for (const s of segments) {
     const prev = out[out.length - 1]
     if (
-      s.kind === 'text' &&
+      (s.kind === 'text' || s.kind === 'reasoning') &&
       prev &&
-      prev.kind === 'text' &&
+      (prev.kind === 'text' || prev.kind === 'reasoning') &&
+      prev.kind === s.kind &&
       prev.turnId === s.turnId &&
       (prev.worker?.id ?? null) === (s.worker?.id ?? null)
     ) {

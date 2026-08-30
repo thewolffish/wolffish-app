@@ -22,13 +22,21 @@ export const MAX_EMPTY_TURN_NUDGES = 2
  * token as text (observed: grok-4.6 emitting a literal `<|eos|>` to the user).
  * Naming silence as valid keeps the choice with the model; the nudge budget
  * above still bounds a genuinely glitched dropout.
+ *
+ * The silent exit must spell out that "empty" means ZERO characters. An
+ * earlier wording ("end with no output again") was taken literally: a model
+ * closed the turn by typing the text `(no output)`, which was delivered to
+ * the user as a reply (observed live, 2026-08-30). Placeholder text that
+ * DESCRIBES silence is still output.
  */
 const EMPTY_TURN_NUDGE_TEXT =
   '[System: You ended your turn without any output or tool call. If the task is ' +
   'complete, reply with a brief summary of what was done. If your closing message ' +
   'was already delivered earlier this turn and there is genuinely nothing left to ' +
-  'say, end with no output again and the turn will close cleanly — never fill the ' +
-  'silence with filler text or a control token. Otherwise, continue the ' +
+  'say, end with an entirely empty response again — zero characters — and the ' +
+  'turn will close cleanly. Do NOT type a placeholder that describes the silence, ' +
+  'such as "(no output)" or "(nothing to add)", and no control tokens: anything ' +
+  'you write is delivered to the user verbatim as a reply. Otherwise, continue the ' +
   'next step now — either call the appropriate tool(s) or give your final answer.]'
 
 /**

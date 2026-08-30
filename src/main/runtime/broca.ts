@@ -203,10 +203,10 @@ export function upsertTaskSegment(
 }
 
 /**
- * Append a text segment, folding it into the previous one when both are
- * adjacent parts of the same prose run — same author (worker or main line,
- * same worker id) with nothing between them. Shared by every surface that
- * accumulates segments, exactly like the snapshot upserts above.
+ * Append a text or reasoning segment, folding it into the previous one when
+ * both are adjacent parts of the same run — same kind, same author (worker
+ * or main line, same worker id) with nothing between them. Shared by every
+ * surface that accumulates segments, exactly like the snapshot upserts above.
  *
  * Without this, a streamed reply persisted one segment PER MODEL TICK — a
  * few characters each. One heartbeat automation's reply landed as 2,441
@@ -215,15 +215,18 @@ export function upsertTaskSegment(
  * the phone, the phone's store — paid O(ticks) forever after. Folded here,
  * a prose run is ONE segment; boundaries stay boundaries, and the first
  * tick's segmentId keeps naming the run so nothing keyed on it moves.
+ * Reasoning streams tick-by-tick exactly like text, so it folds under the
+ * same rule — kinds never fold into each other.
  */
 export function appendTextSegment(
   segments: Segment[],
-  segment: Extract<Segment, { kind: 'text' }>
+  segment: Extract<Segment, { kind: 'text' | 'reasoning' }>
 ): void {
   const last = segments[segments.length - 1]
   if (
     last &&
-    last.kind === 'text' &&
+    (last.kind === 'text' || last.kind === 'reasoning') &&
+    last.kind === segment.kind &&
     last.turnId === segment.turnId &&
     Boolean(last.worker) === Boolean(segment.worker) &&
     last.worker?.id === segment.worker?.id
@@ -236,6 +239,26 @@ export function appendTextSegment(
 
 export type Segment =
   | { kind: 'text'; turnId: string; segmentId: string; delta: string; worker?: SegmentWorker }
+  | {
+      /**
+       * A run of the model's thinking, streamed in place — one delta per
+       * provider tick, folded per run by appendTextSegment exactly like text,
+       * so the whole turn's reasoning renders at its true position (before
+       * the prose/tool calls it produced), not just the final iteration's.
+       * Display-only: both model-context rebuild paths ignore it.
+       *
+       * Dual-published on purpose: the final iteration's thinking still rides
+       * `turn_end.reasoningContent` (unchanged) so surfaces that predate this
+       * kind — the mobile app, the CLI renderer — keep their turn-end
+       * reasoning card. The in-app renderer prefers these in-place segments
+       * and skips the turn_end copy whenever a message contains any.
+       */
+      kind: 'reasoning'
+      turnId: string
+      segmentId: string
+      delta: string
+      worker?: SegmentWorker
+    }
   | {
       kind: 'tool_call'
       turnId: string
@@ -406,6 +429,13 @@ export class Broca {
       if (chunk.type === 'text' && chunk.text.length > 0) {
         this.emit({
           kind: 'text',
+          turnId: this.requireTurn(),
+          segmentId: this.nextId(),
+          delta: chunk.text
+        })
+      } else if (chunk.type === 'reasoning' && chunk.text.length > 0) {
+        this.emit({
+          kind: 'reasoning',
           turnId: this.requireTurn(),
           segmentId: this.nextId(),
           delta: chunk.text

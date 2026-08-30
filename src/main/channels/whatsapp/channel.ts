@@ -2480,7 +2480,8 @@ export class WhatsAppChannel {
     // per run/task or a long run persists hundreds of full snapshots.
     if (segment.kind === 'workflow') upsertWorkflowSegment(active.segments, segment)
     else if (segment.kind === 'task') upsertTaskSegment(active.segments, segment)
-    else if (segment.kind === 'text') appendTextSegment(active.segments, segment)
+    else if (segment.kind === 'text' || segment.kind === 'reasoning')
+      appendTextSegment(active.segments, segment)
     else active.segments.push(segment)
 
     if (segment.kind === 'workflow') {
@@ -3602,8 +3603,11 @@ function extractWolffishMediaPaths(
   const seen = new Set<string>()
 
   // Explicit [wolffish-output: path (image)] markers — send_file's transport,
-  // i.e. the model's own deliberate delivery act.
-  const markerRegex = /\[wolffish-output:\s*([^\]]+?)\s+\(image\)\]/g
+  // i.e. the model's own deliberate delivery act. Line-anchored: a real marker
+  // stands on its own line (send_file emits it as the whole output); output
+  // that merely QUOTES the template mid-line — grep/cat over code or docs —
+  // must never trigger a send.
+  const markerRegex = /^[ \t]*\[wolffish-output:[ \t]*([^\]\n]+?)[ \t]+\(image\)\][ \t]*$/gm
   let match: RegExpExecArray | null
   while ((match = markerRegex.exec(output)) !== null) {
     const abs = match[1].trim()
@@ -3644,10 +3648,11 @@ function extractDocumentPaths(output: string): string[] {
   // MARKER-ONLY by design: the [wolffish-output: … (document)] marker is
   // send_file's transport — the model's explicit delivery act. Bare {path}
   // JSON and prose paths are mere generation; the harness never auto-sends.
+  // Line-anchored: a quoted marker template mid-line is not a delivery.
   const paths: string[] = []
   const seen = new Set<string>()
   const home = os.homedir()
-  const markerRegex = /\[wolffish-output:\s*([^\]]+?)\s+\(document\)\]/g
+  const markerRegex = /^[ \t]*\[wolffish-output:[ \t]*([^\]\n]+?)[ \t]+\(document\)\][ \t]*$/gm
   let markerMatch: RegExpExecArray | null
   while ((markerMatch = markerRegex.exec(output)) !== null) {
     const raw = markerMatch[1].trim()
@@ -3670,7 +3675,8 @@ function extractGenericFilePaths(output: string): string[] {
   const paths: string[] = []
   const seen = new Set<string>()
   const home = os.homedir()
-  const markerRegex = /\[wolffish-output:\s*([^\]]+?)\s+\((?:file|chart)\)\]/g
+  const markerRegex =
+    /^[ \t]*\[wolffish-output:[ \t]*([^\]\n]+?)[ \t]+\((?:file|chart)\)\][ \t]*$/gm
   let match: RegExpExecArray | null
   while ((match = markerRegex.exec(output)) !== null) {
     const raw = match[1].trim()
@@ -3692,8 +3698,9 @@ function extractAudioVideoPaths(output: string): { path: string; type: 'audio' |
     return p.startsWith('~/') ? path.join(home, p.slice(2)) : p
   }
 
-  // 1. Explicit [wolffish-output: path (audio|video)] markers
-  const markerRegex = /\[wolffish-output:\s*([^\]]+?)\s+\((audio|video)\)\]/g
+  // 1. Explicit [wolffish-output: path (audio|video)] markers (line-anchored —
+  //    a quoted marker template mid-line is not a delivery)
+  const markerRegex = /^[ \t]*\[wolffish-output:[ \t]*([^\]\n]+?)[ \t]+\((audio|video)\)\][ \t]*$/gm
   let match: RegExpExecArray | null
   while ((match = markerRegex.exec(output)) !== null) {
     const abs = resolvePath(match[1].trim())

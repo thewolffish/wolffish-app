@@ -4345,7 +4345,7 @@ app.whenReady().then(async () => {
     }
   )
 
-  handle('upload:readFile', async (_e, relativePath: string): Promise<Buffer> => {
+  handle('upload:readFile', async (_e, relativePath: string): Promise<Buffer | null> => {
     return readUpload(relativePath)
   })
 

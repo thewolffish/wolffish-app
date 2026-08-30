@@ -22,7 +22,8 @@ export function useUploadText(filePath: string | null): { text: string | null; e
     let cancelled = false
     void (async () => {
       try {
-        const buffer: ArrayBuffer = await window.api.upload.readFile(filePath)
+        const buffer = await window.api.upload.readFile(filePath)
+        if (!buffer) throw new Error(`missing upload: ${filePath}`)
         if (cancelled) return
         setLoaded({ forPath: filePath, text: new TextDecoder().decode(buffer), error: false })
       } catch {

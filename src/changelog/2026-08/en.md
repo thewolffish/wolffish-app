@@ -1,4 +1,22 @@
-## v1.0.273 — 2026-08-28 `Latest`
+## v1.0.274 — 2026-08-30 `Latest`
+
+### The Whole Train of Thought, In Its Place
+
+A reasoning model used to leave one **Reasoning** card at the very end of a reply, holding only what it thought before its final words — everything it weighed earlier, before each search and each step, was never shown. Every stretch of thinking now lands as its **own collapsed card, exactly where it happened**, above the words and actions that thinking produced — and it **appears live, while the model is still thinking**, so the long quiet minute at the start of a hard question shows a card filling up instead of nothing at all. Tap to read; copying a reply still copies only the reply itself; old conversations keep the single card they were saved with. The paired phone receives the same cards, streamed mid-turn too.
+
+### A Heads-Up Before the Hands Get Busy
+
+The agent's standing instructions now open every working turn with **a short line about what's about to happen — before the first tool call**, with extra weight on the first reply of a conversation and the start of a big task: exactly the moments a silent spinner reads as a hang. Longer stretches keep dropping a one-liner as phases turn over, so the words remain the progress bar the whole way.
+
+### A Finished Turn Ends Silently — Not With "(no output)"
+
+A turn whose closing message had already gone out could end with a literal **"(no output)"** typed into the chat — the agent obeying an internal instruction a little too literally. Every one of those instructions now spells out that silence means **zero characters**, never a typed placeholder, so a finished turn simply ends.
+
+### Quoting a File Marker No Longer Conjures the File
+
+Tool output that merely **quotes** the app's internal delivery marker — a grep through code, a read of the docs that describe it — could mint a file card for a path that was never sent, and on Telegram or WhatsApp even trigger a real send. A marker now counts **only when it stands on its own line**, the way actual deliveries emit it; a quoted template renders as the plain text it is. In the same spirit, a file whose upload was **since deleted** now shows its calm placeholder everywhere instead of logging errors behind the scenes.
+
+## v1.0.273 — 2026-08-28
 
 ### Voice Notes on WhatsApp Actually Play Now
 

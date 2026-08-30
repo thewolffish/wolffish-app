@@ -86,6 +86,24 @@ ok(
 ok('plain text does NOT deliver', deliveredFileNames('conversion finished OK').length === 0)
 ok('empty output does NOT deliver', deliveredFileNames('').length === 0)
 
+// ── 2b. Quoted marker templates are NOT delivery (line-anchored) ────────
+// A tool result can QUOTE the marker syntax — a grep/cat over code or docs
+// that document it. Only a marker standing on its own line is a delivery.
+ok(
+  'grep-style quoted marker does NOT deliver',
+  deliveredFileNames(
+    'src/pages/Chat.tsx:5004: // MARKER-ONLY by design: the [wolffish-output: path (image)] marker is'
+  ).length === 0
+)
+ok(
+  'marker quoted inside a sentence does NOT deliver',
+  deliveredFileNames('the transport is [wolffish-output: /path (file)] as documented').length === 0
+)
+ok(
+  'indented marker on its own line still delivers',
+  deliveredFileNames('  [wolffish-output: /w/out.png (image)]  ').join() === 'out.png'
+)
+
 // ── 3. The reminder (rides the volatile tail) ───────────────────────────
 const reminder = deliveredFilesReminder(['report.pdf', 'chart.png'])
 ok('reminder is produced', typeof reminder === 'string' && reminder.length > 0)

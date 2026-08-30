@@ -9,10 +9,15 @@
  * auto-delivery: generating a file no longer counts as delivering it, and
  * nothing here may ever talk the model out of sending its output. Delivery
  * is 100% the model's job; this module only remembers what it already sent.
+ *
+ * LINE-ANCHORED: a real marker stands on its own line (send_file emits it as
+ * the whole output; older delivery tools appended it on its own line). Tool
+ * output can QUOTE the marker template mid-line — a grep/cat over code or
+ * docs that mention it — and a quoted template is not a delivery.
  */
 
 const MARKER_RE =
-  /\[wolffish-output:\s*([^\]]+?)\s+\((?:image|audio|video|document|file|chart)\)\]/g
+  /^[ \t]*\[wolffish-output:[ \t]*([^\]\n]+?)[ \t]+\((?:image|audio|video|document|file|chart)\)\][ \t]*$/gm
 
 function basename(p: string): string {
   const cleaned = p.trim().replace(/[/\\]+$/, '')

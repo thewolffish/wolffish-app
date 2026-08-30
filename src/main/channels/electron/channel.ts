@@ -346,7 +346,8 @@ export class ElectronChannel {
         if ('worker' in segment && segment.worker) return
         if (segment.kind === 'workflow') upsertWorkflowSegment(acc.segments, segment)
         else if (segment.kind === 'task') upsertTaskSegment(acc.segments, segment)
-        else if (segment.kind === 'text') appendTextSegment(acc.segments, segment)
+        else if (segment.kind === 'text' || segment.kind === 'reasoning')
+          appendTextSegment(acc.segments, segment)
         else acc.segments.push(segment)
         if (segment.kind === 'turn_end') acc.stopReason = segment.stopReason
         if (segment.kind === 'text') acc.assistantContent += segment.delta

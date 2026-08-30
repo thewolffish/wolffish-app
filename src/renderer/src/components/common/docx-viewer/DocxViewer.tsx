@@ -47,7 +47,8 @@ function Active({ filePath, fileName }: { filePath: string; fileName: string }):
     let cancelled = false
     void (async () => {
       try {
-        const buffer: ArrayBuffer = await window.api.upload.readFile(filePath)
+        const buffer = await window.api.upload.readFile(filePath)
+        if (!buffer) throw new Error(`missing upload: ${filePath}`)
         const result = await mammoth.convertToHtml({ arrayBuffer: buffer })
         if (!cancelled) setHtml(result.value)
       } catch {

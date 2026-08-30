@@ -129,6 +129,10 @@ function capSegment(segment: Segment): Segment {
       }
       return { ...segment, reasoningContent: capHead(segment.reasoningContent, LONG_STRING_CAP) }
     }
+    case 'reasoning': {
+      if (segment.delta.length <= LONG_STRING_CAP) return segment
+      return { ...segment, delta: capHead(segment.delta, LONG_STRING_CAP) }
+    }
     default:
       return segment
   }
@@ -151,6 +155,8 @@ function reduceSegment(segment: Segment): Segment {
       return { ...segment, args: { trimmed: MIRROR_ELIDED_OUTPUT } }
     case 'turn_end':
       return segment.reasoningContent ? { ...segment, reasoningContent: undefined } : segment
+    case 'reasoning':
+      return segment.delta ? { ...segment, delta: '' } : segment
     default:
       return segment
   }
