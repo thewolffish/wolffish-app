@@ -2087,9 +2087,9 @@
       "denied": "Denied"
     },
     "modelPicker": {
-      "search": "Search models",
+      "providersLabel": "Providers",
+      "modelLabel": "Model",
       "noProviders": "Connect a provider API key in Settings first.",
-      "noResults": "No models match your search.",
       "noLocalModels": "No Ollama models installed yet."
     },
     "modePicker": {
@@ -2285,7 +2285,6 @@
       "folders": "Working folders ({{count}})",
       "addFolders": "Add folders",
       "removeFolder": "Remove folder",
-      "expandPrompt": "Click to edit the prompt",
       "prompt": "Prompt",
       "promptPlaceholder": "Write the prompt to run…",
       "autosaveHint": "Saved automatically once the schedule and prompt are valid.",
@@ -2335,7 +2334,6 @@
     "titleRequired": "A title is required",
     "instructions": "Instructions",
     "instructionsPlaceholder": "Write the instructions every conversation in this project starts from…",
-    "expandInstructions": "Click to edit the instructions",
     "noInstructions": "No instructions yet.",
     "copy": "Copy instructions",
     "copied": "Instructions copied",
@@ -2393,7 +2391,6 @@
     "projectIcon": "Uses the project’s icon",
     "titleRequired": "A title is required",
     "prompt": "Prompt",
-    "expandPrompt": "Click to edit the prompt",
     "files": "Files ({{count}})",
     "addFiles": "Add files",
     "removeFile": "Remove file",

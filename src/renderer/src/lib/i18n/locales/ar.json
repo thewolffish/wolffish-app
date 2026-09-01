@@ -2362,9 +2362,9 @@
       }
     },
     "modelPicker": {
-      "search": "ابحث عن نموذج",
+      "providersLabel": "المزوّدون",
+      "modelLabel": "النموذج",
       "noProviders": "اربط مفتاح مزوّد أولًا من الإعدادات.",
-      "noResults": "لا توجد نماذج مطابقة لبحثك.",
       "noLocalModels": "لا توجد نماذج أولاما مثبّتة بعد."
     },
     "modePicker": {
@@ -2560,7 +2560,6 @@
       "folders": "مجلدات العمل ({{count}})",
       "addFolders": "إضافة مجلدات",
       "removeFolder": "إزالة المجلد",
-      "expandPrompt": "انقر لتحرير المطالبة",
       "prompt": "المطالبة",
       "promptPlaceholder": "اكتب المطالبة التي تريد تشغيلها…",
       "autosaveHint": "يُحفظ تلقائيًا متى كانت الجدولة والمطالبة صالحتين.",
@@ -2610,7 +2609,6 @@
     "titleRequired": "العنوان مطلوب",
     "instructions": "التعليمات",
     "instructionsPlaceholder": "اكتب التعليمات التي تبدأ منها كل محادثة في هذا المشروع…",
-    "expandInstructions": "انقر لتحرير التعليمات",
     "noInstructions": "لا توجد تعليمات بعد.",
     "copy": "نسخ التعليمات",
     "copied": "تم نسخ التعليمات",
@@ -2668,7 +2666,6 @@
     "projectIcon": "تُستخدم أيقونة المشروع",
     "titleRequired": "العنوان مطلوب",
     "prompt": "المطالبة",
-    "expandPrompt": "انقر لتحرير المطالبة",
     "files": "الملفات ({{count}})",
     "addFiles": "إضافة ملفات",
     "removeFile": "إزالة الملف",

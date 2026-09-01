@@ -1,4 +1,4 @@
-## v1.0.274 — 2026-08-30 `Latest`
+## v1.0.274 — 2026-08-30
 
 ### The Whole Train of Thought, In Its Place
 
