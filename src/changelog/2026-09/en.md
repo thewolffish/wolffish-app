@@ -1,4 +1,10 @@
-## v1.0.275 — 2026-09-01 `Latest`
+## v1.0.276 — 2026-09-01 `Latest`
+
+### Reasoning That Opens at the Beginning
+
+Tapping a turn's **Reasoning** card used to drop you at the tail of the thinking — its first line flung far above the screen — and closing it could hurl you all the way back up to your own prompt. The card now minds your place in the conversation: expanding scrolls **the head of the reasoning into view** so you always read the thinking from its first line, and collapsing carries you **straight back to the newest message** at the bottom. If the reasoning is short enough to fit where you already are, **nothing moves at all** — and opening a conversation still lands pinned to the end, exactly as before.
+
+## v1.0.275 — 2026-09-01
 
 ### Write the Prompt Right Where You Read It
 
