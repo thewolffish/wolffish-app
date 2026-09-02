@@ -1,4 +1,10 @@
-## v1.0.276 — 2026-09-01 `Latest`
+## v1.0.277 — 2026-09-02 `Latest`
+
+### Reasoning in Plain View
+
+The **Reasoning** card no longer folds the model's thinking behind a click. It is now an **open scroll block, styled like a tool's output**: the thinking sits right there under a small brain icon, grows with what it holds up to **eight lines**, and scrolls inside its own box past that — a one-line thought takes one line, and a long deliberation never swallows the conversation. Hover the block and a **copy** button appears, putting the whole thinking on your clipboard. When a model opens its reasoning with a heading, that **heading becomes the card's title** instead of the plain word "Reasoning". While a reply is still streaming, the block **follows the newest line** as it arrives and stops following the moment you scroll up to read — and a conversation you reopen shows every card from its first line.
+
+## v1.0.276 — 2026-09-01
 
 ### Reasoning That Opens at the Beginning
 

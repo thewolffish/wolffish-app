@@ -4231,7 +4231,7 @@ function renderSegments(
     return true
   }
 
-  // A run of streamed thinking flushes as one collapsed ReasoningCard at its
+  // A run of streamed thinking flushes as one ReasoningCard at its
   // true position — above the prose/tool activity that thinking produced. At
   // most one of textBuffer/reasoningBuffer is ever non-empty (each branch
   // flushes the other before accumulating), so flushText draining both below
