@@ -2087,6 +2087,7 @@
       "denied": "Denied"
     },
     "modelPicker": {
+      "ariaLabel": "Active model",
       "search": "Search models",
       "noProviders": "Connect a provider API key in Settings first.",
       "noResults": "No models match your search.",

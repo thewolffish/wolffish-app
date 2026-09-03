@@ -1,4 +1,14 @@
-## v1.0.278 — 2026-09-03 `Latest`
+## v1.0.279 — 2026-09-04 `Latest`
+
+### One Model, One Chip
+
+The composer carried **two labels side by side** — a Local one and a Cloud one — as though both were somehow live, when only ever one model answers you. There is **a single chip** there now, and it shows **the model that will answer**: your provider's logo and its name, or Ollama's logo and your local model's name. Click it for the same searchable card as before. Choosing a model **is** the switch — pick an Ollama model and you are running local, pick a cloud model and you are running that provider — so the checkmark in the list marks **the one model you're on** instead of one per side. Your local model always keeps a row of its own in that list, so it is there to pick even when Ollama isn't answering.
+
+### The Export Button Waits Until There's Something to Export
+
+The **download-as-PDF** button sat in the header of every conversation, greyed out and unclickable until the chat had something printable in it. On a **brand-new conversation it is simply not there** now, and it appears the moment there is something worth exporting — a dead control says less than no control at all.
+
+## v1.0.278 — 2026-09-03
 
 ### The Model List Comes Back
 

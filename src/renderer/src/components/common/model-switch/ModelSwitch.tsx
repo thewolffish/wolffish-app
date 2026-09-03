@@ -56,13 +56,13 @@ const MODE_ICON: Record<ReasoningMode, typeof BrainIcon> = {
 }
 
 /**
- * Composer model switch: ONE control that is both the Local/Cloud switch and
- * the model selector. Two tabs — Local (Ollama logo + the local model's name)
- * and Cloud (active provider's logo + the cloud model's name) — with the
+ * Composer model switch: ONE control showing the ONE model that will answer —
+ * its logo (Ollama, or the cloud provider's) plus its name — with the
  * searchable, scrollable model-picker card built in (the ContextMeter
- * hover/pin recipe). Hovering previews the card; clicking a tab pins the card
- * open (switching runtime first when that tab wasn't the active one), so
- * "switch to local" and "pick WHICH local model" are one gesture.
+ * hover/pin recipe). Hovering previews the card; clicking the chip pins it
+ * open. There is no Local/Cloud tab pair: a runtime with no model chosen in
+ * it was never a thing you could run, so the runtime is a consequence of the
+ * pick, not a separate switch, and closed the control says only what is live.
  *
  * The list carries both runtimes: the installed Ollama models first (read
  * live from `ollama:listInstalled` each time the card opens, so a model
@@ -104,7 +104,12 @@ export function ModelSwitch({
   chatMode: ChatMode
   /** Chip rows hidden while recording, exactly as the old pills were. */
   showControls: boolean
-  onModeChange: (localOnly: boolean) => void
+  /**
+   * Promise-returning like the pickers below: `pick`/`pickLocal` await it
+   * before dropping their optimistic state, so the chip never falls back to a
+   * runtime the write has already changed.
+   */
+  onModeChange: (localOnly: boolean) => Promise<void>
   onSelectModel: (sel: BrainSelection) => Promise<void>
   /** Selects an already-installed Ollama model as the local model. */
   onSelectLocalModel: (model: string) => Promise<void>
@@ -174,8 +179,9 @@ export function ModelSwitch({
 
   // Installed Ollama models, re-read every time the card opens: `ollama pull`
   // in a terminal (or an `ollama rm`) must be reflected without a relaunch.
-  // Main already swallows a dead daemon into [], so an unreachable Ollama
-  // simply leaves the local group empty.
+  // Main already swallows a dead daemon into [], so this can come back empty
+  // for an unreachable Ollama exactly as it does for an empty one — which is
+  // why `localIds` below keeps a row for the configured model regardless.
   useEffect(() => {
     if (!cardVisible) return
     let cancelled = false
@@ -221,17 +227,33 @@ export function ModelSwitch({
 
   const shownLocal = optimisticLocal ?? localModel
   const localIds = useMemo(() => {
-    const names = installed.map((tag) => tag.name).sort((a, b) => a.localeCompare(b))
+    const names = installed.map((tag) => tag.name)
+    // The configured local model always gets a row of its own. `listInstalled`
+    // reports [] for an unreachable daemon as well as for an empty one, and
+    // the two are indistinguishable here — so without this, opening the card
+    // while Ollama happens to be down offers no row to click and no way back
+    // to the local runtime at all, now that there is no Local tab to fall
+    // back on. Picking it is what starts that runtime; whether the daemon is
+    // answering yet is the runtime's problem, not the picker's.
+    if (shownLocal && !names.includes(shownLocal)) names.push(shownLocal)
+    names.sort((a, b) => a.localeCompare(b))
     if (!q) return names
     return names.filter((m) => m.toLowerCase().includes(q) || 'ollama'.includes(q))
-  }, [installed, q])
+  }, [installed, shownLocal, q])
 
   // With a search on, an empty local group is just noise — hide it. With no
   // search, the group always shows: its "nothing installed" line is the
-  // answer to "why is there nothing here?" after switching to Local.
+  // answer to "why is there no Ollama model to pick?" — which, given the
+  // fallback above, now means genuinely none is configured either.
   const showLocalGroup = localIds.length > 0 || !q
 
-  // The tab text is the MODEL name (the icons already say local vs cloud) —
+  // ONE model is active at a time, and the closed control shows only that
+  // one: its runtime is something the logo says, not a second thing to pick.
+  // An in-flight pick decides the runtime before its await lands, so the chip
+  // and the checkmark move with the click rather than a round-trip later.
+  const shownLocalOnly = optimisticLocal !== null ? true : optimistic !== null ? false : localOnly
+
+  // The chip text is the MODEL name (the logo already says local vs cloud) —
   // with nothing configured it must say so, not echo the mode name as if
   // "Local"/"Cloud" were a model.
   const CloudLogo = activeCloud ? PROVIDER_LOGOS[activeCloud.providerId] : CloudIcon
@@ -239,6 +261,10 @@ export function ModelSwitch({
     ? shortModelName(activeCloud.model)
     : t('chat.modeToggle.noModelShort')
   const localName = shownLocal ? shortModelName(shownLocal) : t('chat.modeToggle.noModelShort')
+  const ActiveLogo = shownLocalOnly ? OllamaLogo : CloudLogo
+  const activeName = shownLocalOnly ? localName : cloudName
+  /** Whether the chip is showing a real model id (LTR) or the empty-state line. */
+  const activeNamed = shownLocalOnly ? Boolean(shownLocal) : Boolean(activeCloud)
 
   const pick = async (providerId: CloudProviderConfig['id'], model: string): Promise<void> => {
     const sel = { providerId, model }
@@ -247,7 +273,7 @@ export function ModelSwitch({
       await onSelectModel(sel)
       // Picking a cloud model while running local means "use this model" —
       // flip the switch too instead of leaving the choice inert.
-      if (localOnly) onModeChange(false)
+      if (localOnly) await onModeChange(false)
     } finally {
       setOptimistic(null)
     }
@@ -259,7 +285,7 @@ export function ModelSwitch({
       await onSelectLocalModel(model)
       // Mirror of `pick`: choosing from the other side of the switch means
       // "run this one", so flip the runtime too.
-      if (!localOnly) onModeChange(true)
+      if (!localOnly) await onModeChange(true)
     } finally {
       setOptimisticLocal(null)
     }
@@ -313,15 +339,14 @@ export function ModelSwitch({
       interactive ? 'cursor-pointer' : 'cursor-default'
     )
 
-  // Quiet footer chips (the composer card supplies the surface): the active
-  // runtime reads as a soft primary tint, the inactive one as muted text.
-  const tabClass = (active: boolean): string =>
-    cn(
-      'flex h-7 items-center gap-1.5 rounded-lg px-2',
-      'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-      active ? 'bg-primary/10 text-primary' : cn('text-muted', !disabled && 'hover:text-fg'),
-      disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
-    )
+  // One quiet footer chip (the composer card supplies the surface): the model
+  // that will answer, worn as a soft primary tint.
+  const modelChipClass = cn(
+    'flex h-7 min-w-0 shrink items-center gap-1.5 rounded-lg px-2',
+    'bg-primary/10 text-primary',
+    'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+    disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer hover:bg-primary/15'
+  )
 
   return (
     <span
@@ -330,76 +355,32 @@ export function ModelSwitch({
       onMouseEnter={onEnter}
       onMouseLeave={onLeave}
     >
-      <div
-        role="tablist"
-        aria-label={t('chat.modeToggle.ariaLabel')}
-        className="inline-flex items-center gap-0.5"
+      <button
+        type="button"
+        aria-haspopup="dialog"
+        aria-label={t('chat.modelPicker.ariaLabel')}
+        aria-expanded={cardVisible}
+        disabled={disabled}
+        onClick={() => {
+          if (disabled) return
+          setPinned((p) => {
+            const next = !p
+            if (next) setOpen(true)
+            return next
+          })
+        }}
+        onFocus={onEnter}
+        onBlur={onLeave}
+        className={modelChipClass}
       >
-        <button
-          role="tab"
-          type="button"
-          disabled={disabled}
-          aria-selected={localOnly}
-          aria-expanded={cardVisible}
-          onClick={() => {
-            if (disabled) return
-            // Switching to Local opens the card on the installed-Ollama list:
-            // the switch and the choice of which model are one gesture.
-            if (!localOnly) {
-              onModeChange(true)
-              setPinned(true)
-              setOpen(true)
-              return
-            }
-            setPinned((p) => {
-              const next = !p
-              if (next) setOpen(true)
-              return next
-            })
-          }}
-          onFocus={onEnter}
-          onBlur={onLeave}
-          className={tabClass(localOnly)}
+        <ActiveLogo size={14} />
+        <span
+          className="max-w-64 truncate text-[11px] leading-tight font-medium"
+          dir={activeNamed ? 'ltr' : 'auto'}
         >
-          <OllamaLogo size={14} />
-          <span
-            className="max-w-64 truncate text-[11px] leading-tight font-medium"
-            dir={shownLocal ? 'ltr' : 'auto'}
-          >
-            {localName}
-          </span>
-        </button>
-        <button
-          role="tab"
-          type="button"
-          disabled={disabled}
-          aria-selected={!localOnly}
-          aria-expanded={cardVisible}
-          onClick={() => {
-            if (disabled) return
-            if (localOnly) {
-              onModeChange(false)
-              return
-            }
-            setPinned((p) => {
-              const next = !p
-              if (next) setOpen(true)
-              return next
-            })
-          }}
-          onFocus={onEnter}
-          onBlur={onLeave}
-          className={tabClass(!localOnly)}
-        >
-          <CloudLogo size={14} />
-          <span
-            className="max-w-64 truncate text-[11px] leading-tight font-medium"
-            dir={activeCloud ? 'ltr' : 'auto'}
-          >
-            {cloudName}
-          </span>
-        </button>
-      </div>
+          {activeName}
+        </span>
+      </button>
 
       {cardVisible && (
         <div
@@ -513,10 +494,10 @@ export function ModelSwitch({
                   </p>
                 ) : (
                   localIds.map((m) => {
-                    // The check means "selected for this runtime", exactly as
-                    // it does on the cloud rows — which runtime is LIVE is the
-                    // highlighted tab's job, not the checkmark's.
-                    const active = shownLocal === m
+                    // The check means "this is THE active model" — with the
+                    // runtime tabs gone, a remembered-but-not-running local
+                    // model must not wear it while a cloud model answers.
+                    const active = shownLocalOnly && shownLocal === m
                     const size = installed.find((tag) => tag.name === m)?.size
                     return (
                       <button
@@ -561,7 +542,9 @@ export function ModelSwitch({
                   </div>
                   {ids.map((m) => {
                     const active =
-                      activeCloud?.providerId === provider.id && activeCloud?.model === m
+                      !shownLocalOnly &&
+                      activeCloud?.providerId === provider.id &&
+                      activeCloud?.model === m
                     const spec = findModelSpec(provider.id, m)
                     return (
                       <button

@@ -2943,22 +2943,28 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                 <ArrowExpandIcon size={14} />
               </button>
             )}
-            <button
-              type="button"
-              onClick={() => void exportChatPdf()}
-              disabled={busy || exportingPdf || !canExportPdf}
-              title={t('chat.downloadPdf')}
-              aria-label={t('chat.downloadPdf')}
-              className={cn(
-                'flex h-7 w-7 shrink-0 items-center justify-center rounded-lg',
-                'text-muted enabled:hover:text-fg enabled:hover:bg-border/40',
-                'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-                'disabled:cursor-not-allowed disabled:opacity-50',
-                !busy && !exportingPdf && canExportPdf && 'cursor-pointer'
-              )}
-            >
-              <Download01Icon size={16} />
-            </button>
+            {/* Nothing printable in the conversation yet means no button at
+                all — an empty chat shouldn't carry a dead control. Once there
+                is content it stays put, greyed while the turn or the export
+                itself is running. */}
+            {canExportPdf && (
+              <button
+                type="button"
+                onClick={() => void exportChatPdf()}
+                disabled={busy || exportingPdf}
+                title={t('chat.downloadPdf')}
+                aria-label={t('chat.downloadPdf')}
+                className={cn(
+                  'flex h-7 w-7 shrink-0 items-center justify-center rounded-lg',
+                  'text-muted enabled:hover:text-fg enabled:hover:bg-border/40',
+                  'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+                  'disabled:cursor-not-allowed disabled:opacity-50',
+                  !busy && !exportingPdf && 'cursor-pointer'
+                )}
+              >
+                <Download01Icon size={16} />
+              </button>
+            )}
             {/* Picking a folder stays live mid-turn — it rides the next queued
                 prompt, same as an attachment. Removing is locked while the turn
                 runs so the agent can't lose a folder it's working in. */}
