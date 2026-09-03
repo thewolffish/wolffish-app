@@ -388,7 +388,7 @@ export function ModelSwitch({
         >
           <OllamaLogo size={14} />
           <span
-            className="max-w-28 truncate text-[11px] leading-tight font-medium"
+            className="max-w-64 truncate text-[11px] leading-tight font-medium"
             dir={shownLocal ? 'ltr' : 'auto'}
           >
             {localName}
@@ -418,7 +418,7 @@ export function ModelSwitch({
         >
           <CloudLogo size={14} />
           <span
-            className="max-w-28 truncate text-[11px] leading-tight font-medium"
+            className="max-w-64 truncate text-[11px] leading-tight font-medium"
             dir={activeCloud ? 'ltr' : 'auto'}
           >
             {cloudName}
@@ -429,7 +429,7 @@ export function ModelSwitch({
       {cardVisible && (
         <div
           role="dialog"
-          className="border-border bg-surface absolute bottom-full inset-s-0 z-50 mb-2 w-[26rem] max-w-[90vw] rounded-xl border shadow-xl"
+          className="border-border bg-surface absolute bottom-full inset-s-0 z-50 mb-2 w-104 max-w-[90vw] rounded-xl border shadow-xl"
         >
           {showControls && (
             <div className="border-border flex flex-col gap-1.5 border-b px-3 py-2.5">
