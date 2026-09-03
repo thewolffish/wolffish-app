@@ -2087,9 +2087,9 @@
       "denied": "Denied"
     },
     "modelPicker": {
-      "providersLabel": "Providers",
-      "modelLabel": "Model",
+      "search": "Search models",
       "noProviders": "Connect a provider API key in Settings first.",
+      "noResults": "No models match your search.",
       "noLocalModels": "No Ollama models installed yet."
     },
     "modePicker": {

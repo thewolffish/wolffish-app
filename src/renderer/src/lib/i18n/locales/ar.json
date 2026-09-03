@@ -2362,9 +2362,9 @@
       }
     },
     "modelPicker": {
-      "providersLabel": "المزوّدون",
-      "modelLabel": "النموذج",
+      "search": "ابحث عن نموذج",
       "noProviders": "اربط مفتاح مزوّد أولًا من الإعدادات.",
+      "noResults": "لا توجد نماذج مطابقة لبحثك.",
       "noLocalModels": "لا توجد نماذج أولاما مثبّتة بعد."
     },
     "modePicker": {

@@ -1,4 +1,14 @@
-## v1.0.277 — 2026-09-02 `Latest`
+## v1.0.278 — 2026-09-03 `Latest`
+
+### The Model List Comes Back
+
+The composer's model card spent a version speaking in chips — three sideways-scrolling rows you had to drag through to find a brain. It is **a list again**: your installed Ollama models on top, then a group per connected provider, each model on its own line with its **size, badges and context window**, and a checkmark on the one you're using. It **scrolls down the way a list should**, never sideways, and the **search box is back at the top** — type a few letters and it filters local models and every provider at once. The chip rows stay where they belong, on the project pickers and the phone.
+
+### Long Model Names Fit the Composer
+
+The **Local** and **Cloud** labels under the composer were capped so tightly that any name past about twenty characters got cut off mid-word — a long Ollama tag or a full vision-model id showed as little more than a stub. The cap is now **wide enough for every model in the catalog**, so the composer tells you which brain you're on at a glance instead of leaving you to guess from the first half of its name.
+
+## v1.0.277 — 2026-09-02
 
 ### Reasoning in Plain View
 

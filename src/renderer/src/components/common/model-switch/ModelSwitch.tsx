@@ -1,9 +1,11 @@
-import { ChipRow } from '@components/common/chip-row/ChipRow'
 import { OllamaLogo } from '@components/core/ProviderLogos'
 import { cn } from '@lib/utils/cn'
+import { formatBytesL } from '@lib/utils/format'
 import type { ReasoningMode } from '@main/runtime/reasoning'
 import {
+  BADGE_STYLES,
   isModelDisabled,
+  findModelSpec,
   PROVIDER_LOGOS,
   PROVIDER_ORDER,
   shortModelName,
@@ -17,6 +19,8 @@ import {
   CloudIcon,
   FireIcon,
   FlashIcon,
+  Search01Icon,
+  Tick02Icon,
   WorkflowSquare03Icon
 } from 'hugeicons-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -55,19 +59,18 @@ const MODE_ICON: Record<ReasoningMode, typeof BrainIcon> = {
  * Composer model switch: ONE control that is both the Local/Cloud switch and
  * the model selector. Two tabs — Local (Ollama logo + the local model's name)
  * and Cloud (active provider's logo + the cloud model's name) — with the
- * model-picker card built in (the ContextMeter hover/pin recipe). Hovering
- * previews the card; clicking a tab pins the card open (switching runtime
- * first when that tab wasn't the active one), so "switch to local" and "pick
- * WHICH local model" are one gesture.
+ * searchable, scrollable model-picker card built in (the ContextMeter
+ * hover/pin recipe). Hovering previews the card; clicking a tab pins the card
+ * open (switching runtime first when that tab wasn't the active one), so
+ * "switch to local" and "pick WHICH local model" are one gesture.
  *
- * The card picks with the mobile chat controls' chip rows, not a list: one
- * x-scrolling row of installed Ollama models (read live from
- * `ollama:listInstalled` each time the card opens, so a model pulled in a
- * terminal shows up without a relaunch), one row of connected providers, and
- * one row of the active provider's models. Picking writes the local model or
- * the Brain — and flips the runtime switch when you picked from the other
- * side — the card is the ONLY model-selection surface; settings keeps just
- * the API keys.
+ * The list carries both runtimes: the installed Ollama models first (read
+ * live from `ollama:listInstalled` each time the card opens, so a model
+ * pulled in a terminal shows up without a relaunch), then one group per
+ * connected cloud provider. One search box filters across all of them.
+ * Picking writes the local model or the Brain — and flips the runtime switch
+ * when you picked from the other side — the card is the ONLY model-selection
+ * surface; settings keeps just the API keys.
  *
  * The card also carries the two per-turn knobs that used to be their own
  * composer pills — reasoning effort and chat mode — as one chip row each,
@@ -111,12 +114,14 @@ export function ModelSwitch({
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const [pinned, setPinned] = useState(false)
+  const [query, setQuery] = useState('')
   const [optimistic, setOptimistic] = useState<BrainSelection | null>(null)
   const [optimisticLocal, setOptimisticLocal] = useState<string | null>(null)
   const [installed, setInstalled] = useState<OllamaTag[]>([])
   const [optimisticChatMode, setOptimisticChatMode] = useState<ChatMode | null>(null)
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const rootRef = useRef<HTMLSpanElement>(null)
+  const searchRef = useRef<HTMLInputElement>(null)
 
   // Escape unpins/closes; clicking outside while open closes.
   useEffect(() => {
@@ -146,6 +151,14 @@ export function ModelSwitch({
       if (hoverTimer.current) clearTimeout(hoverTimer.current)
     }
   }, [])
+
+  // Autofocus the search only when pinned (deliberate open), never on hover —
+  // mousing across the composer must not steal focus from the textarea.
+  useEffect(() => {
+    if (!pinned) return
+    const id = requestAnimationFrame(() => searchRef.current?.focus())
+    return () => cancelAnimationFrame(id)
+  }, [pinned])
 
   const onEnter = (): void => {
     if (disabled) return
@@ -188,6 +201,7 @@ export function ModelSwitch({
     return connected.some((p) => p.id === shown.providerId) ? shown : null
   }, [shown, connected])
 
+  const q = query.trim().toLowerCase()
   const groups = useMemo(
     () =>
       connected
@@ -196,17 +210,26 @@ export function ModelSwitch({
           if (ids.length === 0 && p.model) ids = [p.model]
           if (p.id === 'openrouter') ids = sortOpenRouterModelIds(ids)
           ids = ids.filter((m) => !isModelDisabled(m))
+          if (q) {
+            ids = ids.filter((m) => m.toLowerCase().includes(q) || p.id.toLowerCase().includes(q))
+          }
           return { provider: p, ids }
         })
         .filter((g) => g.ids.length > 0),
-    [connected]
+    [connected, q]
   )
 
   const shownLocal = optimisticLocal ?? localModel
-  const localIds = useMemo(
-    () => installed.map((tag) => tag.name).sort((a, b) => a.localeCompare(b)),
-    [installed]
-  )
+  const localIds = useMemo(() => {
+    const names = installed.map((tag) => tag.name).sort((a, b) => a.localeCompare(b))
+    if (!q) return names
+    return names.filter((m) => m.toLowerCase().includes(q) || 'ollama'.includes(q))
+  }, [installed, q])
+
+  // With a search on, an empty local group is just noise — hide it. With no
+  // search, the group always shows: its "nothing installed" line is the
+  // answer to "why is there nothing here?" after switching to Local.
+  const showLocalGroup = localIds.length > 0 || !q
 
   // The tab text is the MODEL name (the icons already say local vs cloud) —
   // with nothing configured it must say so, not echo the mode name as if
@@ -240,54 +263,6 @@ export function ModelSwitch({
     } finally {
       setOptimisticLocal(null)
     }
-  }
-
-  // The chip rows, the mobile ModelSelector's rules. Provider chips: every
-  // connected provider with a pickable model, plus a chip for a brain whose
-  // provider is missing from that list — a row must never show nothing lit.
-  const providerChips = useMemo(() => {
-    const chipFor = (
-      id: CloudProviderConfig['id']
-    ): { value: string; label: string; icon?: React.ReactNode; activeIcon?: React.ReactNode } => {
-      const Logo = PROVIDER_LOGOS[id]
-      return {
-        value: id as string,
-        label: t(`settings.model.providers.${id}`),
-        icon: Logo ? <Logo size={14} className="text-muted shrink-0" /> : undefined,
-        activeIcon: Logo ? <Logo size={14} className="text-primary-fg shrink-0" /> : undefined
-      }
-    }
-    const rows = groups.map(({ provider }) => chipFor(provider.id))
-    if (shown && !groups.some(({ provider }) => provider.id === shown.providerId)) {
-      rows.push(chipFor(shown.providerId))
-    }
-    return rows
-  }, [groups, shown, t])
-
-  // The shown provider's models. The chosen model can sit outside the list
-  // (or the list can be empty) — it still needs a chip.
-  const modelChips = useMemo(() => {
-    const ids = [...(groups.find(({ provider }) => provider.id === shown?.providerId)?.ids ?? [])]
-    if (shown?.model && !ids.includes(shown.model)) ids.push(shown.model)
-    return ids.map((m) => ({ value: m, label: m }))
-  }, [groups, shown])
-
-  const localChips = useMemo(() => {
-    const rows = localIds.map((m) => ({ value: m, label: m }))
-    if (shownLocal && !localIds.includes(shownLocal)) {
-      rows.push({ value: shownLocal, label: shownLocal })
-    }
-    return rows
-  }, [localIds, shownLocal])
-
-  // A provider chip picks the provider AND a model — its remembered one when
-  // still pickable, else the first of its list — exactly like the mobile row.
-  const pickProvider = (id: string): void => {
-    const group = groups.find(({ provider }) => provider.id === id)
-    if (!group) return
-    const remembered = group.provider.model
-    const model = remembered && group.ids.includes(remembered) ? remembered : group.ids[0]
-    void pick(group.provider.id, model)
   }
 
   // Reasoning: unsupported models get the explanation line instead of chips,
@@ -497,80 +472,137 @@ export function ModelSwitch({
               </div>
             </div>
           )}
-          {/* The mobile chat controls' chip rows: local models, providers,
-              then the shown provider's models — each the whole list on one
-              x-scrolling line. Model ids are technical LTR identifiers, so
-              their chips hold LTR even in the RTL UI; the side labels flip
-              with the locale like the reasoning and mode labels above. */}
-          <div className="flex flex-col gap-2 px-3 py-2.5">
-            <div className="flex items-center gap-1.5">
-              <span className="text-muted flex w-14 shrink-0 items-center gap-1 text-[10px] font-medium tracking-wide uppercase">
-                <OllamaLogo size={12} className="shrink-0" />
-                <span dir="auto" className="truncate">
-                  {t('settings.model.providers.ollama')}
-                </span>
-              </span>
-              {localChips.length === 0 ? (
-                <span className="text-muted text-[11px] leading-snug" dir="auto">
-                  {t('chat.modelPicker.noLocalModels')}
-                </span>
-              ) : (
-                <ChipRow
-                  className="min-w-0 flex-1"
-                  ariaLabel={t('settings.model.providers.ollama')}
-                  ltrLabels
-                  chips={localChips}
-                  value={shownLocal ?? ''}
-                  onChange={(m) => void pickLocal(m)}
-                />
-              )}
-            </div>
-            {connected.length === 0 ? (
-              <div className="flex items-center gap-1.5">
-                <span className="text-muted w-14 shrink-0 text-[10px] font-medium tracking-wide uppercase">
-                  {t('chat.modelPicker.providersLabel')}
-                </span>
-                <span className="text-muted text-[11px] leading-snug" dir="auto">
-                  {t('chat.modelPicker.noProviders')}
-                </span>
+          <div className="border-border flex items-center gap-2 border-b px-3 py-2">
+            <Search01Icon size={14} className="text-muted shrink-0" />
+            <input
+              ref={searchRef}
+              value={query}
+              // Engaging the search is a deliberate open — pin the card so the
+              // hover-leave timer can't close it out from under the typing.
+              onFocus={() => {
+                if (hoverTimer.current) clearTimeout(hoverTimer.current)
+                setPinned(true)
+                setOpen(true)
+              }}
+              onChange={(e) => {
+                setQuery(e.target.value)
+                setPinned(true)
+              }}
+              placeholder={t('chat.modelPicker.search')}
+              className="bg-transparent text-fg placeholder:text-muted/50 w-full text-sm outline-none"
+            />
+          </div>
+          {/* Model ids are technical LTR identifiers — the whole list renders
+              LTR (logo → id → badges → context → check) even in the RTL UI,
+              so rows never mirror around the ids. */}
+          <div className="max-h-[min(420px,60vh)] overflow-y-auto p-1.5" dir="ltr">
+            {groups.length === 0 && !showLocalGroup && (
+              <div className="text-muted px-2 py-4 text-center text-xs" dir="auto">
+                {t('chat.modelPicker.noResults')}
               </div>
-            ) : (
-              <>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-muted w-14 shrink-0 text-[10px] font-medium tracking-wide uppercase">
-                    {t('chat.modelPicker.providersLabel')}
-                  </span>
-                  <ChipRow
-                    className="min-w-0 flex-1"
-                    ariaLabel={t('chat.modelPicker.providersLabel')}
-                    chips={providerChips}
-                    value={shown?.providerId ?? ''}
-                    onChange={pickProvider}
-                  />
-                </div>
-                {modelChips.length > 0 && (
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-muted w-14 shrink-0 text-[10px] font-medium tracking-wide uppercase">
-                      {t('chat.modelPicker.modelLabel')}
-                    </span>
-                    {/* Switching provider swaps the whole chip set: remount so
-                        the fresh row starts at its edge and carries the new
-                        lit chip in. */}
-                    <ChipRow
-                      key={shown?.providerId ?? 'none'}
-                      className="min-w-0 flex-1"
-                      ariaLabel={t('chat.modelPicker.modelLabel')}
-                      ltrLabels
-                      chips={modelChips}
-                      value={shown?.model ?? ''}
-                      onChange={(m) => {
-                        if (shown) void pick(shown.providerId, m)
-                      }}
-                    />
-                  </div>
-                )}
-              </>
             )}
+            {showLocalGroup && (
+              <div className="mb-1.5 flex flex-col gap-1 last:mb-0">
+                <div className="text-muted flex items-center gap-1.5 px-2 pt-1.5 pb-0.5 text-[10px] font-medium tracking-wide uppercase">
+                  <OllamaLogo size={12} />
+                  <span dir="auto">{t('settings.model.providers.ollama')}</span>
+                </div>
+                {localIds.length === 0 ? (
+                  <p className="text-muted px-2 pb-1 text-[11px] leading-snug" dir="auto">
+                    {t('chat.modelPicker.noLocalModels')}
+                  </p>
+                ) : (
+                  localIds.map((m) => {
+                    // The check means "selected for this runtime", exactly as
+                    // it does on the cloud rows — which runtime is LIVE is the
+                    // highlighted tab's job, not the checkmark's.
+                    const active = shownLocal === m
+                    const size = installed.find((tag) => tag.name === m)?.size
+                    return (
+                      <button
+                        key={`ollama::${m}`}
+                        type="button"
+                        onClick={() => void pickLocal(m)}
+                        className={cn(
+                          'flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-start',
+                          'focus-visible:ring-2 focus-visible:ring-accent',
+                          active ? 'bg-primary/10 text-fg' : 'text-fg hover:bg-border/40'
+                        )}
+                      >
+                        <span className="min-w-0 flex-1 truncate text-xs" dir="ltr">
+                          {m}
+                        </span>
+                        {size ? (
+                          <span className="text-muted shrink-0 text-[10px] tabular-nums" dir="auto">
+                            {formatBytesL(size, t)}
+                          </span>
+                        ) : null}
+                        <span className="w-4 shrink-0">
+                          {active ? <Tick02Icon size={14} className="text-primary" /> : null}
+                        </span>
+                      </button>
+                    )
+                  })
+                )}
+              </div>
+            )}
+            {!q && connected.length === 0 && (
+              <div className="text-muted px-2 py-4 text-center text-xs" dir="auto">
+                {t('chat.modelPicker.noProviders')}
+              </div>
+            )}
+            {groups.map(({ provider, ids }) => {
+              const Logo = PROVIDER_LOGOS[provider.id]
+              return (
+                <div key={provider.id} className="mb-1.5 flex flex-col gap-1 last:mb-0">
+                  <div className="text-muted flex items-center gap-1.5 px-2 pt-1.5 pb-0.5 text-[10px] font-medium tracking-wide uppercase">
+                    {Logo ? <Logo size={12} /> : null}
+                    <span dir="auto">{t(`settings.model.providers.${provider.id}`)}</span>
+                  </div>
+                  {ids.map((m) => {
+                    const active =
+                      activeCloud?.providerId === provider.id && activeCloud?.model === m
+                    const spec = findModelSpec(provider.id, m)
+                    return (
+                      <button
+                        key={`${provider.id}::${m}`}
+                        type="button"
+                        onClick={() => void pick(provider.id, m)}
+                        className={cn(
+                          'flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-start',
+                          'focus-visible:ring-2 focus-visible:ring-accent',
+                          active ? 'bg-primary/10 text-fg' : 'text-fg hover:bg-border/40'
+                        )}
+                      >
+                        <span className="min-w-0 flex-1 truncate text-xs" dir="ltr">
+                          {m}
+                        </span>
+                        {spec?.badges?.slice(0, 2).map((b) => (
+                          <span
+                            key={b}
+                            dir="auto"
+                            className={cn(
+                              'inline-flex shrink-0 items-center rounded px-1 text-[9px] font-medium',
+                              BADGE_STYLES[b]
+                            )}
+                          >
+                            {t(`settings.model.cloud.breakdown.badges.${b}`)}
+                          </span>
+                        ))}
+                        {spec?.context ? (
+                          <span className="text-muted shrink-0 text-[10px] tabular-nums" dir="ltr">
+                            {spec.context}
+                          </span>
+                        ) : null}
+                        <span className="w-4 shrink-0">
+                          {active ? <Tick02Icon size={14} className="text-primary" /> : null}
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              )
+            })}
           </div>
         </div>
       )}
