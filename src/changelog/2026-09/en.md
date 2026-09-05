@@ -1,4 +1,22 @@
-## v1.0.280 — 2026-09-05 `Latest`
+## v1.0.281 — 2026-09-05 `Latest`
+
+### The Leak That Broke Every Tool at Once
+
+Leave the app open long enough and **everything that runs a program would start failing at the same moment** — Google Workspace announcing that gogcli "is not installed", video and audio conversion falling over, a shell command dying with nothing useful to say. Each one reported the failure as its own local problem, so none of them pointed anywhere near the cause: the file watcher that keeps your workspace searchable was claiming **one system handle for every single file it watched**, and a lived-in workspace is tens of thousands of files. Once the app ran out of handles it could no longer start **any** program at all, and every tool went down together. The watcher now holds **one handle for the whole workspace** — eleven of them instead of twenty-three thousand, and it stays eleven however far your workspace grows. It also notices folders created after the app started, which the old watcher quietly missed on a fresh workspace.
+
+### Installing Google Workspace Explains Itself
+
+When the Google Workspace install or update failed, all you got was a toast reading **"Install failed"** — which then vanished, taking the only account of what happened with it. The real reason now **stays on the card** in plain words: GitHub's hourly rate limit, a release that has moved, a file that won't run, a path the app can't write to. Install itself is **repairable now**, too. It unpacks to a scratch folder and swaps the finished binary into place in one move, so a download that dies halfway **leaves your working copy untouched** instead of replacing it with a truncated one — and the state that used to make Install fail forever, however many times you pressed it, now clears on the first try. An update that lands a binary which won't actually run **reports that as a failure**, rather than showing you a green checkmark while every Google call quietly fails.
+
+### The Edit Forms Get the Whole Window
+
+The editors for **automations, projects and procedures** were boxes floating in the middle of a dimmed screen — and a real one, with a schedule, a file list, a folder list and a prompt, grew straight past the bottom of the window with **nothing to scroll and the Done button somewhere off-screen**. All three are now **full-height panels that slide in from the edge**, the same surface the logs, files and conversations sheets already use: the form scrolls, while the title and the Done bar stay put. The three list pages also dropped from three columns to **two**, so a long automation name, its schedule and its controls all stay readable instead of being squeezed into a third of the window.
+
+### Every Automation Says When It Runs Next
+
+An automation card gave you its schedule in **small grey text among everything else** on the card — the one fact about a scheduled job that changes on its own, buried in the one line that never does. Each card now leads with **a countdown chip**: _Next run in 3 hours_, in the same shape the composer wears for its model. Inside the final minute it **counts down by the second**, and when the moment passes the card **rolls forward to the next occurrence by itself** instead of sitting on a time that has already gone. A switched-off automation wears the chip greyed out rather than promising a run that isn't coming. The exact wall-clock time, the schedule's own syntax and when you last edited it moved to a small monospace line at the foot of the card — and the editor now **previews the very same chip** the card will wear once you save.
+
+## v1.0.280 — 2026-09-05
 
 ### A Turn That Survives the Power Going Out
 

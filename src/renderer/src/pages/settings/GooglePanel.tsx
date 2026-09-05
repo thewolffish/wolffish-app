@@ -54,6 +54,10 @@ export function GooglePanel(): React.JSX.Element {
   // on its own mount, so by the time the user clicks Google Workspace the
   // snapshot is usually already available and we render in one shot.
   const initial = getCachedGoogleSnapshot()
+  // Why the last install/update failed, verbatim from main. A toast alone
+  // reduces every failure to "Install failed" and then vanishes, which is
+  // exactly the state where the user needs the reason most.
+  const [setupError, setSetupError] = useState<string | null>(null)
   const [binary, setBinary] = useState<GoogleBinaryStatus>(
     initial?.binary ?? { gogInstalled: false, gogVersion: null }
   )
@@ -185,6 +189,7 @@ export function GooglePanel(): React.JSX.Element {
     try {
       const result = await window.api.google.setup()
       if (result.ok) {
+        setSetupError(null)
         setBinary(result.binary)
         setProgress(100)
         toast.show({
@@ -194,6 +199,7 @@ export function GooglePanel(): React.JSX.Element {
           tone: 'success'
         })
       } else {
+        setSetupError(result.message?.trim() || null)
         toast.show({
           message: t(`settings.services.google.errors.${result.kind}`, {
             defaultValue: t('settings.services.google.toasts.installFailed')
@@ -203,6 +209,22 @@ export function GooglePanel(): React.JSX.Element {
         const fresh = await window.api.google.checkBinary()
         setBinary(fresh)
         setProgress(fresh.gogInstalled ? 100 : 0)
+      }
+    } catch (err) {
+      // A rejected IPC call (stale handler, main-process throw) would
+      // otherwise resolve nothing and leave the card sitting at 0% with no
+      // toast and no reason — the update path already guards this.
+      setSetupError((err as Error)?.message?.trim() || null)
+      toast.show({
+        message: t('settings.services.google.toasts.installFailed'),
+        tone: 'error'
+      })
+      const fresh = await window.api.google.checkBinary().catch(() => null)
+      if (fresh) {
+        setBinary(fresh)
+        setProgress(fresh.gogInstalled ? 100 : 0)
+      } else {
+        setProgress(0)
       }
     } finally {
       setStage('idle')
@@ -280,6 +302,7 @@ export function GooglePanel(): React.JSX.Element {
     try {
       const result = await window.api.google.update()
       if (result?.ok) {
+        setSetupError(null)
         if (result.updated) {
           setBinary({ gogInstalled: true, gogVersion: result.version })
           setProgress(100)
@@ -298,6 +321,7 @@ export function GooglePanel(): React.JSX.Element {
           })
         }
       } else {
+        setSetupError(result?.message?.trim() || null)
         toast.show({
           message: t('settings.services.google.toasts.updateFailed'),
           tone: 'error'
@@ -306,9 +330,10 @@ export function GooglePanel(): React.JSX.Element {
         setBinary(fresh)
         setProgress(fresh.gogInstalled ? 100 : 0)
       }
-    } catch {
+    } catch (err) {
       // Anything that throws (stale IPC handler, network reject, etc.)
       // would otherwise leave the bar at 0 with no feedback. Surface it.
+      setSetupError((err as Error)?.message?.trim() || null)
       toast.show({
         message: t('settings.services.google.toasts.updateFailed'),
         tone: 'error'
@@ -462,6 +487,7 @@ export function GooglePanel(): React.JSX.Element {
           binary={binary}
           stage={stage}
           progress={progress}
+          error={setupError}
           onSetup={() => void handleSetup()}
           onUpdate={() => void handleUpdate()}
         />
@@ -504,12 +530,14 @@ function SetupSection({
   binary,
   stage,
   progress,
+  error,
   onSetup,
   onUpdate
 }: {
   binary: GoogleBinaryStatus
   stage: Stage
   progress: number
+  error: string | null
   onSetup: () => void
   onUpdate: () => void
 }): React.JSX.Element {
@@ -565,6 +593,9 @@ function SetupSection({
           style={{ width: `${progress}%` }}
         />
       </div>
+      {error && !busy && (
+        <p className="text-xs leading-relaxed wrap-break-word text-amber-500">{error}</p>
+      )}
     </section>
   )
 }

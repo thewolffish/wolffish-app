@@ -291,12 +291,12 @@ context window usage, token costs, disk space, RAM, model availability
 ### brainstem.ts — background processes
 
 **Region:** Brainstem. **Job:** parse cron-like schedules from
-`brainstem/heartbeat.md` and run them. Watch the workspace with chokidar
-and notify the cortex when files change. Schedule nightly memory
-consolidation. **Reads:** `brainstem/heartbeat.md`. **Watches:** every
-file under the workspace. **Interfaces:** `startScheduler()`,
-`startWatcher()`, `stopAll()`, `getActiveJobs()`. **Bus:** emits
-`scheduler.tick`, `watcher.changed`.
+`brainstem/heartbeat.md` and run them. Watch the workspace with one
+recursive `fs.watch` and notify the cortex when files change. Schedule
+nightly memory consolidation. **Reads:** `brainstem/heartbeat.md`.
+**Watches:** every file under the workspace. **Interfaces:**
+`startScheduler()`, `startWatcher()`, `stopAll()`, `getActiveJobs()`.
+**Bus:** emits `scheduler.tick`, `watcher.changed`.
 
 ### corpus.ts — event bus
 

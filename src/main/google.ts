@@ -9,7 +9,17 @@ import { getGoogleConfig } from '@main/workspace/workspace'
 import { execFile, spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { createWriteStream } from 'node:fs'
-import { access, appendFile, chmod, mkdir, readFile, rm, unlink, writeFile } from 'node:fs/promises'
+import {
+  access,
+  appendFile,
+  chmod,
+  mkdir,
+  readFile,
+  rename,
+  rm,
+  unlink,
+  writeFile
+} from 'node:fs/promises'
 import os, { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable, Transform } from 'node:stream'
@@ -103,8 +113,21 @@ async function fileExists(p: string): Promise<boolean> {
   }
 }
 
-async function checkGog(): Promise<{ installed: boolean; version: string | null }> {
-  if (!(await fileExists(GOG_PATH))) return { installed: false, version: null }
+/**
+ * `installed` is "the binary is there AND runs" — a file that exists but
+ * won't execute is not installed, because every later call would fail.
+ * `reason` carries WHY it failed so the panel can say more than "failed":
+ * a missing file, a busy/unwritable path and a Gatekeeper block all land
+ * here and are indistinguishable to the user otherwise.
+ */
+async function checkGog(): Promise<{
+  installed: boolean
+  version: string | null
+  reason: string | null
+}> {
+  if (!(await fileExists(GOG_PATH))) {
+    return { installed: false, version: null, reason: `not found at ${GOG_PATH}` }
+  }
   try {
     const stdout = await exec(GOG_PATH, ['--version'], 5_000)
     const cleaned = stdout
@@ -112,9 +135,9 @@ async function checkGog(): Promise<{ installed: boolean; version: string | null 
       .replace(/^gog\s+/i, '')
       .replace(/\s*\([^)]*\)\s*$/, '')
       .trim()
-    return { installed: true, version: cleaned || null }
-  } catch {
-    return { installed: false, version: null }
+    return { installed: true, version: cleaned || null, reason: null }
+  } catch (err) {
+    return { installed: false, version: null, reason: (err as Error).message || String(err) }
   }
 }
 
@@ -152,7 +175,18 @@ async function fetchLatestAsset(): Promise<{
       headers: { 'User-Agent': 'wolffish', Accept: 'application/vnd.github+json' }
     }
   )
-  if (!res.ok) throw new Error(`GitHub API error: HTTP ${res.status}`)
+  if (!res.ok) {
+    // The two failures that actually happen: the unauthenticated 60/hour
+    // budget (shared with anything else on this IP), and a pinned tag that
+    // upstream retagged or pulled. Both look like a bare 403/404 otherwise.
+    if (res.status === 403 && res.headers.get('x-ratelimit-remaining') === '0') {
+      throw new Error('GitHub rate limit reached — try again in an hour')
+    }
+    if (res.status === 404) {
+      throw new Error(`gogcli release ${GOG_PINNED_TAG} not found on GitHub`)
+    }
+    throw new Error(`GitHub API error: HTTP ${res.status}`)
+  }
   const release = (await res.json()) as {
     tag_name?: string
     assets?: Array<{ name: string; browser_download_url: string }>
@@ -220,13 +254,31 @@ async function downloadAndExtract(
 
   await pipeline(Readable.fromWeb(res.body as never), tracker, createWriteStream(tmpFile))
 
+  // Extract beside the destination, then swap — never on top of it. tar
+  // unlinks before writing, so a running or read-only `gog` is replaced
+  // fine (measured), but a *directory* at that path is not: it fails with
+  // "Can't replace existing directory with non-directory" on every retry,
+  // so the one action the user has — press Install again — can't clear the
+  // state Install exists to clear. Staging inside WOLFFISH_BIN keeps the
+  // rename on one filesystem (atomic), and an extract that dies halfway
+  // now leaves the working binary intact instead of a truncated one.
+  const stageDir = join(WOLFFISH_BIN, `.gog-stage-${randomBytes(6).toString('hex')}`)
   try {
+    await mkdir(stageDir, { recursive: true })
     // System tar handles .tar.gz on Unix and .zip on Windows 10+ (libarchive-based).
     const flag = name.endsWith('.zip') ? '-xf' : '-xzf'
-    await exec('tar', [flag, tmpFile, '-C', WOLFFISH_BIN, GOG_NAME], INSTALL_TIMEOUT_MS)
-    if (!IS_WINDOWS) await chmod(GOG_PATH, 0o755)
+    await exec('tar', [flag, tmpFile, '-C', stageDir, GOG_NAME], INSTALL_TIMEOUT_MS)
+    const staged = join(stageDir, GOG_NAME)
+    if (!IS_WINDOWS) await chmod(staged, 0o755)
+    await rm(GOG_PATH, { recursive: true, force: true }).catch(async () => {
+      // Windows holds a lock on a running .exe, so it can't be deleted —
+      // but it can be renamed out of the way, which frees the name.
+      await rename(GOG_PATH, `${GOG_PATH}.old-${randomBytes(4).toString('hex')}`)
+    })
+    await rename(staged, GOG_PATH)
   } finally {
     await rm(tmpFile, { force: true }).catch(() => {})
+    await rm(stageDir, { recursive: true, force: true }).catch(() => {})
   }
 }
 
@@ -343,6 +395,16 @@ class GoogleService {
       await downloadAndExtract(asset.url, asset.name, track)
       track(100)
       const after = await checkGog()
+      if (!after.installed) {
+        // The download replaced a working binary with one that won't run.
+        // Reporting ok:true here would leave the panel claiming success
+        // while every Google call fails.
+        return {
+          ok: false,
+          kind: 'install_failed',
+          message: `Updated binary did not run: ${after.reason ?? 'unknown error'}`
+        }
+      }
       return {
         ok: true,
         updated: true,
@@ -374,12 +436,16 @@ class GoogleService {
       }
       track(5)
       await downloadAndExtract(asset.url, asset.name, track)
-      const binary = await this.checkBinary()
+      const after = await checkGog()
+      const binary: GoogleBinaryStatus = {
+        gogInstalled: after.installed,
+        gogVersion: after.version
+      }
       if (!binary.gogInstalled) {
         return {
           ok: false,
           kind: 'install_failed',
-          message: 'Binary did not run after extraction.'
+          message: `Binary did not run after extraction: ${after.reason ?? 'unknown error'}`
         }
       }
       void ensureInUserPath()

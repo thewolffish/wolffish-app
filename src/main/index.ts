@@ -4146,7 +4146,7 @@ app.whenReady().then(async () => {
           error: err instanceof Error ? err.message : String(err)
         }
       }
-      // Apply live in the same turn rather than waiting on the chokidar watcher,
+      // Apply live in the same turn rather than waiting on the file watcher,
       // so the agent can verify the new job list immediately. The watcher's
       // own reload on this write is harmless — reloadScheduler is serialized.
       await agent.brainstem.reloadScheduler()

@@ -13,9 +13,9 @@ import {
   type CompactionConfig,
   type ReflectionConfig
 } from '@main/workspace/workspace'
-import chokidar, { type FSWatcher } from 'chokidar'
 import cron, { type ScheduledTask } from 'node-cron'
 import { createHash } from 'node:crypto'
+import { watch, type FSWatcher } from 'node:fs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
@@ -28,7 +28,7 @@ import path from 'node:path'
  * sleep-wake cycle. You don't have to think about any of it; the
  * brainstem just runs it, and if it stops, you stop.
  *
- * In Wolffish, Brainstem owns three background concerns: a chokidar
+ * In Wolffish, Brainstem owns three background concerns: a file
  * watcher that drives cortex reindexing, a cron scheduler that fires
  * jobs declared in brainstem/heartbeat.md, and the nightly compaction
  * job that summarizes the day's episodes and promotes the worthwhile
@@ -420,7 +420,7 @@ export class Brainstem {
   // when a same-kind job is added or removed, which would misattribute one
   // job's run history to another after an edit/delete.)
   private jobStatuses = new Map<string, JobRunStatus>()
-  // Serializes scheduler reloads so a bridge-driven write and the chokidar
+  // Serializes scheduler reloads so a bridge-driven write and the file
   // watcher firing on that same write can't interleave their stop/start.
   private reloadInFlight: Promise<void> = Promise.resolve()
   // Per-job "last edited" stamps, keyed by heading label and persisted to
@@ -498,49 +498,56 @@ export class Brainstem {
     await this.stopWatcher()
   }
 
+  /**
+   * ONE recursive watcher over the whole workspace, not a per-path watcher
+   * library.
+   *
+   * This used to be `chokidar.watch(<the eight roots>)`, which registers a
+   * kernel watch per file: on a workspace of ~23k files that is ~23k open
+   * descriptors in the main process, and the fd table fills to the process
+   * cap. Past that point the failure is not "the watcher is slow" — it is
+   * that `child_process.spawn` starts failing with EBADF, because libuv can
+   * no longer get descriptors for the child's stdio. Every spawned tool dies
+   * at once (gogcli, tar, ffmpeg, python, git), and each one reports it as
+   * its own local problem: Google Workspace says gogcli "is not installed"
+   * because `gog --version` won't run. The bug is invisible where it fires
+   * and only shows up where it lands.
+   *
+   * `fs.watch(root, { recursive: true })` is one FSEvents stream on macOS
+   * (ReadDirectoryChangesW on Windows) — 11 descriptors for the same tree,
+   * flat in workspace size, and it covers directories created after start,
+   * which the per-root form would miss on a fresh workspace.
+   */
   async startWatcher(): Promise<void> {
     if (this.watcher) return
     if (!this.workspaceRoot) return
 
-    // Every root the cortex indexes: brain/ (memory, conversations, tasks)
-    // plus the workspace-level trees the retrieval tools cover — usage ledger,
-    // app/extension logs, and the artifact trees (metadata-only ingest).
-    // diskWriter can't see plugin/shell writes, so the watcher is the one
-    // ingest trigger that catches everything.
     const workspaceRoot = this.workspaceRoot
-    const roots = [
-      'brain',
-      'usage',
-      'logs',
-      'files',
-      'uploads',
-      'screenshots',
-      'speech',
-      'whatsapp'
-    ].map((dir) => path.join(workspaceRoot, dir))
     let watcher: FSWatcher
     try {
-      watcher = chokidar.watch(roots, {
-        ignoreInitial: true,
-        persistent: true,
-        ignored: (filepath) => shouldIgnoreWatch(filepath)
+      watcher = watch(workspaceRoot, { recursive: true, persistent: true }, (_event, name) => {
+        if (!name) return
+        const rel = name.toString()
+        // Only the trees the cortex indexes: brain/ (memory, conversations,
+        // tasks) plus the workspace-level trees the retrieval tools cover —
+        // usage ledger, app/extension logs, and the artifact trees
+        // (metadata-only ingest). diskWriter can't see plugin/shell writes,
+        // so this watcher is the one ingest trigger that catches everything.
+        const top = rel.split(/[\\/]/)[0]
+        if (!WATCHED_ROOTS.has(top)) return
+        const filepath = path.join(workspaceRoot, rel)
+        if (isHeartbeatFile(filepath)) void this.reloadScheduler()
+        // macOS coalesces creates, writes and deletes into one event type, so
+        // the event never says which it was — 'auto' resolves it by existence
+        // when the debounce fires, which is also the only moment the answer is
+        // still true.
+        this.scheduleIndex(filepath, 'auto')
       })
     } catch {
       return
     }
-    this.watcher = watcher
-
-    const onFileChange = (filepath: string, action: 'index' | 'remove'): void => {
-      if (isHeartbeatFile(filepath)) {
-        void this.reloadScheduler()
-      }
-      this.scheduleIndex(filepath, action)
-    }
-
-    watcher.on('add', (fp) => onFileChange(fp, 'index'))
-    watcher.on('change', (fp) => onFileChange(fp, 'index'))
-    watcher.on('unlink', (fp) => onFileChange(fp, 'remove'))
     watcher.on('error', () => {})
+    this.watcher = watcher
   }
 
   async stopWatcher(): Promise<void> {
@@ -548,7 +555,7 @@ export class Brainstem {
     this.pendingIndex.clear()
     if (!this.watcher) return
     try {
-      await this.watcher.close()
+      this.watcher.close()
     } catch {
       // best-effort
     }
@@ -689,7 +696,7 @@ export class Brainstem {
   /**
    * Re-read brainstem/heartbeat.md and rebuild the cron schedule. Public so
    * the `automations` capability can apply an edit live in the same turn, and
-   * serialized so this call and the chokidar watcher firing on the same write
+   * serialized so this call and the workspace watcher firing on the same write
    * can't interleave their stop/start (which could double-register a job).
    */
   async reloadScheduler(): Promise<void> {
@@ -1962,7 +1969,7 @@ export class Brainstem {
     }
   }
 
-  private scheduleIndex(filepath: string, action: 'index' | 'remove'): void {
+  private scheduleIndex(filepath: string, action: 'index' | 'remove' | 'auto'): void {
     if (!this.cortex) return
     if (!this.workspaceRoot) return
     if (shouldIgnoreWatch(filepath)) return
@@ -1985,10 +1992,23 @@ export class Brainstem {
     this.pendingIndex.set(filepath, timer)
   }
 
-  private async dispatchIndex(filepath: string, action: 'index' | 'remove'): Promise<void> {
+  private async dispatchIndex(
+    filepath: string,
+    action: 'index' | 'remove' | 'auto'
+  ): Promise<void> {
     if (!this.cortex) return
     try {
-      if (action === 'remove') await this.cortex.removeFile(filepath)
+      // 'auto' asks the disk instead of trusting the event: a file created and
+      // deleted inside one debounce window must not be indexed, and a delete
+      // the platform reported as a generic change must still remove the row.
+      const resolved =
+        action === 'auto'
+          ? await fs
+              .access(filepath)
+              .then(() => 'index' as const)
+              .catch(() => 'remove' as const)
+          : action
+      if (resolved === 'remove') await this.cortex.removeFile(filepath)
       else await this.cortex.indexFile(filepath)
     } catch {
       // a single failed index shouldn't break the watcher loop
@@ -1999,10 +2019,27 @@ export class Brainstem {
 // ── File-watcher ignore rules ─────────────────────────────────────────
 
 /**
- * Subtree pruning for the chokidar watcher. This callback also receives
- * DIRECTORY paths — returning true prunes the whole subtree — so it must only
- * reject known-bad trees (dot-dirs, node_modules, the index's own db files).
- * File-level indexability is decided by isIndexablePath in scheduleIndex.
+ * Top-level workspace directories the cortex indexes. The watcher runs on the
+ * workspace root, so everything else under it (generations/, diagnostics/,
+ * runtime scratch) is dropped on the first path segment.
+ */
+const WATCHED_ROOTS = new Set([
+  'brain',
+  'usage',
+  'logs',
+  'files',
+  'uploads',
+  'screenshots',
+  'speech',
+  'whatsapp'
+])
+
+/**
+ * Hot-path rejects for watcher events: files that change constantly and are
+ * never index-worthy (the heartbeat tick, the index's own db files, Baileys
+ * credential churn). Broad structural pruning — dot-dirs, node_modules — is
+ * isIndexablePath's job, which scheduleIndex applies to the workspace-relative
+ * path right after this.
  */
 function shouldIgnoreWatch(filepath: string): boolean {
   const normalized = filepath.replace(/\\/g, '/')
