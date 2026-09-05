@@ -24,9 +24,7 @@ import { Changelog } from '@pages/Changelog'
 import { Heartbeat } from '@pages/Heartbeat'
 import { Procedures } from '@pages/Procedures'
 import { Projects } from '@pages/Projects'
-import { Soul } from '@pages/Soul'
-import { User } from '@pages/User'
-import { Agents } from '@pages/Agents'
+import { Customization } from '@pages/Customization'
 
 // The one-time cortex reindex (after an app update) blocks every turn, so
 // while it runs the chat screen is swapped for its own overlay. (Background
@@ -74,9 +72,7 @@ const CHAT_KEEPALIVE_SCREENS = new Set<Screen>([
   'heartbeat',
   'procedures',
   'projects',
-  'soul',
-  'user',
-  'agents',
+  'customization',
   'ollama-setup',
   'model-picker'
 ])
@@ -110,12 +106,8 @@ function NonChatScreen({ screen }: { screen: Screen }): React.JSX.Element | null
       return <Procedures />
     case 'projects':
       return <Projects />
-    case 'soul':
-      return <Soul />
-    case 'user':
-      return <User />
-    case 'agents':
-      return <Agents />
+    case 'customization':
+      return <Customization />
   }
 }
 

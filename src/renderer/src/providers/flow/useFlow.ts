@@ -26,9 +26,7 @@ export type Screen =
   | 'heartbeat'
   | 'procedures'
   | 'projects'
-  | 'soul'
-  | 'user'
-  | 'agents'
+  | 'customization'
 
 export type ChatRole = 'user' | 'assistant'
 

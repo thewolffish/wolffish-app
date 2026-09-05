@@ -166,9 +166,9 @@ export function parseAllowedNumbers(text: string): string[] {
 }
 
 /**
- * The three hand-written documents that shape the agent — the desktop's Soul,
- * User and Agents pages (pages/Soul.tsx, User.tsx, Agents.tsx), which are all
- * one MarkdownEditorPage over one workspace file.
+ * The three hand-written documents that shape the agent — the three tabs of
+ * the desktop's Customization page (pages/Customization.tsx), which is one
+ * markdown editor over one workspace file at a time.
  *
  * Declared once, here, because BOTH directions index into it: the snapshot
  * below reads these paths, and applyMobileSettings (index.ts) writes them from

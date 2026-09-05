@@ -1,4 +1,18 @@
-## v1.0.281 — 2026-09-05 `Latest`
+## v1.0.282 — 2026-09-05 `Latest`
+
+### Soul, User and Agents Become One Page
+
+The three documents that shape the agent — its **personality**, the **facts about you** it should always know, and **your own procedures** — sat behind three separate sidebar entries opening three near-identical editors, so adjusting how the agent behaves began with remembering which of the three held the paragraph you meant. They are now **one Customization page with three tabs**, the shape your phone already uses. Each tab states in a line **what its document is actually for**, so the choice no longer rests on a single word. A draft you leave in one tab is **still there when you come back** from another, and that tab **carries a dot while it holds unsaved changes** — which is exactly the draft you can no longer see. Edits made on your phone or in another window still arrive on their own, and now they land on **whichever tab is clean** rather than only the one you happen to be looking at.
+
+### The Files Sheet Lists What the Conversation Actually Has
+
+**View Files** had been drifting into a list of things that were not there. A long run names plenty of files it then cleans up — a PDF check renders proof pages, looks at them, re-renders and deletes the batch — and every one of them stayed in the sheet as a **tombstone you could click but never open**. Files the agent merely **read for reference** landed there too, so a morning digest that consulted last week's reports filled today's sheet with **last week's files**. Meanwhile the one file you were most likely looking at — **a meme or a GIF the agent had just made and shown you inline** — was the single file the sheet never listed at all. All three are fixed: the sheet now **checks what is still on disk** and counts only that, **a file read for reference no longer counts as this conversation's**, and **generated media appears the moment it does**, while the answer is still being written. When a picture is genuinely gone, its placeholder **fills its column** instead of sitting in it as a narrow stub.
+
+### The Logs and Files Chips Earn Their Place
+
+The two chips beside the composer were **always mounted and merely greyed out** when they had nothing, so a brand-new chat opened carrying two dead controls advertising sheets that were empty anyway. Each one now **joins the row when its first event or file lands**, the same way the export button waits until there is something to export. They also **wear the same frame as the context meter** they sit beside, instead of standing bare next to a bordered pill.
+
+## v1.0.281 — 2026-09-05
 
 ### The Leak That Broke Every Tool at Once
 
