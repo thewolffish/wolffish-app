@@ -142,7 +142,7 @@ function ToastItem({
       <span className="mt-0.5 shrink-0">
         <ToneIcon tone={toast.tone ?? 'info'} />
       </span>
-      <span className="min-w-0 break-words leading-relaxed">{toast.message}</span>
+      <span className="min-w-0 wrap-break-word leading-relaxed">{toast.message}</span>
       <button
         type="button"
         aria-label={t('common.dismiss')}

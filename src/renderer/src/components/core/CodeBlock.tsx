@@ -34,7 +34,7 @@ export function CodeBlock({
   }, [content, language])
 
   const preClasses = cn(
-    'hljs border-border bg-bg overflow-y-auto rounded-md border px-3 py-2 text-left text-xs whitespace-pre-wrap break-words font-mono',
+    'hljs border-border bg-bg overflow-y-auto rounded-md border px-3 py-2 text-left text-xs whitespace-pre-wrap wrap-break-word font-mono',
     showCopy && 'pe-12',
     tone === 'error' && 'border-red-500/40',
     maxH

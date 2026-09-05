@@ -144,7 +144,7 @@ function WebsiteCard({
           className="text-muted hover:text-fg ms-auto flex shrink-0 items-center gap-1 text-[10px]"
         >
           <LinkSquare01Icon size={12} className="shrink-0" />
-          <span className="max-w-[200px] truncate">{host ?? url}</span>
+          <span className="max-w-50 truncate">{host ?? url}</span>
         </a>
       </div>
       <div className="bg-white" style={{ height: 440 }}>
@@ -199,7 +199,7 @@ function ContentCard({
             className="text-muted hover:text-fg ms-auto flex shrink-0 items-center gap-1 text-[10px]"
           >
             <LinkSquare01Icon size={12} className="shrink-0" />
-            <span className="max-w-[160px] truncate">{host ?? url}</span>
+            <span className="max-w-40 truncate">{host ?? url}</span>
           </a>
         )}
       </div>

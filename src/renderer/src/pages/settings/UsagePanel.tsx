@@ -424,7 +424,7 @@ function ProviderCard({ provider }: { provider: UsageProviderSummary }): React.J
         <div className="mt-3 flex flex-col gap-1.5">
           {provider.models.map((m) => (
             <div key={m.model} className="flex items-center justify-between text-xs">
-              <span className="text-muted truncate max-w-[200px]">{m.model}</span>
+              <span className="text-muted truncate max-w-50">{m.model}</span>
               <div className="flex items-center gap-3">
                 <span className="text-muted">
                   {formatCompact(m.inputTokens + m.outputTokens)} {t('settings.usage.tokens')}

@@ -424,7 +424,12 @@ export async function buildConfigSnapshot(sources: SnapshotSources): Promise<Con
         // phone renders and edits it as that machine's setting, exactly as it
         // does the in-app feed switch beside it; its own copy of the question
         // is `mobile.runCards` below.
-        runCards: bool(config.inapp?.runCards)
+        runCards: bool(config.inapp?.runCards),
+        // Whether the thinking card renders at all. One workspace answer for
+        // both surfaces (the phone obeys the same key), ON by default — so an
+        // absent field must read as true here too, or a workspace that has
+        // never touched the switch would reach the phone as off.
+        reasoning: bool(config.inapp?.reasoning, true)
       },
       // The terminal channel. `runMode` is what decides which autostart
       // registration this machine gets, so it belongs beside the setting it

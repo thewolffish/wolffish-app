@@ -58,7 +58,7 @@ export function EmojiPicker({
         onClick={onClose}
         className="fixed inset-0 z-40 cursor-default"
       />
-      <div className="bg-surface border-border absolute start-0 top-10 z-50 flex w-80 flex-col overflow-hidden rounded-xl border shadow-lg">
+      <div className="bg-surface border-border absolute inset-s-0 top-10 z-50 flex w-80 flex-col overflow-hidden rounded-xl border shadow-lg">
         <div className="border-border border-b p-2">
           <input
             autoFocus

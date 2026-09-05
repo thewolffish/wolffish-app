@@ -351,8 +351,8 @@ so hidden — `ls -a` to see them). Drop a folder in, and the agent learns a ski
 | | `.pdf` | `pdf_read/create/merge/split/modify/form/secure/compress` |
 | | `.spreadsheet` | xlsx/csv — `spreadsheet_read/create/modify/formula/chart/pivot/analyze` |
 | **Media** | `.ffmpeg` | Audio/video — `ffmpeg_run` |
-| | `.speech-to-text` | Whisper, offline — `stt_transcribe`, `stt_transcribe_voice_memo` |
-| | `.text-to-speech` | Neural TTS — `voice_generate`, `voice_respond` |
+| | `.speech-to-text` | Whisper, offline — `stt_transcribe`, `stt_transcribe_voice_memo`; owns its own settings — `stt_settings_get/set` (model, language), `stt_engine_install` |
+| | `.text-to-speech` | Neural TTS — `voice_generate`, `voice_respond`; owns its own settings — `voice_settings_get/set` (voice, speed), `voice_engine_install` |
 | | `.memes` | `meme_generate`, `meme_templates`, `gif_search`, `gif_trending` |
 | **Code / services** | `.git` | Git conventions on top of `.shell` (pure skill) |
 | | `.github` | GitHub API — ~60 `github_*` tools (repos, issues, PRs, Actions, releases, gists, …) |

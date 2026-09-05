@@ -206,7 +206,7 @@ export function ConversationsSheet({ onClose }: { onClose: () => void }): React.
         aria-modal="true"
         aria-label={t('chat.conversations')}
         className={cn(
-          'wf-sheet-panel bg-bg border-border/40 absolute inset-y-0 start-0 flex w-[340px] max-w-[86vw] flex-col border-e'
+          'wf-sheet-panel bg-bg border-border/40 absolute inset-y-0 inset-s-0 flex w-130 max-w-[92vw] flex-col border-e'
         )}
       >
         {/* Fixed page rows — deliberately NOT part of the scroller, so the

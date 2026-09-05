@@ -345,7 +345,7 @@ export function MobilePanel(): React.JSX.Element {
                     ) : (
                       <div
                         aria-hidden="true"
-                        className="bg-border/30 size-[240px] animate-pulse rounded-xl"
+                        className="bg-border/30 size-60 animate-pulse rounded-xl"
                       />
                     )}
                     <p className="text-muted max-w-sm text-center text-sm leading-relaxed">
@@ -576,7 +576,7 @@ export function MobilePanel(): React.JSX.Element {
             {status === null ? (
               <div
                 aria-hidden="true"
-                className="bg-border/30 h-7 w-[78px] shrink-0 animate-pulse rounded-lg"
+                className="bg-border/30 h-7 w-19.5 shrink-0 animate-pulse rounded-lg"
               />
             ) : (
               <div
@@ -623,7 +623,7 @@ export function MobilePanel(): React.JSX.Element {
             {verbose === null ? (
               <div
                 aria-hidden="true"
-                className="bg-border/30 h-7 w-[78px] shrink-0 animate-pulse rounded-lg"
+                className="bg-border/30 h-7 w-19.5 shrink-0 animate-pulse rounded-lg"
               />
             ) : (
               <div
@@ -670,7 +670,7 @@ export function MobilePanel(): React.JSX.Element {
             {runCards === null ? (
               <div
                 aria-hidden="true"
-                className="bg-border/30 h-7 w-[78px] shrink-0 animate-pulse rounded-lg"
+                className="bg-border/30 h-7 w-19.5 shrink-0 animate-pulse rounded-lg"
               />
             ) : (
               <div

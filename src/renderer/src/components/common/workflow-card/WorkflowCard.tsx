@@ -181,7 +181,7 @@ export function WorkflowCard({ snapshot }: { snapshot: WorkflowSnapshot }): Reac
           {/* Agents: one deterministic telemetry row each. */}
           {snapshot.agents.length > 0 ? (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[560px] border-collapse text-xs">
+              <table className="w-full min-w-140 border-collapse text-xs">
                 <thead>
                   <tr className="text-muted border-border border-b text-start text-[10px] uppercase tracking-wide">
                     <th className="px-1.5 py-1 text-start font-medium">
@@ -247,7 +247,7 @@ function AgentRow({ agent, now }: { agent: WorkflowAgentView; now: number }): Re
 
   return (
     <tr className="border-border/60 border-b last:border-b-0 align-top">
-      <td className="max-w-[220px] px-1.5 py-1.5">
+      <td className="max-w-55 px-1.5 py-1.5">
         <span className="flex items-center gap-1.5">
           <span
             className={cn('inline-block h-1.5 w-1.5 shrink-0 rounded-full', dotTone)}
@@ -269,12 +269,12 @@ function AgentRow({ agent, now }: { agent: WorkflowAgentView; now: number }): Re
         </span>
       </td>
       <td className="px-1.5 py-1.5">
-        <span className="inline-flex max-w-[160px] items-center gap-1" dir="ltr">
+        <span className="inline-flex max-w-40 items-center gap-1" dir="ltr">
           {Logo ? <Logo size={12} /> : null}
           <span className="text-muted truncate">{agent.model.split('/').pop()}</span>
         </span>
       </td>
-      <td className="text-muted max-w-[170px] truncate px-1.5 py-1.5">{agent.phase ?? '—'}</td>
+      <td className="text-muted max-w-42.5 truncate px-1.5 py-1.5">{agent.phase ?? '—'}</td>
       <td className="text-muted px-1.5 py-1.5 text-end tabular-nums" dir="ltr">
         {live && agent.status === 'queued'
           ? t('chat.workflow.agentStatus.queued')

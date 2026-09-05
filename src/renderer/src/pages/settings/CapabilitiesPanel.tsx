@@ -493,7 +493,7 @@ function CapabilityRow({
                 <Badge
                   variant="default"
                   size="sm"
-                  className="!bg-primary/10 !text-primary !ring-primary/30"
+                  className="bg-primary/10! text-primary! ring-primary/30!"
                 >
                   <SquareLock02Icon size={11} />
                   {t('settings.capabilities.core')}
@@ -502,7 +502,7 @@ function CapabilityRow({
                 <Badge
                   variant="default"
                   size="sm"
-                  className="!bg-primary/10 !text-primary !ring-primary/30"
+                  className="bg-primary/10! text-primary! ring-primary/30!"
                 >
                   <SecurityCheckIcon size={11} />
                   {t('settings.capabilities.official')}
@@ -513,7 +513,7 @@ function CapabilityRow({
                 <Badge
                   variant="default"
                   size="sm"
-                  className="!bg-primary/10 !text-primary !ring-primary/30"
+                  className="bg-primary/10! text-primary! ring-primary/30!"
                 >
                   <SparklesIcon size={11} />
                   {t('settings.capabilities.wolffish')}

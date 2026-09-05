@@ -79,8 +79,10 @@ import {
   CancelCircleIcon,
   Clock01Icon,
   CloudUploadIcon,
+  ComputerTerminal01Icon,
   Delete02Icon,
   Download01Icon,
+  Files01Icon,
   Folder01Icon,
   Image02Icon,
   Mic01Icon,
@@ -164,6 +166,12 @@ const REMOTE_RUN_PLACEHOLDER: AssistantMessage = {
 // cards are hidden. true = the full activity feed (chip included). Provided
 // by Chat, read in AssistantBubble.
 const InAppVerboseContext = createContext(false)
+
+// Whether the model's thinking renders as a ReasoningCard. ON by default and
+// display-only: switching it off hides the card, and the reasoning still
+// streams, still persists, still exports either way. Same workspace key the
+// phone obeys (`inapp.reasoning`), so the two surfaces can never disagree.
+const InAppReasoningContext = createContext(false)
 
 export type ChatProps = {
   /** Stable identity of this session in the ChatSessionsProvider. */
@@ -303,12 +311,21 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
   // getConfig() below flipped it to true a beat later, and tool cards popped in
   // on a second render — growing the conversation and flashing on open.
   const [inAppVerbose, setInAppVerbose] = useState(status?.config?.inapp?.verbose ?? false)
+  // Same seed-then-subscribe as verbose above, and for the same reason: a
+  // late flip would pop thinking cards into a feed that had already laid out.
+  const [inAppReasoning, setInAppReasoning] = useState(status?.config?.inapp?.reasoning ?? true)
   useEffect(() => {
     let cancelled = false
     void window.api.inapp.getConfig().then((cfg) => {
-      if (!cancelled) setInAppVerbose(cfg.verbose ?? false)
+      if (!cancelled) {
+        setInAppVerbose(cfg.verbose ?? false)
+        setInAppReasoning(cfg.reasoning ?? true)
+      }
     })
-    const off = window.api.inapp.onConfigChange((cfg) => setInAppVerbose(cfg.verbose ?? false))
+    const off = window.api.inapp.onConfigChange((cfg) => {
+      setInAppVerbose(cfg.verbose ?? false)
+      setInAppReasoning(cfg.reasoning ?? true)
+    })
     return () => {
       cancelled = true
       off()
@@ -1886,6 +1903,12 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
           // SAME id, so our end-of-turn save reconciles with the shell
           // instead of duplicating it.
           userMessageId: userMessage.id,
+          // Main checkpoints the turn-so-far to disk under this id while it
+          // runs (channels/turn-checkpoint.ts). Handing it OUR placeholder's
+          // id is what makes that checkpoint and the save below one message:
+          // the id-keyed merge replaces it rather than appending a second
+          // copy of the same answer.
+          assistantMessageId: assistantPlaceholder.id,
           workingFolders: opts?.workingFolders ?? workingFolders,
           contextFiles: opts?.contextFiles ?? contextFiles,
           thinkingMode: thinkingMode as import('@preload/index').ThinkingMode,
@@ -2161,6 +2184,9 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
           // Same contract as sendContent: the titler shell persists this very
           // message, and it must carry the feed's id to reconcile later.
           userMessageId: userMsgId,
+          // Same contract as sendContent — main's mid-turn checkpoint writes
+          // under this id so the fold below replaces it, not duplicates it.
+          assistantMessageId: assistantPlaceholder.id,
           workingFolders,
           contextFiles,
           thinkingMode: thinkingMode as import('@preload/index').ThinkingMode,
@@ -2686,25 +2712,27 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
             </div>
           )}
           <InAppVerboseContext.Provider value={inAppVerbose}>
-            {feedMessages.map((m, i) => (
-              <ChatItem
-                key={m.id}
-                message={m}
-                t={t}
-                awaitingApproval={awaitingApproval}
-                awaitingAsk={awaitingAsk}
-                onApprovalDecision={respondApproval}
-                onAskRespond={respondAsk}
-                onTryAgain={
-                  i === feedMessages.length - 1 &&
-                  !busy &&
-                  m.role === 'assistant' &&
-                  m.status === 'error'
-                    ? handleTryAgain
-                    : undefined
-                }
-              />
-            ))}
+            <InAppReasoningContext.Provider value={inAppReasoning}>
+              {feedMessages.map((m, i) => (
+                <ChatItem
+                  key={m.id}
+                  message={m}
+                  t={t}
+                  awaitingApproval={awaitingApproval}
+                  awaitingAsk={awaitingAsk}
+                  onApprovalDecision={respondApproval}
+                  onAskRespond={respondAsk}
+                  onTryAgain={
+                    i === feedMessages.length - 1 &&
+                    !busy &&
+                    m.role === 'assistant' &&
+                    m.status === 'error'
+                      ? handleTryAgain
+                      : undefined
+                  }
+                />
+              ))}
+            </InAppReasoningContext.Provider>
           </InAppVerboseContext.Provider>
           {hasMessages && !hasAnyModel && (
             <div
@@ -2805,12 +2833,12 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                 placeholder={busy ? t('chat.queue.placeholder') : t('chat.placeholder')}
                 dir={isRtl ? 'rtl' : 'ltr'}
                 className={cn(
-                  'text-fg placeholder:text-muted max-h-40 min-h-[38px] min-w-0 flex-1 resize-none bg-transparent px-3.5 pt-2.5 pb-0.5 text-sm outline-none',
+                  'text-fg placeholder:text-muted max-h-40 min-h-9.5 min-w-0 flex-1 resize-none bg-transparent px-3.5 pt-2.5 pb-0.5 text-sm outline-none',
                   placeholderAlign
                 )}
               />
             ) : recPhase === 'recording' ? (
-              <div className="flex min-h-[38px] min-w-0 flex-1 items-center gap-3 px-3.5">
+              <div className="flex min-h-9.5 min-w-0 flex-1 items-center gap-3 px-3.5">
                 <span className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-red-500" />
                 <span className="text-fg tabular-nums text-sm font-medium">
                   {formatRecTime(recElapsed)}
@@ -2830,7 +2858,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                 </button>
               </div>
             ) : (
-              <div className="flex min-h-[38px] min-w-0 flex-1 items-center gap-2 px-3.5">
+              <div className="flex min-h-9.5 min-w-0 flex-1 items-center gap-2 px-3.5">
                 <button
                   type="button"
                   onClick={togglePlayback}
@@ -2924,11 +2952,30 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                   convStats?.lastTurn?.provider ??
                   (localOnly ? 'local' : activeCloudProvider)
                 }
-                logsCount={timelineEventCount}
-                filesCount={conversationFiles.length}
-                onOpenTimeline={() => setTimelineOpen(true)}
-                onOpenFiles={() => setFilesOpen(true)}
               />
+            )}
+            {/* Logs and files ride beside the meter rather than inside its
+                card: the footer's start edge has the room, and one click
+                opens the sheet instead of hover-card → button. Icon + count
+                only — the count is the label. Kept mounted (dimmed) at zero
+                so the row doesn't shift the moment the first event lands. */}
+            {recPhase === 'idle' && (
+              <>
+                <SheetCountButton
+                  icon={<ComputerTerminal01Icon size={14} />}
+                  count={timelineEventCount}
+                  label={t('chat.timeline.viewLogs')}
+                  countLabel={t('chat.timeline.eventCount', { count: timelineEventCount })}
+                  onOpen={() => setTimelineOpen(true)}
+                />
+                <SheetCountButton
+                  icon={<Files01Icon size={14} />}
+                  count={conversationFiles.length}
+                  label={t('chat.files.viewFiles')}
+                  countLabel={t('chat.files.fileCount', { count: conversationFiles.length })}
+                  onOpen={() => setFilesOpen(true)}
+                />
+              </>
             )}
             <div className="min-w-0 flex-1" />
             {/* Expands the draft into the full-screen CodeMirror editor —
@@ -3103,11 +3150,13 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
           <div
             role="presentation"
             onClick={() => setTimelineOpen(false)}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+            className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm"
           >
-            <div
+            <aside
+              role="dialog"
+              aria-modal="true"
               onClick={(e) => e.stopPropagation()}
-              className="border-border bg-surface flex h-[80vh] w-[80vw] flex-col overflow-hidden rounded-2xl border shadow-xl"
+              className="wf-sheet-panel-end border-border bg-surface absolute inset-y-0 inset-e-0 flex w-[80vw] max-w-full flex-col overflow-hidden border-s shadow-xl"
             >
               <div className="border-border flex shrink-0 items-center justify-between border-b px-5 py-3">
                 <h2 className="text-fg min-w-0 flex-1 truncate text-sm font-semibold">
@@ -3135,7 +3184,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                 </span>
               </div>
               <TimelineList entries={displayTimeline} locale={locale} />
-            </div>
+            </aside>
           </div>,
           document.body
         )}
@@ -3146,11 +3195,13 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
           <div
             role="presentation"
             onClick={() => setFilesOpen(false)}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+            className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm"
           >
-            <div
+            <aside
+              role="dialog"
+              aria-modal="true"
               onClick={(e) => e.stopPropagation()}
-              className="border-border bg-surface flex h-[80vh] w-[80vw] flex-col overflow-hidden rounded-2xl border shadow-xl"
+              className="wf-sheet-panel-end border-border bg-surface absolute inset-y-0 inset-e-0 flex w-[80vw] max-w-full flex-col overflow-hidden border-s shadow-xl"
             >
               <div className="border-border flex shrink-0 items-center justify-between border-b px-5 py-3">
                 <h2 className="text-fg min-w-0 flex-1 truncate text-sm font-semibold">
@@ -3180,7 +3231,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
               <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-5 py-4">
                 <AttachmentList attachments={conversationFiles} variant="grid" />
               </div>
-            </div>
+            </aside>
           </div>,
           document.body
         )}
@@ -3400,6 +3451,47 @@ function formatDuration(ms: number): string {
   const hr = Math.floor(min / 60)
   const remMin = min % 60
   return remMin === 0 ? `${hr}h` : `${hr}h ${remMin}m`
+}
+
+// A composer-footer chip for a sheet that has a count: icon + number, no
+// text. Zero keeps it mounted but disabled — the counts climb mid-turn, and a
+// button that appears out of nowhere would shove the whole row sideways.
+function SheetCountButton({
+  icon,
+  count,
+  label,
+  countLabel,
+  onOpen
+}: {
+  icon: ReactNode
+  count: number
+  label: string
+  /** Pluralized "N events" / "N files" — the count for screen readers. */
+  countLabel: string
+  onOpen: () => void
+}): React.JSX.Element {
+  const off = count === 0
+  return (
+    <button
+      type="button"
+      disabled={off}
+      onClick={onOpen}
+      title={label}
+      aria-label={`${label} (${countLabel})`}
+      className={cn(
+        'flex h-7 shrink-0 items-center gap-1 rounded-lg px-1.5',
+        'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+        off
+          ? 'text-muted/40 cursor-not-allowed'
+          : 'text-muted hover:text-fg hover:bg-border/40 cursor-pointer'
+      )}
+    >
+      {icon}
+      <span className="text-[10px] font-medium leading-none tabular-nums" dir="ltr">
+        {count}
+      </span>
+    </button>
+  )
 }
 
 // The working-folder control: a bordered card that reveals the folder list on
@@ -4074,6 +4166,7 @@ function AssistantBubble({
 }): React.JSX.Element {
   const { t } = useTranslation()
   const verbose = useContext(InAppVerboseContext)
+  const showReasoning = useContext(InAppReasoningContext)
   const isStreaming = message.status === 'streaming'
   const isError = message.status === 'error'
   const [typedText, setTypedText] = useState('')
@@ -4125,7 +4218,8 @@ function AssistantBubble({
     message.toolTimings,
     onApprovalDecision,
     onAskRespond,
-    verbose
+    verbose,
+    showReasoning
   )
   const showThinking = isStreaming && renderable.empty
   const fullText = useMemo(() => collectText(message.segments), [message.segments])
@@ -4214,7 +4308,8 @@ function renderSegments(
   toolTimings: Record<string, ToolTiming> | undefined,
   onApprovalDecision: (id: string, decision: 'approved' | 'denied') => void,
   onAskRespond: (askId: string, response: AskUserResponse) => void,
-  verbose: boolean
+  verbose: boolean,
+  showReasoning: boolean
 ): RenderResult {
   const blocks: ReactNode[] = []
   let textBuffer = ''
@@ -4243,6 +4338,13 @@ function renderSegments(
   // flushes the other before accumulating), so flushText draining both below
   // can never reorder them.
   const flushReasoning = (): void => {
+    // Thinking hidden (default): drop the run instead of carding it. Dropped
+    // at the flush rather than at the segment so the buffer/ordering rules
+    // above stay in one place.
+    if (!showReasoning) {
+      reasoningBuffer = ''
+      return
+    }
     if (reasoningBuffer.trim().length === 0) {
       reasoningBuffer = ''
       return
@@ -4745,7 +4847,7 @@ function renderSegments(
       // LEGACY: conversations persisted before in-place reasoning segments
       // carry the final iteration's thinking only here. When the message has
       // reasoning segments, this is a duplicate of the last one — skip it.
-      if (seg.reasoningContent?.trim() && !hasReasoningSegments) {
+      if (showReasoning && seg.reasoningContent?.trim() && !hasReasoningSegments) {
         blocks.push(<ReasoningCard key={`r-${seg.segmentId}`} content={seg.reasoningContent} />)
       }
     }

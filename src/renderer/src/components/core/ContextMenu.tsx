@@ -58,7 +58,7 @@ export function ContextMenuPopup({
     <div
       ref={menuRef}
       className={cn(
-        'bg-surface border-border fixed z-9999 min-w-[140px] overflow-hidden rounded-lg border py-1 shadow-lg'
+        'bg-surface border-border fixed z-9999 min-w-35 overflow-hidden rounded-lg border py-1 shadow-lg'
       )}
       style={{ left: position.x, top: position.y }}
     >

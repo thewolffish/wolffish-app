@@ -591,7 +591,7 @@ export function CliPanel(): React.JSX.Element {
             {config === null ? (
               <div
                 aria-hidden="true"
-                className="bg-border/30 h-7 w-[78px] shrink-0 animate-pulse rounded-lg"
+                className="bg-border/30 h-7 w-19.5 shrink-0 animate-pulse rounded-lg"
               />
             ) : (
               <div

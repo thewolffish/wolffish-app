@@ -213,7 +213,6 @@ import {
   setBypassPermissions as persistBypassPermissions,
   setCliConfig as persistCliConfig,
   setCompactionConfig as persistCompactionConfig,
-  setComputerUseConfig as persistComputerUseConfig,
   setReflectionConfig as persistReflectionConfig,
   setGitHubConfig as persistGitHubConfig,
   setGoogleConfig as persistGoogleConfig,
@@ -974,7 +973,7 @@ let mobileSetCapabilityEnabled: (name: string, enabled: boolean) => Promise<bool
  * the shape `inapp:configChange` carries, so a listener never has to guess at
  * undefined. Mirrors EMPTY_INAPP_CONFIG in workspace.ts.
  */
-const EMPTY_INAPP: InAppConfig = { verbose: false, runCards: false }
+const EMPTY_INAPP: InAppConfig = { verbose: false, runCards: false, reasoning: true }
 
 /**
  * The phone edited a setting. Every key maps onto the exact setter
@@ -1064,14 +1063,10 @@ async function applyMobileSettings(settings: Record<string, unknown>): Promise<v
         // it up.
         await persistTtsConfig({ voiceReplies: value === true })
         break
-      case 'screenshotMaxWidth': {
-        const width = int(value)
-        if (width) await persistComputerUseConfig({ screenshotMaxWidth: width })
-        break
-      }
-      case 'screenshotFormat':
-        await persistComputerUseConfig({ screenshotFormat: value === 'png' ? 'png' : 'jpeg' })
-        break
+      // No computer-use screenshotMaxWidth/screenshotFormat cases: the agent
+      // sets those per capture now, so a phone write to them is a stale
+      // client and falls through to the throw below — which is how this
+      // switch is meant to reject one (the phone re-pulls the snapshot).
       case 'browserScreenshotMaxWidth': {
         const width = int(value)
         if (width) await persistBrowserExtensionConfig({ screenshotMaxWidth: width })
@@ -1335,9 +1330,14 @@ async function applyMobileSettings(settings: Record<string, unknown>): Promise<v
       // chat adopts the phone's flip without a refetch. It drives the
       // phone's own chat feed too; the preference is the workspace's.
       case 'inappVerbose':
-      case 'inappRunCards': {
-        const patch =
-          key === 'inappVerbose' ? { verbose: value === true } : { runCards: value === true }
+      case 'inappRunCards':
+      case 'inappReasoning': {
+        const patch: Partial<InAppConfig> =
+          key === 'inappVerbose'
+            ? { verbose: value === true }
+            : key === 'inappRunCards'
+              ? { runCards: value === true }
+              : { reasoning: value === true }
         const updated = await persistInAppConfig(patch)
         broadcast('inapp:configChange', updated.inapp ?? EMPTY_INAPP)
         break
@@ -1430,8 +1430,6 @@ const MOBILE_KEY_SERVICE: Record<string, string | undefined> = {
   ttsVoice: 'tts',
   ttsSpeed: 'tts',
   ttsVoiceReplies: 'tts',
-  screenshotMaxWidth: 'computerUse',
-  screenshotFormat: 'computerUse',
   browserScreenshotMaxWidth: 'browserExtension',
   browserScreenshotFormat: 'browserExtension',
   browserScreenshotQuality: 'browserExtension'
@@ -2301,6 +2299,21 @@ function createWindow(): BrowserWindow {
     mainWindow.webContents.executeJavaScript('document.activeElement?.blur()').catch(() => {})
   })
 
+  // Windows shutdown / restart / log-off. `query-session-end` fires first and
+  // is the only warning we get; `session-end` follows and cannot be stopped.
+  // Neither goes through before-quit's drain, so an in-flight turn would
+  // otherwise die exactly where it stood — which is how a forty-minute run
+  // came back as nothing but the prompt the titler shell wrote before it
+  // started. Both flush; the checkpointer's no-op guard makes the second free.
+  // We do NOT preventDefault: the user asked the machine to restart, and the
+  // periodic checkpoint means there is at most a few seconds of prose at risk.
+  const flushForSessionEnd = (): void => {
+    wlog.info('[quit]', 'windows session ending — flushing in-flight turns')
+    void electronChannel.flushCheckpoints().catch(() => undefined)
+  }
+  mainWindow.on('query-session-end', flushForSessionEnd)
+  mainWindow.on('session-end', flushForSessionEnd)
+
   mainWindow.on('close', (event) => {
     if (updateInstallInProgress) return
     if (isQuittingFromTray || isShuttingDown) {
@@ -2633,6 +2646,11 @@ async function shutdownGracefully(): Promise<void> {
   isShuttingDown = true
 
   if (activePull) activePull.abort()
+  // Write every in-flight turn to disk BEFORE aborting it. abort() drops the
+  // accumulators on the floor, and until this landed a quit (or an update
+  // install) mid-run threw away the whole turn — the renderer folds the
+  // transcript only at chat:done, which an aborted turn never reaches.
+  await electronChannel.flushCheckpoints().catch(() => undefined)
   electronChannel.abort()
   telegramChannel.abort()
   whatsappChannel.abort()
@@ -3260,26 +3278,12 @@ app.whenReady().then(async () => {
       memesService.testImgflip(payload.username, payload.password)
   )
 
-  // Computer Use — desktop automation. Plugin reads config.json directly;
-  // these handlers let the settings panel read/write the config.
+  // Computer Use — desktop automation. The plugin reads config.json directly;
+  // this handler is the read side only. There is deliberately no setter:
+  // screenshot resolution and format are chosen by the agent per capture
+  // (`max_width` / `format` on computer_screenshot), so the stored values are
+  // a fallback default that no UI — desktop or phone — writes.
   handle('computerUse:getConfig', (): Promise<ComputerUseConfig> => getComputerUseConfig())
-
-  handle(
-    'computerUse:setConfig',
-    async (
-      _e,
-      patch: Partial<ComputerUseConfig>
-    ): Promise<{ ok: true; config: ComputerUseConfig }> => {
-      const updated = await persistComputerUseConfig(patch)
-      const next = updated.computerUse ?? {
-        enabled: true,
-        screenshotMaxWidth: 1280,
-        screenshotFormat: 'jpeg' as const
-      }
-      broadcast('services:changed', { service: 'computerUse' })
-      return { ok: true as const, config: next }
-    }
-  )
 
   handle(
     'computerUse:checkPermissions',
@@ -3684,21 +3688,64 @@ app.whenReady().then(async () => {
       w.webContents.send(channel, payload)
     }
   }
-  handle('tts:install', async (): Promise<EngineInstallResult> => {
+  // One install path per engine, shared by the panel's button (the IPC handlers
+  // below) and by the agent (the voice host further down). Whoever starts it,
+  // progress reaches every window and the terminal 'done' fires, so the panel's
+  // card tracks an agent-triggered install exactly as it tracks its own — and
+  // installTts/installStt dedupe against an in-flight run, so a click landing
+  // mid-agent-install (or the reverse) joins that run instead of starting a
+  // second one.
+  const runTtsInstall = async (): Promise<EngineInstallResult> => {
     const res = await installTts(
       (p: EngineInstallProgress) => broadcastEngineProgress('tts:installProgress', p),
       { ensureFfmpeg: () => agent.cerebellum.ensureSystemTool('ffmpeg').then(() => undefined) }
     )
     broadcastEngineProgress('tts:installProgress', { phase: 'done', percent: 100 })
     return res
-  })
-  handle('stt:installStatus', (): Promise<EngineStatus> => sttStatus())
-  handle('stt:install', async (): Promise<EngineInstallResult> => {
+  }
+  const runSttInstall = async (): Promise<EngineInstallResult> => {
     const res = await installStt((p: EngineInstallProgress) =>
       broadcastEngineProgress('stt:installProgress', p)
     )
     broadcastEngineProgress('stt:installProgress', { phase: 'done', percent: 100 })
     return res
+  }
+  handle('tts:install', (): Promise<EngineInstallResult> => runTtsInstall())
+  handle('stt:installStatus', (): Promise<EngineStatus> => sttStatus())
+  handle('stt:install', (): Promise<EngineInstallResult> => runSttInstall())
+
+  // The agent's own hand on these two panels. Every setter is the one the
+  // panel's IPC handler calls, broadcast included, so a change the model makes
+  // re-seeds an open TTS/STT panel and reaches the CLI and phone surfaces
+  // through the same channel a click here would — no second write path, no
+  // surface left holding a stale value. Validation of WHICH values are
+  // acceptable lives in the plugins, against the catalogs the panels render.
+  agent.cerebellum.setVoiceHost({
+    getTts: () => getTtsConfig(),
+    setTts: async (patch) => {
+      const updated = await persistTtsConfig(patch)
+      broadcast('services:changed', { service: 'tts' })
+      return {
+        defaultVoice: updated.tts?.defaultVoice ?? '',
+        defaultSpeed: updated.tts?.defaultSpeed ?? '',
+        voiceReplies: updated.tts?.voiceReplies !== false
+      }
+    },
+    getStt: () => getSttConfig(),
+    setStt: async (patch) => {
+      const updated = await persistSttConfig(patch)
+      broadcast('services:changed', { service: 'stt' })
+      return {
+        defaultModel: updated.stt?.defaultModel ?? '',
+        language: updated.stt?.language ?? ''
+      }
+    },
+    ttsInstalled: async () => (await ttsStatus()).installed,
+    sttInstalled: async () => (await sttStatus()).installed,
+    installTts: () => runTtsInstall(),
+    installStt: () => runSttInstall(),
+    ttsInstalling: () => getTtsInstallState().installing,
+    sttInstalling: () => getSttInstallState().installing
   })
 
   // Real Kokoro preview for the TTS panel: synthesize a short sample with the
@@ -5451,6 +5498,7 @@ app.whenReady().then(async () => {
         history: ChatHistoryMessage[]
         conversationId?: string | null
         userMessageId?: string
+        assistantMessageId?: string
         workingFolders?: string[]
         contextFiles?: string[]
         thinkingMode?: string

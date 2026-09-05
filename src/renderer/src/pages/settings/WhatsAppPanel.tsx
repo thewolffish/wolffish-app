@@ -344,7 +344,7 @@ export function WhatsAppPanel(): React.JSX.Element {
             {enabled === null ? (
               <div
                 aria-hidden="true"
-                className="bg-border/30 h-7 w-[78px] shrink-0 animate-pulse rounded-lg"
+                className="bg-border/30 h-7 w-19.5 shrink-0 animate-pulse rounded-lg"
               />
             ) : (
               <div
@@ -523,7 +523,7 @@ export function WhatsAppPanel(): React.JSX.Element {
                 {autoRefresh === null ? (
                   <div
                     aria-hidden="true"
-                    className="bg-border/30 h-7 w-[78px] shrink-0 animate-pulse rounded-lg"
+                    className="bg-border/30 h-7 w-19.5 shrink-0 animate-pulse rounded-lg"
                   />
                 ) : (
                   <div
@@ -594,7 +594,7 @@ export function WhatsAppPanel(): React.JSX.Element {
               {verbose === null ? (
                 <div
                   aria-hidden="true"
-                  className="bg-border/30 h-7 w-[78px] shrink-0 animate-pulse rounded-lg"
+                  className="bg-border/30 h-7 w-19.5 shrink-0 animate-pulse rounded-lg"
                 />
               ) : (
                 <div
@@ -655,7 +655,7 @@ export function WhatsAppPanel(): React.JSX.Element {
             {hideAutomations === null ? (
               <div
                 aria-hidden="true"
-                className="bg-border/30 h-7 w-[78px] shrink-0 animate-pulse rounded-lg"
+                className="bg-border/30 h-7 w-19.5 shrink-0 animate-pulse rounded-lg"
               />
             ) : (
               <div

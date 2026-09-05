@@ -45,7 +45,7 @@ export function SettingsCardGrid({
         <div className="relative w-full">
           <Search01Icon
             size={16}
-            className="text-muted pointer-events-none absolute start-3 top-1/2 -translate-y-1/2"
+            className="text-muted pointer-events-none absolute inset-s-3 top-1/2 -translate-y-1/2"
           />
           <input
             type="text"

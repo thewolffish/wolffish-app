@@ -337,7 +337,7 @@ function RunCard({
       <span className="bg-bg/60 border-border block w-full rounded-lg border px-2.5 py-1.5">
         <span
           ref={logBoxRef}
-          className="block h-4 w-full overflow-y-auto overscroll-contain font-mono text-[10px] leading-[16px]"
+          className="block h-4 w-full overflow-y-auto overscroll-contain font-mono text-[10px] leading-4"
         >
           {logs.length === 0 ? (
             <span className="text-muted/50 flex items-center gap-2">

@@ -217,11 +217,10 @@ export const CLI_SETTING_SECTIONS: CliSettingSection[] = [
     group: 'services',
     label: 'Speech-to-Text'
   },
-  {
-    id: 'services.computerUse',
-    group: 'services',
-    label: 'Computer Use'
-  },
+  // No 'services.computerUse' card: its only two rows were screenshot
+  // resolution and format, and the agent picks those per capture now
+  // (`max_width` / `format` on computer_screenshot). An empty card is a dead
+  // menu entry, so the card goes with the rows.
 
   // Single-card pages. The card still exists so the flows registered against
   // it have somewhere to land.
@@ -955,31 +954,6 @@ export const CLI_SETTINGS: CliSetting[] = [
     channel: 'stt:setConfig',
     wrap: 'language'
   },
-  {
-    id: 'services.computerUse.screenshotMaxWidth',
-    group: 'services',
-    section: 'services.computerUse',
-    label: 'Screenshot resolution',
-    description: 'Maximum width in pixels. Lower values use less tokens but reduce detail.',
-    kind: 'number',
-    hint: 'pixels',
-    read: 'services.screenshotMaxWidth',
-    channel: 'computerUse:setConfig',
-    wrap: 'screenshotMaxWidth'
-  },
-  {
-    id: 'services.computerUse.screenshotFormat',
-    group: 'services',
-    section: 'services.computerUse',
-    label: 'Screenshot format',
-    description: 'JPEG is smaller and faster. PNG is lossless and better for text-heavy screens.',
-    kind: 'enum',
-    options: IMAGE_FORMATS,
-    read: 'services.screenshotFormat',
-    channel: 'computerUse:setConfig',
-    wrap: 'screenshotFormat'
-  },
-
   // ── Knowledge ────────────────────────────────────────────────────────────
   {
     id: 'knowledge.compaction.dailyHour',

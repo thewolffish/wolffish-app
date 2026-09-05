@@ -65,14 +65,12 @@ const components: Components = {
   ),
   thead: ({ children }) => <thead className="bg-bg/50">{children}</thead>,
   th: ({ children }) => (
-    <th className="border-border min-w-[7rem] border px-2 py-1 text-start font-semibold whitespace-nowrap">
+    <th className="border-border min-w-28 border px-2 py-1 text-start font-semibold whitespace-nowrap">
       {children}
     </th>
   ),
   td: ({ children }) => (
-    <td className="border-border min-w-[7rem] border px-2 py-1 align-top wrap-anywhere">
-      {children}
-    </td>
+    <td className="border-border min-w-28 border px-2 py-1 align-top wrap-anywhere">{children}</td>
   ),
   pre: ({ children, className }) => {
     const text = extractText(children).replace(/\n$/, '')

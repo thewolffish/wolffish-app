@@ -1,4 +1,34 @@
-## v1.0.279 — 2026-09-04 `Latest`
+## v1.0.280 — 2026-09-05 `Latest`
+
+### A Turn That Survives the Power Going Out
+
+Until now a conversation reached your disk **exactly once — at the very end**. A run that worked for forty minutes across a dozen tool calls existed nowhere but in the app's memory while it worked, so a crash, a force-quit, an update installing itself, or a Windows restart threw the whole thing away and left you with **your question and nothing else**. Every in-app turn is now **written to disk as it happens**: the answer so far, every tool card, the task timeline. The prompt lands before the first word arrives, the slow and expensive parts — a tool call, its result, a task flipping to done — are saved within a second, and the prose follows a few seconds behind. Quit the app mid-run, restart the machine, pull the plug: **the conversation comes back with the work in it**, marked as the run that never got to finish, and nothing about a turn that ends normally changes at all.
+
+### Restarts Wait for the Answer to Land
+
+Asking the agent to restart your machine used to take it down **that instant** — including the turn that was still being saved, so the very answer telling you it was restarting went down with it. A restart or shutdown is now **scheduled about twenty seconds out**, which is far longer than saving needs and short enough that you won't notice waiting. The agent tells you what is about to happen and how to stop it (`shutdown /a` on Windows), gives the machine longer when a download or a long write is still in flight, and can still go down immediately if you explicitly ask for it. It also **can't sneak a reboot through the terminal** any more — that path skipped both the approval card and the delay.
+
+### Screenshots as Sharp as the Task Needs
+
+Screenshot resolution and format used to be **two settings you had to find and tune yourself**, and every capture came out the same regardless of what it was for. Both are now **chosen per screenshot by the agent**, which knows what it's looking at: an ordinary hunt for a button stays small and fast, while **reading a page of code, judging spacing and color, or handing you a screenshot to keep** goes up to 2560 pixels and lossless PNG. Ask for a **higher-resolution or sharper screenshot** at any point and it simply takes one — it is a choice on the next capture, not a preference buried in a panel. The old settings are gone from the app, the terminal and your phone, because nothing needs to write them any more.
+
+### Your Voice, Changed by Asking
+
+Changing how the agent **speaks** or how it **hears you** meant opening Settings and finding the right panel. Now you just say it. **"Use a British voice"**, **"you're talking too fast"**, **"transcribe in Arabic from now on"**, **"use a more accurate model"** — the agent reads your current settings, changes the one you meant, and tells you in plain words what it changed. It can also **install the voice and transcription engines on request**, with the same progress bar the panel's own button shows. Whatever it changes, the **Settings panel and your phone update live**, and it will only ever set a voice, speed, model or language that every screen can actually display — so a default it sets for you never silently reverts.
+
+### Automations, Procedures and Projects at a Glance
+
+All three pages listed their entries as **tall stacked rows**, each one carrying its full prompt, its attached files and its folders — so four automations filled the window and finding one meant scrolling past everything it contained. They are now **three-column grids of compact cards**, matching the Services page: an icon, the name, the two lines that matter, and the controls. The prompt, files and folders live in the editor, which is what the editor is for. Automations also finally have **a name of their own** — "Morning digest" rather than "Daily (08:00)" — so a card tells you what a job *does*, with its schedule reading underneath.
+
+### Logs and Files, One Click Away
+
+The **Logs** and **Files** buttons were folded inside the context meter's hover card, so reaching either meant hovering one thing to click another. They now sit **right in the composer footer** as two small chips carrying their own counts — one click, no hover. Both sheets, along with the **expanded file and PDF viewers**, also stopped being boxes floating in the middle of a dimmed screen: they now **slide in from the edge as full-height panels**, mirroring the conversations sheet on the other side, so a long document or a long timeline gets the whole height of the window to be read in.
+
+### Thinking, Shown or Hidden
+
+The model's reasoning card is welcome company for some people and clutter for others. There is now a **Show reasoning** switch in Preferences — **on by default**, and shared by this app and your phone so the two never disagree. Turning it off **hides the card and nothing more**: the model still thinks exactly as before, and the reasoning is still saved with the conversation and still included when you export it, so switching it back on brings every thought back with it.
+
+## v1.0.279 — 2026-09-04
 
 ### One Model, One Chip
 

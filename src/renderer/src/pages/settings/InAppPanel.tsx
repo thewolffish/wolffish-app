@@ -82,6 +82,22 @@ export function InAppPanel(): React.JSX.Element {
             options={toggleOptions}
             onChange={(value) => void patch({ runCards: value })}
           />
+
+          <div className="border-border/60 border-t" />
+
+          {/* The model's thinking, as a collapsible card in the feed. On by
+              default, here AND on the phone — one workspace answer, like
+              `verbose` above. Switching it off hides the card and nothing
+              else: the reasoning is still streamed, still stored with the
+              conversation, and still in an export. */}
+          <ToggleRow
+            label={t('settings.services.inapp.reasoning.label')}
+            description={t('settings.services.inapp.reasoning.description')}
+            value={config?.reasoning !== false}
+            loaded={loaded}
+            options={toggleOptions}
+            onChange={(value) => void patch({ reasoning: value })}
+          />
         </section>
       </div>
     </div>
@@ -113,7 +129,7 @@ function ToggleRow({
       {!loaded ? (
         <div
           aria-hidden="true"
-          className="bg-border/30 h-7 w-[78px] shrink-0 animate-pulse rounded-lg"
+          className="bg-border/30 h-7 w-19.5 shrink-0 animate-pulse rounded-lg"
         />
       ) : (
         <div

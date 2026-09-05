@@ -58,7 +58,7 @@ export function AttachmentList({
         {attachments.map((att, idx) => (
           <div
             key={`${att.filePath}-${idx}`}
-            className="mb-4 break-inside-avoid [&>*]:w-full [&>*]:max-w-none!"
+            className="mb-4 break-inside-avoid *:w-full *:max-w-none!"
           >
             {renderViewer(att, existence[att.filePath] ?? true)}
           </div>
@@ -75,7 +75,7 @@ export function AttachmentList({
         // intrinsic content width — without this, the audio/video players
         // collapse to the size of their controls.
         'flex w-full flex-col gap-2',
-        align === 'end' ? 'items-end [&>*]:self-end' : 'items-start [&>*]:self-start'
+        align === 'end' ? 'items-end *:self-end' : 'items-start *:self-start'
       )}
     >
       {attachments.map((att, idx) => (

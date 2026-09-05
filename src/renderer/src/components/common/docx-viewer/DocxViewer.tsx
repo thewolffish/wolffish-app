@@ -95,11 +95,11 @@ function Active({ filePath, fileName }: { filePath: string; fileName: string }):
     >
       {html !== null ? (
         <div
-          className="bg-bg text-fg max-h-[400px] overflow-auto p-4 text-sm"
+          className="bg-bg text-fg max-h-100 overflow-auto p-4 text-sm"
           dangerouslySetInnerHTML={{ __html: html }}
         />
       ) : (
-        <div className="flex h-[200px] w-full items-center justify-center">
+        <div className="flex h-50 w-full items-center justify-center">
           <span className="text-muted animate-pulse text-xs">{t('chat.docxViewer.loading')}</span>
         </div>
       )}

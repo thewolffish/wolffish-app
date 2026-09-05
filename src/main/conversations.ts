@@ -76,6 +76,16 @@ export type ConversationMessage = {
   toolTimings?: Record<string, PersistedToolTiming>
   stopReason?: SegmentTurnEndReason
   error?: string
+  /**
+   * Set on an assistant message written by a MID-TURN checkpoint — the turn
+   * was still running when this copy hit disk (see channels/turn-checkpoint.ts).
+   * Cleared by the checkpoint's own final flush and absent from every fold the
+   * renderer or a channel writes, so it survives exactly one way: the process
+   * died before the turn ended. That makes it the honest marker for "this
+   * answer is as far as the run got", and the only field the checkpoint's
+   * upsert refuses to preserve from disk.
+   */
+  interrupted?: boolean
 }
 
 /**

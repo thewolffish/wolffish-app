@@ -115,10 +115,17 @@ export type WhatsAppConfig = {
  * switches, in their own panels). False is the default and the whole point:
  * the runs still happen, are still logged, and still reach the automations
  * screen — the card simply does not float over the chat.
+ *
+ * `reasoning` gates the collapsible thinking card. TRUE (default) shows the
+ * model's reasoning on BOTH surfaces — like `verbose`, the preference belongs
+ * to the workspace rather than to the device rendering it, and it is
+ * display-only: switching it off hides the card, and the reasoning is still
+ * streamed, still persisted, still exported either way.
  */
 export type InAppConfig = {
   verbose?: boolean
   runCards?: boolean
+  reasoning?: boolean
 }
 
 /**
@@ -1435,7 +1442,8 @@ export async function setWhatsAppConfig(patch: Partial<WhatsAppConfig>): Promise
 
 const EMPTY_INAPP_CONFIG: InAppConfig = {
   verbose: false,
-  runCards: false
+  runCards: false,
+  reasoning: true
 }
 
 export async function getInAppConfig(): Promise<InAppConfig> {
@@ -1450,7 +1458,8 @@ export async function setInAppConfig(patch: Partial<InAppConfig>): Promise<Works
     const current = c.inapp ?? EMPTY_INAPP_CONFIG
     const next: InAppConfig = {
       verbose: patch.verbose ?? current.verbose,
-      runCards: patch.runCards ?? current.runCards ?? false
+      runCards: patch.runCards ?? current.runCards ?? false,
+      reasoning: patch.reasoning ?? current.reasoning ?? true
     }
     return { ...c, inapp: next }
   })
@@ -1771,18 +1780,9 @@ export async function getComputerUseConfig(): Promise<ComputerUseConfig> {
   }
 }
 
-export async function setComputerUseConfig(
-  patch: Partial<ComputerUseConfig>
-): Promise<WorkspaceConfig> {
-  return patchConfig((c) => {
-    const current = c.computerUse ?? DEFAULT_COMPUTER_USE_CONFIG
-    const next: ComputerUseConfig = {
-      screenshotMaxWidth: patch.screenshotMaxWidth ?? current.screenshotMaxWidth,
-      screenshotFormat: patch.screenshotFormat ?? current.screenshotFormat
-    }
-    return { ...c, computerUse: next }
-  })
-}
+// No setComputerUseConfig: these two values are the agent's to choose per
+// capture (`max_width` / `format` on computer_screenshot), so the stored pair
+// is a read-only fallback default with no writer on any surface.
 
 // ─── Browser Extension ──────────────────────────────────────────────────
 

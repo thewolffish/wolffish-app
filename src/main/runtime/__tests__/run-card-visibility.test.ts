@@ -82,6 +82,10 @@ async function main(): Promise<void> {
     ok('a fresh workspace draws no compaction card', compaction.cards === false)
     ok('a fresh workspace draws no reflection card', reflection.cards === false)
     ok('the feed is still clean by default', inapp.verbose === false)
+    // The one switch here that ships ON. Same `=== true` pedantry as above:
+    // `undefined` would render the card today (the surfaces read `!== false`)
+    // and stop rendering it the moment someone wrote `?? false` somewhere.
+    ok('a fresh workspace shows the thinking card', inapp.reasoning === true)
   }
 
   console.log('\na config written before the switches existed reads as off')
@@ -98,6 +102,10 @@ async function main(): Promise<void> {
     const reflection = await getReflectionConfig()
     ok('an older in-app section still reads as no card', inapp.runCards === false)
     ok('an older in-app section keeps its verbose value', inapp.verbose === true)
+    // The upgrade path for an ON-by-default field: a section written before
+    // `reasoning` existed has no such key, and it must read as ON rather than
+    // inheriting the absence as off.
+    ok('an older in-app section still shows the thinking card', inapp.reasoning === true)
     ok('an older compaction section still reads as no card', compaction.cards === false)
     ok('an older compaction section keeps its schedule', compaction.dailyHour === 4)
     ok('an older reflection section still reads as no card', reflection.cards === false)
@@ -130,6 +138,13 @@ async function main(): Promise<void> {
 
     await setInAppConfig({ verbose: false })
     ok('writing verbose leaves the card switch alone', (await getInAppConfig()).runCards === true)
+
+    // Turning an ON-by-default switch off is the case a `??` chain gets wrong:
+    // the stored `false` must survive both the read and a neighbouring write.
+    await setInAppConfig({ reasoning: false })
+    ok('the thinking card can be switched off', (await getInAppConfig()).reasoning === false)
+    await setInAppConfig({ verbose: true })
+    ok('a neighbouring write leaves it off', (await getInAppConfig()).reasoning === false)
   }
 
   console.log('\nthe family a job id names')

@@ -715,6 +715,54 @@ export type KnowledgeWriteResult =
   | { ok: true; message: string; warning?: string }
   | { ok: false; error: string }
 
+/**
+ * The local voice engines' settings + provisioning seam, injected into the
+ * `text-to-speech` and `speech-to-text` plugins via their init context
+ * (PluginContext.voice). Implemented in the main process over the SAME
+ * functions the Settings panels' IPC handlers call — persistTtsConfig /
+ * persistSttConfig followed by `services:changed`, and the deduped
+ * installTts / installStt with their progress broadcast.
+ *
+ * That sameness is the point. A setting the agent changes has to be
+ * indistinguishable from one the user changed in the panel: the config write,
+ * the renderer re-seed and the CLI/phone surfaces are one path, so an open
+ * TTS/STT panel moves under the agent's hand and every other surface follows,
+ * without any of them knowing which side made the change.
+ *
+ * Undefined for every other plugin, and for a headless host or a test that
+ * never wired one — the plugins refuse the settings tools rather than falling
+ * back to a raw config write, which would land on disk with no surface told.
+ */
+export type VoiceHost = {
+  /** Current TTS defaults, normalized field-by-field. */
+  getTts: () => Promise<{ defaultVoice: string; defaultSpeed: string; voiceReplies: boolean }>
+  /** Persist TTS defaults and announce them (renderer re-seed + surface push). */
+  setTts: (patch: {
+    defaultVoice?: string
+    defaultSpeed?: string
+  }) => Promise<{ defaultVoice: string; defaultSpeed: string; voiceReplies: boolean }>
+  /** Current STT defaults, normalized field-by-field. */
+  getStt: () => Promise<{ defaultModel: string; language: string }>
+  /** Persist STT defaults and announce them (renderer re-seed + surface push). */
+  setStt: (patch: {
+    defaultModel?: string
+    language?: string
+  }) => Promise<{ defaultModel: string; language: string }>
+  /** Whether each engine is provisioned on this device right now. */
+  ttsInstalled: () => Promise<boolean>
+  sttInstalled: () => Promise<boolean>
+  /**
+   * Provision an engine, driving the very same install the panel's button
+   * runs — deduped against an in-flight one, with progress broadcast to every
+   * window, so the panel's card tracks an agent-triggered install live.
+   */
+  installTts: () => Promise<{ ok: true } | { ok: false; error: string }>
+  installStt: () => Promise<{ ok: true } | { ok: false; error: string }>
+  /** True while an install this process started is still running. */
+  ttsInstalling: () => boolean
+  sttInstalling: () => boolean
+}
+
 export type PluginContext = {
   pluginDir: string
   workspaceRoot: string
@@ -789,6 +837,14 @@ export type PluginContext = {
    * other plugin.
    */
   knowledge?: KnowledgeHost
+  /**
+   * The local voice engines' settings + provisioning seam. Present only when
+   * the host wired one in via setVoiceHost — used by the `text-to-speech` and
+   * `speech-to-text` capabilities to read and change their own defaults (voice,
+   * speed, model, language) and to install their engines, through the exact
+   * paths the Settings panels use. Undefined for every other plugin.
+   */
+  voice?: VoiceHost
   /**
    * Async video-generation surface. Present only when the host wired one in
    * via setVideoTasksHost — used by the `video` capability to submit, await,
@@ -991,6 +1047,7 @@ export class Cerebellum {
   private mcpHost?: McpHost
   private cortexHost?: CortexHost
   private knowledgeHost?: KnowledgeHost
+  private voiceHost?: VoiceHost
   private videoTasksHost?: VideoTasksHost
   /**
    * Bumped every time the live tool surface changes — a reload (skills
@@ -1148,6 +1205,17 @@ export class Cerebellum {
    */
   setKnowledgeHost(host: KnowledgeHost): void {
     this.knowledgeHost = host
+  }
+
+  /**
+   * Wire the voice-engine settings + provisioning seam (implemented in main
+   * over the same setters, broadcast and installers the Settings panels use)
+   * that the `text-to-speech` and `speech-to-text` plugins receive in their
+   * init context. Set once at startup; survives reload() so the bridge keeps
+   * working after either plugin is re-imported.
+   */
+  setVoiceHost(host: VoiceHost): void {
+    this.voiceHost = host
   }
 
   /**
@@ -2152,6 +2220,7 @@ export class Cerebellum {
         mcp: this.mcpHost,
         cortex: this.cortexHost,
         knowledge: this.knowledgeHost,
+        voice: this.voiceHost,
         videoTasks: this.videoTasksHost,
         askUser: (input) => this.dispatchAskUser(input),
         getChannelStatus: () => this.channelStatusProvider?.() ?? []

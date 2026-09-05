@@ -179,7 +179,7 @@ function AnalyticsGrid({ analytics }: { analytics: DataAnalytics }): React.JSX.E
 // loading to loaded is layout-neutral. 4.25rem (68px) sits just above
 // the loaded card's measured intrinsic height (~66.5px on Retina), so
 // min-h drives in both states instead of either side's content winning.
-const METRIC_CARD_BASE = 'bg-surface border-border min-h-[4.25rem] rounded-xl border p-3'
+const METRIC_CARD_BASE = 'bg-surface border-border min-h-17 rounded-xl border p-3'
 
 function MetricCard({
   label,

@@ -206,7 +206,7 @@ export function WolffishPanel(): React.JSX.Element {
               disabled={savingKey === 'launchAtStartup'}
             />
           ) : (
-            <div className="h-[52px]" />
+            <div className="h-13" />
           )}
           <div className="border-border/60 border-t" />
           <SettingToggle
