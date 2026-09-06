@@ -1,4 +1,18 @@
-## v1.0.282 — 2026-09-05 `Latest`
+## v1.0.283 — 2026-09-06 `Latest`
+
+### The Expanded Prompt Editor Joins the Panel
+
+The last release moved the **automation, project and procedure** forms into full-height panels that slide in from the edge. The button that gives your prompt more room, though, still opened **a box floating in the middle of a dimmed screen** — a second shape stacked on the first, for the very same act of asking for space. It now opens **the same full-height panel**, the one the file and PDF viewers already use, so writing a long prompt widens the surface you are already on instead of covering it with another. It also finally has **a close button**: before, the only ways out were Escape or a click on the backdrop, and that backdrop click is gone on purpose — **a stray click while you were writing used to shut the editor from under you**. In Arabic on a Mac, the expanded viewer's title also no longer sits **underneath the window buttons**.
+
+### The Prompt Comes First
+
+In all three editors the prompt sat **below the file list and the folder list**, so the one field the whole form exists for was the one you had to scroll past everything else to reach — and the longer your file and folder lists grew, the further down it went. It now sits **directly under the name and project**, with files and folders beneath it. Projects already worked this way; automations and procedures now match.
+
+### Cards That Say What They Hold
+
+A project card now shows **how many files and working folders** it carries into every conversation it starts, as two small chips beside the name — and shows **nothing at all where there is nothing**, rather than an empty "0". On a procedure card the **Single / Workflow toggle moved up beside the buttons**, giving the name a full line of its own. Both cards now close with **the same small monospace line the automation cards use** — when it was last edited, when it was last used, how many conversations — so the three pages read alike, and every card in a row ends on the same line however much it holds.
+
+## v1.0.282 — 2026-09-05
 
 ### Soul, User and Agents Become One Page
 
