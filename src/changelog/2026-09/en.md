@@ -1,4 +1,10 @@
-## v1.0.283 — 2026-09-06 `Latest`
+## v1.0.284 — 2026-09-06 `Latest`
+
+### The Composer Expands Like Everything Else
+
+The last release moved the **automation, project and procedure** editors into the full-height panel when you ask their prompt for more room. The chat composer's own expand button was **the one left over** — it still opened a box floating in the middle of a dimmed screen, so the same request meant two different shapes depending on which text you happened to be writing. It now opens **the same panel**, over the same draft, so what you write in it is what the composer sends the moment you close it. It also has **a close button and answers Escape**, where before the only way out was clicking the dimmed area behind it — and that click is gone on purpose, because **a stray one while you were writing used to shut the editor mid-sentence**. The button itself finally **says what it does** when you hover it, instead of being a bare icon.
+
+## v1.0.283 — 2026-09-06
 
 ### The Expanded Prompt Editor Joins the Panel
 
