@@ -1,4 +1,14 @@
-## v1.0.284 — 2026-09-06 `Latest`
+## v1.0.285 — 2026-09-07 `Latest`
+
+### The Stray Period at the End of an Answer
+
+Every so often a finished answer was followed by **a message containing nothing but a full stop**. It arrived under a reply that was already complete, said nothing, and left you wondering what the agent had meant by it. It meant silence. When the work is done and the notification has gone out, the runtime tells the agent there is nothing left to reply to — and the correct way to finish there is to write **nothing at all**. But a model asked to send nothing cannot always send *nothing*, so it typed **the smallest mark it could find** and sent that instead. The app never edits a word the agent writes, on purpose, so the answer was never to quietly delete the character — it was to make sure the agent knows a lone `.` is every bit as visible as a sentence. It is now **told exactly that, the next time it speaks**, along with what you actually saw on your screen, the same way it is already told when a raw tokenizer marker slips into a reply. The instructions it works from **name the case outright** now, too, so the far more common outcome is that it never types the character in the first place. A reply that is genuinely just punctuation because you asked for it — a divider, a row of dashes — is left alone.
+
+### The Context Meter Waits Until It Has Something to Show
+
+A brand-new chat opened with **an empty gauge sitting in the composer row**, and hovering it produced a card that said only "No usage yet" — a control that existed to tell you nothing, beside the logs and files chips that had already stopped doing exactly that. The meter now **joins the row the moment it has a reading**, on your first send, and stays away until then. Next to it, the button that opens the full-height draft editor wore **the four-arrow mark the file, PDF and video viewers use for "make this bigger"**, while its own label reads "Write your message" — it now wears **the pencil** that the project, automation and procedure cards already use to open an editor, at the same size as every other icon in that cluster.
+
+## v1.0.284 — 2026-09-06
 
 ### The Composer Expands Like Everything Else
 
