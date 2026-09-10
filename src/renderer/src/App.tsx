@@ -21,9 +21,7 @@ import { Settings } from '@pages/settings/Settings'
 import { ViewerPage } from '@pages/ViewerPage'
 import { History } from '@pages/History'
 import { Changelog } from '@pages/Changelog'
-import { Heartbeat } from '@pages/Heartbeat'
-import { Procedures } from '@pages/Procedures'
-import { Projects } from '@pages/Projects'
+import { Library } from '@pages/Library'
 import { Customization } from '@pages/Customization'
 
 // The one-time cortex reindex (after an app update) blocks every turn, so
@@ -69,9 +67,7 @@ const CHAT_KEEPALIVE_SCREENS = new Set<Screen>([
   'viewer',
   'history',
   'changelog',
-  'heartbeat',
-  'procedures',
-  'projects',
+  'library',
   'customization',
   'ollama-setup',
   'model-picker'
@@ -100,12 +96,8 @@ function NonChatScreen({ screen }: { screen: Screen }): React.JSX.Element | null
       return <History />
     case 'changelog':
       return <Changelog />
-    case 'heartbeat':
-      return <Heartbeat />
-    case 'procedures':
-      return <Procedures />
-    case 'projects':
-      return <Projects />
+    case 'library':
+      return <Library />
     case 'customization':
       return <Customization />
   }

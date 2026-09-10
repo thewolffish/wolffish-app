@@ -23,9 +23,7 @@ export type Screen =
   | 'viewer'
   | 'history'
   | 'changelog'
-  | 'heartbeat'
-  | 'procedures'
-  | 'projects'
+  | 'library'
   | 'customization'
 
 export type ChatRole = 'user' | 'assistant'

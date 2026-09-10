@@ -1915,6 +1915,7 @@
     "conversationsUntitled": "Untitled",
     "workspace": "Workspace",
     "customization": "Customization",
+    "library": "Library",
     "soul": "Soul",
     "user": "User",
     "agents": "Agents",
@@ -2129,6 +2130,9 @@
       },
       "tokens": "{{compact}} tok"
     }
+  },
+  "library": {
+    "title": "Library"
   },
   "customization": {
     "title": "Customization",

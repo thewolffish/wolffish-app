@@ -1933,6 +1933,7 @@
     "conversationsUntitled": "بدون عنوان",
     "workspace": "مساحة العمل",
     "customization": "التخصيص",
+    "library": "المكتبة",
     "soul": "الروح",
     "user": "المستخدم",
     "agents": "الوكلاء",
@@ -2404,6 +2405,9 @@
       },
       "tokens": "{{compact}} رمز"
     }
+  },
+  "library": {
+    "title": "المكتبة"
   },
   "customization": {
     "title": "التخصيص",

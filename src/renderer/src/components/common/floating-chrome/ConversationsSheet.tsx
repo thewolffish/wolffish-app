@@ -17,9 +17,7 @@ import {
   AiBrain01Icon,
   Clock01Icon,
   FileEditIcon,
-  Folder01Icon,
-  HeartCheckIcon,
-  PlayListIcon,
+  LibraryIcon,
   Settings02Icon
 } from 'hugeicons-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from 'react'
@@ -40,9 +38,7 @@ const NAV: {
   labelKey: string
 }[] = [
   { key: 'settings', screen: 'settings', icon: Settings02Icon, labelKey: 'chat.settings' },
-  { key: 'heartbeat', screen: 'heartbeat', icon: HeartCheckIcon, labelKey: 'chat.heartbeat' },
-  { key: 'projects', screen: 'projects', icon: Folder01Icon, labelKey: 'chat.projects' },
-  { key: 'procedures', screen: 'procedures', icon: PlayListIcon, labelKey: 'chat.procedures' },
+  { key: 'library', screen: 'library', icon: LibraryIcon, labelKey: 'chat.library' },
   {
     key: 'customization',
     screen: 'customization',

@@ -1,4 +1,10 @@
-## v1.0.285 — 2026-09-07 `Latest`
+## v1.0.286 — 2026-09-10 `Latest`
+
+### Automations, Projects and Procedures Become One Library
+
+The three pages that hold what the agent **runs on its own**, what it **starts a conversation from**, and what you **run on demand** sat behind three separate sidebar entries, each opening a near-identical grid of cards under its own back button — so finding the thing you wanted to edit began with remembering which of three lookalike pages it lived on. They are now **one Library page with three tabs**, the same shape Customization took for Soul, User and Agents: the back button leads, the tabs sit beside it, and the grid fills the rest. Nothing on the cards changed — creating, editing, playing and deleting all work exactly as before — and the Automations tab keeps its **cards-or-markdown switch**, now at the far end of the same row as the tabs rather than in a header of its own. **The tab you left on is the one you come back to** after a detour through chat, so a look at what is scheduled never costs you your place among your procedures. The sidebar is one row shorter for it, in English and in Arabic alike.
+
+## v1.0.285 — 2026-09-07
 
 ### The Stray Period at the End of an Answer
 
