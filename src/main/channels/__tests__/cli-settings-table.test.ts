@@ -6,7 +6,7 @@
  * config snapshot renders "—" forever and reads as "not configured" when it
  * may well be set. A row whose LABEL collides with another on the same card is
  * indistinguishable from it — which is exactly what shipped: four rows reading
- * "Verbose task results" in one flat list, one per channel, with nothing to
+ * "Show all tool activity" in one flat list, one per channel, with nothing to
  * say which was WhatsApp's. None of the three throws, none is visible without
  * checking, and all are one edit away at all times — so all three are checked
  * against the real sources rather than trusted.
@@ -279,7 +279,7 @@ async function main(): Promise<void> {
   /**
    * The reported bug, as an assertion.
    *
-   * Labels are CARD-SCOPED in this app: "Status" and "Verbose task results"
+   * Labels are CARD-SCOPED in this app: "Status" and "Show all tool activity"
    * are unambiguous inside a Telegram card and meaningless in a flat list of
    * every setting. Two rows on ONE card that render identically cannot be told
    * apart at all.

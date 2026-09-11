@@ -59,6 +59,7 @@ import {
 import { compressVideoToLimit } from '@main/channels/video-compress'
 import {
   upsertTaskSegment,
+  upsertTodoSegment,
   appendTextSegment,
   upsertWorkflowSegment,
   WORKFLOW_TOOL_NAMES,
@@ -2741,9 +2742,14 @@ export class TelegramChannel {
     // per run/task or a long run persists hundreds of full snapshots.
     if (segment.kind === 'workflow') upsertWorkflowSegment(active.segments, segment)
     else if (segment.kind === 'task') upsertTaskSegment(active.segments, segment)
+    else if (segment.kind === 'todo') upsertTodoSegment(active.segments, segment)
     else if (segment.kind === 'text' || segment.kind === 'reasoning')
       appendTextSegment(active.segments, segment)
     else active.segments.push(segment)
+
+    // The todo checklist is an in-app card; on a chat channel the model's
+    // own narration carries progress, so the segment persists but sends nothing.
+    if (segment.kind === 'todo') return
 
     if (segment.kind === 'workflow') {
       await this.renderWorkflowUpdate(chatId, segment.snapshot)

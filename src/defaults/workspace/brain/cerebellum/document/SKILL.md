@@ -88,6 +88,7 @@ triggers:
   - terms
 tools:
   - name: document_read
+    readOnly: true
     description: Read any document file and extract content as text, HTML, or Markdown. Supports docx, html, md, txt, rtf.
     parameters:
       path:
@@ -218,6 +219,7 @@ tools:
           - html
         required: false
   - name: document_extract_images
+    readOnly: true
     description: Extract all images embedded in a .docx file and save them to a directory.
     parameters:
       path:

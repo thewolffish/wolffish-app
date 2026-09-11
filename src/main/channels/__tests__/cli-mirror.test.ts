@@ -177,6 +177,70 @@ async function main(): Promise<void> {
     assert.ok(last.content.includes('Journald'), 'lost the first delta')
     assert.ok(last.content.includes('Vacuum'), 'lost the throttled delta')
   })
+
+  // ── the fold: context-meter stats reach disk ─────────────────────────────
+  // The renderer builds `stats` itself for in-app turns; a terminal has no
+  // renderer, so the channel must fold the relayed usage events in at the
+  // fold — otherwise the app reopens this conversation with a blank meter.
+  sink.onTurnEvent('context.built', {
+    tokenCount: 1200,
+    tokenBudget: 200000,
+    compactionAt: 150000,
+    sectionsIncluded: []
+  })
+  sink.onTurnEvent('llm.response', {
+    provider: 'anthropic',
+    model: 'claude-test',
+    role: 'brain',
+    inputTokens: 1000,
+    outputTokens: 50,
+    cacheCreationTokens: 200,
+    cacheReadTokens: 300,
+    durationMs: 800
+  })
+  sink.onTurnEvent('turn.usage', {
+    provider: 'anthropic',
+    model: 'claude-test',
+    role: 'brain',
+    iterations: 1,
+    toolCalls: 2,
+    inputTokens: 1000,
+    outputTokens: 50,
+    cacheCreationTokens: 200,
+    cacheReadTokens: 300,
+    cacheHitRate: 0.2,
+    cost: 0.0123
+  })
+  const doneFrame = new Promise<void>((resolve) => {
+    channel.subscribe((event) => {
+      if (event.t === 'done' && event.turnId === 'turn_test_1') resolve()
+    })
+  })
+  sink.onDone()
+  await doneFrame
+  const { loadConversation } = await import('@main/conversations')
+  const saved = await loadConversation(started.conversationId)
+
+  check('the reply is persisted at the fold', () => {
+    assert.ok(
+      saved?.messages.some((m) => m.role === 'assistant'),
+      'no assistant on disk'
+    )
+  })
+  check('the context-meter stats are persisted with the reply', () => {
+    const stats = saved?.stats
+    assert.ok(stats, 'stats missing — the app would show a blank meter')
+    assert.equal(stats.meter?.contextTokens, 1500, 'meter = in + cacheRead + cacheWrite')
+    assert.equal(stats.meter?.contextBudget, 200000)
+    assert.equal(stats.meter?.compactionAt, 150000)
+    assert.equal(stats.meter?.model, 'claude-test')
+    assert.equal(stats.lastTurn?.apiCalls, 1)
+    assert.equal(stats.lastTurn?.toolCalls, 2, 'turn.usage tool count is authoritative')
+    assert.equal(stats.lastTurn?.cost, 0.0123)
+    assert.equal(stats.allTime.turns, 1)
+    assert.equal(stats.allTime.inputTokens, 1000)
+    assert.equal(stats.allTime.outputTokens, 50)
+  })
   ;(os as { homedir: () => string }).homedir = realHomedir
   fs.rmSync(TMP, { recursive: true, force: true })
   console.log(`\n${passed} passed, ${failed} failed`)

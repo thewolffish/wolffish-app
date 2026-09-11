@@ -120,6 +120,7 @@ tools:
     description: List the Google accounts the user has authorized. Always call this first to get the exact account email(s) you must pass as `account` on every other google_* tool. There is no implicit "default" account — every other google_* call requires `account` explicitly.
     parameters: {}
   - name: google_gmail_search
+    readOnly: true
     description: Search Gmail messages by query. Supports Gmail search operators (from:, to:, subject:, has:attachment, is:unread, after:, before:, label:, etc). Returns message metadata and snippets.
     parameters:
       account:
@@ -133,6 +134,7 @@ tools:
         required: false
         description: Maximum results to return (default 10)
   - name: google_gmail_read
+    readOnly: true
     description: Read a full email thread by ID. Returns all messages in the thread with headers, body text, and attachment metadata.
     parameters:
       account:
@@ -303,6 +305,7 @@ tools:
         required: false
         description: Reply to this message ID (sets threading headers)
   - name: google_drive_list
+    readOnly: true
     description: List files in Google Drive. Optionally filter by parent folder. Returns file names, IDs, types, sizes, and modification dates.
     parameters:
       account:
@@ -317,6 +320,7 @@ tools:
         required: false
         description: Maximum results (default 20)
   - name: google_drive_search
+    readOnly: true
     description: Search Google Drive files by name or content. Returns matching file names, IDs, types, sizes, and modification dates.
     parameters:
       account:
@@ -494,6 +498,7 @@ tools:
         required: false
         description: '"all", "externalOnly", or "none" — whether to notify attendees (default none)'
   - name: google_contacts_search
+    readOnly: true
     description: Search Google Contacts by name, email, or phone number.
     parameters:
       account:
@@ -540,6 +545,7 @@ tools:
         required: false
         description: Notes / biography
   - name: google_tasks_list
+    readOnly: true
     description: List Google Tasks. When called without a task_list_id, returns all task lists. When called with a task_list_id, returns tasks in that list.
     parameters:
       account:
@@ -602,6 +608,7 @@ tools:
         type: string
         description: Task ID
   - name: google_sheets_read
+    readOnly: true
     description: Read data from a Google Sheets spreadsheet. Returns cell values as a 2D array.
     parameters:
       account:

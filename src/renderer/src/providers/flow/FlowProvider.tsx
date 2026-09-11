@@ -46,8 +46,9 @@ export function FlowProvider({ children }: { children: ReactNode }): React.JSX.E
 
     // 1. Selected model + Ollama reachable: verify the model is still
     //    installed in Ollama. If it was removed via `ollama rm` or never
-    //    actually finished pulling, clear our selection and route to picker
-    //    so the user can re-select.
+    //    actually finished pulling, clear our selection — and then fall
+    //    through to the same routing as "no model" below. Ollama is
+    //    optional; a stale pick must never strand the user on the picker.
     if (selectedModel && ollama.reachable) {
       const installed = await window.api.ollama.listInstalled()
       const stillThere = installed.some((tag) => tag.name === selectedModel)
@@ -56,22 +57,19 @@ export function FlowProvider({ children }: { children: ReactNode }): React.JSX.E
       }
       await window.api.model.clear()
       s = await window.api.workspace.getStatus()
-      return { screen: 'model-picker', status: s }
     }
 
-    // 2. Onboarding incomplete → welcome (theme/locale)
+    // 2. Onboarding incomplete → welcome (theme/locale). Onboarding is the
+    //    ONLY launch path that leads to ollama-setup / model-picker.
     if (!s.onboardingCompleted) {
       return { screen: 'welcome', status: s }
     }
 
-    // 3. Ollama not reachable → chat (Ollama is optional; in-chat notice
-    //    guides the user to configure a model if nothing is available).
-    if (!ollama.reachable) {
-      return { screen: 'chat', status: s }
-    }
-
-    // 4. Ollama reachable, no model → picker
-    return { screen: 'model-picker', status: s }
+    // 3. Onboarded → chat, whether or not Ollama is reachable or a local
+    //    model is picked. Ollama is a secondary, optional provider: the
+    //    user reaches the picker from Settings when they want it, and the
+    //    in-chat notice guides them if no model is available at all.
+    return { screen: 'chat', status: s }
   }, [])
 
   useEffect(() => {

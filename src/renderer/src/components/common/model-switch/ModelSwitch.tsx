@@ -11,7 +11,7 @@ import {
   shortModelName,
   sortOpenRouterModelIds
 } from '@pages/settings/modelCatalog'
-import type { BrainSelection, CloudProviderConfig, OllamaTag } from '@preload/index'
+import type { BrainSelection, CloudProviderConfig, OllamaSnapshot } from '@preload/index'
 import {
   AiBrain01Icon,
   BrainIcon,
@@ -64,10 +64,13 @@ const MODE_ICON: Record<ReasoningMode, typeof BrainIcon> = {
  * it was never a thing you could run, so the runtime is a consequence of the
  * pick, not a separate switch, and closed the control says only what is live.
  *
- * The list carries both runtimes: the installed Ollama models first (read
- * live from `ollama:listInstalled` each time the card opens, so a model
- * pulled in a terminal shows up without a relaunch), then one group per
- * connected cloud provider. One search box filters across all of them.
+ * The list carries both runtimes: the installed Ollama models first, then
+ * one group per connected cloud provider. One search box filters across
+ * all of them. Ollama is listed exactly as a cloud provider is — only while
+ * it can answer: a cloud group needs its key, the local group needs the
+ * daemon up. Both are flags the card READS, never something it checks on
+ * open: main watches the daemon in the background (`useOllama`), so the
+ * card renders from a settled answer and nothing refreshes when it opens.
  * Picking writes the local model or the Brain — and flips the runtime switch
  * when you picked from the other side — the card is the ONLY model-selection
  * surface; settings keeps just the API keys.
@@ -80,6 +83,7 @@ export function ModelSwitch({
   localOnly,
   localModel,
   providers,
+  ollama,
   brain,
   disabled,
   reasoningModes,
@@ -95,6 +99,8 @@ export function ModelSwitch({
   localOnly: boolean
   localModel: string | null
   providers: CloudProviderConfig[]
+  /** The daemon's settled state (see useOllama): decides whether the local group exists at all. */
+  ollama: OllamaSnapshot
   brain: BrainSelection | null
   disabled: boolean
   /** Ordered reasoning modes this model honours (from reasoningModesFor). */
@@ -122,7 +128,6 @@ export function ModelSwitch({
   const [query, setQuery] = useState('')
   const [optimistic, setOptimistic] = useState<BrainSelection | null>(null)
   const [optimisticLocal, setOptimisticLocal] = useState<string | null>(null)
-  const [installed, setInstalled] = useState<OllamaTag[]>([])
   const [optimisticChatMode, setOptimisticChatMode] = useState<ChatMode | null>(null)
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const rootRef = useRef<HTMLSpanElement>(null)
@@ -177,24 +182,10 @@ export function ModelSwitch({
   }
   const cardVisible = (open || pinned) && !disabled
 
-  // Installed Ollama models, re-read every time the card opens: `ollama pull`
-  // in a terminal (or an `ollama rm`) must be reflected without a relaunch.
-  // Main already swallows a dead daemon into [], so this can come back empty
-  // for an unreachable Ollama exactly as it does for an empty one — which is
-  // why `localIds` below keeps a row for the configured model regardless.
-  useEffect(() => {
-    if (!cardVisible) return
-    let cancelled = false
-    void window.api.ollama
-      .listInstalled()
-      .then((tags) => {
-        if (!cancelled) setInstalled(tags)
-      })
-      .catch(() => {})
-    return () => {
-      cancelled = true
-    }
-  }, [cardVisible])
+  // Installed Ollama models come with the snapshot — main's watch re-reads
+  // them on its own tick, so `ollama pull` in a terminal (or an `ollama rm`)
+  // shows up here without a relaunch and without the card asking.
+  const installed = ollama.installed
 
   const shown = optimistic ?? brain
   const connected = useMemo(() => {
@@ -228,24 +219,20 @@ export function ModelSwitch({
   const shownLocal = optimisticLocal ?? localModel
   const localIds = useMemo(() => {
     const names = installed.map((tag) => tag.name)
-    // The configured local model always gets a row of its own. `listInstalled`
-    // reports [] for an unreachable daemon as well as for an empty one, and
-    // the two are indistinguishable here — so without this, opening the card
-    // while Ollama happens to be down offers no row to click and no way back
-    // to the local runtime at all, now that there is no Local tab to fall
-    // back on. Picking it is what starts that runtime; whether the daemon is
-    // answering yet is the runtime's problem, not the picker's.
+    // The configured local model always gets a row of its own — the mirror
+    // of a cloud provider whose list is empty still offering its `model`.
     if (shownLocal && !names.includes(shownLocal)) names.push(shownLocal)
     names.sort((a, b) => a.localeCompare(b))
     if (!q) return names
     return names.filter((m) => m.toLowerCase().includes(q) || 'ollama'.includes(q))
   }, [installed, shownLocal, q])
 
-  // With a search on, an empty local group is just noise — hide it. With no
-  // search, the group always shows: its "nothing installed" line is the
-  // answer to "why is there no Ollama model to pick?" — which, given the
-  // fallback above, now means genuinely none is configured either.
-  const showLocalGroup = localIds.length > 0 || !q
+  // No daemon, no group — Ollama is hidden like any provider that cannot
+  // answer, and the flag was settled before the card opened. With the daemon
+  // up: a search hides an empty local group as noise, while with no search
+  // the group always shows, its "nothing installed" line being the answer to
+  // "why is there no Ollama model to pick?".
+  const showLocalGroup = ollama.reachable && (localIds.length > 0 || !q)
 
   // ONE model is active at a time, and the closed control shows only that
   // one: its runtime is something the logo says, not a second thing to pick.

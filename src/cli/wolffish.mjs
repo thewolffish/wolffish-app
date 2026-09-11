@@ -90,6 +90,7 @@ ${c.gray('CHAT')}
   wolffish "<prompt>"               ask once, print, exit
   wolffish -p "<prompt>" -f a.pdf   attach files by path
   wolffish -p "…" --project <id>   ask inside a project
+  wolffish -p "…" --plan           plan mode: read-only turn that only writes its plan file
   cat log.txt | wolffish -p "why?"  pipe context in
   wolffish resume [id]              continue a past conversation
 
@@ -151,6 +152,8 @@ function parseArgs(argv) {
     files: [],
     conversation: null,
     project: null,
+    /** Plan mode: a read-only turn that only writes the conversation's plan file. */
+    plan: false,
     /**
      * Null means "whatever `channels.cli.verbose` says". `--tools` and
      * `--clean` are a per-COMMAND override, which is the thing the stored
@@ -178,6 +181,7 @@ function parseArgs(argv) {
     else if (arg === '-f' || arg === '--file') flags.files.push(argv[++i])
     else if (arg === '-c' || arg === '--conversation') flags.conversation = argv[++i] ?? null
     else if (arg === '--project') flags.project = argv[++i] ?? null
+    else if (arg === '--plan') flags.plan = true
     else rest.push(arg)
   }
   return { flags, rest }
@@ -693,6 +697,7 @@ async function oneShot(client, text, flags) {
       text: prompt,
       conversationId: flags.conversation,
       projectId,
+      planMode: flags.plan === true,
       attachmentPaths: flags.files.length ? flags.files : undefined
     },
     { verbose: flags.verbose }

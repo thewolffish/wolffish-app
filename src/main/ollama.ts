@@ -441,3 +441,96 @@ export async function enrichWithDetails(
     })
   )
 }
+
+// ---------------------------------------------------------------------------
+// Liveness watch — the daemon's state, known BEFORE anyone asks for it
+// ---------------------------------------------------------------------------
+
+/** What the chat picker needs to know about Ollama: up or not, and what it holds. */
+export type OllamaSnapshot = { reachable: boolean; installed: OllamaTag[] }
+
+const WATCH_INTERVAL_MS = 5000
+
+/**
+ * Keeps an `OllamaSnapshot` current in the background so a surface that
+ * hides the local provider when the daemon is down (the composer's model
+ * card) reads a flag that is already there, exactly as it reads a cloud
+ * provider's key — instead of probing on open and re-rendering when the
+ * answer lands. One liveness ping per tick (the same bounded GET `detect`
+ * runs), plus a tags read only while the daemon is up; `onChange` fires
+ * only when the answer actually differs from the last one, so an idle
+ * daemon costs a loopback request every few seconds and no pushes at all.
+ * `poke` re-probes immediately after something known to change the answer
+ * (a launch, a finished pull) so the flip lands ahead of the next tick.
+ */
+export function startOllamaWatch(options: {
+  getEndpoint: () => string
+  onChange: (snapshot: OllamaSnapshot) => void
+}): { current: () => OllamaSnapshot; poke: () => void; stop: () => void } {
+  let current: OllamaSnapshot = { reachable: false, installed: [] }
+  let timer: ReturnType<typeof setTimeout> | null = null
+  let probing = false
+  let again = false
+  let stopped = false
+
+  const same = (a: OllamaSnapshot, b: OllamaSnapshot): boolean =>
+    a.reachable === b.reachable &&
+    a.installed.length === b.installed.length &&
+    a.installed.every(
+      (tag, i) => tag.name === b.installed[i].name && tag.size === b.installed[i].size
+    )
+
+  const schedule = (): void => {
+    if (stopped) return
+    if (timer) clearTimeout(timer)
+    timer = setTimeout(() => void probe(), WATCH_INTERVAL_MS)
+    // Never the reason the process stays alive.
+    timer.unref()
+  }
+
+  const probe = async (): Promise<void> => {
+    if (stopped) return
+    if (probing) {
+      // A poke during a probe: run once more right after, so the poke's
+      // reason (the daemon just launched) is not lost to the in-flight ping.
+      again = true
+      return
+    }
+    probing = true
+    try {
+      const endpoint = options.getEndpoint()
+      const reachable = await detect(endpoint)
+      let installed: OllamaTag[] = []
+      if (reachable) {
+        try {
+          installed = await listTags(endpoint)
+        } catch {
+          installed = []
+        }
+      }
+      const next = { reachable, installed }
+      if (!same(current, next)) {
+        current = next
+        if (!stopped) options.onChange(next)
+      }
+    } finally {
+      probing = false
+      if (again) {
+        again = false
+        void probe()
+      } else {
+        schedule()
+      }
+    }
+  }
+
+  void probe()
+  return {
+    current: () => current,
+    poke: () => void probe(),
+    stop: () => {
+      stopped = true
+      if (timer) clearTimeout(timer)
+    }
+  }
+}

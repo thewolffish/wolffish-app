@@ -111,6 +111,7 @@ tools:
         description: "Filter templates by name (case-insensitive)"
         required: false
   - name: gif_search
+    readOnly: true
     description: Search Giphy for a GIF by keyword. Requires Giphy API key in config.
     parameters:
       query:

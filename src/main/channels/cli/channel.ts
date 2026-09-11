@@ -32,6 +32,7 @@ import {
   type TurnSink
 } from '@main/channels/channel'
 import type { TurnRunner } from '@main/channels/turn-runner'
+import { TurnStatsCollector } from '@main/channels/turn-stats'
 import {
   createConversation,
   loadConversation,
@@ -47,6 +48,7 @@ import type { ApprovalDecision, ApprovalRequest } from '@main/runtime/amygdala'
 import {
   appendTextSegment,
   upsertTaskSegment,
+  upsertTodoSegment,
   upsertWorkflowSegment,
   type Segment
 } from '@main/runtime/broca'
@@ -109,6 +111,8 @@ export type CliSendPayload = {
   projectId?: string | null
   thinkingMode?: 'off' | 'on' | 'high' | 'max'
   modeOverride?: 'single' | 'workflow'
+  /** Plan mode: read-only turn that may only write its plan file. */
+  planMode?: boolean
 }
 
 type LiveTurn = {
@@ -272,6 +276,7 @@ export class CliChannel {
       workingFolders: payload.workingFolders,
       thinkingMode: payload.thinkingMode,
       modeOverride: payload.modeOverride,
+      planMode: payload.planMode === true,
       channel: 'cli',
       makeSink: ({ turnId, conversationId }) =>
         this.createSink(turnId, conversationId, conversation, userMessage)
@@ -398,6 +403,13 @@ export class CliChannel {
       toolTimings: new Map(),
       stopReason: null
     }
+    /**
+     * Tokenomics for the persisted context-meter `stats`. The renderer builds
+     * these itself for in-app turns; every other channel must fold them in at
+     * the fold, and this one did not — so a CLI conversation reopened in the
+     * app showed a blank meter card. Same collector Telegram/WhatsApp use.
+     */
+    const stats = new TurnStatsCollector(Date.now())
 
     let lastMirrorAt = 0
     let mirrorTimer: NodeJS.Timeout | null = null
@@ -428,16 +440,26 @@ export class CliChannel {
       mirrorTimer.unref?.()
     }
 
-    /** One write, at the fold — the same shape every other channel persists. */
+    /**
+     * One write, at the fold — the same shape every other channel persists.
+     * Runs even without an assistant message when the turn reached the model,
+     * so an errored/empty turn still records its all-time roll-up (Telegram
+     * and WhatsApp do the same).
+     */
     const persist = async (): Promise<void> => {
       const assistant = buildAssistantMessage(acc)
-      if (!assistant) return
+      const foldStats = stats.hasData()
+      if (!assistant && !foldStats) return
+      const endedAt = Date.now()
       await updateConversation(conversation.id, (disk) => {
         if (!disk) return null
-        const existing = disk.messages.findIndex((m) => m.id === assistant.id)
-        if (existing >= 0) disk.messages[existing] = assistant
-        else disk.messages.push(assistant)
-        disk.updatedAt = assistant.timestamp
+        if (assistant) {
+          const existing = disk.messages.findIndex((m) => m.id === assistant.id)
+          if (existing >= 0) disk.messages[existing] = assistant
+          else disk.messages.push(assistant)
+          disk.updatedAt = assistant.timestamp
+        }
+        if (foldStats) disk.stats = stats.foldInto(disk.stats, endedAt)
         /**
          * A heartbeat or procedure run SEALS its conversation as a finished
          * record. Answering in one from the terminal makes it live again, and
@@ -469,7 +491,7 @@ export class CliChannel {
            * the terminal is the ONLY surface and its conversations are the
            * long ones.
            */
-          queueConversationSummarization(conversation.id)
+          if (assistant) queueConversationSummarization(conversation.id)
         })
         .catch(() => undefined)
     }
@@ -483,6 +505,7 @@ export class CliChannel {
         if ('worker' in segment && segment.worker) return
         if (segment.kind === 'workflow') upsertWorkflowSegment(acc.segments, segment)
         else if (segment.kind === 'task') upsertTaskSegment(acc.segments, segment)
+        else if (segment.kind === 'todo') upsertTodoSegment(acc.segments, segment)
         else if (segment.kind === 'text' || segment.kind === 'reasoning')
           appendTextSegment(acc.segments, segment)
         else acc.segments.push(segment)
@@ -496,6 +519,8 @@ export class CliChannel {
           const turn = this.turns.get(turnId)
           if (task.taskId && turn) turn.taskId = task.taskId
         }
+        // Accumulate tokenomics for the persisted context-meter stats.
+        stats.note(type, payload)
         this.emit({ t: 'turnEvent', conversationId, turnId, type, payload })
       },
       onApprovalRequest: (req: ApprovalRequest & { id: string }) => {

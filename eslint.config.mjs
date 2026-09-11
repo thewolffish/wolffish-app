@@ -11,6 +11,9 @@ export default defineConfig(
       '**/node_modules',
       '**/dist',
       '**/out',
+      // The coding-agent parity benchmark: plain-JS harness scripts and the
+      // bug fixtures the two agents are graded on — fixture code is the bug.
+      'bench/**',
       // Bundled workspace defaults are user-facing assets copied into
       // ~/.wolffish on first launch. Plugin code there is JavaScript the
       // user can edit — not part of the app's TypeScript source.

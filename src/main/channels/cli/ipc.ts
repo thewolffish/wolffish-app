@@ -270,7 +270,7 @@ export function registerCliIpc(deps: CliIpcDeps): void {
    * and sub-tabs are. The CLI's picker mirrors the desktop's nav rather than
    * inventing a second taxonomy — someone who knows where a setting lives in
    * the window can find it here, and the card is what makes a row's label
-   * ("Status", "Verbose task results") mean something on its own.
+   * ("Status", "Show all tool activity") mean something on its own.
    */
   handle('cli:settingGroups', async (): Promise<CliSettingGroupCard[]> => {
     return CLI_SETTING_GROUPS.map((group) => ({
@@ -318,6 +318,8 @@ export function registerCliIpc(deps: CliIpcDeps): void {
         projectId?: string | null
         thinkingMode?: 'off' | 'on' | 'high' | 'max'
         modeOverride?: 'single' | 'workflow'
+        /** Plan mode: read-only turn that may only write its plan file (`wolffish --plan`). */
+        planMode?: boolean
       }
     ) => {
       const attachments = payload?.attachmentPaths?.length
@@ -328,6 +330,7 @@ export function registerCliIpc(deps: CliIpcDeps): void {
         conversationId: payload?.conversationId ?? null,
         attachments,
         workingFolders: payload?.workingFolders,
+        planMode: payload?.planMode === true,
         projectId: payload?.projectId ?? null,
         thinkingMode: payload?.thinkingMode,
         modeOverride: payload?.modeOverride

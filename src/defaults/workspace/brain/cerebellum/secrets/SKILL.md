@@ -42,6 +42,7 @@ tools:
         required: false
         description: Only changes how the Settings UI shows it (masked vs plain) — you always get the real value. Defaults to true; pass false for non-secret config like a base URL.
   - name: list_secrets
+    readOnly: true
     description: List the saved secrets/variables with their actual values so you can use a stored value directly instead of asking the user. Each is tagged sensitive or not. Call before asking the user for any key/token/value.
     parameters: {}
 ---

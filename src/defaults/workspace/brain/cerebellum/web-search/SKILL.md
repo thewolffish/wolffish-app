@@ -94,6 +94,7 @@ requires:
   - node
 tools:
   - name: web_search
+    readOnly: true
     description: Search the web. Returns titles, snippets and URLs — never a page. Fast, and each query spends the user's money, so use it to settle one fact or to find which URL to open. To actually read or work with a site, prefer the browser-extension capability.
     parameters:
       query:
@@ -104,6 +105,7 @@ tools:
         required: false
         description: Maximum number of results to return (default 5, max 10)
   - name: web_fetch
+    readOnly: true
     description: One plain HTTP GET of a URL, returned as text. Instant and free, but it sees only what the server sends — JS-rendered pages come back empty, and paywalls, logins, consent walls and bot checks defeat it. When that happens, or when the page needs a click or scroll, switch to the browser-extension capability rather than retrying.
     parameters:
       url:

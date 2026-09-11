@@ -22,6 +22,7 @@ triggers:
   - h3
 tools:
   - name: video_check
+    readOnly: true
     description: "Confirm video generation is configured and the API key works — costs nothing and spends no credits. Call this FIRST when a video request is the start of a conversation, when a previous generation failed on credentials, or any time you are unsure the service is set up; a generation attempt against an unconfigured service wastes a turn and confuses the user. Reports exactly what to tell them when something is missing."
     parameters: {}
   - name: video_generate
@@ -84,6 +85,7 @@ tools:
         description: "Task to wait for. Omit for this conversation's most recent task."
         required: false
   - name: video_status
+    readOnly: true
     description: "Instant, non-blocking snapshot of this conversation's video tasks (or one by id). For a quick glance while doing other work — video_await is how you actually collect a result."
     parameters:
       task_id:

@@ -1,4 +1,50 @@
-## v1.0.287 — 2026-09-11 `Latest`
+## v1.0.288 — 2026-09-11 `Latest`
+
+### Wolffish Writes Code Now
+
+Point a conversation at a code project and Wolffish stops being an assistant that happens to own a shell and becomes **a coding agent that works the way you would**. It begins by **reading the project instead of guessing at it**: the runtime now tells it which of your working folders are real projects, **what branch each one is on and how many uncommitted changes it carries**, which toolchain it uses, and **the exact check commands that project exposes** — and it reads the project's own `AGENTS.md` or `CLAUDE.md` first, so a repository's house rules outrank anything Wolffish believes by default. Three new tools do the work: **`file_edit`** makes a surgical, exact-string change and shows you the diff instead of rewriting a file whole; **`file_grep`** searches file contents with ripgrep across a codebase of any size, respecting `.gitignore`; and **`file_glob`** finds a file by name. Every edit is followed by two steps you never have to ask for — the **project's own formatter** runs on the file when the project demonstrably uses one, and the **project's own TypeScript, ESLint, Ruff or Pyright** is asked what it thinks, with any errors handed straight back so they are fixed in the same turn instead of surfacing at build time. And a change is not done until a check passes: the narrowest test first, then the project's full typecheck, lint and tests, with a failure reported rather than hidden. All of this is attached **only when the working folder really is a code project** — an ordinary conversation carries none of it.
+
+### Plan First, Change After
+
+A new **Plan chip** sits in the composer beside the draft-editor button. With it on, a turn **cannot change anything**: it reads, searches and investigates, then ends by writing a plan — the recommended approach, the files it will touch, the steps in order, and how the result will be checked — and tells you to turn Plan off to run it. It is a stance you take for a conversation rather than a property of its transcript, so it is held in one place and **shared with your paired phone**: set from either surface, and the other follows at once. A brand-new chat can carry the stance before it even has an id. Turn it off and the next turn is told, once, that the plan is now approved to act on.
+
+### Every Change Arrives as a Diff
+
+A file edit and a shell run used to look like every other tool call in the feed. They now get **a compact activity row of their own** — a short label, the file or the command, and a chip reading **`+12 −3`** for an edit or **`exit 0`** for a command, green or red. Open the row and an edit shows **the real unified diff**, red and green with the true line numbers down both sides; a command shows its output and, when the output was long, **the path of the file holding all of it**. The diff travels on the result itself, so **a conversation reopened next week renders exactly what it rendered live**.
+
+### The Task List
+
+When a job runs to three steps or more the agent now keeps **a task list**, and it appears in the chat as **a checklist card**: exactly one item in progress, an item ticked off only after the check that proves it really ran. The card **updates in place** rather than stacking a new copy on every revision, so a long run leaves one list in the transcript showing where things stand. It reaches the paired phone and the exported PDF the same way.
+
+### Putting It Back
+
+Before the first change a turn makes to a file, Wolffish now **keeps the original bytes**. `changes_list` shows what each recent turn touched, and **`changes_revert` puts a turn's files back** — the whole turn, or one file of it. It needs no git, works in any folder, and keeps **the last twenty turns** of each conversation. It exists for one sentence you have certainly said before: *that fix made it worse, put it back*.
+
+### Allow It for This Conversation
+
+The approval card has a second button. **Allow for this conversation** approves the call in front of you and stops asking about **the same kind of call for the rest of the chat** — the same tool, and for the shell the same command head, so allowing `npm install` once never quietly allows `git push` later. Anything blocked outright never reaches this card and never gets the button.
+
+### Approvals That Read the Path, Not the Code
+
+Writing a file whose **contents** happened to mention a path used to stop the agent and ask you about it. An ordinary relative import — `import x from '../lib/x'` — raised a red **"Path traversal attempt"** card, the app's most severe warning, over a line of perfectly normal code; a shell script beginning `#!/usr/bin/env node` was announced as **"Modifying system files"**. The rules were reading the whole call, text and all, instead of the one thing they are about. They now read **the path being written**, and nothing else. A genuine traversal such as `../../../etc/hosts`, and a genuine write into `/etc`, `/usr` or `/private`, still stop and ask exactly as before, on a file tool and on a shell command alike — and the rules that are about a command, not a path, are untouched. One thing genuinely relaxes: a shell command that merely walks up a directory, `cd ../sibling && npm test`, no longer counts as an attempted break-out. This one is older than the rest of this release; it simply became impossible to ignore once the agent started sending whole blocks of code through those very fields.
+
+### The Feed Shows the Work, Not the Mechanics
+
+The switch that controls how much of a turn you see carried the name **"Verbose task results"** on four different surfaces — a name describing its setting rather than what you would see. It is now **"Show all tool activity"** everywhere: desktop, phone, terminal, Telegram and WhatsApp. More usefully, **what a clean feed always shows has grown**. With the switch off you now see the replies, the delivered files, **the code edits and shell runs**, the questions and approvals, the reasoning and the task lists — only genuine mechanics stay out of sight. Along the transcript's top edge there is also a new strip of **folder chips: every folder this conversation changed files in, and how many**, each one a click away from opening on your desktop. Going the other way, **the live run cards are gone** — the card that covered the chat while an automation, a procedure, a compaction or a reflection ran has been removed along with its four switches, because each of those runs already reports itself on its own page and the card only ever sat in front of what you were reading.
+
+### Output That Keeps Its Ending, Servers That Can Be Stopped
+
+A long test run's output used to be cut off past about 100 KB — it kept the beginning and **threw away the bottom of the log**, precisely where the failure is reported. Long output now keeps **the last 2000 lines or 50 KB**, and **the full text is written to a file the result names**, so nothing is lost and the agent can search the log for the failing test instead of running everything again. Commands also **run in your working folder by default** now instead of your home directory, so `npm test` and `git status` land in the project without being told where it is, and they come back with the colour codes stripped out. A command shaped like a dev server or a watcher is **refused in the foreground** rather than hanging the turn: it is started in the background instead, with **`shell_jobs`** to list what is running and **`shell_stop`** to end one or all of them before the turn finishes.
+
+### Simulators, on Both Phones
+
+A new **Mobile simulators** capability puts iOS and Android on the desk: **nine `sim_` tools** for the iOS Simulator — list the devices, boot one, build, install, launch, terminate, screenshot, read the log, open a deep link — and **seven `adb_` tools** for an Android emulator or a plugged-in device, tapping and typing included. "Does the new screen look right?" is now a question the agent answers by building the app, launching it and looking.
+
+### The Local Models Group Waits for Ollama
+
+The composer's model card used to **ask Ollama what it held every single time you opened it**, then re-render when the answer arrived — and it offered a local group whether or not the daemon was actually running. Wolffish now **watches Ollama in the background**, and the card simply reads an answer that has already settled: the local group is there exactly when Ollama can answer, the same way a cloud provider's group is there exactly when it has a key. Opening the card costs nothing, and nothing shifts under your cursor.
+
+## v1.0.287 — 2026-09-11
 
 ### DeepSeek's New Flash Can See
 

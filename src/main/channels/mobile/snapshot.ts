@@ -420,11 +420,6 @@ export async function buildConfigSnapshot(sources: SnapshotSources): Promise<Con
     channels: {
       inapp: {
         verbose: bool(config.inapp?.verbose),
-        // Whether a running automation cards over the DESKTOP's chat. The
-        // phone renders and edits it as that machine's setting, exactly as it
-        // does the in-app feed switch beside it; its own copy of the question
-        // is `mobile.runCards` below.
-        runCards: bool(config.inapp?.runCards),
         // Whether the thinking card renders at all. One workspace answer for
         // both surfaces (the phone obeys the same key), ON by default — so an
         // absent field must read as true here too, or a workspace that has
@@ -459,10 +454,7 @@ export async function buildConfigSnapshot(sources: SnapshotSources): Promise<Con
       // ON (MobileChannelConfig), the feed defaults clean.
       mobile: {
         notifications: bool(mobile.notifications, true),
-        verbose: bool(mobile.verbose),
-        // The phone's own floating automation cards. Off by default, and the
-        // phone is the surface that obeys it — the desktop only stores it.
-        runCards: bool(mobile.runCards)
+        verbose: bool(mobile.verbose)
       },
       telegram: {
         enabled: bool(telegram.enabled),
@@ -560,10 +552,7 @@ export async function buildConfigSnapshot(sources: SnapshotSources): Promise<Con
     // unset config must read the same on both screens.
     reflection: {
       hour: int(reflection.hour, 3),
-      quietHours: int(reflection.quietHours, 12),
-      // Floating run cards for the nightly review and the deep clean — one
-      // switch for both surfaces, defaulting off like the compaction twin.
-      cards: bool(reflection.cards)
+      quietHours: int(reflection.quietHours, 12)
     },
 
     compaction: {
@@ -572,9 +561,6 @@ export async function buildConfigSnapshot(sources: SnapshotSources): Promise<Con
       dailyHour: int(compaction.dailyHour, 23),
       weeklyDay: int(compaction.weeklyDay, 0),
       weeklyHour: int(compaction.weeklyHour, 23),
-      // Floating run cards for the daily/weekly passes — both surfaces, off by
-      // default: housekeeping that finished is what the last-run cards report.
-      cards: bool(compaction.cards),
       ...(compactionRuns
         ? {
             runs: {

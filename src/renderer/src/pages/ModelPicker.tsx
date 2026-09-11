@@ -757,11 +757,9 @@ export function ModelPicker(): React.JSX.Element {
                   <ArrowIcon size={18} />
                 )}
               </Button>
-              {currentModel && (
-                <Button size="lg" variant="ghost" disabled={locked} onClick={() => goTo('chat')}>
-                  {t('modelPicker.backToChat')}
-                </Button>
-              )}
+              <Button size="lg" variant="ghost" disabled={locked} onClick={() => goTo('chat')}>
+                {currentModel ? t('modelPicker.backToChat') : t('modelPicker.skip')}
+              </Button>
               <button
                 type="button"
                 disabled={locked}

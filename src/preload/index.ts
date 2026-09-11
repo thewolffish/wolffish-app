@@ -3,11 +3,25 @@ import type {
   SegmentTurnEndReason,
   TaskSnapshot,
   TaskStatus,
+  TodoItem,
+  TodoStatus,
+  ToolResultDiff,
+  ToolResultMeta,
   ToolResultStatus
 } from '@main/runtime/broca'
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 
-export type { Segment, SegmentTurnEndReason, TaskSnapshot, TaskStatus, ToolResultStatus }
+export type {
+  Segment,
+  SegmentTurnEndReason,
+  TaskSnapshot,
+  TaskStatus,
+  TodoItem,
+  TodoStatus,
+  ToolResultDiff,
+  ToolResultMeta,
+  ToolResultStatus
+}
 
 export type ThemeSource = 'system' | 'light' | 'dark'
 export type Locale = 'en' | 'ar'
@@ -110,14 +124,9 @@ export type WhatsAppConfig = {
  * (default) the in-app chat shows a clean feed — agent replies,
  * file-bearing tool results, errors, and the model chip — and hides
  * tool-activity and compaction cards. Display-only; history is unaffected.
- *
- * `runCards` (default false) is the separate question of whether a
- * RUNNING automation floats its live card over this app. Compaction and
- * reflection runs have the same switch in their own panels.
  */
 export type InAppConfig = {
   verbose?: boolean
-  runCards?: boolean
   /**
    * Whether the model's thinking renders as a collapsible card. Default
    * TRUE, one workspace answer for this app and the phone, and display-only:
@@ -358,6 +367,13 @@ export type WorkspaceStatus = {
 }
 
 export type OllamaTag = { name: string; size: number }
+
+/**
+ * Main's background read of the daemon: up or not, and what it holds. Kept
+ * current by a watch that pushes `ollama:changed` only when the answer
+ * differs, so the renderer holds the flag before any surface asks for it.
+ */
+export type OllamaSnapshot = { reachable: boolean; installed: OllamaTag[] }
 
 export type PullProgressEvent = {
   modelName: string
@@ -618,7 +634,7 @@ export type ChatTurnEvent = {
 }
 
 export type DangerLevel = 'safe' | 'warn' | 'confirm' | 'destructive' | 'block'
-export type ApprovalDecision = 'approved' | 'denied'
+export type ApprovalDecision = 'approved' | 'denied' | 'approved_session'
 
 export type RiskLevel = 'low' | 'medium' | 'high'
 
@@ -827,8 +843,6 @@ export type CompactionConfig = {
   dailyHour: number
   weeklyDay: number
   weeklyHour: number
-  /** Whether a running compaction job draws its floating card (default off). */
-  cards: boolean
 }
 
 /** Last completed run of a compaction job (mirrors brainstem's type). */
@@ -856,8 +870,6 @@ export type CompactionRuns = {
 export type ReflectionConfig = {
   hour: number
   quietHours: number
-  /** Whether a running reflection job draws its floating card (default off). */
-  cards: boolean
 }
 
 export type OllamaModelDetail = {
@@ -877,6 +889,10 @@ export type OllamaApi = {
   openInstallPage: () => Promise<{ opened: boolean }>
   start: () => Promise<{ ok: boolean; error?: string }>
   listInstalled: () => Promise<OllamaTag[]>
+  /** The watch's settled answer right now — seeds the renderer cache at boot. */
+  snapshot: () => Promise<OllamaSnapshot>
+  /** Fires only when reachability or the installed list actually changes. */
+  onChanged: (listener: (snapshot: OllamaSnapshot) => void) => () => void
   scanAvailable: () => Promise<OllamaModelDetail[]>
   getModelsFolder: () => Promise<string>
   setModelsFolder: (folder: string) => Promise<{ ok: true; folder: string }>
@@ -980,6 +996,11 @@ export type ChatApi = {
     modeOverride?: 'single' | 'workflow'
     /** Project this conversation runs inside — overlays its context on the turn. */
     projectId?: string | null
+    /**
+     * Plan mode: a read-only turn that may only write the conversation's
+     * plan file. The composer's Plan chip sets it per conversation.
+     */
+    planMode?: boolean
   }) => Promise<{ turnId: string; ok: boolean; error?: string }>
   /**
    * Cancel one conversation's in-flight turn; omitted id cancels all. Works
@@ -989,6 +1010,13 @@ export type ChatApi = {
   cancel: (payload?: { conversationId?: string | null }) => Promise<{ canceled: boolean }>
   /** Conversations running RIGHT NOW, any channel (window cold-start seed). */
   activeRuns: () => Promise<ChatActiveRun[]>
+  /** One conversation's plan-mode stance, held in main and shared with the phone. */
+  getPlanMode: (conversationId: string) => Promise<boolean>
+  /** Set it; every window and the paired phone hear the change via onPlanMode. */
+  setPlanMode: (payload: { conversationId: string; planMode: boolean }) => Promise<boolean>
+  onPlanMode: (
+    listener: (change: { conversationId: string; planMode: boolean }) => void
+  ) => () => void
   /**
    * The newest live-mirror snapshot of one running conversation's in-progress
    * assistant message, or null when nothing is cached (no run, or the turn
@@ -1176,11 +1204,10 @@ export type HeartbeatJobView = {
 
 /**
  * Which family a pooled run belongs to (dual decl — see brainstem's RunFamily).
- * The run pool is shared, and each family's live card has its own visibility
- * switch: automations in Settings → Channels → In-app, the other two in their
- * own Knowledge panels. Procedure runs ride the automations switch — a
- * procedure is a saved prompt run in the background, and "is something running
- * for me" is one question, not two.
+ * The run pool is shared by automations, the built-in compaction and
+ * reflection jobs, and model-triggered procedure runs; consumers that mean
+ * automations specifically (the Automations page's play-button gating) skip
+ * `procedure` by this stamp rather than parsing job ids.
  */
 export type RunFamily = 'automation' | 'compaction' | 'reflection' | 'procedure'
 
@@ -1693,8 +1720,6 @@ export type MobileStatus = {
   verbose: boolean
   /** Whether the model's notify_phone tool may send push notifications. */
   notificationsEnabled: boolean
-  /** Whether a running automation draws its live card on the PHONE. */
-  runCards: boolean
   /** Relay endpoint the tunnel dials — known before pairing, shown in the panel. */
   relayUrl: string
   /** What "reset to default" returns to, so the panel needn't hardcode it. */
@@ -1714,8 +1739,6 @@ export type MobileApi = {
   setVerbose: (verbose: boolean) => Promise<MobileStatus>
   /** Allow or forbid the model's notify_phone push notifications. */
   setNotifications: (enabled: boolean) => Promise<MobileStatus>
-  /** Show or hide the phone's floating automation-run cards. */
-  setRunCards: (enabled: boolean) => Promise<MobileStatus>
   /**
    * Point the tunnel at a different relay (null resets to the default).
    * Rejects on a malformed URL. Changing relay drops any offer or pairing —
@@ -2324,6 +2347,8 @@ const api: WolffishApi = {
     openInstallPage: () => ipcRenderer.invoke('ollama:openInstallPage'),
     start: () => ipcRenderer.invoke('ollama:start'),
     listInstalled: () => ipcRenderer.invoke('ollama:listInstalled'),
+    snapshot: () => ipcRenderer.invoke('ollama:snapshot'),
+    onChanged: (listener) => subscribe('ollama:changed', listener),
     scanAvailable: () => ipcRenderer.invoke('ollama:scanAvailable'),
     getModelsFolder: () => ipcRenderer.invoke('ollama:getModelsFolder'),
     setModelsFolder: (folder) => ipcRenderer.invoke('ollama:setModelsFolder', folder),
@@ -2351,6 +2376,9 @@ const api: WolffishApi = {
     send: (payload) => ipcRenderer.invoke('chat:send', payload),
     cancel: (payload) => ipcRenderer.invoke('chat:cancel', payload),
     activeRuns: () => ipcRenderer.invoke('chat:activeRuns'),
+    getPlanMode: (conversationId) => ipcRenderer.invoke('chat:planModeGet', conversationId),
+    setPlanMode: (payload) => ipcRenderer.invoke('chat:planModeSet', payload),
+    onPlanMode: (listener) => subscribe('chat:planMode', listener),
     turnMirror: (conversationId) => ipcRenderer.invoke('chat:turnMirror', conversationId),
     respondApproval: (payload) => ipcRenderer.invoke('chat:approvalRespond', payload),
     respondAsk: (payload) => ipcRenderer.invoke('chat:askRespond', payload),
@@ -2538,7 +2566,6 @@ const api: WolffishApi = {
     unpair: () => ipcRenderer.invoke('mobile:unpair'),
     setVerbose: (verbose) => ipcRenderer.invoke('mobile:setVerbose', verbose),
     setNotifications: (enabled) => ipcRenderer.invoke('mobile:setNotifications', enabled),
-    setRunCards: (enabled) => ipcRenderer.invoke('mobile:setRunCards', enabled),
     setRelayUrl: (url) => ipcRenderer.invoke('mobile:setRelayUrl', url),
     onStatusChange: (callback) => subscribe('mobile:statusChange', callback)
   },

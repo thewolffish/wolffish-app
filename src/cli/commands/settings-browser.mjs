@@ -10,10 +10,10 @@
  *   wolffish settings verbose             everything matching, wherever it lives
  *
  * The hierarchy is not decoration. Labels in this app are CARD-SCOPED — inside
- * a Telegram card, a row called "Status" or "Verbose task results" is
+ * a Telegram card, a row called "Status" or "Show all tool activity" is
  * unambiguous, and four channels legitimately carry the same two words. Print
  * them as one flat list and the result is what this replaced: fifty-six rows
- * with "Verbose task results" appearing four times and no way to tell which
+ * with "Show all tool activity" appearing four times and no way to tell which
  * one is WhatsApp's. Grouping is the disambiguation, and it is also how
  * someone who knows where a setting lives on screen finds it here.
  *
@@ -381,7 +381,7 @@ function cardItems(model, sectionId) {
 /**
  * Search spans every card, every row and every flow, and each hit says where
  * it lives. A result without its card is the original problem in miniature:
- * "Verbose task results" four times over, indistinguishable.
+ * "Show all tool activity" four times over, indistinguishable.
  *
  * Cards are results too, not just containers — a word that names two cards
  * ("general" is both Preferences and Appearance) has to be answerable with

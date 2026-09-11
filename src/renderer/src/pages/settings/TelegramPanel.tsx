@@ -663,7 +663,7 @@ export function TelegramPanel(): React.JSX.Element {
 
           <div className="border-border/60 border-t" />
 
-          {/* Verbose task results — off (default) sends a clean feed:
+          {/* Show all tool activity — off (default) sends a clean feed:
               agent messages, file-bearing tool results, and errors only.
               On relays every tool call/result/activity. Persists without a
               bot restart and affects sending only, never history. Gated on a

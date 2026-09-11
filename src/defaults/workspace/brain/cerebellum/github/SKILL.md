@@ -118,6 +118,7 @@ tools:
     description: 'List the configured GitHub connections (their labels and connected account) so you know which `connection` to pass on other github_* tools. Never exposes tokens.'
     parameters: {}
   - name: github_list_repos
+    readOnly: true
     description: List the authenticated user's repositories. Returns name, description, visibility, default branch, and last pushed date.
     parameters:
       connection:
@@ -146,6 +147,7 @@ tools:
         required: false
         description: Results per page (default 10, max 100)
   - name: github_get_repo
+    readOnly: true
     description: Get details for a specific repository including open issues count, stars, forks, default branch, language, and topics.
     parameters:
       connection:
@@ -181,6 +183,7 @@ tools:
         required: false
         description: Initialize with a README (default false)
   - name: github_list_issues
+    readOnly: true
     description: List issues for a repository. Returns issue number, title, state, labels, assignee, and created date.
     parameters:
       connection:
@@ -214,6 +217,7 @@ tools:
         required: false
         description: Results per page (default 10, max 100)
   - name: github_get_issue
+    readOnly: true
     description: Get a single issue with full body and comments.
     parameters:
       connection:
@@ -274,6 +278,7 @@ tools:
         type: number
         description: Issue number
   - name: github_list_prs
+    readOnly: true
     description: List pull requests for a repository. Returns PR number, title, state, head/base branches, author, and review status.
     parameters:
       connection:
@@ -307,6 +312,7 @@ tools:
         required: false
         description: Results per page (default 10, max 100)
   - name: github_get_pr
+    readOnly: true
     description: Get a single pull request with full body, diff stats, and review status.
     parameters:
       connection:
@@ -377,6 +383,7 @@ tools:
           - squash
           - rebase
   - name: github_list_branches
+    readOnly: true
     description: List branches for a repository. Returns branch names and whether they are protected.
     parameters:
       connection:
@@ -482,6 +489,7 @@ tools:
         required: false
         description: Branch or commit SHA for the tag (default repo default branch)
   - name: github_search_code
+    readOnly: true
     description: Search code across GitHub repositories.
     parameters:
       connection:
@@ -496,6 +504,7 @@ tools:
         required: false
         description: Results per page (default 10, max 100)
   - name: github_get_file_content
+    readOnly: true
     description: Get the contents of a file from a repository.
     parameters:
       connection:
@@ -516,6 +525,7 @@ tools:
         required: false
         description: Branch, tag, or commit SHA (default repo default branch)
   - name: github_list_gists
+    readOnly: true
     description: List the authenticated user's gists.
     parameters:
       connection:
@@ -558,6 +568,7 @@ tools:
         type: string
         description: Repository name
   - name: github_list_user_orgs
+    readOnly: true
     description: List organizations the authenticated user belongs to. Returns org login, description, and URL. Use this to discover org names before calling github_list_org_repos.
     parameters:
       connection:
@@ -565,6 +576,7 @@ tools:
         required: false
         description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
   - name: github_list_org_repos
+    readOnly: true
     description: List repositories for a specific organization. Returns name, description, visibility, default branch, and last pushed date.
     parameters:
       connection:
@@ -599,6 +611,7 @@ tools:
         required: false
         description: Results per page (default 10, max 100)
   - name: github_get_authenticated_user
+    readOnly: true
     description: Get the authenticated user's profile. Returns username, name, email, bio, public repos count, followers, and created date.
     parameters:
       connection:
@@ -606,6 +619,7 @@ tools:
         required: false
         description: 'Which linked GitHub connection (account) to use, by its label (e.g. "Personal", "Work"). Optional when only one connection is configured; required to disambiguate when several exist. Call github_connections to list the labels.'
   - name: github_list_collaborators
+    readOnly: true
     description: List collaborators on a repository. Returns username, role, and permissions.
     parameters:
       connection:
@@ -671,6 +685,7 @@ tools:
         type: string
         description: Username to remove
   - name: github_list_comments_on_issue
+    readOnly: true
     description: List comments on an issue or PR. Returns comment author, body, and created date.
     parameters:
       connection:
@@ -710,6 +725,7 @@ tools:
         type: string
         description: Comment body (markdown)
   - name: github_list_labels
+    readOnly: true
     description: List labels for a repository. Returns label name, color, and description.
     parameters:
       connection:
@@ -770,6 +786,7 @@ tools:
         type: array
         description: Array of label names to add
   - name: github_list_milestones
+    readOnly: true
     description: List milestones for a repository. Returns title, description, due date, and open/closed issue counts.
     parameters:
       connection:
@@ -826,6 +843,7 @@ tools:
           - open
           - closed
   - name: github_list_pr_reviews
+    readOnly: true
     description: List reviews on a pull request. Returns reviewer, state, body, and submitted date.
     parameters:
       connection:
@@ -869,6 +887,7 @@ tools:
         required: false
         description: Array of team slugs to request review from
   - name: github_list_pr_files
+    readOnly: true
     description: List files changed in a pull request. Returns filename, status, additions, deletions, and patch snippet.
     parameters:
       connection:
@@ -924,6 +943,7 @@ tools:
         required: false
         description: New base branch
   - name: github_list_releases
+    readOnly: true
     description: List releases for a repository. Returns tag name, release name, published date, draft/prerelease flags, and asset count.
     parameters:
       connection:
@@ -941,6 +961,7 @@ tools:
         required: false
         description: Results per page (default 10, max 100)
   - name: github_get_release
+    readOnly: true
     description: Get a single release with full body and asset download URLs.
     parameters:
       connection:
@@ -962,6 +983,7 @@ tools:
         required: false
         description: Tag name (e.g. "v1.0.0") — alternative to release_id
   - name: github_list_repo_topics
+    readOnly: true
     description: List topics (tags) for a repository.
     parameters:
       connection:
@@ -991,6 +1013,7 @@ tools:
         type: array
         description: Array of topic strings to set
   - name: github_get_commit
+    readOnly: true
     description: Get details for a specific commit. Returns SHA, author, message, date, and files changed.
     parameters:
       connection:
@@ -1026,6 +1049,7 @@ tools:
         type: string
         description: Head commit/branch/tag
   - name: github_list_notifications
+    readOnly: true
     description: List the authenticated user's notifications.
     parameters:
       connection:
@@ -1056,6 +1080,7 @@ tools:
         required: false
         description: ISO 8601 timestamp — marks notifications before this time as read. Defaults to now.
   - name: github_list_stargazers
+    readOnly: true
     description: List users who have starred a repository.
     parameters:
       connection:

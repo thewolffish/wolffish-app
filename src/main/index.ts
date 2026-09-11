@@ -6,6 +6,7 @@ import { braveService, type BraveStatus, type BraveTestResult } from '@main/brav
 import { turnRouter } from '@main/channels/channel'
 import { collectChannelStatus } from '@main/channels/status'
 import { normalizeReasoningMode, reasoningModesFor } from '@main/runtime/reasoning'
+import { getPlanMode, onPlanModeChange, setPlanMode } from '@main/runtime/plan-mode'
 import { ElectronChannel } from '@main/channels/electron/channel'
 import { ExtensionServer } from '@main/channels/extension/server'
 import { MobileChannel } from '@main/channels/mobile/channel'
@@ -112,7 +113,9 @@ import {
   pullModel,
   scanModelManifests,
   startOllama,
-  type OllamaPullStatus
+  startOllamaWatch,
+  type OllamaPullStatus,
+  type OllamaSnapshot
 } from '@main/ollama'
 import { diskWriter } from '@main/io/diskWriter'
 import { Agent } from '@main/runtime/agent'
@@ -857,6 +860,7 @@ export type ThemeState = {
 }
 
 let activePull: AbortController | null = null
+let ollamaWatch: ReturnType<typeof startOllamaWatch> | null = null
 let activePullModel: string | null = null
 let lockAcquired = false
 let isShuttingDown = false
@@ -973,7 +977,7 @@ let mobileSetCapabilityEnabled: (name: string, enabled: boolean) => Promise<bool
  * the shape `inapp:configChange` carries, so a listener never has to guess at
  * undefined. Mirrors EMPTY_INAPP_CONFIG in workspace.ts.
  */
-const EMPTY_INAPP: InAppConfig = { verbose: false, runCards: false, reasoning: true }
+const EMPTY_INAPP: InAppConfig = { verbose: false, reasoning: true }
 
 /**
  * The phone edited a setting. Every key maps onto the exact setter
@@ -1175,6 +1179,7 @@ async function applyMobileSettings(settings: Record<string, unknown>): Promise<v
           localProvider.configure(updated.llm.local.model, updated.llm.local.endpoint)
         }
         broadcast('model:pullDone', { modelName, ok: true as const })
+        ollamaWatch?.poke()
         break
       }
       case 'brainProvider': {
@@ -1280,15 +1285,6 @@ async function applyMobileSettings(settings: Record<string, unknown>): Promise<v
         agent.brainstem.setCompactionConfig(updated.compaction!)
         break
       }
-      // Whether a running compaction job draws its floating card — on BOTH
-      // surfaces, which is why it rides the same broadcast the panel's own
-      // save fires rather than living in a per-device channel config.
-      case 'compactionCards': {
-        const updated = await persistCompactionConfig({ cards: value === true })
-        agent.brainstem.setCompactionConfig(updated.compaction!)
-        broadcast('compaction:configChanged', updated.compaction!)
-        break
-      }
       // The phone's own two channel settings, edited from the phone. Routed
       // through the channel's setters rather than the config writer, because
       // each does more than persist: notifications registers or withdraws the
@@ -1300,12 +1296,6 @@ async function applyMobileSettings(settings: Record<string, unknown>): Promise<v
         break
       case 'mobileVerbose':
         await mobileChannel.setVerbose(value === true)
-        break
-      // The phone's own floating automation cards — its half of the pair the
-      // in-app switch owns here. Same setter the Mobile panel's control calls,
-      // so the desktop's segmented control moves with the phone's.
-      case 'mobileRunCards':
-        await mobileChannel.setRunCards(value === true)
         break
       /**
        * The terminal's feed preference — the one CLI setting the phone edits.
@@ -1330,14 +1320,9 @@ async function applyMobileSettings(settings: Record<string, unknown>): Promise<v
       // chat adopts the phone's flip without a refetch. It drives the
       // phone's own chat feed too; the preference is the workspace's.
       case 'inappVerbose':
-      case 'inappRunCards':
       case 'inappReasoning': {
         const patch: Partial<InAppConfig> =
-          key === 'inappVerbose'
-            ? { verbose: value === true }
-            : key === 'inappRunCards'
-              ? { runCards: value === true }
-              : { reasoning: value === true }
+          key === 'inappVerbose' ? { verbose: value === true } : { reasoning: value === true }
         const updated = await persistInAppConfig(patch)
         broadcast('inapp:configChange', updated.inapp ?? EMPTY_INAPP)
         break
@@ -1644,13 +1629,6 @@ const mobileChannel = new MobileChannel({
   loadVerbose: async () => (await getMobileChannelConfig()).verbose === true,
   saveVerbose: async (verbose) => {
     await persistMobileChannelConfig({ verbose })
-  },
-  // Whether a running automation draws its card on the PHONE — the desktop's
-  // own answer to that question lives in `inapp.runCards`, deliberately
-  // apart: the two screens are looked at differently.
-  loadRunCards: async () => (await getMobileChannelConfig()).runCards === true,
-  saveRunCards: async (enabled) => {
-    await persistMobileChannelConfig({ runCards: enabled })
   },
   onStatus: (status) => broadcast('mobile:statusChange', status),
   // A project re-file made on the phone is a write to this app's own
@@ -2429,6 +2407,8 @@ async function pushConversationToMobile(id: string): Promise<void> {
  */
 const MOBILE_CONFIG_SILENT = new Set([
   'app:closingPending',
+  // A conversation's plan-mode stance — the phone gets its own push.
+  'chat:planMode',
   'automations:copyProgress',
   'procedures:copyProgress',
   'chat:turnState',
@@ -2440,6 +2420,7 @@ const MOBILE_CONFIG_SILENT = new Set([
   'heartbeat:jobLog',
   'mobile:statusChange',
   'model:pullProgress',
+  'ollama:changed',
   'projects:copyProgress',
   'reindex:progress',
   'task:changed'
@@ -2772,6 +2753,15 @@ app.whenReady().then(async () => {
   if (cfg?.llm.local.model) {
     localProvider.configure(cfg.llm.local.model, cfg.llm.local.endpoint)
   }
+  // Ollama liveness, tracked from here on rather than probed on demand: the
+  // composer's model card hides the local provider while the daemon is down
+  // the way it hides a cloud provider with no key, and it reads this flag —
+  // already settled — instead of pinging when it opens. Follows the endpoint
+  // the local provider is configured against, so a remote daemon counts.
+  ollamaWatch = startOllamaWatch({
+    getEndpoint: () => localProvider.currentEndpoint,
+    onChange: (snapshot) => broadcast('ollama:changed', snapshot)
+  })
   if (cfg?.llm.providers) {
     thalamus.setCloudProviders(cfg.llm.providers)
     thalamus.setBrain(cfg.llm.brain ?? null)
@@ -3919,11 +3909,6 @@ app.whenReady().then(async () => {
     pushMobileChannelConfig()
     return status
   })
-  handle('mobile:setRunCards', async (_event, enabled: boolean) => {
-    const status = await mobileChannel.setRunCards(Boolean(enabled))
-    pushMobileChannelConfig()
-    return status
-  })
   handle('mobile:setRelayUrl', (_event, url: string | null) =>
     mobileChannel.setRelayUrl(typeof url === 'string' ? url : null)
   )
@@ -4774,8 +4759,8 @@ app.whenReady().then(async () => {
   })
 
   // Live run-pool snapshot: up to 3 concurrent runs plus the FIFO overflow.
-  // The floating run cards and the Automations page's play-button gating both
-  // render from this seed + the heartbeat:runsChanged pushes below.
+  // The Automations page's play-button gating renders from this seed + the
+  // heartbeat:runsChanged pushes below.
   handle('heartbeat:getRuns', () => ({
     running: agent.brainstem.getRunningJobs(),
     queued: agent.brainstem.getQueuedJobs()
@@ -5202,7 +5187,18 @@ app.whenReady().then(async () => {
     await shell.openExternal(platformInstallUrl(process.platform))
     return { opened: true }
   })
-  handle('ollama:start', () => startOllama())
+  handle('ollama:start', () => {
+    const result = startOllama()
+    // The daemon takes a moment to answer; the watch re-probes on its own
+    // tick, and once more now so the flip lands as soon as it is up.
+    if (result.ok) setTimeout(() => ollamaWatch?.poke(), 1500).unref()
+    return result
+  })
+  // The watch's settled answer — what the renderer seeds its cache from at
+  // boot; every later change arrives as `ollama:changed`.
+  handle('ollama:snapshot', (): OllamaSnapshot => {
+    return ollamaWatch?.current() ?? { reachable: false, installed: [] }
+  })
   handle('ollama:listInstalled', async () => {
     try {
       return await listTags()
@@ -5259,6 +5255,7 @@ app.whenReady().then(async () => {
         localProvider.configure(updated.llm.local.model, updated.llm.local.endpoint)
       }
       broadcast('model:pullDone', { modelName, ok: true as const })
+      ollamaWatch?.poke()
       return { ok: true, alreadyDownloaded: true }
     }
 
@@ -5294,6 +5291,7 @@ app.whenReady().then(async () => {
         localProvider.configure(updated.llm.local.model, updated.llm.local.endpoint)
       }
       broadcast('model:pullDone', { modelName, ok: true as const })
+      ollamaWatch?.poke()
       return { ok: true }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
@@ -5504,6 +5502,7 @@ app.whenReady().then(async () => {
         thinkingMode?: string
         modeOverride?: 'single' | 'workflow'
         projectId?: string | null
+        planMode?: boolean
       }
     ) => electronChannel.send(e.sender, payload)
   )
@@ -5528,6 +5527,19 @@ app.whenReady().then(async () => {
   // channel. chat:turnState only broadcasts transitions, so a window opened
   // (or reopened from the tray) mid-run has no way to learn about it —
   // this is how the renderer seeds its live run state.
+  // Plan mode per conversation — held in main (runtime/plan-mode) so the
+  // composer chip and the paired phone's switch read one stance. A set from
+  // either side fans out to every window and to the phone.
+  handle('chat:planModeGet', (_e, conversationId: string): boolean =>
+    getPlanMode(String(conversationId ?? ''))
+  )
+  handle(
+    'chat:planModeSet',
+    (_e, payload: { conversationId: string; planMode: boolean }): boolean =>
+      setPlanMode(String(payload?.conversationId ?? ''), payload?.planMode === true)
+  )
+  onPlanModeChange((change) => broadcast('chat:planMode', change))
+
   handle('chat:activeRuns', (): ActiveRun[] => [
     ...turnRunner.activeRuns(),
     // Autonomous runs (automations, procedures) bypass the runner entirely,

@@ -132,6 +132,16 @@ export type RuntimeContext = {
    */
   videoTasks?: string
   /**
+   * Open task list notice — the conversation's latest todo list still has
+   * unfinished items from an earlier turn (the turn that wrote it was
+   * interrupted, or ended mid-work), so the model knows the checklist the
+   * user is looking at and can carry it on: its next todo_write updates
+   * that same card. Present on every iteration until the model writes the
+   * list once this turn. Same vehicle and cache rationale as noProgress.
+   * Undefined renders nothing.
+   */
+  openTodo?: string
+  /**
    * Voice-reply notice, present on every master/single turn while the Voice
    * replies preference is ON — the switch alone gates it (no per-turn voice
    * detection; the notice's wording is conditional, so it reads truthfully
@@ -779,6 +789,24 @@ The ONLY exception: the user's own message explicitly asks for something else ("
     }
   }
 
+  /**
+   * The coding overlay: appended to the pinned prompt by the Agent when a
+   * working folder is a code project (see workdir.ts anyCodeFolder). The
+   * base file stands on its own for every provider; a provider-specific
+   * addendum (coding.<provider>.md) follows it when one ships. Both are
+   * app-managed (workspace.ts migrateAgentsCore) and read fresh per turn, so
+   * the cached prefix is stable across a turn and current across launches.
+   */
+  async buildCodingOverlay(provider: string | null): Promise<string> {
+    const base = (await this.readFile('brain/prefrontal/coding.md'))?.trim() ?? ''
+    if (!base) return ''
+    const extra =
+      provider && /^[a-z0-9-]+$/i.test(provider)
+        ? ((await this.readFile(`brain/prefrontal/coding.${provider}.md`))?.trim() ?? '')
+        : ''
+    return `\n\n${base}${extra ? `\n\n${extra}` : ''}`
+  }
+
   private async readFile(relPath: string): Promise<string | null> {
     try {
       const raw = await fs.readFile(path.join(this.options.workspaceRoot, relPath), 'utf8')
@@ -880,6 +908,7 @@ function formatRuntimeBody(runtime: RuntimeContext | undefined): string {
     if (runtime.controlToken) lines.push(`  ${runtime.controlToken}`)
     // Video-task landing notice — same vehicle, same reason.
     if (runtime.videoTasks) lines.push(`  ${runtime.videoTasks}`)
+    if (runtime.openTodo) lines.push(`  ${runtime.openTodo}`)
     // Voice-reply notice (voice-prompted turn, Voice replies ON) — same
     // vehicle, same reason.
     if (runtime.voiceReply) lines.push(`  ${runtime.voiceReply}`)

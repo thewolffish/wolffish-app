@@ -95,6 +95,7 @@ tools:
     description: 'List the configured Notion connections (their labels and connected account) so you know which `connection` to pass on other notion_* tools. Never exposes tokens.'
     parameters: {}
   - name: notion_search
+    readOnly: true
     description: Search across all pages and databases the integration can access. Returns page/database titles, IDs, and snippets.
     parameters:
       connection:
@@ -117,6 +118,7 @@ tools:
         required: false
         description: '"ascending" or "descending" by last_edited_time. Default descending.'
   - name: notion_read_page
+    readOnly: true
     description: Retrieve a page's properties (title, status, dates, relations, etc). Returns the full property object as raw Notion JSON.
     parameters:
       connection:
@@ -127,6 +129,7 @@ tools:
         type: string
         description: The page ID (UUID, with or without dashes)
   - name: notion_read_blocks
+    readOnly: true
     description: Read the block content (body) of a page or block. Returns an array of block objects. Use the page ID to read the top-level content, or a block ID for children of a specific block.
     parameters:
       connection:
@@ -213,6 +216,7 @@ tools:
         required: true
         description: Array of block objects to append
   - name: notion_read_database
+    readOnly: true
     description: Query a database with optional filters and sorts. Returns an array of page objects (database rows).
     parameters:
       connection:
@@ -239,6 +243,7 @@ tools:
         required: false
         description: Cursor for pagination
   - name: notion_get_database
+    readOnly: true
     description: "Retrieve a database's metadata and property SCHEMA (column names/types), title, description, icon/cover, and parent. Use this — NOT notion_read_database, which queries rows — to learn a database's columns before creating or updating a row, and to inspect an empty database. Notion page and database IDs look identical; if notion_read_page reports that an ID is a database, read it here. Returns raw Notion JSON."
     parameters:
       connection:
@@ -327,6 +332,7 @@ tools:
         required: false
         description: Property schema updates. To rename, include both old key with null and new key with config. To add, include the new property. To remove, set property value to null.
   - name: notion_list_users
+    readOnly: true
     description: List all users in the workspace (members and bots).
     parameters:
       connection:
@@ -342,6 +348,7 @@ tools:
         required: false
         description: Cursor for pagination
   - name: notion_get_user
+    readOnly: true
     description: Get details about a specific user by ID.
     parameters:
       connection:
@@ -370,6 +377,7 @@ tools:
         type: array
         description: Rich text content of the comment
   - name: notion_list_comments
+    readOnly: true
     description: List comments on a block or page.
     parameters:
       connection:

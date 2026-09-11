@@ -20,7 +20,7 @@
  * THE SHAPE IS THE WINDOW'S SHAPE: page → card → row. The desktop nav has a
  * tab (`CLI_SETTING_GROUPS`), the tab has cards (`CLI_SETTING_SECTIONS`), and
  * a card holds rows. Flattening that away is not a simplification — it is what
- * produced a terminal listing with "Verbose task results" four times and no
+ * produced a terminal listing with "Show all tool activity" four times and no
  * way to tell which was Telegram's. Labels are card-scoped in the app
  * ("Status" inside a Telegram card is unambiguous), so a row's label is only
  * meaningful UNDER ITS SECTION, and a label never repeats the channel name
@@ -493,33 +493,21 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'channels.inapp.verbose',
     group: 'channels',
     section: 'channels.inapp',
-    label: 'Verbose task results',
+    label: 'Show all tool activity',
     description:
-      'Show every tool call and step in the chat, plus the model/provider chip. Off (the default) keeps a clean feed — only agent replies and the files it sends.',
+      'On adds every tool call and its result to the chat, plus the model chip. Off shows only what always appears: replies, delivered files, code edits and shell runs, questions and approvals, reasoning and task lists.',
     kind: 'boolean',
     read: 'channels.inapp.verbose',
     channel: 'inapp:setConfig',
     wrap: 'verbose'
   },
   {
-    id: 'channels.inapp.runCards',
-    group: 'channels',
-    section: 'channels.inapp',
-    label: 'Run cards',
-    description:
-      'Show a live card over the app while one of your automations or procedures runs. Off (the default) keeps the screen quiet — the run still happens, still logs, and still reports on its own page. Compaction and reflection have their own switches, under Knowledge.',
-    kind: 'boolean',
-    read: 'channels.inapp.runCards',
-    channel: 'inapp:setConfig',
-    wrap: 'runCards'
-  },
-  {
     id: 'channels.cli.verbose',
     group: 'channels',
     section: 'channels.cli',
-    label: 'Verbose task results',
+    label: 'Show all tool activity',
     description:
-      'Off (default) prints a clean feed: what the agent says, the files it delivers, and anything that failed. On adds the model chip and every tool call and result, the same way the in-app verbose toggle does.',
+      "On prints every tool call and its result in the terminal, plus the model chip. Off prints only the agent's replies, the files it delivers, and anything that failed.",
     kind: 'boolean',
     read: 'channels.cli.verbose',
     channel: 'cli:setConfig',
@@ -568,22 +556,10 @@ export const CLI_SETTINGS: CliSetting[] = [
     section: 'channels.mobile',
     label: 'Task results',
     description:
-      "Off keeps the phone's feed clean: assistant messages, file-bearing results and errors. On relays every tool call and activity. Connection logging is always on and is not affected by this.",
+      "Off keeps the phone's feed clean: replies, delivered files, code edits and shell runs, questions and approvals, reasoning, and errors. On relays every tool call and its result. Connection logging is always on and is not affected by this.",
     kind: 'boolean',
     read: 'channels.mobile.verbose',
     channel: 'mobile:setVerbose',
-    wrap: null
-  },
-  {
-    id: 'channels.mobile.runCards',
-    group: 'channels',
-    section: 'channels.mobile',
-    label: 'Run cards',
-    description:
-      'Show a live card on the paired phone while one of your automations or procedures runs. Off (the default) keeps the phone quiet — nothing about the run itself changes.',
-    kind: 'boolean',
-    read: 'channels.mobile.runCards',
-    channel: 'mobile:setRunCards',
     wrap: null
   },
   {
@@ -623,9 +599,9 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'channels.telegram.verbose',
     group: 'channels',
     section: 'channels.telegram',
-    label: 'Verbose task results',
+    label: 'Show all tool activity',
     description:
-      'Relay every tool call and step to the chat. Off (the default) sends a clean feed — only agent replies and the files it sends.',
+      "On relays every tool call and its result to the chat. Off sends only the agent's replies and the files it delivers.",
     kind: 'boolean',
     read: 'channels.telegram.verbose',
     channel: 'telegram:setConfig',
@@ -695,9 +671,9 @@ export const CLI_SETTINGS: CliSetting[] = [
     id: 'channels.whatsapp.verbose',
     group: 'channels',
     section: 'channels.whatsapp',
-    label: 'Verbose task results',
+    label: 'Show all tool activity',
     description:
-      'Relay every tool call and step to the chat. Off (the default) sends a clean feed — only agent replies and the files it sends.',
+      "On relays every tool call and its result to the chat. Off sends only the agent's replies and the files it delivers.",
     kind: 'boolean',
     read: 'channels.whatsapp.verbose',
     channel: 'whatsapp:setConfig',
@@ -992,18 +968,6 @@ export const CLI_SETTINGS: CliSetting[] = [
     wrap: 'weeklyHour'
   },
   {
-    id: 'knowledge.compaction.cards',
-    group: 'knowledge',
-    section: 'knowledge.compaction',
-    label: 'Compaction cards',
-    description:
-      'Show a live card while a compaction pass runs — over the chat in the app, and on the paired phone. Off (the default) hides the card only; the passes still run on their schedule.',
-    kind: 'boolean',
-    read: 'compaction.cards',
-    channel: 'runtime:setCompactionConfig',
-    wrap: 'cards'
-  },
-  {
     id: 'knowledge.reflection.hour',
     group: 'knowledge',
     section: 'knowledge.reflection',
@@ -1028,18 +992,6 @@ export const CLI_SETTINGS: CliSetting[] = [
     read: 'reflection.quietHours',
     channel: 'runtime:setReflectionConfig',
     wrap: 'quietHours'
-  },
-  {
-    id: 'knowledge.reflection.cards',
-    group: 'knowledge',
-    section: 'knowledge.reflection',
-    label: 'Reflection cards',
-    description:
-      'Show a live card while a reflection runs — over the chat in the app, and on the paired phone. Off (the default) hides the card only; the nightly review and the deep clean still run.',
-    kind: 'boolean',
-    read: 'reflection.cards',
-    channel: 'runtime:setReflectionConfig',
-    wrap: 'cards'
   },
 
   // ── Updates ──────────────────────────────────────────────────────────────

@@ -118,11 +118,15 @@ import {
   CODE_TTL_MS
 } from '@main/tunnel/pairing'
 import { Tunnel, type TunnelState } from '@main/tunnel/tunnel'
+import { getPlanMode, onPlanModeChange, setPlanMode } from '@main/runtime/plan-mode'
 import type { TurnRunner } from '@main/channels/turn-runner'
+import { TurnStatsCollector } from '@main/channels/turn-stats'
 import type { TurnSink } from '@main/channels/channel'
 import {
+  CODE_ACTIVITY_TOOLS,
   appendTextSegment,
   upsertTaskSegment,
+  upsertTodoSegment,
   upsertWorkflowSegment,
   type Segment
 } from '@main/runtime/broca'
@@ -235,7 +239,13 @@ function isCleanFeedSegment(segment: Segment): boolean {
     // the turn persists.
     segment.kind === 'reasoning' ||
     segment.kind === 'tool_result' ||
+    // The code tools are the one call the clean feed does show: an edit, a
+    // write or a shell run is a change in the user's project, and the phone
+    // draws it as a compact activity row (label, path, +N −M, exit code) —
+    // which needs the call's name and args, not just its result.
+    (segment.kind === 'tool_call' && CODE_ACTIVITY_TOOLS.has(segment.name)) ||
     segment.kind === 'task' ||
+    segment.kind === 'todo' ||
     segment.kind === 'separator' ||
     segment.kind === 'turn_end'
   )
@@ -271,8 +281,6 @@ export type MobileStatus = {
   verbose: boolean
   /** Whether the model's notify_phone tool may send push notifications. */
   notificationsEnabled: boolean
-  /** Whether a running automation draws its floating card on the phone. */
-  runCards: boolean
   /** Relay endpoint the tunnel dials — known before pairing, shown in the panel. */
   relayUrl: string
   /** What "reset to default" returns to, so the panel needn't hardcode it. */
@@ -283,8 +291,6 @@ export type MobileStatus = {
 export type ReflectionWirePatch = {
   hour?: number
   quietHours?: number
-  /** Whether a running reflection job draws its floating card, either side. */
-  cards?: boolean
 }
 
 export type MobileChannelDeps = SnapshotSources & {
@@ -352,12 +358,6 @@ export type MobileChannelDeps = SnapshotSources & {
    */
   loadVerbose?: () => Promise<boolean>
   saveVerbose?: (verbose: boolean) => Promise<void>
-  /**
-   * Persisted switch for the phone's floating automation-run cards — see
-   * setRunCards. Absent = no cards, never remembered (tests).
-   */
-  loadRunCards?: () => Promise<boolean>
-  saveRunCards?: (enabled: boolean) => Promise<void>
   /** Broadcast to the renderer so the panel updates without polling. */
   onStatus?: (status: MobileStatus) => void
   /**
@@ -445,7 +445,6 @@ export class MobileChannel {
   private pairing: MobilePairing | null = null
   private tunnelState: TunnelState | null = null
   private verbose = false
-  private runCards = false
   /** Mutable: the panel can point the tunnel at a self-hosted relay. */
   private relayUrl: string
   /** Live turns the phone started, so it can abort them. */
@@ -626,6 +625,11 @@ export class MobileChannel {
     | null = null
 
   constructor(private readonly deps: MobileChannelDeps) {
+    // Plan mode is the desktop's stance (runtime/plan-mode); every change,
+    // from the composer chip or the phone's own switch, reaches the phone
+    // here. Subscribed for the channel's lifetime (it is a singleton) — a link that is down
+    // simply drops the push, and the phone re-reads on its next open.
+    onPlanModeChange((change) => this.tunnel?.emit(Event.planMode, change))
     this.relayUrl = deps.relayUrl ?? DEFAULT_RELAY_URL
   }
 
@@ -649,7 +653,6 @@ export class MobileChannel {
     this.relayUrl = (await loadRelayUrl()) ?? this.deps.relayUrl ?? DEFAULT_RELAY_URL
     this.notificationsEnabled = (await this.deps.loadNotificationsEnabled?.()) ?? true
     this.verbose = (await this.deps.loadVerbose?.()) ?? false
-    this.runCards = (await this.deps.loadRunCards?.()) ?? false
 
     this.pairing = await loadPairing()
     // The notify_phone tool's presence IS the availability signal — see
@@ -854,23 +857,6 @@ export class MobileChannel {
     this.verbose = verbose
     await this.deps.saveVerbose?.(verbose)
     this.log(`phone feed ${verbose ? 'relays every tool call' : 'kept clean'}`)
-    this.emitStatus()
-    return this.getStatus()
-  }
-
-  /**
-   * Whether an automation running on this desktop draws its live card over
-   * whatever screen the PHONE is on. Off by default: the run pool announces
-   * itself either way (the phone still receives the pushes, the automations
-   * screen still shows what ran), this is only whether it interrupts.
-   *
-   * Persisted and status-borne like the two switches above, so the phone's own
-   * Channels screen and the desktop's Mobile panel edit one value.
-   */
-  async setRunCards(enabled: boolean): Promise<MobileStatus> {
-    this.runCards = enabled
-    await this.deps.saveRunCards?.(enabled)
-    this.log(`phone automation cards ${enabled ? 'shown' : 'hidden'}`)
     this.emitStatus()
     return this.getStatus()
   }
@@ -1328,6 +1314,16 @@ export class MobileChannel {
      * would show project chrome over turns that never received the project's
      * instructions.
      */
+    // Plan mode: the phone's chat-controls switch reads and writes the SAME
+    // stance the desktop composer's chip does (runtime/plan-mode); a set from
+    // either side reaches the other through Event.planMode.
+    tunnel.onRpc(Rpc.planModeGet, (params) => ({
+      planMode: getPlanMode(String(params.conversationId ?? ''))
+    }))
+    tunnel.onRpc(Rpc.planModeSet, (params) => ({
+      planMode: setPlanMode(String(params.conversationId ?? ''), params.planMode === true)
+    }))
+
     tunnel.onRpc(Rpc.conversationProject, async (params) => {
       const conversationId = String(params.conversationId ?? '')
       if (!conversationId) throw new Error('conversationProject needs a conversationId')
@@ -1525,13 +1521,27 @@ export class MobileChannel {
       }
 
       const cid = conversationId
-      void this.continueSend(cid, text, attachments, voicePrompt, voiceLang, messageId).catch(
-        (error) => {
-          const message = error instanceof Error ? error.message : String(error)
-          this.log(`send from the phone failed in ${cid} — ${message}`)
-          this.pushTurnStatus(cid, 'error', message)
-        }
-      )
+      // Plan mode: the phone's chat controls carry the same per-conversation
+      // stance the desktop composer does — a read-only turn that only writes
+      // its plan file (Agent.planMode). The wire is data: anything but a
+      // literal true is off.
+      const planMode = params.planMode === true
+      // The send's stance is the conversation's stance from here on — the
+      // desktop chip follows the phone's switch, not only the other way.
+      setPlanMode(cid, planMode)
+      void this.continueSend(
+        cid,
+        text,
+        attachments,
+        voicePrompt,
+        voiceLang,
+        messageId,
+        planMode
+      ).catch((error) => {
+        const message = error instanceof Error ? error.message : String(error)
+        this.log(`send from the phone failed in ${cid} — ${message}`)
+        this.pushTurnStatus(cid, 'error', message)
+      })
       return { conversationId: cid }
     })
 
@@ -1781,22 +1791,16 @@ export class MobileChannel {
     })
 
     /**
-     * The overlay stack's seed, taken once per connection.
+     * The reindex overlay's seed, taken once per connection.
      *
-     * Both halves of it are push-only — the run pool announces itself when it
-     * moves, the reindex when it starts and stops — so a phone that connects
-     * mid-run has already missed the announcement and would show nothing until
-     * whatever is running ended. This is the one read that closes that window.
+     * The reindex is push-only — it announces itself when it starts and stops
+     * — so a phone that connects mid-rebuild has already missed the
+     * announcement and would show nothing until it ended. This is the one read
+     * that closes that window.
      */
     tunnel.onRpc(Rpc.overlaysRead, async () => {
-      const seed: OverlaySeed = {
-        runs: this.automationRuns(),
-        reindex: this.deps.agent.cortex.getReindexStatus()
-      }
-      this.debug(
-        `served overlay seed (${seed.runs.running.length} running, ` +
-          `${seed.runs.queued.length} queued, reindex ${seed.reindex ? 'active' : 'idle'})`
-      )
+      const seed: OverlaySeed = { reindex: this.deps.agent.cortex.getReindexStatus() }
+      this.debug(`served overlay seed (reindex ${seed.reindex ? 'active' : 'idle'})`)
       return seed
     })
 
@@ -2123,9 +2127,9 @@ export class MobileChannel {
   }
 
   /**
-   * The run pool, minus procedure runs. They share the pool but are not
-   * automations, so they never gate an automation's play button — the same
-   * filter the desktop's own cards apply.
+   * The run pool as the phone reads it — every row, `kind` included, so the
+   * phone's Automations screen can gate its play buttons and skip procedure
+   * runs (which share the pool but are not headings in heartbeat.md).
    */
   private automationRuns(): AutomationRuns {
     const brainstem = this.deps.agent.brainstem
@@ -2163,7 +2167,8 @@ export class MobileChannel {
     attachments: MessageAttachment[],
     voicePrompt: boolean,
     voiceLangHint: string | undefined,
-    messageId?: string
+    messageId?: string,
+    planMode = false
   ): Promise<void> {
     let content = text
     let voiceLang = voiceLangHint
@@ -2225,6 +2230,7 @@ export class MobileChannel {
       conversationId,
       userMessageId: userMessage.id,
       projectId: conversation.projectId ?? null,
+      planMode,
       makeSink: ({ turnId, conversationId: sinkConversationId }) =>
         this.createSink(turnId, sinkConversationId ?? conversationId, userMessage)
     })
@@ -2393,16 +2399,32 @@ export class MobileChannel {
       toolTimings: new Map(),
       stopReason: null
     }
-    /** Append the accumulated assistant message; resolves once it is on disk. */
+    /**
+     * Tokenomics for the persisted context-meter `stats`. The renderer builds
+     * these itself for in-app turns; every other channel must fold them in at
+     * the fold, and this one did not — so a conversation started on the phone
+     * showed a blank meter card when reopened in the app. Same collector
+     * Telegram/WhatsApp/CLI use.
+     */
+    const stats = new TurnStatsCollector(Date.now())
+    /**
+     * Append the accumulated assistant message; resolves once it is on disk.
+     * Runs even without an assistant message when the turn reached the model,
+     * so an errored/empty turn still records its all-time roll-up.
+     */
     const persistTurn = async (error?: string): Promise<void> => {
       const assistant = buildAssistantMessage(acc)
-      if (!assistant) return
-      if (error) assistant.error = error
+      const foldStats = stats.hasData()
+      if (!assistant && !foldStats) return
+      if (assistant && error) assistant.error = error
       const endedAt = Date.now()
       await updateConversation(conversationId, (disk) => {
         if (!disk) return null
-        disk.messages.push(assistant)
-        disk.updatedAt = endedAt
+        if (assistant) {
+          disk.messages.push(assistant)
+          disk.updatedAt = endedAt
+        }
+        if (foldStats) disk.stats = stats.foldInto(disk.stats, endedAt)
         return disk
       }).catch(() => undefined)
     }
@@ -2477,6 +2499,7 @@ export class MobileChannel {
         // stream of them is one card, not a card per tick.
         if (segment.kind === 'workflow') upsertWorkflowSegment(acc.segments, segment)
         else if (segment.kind === 'task') upsertTaskSegment(acc.segments, segment)
+        else if (segment.kind === 'todo') upsertTodoSegment(acc.segments, segment)
         else if (segment.kind === 'text' || segment.kind === 'reasoning')
           appendTextSegment(acc.segments, segment)
         else acc.segments.push(segment)
@@ -2496,7 +2519,8 @@ export class MobileChannel {
         // throttle, exactly as in the in-app mirror.
         scheduleMirror(segment.kind === 'task')
       },
-      onTurnEvent: () => undefined,
+      // Accumulate tokenomics for the persisted context-meter stats.
+      onTurnEvent: (type, payload) => stats.note(type, payload),
       /**
        * A flagged tool call, put to the phone as the card the desktop shows
        * for the same request. The turn parks here until the phone answers,
@@ -2921,8 +2945,8 @@ export class MobileChannel {
 
   /**
    * The run pool moved. Carries its payload — this fires several times per run
-   * and a fetch per tick would be pure overhead — with procedure runs stripped,
-   * since they share the pool but never gate an automation card.
+   * and a fetch per tick would be pure overhead. Every row travels, procedure
+   * runs included; the phone filters by `kind` where it means automations.
    */
   pushAutomationRuns(snapshot: { running: RunningJobInfo[]; queued: QueuedJobInfo[] }): void {
     this.tunnel?.emit(Event.automationRunsChanged, toWireRuns(snapshot))
@@ -2981,7 +3005,6 @@ export class MobileChannel {
       storage: storageBackend(),
       verbose: this.verbose,
       notificationsEnabled: this.notificationsEnabled,
-      runCards: this.runCards,
       relayUrl: this.relayUrl,
       defaultRelayUrl: this.deps.relayUrl ?? DEFAULT_RELAY_URL
     }
@@ -3035,7 +3058,7 @@ export function normalizeRelayUrl(raw: string | null): string | null {
 
 /**
  * A reflection patch from the wire, reduced to the fields that are real: an
- * integer hour 0-23, an integer quiet window 1-48 h, a boolean cards flag.
+ * integer hour 0-23, an integer quiet window 1-48 h.
  * Malformed fields are dropped rather than clamped — clamping would persist a
  * value the user never chose, while dropping costs that field alone and the
  * authoritative answer corrects the screen that sent it.
@@ -3059,7 +3082,6 @@ export function sanitizeReflectionPatch(params: unknown): ReflectionWirePatch {
   ) {
     patch.quietHours = raw.quietHours
   }
-  if (typeof raw.cards === 'boolean') patch.cards = raw.cards
   return patch
 }
 
@@ -3187,37 +3209,20 @@ async function resolveWireDirectories(wire: unknown[]): Promise<string[]> {
  *
  * `kind` is the brainstem's own `family`, resolved from the job id where the
  * ids are minted (see its `runFamily`), so no surface re-derives it. The two
- * vocabularies are the same four words on purpose.
+ * vocabularies are the same four words on purpose. Procedure runs travel like
+ * the rest; a consumer that means automations SPECIFICALLY — the Automations
+ * screen's per-job status — filters `kind === 'procedure'` itself.
  *
- * Procedure runs used to be dropped here, on the grounds that they are not
- * automations. They now travel like the rest: the phone cards them under the
- * automations switch, because "something is running for me" is one question.
- * A consumer that means automations SPECIFICALLY — the Automations screen's
- * per-job status — filters `kind === 'procedure'` itself.
- *
- * Each row is widened with everything a card draws: `body` (the prompt — an
- * i18n key for the built-ins, see OverlayKind), `startedAt` for the elapsed
- * clock, and the run's own mode.
+ * Only what that gating reads goes over: the id, the heading label and the
+ * kind. The prompt body, start time and mode stay home.
  */
 function toWireRuns(snapshot: {
   running: RunningJobInfo[]
   queued: QueuedJobInfo[]
 }): AutomationRuns {
   return {
-    running: snapshot.running.map((row) => ({
-      id: row.id,
-      label: row.label,
-      body: row.body,
-      kind: row.family,
-      startedAt: row.startedAt,
-      mode: row.mode ?? null
-    })),
-    queued: snapshot.queued.map((row) => ({
-      id: row.id,
-      label: row.label,
-      kind: row.family,
-      queuedAt: row.queuedAt
-    }))
+    running: snapshot.running.map((row) => ({ id: row.id, label: row.label, kind: row.family })),
+    queued: snapshot.queued.map((row) => ({ id: row.id, label: row.label, kind: row.family }))
   }
 }
 

@@ -43,6 +43,7 @@ triggers:
 requires: []
 tools:
   - name: cloudflared_check
+    readOnly: true
     description: Check if cloudflared is installed
     parameters: {}
   - name: cloudflared_install

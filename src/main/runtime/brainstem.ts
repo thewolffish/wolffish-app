@@ -266,7 +266,8 @@ export type ParsedSchedule = {
  * model-triggered procedure all queue through the same three slots. Only the
  * ids tell them apart, and those ids are this scheduler's naming — so the
  * split is resolved here, once, and travels with the snapshot instead of being
- * re-derived by every surface that draws a card.
+ * re-derived by every surface that reads the pool (the Automations pages on
+ * both devices skip `procedure` by it when gating their play buttons).
  */
 export type RunFamily = 'automation' | 'compaction' | 'reflection' | 'procedure'
 
@@ -1114,7 +1115,7 @@ export class Brainstem {
    * in `running` before its first await), so there is no window where a job is
    * neither queued nor running and a same-id fire could slip past coalescing.
    * Every pass ends by pushing the fresh pool snapshot to the listener — the
-   * renderer's run cards and play buttons track transitions without polling.
+   * Automations pages' play buttons track transitions without polling.
    */
   private pump(): void {
     while (this.queue.length > 0 && this.running.size < MAX_CONCURRENT_JOBS) {
@@ -1709,7 +1710,7 @@ export class Brainstem {
               kind: 'daily',
               cron: dailyCron,
               label: 'Daily compaction',
-              body: 'heartbeat.overlay.compactionDaily'
+              body: "Curate today's episodes into the long-term knowledge files — merge, dedupe, and update."
             },
             () => this.runCompaction(undefined, 'compaction-daily').then(() => undefined)
           )
@@ -1730,7 +1731,7 @@ export class Brainstem {
               kind: 'weekly',
               cron: weeklyCron,
               label: 'Weekly consolidation',
-              body: 'heartbeat.overlay.compactionWeekly'
+              body: "Consolidate the past week's episodes into a digest."
             },
             () => this.runWeeklyReview('compaction-weekly')
           )
@@ -1815,7 +1816,7 @@ export class Brainstem {
         kind: 'daily',
         cron: cronExpr,
         label: 'Nightly reflection',
-        body: 'heartbeat.overlay.reflection'
+        body: 'Review settled conversations — wins, failures — and fold the lessons into the playbook.'
       },
       () => this.runReflectionJob('reflection-nightly')
     )
@@ -1828,7 +1829,7 @@ export class Brainstem {
         kind: 'monthly',
         cron: cronExpr,
         label: 'Deep reflection',
-        body: 'heartbeat.overlay.deepClean'
+        body: 'Deep reflection: challenge the playbook and knowledge files — merge duplicates, prune stale or contradicted entries.'
       },
       () => this.runDeepCleanJob('reflection-deepclean')
     )
