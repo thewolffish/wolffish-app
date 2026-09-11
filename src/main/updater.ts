@@ -1,7 +1,7 @@
 import { is } from '@electron-toolkit/utils'
 import { wlog } from '@main/workspace/logger'
 import { patchConfig, readConfig } from '@main/workspace/workspace'
-import { app, BrowserWindow } from 'electron'
+import { app, autoUpdater as nativeUpdater, BrowserWindow } from 'electron'
 import { handle } from '@main/ipc-registry'
 import { autoUpdater, type UpdateDownloadedEvent, type UpdateInfo } from 'electron-updater'
 
@@ -33,7 +33,13 @@ export type UpdaterPhase =
 
 // Coarse failure category so the renderer can show a friendly, translatable
 // reason instead of electron-updater's raw exception text.
-export type UpdaterErrorCode = 'checksum' | 'network' | 'timeout' | 'filesystem' | 'unknown'
+export type UpdaterErrorCode =
+  | 'checksum'
+  | 'network'
+  | 'timeout'
+  | 'filesystem'
+  | 'install'
+  | 'unknown'
 
 export type UpdaterErrorInfo = {
   code: UpdaterErrorCode
@@ -59,7 +65,13 @@ function shortenDigests(text: string): string {
 }
 
 // Map electron-updater's raw error into a friendly category + sanitized detail.
-function classifyUpdaterError(err: unknown): UpdaterErrorInfo {
+// `fallback` is the bucket for anything unrecognised: 'unknown' ("failed to
+// download") while fetching, 'install' once the artifact is verified and the
+// failure can only be the install itself.
+function classifyUpdaterError(
+  err: unknown,
+  fallback: UpdaterErrorCode = 'unknown'
+): UpdaterErrorInfo {
   const raw = (err instanceof Error ? err.message : String(err)).trim()
   const detail = raw ? shortenDigests(raw) : null
   const lower = raw.toLowerCase()
@@ -87,6 +99,9 @@ function classifyUpdaterError(err: unknown): UpdaterErrorInfo {
   if (/ebusy|eperm|eacces|enospc|locked|being used by another/.test(lower)) {
     return { code: 'filesystem', message: 'Could not save the update to disk.', detail }
   }
+  if (fallback === 'install') {
+    return { code: 'install', message: 'The update could not be installed.', detail }
+  }
   return { code: 'unknown', message: 'The update failed to download.', detail }
 }
 
@@ -106,6 +121,12 @@ function broadcast<T>(channel: string, payload: T): void {
 }
 
 let lastReady: UpdateReadyEvent | null = null
+
+// Set by the 'error' handler while in 'installing'. Read by installUpdate()
+// right after quitAndInstall() returns (NSIS/AppImage report a failed spawn
+// synchronously through that event) and by the install handler's exit timer
+// (Squirrel.Mac reports asynchronously).
+let installFailure: UpdaterErrorInfo | null = null
 
 // Main is the single source of truth for update progress. The renderer panels
 // (UpdatesPanel, UpdateCard) are fully unmounted on page navigation, so they
@@ -293,10 +314,18 @@ export function initUpdater(): void {
   autoUpdater.on('error', (err) => {
     wlog.error(tag, err)
     clearVerifyWatchdog()
-    const info = classifyUpdaterError(err)
+    const info = classifyUpdaterError(err, state.phase === 'installing' ? 'install' : 'unknown')
     if (state.phase === 'downloading' || state.phase === 'verifying') {
       // A download/verify failure has no other surface — drop any stale ready
       // artifact and make it visible + retryable via the error phase.
+      failWith(info)
+    } else if (state.phase === 'installing') {
+      // The install itself failed: Squirrel.Mac rejected the bundle while
+      // staging, or NSIS/AppImage could not spawn the installer. Leave the
+      // 'installing' phase — both panels pin their button disabled on it —
+      // and remember the failure so the install handler never force-exits a
+      // process that has nothing to install.
+      installFailure = info
       failWith(info)
     } else if (state.phase === 'checking') {
       // A check failure is already reported to the renderer via the
@@ -337,6 +366,91 @@ export function markInstalling(): void {
   setState({ phase: 'installing' })
 }
 
+export function installFailed(): boolean {
+  return installFailure !== null
+}
+
+// How long Squirrel.Mac gets to fetch, unpack and signature-check the bundle
+// before the install is called off. A ~300 MB universal zip is routinely
+// 5–30 s on a busy disk; this is a hang guard, not a budget.
+const STAGE_TIMEOUT_MS = 180_000
+
+/**
+ * macOS only; a no-op that resolves true elsewhere.
+ *
+ * electron-updater downloads and sha512-checks the zip itself, but the
+ * install is Squirrel.Mac's job. With autoInstallOnAppQuit off, its
+ * quitAndInstall() only ASKS Squirrel to fetch the zip from a local proxy,
+ * unpack it and verify the signature — the app quits when Squirrel later
+ * reports the bundle staged. That gap was the "update closes the app and it
+ * never comes back" bug: the install handler force-exited a fixed 5 s after
+ * the call, before Squirrel finished, so nothing was installed and nothing
+ * relaunched.
+ *
+ * Doing the staging here, BEFORE the graceful shutdown, means the app is torn
+ * down only once the install is guaranteed (quitAndInstall() then takes its
+ * instant path), and a staging failure leaves a fully working app behind in
+ * the error phase instead of a dead process.
+ */
+export async function stageUpdate(): Promise<boolean> {
+  if (process.platform !== 'darwin') return true
+  if (!isUpdateReady()) return false
+  installFailure = null
+  wlog.info(tag, 'staging with Squirrel.Mac')
+  const startedAt = Date.now()
+  const failure = await new Promise<UpdaterErrorInfo | null>((resolve) => {
+    let settled = false
+    const finish = (result: UpdaterErrorInfo | null): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      nativeUpdater.off('update-downloaded', onStaged)
+      nativeUpdater.off('error', onError)
+      resolve(result)
+    }
+    const onStaged = (): void => finish(null)
+    const onError = (err: Error): void => finish(classifyUpdaterError(err, 'install'))
+    const timer = setTimeout(
+      () =>
+        finish({
+          code: 'install',
+          message: 'The update took too long to prepare.',
+          detail: null
+        }),
+      STAGE_TIMEOUT_MS
+    )
+    nativeUpdater.on('update-downloaded', onStaged)
+    nativeUpdater.on('error', onError)
+    try {
+      // The feed URL points at electron-updater's proxy from the moment it
+      // emitted update-downloaded, which isUpdateReady() guarantees.
+      nativeUpdater.checkForUpdates()
+    } catch (err) {
+      finish(classifyUpdaterError(err, 'install'))
+    }
+  })
+  if (failure) {
+    wlog.warn(
+      tag,
+      `staging failed after ${Date.now() - startedAt}ms: ${failure.detail ?? failure.message}`
+    )
+    // Squirrel's error normally also reaches electron-updater's 'error' event
+    // (handled above); the timeout and a synchronous throw do not.
+    installFailure = installFailure ?? failure
+    if (state.phase !== 'error') failWith(failure)
+    return false
+  }
+  wlog.info(tag, `staged in ${Date.now() - startedAt}ms — Squirrel holds the bundle`)
+  return true
+}
+
+/**
+ * Hands the verified artifact to the platform installer and returns whether
+ * that succeeded. On macOS this is instant once stageUpdate() has run; on
+ * Windows/Linux it spawns NSIS/the AppImage swap. A false return means
+ * electron-updater reported the failure (already broadcast as the error
+ * phase) and the app is NOT going to quit — the caller must not force it.
+ */
 export function installUpdate(): boolean {
   if (!isUpdateReady()) {
     wlog.warn(tag, 'No downloaded update is ready to install')
@@ -347,10 +461,22 @@ export function installUpdate(): boolean {
     })
     return false
   }
+  installFailure = null
   wlog.separator('Install')
   wlog.info(tag, 'quitAndInstall(false, true)')
-  autoUpdater.quitAndInstall(false, true)
-  return true
+  try {
+    autoUpdater.quitAndInstall(false, true)
+  } catch (err) {
+    const info = classifyUpdaterError(err, 'install')
+    installFailure = info
+    failWith(info)
+    return false
+  }
+  // Only synchronous failures land here (a missing installer path, a thrown
+  // exception): those reach the 'error' event before quitAndInstall() returns.
+  // NSIS reports a failed spawn asynchronously and still schedules the quit,
+  // so that path is unchanged from before.
+  return installFailure === null
 }
 
 export async function checkForUpdatesIfEnabled(): Promise<void> {

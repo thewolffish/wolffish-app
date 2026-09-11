@@ -146,9 +146,11 @@ import {
   getUpdaterState,
   initUpdater,
   installUpdate,
+  installFailed,
   isUpdateReady,
   markInstalling,
   onUpdaterState,
+  stageUpdate,
   stampPreUpdateVersion,
   type UpdaterState
 } from '@main/updater'
@@ -4651,21 +4653,53 @@ app.whenReady().then(async () => {
     // Broadcast 'installing' so a panel remounted during the grace window
     // (page navigation) restores the disabled state instead of re-enabling.
     markInstalling()
+    // macOS: Squirrel unpacks and signature-checks the bundle NOW, while the
+    // app is still whole. Until this resolves nothing has been torn down, so a
+    // failure simply lands in the error phase with a working app behind it.
+    // (Before this step existed the handler force-exited 5 s after
+    // quitAndInstall — usually before Squirrel had finished — and the app
+    // died with nothing installed and nothing relaunched.)
+    if (!(await stageUpdate())) {
+      updateInstallInProgress = false
+      return
+    }
     await stampPreUpdateVersion()
     void shutdownGracefully()
     // Grace period: let in-flight work finish, then force through
     await new Promise((resolve) => setTimeout(resolve, 4_000))
     quitInProgress = false
-    installUpdate()
-    // Safety net: force exit if quitAndInstall silently failed
-    setTimeout(() => {
-      wlog.warn('[updater]', 'quitAndInstall did not exit — forcing')
+    // app.exit() skips before-quit/will-quit, so their cleanup happens here.
+    const exitNow = (): void => {
+      mcpManager.killAllSync()
       if (lockAcquired) {
         releaseLockSync(lockfilePath())
         lockAcquired = false
       }
       app.exit(0)
-    }, 5_000)
+    }
+    if (!installUpdate()) {
+      // The installer never armed and the agent/channels are already down —
+      // this process is a shell. Neither leaving it open nor exiting is a
+      // fix; relaunching the current version hands the user a working app
+      // with the update still downloaded (cache) and the failure on screen.
+      wlog.warn('[updater]', 'install did not arm — relaunching current version')
+      app.relaunch()
+      exitNow()
+      return
+    }
+    // Safety net: the installer is armed (NSIS spawned / ShipIt waiting on
+    // this pid), so if the normal quit did not go through, force it — and if
+    // a late error says the install fell over after all, relaunch instead so
+    // the app comes back rather than vanishing.
+    setTimeout(() => {
+      if (installFailed()) {
+        wlog.warn('[updater]', 'install failed after arming — relaunching current version')
+        app.relaunch()
+      } else {
+        wlog.warn('[updater]', 'quitAndInstall did not exit — forcing')
+      }
+      exitNow()
+    }, 10_000)
   })
 
   handle('updater:consumePostUpdate', async () => {

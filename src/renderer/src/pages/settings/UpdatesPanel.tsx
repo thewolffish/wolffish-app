@@ -71,7 +71,9 @@ export function UpdatesPanel(): React.JSX.Element {
     let cancelled = false
     void window.api.updater.getState().then((s) => {
       if (cancelled || liveSeen.current) return
-      setPhase((prev) => (prev === 'installing' ? prev : s.phase))
+      // Keep the install view pinned while main is still 'ready' — but an
+      // error (the install failed and main released the artifact) wins.
+      setPhase((prev) => (prev === 'installing' && s.phase !== 'error' ? prev : s.phase))
       setUpdateVersion(s.version)
       setDownloadPercent(s.percent)
       setErrorInfo(s.phase === 'error' ? s.error : null)
@@ -319,7 +321,11 @@ export function UpdatesPanel(): React.JSX.Element {
                     phase === 'installing' && 'cursor-not-allowed opacity-60'
                   )}
                 >
-                  <span>{t('settings.updates.install', 'Update')}</span>
+                  <span>
+                    {phase === 'installing'
+                      ? t('settings.updates.installing', 'Installing…')
+                      : t('settings.updates.install', 'Update')}
+                  </span>
                 </button>
               </div>
             ) : phase === 'error' ? (

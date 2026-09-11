@@ -1606,9 +1606,11 @@
         "network": "Couldn't reach the update server. Check your connection and try again.",
         "timeout": "The update timed out before it finished. Please try again.",
         "filesystem": "Couldn't save the update to your disk. Close other apps and try again.",
+        "install": "The update couldn't be installed. Please try again.",
         "unknown": "The update failed to download. Please try again."
       },
       "install": "Update",
+      "installing": "Installing…",
       "upToDate": "Up to date",
       "updateFound": "Update found",
       "checkFailed": "Could not check for updates",
@@ -1714,6 +1716,8 @@
   "update": {
     "available": "Update available",
     "install": "Update",
+    "installing": "Installing…",
+    "retry": "Retry",
     "changelog": "Changelog"
   },
   "changelog": {

@@ -1,4 +1,14 @@
-## v1.0.290 — 2026-09-11 `Latest`
+## v1.0.291 — 2026-09-11 `Latest`
+
+### Updates on Mac Come Back
+
+Clicking **Update** on a Mac would sometimes close Wolffish and then — **nothing**. No relaunch, and when you opened it yourself it was still the old version. The cause was a race: on macOS the system's own installer has to unpack and check the 300 MB bundle **after** you click, and Wolffish gave it a fixed five seconds before forcing itself shut. On a busy disk that is not enough, so the app died with the update half-prepared. Wolffish now **prepares the update first, while it is still fully running**, and only begins shutting down once the installer confirms it holds the new version. If preparing fails, **nothing is torn down**: the app stays open, tells you the install did not go through, and lets you try again. The same rule now holds on every platform — Wolffish **never force-quits with nothing installed**; if the installer could not be armed after shutdown had begun, it relaunches the current version instead of vanishing. One honest note: the update that *brings* you this version is still carried out by the old code, so it may misbehave one last time — the update after it is the first to run the fix.
+
+### Install Failures Say So
+
+If an install failed, the **Update** button used to sit greyed out on "Installing" for good, in both the chat card and Settings → Updates, with no way back short of restarting. Both now show **what went wrong** in place of the release notes, turn the button into **Retry**, and read **"Installing…"** while the work is actually in progress.
+
+## v1.0.290 — 2026-09-11
 
 ### Several Times a Day Is One Automation
 

@@ -2095,7 +2095,13 @@ export type UpdaterPhase =
   | 'installing'
   | 'error'
 
-export type UpdaterErrorCode = 'checksum' | 'network' | 'timeout' | 'filesystem' | 'unknown'
+export type UpdaterErrorCode =
+  | 'checksum'
+  | 'network'
+  | 'timeout'
+  | 'filesystem'
+  | 'install'
+  | 'unknown'
 
 export type UpdaterErrorInfo = {
   code: UpdaterErrorCode

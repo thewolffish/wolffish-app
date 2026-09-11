@@ -1,5 +1,5 @@
 import { cn } from '@lib/utils/cn'
-import type { UpdateReadyEvent } from '@preload/index'
+import type { UpdaterErrorInfo, UpdateReadyEvent } from '@preload/index'
 import { useFlow } from '@providers/flow/useFlow'
 import { ArrowUp02Icon, Cancel01Icon } from 'hugeicons-react'
 import { useCallback, useEffect, useState } from 'react'
@@ -13,6 +13,10 @@ export function UpdateCard(): React.JSX.Element | null {
   const [update, setUpdate] = useState<UpdateReadyEvent | null>(cachedUpdate)
   const [dismissed, setDismissed] = useState(false)
   const [installing, setInstalling] = useState(false)
+  // The install failed (main broadcast the error phase). Shown in place of the
+  // release notes; the button turns into Retry, which re-runs the check — the
+  // artifact is cached, so 'ready' comes back in seconds and clears this.
+  const [failed, setFailed] = useState<UpdaterErrorInfo | null>(null)
 
   useEffect(() => {
     if (status?.config?.updates?.enabled === false) return
@@ -25,17 +29,34 @@ export function UpdateCard(): React.JSX.Element | null {
     const unsub = window.api.updater.onReady((event) => {
       cachedUpdate = event
       setUpdate(event)
+      setFailed(null)
+      setInstalling(false)
+    })
+    // Without this the card stayed pinned on a disabled "Installing…" forever
+    // after a failed install — nothing else ever reset the flag.
+    const unsubState = window.api.updater.onState((s) => {
+      if (s.phase === 'error') {
+        setInstalling(false)
+        setFailed(s.error)
+      }
     })
     return () => {
       cancelled = true
       unsub()
+      unsubState()
     }
   }, [status?.config?.updates?.enabled])
 
   const handleInstall = useCallback(() => {
+    if (failed) {
+      // Retry: the check finds the cached artifact and re-emits ready.
+      setFailed(null)
+      void window.api.updater.check()
+      return
+    }
     setInstalling(true)
     void window.api.updater.install()
-  }, [])
+  }, [failed])
 
   if (!update || dismissed) return null
   if (status?.config?.updates?.enabled === false) return null
@@ -60,8 +81,14 @@ export function UpdateCard(): React.JSX.Element | null {
             v{update.version}
           </code>
         </div>
-        {update.releaseNotes && (
-          <p className="text-muted truncate text-xs">{update.releaseNotes}</p>
+        {failed ? (
+          <p className="truncate text-xs text-red-700 dark:text-red-200">
+            {t(`settings.updates.errors.${failed.code}`, failed.message)}
+          </p>
+        ) : (
+          update.releaseNotes && (
+            <p className="text-muted truncate text-xs">{update.releaseNotes}</p>
+          )
         )}
       </div>
 
@@ -92,7 +119,13 @@ export function UpdateCard(): React.JSX.Element | null {
             installing ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
           )}
         >
-          <span>{t('update.install', 'Update')}</span>
+          <span>
+            {failed
+              ? t('update.retry', 'Retry')
+              : installing
+                ? t('update.installing', 'Installing…')
+                : t('update.install', 'Update')}
+          </span>
         </button>
       </div>
     </div>
