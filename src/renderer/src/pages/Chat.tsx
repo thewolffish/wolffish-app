@@ -248,7 +248,16 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     const provider = cloudProviders.find((p) => p.id === brain.providerId)
     return provider && provider.apiKey && provider.apiKey.length > 0 ? brain.providerId : null
   }, [brain, cloudProviders])
-  const hasAnyModel = !!currentModel || hasCloudProvider
+  // A configured local model only counts while Ollama actually has it. The
+  // snapshot is main's background watch — never a probe of our own — and the
+  // `reachable` guard keeps a daemon that is merely down (or a snapshot that
+  // has not seeded yet) from reading as "your model is gone". Without this, a
+  // model removed with `ollama rm` leaves currentModel set, which hid the
+  // notice below and kept the composer live until a send failed with a raw
+  // provider error.
+  const localModelMissing =
+    !!currentModel && ollama.reachable && !ollama.installed.some((tag) => tag.name === currentModel)
+  const hasAnyModel = (!!currentModel && !localModelMissing) || hasCloudProvider
   const [savingMode, setSavingMode] = useState(false)
   const activeCloudModel = useMemo(
     () => (activeCloudProvider && brain ? brain.model : null),
@@ -2831,7 +2840,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                 >
                   <Settings02Icon size={14} className="shrink-0" aria-hidden />
                   <p className="flex-1">
-                    {t('chat.noModel.notice')}
+                    {localModelMissing ? t('chat.noModel.localMissing') : t('chat.noModel.notice')}
                     <br />
                     <button
                       type="button"
@@ -2881,7 +2890,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
             >
               <Settings02Icon size={14} className="shrink-0" aria-hidden />
               <p className="flex-1">
-                {t('chat.noModel.notice')}
+                {localModelMissing ? t('chat.noModel.localMissing') : t('chat.noModel.notice')}
                 <br />
                 <button
                   type="button"
@@ -3264,12 +3273,17 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
             {(recPhase === 'idle' || busy) && (
               <button
                 type="submit"
-                // Stop is never gated on staging — a turn you can't stop
-                // because a file is copying would be a trap.
+                // While busy this button is Stop, and Stop is gated on
+                // NOTHING — a turn you can't stop because a file is copying,
+                // or because the model it is running on just disappeared from
+                // Ollama, would be a trap. That second case is live now that
+                // hasAnyModel follows the daemon watch: `ollama rm` mid-turn
+                // must never cost the user their stop button.
                 disabled={
-                  !hasAnyModel ||
-                  (!busy &&
-                    (staging || (draft.trim().length === 0 && pendingAttachments.length === 0)))
+                  !busy &&
+                  (!hasAnyModel ||
+                    staging ||
+                    (draft.trim().length === 0 && pendingAttachments.length === 0))
                 }
                 title={!busy && staging ? t('chat.upload.copyingWait') : undefined}
                 aria-label={busy ? t('chat.stop') : t('chat.send')}

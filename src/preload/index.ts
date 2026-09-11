@@ -911,7 +911,6 @@ export type ModelCapabilities = {
 export type ModelApi = {
   select: (modelName: string) => Promise<SelectModelResult>
   cancelPull: () => Promise<{ canceled: boolean }>
-  clear: () => Promise<{ cleared: boolean }>
   status: () => Promise<{ model: string | null }>
   capabilities: () => Promise<ModelCapabilities>
   onPullProgress: (listener: (event: PullProgressEvent) => void) => () => void
@@ -2357,7 +2356,6 @@ const api: WolffishApi = {
   model: {
     select: (modelName) => ipcRenderer.invoke('model:select', modelName),
     cancelPull: () => ipcRenderer.invoke('model:cancelPull'),
-    clear: () => ipcRenderer.invoke('model:clear'),
     status: () => ipcRenderer.invoke('model:status'),
     capabilities: () => ipcRenderer.invoke('model:capabilities'),
     onPullProgress: (listener) => subscribe('model:pullProgress', listener),

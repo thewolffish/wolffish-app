@@ -11,17 +11,21 @@ import { RTL_LOCALES } from '@lib/i18n'
 export function Onboarding(): React.JSX.Element {
   const { t } = useTranslation()
   const { locale } = useLocale()
-  const { goTo, status } = useFlow()
+  const { goTo, status, refreshStatus } = useFlow()
   const isRtl = RTL_LOCALES.has(locale)
   const ArrowIcon = isRtl ? ArrowLeft02Icon : ArrowRight02Icon
 
   const isReentry = !!status?.onboardingCompleted
 
+  // Onboarding is theme and language, then the chat. Nothing else: no
+  // provider setup, no Ollama, no model to choose. A local model is one
+  // optional provider among several — the user configures it in Settings →
+  // Models → Ollama if and when they want one, and an empty chat carries its
+  // own notice while no model or cloud provider is set up.
   const onContinue = async (): Promise<void> => {
     if (!isReentry) {
       await window.api.workspace.completeOnboarding()
-      goTo('ollama-setup')
-      return
+      await refreshStatus()
     }
     goTo('chat')
   }

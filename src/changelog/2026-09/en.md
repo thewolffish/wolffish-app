@@ -1,4 +1,18 @@
-## v1.0.288 — 2026-09-11 `Latest`
+## v1.0.289 — 2026-09-11 `Latest`
+
+### Ollama Stops Asking to Be Installed
+
+A first run used to walk you from the welcome screen straight into **install Ollama**, and from there into **pick your Ollama model** — two full-screen pages that carry none of the app's navigation, so anyone who simply did not want a local model had nowhere to go. Wolffish now treats Ollama as what it is: **one optional provider among several**. Onboarding is **a theme, a language, and then the chat** — nothing else. The model picker no longer exists as a screen at all; it is **the Ollama panel of Settings → Models**, where you go looking for it when you actually want it, and every way in is a button you chose to press. Launch itself now **asks Ollama nothing** — no probe, no tag list, no quietly rewriting your configuration before the window is even up.
+
+### The Models Panel Stays Where You Are
+
+Finishing a download used to **throw you out of Settings and into the chat**, because the picker was built as a step in a flow rather than a panel you had opened on purpose. It now **stays exactly where you are**: the list comes back with your new model marked as the current one, and the panel re-reads what Ollama actually holds, so **re-downloading a model your configuration already names** no longer leaves the card standing there still offering "Install". The buttons that belonged to that old flow — "Skip for now", "Back to chat" and "Continue to chat" — are gone, because **Settings' own sidebar and back chevron** were always the way out of a panel.
+
+### When a Local Model Goes Missing
+
+Delete a model with `ollama rm` and Wolffish used to carry on believing it still had one: the composer stayed live, the notice that points you at Settings stayed hidden, and you found out by **sending a message and getting a raw provider error back**. The chat now reads the **daemon's live state** — a background watch the app already keeps, not a new probe of its own — and tells you plainly that **your local model is no longer installed in Ollama**, with the same one-click path to Settings → Models. A daemon that is merely switched off is left alone, and so is one that stumbles for a moment before answering: neither is reported as a missing model. And the **Stop button is now gated on nothing at all**, so a turn running on a model that vanished mid-generation can still be stopped.
+
+## v1.0.288 — 2026-09-11
 
 ### Wolffish Writes Code Now
 

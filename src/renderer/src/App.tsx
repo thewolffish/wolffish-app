@@ -14,7 +14,6 @@ import { ReindexActiveOverlay } from '@components/common/reindex-active-overlay/
 import { Onboarding } from '@pages/Onboarding'
 import { LowDiskSpace } from '@pages/LowDiskSpace'
 import { OllamaSetup } from '@pages/OllamaSetup'
-import { ModelPicker } from '@pages/ModelPicker'
 import { Chat } from '@pages/Chat'
 import { Settings } from '@pages/settings/Settings'
 import { ViewerPage } from '@pages/ViewerPage'
@@ -56,10 +55,11 @@ function useReindexActive(): boolean {
 // stay mounted for the whole set so navigating anywhere and back never tears
 // live state down — with concurrent sessions, an unmount would silently
 // reset every feed to its open-time seed and orphan in-flight turns.
-// ollama-setup and model-picker are included because both are reachable
-// mid-session (Settings' "install Ollama" button, clearing the model);
-// only the pre-conversation launch screens (welcome, low-disk-space) stay
-// out — no session can exist there yet.
+// ollama-setup is included because it is reachable mid-session (Settings →
+// Models → Ollama → set up); only the pre-conversation launch screens
+// (welcome, low-disk-space) stay out — no session can exist there yet. The
+// model picker has no screen of its own: it renders as the Ollama panel
+// inside Settings, never as a step the app routes anyone through.
 const CHAT_KEEPALIVE_SCREENS = new Set<Screen>([
   'chat',
   'settings',
@@ -68,8 +68,7 @@ const CHAT_KEEPALIVE_SCREENS = new Set<Screen>([
   'changelog',
   'library',
   'customization',
-  'ollama-setup',
-  'model-picker'
+  'ollama-setup'
 ])
 
 // Every screen EXCEPT chat, which is rendered persistently by Screens() so its
@@ -83,8 +82,6 @@ function NonChatScreen({ screen }: { screen: Screen }): React.JSX.Element | null
       return <LowDiskSpace />
     case 'ollama-setup':
       return <OllamaSetup />
-    case 'model-picker':
-      return <ModelPicker />
     case 'chat':
       return null
     case 'settings':

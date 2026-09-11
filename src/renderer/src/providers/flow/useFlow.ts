@@ -17,7 +17,6 @@ export type Screen =
   | 'welcome'
   | 'low-disk-space'
   | 'ollama-setup'
-  | 'model-picker'
   | 'chat'
   | 'settings'
   | 'viewer'
@@ -145,9 +144,9 @@ export type FlowContextValue = {
   status: WorkspaceStatus | null
   /**
    * Navigate to a screen. Optional `returnTo` records where a follow-up
-   * "Continue" should land — e.g. opening ollama-setup from Settings sets
-   * returnTo='settings' so completing setup returns to Settings, not the
-   * onboarding model picker. Pass `null` to clear.
+   * "Continue" should land — e.g. opening ollama-setup from Settings →
+   * Models → Ollama sets returnTo='settings' so completing setup returns to
+   * the panel it was opened from. Pass `null` to clear.
    */
   goTo: (screen: Screen, returnTo?: Screen | null) => void
   /** Where the user should land after the current screen's primary action. */
@@ -156,7 +155,6 @@ export type FlowContextValue = {
   systemInfo: SystemInfo | null
   refreshData: () => Promise<void>
   refreshStatus: () => Promise<void>
-  clearModel: () => Promise<void>
   /**
    * Re-run the launch routing decision. Used by gating screens (e.g.
    * low-disk-space) so that once the blocking condition clears, the user

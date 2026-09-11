@@ -499,13 +499,21 @@ export function startOllamaWatch(options: {
     probing = true
     try {
       const endpoint = options.getEndpoint()
-      const reachable = await detect(endpoint)
+      // A daemon that answers the root probe but cannot serve /api/tags is
+      // not usable, and `reachable: true` with an empty list reads to every
+      // consumer as "Ollama is up and you have no models" — which tells a
+      // user with a perfectly good local model, for as long as the blip
+      // lasts, that their model is gone. Treat a failed tag list as not
+      // reachable and let the next probe settle it. (A tag list that
+      // legitimately comes back empty — a fresh Ollama with nothing pulled —
+      // is a real answer and stays reachable.)
+      let reachable = await detect(endpoint)
       let installed: OllamaTag[] = []
       if (reachable) {
         try {
           installed = await listTags(endpoint)
         } catch {
-          installed = []
+          reachable = false
         }
       }
       const next = { reachable, installed }

@@ -179,7 +179,6 @@ import {
 import { wlog } from '@main/workspace/logger'
 import {
   bundledCapabilityNames,
-  clearLocalModel,
   ensureWorkspace,
   extensionFolderPath,
   factoryReset,
@@ -5314,13 +5313,6 @@ app.whenReady().then(async () => {
   handle('model:cancelPull', () => {
     activePull?.abort()
     return { canceled: !!activePull }
-  })
-
-  handle('model:clear', async () => {
-    activePull?.abort()
-    await clearLocalModel()
-    localProvider.configure(null)
-    return { cleared: true }
   })
 
   handle('model:status', () => ({

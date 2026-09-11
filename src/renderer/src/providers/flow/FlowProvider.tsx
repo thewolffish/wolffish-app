@@ -26,7 +26,7 @@ export function FlowProvider({ children }: { children: ReactNode }): React.JSX.E
     screen: Screen
     status: WorkspaceStatus
   }> => {
-    let s = await window.api.workspace.getStatus()
+    const s = await window.api.workspace.getStatus()
 
     // 0. Free disk warning. If we can't read free disk (null), don't block —
     //    let the user through and surface real errors downstream rather
@@ -41,34 +41,16 @@ export function FlowProvider({ children }: { children: ReactNode }): React.JSX.E
       return { screen: 'low-disk-space', status: s }
     }
 
-    const selectedModel = s.config?.llm.local.model ?? null
-    const ollama = await window.api.ollama.detect()
-
-    // 1. Selected model + Ollama reachable: verify the model is still
-    //    installed in Ollama. If it was removed via `ollama rm` or never
-    //    actually finished pulling, clear our selection — and then fall
-    //    through to the same routing as "no model" below. Ollama is
-    //    optional; a stale pick must never strand the user on the picker.
-    if (selectedModel && ollama.reachable) {
-      const installed = await window.api.ollama.listInstalled()
-      const stillThere = installed.some((tag) => tag.name === selectedModel)
-      if (stillThere) {
-        return { screen: 'chat', status: s }
-      }
-      await window.api.model.clear()
-      s = await window.api.workspace.getStatus()
-    }
-
-    // 2. Onboarding incomplete → welcome (theme/locale). Onboarding is the
-    //    ONLY launch path that leads to ollama-setup / model-picker.
+    // 1. Onboarding incomplete → welcome (theme/locale, then the chat).
     if (!s.onboardingCompleted) {
       return { screen: 'welcome', status: s }
     }
 
-    // 3. Onboarded → chat, whether or not Ollama is reachable or a local
-    //    model is picked. Ollama is a secondary, optional provider: the
-    //    user reaches the picker from Settings when they want it, and the
-    //    in-chat notice guides them if no model is available at all.
+    // 2. Onboarded → chat. Launch asks Ollama nothing: no detect, no tag
+    //    list, no clearing a selection that points at a model someone removed
+    //    with `ollama rm`. A local model is managed in Settings → Models →
+    //    Ollama and nowhere else — that panel reads the daemon when the user
+    //    opens it, and the in-chat notice covers having no model at all.
     return { screen: 'chat', status: s }
   }, [])
 
@@ -116,12 +98,6 @@ export function FlowProvider({ children }: { children: ReactNode }): React.JSX.E
     setScreen(next)
   }, [])
 
-  const clearModel = useCallback(async () => {
-    await window.api.model.clear()
-    await refreshStatus()
-    setScreen('model-picker')
-  }, [refreshStatus])
-
   const revalidateScreen = useCallback(async () => {
     const r = await decideInitialScreen()
     setStatus(r.status)
@@ -143,7 +119,6 @@ export function FlowProvider({ children }: { children: ReactNode }): React.JSX.E
       goTo,
       returnTo,
       refreshStatus,
-      clearModel,
       revalidateScreen,
       dismissDiskGate
     }),
@@ -156,7 +131,6 @@ export function FlowProvider({ children }: { children: ReactNode }): React.JSX.E
       goTo,
       returnTo,
       refreshStatus,
-      clearModel,
       revalidateScreen,
       dismissDiskGate
     ]

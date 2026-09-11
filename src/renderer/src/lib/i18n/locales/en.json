@@ -153,7 +153,6 @@
     },
     "install": "Install",
     "use": "Use this model",
-    "continue": "Continue to chat",
     "cancel": "Cancel",
     "retry": "Try again",
     "speedLine": "{{speed}} / sec · {{eta}} remaining",
@@ -175,8 +174,6 @@
       "connection": "Connection failed — check internet and Ollama.",
       "generic": "Something went wrong. Try to restart the app."
     },
-    "backToChat": "Back to chat",
-    "skip": "Skip for now",
     "reinstallOllama": "Need to reinstall Ollama?",
     "available": "Available",
     "availableDescription": "Models already downloaded on your machine, ready to use.",
@@ -1733,6 +1730,7 @@
     },
     "noModel": {
       "notice": "No local model or cloud provider configured.",
+      "localMissing": "Your local model is no longer installed in Ollama.",
       "settingsLink": "Go to Settings → Models"
     },
     "thinking": "Thinking…",

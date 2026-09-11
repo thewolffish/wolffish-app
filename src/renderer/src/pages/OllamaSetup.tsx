@@ -109,10 +109,12 @@ export function OllamaSetup(): React.JSX.Element {
   }
 
   const onContinue = (): void => {
-    // If we got here from somewhere with a return target (e.g. Settings →
-    // Model → reinstall Ollama), go back there. Otherwise advance through
-    // the onboarding flow to the model picker. Clear the marker either way.
-    goTo(returnTo ?? 'model-picker', null)
+    // Every way into this screen comes from Settings → Models → Ollama and
+    // carries returnTo='settings', so that is where finishing lands. The
+    // fallback is the chat, never a model picker: choosing a local model is
+    // something the user goes looking for in the Models panel, not a step
+    // this screen graduates them into.
+    goTo(returnTo ?? 'chat', null)
   }
 
   // Until the very first detect() resolves we don't know whether Ollama is
@@ -226,15 +228,18 @@ export function OllamaSetup(): React.JSX.Element {
           </Button>
         )}
 
-        {reachable !== true && knowState && (
-          <button
-            type="button"
-            onClick={() => goTo(returnTo ?? 'chat', null)}
-            className="text-muted hover:text-fg cursor-pointer text-sm underline underline-offset-2 self-center"
-          >
-            {t('ollamaSetup.skip')}
-          </button>
-        )}
+        {/* Always rendered, in every detection state. This screen paints over
+            the whole app — no sidebar, no chrome — so this link is the only
+            way off it, and gating it on "Ollama isn't reachable" left anyone
+            with Ollama running exactly one button to press. Setting up a
+            local provider is optional; leaving must never be. */}
+        <button
+          type="button"
+          onClick={() => goTo(returnTo ?? 'chat', null)}
+          className="text-muted hover:text-fg cursor-pointer self-center text-sm underline underline-offset-2"
+        >
+          {t('ollamaSetup.skip')}
+        </button>
       </div>
     </main>
   )

@@ -142,13 +142,20 @@ function platformLabel(platform: NodeJS.Platform): string {
   return platform
 }
 
+/**
+ * The Ollama panel of Settings → Models — and nothing else. It has no screen
+ * of its own and no place in onboarding: a local model is opt-in, something
+ * the user comes looking for, never a step the app marches them through. Its
+ * exits are Settings' own — the sidebar and the drill-back chevron in the
+ * header — so it carries no "skip" or "back to chat" of its own.
+ */
 export function ModelPicker(): React.JSX.Element {
   const { t } = useTranslation()
   const { locale } = useLocale()
   const isRtl = RTL_LOCALES.has(locale)
   const ArrowIcon = isRtl ? ArrowLeft02Icon : ArrowRight02Icon
 
-  const { goTo, screen, status, refreshStatus } = useFlow()
+  const { goTo, status, refreshStatus } = useFlow()
   const online = useOnline()
   const [system, setSystem] = useState<SystemInfo | null>(null)
   const [catalog, setCatalog] = useState<readonly ModelEntry[]>([])
@@ -293,7 +300,29 @@ export function ModelPicker(): React.JSX.Element {
       if (event.modelName !== selected) return
       setSwitching(false)
       if (event.ok) {
-        void refreshStatus().then(() => goTo('chat'))
+        // Stay put. This panel lives in Settings → Models → Ollama, so a
+        // finished install returns to the list with the model now marked
+        // current — it does not walk the user out to the chat. The tag list
+        // is re-read HERE rather than left to the load effect: that effect
+        // keys on currentModel, and re-pulling the model config already names
+        // (one removed with `ollama rm`, or a pull that died half way) writes
+        // the same string, so the effect would not re-run and the card would
+        // sit there still offering "Install".
+        setPhase('idle')
+        setError(null)
+        setProgress({ completed: null, total: null })
+        setStatusKind('lookingUp')
+        setSpeedBps(null)
+        setEtaSeconds(null)
+        speedSampleRef.current = null
+        layersRef.current.clear()
+        void refreshStatus()
+        void Promise.all([window.api.ollama.listInstalled(), window.api.ollama.scanAvailable()])
+          .then(([tags, scanned]) => {
+            setInstalled(tags)
+            setAvailableModels(scanned)
+          })
+          .catch(() => {})
       } else if (event.aborted) {
         setPhase('idle')
         setError(null)
@@ -312,7 +341,7 @@ export function ModelPicker(): React.JSX.Element {
       offProgress()
       offDone()
     }
-  }, [selected, phase, refreshStatus, goTo, t])
+  }, [selected, phase, refreshStatus, t])
 
   // Cancel an in-flight pull immediately when the network drops. Only during
   // the network-bound phases — processing/verifying are local and don't care.
@@ -428,21 +457,14 @@ export function ModelPicker(): React.JSX.Element {
     if (models.length > 0) setShowAvailable(true)
   }
 
-  // Three different actions sit behind the one primary button:
+  // Two actions sit behind the one primary button:
   //   · model not downloaded    → pull it (download card + Cancel)
-  //   · downloaded, not current → persist the choice, then leave
-  //   · downloaded and current  → nothing to do; just leave
-  // Only the first is a transfer, so only the first gets the transfer UI.
-  const onPrimary = async (): Promise<void> => {
-    if (!selected) return
-    if (alreadyHave && selected === currentModel) {
-      // Config already names this model (a model is only ever stored with
-      // local.enabled true), so model:select would be a no-op round trip.
-      goTo('chat')
-      return
-    }
-    await onInstall()
-  }
+  //   · downloaded, not current → persist the choice, in place
+  // Only the first is a transfer, so only the first gets the transfer UI. A
+  // model that is downloaded AND already current needs neither — config
+  // already names it — so the button renders nothing at all rather than a
+  // "Continue" that only ever meant "leave this screen".
+  const isCurrentSelection = alreadyHave && selected === currentModel
 
   const onInstall = async (): Promise<void> => {
     if (!selected) return
@@ -743,27 +765,20 @@ export function ModelPicker(): React.JSX.Element {
 
           {phase === 'idle' && (
             <div className="flex flex-col items-stretch gap-3">
-              <Button size="lg" disabled={!canInstall} onClick={() => void onPrimary()}>
-                <span>
-                  {selected && isInstalled(selected) && selected === currentModel
-                    ? t('modelPicker.continue')
-                    : selected && isInstalled(selected)
-                      ? t('modelPicker.use')
-                      : t('modelPicker.install')}
-                </span>
-                {switching ? (
-                  <Loading03Icon size={18} className="animate-spin" />
-                ) : (
-                  <ArrowIcon size={18} />
-                )}
-              </Button>
-              <Button size="lg" variant="ghost" disabled={locked} onClick={() => goTo('chat')}>
-                {currentModel ? t('modelPicker.backToChat') : t('modelPicker.skip')}
-              </Button>
+              {!isCurrentSelection && (
+                <Button size="lg" disabled={!canInstall} onClick={() => void onInstall()}>
+                  <span>{alreadyHave ? t('modelPicker.use') : t('modelPicker.install')}</span>
+                  {switching ? (
+                    <Loading03Icon size={18} className="animate-spin" />
+                  ) : (
+                    <ArrowIcon size={18} />
+                  )}
+                </Button>
+              )}
               <button
                 type="button"
                 disabled={locked}
-                onClick={() => goTo('ollama-setup', screen === 'settings' ? 'settings' : null)}
+                onClick={() => goTo('ollama-setup', 'settings')}
                 className={cn(
                   'text-muted text-center text-xs',
                   locked ? 'cursor-not-allowed opacity-60' : 'hover:text-fg cursor-pointer'
