@@ -1,4 +1,22 @@
-## v1.0.289 — 2026-09-11 `Latest`
+## v1.0.290 — 2026-09-11 `Latest`
+
+### Several Times a Day Is One Automation
+
+"Sweep the inbox at 8, at 2 and at 8" used to mean **three separate automations** standing in a row, each with its own card, its own history and its own edit. A schedule can now **carry a list**: `Daily (08:00, 14:00, 20:00)` fires three times a day, `Weekday (09:00, 17:00)` twice on every working day, and `Weekly (Monday, Wednesday, Friday 09:00)` three times a week. Days and times can **both** be lists — `Weekly (Monday, Friday 09:00, 17:00)` is four runs a week from one line — day names take **Mon, Tue, Wed** as readily as the full word, `Monthly (1, 15 09:00)` covers the first and the fifteenth, and the times need not share a minute, so `Daily (08:00, 12:30, 18:00)` is fine. The card's countdown follows: a schedule like that shows **its next run rather than its first**, so an automation that fires at 08:00, 14:00 and 20:00 reads 14:00 when you look at lunchtime. Everything already written keeps working **exactly as it did** — a single value is simply the one-item list.
+
+### Pick How Many Times, Then the Period
+
+Above the schedule field there is now **a row of count pills** — Once, Twice, 3 times, 4 times, 5 times — that reads as one sentence with the period chips beneath it: **"3 times" · "Every day"** fills in a `Daily (…)` with three times spread evenly across the day, anchored on now. Pick them in either order. Both rows **light from what is actually in the field** rather than from your last click, so opening an existing automation — or typing a schedule by hand — shows you its own period and its own count.
+
+### Code Blocks Without a Language Tag
+
+A fenced block with no language on it — just three backticks — rendered with **a second, darker box drawn inside it**, sized to the text instead of the block and plainly visible in light mode. Wolffish was deciding "block or inline snippet?" by looking for a `language-` class that an untagged fence never carries. It now decides by **where the code sits**: inside a fence, it is a block.
+
+### Previews on the Right Ground
+
+The **Word and spreadsheet previews** painted themselves on the window's background rather than the card's, leaving a document sitting in a well slightly darker than the card holding it; they now use **the same ground every other card paints on**. The **folder chips along the top of a transcript** were translucent, which let the lines scrolling underneath **ghost through them** — they are solid now, so the strip reads as chips over the transcript instead of a smudge of it.
+
+## v1.0.289 — 2026-09-11
 
 ### Ollama Stops Asking to Be Installed
 
