@@ -1295,8 +1295,9 @@ export function contextWindowForModel(model: string): number {
   if (m.includes('3-5-sonnet') || m.includes('3.5-sonnet')) return 200_000
   if (m.includes('3-5-haiku') || m.includes('3.5-haiku')) return 200_000
   if (m.includes('opus') || m.includes('sonnet') || m.includes('haiku')) return 200_000
-  // DeepSeek
-  if (m.includes('deepseek-v4')) return 1_000_000
+  // DeepSeek — `deepseek-flash` (V4.1-Flash) has no version in its id, and
+  // the retired deepseek-chat / deepseek-reasoner aliases are served by it
+  if (m.includes('deepseek-v4') || /^deepseek-(flash|chat|reasoner)$/.test(m)) return 1_000_000
   // Xiaomi Mimo
   if (m.includes('mimo-v2.5')) return 1_000_000
   if (m.includes('mimo-v2')) return 256_000
@@ -1380,7 +1381,7 @@ function maxOutputForModel(model: string): number {
   if (/3\.[57]-(sonnet|haiku)/.test(m)) return 0
   // DeepSeek — must match maxTokensFor in providers/deepseek.ts (65,536 for
   // the v4 line; the API cap is 384K but we request 64K).
-  if (m.includes('deepseek-v4')) return 65_536
+  if (m.includes('deepseek-v4') || /^deepseek-(flash|chat|reasoner)$/.test(m)) return 65_536
   // Xiaomi Mimo
   if (m.includes('mimo-v2.5-pro')) return 65_536
   if (m.includes('mimo')) return 32_768

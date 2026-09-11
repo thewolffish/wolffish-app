@@ -38,12 +38,14 @@ export function cloudModelSupportsVision(provider: string, model: string): boole
     case 'openai':
       return openaiSupportsVision(m)
     case 'deepseek':
-      // DeepSeek's chat models are text-only — image parts are rejected
-      // with HTTP 400 "This model does not support image" (re-verified
-      // live 2026-08-22). The one exception, deepseek-v4-flash-vision-exp
-      // (image parts verified live same day), carries the `vision` name
-      // marker and is accepted above before this case is reached.
-      return false
+      // `deepseek-flash` (= DeepSeek-V4.1-Flash, no version or `vision`
+      // marker in the id) reads images — verified live 2026-09-11 with a
+      // three-stripe PNG it names in order every run. The retired
+      // v4-flash / chat / reasoner ids are aliases served by the same model.
+      // deepseek-v4-pro is the last text-only model, and it no longer 400s
+      // on an image: it answers HTTP 200 with a guess (same stripe probe,
+      // different wrong colours each run), so this gate is its only guard.
+      return /^deepseek-(flash|v4-flash|v4-flash-vision-exp|chat|reasoner)$/.test(m)
     case 'xai':
       // grok-2-vision and friends are caught by the markers above;
       // grok-4 onward is multimodal without a name marker.

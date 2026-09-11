@@ -13,6 +13,10 @@ const DEEPSEEK_ENDPOINT = 'https://api.deepseek.com/chat/completions'
 
 function maxTokensFor(model: string): number {
   const m = model.toLowerCase()
+  // `deepseek-flash` (= V4.1-Flash) carries no version number, so match it
+  // by name; the retired deepseek-chat / deepseek-reasoner / v4-flash ids
+  // all resolve to it server-side.
+  if (/^deepseek-(flash|chat|reasoner)$/.test(m)) return 65536
   if (m.includes('v4-pro')) return 65536
   if (m.includes('v4-flash')) return 65536
   return 16384

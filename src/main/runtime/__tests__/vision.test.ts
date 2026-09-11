@@ -36,12 +36,14 @@ function check(label: string, actual: unknown, expected: unknown): void {
 // ---------------------------------------------------------------------------
 
 const CASES: Array<[provider: string, model: string, vision: boolean]> = [
-  // deepseek — text-only chat lineup (the original bug); the vision-exp
-  // drop of 2026-08-21 rides the `vision` name marker
+  // deepseek — deepseek-flash (V4.1-Flash, 2026-09-11) sees images and the
+  // retired ids alias to it; deepseek-v4-pro is the last text-only model
+  // and now answers images with a silent guess instead of a 400
   ['deepseek', 'deepseek-v4-pro', false],
-  ['deepseek', 'deepseek-v4-flash', false],
-  ['deepseek', 'deepseek-chat', false],
-  ['deepseek', 'deepseek-reasoner', false],
+  ['deepseek', 'deepseek-flash', true],
+  ['deepseek', 'deepseek-v4-flash', true],
+  ['deepseek', 'deepseek-chat', true],
+  ['deepseek', 'deepseek-reasoner', true],
   ['deepseek', 'deepseek-v4-flash-vision-exp', true],
   // anthropic — every Claude chat model accepts images
   ['anthropic', 'claude-sonnet-4-5', true],

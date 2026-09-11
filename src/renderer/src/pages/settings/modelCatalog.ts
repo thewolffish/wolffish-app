@@ -63,7 +63,7 @@ export const PROVIDER_ORDER: ProviderId[] = [
  * from the chat composer's model picker.
  */
 export const DEFAULT_MODEL: Partial<Record<ProviderId, string>> = {
-  deepseek: 'deepseek-v4-flash',
+  deepseek: 'deepseek-flash',
   zai: 'glm-5.2',
   qwen: 'qwen3.8-max',
   kimi: 'kimi-k3',
@@ -417,8 +417,22 @@ export const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
     }
   ],
   // DeepSeek bills peak/off-peak since 2026-08-16 (peak 01:00-04:00 and
-  // 06:00-10:00 UTC; off-peak is half) — shown as ranges, low end first.
+  // 06:00-10:00 UTC Mon-Fri; off-peak is half) — shown as ranges, low end
+  // first. `deepseek-flash` is DeepSeek-V4.1-Flash (the id carries no version
+  // number); it replaced the whole v4-flash line on 2026-09-11 — the old ids
+  // still resolve to it — and sees images. deepseek-v4-pro stays listed at its
+  // own prices; from 2026-09-14 DeepSeek routes it to V4.1-Flash and bills the
+  // Flash rate, so re-check this row after that date (until a V4.1 Pro ships).
   deepseek: [
+    {
+      name: 'deepseek-flash',
+      context: '1M',
+      input: '$0.15–0.30',
+      output: '$0.60–1.20',
+      cached: '$0.003–0.006',
+      badges: ['fast', 'vision', 'reasoning'],
+      modes: ['none', 'high', 'max']
+    },
     {
       name: 'deepseek-v4-pro',
       context: '1M',
@@ -426,24 +440,6 @@ export const MODEL_SPECS: Record<ProviderId, ModelSpec[]> = {
       output: '$1.98–3.96',
       cached: '$0.022–0.044',
       badges: ['frontier', 'reasoning'],
-      modes: ['none', 'high', 'max']
-    },
-    {
-      name: 'deepseek-v4-flash',
-      context: '1M',
-      input: '$0.22–0.44',
-      output: '$0.66–1.32',
-      cached: '$0.007–0.014',
-      badges: ['fast', 'reasoning'],
-      modes: ['none', 'high', 'max']
-    },
-    {
-      name: 'deepseek-v4-flash-vision-exp',
-      context: '1M',
-      input: '$0.22–0.44',
-      output: '$0.66–1.32',
-      cached: '$0.007–0.014',
-      badges: ['fast', 'vision', 'reasoning'],
       modes: ['none', 'high', 'max']
     }
   ],

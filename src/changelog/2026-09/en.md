@@ -1,4 +1,10 @@
-## v1.0.286 — 2026-09-10 `Latest`
+## v1.0.287 — 2026-09-11 `Latest`
+
+### DeepSeek's New Flash Can See
+
+DeepSeek has retired its whole **V4 Flash line** and replaced it with one model, **DeepSeek-V4.1-Flash**, served under the plain name `deepseek-flash`. It is now the **default DeepSeek pick** in the model catalog, and it wears a **vision badge** for the first time in that provider's row: it reads the images you attach and the screenshots computer use takes, so driving the screen on DeepSeek no longer means switching to another provider first. It is also markedly **cheaper** — input at **$0.15 to $0.30** and output at **$0.60 to $1.20** per million tokens depending on the hour, with cache hits close to free — and the catalog now shows those rates. Underneath, the app finally recognises a name that carries **no version number**: until now a chat on `deepseek-flash` would have been quietly treated as an **8K-context, 16K-output** model instead of the **1M-context** one it is, and every image would have been stripped before sending because the app still believed DeepSeek was blind. The retired names keep working — DeepSeek routes them to the same model, and the app now treats them the same way. `deepseek-v4-pro` stays listed at its own prices for the few days it has left; from **14 September** DeepSeek routes it to V4.1 Flash as well and bills the Flash rate.
+
+## v1.0.286 — 2026-09-10
 
 ### Automations, Projects and Procedures Become One Library
 
