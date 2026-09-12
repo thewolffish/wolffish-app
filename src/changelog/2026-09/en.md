@@ -1,4 +1,10 @@
-## v1.0.291 — 2026-09-11 `Latest`
+## v1.0.292 — 2026-09-12 `Latest`
+
+### An Automation Card Says When, at a Glance
+
+The schedule an automation runs by — `Daily (09:00)`, `Weekly (Mon 09:00)`, a raw cron line — used to open **the small grey line of code at the bottom of its card**, sharing two clamped lines with the next run's date, the project and the edit stamp, where a long one could be cut off before you ever read it. It now carries **a chip of its own**, paired on one row with the countdown: **when it runs next on one side, the rule it runs by on the other**, pushed to the card's two edges the way the On/Off and Single/Workflow switches above them are. The chip wears **the glyph of its period** — a sun for a daily run, a briefcase for weekdays, a calendar for weekly and monthly, a stopwatch for hourly, a rocket for one that fires when the app starts, angle brackets for raw cron — so the shape of an automation registers before you read a word of it, and **a long cron drops to its own line rather than squeezing**, keeping the card's full width. The line of code below is left with **only what it was always for**: the exact moment of the next run, the project it belongs to, and when you last edited it.
+
+## v1.0.291 — 2026-09-11
 
 ### Updates on Mac Come Back
 
