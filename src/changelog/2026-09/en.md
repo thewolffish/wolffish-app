@@ -1,4 +1,10 @@
-## v1.0.292 — 2026-09-12 `Latest`
+## v1.0.293 — 2026-09-12 `Latest`
+
+### A Finished Turn Ends on Nothing, Not on a Note About Nothing
+
+When a turn had nothing left to say — the answer already delivered, the phone already notified — Wolffish's own instructions told it to end with nothing, and printed the mistake it must not make: the offending note itself, in quotes, as the example not to write. A model that has decided to say nothing reaches for the nearest token, and the nearest token was the one the instruction had just shown it. So a finished turn could close with that note typed after a real answer and delivered to you as part of it, twice in one conversation. Every one of those instructions — the standing procedures and both runtime notices — now **names no example at all** and never prints the phrase it forbids. They describe the class of mistake instead (a bracketed status note, a written statement that you are staying silent, a lone "." or "…"), say outright that **nothing is ever structurally required in a reply**, and cover the shape that leaked: a substantive answer **never carries a trailing marker** — it ends at its last real character. Silence is written as nothing, which is what it always meant.
+
+## v1.0.292 — 2026-09-12
 
 ### An Automation Card Says When, at a Glance
 
@@ -8,7 +14,7 @@ The schedule an automation runs by — `Daily (09:00)`, `Weekly (Mon 09:00)`, a 
 
 ### Updates on Mac Come Back
 
-Clicking **Update** on a Mac would sometimes close Wolffish and then — **nothing**. No relaunch, and when you opened it yourself it was still the old version. The cause was a race: on macOS the system's own installer has to unpack and check the 300 MB bundle **after** you click, and Wolffish gave it a fixed five seconds before forcing itself shut. On a busy disk that is not enough, so the app died with the update half-prepared. Wolffish now **prepares the update first, while it is still fully running**, and only begins shutting down once the installer confirms it holds the new version. If preparing fails, **nothing is torn down**: the app stays open, tells you the install did not go through, and lets you try again. The same rule now holds on every platform — Wolffish **never force-quits with nothing installed**; if the installer could not be armed after shutdown had begun, it relaunches the current version instead of vanishing. One honest note: the update that *brings* you this version is still carried out by the old code, so it may misbehave one last time — the update after it is the first to run the fix.
+Clicking **Update** on a Mac would sometimes close Wolffish and then — **nothing**. No relaunch, and when you opened it yourself it was still the old version. The cause was a race: on macOS the system's own installer has to unpack and check the 300 MB bundle **after** you click, and Wolffish gave it a fixed five seconds before forcing itself shut. On a busy disk that is not enough, so the app died with the update half-prepared. Wolffish now **prepares the update first, while it is still fully running**, and only begins shutting down once the installer confirms it holds the new version. If preparing fails, **nothing is torn down**: the app stays open, tells you the install did not go through, and lets you try again. The same rule now holds on every platform — Wolffish **never force-quits with nothing installed**; if the installer could not be armed after shutdown had begun, it relaunches the current version instead of vanishing. One honest note: the update that _brings_ you this version is still carried out by the old code, so it may misbehave one last time — the update after it is the first to run the fix.
 
 ### Install Failures Say So
 
@@ -66,7 +72,7 @@ When a job runs to three steps or more the agent now keeps **a task list**, and 
 
 ### Putting It Back
 
-Before the first change a turn makes to a file, Wolffish now **keeps the original bytes**. `changes_list` shows what each recent turn touched, and **`changes_revert` puts a turn's files back** — the whole turn, or one file of it. It needs no git, works in any folder, and keeps **the last twenty turns** of each conversation. It exists for one sentence you have certainly said before: *that fix made it worse, put it back*.
+Before the first change a turn makes to a file, Wolffish now **keeps the original bytes**. `changes_list` shows what each recent turn touched, and **`changes_revert` puts a turn's files back** — the whole turn, or one file of it. It needs no git, works in any folder, and keeps **the last twenty turns** of each conversation. It exists for one sentence you have certainly said before: _that fix made it worse, put it back_.
 
 ### Allow It for This Conversation
 
@@ -108,7 +114,7 @@ The three pages that hold what the agent **runs on its own**, what it **starts a
 
 ### The Stray Period at the End of an Answer
 
-Every so often a finished answer was followed by **a message containing nothing but a full stop**. It arrived under a reply that was already complete, said nothing, and left you wondering what the agent had meant by it. It meant silence. When the work is done and the notification has gone out, the runtime tells the agent there is nothing left to reply to — and the correct way to finish there is to write **nothing at all**. But a model asked to send nothing cannot always send *nothing*, so it typed **the smallest mark it could find** and sent that instead. The app never edits a word the agent writes, on purpose, so the answer was never to quietly delete the character — it was to make sure the agent knows a lone `.` is every bit as visible as a sentence. It is now **told exactly that, the next time it speaks**, along with what you actually saw on your screen, the same way it is already told when a raw tokenizer marker slips into a reply. The instructions it works from **name the case outright** now, too, so the far more common outcome is that it never types the character in the first place. A reply that is genuinely just punctuation because you asked for it — a divider, a row of dashes — is left alone.
+Every so often a finished answer was followed by **a message containing nothing but a full stop**. It arrived under a reply that was already complete, said nothing, and left you wondering what the agent had meant by it. It meant silence. When the work is done and the notification has gone out, the runtime tells the agent there is nothing left to reply to — and the correct way to finish there is to write **nothing at all**. But a model asked to send nothing cannot always send _nothing_, so it typed **the smallest mark it could find** and sent that instead. The app never edits a word the agent writes, on purpose, so the answer was never to quietly delete the character — it was to make sure the agent knows a lone `.` is every bit as visible as a sentence. It is now **told exactly that, the next time it speaks**, along with what you actually saw on your screen, the same way it is already told when a raw tokenizer marker slips into a reply. The instructions it works from **name the case outright** now, too, so the far more common outcome is that it never types the character in the first place. A reply that is genuinely just punctuation because you asked for it — a divider, a row of dashes — is left alone.
 
 ### The Context Meter Waits Until It Has Something to Show
 
@@ -186,7 +192,7 @@ Changing how the agent **speaks** or how it **hears you** meant opening Settings
 
 ### Automations, Procedures and Projects at a Glance
 
-All three pages listed their entries as **tall stacked rows**, each one carrying its full prompt, its attached files and its folders — so four automations filled the window and finding one meant scrolling past everything it contained. They are now **three-column grids of compact cards**, matching the Services page: an icon, the name, the two lines that matter, and the controls. The prompt, files and folders live in the editor, which is what the editor is for. Automations also finally have **a name of their own** — "Morning digest" rather than "Daily (08:00)" — so a card tells you what a job *does*, with its schedule reading underneath.
+All three pages listed their entries as **tall stacked rows**, each one carrying its full prompt, its attached files and its folders — so four automations filled the window and finding one meant scrolling past everything it contained. They are now **three-column grids of compact cards**, matching the Services page: an icon, the name, the two lines that matter, and the controls. The prompt, files and folders live in the editor, which is what the editor is for. Automations also finally have **a name of their own** — "Morning digest" rather than "Daily (08:00)" — so a card tells you what a job _does_, with its schedule reading underneath.
 
 ### Logs and Files, One Click Away
 

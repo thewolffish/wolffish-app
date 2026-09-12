@@ -25,11 +25,21 @@ export const MAX_EMPTY_TURN_NUDGES = 2
  *
  * The silent exit must spell out that "empty" means ZERO characters. An
  * earlier wording ("end with no output again") was taken literally: a model
- * closed the turn by typing the text `(no output)`, which was delivered to
- * the user as a reply (observed live, 2026-08-30). Placeholder text that
- * DESCRIBES silence is still output.
+ * closed the turn by typing `(no output)` as its content, which was delivered
+ * to the user as a reply (observed live, 2026-08-30). Text that DESCRIBES
+ * silence is still output.
  *
- * Naming `(no output)` alone was not enough either: on 2026-09-06 deepseek-v4
+ * Naming that literal in order to forbid it made the leak worse, which is why
+ * this text no longer prints a stand-in at all — printing one is how the model
+ * learns it. On 2026-09-12 a mobile-channel conversation was nudged twice and
+ * closed twice with the same literal appended AFTER real prose, the marker
+ * count matching the nudge budget exactly, and the model's reasoning both
+ * times was "I need to produce some output structurally in this format". So
+ * the wording now describes the class (a typed stand-in for silence) without
+ * quoting a member of it, denies the structural-requirement premise outright,
+ * and covers the appended shape as well as the reply-for-silence shape.
+ *
+ * Naming punctuation was needed for the same reason: on 2026-09-06 deepseek-v4
  * reasoned "so I end silently with zero characters" and then sent a lone `.`,
  * which reached the user as its own message bubble. A bare punctuation mark
  * does not read as a "placeholder that describes the silence", so it has to
@@ -38,13 +48,14 @@ export const MAX_EMPTY_TURN_NUDGES = 2
  * there, because the text has already streamed to the user by then.
  */
 const EMPTY_TURN_NUDGE_TEXT =
-  '[System: You ended your turn without any output or tool call. If the task is ' +
+  '[System: You ended your turn with an empty response and no tool call. If the task is ' +
   'complete, reply with a brief summary of what was done. If your closing message ' +
   'was already delivered earlier this turn and there is genuinely nothing left to ' +
   'say, end with an entirely empty response again — zero characters — and the ' +
-  'turn will close cleanly. Do NOT type a placeholder that describes the silence, ' +
-  'such as "(no output)" or "(nothing to add)", no bare punctuation such as "." or ' +
-  '"…", and no control tokens: anything ' +
+  'turn will close cleanly. Nothing is ever structurally required in your reply. ' +
+  'Do NOT write a stand-in for the silence: no bracketed status note, no written ' +
+  'statement that you are staying silent, no lone "." or "…", no control token, ' +
+  'and never a trailing marker on the end of a reply that has content — anything ' +
   'you write is delivered to the user verbatim as a reply. Otherwise, continue the ' +
   'next step now — either call the appropriate tool(s) or give your final answer.]'
 

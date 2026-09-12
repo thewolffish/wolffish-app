@@ -56,7 +56,12 @@ function testNoticeNamesTokenAndDefers(): void {
   const notice = controlTokenNotice('<|eos|>')
   assert.match(notice, /<\|eos\|>/, 'the notice names the leaked token')
   assert.match(notice, /disregard/, 'the notice defers to deliberate quoting')
-  assert.match(notice, /no output at all/, 'the notice names the silent ending as the fix')
+  assert.match(notice, /empty reply/, 'the notice names the silent ending as the fix')
+  assert.doesNotMatch(
+    notice,
+    /\(no output\)|\(nothing to add\)/i,
+    'the notice never prints a stand-in it forbids — printing one is how the model learns it'
+  )
   console.log('ok: the notice names the token, offers the silent exit, and defers')
 }
 
@@ -115,6 +120,11 @@ function testContentFreeNoticeEchoesAndDefers(): void {
   const notice = contentFreeReplyNotice('.')
   assert.match(notice, /`\.`/, 'the notice echoes the characters the user saw')
   assert.match(notice, /zero characters/, 'the notice names the silent ending as the fix')
+  assert.doesNotMatch(
+    notice,
+    /\(no output\)|\(nothing to add\)/i,
+    'the notice never prints a stand-in it forbids'
+  )
   assert.match(notice, /disregard/, 'the notice defers to deliberate punctuation')
   console.log('ok: the content-free notice echoes, offers the silent exit, and defers')
 }

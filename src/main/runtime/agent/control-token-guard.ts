@@ -21,6 +21,13 @@
  * nothing downstream may silently delete them either. The fix lives where the
  * bug lives: in the model's own behaviour.
  *
+ * The remedy is copy, never post-processing — which means the copy must not
+ * print the stand-in it forbids: printing one is how the model learns it. On
+ * 2026-09-12 two replies closed with a literal `(no output)` appended after
+ * real prose, in a conversation whose empty turns had been nudged exactly
+ * twice. Both notices below therefore describe the class (a typed stand-in for
+ * silence) without quoting a member of it.
+ *
  * So the leak is surfaced the way the no-progress guard surfaces repetition —
  * one line in the volatile runtime tail (cache-safe, after every cache
  * breakpoint), addressed to the model that wrote it. The model reads it and
@@ -76,8 +83,10 @@ export function controlTokenNotice(token: string): string {
     `a tokenizer control token, and it was delivered to the user exactly as written. ` +
     `To the user it is meaningless clutter; they cannot be expected to know what it is. ` +
     `Never write control tokens as visible text. When everything is delivered and there ` +
-    `is nothing left to say, end with no output at all instead — a completely empty ` +
-    `reply, zero characters, never a typed placeholder such as "(no output)". If the stray token may ` +
+    `is nothing left to say, end the turn with an entirely empty reply instead — zero ` +
+    `characters, a complete and valid ending. Write no stand-in for that silence: a ` +
+    `bracketed status note, a written statement that you are staying silent, a lone "." ` +
+    `and a stray token like this one are all output, and all reach the user as a message. If the stray token may ` +
     `have confused the user, clear it up briefly in your next reply; if you wrote it ` +
     `deliberately as content (for example, quoting a token to explain it), disregard this.`
   )
@@ -127,9 +136,10 @@ export function contentFreeReplyNotice(reply: string): string {
     `CONTENT-FREE REPLY SIGNAL: your previous reply was \`${reply}\` and nothing else — ` +
     `punctuation with no content, delivered to the user as a message of its own. ` +
     `To them it reads as a stray keystroke, not as silence. ` +
-    `When everything is delivered and there is nothing left to say, end with no output ` +
-    `at all instead — a completely empty reply, zero characters. A lone \`.\`, \`…\` or \`-\` ` +
-    `is output, exactly as much as "(no output)" is. ` +
+    `When everything is delivered and there is nothing left to say, end the turn with an ` +
+    `entirely empty reply instead — zero characters, a complete and valid ending — and ` +
+    `write no stand-in for the silence. A lone \`.\`, \`…\` or \`-\` is output, and so is any ` +
+    `written note that stands in for saying nothing. ` +
     `If you wrote it deliberately as content, disregard this.`
   )
 }

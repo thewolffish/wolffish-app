@@ -91,6 +91,19 @@ async function main(): Promise<void> {
       typeof nudge[1].content === 'string' &&
       (nudge[1].content as string).length > 0
   )
+  // The nudge asked a silent model to type nothing and thereby taught it what
+  // to type: it printed the offending note as the example not to write, and a
+  // model reaches for the nearest token. Pin that the copy never names one.
+  const nudgeText = (nudge?.[1].content as string) ?? ''
+  ok(
+    'nudge never prints a stand-in for silence',
+    !/\(\s*no output\s*\)|\(\s*nothing to add\s*\)/i.test(nudgeText),
+    nudgeText
+  )
+  ok(
+    'nudge denies the structural-requirement premise and names the trailing-marker shape',
+    /structurally required/.test(nudgeText) && /trailing marker/.test(nudgeText)
+  )
   ok(
     'injected assistant carries no tool calls (no orphaned tool_use)',
     nudge?.[0].role === 'assistant' && nudge[0].toolUses === undefined
