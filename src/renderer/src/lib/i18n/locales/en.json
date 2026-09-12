@@ -1610,7 +1610,6 @@
         "unknown": "The update failed to download. Please try again."
       },
       "install": "Update",
-      "installing": "Installing…",
       "upToDate": "Up to date",
       "updateFound": "Update found",
       "checkFailed": "Could not check for updates",
@@ -1716,7 +1715,6 @@
   "update": {
     "available": "Update available",
     "install": "Update",
-    "installing": "Installing…",
     "retry": "Retry",
     "changelog": "Changelog"
   },

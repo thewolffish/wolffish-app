@@ -32,7 +32,7 @@ export function UpdateCard(): React.JSX.Element | null {
       setFailed(null)
       setInstalling(false)
     })
-    // Without this the card stayed pinned on a disabled "Installing…" forever
+    // Without this the card stayed pinned on a dimmed, dead button forever
     // after a failed install — nothing else ever reset the flag.
     const unsubState = window.api.updater.onState((s) => {
       if (s.phase === 'error') {
@@ -119,13 +119,9 @@ export function UpdateCard(): React.JSX.Element | null {
             installing ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
           )}
         >
-          <span>
-            {failed
-              ? t('update.retry', 'Retry')
-              : installing
-                ? t('update.installing', 'Installing…')
-                : t('update.install', 'Update')}
-          </span>
+          {/* The label never becomes "Installing…" — the button stays Update and
+              only dims, so the card reads the same the whole way through. */}
+          <span>{failed ? t('update.retry', 'Retry') : t('update.install', 'Update')}</span>
         </button>
       </div>
     </div>

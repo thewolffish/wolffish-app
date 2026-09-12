@@ -321,11 +321,8 @@ export function UpdatesPanel(): React.JSX.Element {
                     phase === 'installing' && 'cursor-not-allowed opacity-60'
                   )}
                 >
-                  <span>
-                    {phase === 'installing'
-                      ? t('settings.updates.installing', 'Installing…')
-                      : t('settings.updates.install', 'Update')}
-                  </span>
+                  {/* Stays Update while installing — the button only dims. */}
+                  <span>{t('settings.updates.install', 'Update')}</span>
                 </button>
               </div>
             ) : phase === 'error' ? (
