@@ -12,6 +12,7 @@ import type { ApprovalDecision, ApprovalRequest } from '@main/runtime/amygdala'
 import {
   appendTextSegment,
   upsertTaskSegment,
+  upsertCountdownSegment,
   upsertTodoSegment,
   upsertWorkflowSegment
 } from '@main/runtime/broca'
@@ -432,6 +433,7 @@ export class ElectronChannel {
         if ('worker' in segment && segment.worker) return
         if (segment.kind === 'workflow') upsertWorkflowSegment(acc.segments, segment)
         else if (segment.kind === 'task') upsertTaskSegment(acc.segments, segment)
+        else if (segment.kind === 'countdown') upsertCountdownSegment(acc.segments, segment)
         else if (segment.kind === 'todo') upsertTodoSegment(acc.segments, segment)
         else if (segment.kind === 'text' || segment.kind === 'reasoning')
           appendTextSegment(acc.segments, segment)
@@ -440,7 +442,7 @@ export class ElectronChannel {
         if (segment.kind === 'text') acc.assistantContent += segment.delta
         // Task snapshots flush the mirror immediately — a card flipping to
         // running/succeeded should not wait out the text throttle.
-        scheduleMirror(segment.kind === 'task')
+        scheduleMirror(segment.kind === 'task' || segment.kind === 'countdown')
         // Prose is cheap to lose a few seconds of and arrives per token;
         // everything else — a tool call, its result, a task or workflow
         // snapshot, the turn's end — is the slow, expensive part of a run and

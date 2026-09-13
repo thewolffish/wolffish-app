@@ -36,6 +36,8 @@ import {
   type ConversationMeta
 } from '@main/conversations'
 import { turnScope } from '@main/runtime/corpus'
+import { countdowns } from '@main/runtime/countdown'
+import { registerCountdownCapability } from '@main/runtime/countdown-capability'
 import type { TaskSnapshot } from '@main/runtime/broca'
 import { checkVideoService, videoTasks } from '@main/runtime/video-tasks'
 import { getDataAnalytics, type DataAnalytics } from '@main/data'
@@ -1589,6 +1591,7 @@ const mobileChannel = new MobileChannel({
     if (!check) return { ok: false, error: 'updater unavailable' }
     return (await check(null)) as { ok: boolean; version?: string | null; error?: string }
   },
+  countdownAbort: (countdownId) => countdowns.abort(countdownId, 'user'),
   updaterInstall: async () => {
     // Refuse cleanly when nothing verified is ready — never trip the
     // handler's own failure path (that surfaces an error card on BOTH
@@ -1920,6 +1923,46 @@ videoTasks.onTerminal((snapshot) => {
   void deliverVideoTaskFallback(snapshot)
 })
 void videoTasks.init()
+
+// ── Turn-end countdowns ──────────────────────────────────────────────────
+// The manager fires an armed tool call after the arming turn ends (see
+// runtime/countdown.ts). `system_power` arms through the host below; the
+// model arms anything else through the generic `countdown_start` tool.
+countdowns.setExecutor((tool, args) => agent.cerebellum.executeTool(tool, args))
+agent.cerebellum.setCountdownHost({
+  arm: (input) => {
+    const scope = turnScope.getStore()
+    if (scope?.autonomous) {
+      return Promise.resolve({
+        ok: false as const,
+        error:
+          'Countdowns are refused in an automation run: nobody is watching the card to abort it.'
+      })
+    }
+    return countdowns.arm(agent.cerebellum.getCurrentConversationId(), scope?.turnId ?? null, input)
+  },
+  isFiring: () => countdowns.isFiring(),
+  pending: () => countdowns.pending()
+})
+registerCountdownCapability(agent.cerebellum, agent.amygdala, countdowns)
+// Every transition reaches the renderer and the phone — the arming turn's
+// broca carries only the `armed` state; counting/fired/aborted happen after
+// the turn ended and have no stream to ride. High-frequency-adjacent →
+// MOBILE_CONFIG_SILENT below.
+countdowns.onSnapshot((snapshot) => {
+  broadcast('countdown:changed', snapshot)
+  if (mobileChannel.hasPeer) mobileChannel.pushCountdownChanged(snapshot)
+})
+// Once the write-through has refreshed the on-disk body, nudge the phone to
+// re-read it (the deliverVideoTaskFallback pattern): the push above folds the
+// card live when the phone already holds the message, this covers the case
+// where it does not yet.
+countdowns.onWritten((snapshot) => {
+  if (snapshot.conversationId && mobileChannel.hasPeer) {
+    mobileChannel.pushMessageAppended(snapshot.conversationId, undefined)
+  }
+})
+void countdowns.init()
 
 async function deliverVideoTaskFallback(snapshot: TaskSnapshot): Promise<void> {
   if (videoTasks.isOwningTurnLive(snapshot.taskId)) return
@@ -2424,7 +2467,8 @@ const MOBILE_CONFIG_SILENT = new Set([
   'ollama:changed',
   'projects:copyProgress',
   'reindex:progress',
-  'task:changed'
+  'task:changed',
+  'countdown:changed'
 ])
 
 /**
@@ -4639,6 +4683,10 @@ app.whenReady().then(async () => {
   // model to notice.
   handle('task:cancel', async (_e, payload: { taskId: string }) => {
     return videoTasks.cancel(payload.taskId)
+  })
+  // Countdown-card Abort button: stops a pending turn-end countdown for good.
+  handle('countdown:abort', async (_e, payload: { countdownId: string }) => {
+    return countdowns.abort(payload.countdownId, 'user')
   })
   handle('updater:install', async () => {
     if (is.dev || updateInstallInProgress) return

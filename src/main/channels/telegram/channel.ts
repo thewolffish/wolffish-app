@@ -1,3 +1,4 @@
+import { countdowns } from '@main/runtime/countdown'
 import { interpretAskReply } from '@main/channels/ask-reply'
 import { bindChatToConversation } from '@main/channels/chat-binding'
 import {
@@ -59,6 +60,7 @@ import {
 import { compressVideoToLimit } from '@main/channels/video-compress'
 import {
   upsertTaskSegment,
+  upsertCountdownSegment,
   upsertTodoSegment,
   appendTextSegment,
   upsertWorkflowSegment,
@@ -1099,6 +1101,14 @@ export class TelegramChannel {
     // mid-turn (that is the only time a queue exists), touches the running
     // turn not at all, and is never itself queued.
     if (command === CANCEL_COMMAND) {
+      // A pending turn-end countdown (a restart the last reply armed) is the
+      // other thing the phone user may need to stop from here — the card's
+      // Abort button lives in the app, not in this chat.
+      const countdown = await countdowns.abortPending('user')
+      if (countdown) {
+        await this.sendPlain(chatId, `Aborted: ${countdown.label}.`)
+        return
+      }
       const dropped = this.clearQueue(chatId)
       await this.sendPlain(
         chatId,
@@ -2742,6 +2752,7 @@ export class TelegramChannel {
     // per run/task or a long run persists hundreds of full snapshots.
     if (segment.kind === 'workflow') upsertWorkflowSegment(active.segments, segment)
     else if (segment.kind === 'task') upsertTaskSegment(active.segments, segment)
+    else if (segment.kind === 'countdown') upsertCountdownSegment(active.segments, segment)
     else if (segment.kind === 'todo') upsertTodoSegment(active.segments, segment)
     else if (segment.kind === 'text' || segment.kind === 'reasoning')
       appendTextSegment(active.segments, segment)

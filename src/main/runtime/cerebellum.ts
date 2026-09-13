@@ -18,7 +18,8 @@ import type {
   McpTestResult
 } from '@main/runtime/mcp/types'
 import type { WorkflowEffort, WorkflowWaitOutcome } from '@main/runtime/workflow'
-import type { TaskSnapshot, WorkflowAgentView } from '@main/runtime/broca'
+import type { CountdownSnapshot, TaskSnapshot, WorkflowAgentView } from '@main/runtime/broca'
+import type { CountdownArmInput, CountdownArmResult } from '@main/runtime/countdown'
 import type { VideoSubmitInput, VideoSubmitResult } from '@main/runtime/video-tasks'
 import { sudoSession, type SudoSession } from '@main/runtime/sudoSession'
 import type { ToolDefinition } from '@main/runtime/thalamus'
@@ -628,6 +629,31 @@ export type VideoTasksHost = {
 }
 
 /**
+ * Turn-end countdown surface (see runtime/countdown.ts), injected into every
+ * plugin's init context as PluginContext.countdown. A plugin whose effect
+ * would take the app or machine down (the `system` power actions) arms a
+ * countdown here instead of running the effect, so the turn ends and its
+ * transcript lands first; the manager fires the armed tool call after the
+ * grace period unless the user aborts it from the card.
+ */
+export type CountdownHost = {
+  /**
+   * Register `tool(args)` to run `seconds` after the current turn ends. The
+   * host stamps the active conversation/turn. Fails outside a turn, and in
+   * an autonomous (automation) turn — nobody is watching that card.
+   */
+  arm: (input: CountdownArmInput) => Promise<CountdownArmResult>
+  /**
+   * True while the manager is executing an armed target. A plugin that arms
+   * on the model's call reads this to run for real when the countdown
+   * calls it back.
+   */
+  isFiring: () => boolean
+  /** The single armed-or-counting countdown, if any. */
+  pending: () => CountdownSnapshot | null
+}
+
+/**
  * Retrieval surface injected into the `introspect` capability's plugin via
  * its init context (PluginContext.cortex). Implemented in the main process
  * (index.ts) over the live Cortex index + Hippocampus write path, so the
@@ -879,6 +905,11 @@ export type PluginContext = {
    */
   videoTasks?: VideoTasksHost
   /**
+   * Turn-end countdown surface. Present once the host wired one in via
+   * setCountdownHost — see CountdownHost.
+   */
+  countdown?: CountdownHost
+  /**
    * Ask the user a multiple-choice question and block until they answer.
    * Used by the `ask` capability to pause the agent loop, render an
    * interactive question card in the chat, and resume with the user's
@@ -954,6 +985,10 @@ const PLUGIN_FILES = ['index.mjs', 'index.js', 'index.cjs']
  */
 export const CORE_CAPABILITIES: ReadonlySet<string> = new Set([
   'tool-discovery',
+  // Turn-end countdowns (countdown_start) — the safe way to run anything that
+  // would cut off the reply announcing it; `system` (core) arms through the
+  // same manager, so the generic tool must be callable without a hop too.
+  'countdown',
   // Undo for file edits (changes_list / changes_revert) — always callable so
   // "put it back" never needs a discovery hop.
   'changes',
@@ -1017,6 +1052,7 @@ export const CORE_CAPABILITIES: ReadonlySet<string> = new Set([
  */
 export const LOCKED_CAPABILITIES: ReadonlySet<string> = new Set([
   'workflow',
+  'countdown',
   'todo',
   'automations',
   'projects',
@@ -1091,6 +1127,7 @@ export class Cerebellum {
   private knowledgeHost?: KnowledgeHost
   private voiceHost?: VoiceHost
   private videoTasksHost?: VideoTasksHost
+  private countdownHost?: CountdownHost
   /**
    * Bumped every time the live tool surface changes — a reload (skills
    * added/edited/removed) or an enable/disable toggle. The agent loop pins
@@ -1298,6 +1335,19 @@ export class Cerebellum {
    */
   setVideoTasksHost(host: VideoTasksHost): void {
     this.videoTasksHost = host
+  }
+
+  /** Is this tool name registered by any loaded capability right now? */
+  hasTool(name: string): boolean {
+    return this.toolToCapability.has(name)
+  }
+
+  /**
+   * Wire the turn-end countdown host (implemented in the main process over
+   * the CountdownManager singleton). Set once at startup; survives reload().
+   */
+  setCountdownHost(host: CountdownHost): void {
+    this.countdownHost = host
   }
 
   isDisabled(name: string): boolean {
@@ -2596,6 +2646,7 @@ export class Cerebellum {
         knowledge: this.knowledgeHost,
         voice: this.voiceHost,
         videoTasks: this.videoTasksHost,
+        countdown: this.countdownHost,
         askUser: (input) => this.dispatchAskUser(input),
         getChannelStatus: () => this.channelStatusProvider?.() ?? []
       })

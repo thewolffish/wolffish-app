@@ -128,7 +128,9 @@ import {
   upsertTaskSegment,
   upsertTodoSegment,
   upsertWorkflowSegment,
-  type Segment
+  type Segment,
+  type CountdownSnapshot,
+  upsertCountdownSegment
 } from '@main/runtime/broca'
 import type { ApprovalDecision, ApprovalRequest } from '@main/runtime/amygdala'
 import type { AskUserAnswer, AskUserRequest, AskUserResponse } from '@main/runtime/cerebellum'
@@ -245,6 +247,7 @@ function isCleanFeedSegment(segment: Segment): boolean {
     // which needs the call's name and args, not just its result.
     (segment.kind === 'tool_call' && CODE_ACTIVITY_TOOLS.has(segment.name)) ||
     segment.kind === 'task' ||
+    segment.kind === 'countdown' ||
     segment.kind === 'todo' ||
     segment.kind === 'separator' ||
     segment.kind === 'turn_end'
@@ -344,6 +347,8 @@ export type MobileChannelDeps = SnapshotSources & {
   updaterState?: () => Promise<UpdaterWireState>
   updaterCheck?: () => Promise<{ ok: boolean; version?: string | null; error?: string }>
   updaterInstall?: () => Promise<{ ok: boolean }>
+  /** Abort a pending turn-end countdown from the phone's card. */
+  countdownAbort?: (countdownId: string) => Promise<{ ok: boolean; error?: string }>
   /**
    * Persisted switch for model-initiated phone notifications. Absent = the
    * feature is always on (tests). Checked before anything else in the notify
@@ -1545,6 +1550,16 @@ export class MobileChannel {
       return { conversationId: cid }
     })
 
+    tunnel.onRpc(Rpc.countdownAbort, async (params) => {
+      const countdownId = String(params.countdownId ?? '')
+      if (!this.deps.countdownAbort || !countdownId) return { ok: false }
+      const result = await this.deps.countdownAbort(countdownId)
+      this.log(
+        `countdown abort from phone — ${result.ok ? 'aborted' : (result.error ?? 'refused')}`
+      )
+      return result
+    })
+
     tunnel.onRpc(Rpc.abortTurn, async (params) => {
       const conversationId = String(params.conversationId ?? '')
       const live = this.turns.get(conversationId)
@@ -2499,6 +2514,7 @@ export class MobileChannel {
         // stream of them is one card, not a card per tick.
         if (segment.kind === 'workflow') upsertWorkflowSegment(acc.segments, segment)
         else if (segment.kind === 'task') upsertTaskSegment(acc.segments, segment)
+        else if (segment.kind === 'countdown') upsertCountdownSegment(acc.segments, segment)
         else if (segment.kind === 'todo') upsertTodoSegment(acc.segments, segment)
         else if (segment.kind === 'text' || segment.kind === 'reasoning')
           appendTextSegment(acc.segments, segment)
@@ -2517,7 +2533,7 @@ export class MobileChannel {
         }
         // A card flipping to running/succeeded should not wait out the text
         // throttle, exactly as in the in-app mirror.
-        scheduleMirror(segment.kind === 'task')
+        scheduleMirror(segment.kind === 'task' || segment.kind === 'countdown')
       },
       // Accumulate tokenomics for the persisted context-meter stats.
       onTurnEvent: (type, payload) => stats.note(type, payload),
@@ -2981,6 +2997,11 @@ export class MobileChannel {
    */
   pushUpdaterState(state: UpdaterWireState): void {
     this.tunnel?.emit(Event.updaterChanged, { state })
+  }
+
+  /** A turn-end countdown transition after its turn ended — see Event.countdownChanged. */
+  pushCountdownChanged(snapshot: CountdownSnapshot): void {
+    this.tunnel?.emit(Event.countdownChanged, { snapshot })
   }
 
   // ----------------------------------------------------------------- status

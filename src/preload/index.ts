@@ -1,4 +1,6 @@
 import type {
+  CountdownSnapshot,
+  CountdownStatus,
   Segment,
   SegmentTurnEndReason,
   TaskSnapshot,
@@ -12,6 +14,8 @@ import type {
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 
 export type {
+  CountdownSnapshot,
+  CountdownStatus,
   Segment,
   SegmentTurnEndReason,
   TaskSnapshot,
@@ -1063,6 +1067,18 @@ export type TaskApi = {
    * carries it.
    */
   onChanged: (listener: (snapshot: TaskSnapshot) => void) => () => void
+}
+
+export type CountdownApi = {
+  /** The countdown card's Abort: stops a pending turn-end countdown for good. */
+  abort: (countdownId: string) => Promise<{ ok: boolean; error?: string }>
+  /**
+   * Fired on every countdown transition (countdown:changed) — counting,
+   * fired, aborted, failed — all of which happen after the arming turn
+   * ended. The renderer folds the snapshot into the matching `countdown`
+   * segment (by countdownId) and into its in-memory conversation.
+   */
+  onChanged: (listener: (snapshot: CountdownSnapshot) => void) => () => void
 }
 
 export type ConversationApi = {
@@ -2282,6 +2298,7 @@ export type WolffishApi = {
   chat: ChatApi
   conversation: ConversationApi
   task: TaskApi
+  countdown: CountdownApi
   viewer: ViewerApi
   heartbeat: HeartbeatApi
   automationFiles: AutomationFilesApi
@@ -2410,6 +2427,10 @@ const api: WolffishApi = {
   task: {
     cancel: (taskId) => ipcRenderer.invoke('task:cancel', { taskId }),
     onChanged: (listener) => subscribe('task:changed', listener)
+  },
+  countdown: {
+    abort: (countdownId) => ipcRenderer.invoke('countdown:abort', { countdownId }),
+    onChanged: (listener) => subscribe('countdown:changed', listener)
   },
   viewer: {
     readTree: () => ipcRenderer.invoke('viewer:readTree'),

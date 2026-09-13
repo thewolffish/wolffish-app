@@ -1,4 +1,14 @@
-## v1.0.293 — 2026-09-12 `Latest`
+## v1.0.294 — 2026-09-13 `Latest`
+
+### A Restart Waits for the Reply, Then Counts Down Where You Can Stop It
+
+Asking Wolffish to restart, shut down or log out used to hand the job to a hidden timer: the agent scheduled the command twenty seconds out in a detached shell and moved on, with no way to cancel it on a Mac or on Linux, and a failure to even start that timer was reported to you as success. The whole thing is rebuilt around one rule: **nothing that would cut off the agent's own reply runs inside the turn**. A power action is now **armed** rather than run — the agent finishes its answer, the conversation is saved, and only then does a **countdown card** appear in the chat with the action's name, a bar draining over ten seconds, and an **Abort** button. When the bar empties the command runs; press Abort and it never does. The card is a real part of the conversation, so it appears on your phone with the same Abort button, and a conversation opened later shows exactly what happened — **ran, aborted by you, or dropped** because the turn was stopped before its reply landed. On a chat channel, `/cancel` aborts it. Nothing stays pending across a relaunch: a countdown the app went down with is recorded as dropped, never left counting. The escape hatch survives for the one case it exists for — a user who says "restart now" and accepts losing the tail of the turn.
+
+### Any Action Can Take the Same Countdown
+
+The restart is the first user of a general mechanism, and the agent has it as a tool of its own. **`countdown_start`** arms any tool call to run a few seconds after the reply is finished, on the same card with the same Abort — quitting the app, an irreversible cleanup, anything you would want a last chance to stop. The armed action is checked against **the same safety rules as calling it directly**, and if it needs your approval, the approval card is raised at the moment it is armed, never later when no one is there to answer. One countdown is pending at a time; arming a second replaces the first. Automations cannot arm one at all, because no one is watching their card.
+
+## v1.0.293 — 2026-09-12
 
 ### A Finished Turn Ends on Nothing, Not on a Note About Nothing
 

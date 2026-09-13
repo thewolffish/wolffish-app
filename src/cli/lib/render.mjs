@@ -134,6 +134,7 @@ export class TurnRenderer {
     // tracked and only meaningful transitions print, instead of one line per
     // tick (a video task alone emits dozens).
     this.taskState = new Map()
+    this.countdownState = new Map()
     this.workflowState = new Map()
     this.deliveredThisTurn = new Set()
     this.startedAt = Date.now()
@@ -202,6 +203,9 @@ export class TurnRenderer {
         return
       case 'task':
         this.#task(segment.snapshot)
+        return
+      case 'countdown':
+        this.#countdown(segment.snapshot)
         return
       case 'workflow':
         this.#workflow(segment.snapshot)
@@ -293,6 +297,27 @@ export class TurnRenderer {
     this.#line(`${mark} ${c.bold(label)} ${c.gray(status)}`)
   }
 
+  // A turn-end countdown: armed while the turn runs, then counting once it
+  // ends, then fired/aborted. The terminal's card has no Abort button, so the
+  // line says where the one that does lives — silence here would mean a
+  // machine going down with nothing on screen having announced it.
+  #countdown(snapshot) {
+    if (!snapshot || typeof snapshot !== 'object') return
+    const id = snapshot.countdownId ?? 'countdown'
+    const status = snapshot.status ?? 'armed'
+    if (this.countdownState.get(id) === status) return
+    this.countdownState.set(id, status)
+    const label = snapshot.label ?? 'action'
+    const mark = status === 'fired' ? icon.ok() : status === 'failed' ? icon.fail() : icon.tool()
+    const detail =
+      status === 'armed' || status === 'counting'
+        ? `in ${snapshot.seconds ?? 0}s — abort it in the app`
+        : status === 'aborted'
+          ? `aborted (${snapshot.abortedBy ?? 'user'})`
+          : status
+    this.#line(`${mark} ${c.bold(label)} ${c.gray(detail)}`)
+  }
+
   #workflow(snapshot) {
     if (!snapshot || typeof snapshot !== 'object') return
     const id = snapshot.workflowId ?? 'workflow'
@@ -378,6 +403,7 @@ export class TurnRenderer {
     this.toolNames.clear()
     this.toolStartedAt.clear()
     this.taskState.clear()
+    this.countdownState.clear()
     this.workflowState.clear()
     this.deliveredThisTurn.clear()
     this.sawProse = false

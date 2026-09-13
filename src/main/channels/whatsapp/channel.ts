@@ -1,3 +1,4 @@
+import { countdowns } from '@main/runtime/countdown'
 import { Boom } from '@hapi/boom'
 import {
   assistantSegmentsToHistory,
@@ -71,6 +72,7 @@ import {
 import { compressVideoToLimit } from '@main/channels/video-compress'
 import {
   upsertTaskSegment,
+  upsertCountdownSegment,
   upsertTodoSegment,
   appendTextSegment,
   upsertWorkflowSegment,
@@ -1257,6 +1259,12 @@ export class WhatsAppChannel {
     // mid-turn (that is the only time a queue exists), touches the running
     // turn not at all, and is never itself queued.
     if (lower === '/cancel' || lower === 'cancel') {
+      // Same as Telegram: a pending turn-end countdown is abortable from here.
+      const countdown = await countdowns.abortPending('user')
+      if (countdown) {
+        await this.safeSend(jid, `Aborted: ${countdown.label}.`)
+        return
+      }
       const dropped = this.clearQueue(jid)
       await this.safeSend(
         jid,
@@ -2481,6 +2489,7 @@ export class WhatsAppChannel {
     // per run/task or a long run persists hundreds of full snapshots.
     if (segment.kind === 'workflow') upsertWorkflowSegment(active.segments, segment)
     else if (segment.kind === 'task') upsertTaskSegment(active.segments, segment)
+    else if (segment.kind === 'countdown') upsertCountdownSegment(active.segments, segment)
     else if (segment.kind === 'todo') upsertTodoSegment(active.segments, segment)
     else if (segment.kind === 'text' || segment.kind === 'reasoning')
       appendTextSegment(active.segments, segment)

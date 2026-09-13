@@ -32,6 +32,7 @@ import { TurnFooter } from '@components/common/turn-footer/TurnFooter'
 import { UpdateCard } from '@components/common/update-card/UpdateCard'
 import { VideoPlayer } from '@components/common/video-player/VideoPlayer'
 import { TaskCard } from '@components/common/task-card/TaskCard'
+import { CountdownCard } from '@components/common/countdown-card/CountdownCard'
 import { TodoCard } from '@components/common/todo-card/TodoCard'
 import { TouchedFolders } from '@components/common/touched-folders/TouchedFolders'
 import { WorkflowCard } from '@components/common/workflow-card/WorkflowCard'
@@ -52,10 +53,12 @@ import {
   latestTodoLists,
   todoListId,
   upsertTaskSegment,
+  upsertCountdownSegment,
   upsertTodoSegment,
   upsertWorkflowSegment,
   WORKFLOW_TOOL_NAMES,
   type TaskSnapshot,
+  type CountdownSnapshot,
   type WorkflowSnapshot
 } from '@main/runtime/broca'
 import {
@@ -1465,6 +1468,27 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
         for (const message of conv.messages) {
           for (const seg of message.segments ?? []) {
             if (seg.kind === 'task' && seg.snapshot.taskId === snapshot.taskId) {
+              seg.snapshot = snapshot
+            }
+          }
+        }
+      }
+    })
+  }, [activeConversationId])
+
+  // Countdown transitions after the arming turn ended (counting, fired,
+  // aborted, failed) arrive as pushes, not segments — same fold as tasks.
+  useEffect(() => {
+    if (!activeConversationId) return
+    const targetId = activeConversationId
+    return window.api.countdown.onChanged((snapshot) => {
+      if (snapshot.conversationId !== targetId || conversationIdRef.current !== targetId) return
+      setMessages((prev) => foldCountdownSnapshot(prev, snapshot))
+      const conv = conversationRef.current
+      if (conv && conv.id === targetId) {
+        for (const message of conv.messages) {
+          for (const seg of message.segments ?? []) {
+            if (seg.kind === 'countdown' && seg.snapshot.countdownId === snapshot.countdownId) {
               seg.snapshot = snapshot
             }
           }
@@ -4651,6 +4675,15 @@ function renderSegments(
       // user, not tool mechanics.
       flushText()
       blocks.push(<TaskCard key={`task-${seg.snapshot.taskId}`} snapshot={seg.snapshot} />)
+    } else if (seg.kind === 'countdown') {
+      // The turn-end countdown card: one per countdown, upserted by
+      // countdownId on append (the `armed` state, live) and folded from
+      // countdown:changed pushes after the turn ends. Output FOR the user —
+      // renders regardless of verbose, like the task card.
+      flushText()
+      blocks.push(
+        <CountdownCard key={`countdown-${seg.snapshot.countdownId}`} snapshot={seg.snapshot} />
+      )
     } else if (seg.kind === 'todo') {
       // The model's task list: one checklist card per LIST, at the turn that
       // created it, in its latest state — a later turn's write that continues
@@ -6019,6 +6052,34 @@ function foldTaskSnapshot(messages: ChatMessage[], snapshot: TaskSnapshot): Chat
   })
 }
 
+/**
+ * Fold a post-turn countdown-snapshot push into whichever message holds the
+ * matching `countdown` segment — the task fold, keyed by countdownId.
+ */
+function foldCountdownSnapshot(
+  messages: ChatMessage[],
+  snapshot: CountdownSnapshot
+): ChatMessage[] {
+  return messages.map((m) => {
+    if (!isAssistant(m)) return m
+    if (
+      !m.segments.some(
+        (s) => s.kind === 'countdown' && s.snapshot.countdownId === snapshot.countdownId
+      )
+    ) {
+      return m
+    }
+    return {
+      ...m,
+      segments: m.segments.map((s) =>
+        s.kind === 'countdown' && s.snapshot.countdownId === snapshot.countdownId
+          ? { ...s, snapshot }
+          : s
+      )
+    }
+  })
+}
+
 function appendSegment(messages: ChatMessage[], segment: Segment): ChatMessage[] {
   const out = [...messages]
   for (let i = out.length - 1; i >= 0; i--) {
@@ -6031,6 +6092,7 @@ function appendSegment(messages: ChatMessage[], segment: Segment): ChatMessage[]
       const nextSegments = [...m.segments]
       if (segment.kind === 'workflow') upsertWorkflowSegment(nextSegments, segment)
       else if (segment.kind === 'task') upsertTaskSegment(nextSegments, segment)
+      else if (segment.kind === 'countdown') upsertCountdownSegment(nextSegments, segment)
       else if (segment.kind === 'todo') upsertTodoSegment(nextSegments, segment)
       else nextSegments.push(segment)
       const next: AssistantMessage = { ...m, segments: nextSegments }

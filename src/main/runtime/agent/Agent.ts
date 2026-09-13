@@ -35,6 +35,7 @@ import { Brainstem } from '@main/runtime/brainstem'
 import {
   Broca,
   upsertTaskSegment,
+  upsertCountdownSegment,
   appendTextSegment,
   upsertWorkflowSegment,
   WORKFLOW_TOOL_NAMES,
@@ -72,6 +73,7 @@ import type { ActiveRun, TurnLifecycleEvent } from '@main/channels/turn-runner'
 import { Cortex } from '@main/runtime/cortex'
 import { Device } from '@main/runtime/device'
 import { Hippocampus, type TurnToolCall } from '@main/runtime/hippocampus'
+import { countdowns } from '@main/runtime/countdown'
 import { videoTasks } from '@main/runtime/video-tasks'
 import { Hypothalamus } from '@main/runtime/hypothalamus'
 import { Insula } from '@main/runtime/insula'
@@ -893,12 +895,20 @@ export class Agent {
     const unregisterVideoEmitter = videoTasks.registerTurnEmitter(turn.turnId, (snapshot) =>
       broca.emitTask(turn.turnId, snapshot)
     )
+    // Same pattern for a turn-end countdown armed in this turn: its `armed`
+    // card rides this broca; the clock starts (and every later state flows
+    // through main's listeners) only once the TurnRunner reports the turn
+    // ended — see countdowns.turnEnded.
+    const unregisterCountdownEmitter = countdowns.registerTurnEmitter(turn.turnId, (snapshot) =>
+      broca.emitCountdown(turn.turnId, snapshot)
+    )
     try {
       return await this.cerebellum.runWithConversation(turn.conversationId ?? null, () =>
         this.workflowCtx.run(workflow, () => this.runRespond(turn, workflow, broca))
       )
     } finally {
       unregisterVideoEmitter()
+      unregisterCountdownEmitter()
     }
   }
 
@@ -2524,13 +2534,14 @@ export class Agent {
       // persist path.
       if (seg.kind === 'workflow') upsertWorkflowSegment(segments, seg)
       else if (seg.kind === 'task') upsertTaskSegment(segments, seg)
+      else if (seg.kind === 'countdown') upsertCountdownSegment(segments, seg)
       else if (seg.kind === 'text' || seg.kind === 'reasoning') appendTextSegment(segments, seg)
       else segments.push(seg)
       if (seg.kind === 'text') acc.assistantContent += seg.delta
       if (seg.kind === 'turn_end') acc.stopReason = seg.stopReason
       // Task snapshots flush immediately — a card flipping to running/succeeded
       // should not wait out the text throttle.
-      scheduleMirror(seg.kind === 'task')
+      scheduleMirror(seg.kind === 'task' || seg.kind === 'countdown')
       const listener = this.brainstem?.['listener']
       if (!listener?.onJobLog) return
       if (seg.kind === 'text') {
