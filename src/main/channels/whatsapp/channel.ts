@@ -11,6 +11,11 @@ import {
 import { queueConversationSummarization } from '@main/conversation-summarizer'
 import type { TurnRunner } from '@main/channels/turn-runner'
 import {
+  interjectionAckText,
+  type Interjection,
+  type InterjectionEvent
+} from '@main/runtime/agent/interjection'
+import {
   getConversationIdForJid,
   setConversationIdForJid
 } from '@main/channels/whatsapp/conversations'
@@ -21,6 +26,7 @@ import {
   queueEmptyText,
   queuePendingNote,
   queuedAckText,
+  unreadAfterStopText,
   type QueuedMessageBase
 } from '@main/channels/message-queue'
 import { listProjects, projectLabel, type Project } from '@main/projects'
@@ -387,6 +393,16 @@ export class WhatsAppChannel {
   private readonly flushingByJid = new Set<string>()
   /** Live copy of QUEUE_FLUSH_WAIT_MS — instance state so tests can shorten it. */
   private queueFlushWaitMs = QUEUE_FLUSH_WAIT_MS
+  /**
+   * The jid behind every message this channel handed to a RUNNING turn
+   * (runner.interject), keyed by the interjection's messageId. The runner's
+   * lifecycle events carry the conversation, not the chat — and a re-dispatch
+   * after a turn-ended sweep has to go back to the jid that sent it. Entries
+   * leave on the terminal event (delivered or withdrawn) and on stop().
+   */
+  private readonly interjectedByMessageId = new Map<string, { jid: string }>()
+  /** Unsubscribe for the runner's interjection events; null while stopped. */
+  private offInterjection: (() => void) | null = null
   private readonly sentIds = new Set<string>()
   // Delivery-ack tracking. WhatsApp reports a sent message's status via
   // 'messages.update' (ERROR=0, PENDING=1, SERVER_ACK=2, DELIVERY_ACK=3, …).
@@ -532,6 +548,7 @@ export class WhatsAppChannel {
 
     this.allowedPhoneNumbers = config.allowedPhoneNumbers ?? []
     this.processingEnabled = true
+    this.watchInterjections()
     this.statusError = null
     this.currentQr = null
     this.pairingCode = null
@@ -605,6 +622,7 @@ export class WhatsAppChannel {
     // parked messages are still in the user's phone chat if they want them.
     this.queue.clearAll()
     this.flushingByJid.clear()
+    this.unwatchInterjections()
     this.pendingSelections.clear()
     this.lidToPhone.clear()
     // Persist the read buffer before dropping it so history survives a restart;
@@ -1255,9 +1273,10 @@ export class WhatsAppChannel {
       return
     }
 
-    // /cancel — drop everything this chat has waiting in the queue. Works
-    // mid-turn (that is the only time a queue exists), touches the running
-    // turn not at all, and is never itself queued.
+    // /cancel — take back everything this chat sent that has not been read
+    // yet: interjections still pending on the running turn, then the sliver
+    // queue. Works mid-turn (that is the only time either exists), touches
+    // the running turn not at all, and is never itself queued.
     if (lower === '/cancel' || lower === 'cancel') {
       // Same as Telegram: a pending turn-end countdown is abortable from here.
       const countdown = await countdowns.abortPending('user')
@@ -1265,7 +1284,7 @@ export class WhatsAppChannel {
         await this.safeSend(jid, `Aborted: ${countdown.label}.`)
         return
       }
-      const dropped = this.clearQueue(jid)
+      const dropped = await this.dropUnread(jid)
       await this.safeSend(
         jid,
         dropped > 0 ? queueClearedText(dropped) : queueEmptyText(this.activeByJid.has(jid))
@@ -1424,7 +1443,7 @@ export class WhatsAppChannel {
     // declined: it runs on its own turn the moment this chat frees up,
     // exactly like the in-app composer's queue.
     if (this.isJidBusy(jid)) {
-      await this.enqueueMessage(jid, { id: mintMessageId(), text: trimmed, attachments: [] })
+      await this.parkMessage(jid, { id: mintMessageId(), text: trimmed, attachments: [] })
       return
     }
 
@@ -1897,7 +1916,7 @@ export class WhatsAppChannel {
       // Busy (still, or newly) ⇒ park it with both flags intact, so the
       // flushed turn is byte-identical to this one.
       if (this.isJidBusy(jid)) {
-        await this.enqueueMessage(jid, {
+        await this.parkMessage(jid, {
           id: mintMessageId(),
           text: transcript,
           attachments: [attachment],
@@ -2014,7 +2033,7 @@ export class WhatsAppChannel {
       // attachment, so the flushed turn hands the model the same native
       // document/image blocks an unqueued one would.
       if (this.isJidBusy(jid)) {
-        await this.enqueueMessage(jid, {
+        await this.parkMessage(jid, {
           id: mintMessageId(),
           text: media.caption ?? '',
           attachments: [attachment]
@@ -2059,10 +2078,11 @@ export class WhatsAppChannel {
   }
 
   /**
-   * A dispatch that lost the busy race. A normal message is parked and acked;
-   * one that came FROM the queue is left alone — it is already queued, and
-   * re-acking would tell the user "queued" twice for a single message. The
-   * flush loop puts it back at the head instead.
+   * A dispatch that lost the busy race. A normal message is handed to the
+   * running turn (or, with no live lane yet, parked in the sliver queue) and
+   * acked; one that came FROM the queue is left alone — it is already
+   * queued, and re-acking would tell the user twice for a single message.
+   * The flush loop puts it back at the head and interjects it itself.
    */
   private async parkOrYield(
     jid: string,
@@ -2071,7 +2091,7 @@ export class WhatsAppChannel {
     options: { voicePrompt?: boolean; voiceLang?: string; fromQueue?: boolean }
   ): Promise<void> {
     if (options.fromQueue) return
-    await this.enqueueMessage(jid, {
+    await this.parkMessage(jid, {
       id: mintMessageId(),
       text: userText,
       attachments,
@@ -2972,7 +2992,8 @@ export class WhatsAppChannel {
     }
   }
 
-  // --- Mid-turn message queue (see channels/message-queue.ts) ---
+  // --- Mid-turn messages: interject first, sliver queue second ---
+  // (see runtime/agent/interjection.ts and channels/message-queue.ts)
 
   /**
    * True while this jid cannot take a new turn. `dispatchingByJid` is the
@@ -2987,8 +3008,127 @@ export class WhatsAppChannel {
   }
 
   /**
-   * Park a mid-turn message and tell the user it landed. Replaces the old
-   * "hold on, I'm busy" decline: nothing is lost, nothing has to be resent.
+   * The conversation a busy jid's message belongs to: the running turn's own
+   * conversation when we hold one (never re-read the mapping mid-turn), else
+   * the jid mapping (memory-cached after the first hit).
+   */
+  private async resolveConversationId(jid: string): Promise<string | null> {
+    const active = this.activeByJid.get(jid)
+    if (active) return active.conversation.id
+    return await getConversationIdForJid(jid).catch(() => null)
+  }
+
+  /**
+   * A message that arrived while this jid is busy. INTERJECT FIRST: hand it
+   * to the running turn, which reads it at its next stop point and answers
+   * it inside the same run. Only when the runner has no lane for the
+   * conversation yet — the pre-send sliver behind `dispatchingByJid`, where
+   * the conversation load / download / STT is still running before
+   * runner.send registers the turn — does it fall back to the sliver queue,
+   * whose flush interjects again before it would ever start its own turn.
+   * Twin of the Telegram implementation; both acks read the same on the
+   * phone.
+   */
+  private async parkMessage(jid: string, item: QueuedWhatsAppMessage): Promise<void> {
+    const conversationId = await this.resolveConversationId(jid)
+    if (conversationId && this.tryInterject(jid, conversationId, item)) {
+      await this.safeSend(jid, interjectionAckText(item.attachments.length))
+      return
+    }
+    await this.enqueueMessage(jid, item)
+  }
+
+  /**
+   * Offer one message to the conversation's running turn. True when the
+   * runner accepted it (pending on the turn's inbox; this channel owns its
+   * lifecycle from here — see onInterjectionEvent), false when there is no
+   * live lane and the caller must queue or dispatch. The jid record is
+   * written BEFORE the call: `pending` is emitted synchronously from inside
+   * interject, and a terminal event may follow in the same tick.
+   */
+  private tryInterject(jid: string, conversationId: string, item: QueuedWhatsAppMessage): boolean {
+    this.interjectedByMessageId.set(item.id, { jid })
+    const interjection: Interjection = {
+      messageId: item.id,
+      text: item.text,
+      attachments: item.attachments,
+      ...(item.voicePrompt ? { voicePrompt: true } : {}),
+      ...(item.voiceLang ? { voiceLang: item.voiceLang } : {}),
+      channel: 'whatsapp',
+      sentAt: Date.now()
+    }
+    const result = this.runner.interject(conversationId, interjection)
+    if (result.status === 'pending') return true
+    this.interjectedByMessageId.delete(item.id)
+    return false
+  }
+
+  /**
+   * /cancel: withdraw every interjection this channel sent for the jid's
+   * conversation that the turn has not read yet, then clear the sliver queue.
+   * Returns the combined count; an already-read message is history and is
+   * neither withdrawn nor counted.
+   */
+  private async dropUnread(jid: string): Promise<number> {
+    let withdrawn = 0
+    const conversationId = await this.resolveConversationId(jid)
+    if (conversationId) {
+      for (const pending of this.runner.pendingInterjections(conversationId)) {
+        if (pending.channel !== 'whatsapp') continue
+        if (this.runner.withdrawInterjection(conversationId, pending.messageId, 'user')) withdrawn++
+      }
+    }
+    return withdrawn + this.clearQueue(jid)
+  }
+
+  /** Subscribe once per start; idempotent. Paired with unwatchInterjections in stop(). */
+  private watchInterjections(): void {
+    if (this.offInterjection) return
+    this.offInterjection = this.runner.onInterjection((ev) => this.onInterjectionEvent(ev))
+  }
+
+  private unwatchInterjections(): void {
+    this.offInterjection?.()
+    this.offInterjection = null
+    this.interjectedByMessageId.clear()
+  }
+
+  /**
+   * Lifecycle of the interjections THIS channel sent; every other channel's
+   * messages, and events for messages we never recorded, are ignored.
+   * Mirrors the Telegram twin — see its comment for why a turn_ended/error
+   * return goes through the sliver queue and not a direct re-interject or
+   * dispatch (the sweep fires while the finished lane is still counted).
+   * A `canceled` return (the user sent /stop) is reported and never resent.
+   */
+  private onInterjectionEvent(ev: InterjectionEvent): void {
+    if (ev.channel !== 'whatsapp') return
+    if (ev.state === 'pending') return
+    const sender = this.interjectedByMessageId.get(ev.messageId)
+    this.interjectedByMessageId.delete(ev.messageId)
+    if (!sender || ev.state !== 'withdrawn') return
+    if (ev.reason === 'turn_ended' || ev.reason === 'error') {
+      this.queue.enqueue(sender.jid, {
+        id: ev.messageId,
+        text: ev.text,
+        attachments: ev.attachments,
+        ...(ev.voicePrompt ? { voicePrompt: true } : {}),
+        ...(ev.voiceLang ? { voiceLang: ev.voiceLang } : {})
+      })
+      // Same gate as enqueueMessage: a running turn of ours is about to flush
+      // from its cleanup; otherwise nothing else will.
+      if (!this.activeByJid.has(sender.jid)) this.flushQueue(sender.jid)
+      return
+    }
+    if (ev.reason === 'canceled') {
+      void this.safeSend(sender.jid, unreadAfterStopText(ev.text, ev.attachments.length))
+    }
+  }
+
+  /**
+   * Park a message in the sliver queue and tell the user it landed. Reached
+   * only when interject said no_live_turn (see parkMessage) — and directly by
+   * the turn-ended re-dispatch, which skips the ack.
    *
    * The flush fires ONLY when no running turn owns this jid — see the Telegram
    * twin for the full reasoning. Short version: `activeByJid` is what the wait
@@ -2999,18 +3139,23 @@ export class WhatsAppChannel {
    * Gated on `activeByJid` alone, NOT isJidBusy: `dispatchingByJid` is the
    * pre-turn setup claim, and a setup that early-returns releases it without
    * ever running the cleanup — so treating it as "a cleanup will flush" would
-   * strand the queue until the next turn ended.
+   * strand the queue until the next turn ended. The flush started here polls
+   * through that setup and, the moment its turn goes live, hands the message
+   * to it as an interjection instead of waiting for it to finish.
    */
   private async enqueueMessage(jid: string, item: QueuedWhatsAppMessage): Promise<void> {
-    const depth = this.queue.enqueue(jid, item)
-    await this.safeSend(jid, queuedAckText(depth, item.attachments.length))
+    this.queue.enqueue(jid, item)
+    await this.safeSend(jid, queuedAckText(item.attachments.length))
     if (!this.activeByJid.has(jid)) this.flushQueue(jid)
   }
 
   /**
-   * Drain this jid's queue, one turn at a time, in arrival order. Twin of the
-   * Telegram implementation — see its comments for why the wait, the retry
-   * bound, and the fire-and-forget shape are each load-bearing.
+   * Drain this jid's sliver queue in arrival order, INTERJECTING FIRST: an
+   * item joins the turn that is live on the conversation by now and only
+   * starts a turn of its own when there is no live lane. Twin of the
+   * Telegram implementation — see its comments for why the macrotask yield
+   * at the top of every iteration, the wait, the retry bound and the
+   * fire-and-forget shape are each load-bearing.
    */
   private flushQueue(jid: string): void {
     if (this.flushingByJid.has(jid)) return
@@ -3020,14 +3165,19 @@ export class WhatsAppChannel {
       let attempts = 0
       try {
         while (this.queue.size(jid) > 0) {
-          const freed = await this.waitForFreeJid(jid)
+          await new Promise((r) => setTimeout(r, 0))
+          const state = await this.waitForFreeJid(jid)
           const next = this.queue.shift(jid)
           if (!next) return
-          // A throwing dispatch counts as a failed attempt, not a lost message:
-          // the item is already off the queue here, so letting the throw escape
-          // would drop what the user was promised we'd run.
           let started = false
-          if (freed) {
+          if (state === 'live') {
+            const conversationId = await this.resolveConversationId(jid)
+            // No ack: the user was told "I'll read it" when it was parked.
+            started = !!conversationId && this.tryInterject(jid, conversationId, next)
+          } else if (state === 'free') {
+            // A throwing dispatch counts as a failed attempt, not a lost
+            // message: the item is already off the queue here, so letting the
+            // throw escape would drop what the user was promised we'd run.
             try {
               started = await this.dispatchTurn(jid, next.text, next.attachments, {
                 voicePrompt: next.voicePrompt,
@@ -3064,19 +3214,24 @@ export class WhatsAppChannel {
   }
 
   /**
-   * Poll until this jid can take a turn. False means the budget expired.
+   * Poll until this jid can take a turn ('free') or a turn goes live on its
+   * conversation ('live' — the flush interjects into it). 'expired' means the
+   * budget ran out with our own claim/slot still held and no lane live.
    *
    * Waiting on the RUNNER LANE, not just the per-jid slot, is load-bearing —
    * see the Telegram twin for the microtask-ordering window this closes. The
-   * mapping read is memory-cached after the first hit.
+   * mapping read is memory-cached after the first hit. Only ever called after
+   * the flush loop's macrotask yield, so the first check sees a settled lane.
    */
-  private async waitForFreeJid(jid: string): Promise<boolean> {
+  private async waitForFreeJid(jid: string): Promise<'free' | 'live' | 'expired'> {
     const conversationId = (await getConversationIdForJid(jid).catch(() => null)) ?? undefined
     const deadline = Date.now() + this.queueFlushWaitMs
-    while (this.isJidBusy(jid, conversationId) && Date.now() < deadline) {
+    for (;;) {
+      if (conversationId && this.runner.isConversationActive(conversationId)) return 'live'
+      if (!this.isJidBusy(jid, conversationId)) return 'free'
+      if (Date.now() >= deadline) return 'expired'
       await new Promise((r) => setTimeout(r, QUEUE_FLUSH_POLL_MS))
     }
-    return !this.isJidBusy(jid, conversationId)
   }
 
   private clearQueue(jid: string): number {

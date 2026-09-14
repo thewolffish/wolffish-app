@@ -251,6 +251,19 @@ function toAnthropicTool(tool: ToolDefinition): Record<string, unknown> {
 
 type AnthropicMessage = { role: 'user' | 'assistant'; content: string | unknown[] }
 
+/**
+ * Always-array form of userContentToAnthropic, for merging a user message
+ * into an existing user turn (tool results + a mid-turn message, or two
+ * user messages back to back). Empty text yields no block — the API rejects
+ * empty text blocks.
+ */
+function toAnthropicBlocks(content: string | UserContentBlock[]): unknown[] {
+  if (typeof content === 'string')
+    return content.length > 0 ? [{ type: 'text', text: content }] : []
+  const converted = userContentToAnthropic(content)
+  return Array.isArray(converted) ? converted : []
+}
+
 function userContentToAnthropic(content: string | UserContentBlock[]): string | unknown[] {
   if (typeof content === 'string') return content
   const blocks: unknown[] = []
@@ -309,11 +322,34 @@ export function toAnthropicMessages(
       })
       continue
     }
-    flushToolResults()
     if (m.role === 'user') {
+      // A user message right after tool results is a MID-TURN message (see
+      // agent/interjection.ts): it joins the same user turn as those
+      // results — tool_result blocks first, then the text — which is the
+      // order the API requires and keeps the cached prefix an append. A
+      // user message right after another user message (an interjection
+      // delivered before the first model call) merges the same way.
+      const blocks = toAnthropicBlocks(m.content)
+      if (pendingToolResults.length > 0) {
+        pendingToolResults.push(...blocks)
+        flushToolResults()
+        continue
+      }
+      const last = out[out.length - 1]
+      if (last && last.role === 'user') {
+        const prev =
+          typeof last.content === 'string'
+            ? last.content.length > 0
+              ? [{ type: 'text', text: last.content }]
+              : []
+            : last.content
+        last.content = [...prev, ...blocks]
+        continue
+      }
       out.push({ role: 'user', content: userContentToAnthropic(m.content) })
       continue
     }
+    flushToolResults()
     // assistant
     if (m.toolUses && m.toolUses.length > 0) {
       const blocks: unknown[] = []

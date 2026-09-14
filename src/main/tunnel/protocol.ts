@@ -176,6 +176,32 @@ export const Rpc = {
   /** Stop the running turn. */
   abortTurn: 'desktop.chat.abort',
   /**
+   * Hand a message to the conversation's RUNNING turn instead of starting a
+   * new one — the phone's mid-turn send. Params mirror `sendMessage` minus
+   * the creation fields: `{ conversationId, messageId, text, attachments,
+   * voicePrompt?, voiceLang? }`. The desktop saves nothing here: the message
+   * parks in the turn runner's inbox and the agent reads it at its next stop
+   * point, where it becomes a `user_message` segment on the assistant
+   * message the phone is already mirroring. Answers the runtime's
+   * InterjectResult — `{ status: 'pending' }`, or `{ status: 'no_live_turn' }`
+   * when nothing is running and the phone should send a normal turn.
+   * A voice note is transcribed BEFORE it parks (the transcript is what the
+   * model reads), so the answer can take as long as STT does.
+   */
+  interject: 'desktop.chat.interject',
+  /**
+   * Take a still-unread mid-turn message back out. Params
+   * `{ conversationId, messageId }` → `{ ok }`; false once the agent has
+   * already read it — a delivered message is history and cannot be unsent.
+   */
+  withdrawInterjection: 'desktop.chat.withdrawInterjection',
+  /**
+   * The mid-turn messages parked for one conversation and not yet read, as
+   * `{ pending: Interjection[] }` — for a phone that connects or relaunches
+   * into a running turn and has missed the `interjection.status` pushes.
+   */
+  pendingInterjections: 'desktop.chat.pendingInterjections',
+  /**
    * Which conversations have a turn in flight right now, as
    * `{ conversationIds: string[] }` — this app's own chat:activeRuns, served
    * to the phone for the reason a renderer window gets it: 'started' is a
@@ -407,6 +433,13 @@ export const Event = {
   messageAppended: 'message.appended',
   /** Turn lifecycle: thinking / running a tool / done. */
   turnStatus: 'turn.status',
+  /**
+   * A mid-turn user message changed state — `{ conversationId, messageId,
+   * channel, text, attachments, state: 'pending' | 'delivered' | 'withdrawn',
+   * reason? }`. Its own event, not a turn status: a pending message is not
+   * a turn boundary and must not reset the phone's live overlay.
+   */
+  interjection: 'interjection.status',
   /**
    * A conversation's plan-mode stance changed on any surface —
    * `{ conversationId, planMode }`. The phone mirrors it into its switch and

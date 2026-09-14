@@ -22,6 +22,7 @@ import {
   queueEmptyText,
   queuePendingNote,
   queuedAckText,
+  unreadAfterStopText,
   type QueuedMessageBase
 } from '@main/channels/message-queue'
 import { listProjects, projectLabel, type Project } from '@main/projects'
@@ -49,6 +50,11 @@ import {
   type MessageAttachment
 } from '@main/conversations'
 import type { Agent } from '@main/runtime/agent'
+import {
+  interjectionAckText,
+  type Interjection,
+  type InterjectionEvent
+} from '@main/runtime/agent/interjection'
 import type { ApprovalDecision, ApprovalRequest } from '@main/runtime/amygdala'
 import {
   ASK_USER_TOOL,
@@ -530,6 +536,20 @@ export class TelegramChannel {
    */
   private queueFlushWaitMs = QUEUE_FLUSH_WAIT_MS
   /**
+   * Sender context for every message this channel handed to a RUNNING turn
+   * (runner.interject), keyed by the interjection's messageId. The runner's
+   * lifecycle events carry the conversation and the message, not the chat —
+   * and a re-dispatch after a turn-ended sweep needs the Telegram user id and
+   * grammY context the original arrival had. Entries leave on the terminal
+   * event (delivered or withdrawn) and on stop().
+   */
+  private readonly interjectedByMessageId = new Map<
+    string,
+    { chatId: number; userId: number; ctx: BotContext }
+  >()
+  /** Unsubscribe for the runner's interjection events; null while stopped. */
+  private offInterjection: (() => void) | null = null
+  /**
    * Tracks pickers in progress per chat. /resume and /delete render
    * a numbered list and store the corresponding conversation ids
    * here; the next number-only reply from that chat resolves the
@@ -649,6 +669,7 @@ export class TelegramChannel {
     this.statusError = null
     this.statusErrorKind = null
     this.setStatus('starting')
+    this.watchInterjections()
 
     await this.launch()
     return this.getStatus()
@@ -840,6 +861,7 @@ export class TelegramChannel {
     this.reconnectAttempt = 0
     this.desiredToken = null
 
+    this.unwatchInterjections()
     if (!this.bot) {
       this.activeByChat.clear()
       this.pendingSelections.clear()
@@ -1097,9 +1119,10 @@ export class TelegramChannel {
       return
     }
 
-    // /cancel — drop everything this chat has waiting in the queue. Works
-    // mid-turn (that is the only time a queue exists), touches the running
-    // turn not at all, and is never itself queued.
+    // /cancel — take back everything this chat sent that has not been read
+    // yet: interjections still pending on the running turn, then the sliver
+    // queue. Works mid-turn (that is the only time either exists), touches
+    // the running turn not at all, and is never itself queued.
     if (command === CANCEL_COMMAND) {
       // A pending turn-end countdown (a restart the last reply armed) is the
       // other thing the phone user may need to stop from here — the card's
@@ -1109,7 +1132,7 @@ export class TelegramChannel {
         await this.sendPlain(chatId, `Aborted: ${countdown.label}.`)
         return
       }
-      const dropped = this.clearQueue(chatId)
+      const dropped = await this.dropUnread(chatId)
       await this.sendPlain(
         chatId,
         dropped > 0 ? queueClearedText(dropped) : queueEmptyText(this.activeByChat.has(chatId))
@@ -1290,7 +1313,7 @@ export class TelegramChannel {
     // own turn the moment this chat frees up, exactly like the in-app
     // composer's queue.
     if (this.activeByChat.has(chatId)) {
-      await this.enqueueMessage(chatId, {
+      await this.parkMessage(chatId, {
         id: mintMessageId(),
         userId,
         ctx,
@@ -1802,7 +1825,8 @@ export class TelegramChannel {
     }
   }
 
-  // --- Mid-turn message queue (see channels/message-queue.ts) ---
+  // --- Mid-turn messages: interject first, sliver queue second ---
+  // (see runtime/agent/interjection.ts and channels/message-queue.ts)
 
   /**
    * True while this chat cannot take a new turn. `activeByChat` covers a
@@ -1819,8 +1843,147 @@ export class TelegramChannel {
   }
 
   /**
-   * Park a mid-turn message and tell the user it landed. Replaces the old
-   * "hold on, I'm busy" decline: nothing is lost, nothing has to be resent.
+   * The conversation a busy chat's message belongs to: the running turn's
+   * own conversation when we hold one (never re-read the mapping mid-turn),
+   * else the chat mapping (memory-cached after the first hit).
+   */
+  private async resolveConversationId(chatId: number): Promise<string | null> {
+    const active = this.activeByChat.get(chatId)
+    if (active) return active.conversation.id
+    return await getConversationIdForChat(chatId).catch(() => null)
+  }
+
+  /**
+   * A message that arrived while this chat is busy. INTERJECT FIRST: hand it
+   * to the running turn, which reads it at its next stop point and answers
+   * it inside the same run — the user is steering the work that is happening
+   * now. Only when the runner has no lane for the conversation yet (the chat
+   * is marked busy by us but runner.send has not registered the turn: the
+   * pre-send sliver while a download, an STT run or the conversation load is
+   * still going) does the message fall back to the sliver queue, whose flush
+   * interjects again before it would ever start a turn of its own.
+   *
+   * Both acks read the same on the phone — one promise, two carriers.
+   */
+  private async parkMessage(chatId: number, item: QueuedTelegramMessage): Promise<void> {
+    const conversationId = await this.resolveConversationId(chatId)
+    if (conversationId && this.tryInterject(chatId, conversationId, item)) {
+      await this.sendPlain(chatId, interjectionAckText(item.attachments.length))
+      return
+    }
+    await this.enqueueMessage(chatId, item)
+  }
+
+  /**
+   * Offer one message to the conversation's running turn. True when the
+   * runner accepted it (it is pending on the turn's inbox and this channel
+   * now owns its lifecycle — see onInterjectionEvent); false when there is
+   * no live lane and the caller must queue or dispatch instead.
+   *
+   * The sender record is written BEFORE the call: the runner emits `pending`
+   * synchronously from inside interject, and a later terminal event must
+   * find the record even if it fires in the same tick.
+   */
+  private tryInterject(
+    chatId: number,
+    conversationId: string,
+    item: QueuedTelegramMessage
+  ): boolean {
+    this.interjectedByMessageId.set(item.id, { chatId, userId: item.userId, ctx: item.ctx })
+    const interjection: Interjection = {
+      messageId: item.id,
+      text: item.text,
+      attachments: item.attachments,
+      ...(item.voicePrompt ? { voicePrompt: true } : {}),
+      ...(item.voiceLang ? { voiceLang: item.voiceLang } : {}),
+      channel: 'telegram',
+      sentAt: Date.now()
+    }
+    const result = this.runner.interject(conversationId, interjection)
+    if (result.status === 'pending') return true
+    this.interjectedByMessageId.delete(item.id)
+    return false
+  }
+
+  /**
+   * /cancel: withdraw every interjection this channel sent for the chat's
+   * conversation that the turn has not read yet, then clear the sliver queue.
+   * Returns the combined count. A message the agent already read is history
+   * and stays — the runner refuses to withdraw it, and it is not counted.
+   */
+  private async dropUnread(chatId: number): Promise<number> {
+    let withdrawn = 0
+    const conversationId = await this.resolveConversationId(chatId)
+    if (conversationId) {
+      for (const pending of this.runner.pendingInterjections(conversationId)) {
+        if (pending.channel !== 'telegram') continue
+        if (this.runner.withdrawInterjection(conversationId, pending.messageId, 'user')) withdrawn++
+      }
+    }
+    return withdrawn + this.clearQueue(chatId)
+  }
+
+  /** Subscribe once per start; idempotent. Paired with unwatchInterjections in stop(). */
+  private watchInterjections(): void {
+    if (this.offInterjection) return
+    this.offInterjection = this.runner.onInterjection((ev) => this.onInterjectionEvent(ev))
+  }
+
+  private unwatchInterjections(): void {
+    this.offInterjection?.()
+    this.offInterjection = null
+    this.interjectedByMessageId.clear()
+  }
+
+  /**
+   * Lifecycle of the interjections THIS channel sent (every other channel's
+   * messages, and events for messages we never recorded, are ignored).
+   *
+   *  - delivered: the turn read it; nothing to do but forget the record.
+   *  - withdrawn/user: /cancel took it back; the reply was already sent.
+   *  - withdrawn/turn_ended or error: the turn finished (or died) in the
+   *    sliver between the agent's final drain and the lane closing, so the
+   *    message was never read. Re-dispatch it as a fresh turn through the
+   *    sliver queue — NOT a direct dispatch: the sweep fires while the
+   *    finished lane is still counted, so a re-interject here would park the
+   *    message on a turn that will never read it, and a direct dispatchTurn
+   *    would bounce off its own busy re-check into exactly that. The queue is
+   *    drained by the same end-of-turn cleanup that releases the chat, and
+   *    its flush yields to a macrotask before it looks at the lane.
+   *  - withdrawn/canceled: the user stopped the turn. Tell them the message
+   *    was not read; never auto-resend after a stop.
+   */
+  private onInterjectionEvent(ev: InterjectionEvent): void {
+    if (ev.channel !== 'telegram') return
+    if (ev.state === 'pending') return
+    const sender = this.interjectedByMessageId.get(ev.messageId)
+    this.interjectedByMessageId.delete(ev.messageId)
+    if (!sender || ev.state !== 'withdrawn') return
+    if (ev.reason === 'turn_ended' || ev.reason === 'error') {
+      this.queue.enqueue(sender.chatId, {
+        id: ev.messageId,
+        userId: sender.userId,
+        ctx: sender.ctx,
+        text: ev.text,
+        attachments: ev.attachments,
+        ...(ev.voicePrompt ? { voicePrompt: true } : {}),
+        ...(ev.voiceLang ? { voiceLang: ev.voiceLang } : {})
+      })
+      // Same gate as enqueueMessage: a running turn of ours (the one whose
+      // sweep just fired) is about to flush from its cleanup; otherwise
+      // nothing else will, so start the flush here.
+      if (!this.activeByChat.has(sender.chatId)) this.flushQueue(sender.chatId)
+      return
+    }
+    if (ev.reason === 'canceled') {
+      void this.sendPlain(sender.chatId, unreadAfterStopText(ev.text, ev.attachments.length))
+    }
+  }
+
+  /**
+   * Park a message in the sliver queue and tell the user it landed. Reached
+   * only when interject said no_live_turn (see parkMessage) — and directly
+   * by the turn-ended re-dispatch, which skips the ack.
    *
    * The flush fires ONLY when no running turn of ours owns this chat.
    *
@@ -1841,20 +2004,28 @@ export class TelegramChannel {
    * message out.
    */
   private async enqueueMessage(chatId: number, item: QueuedTelegramMessage): Promise<void> {
-    const depth = this.queue.enqueue(chatId, item)
-    await this.sendPlain(chatId, queuedAckText(depth, item.attachments.length))
+    this.queue.enqueue(chatId, item)
+    await this.sendPlain(chatId, queuedAckText(item.attachments.length))
     if (!this.activeByChat.has(chatId)) this.flushQueue(chatId)
   }
 
   /**
-   * Drain this chat's queue, one turn at a time, in arrival order.
+   * Drain this chat's sliver queue in arrival order. For every item:
+   * INTERJECT FIRST — if a turn is live on the conversation by now (the one
+   * that was being set up when the message arrived, or a foreign one), the
+   * message joins it and the turn reads it at its next stop point; only
+   * with no live lane does the item start a turn of its own.
    *
    * Fire-and-forget by design: it is called from the end-of-turn cleanup
-   * chain, which must not block on the next turn's entire lifetime. The loop
-   * waits for the chat to be genuinely free before each dispatch — the
-   * releasing cleanup runs on the render chain, and the runner's own lane tail
-   * settles a tick later, so "the slot was just deleted" is not yet "the lane
-   * is idle".
+   * chain, which must not block on the next turn's entire lifetime.
+   *
+   * Every iteration yields to a MACROTASK before it looks at the lane. This
+   * is load-bearing: the cleanup that calls us runs in the same microtask
+   * drain as the runner's own tail, where a turn that has already swept its
+   * inbox is still counted on the lane for a few more microtasks. Seen from
+   * a timer callback, "the lane is live" means a turn that will read the
+   * inbox; seen from inside that drain, it can mean a corpse — and an
+   * interjection parked on a corpse is never read.
    */
   private flushQueue(chatId: number): void {
     if (this.flushingByChat.has(chatId)) return
@@ -1862,21 +2033,26 @@ export class TelegramChannel {
     this.flushingByChat.add(chatId)
     void (async () => {
       // Retries for the CURRENT head only, reset on every successful dispatch.
-      // Bounds the one loop that could otherwise spin: a non-Telegram turn (the
-      // in-app composer, a heartbeat) claiming this conversation's lane between
-      // our wait and our dispatch. Those turns don't call flushQueue, so the
-      // retry — not their cleanup — is what eventually gets the message out.
+      // Bounds the one loop that could otherwise spin: our own per-chat slot
+      // held by a cleanup that never completes. A FOREIGN lane (the in-app
+      // composer, a heartbeat) no longer needs the retry — the item joins that
+      // turn as an interjection instead.
       let attempts = 0
       try {
         while (this.queue.size(chatId) > 0) {
-          const freed = await this.waitForFreeChat(chatId)
+          await new Promise((r) => setTimeout(r, 0))
+          const state = await this.waitForFreeChat(chatId)
           const next = this.queue.shift(chatId)
           if (!next) return
-          // A throwing dispatch counts as a failed attempt, not a lost message:
-          // the item is already off the queue here, so letting the throw escape
-          // would drop what the user was promised we'd run.
           let started = false
-          if (freed) {
+          if (state === 'live') {
+            const conversationId = await this.resolveConversationId(chatId)
+            // No ack: the user was told "I'll read it" when it was parked.
+            started = !!conversationId && this.tryInterject(chatId, conversationId, next)
+          } else if (state === 'free') {
+            // A throwing dispatch counts as a failed attempt, not a lost
+            // message: the item is already off the queue here, so letting the
+            // throw escape would drop what the user was promised we'd run.
             try {
               started = await this.dispatchTurn(
                 chatId,
@@ -1920,7 +2096,10 @@ export class TelegramChannel {
   }
 
   /**
-   * Poll until this chat can take a turn. False means the budget expired.
+   * Poll until this chat can take a turn ('free') or a turn goes live on its
+   * conversation ('live' — the flush interjects into it instead of waiting
+   * for it to end). 'expired' means the budget ran out with our own per-chat
+   * slot still held and no lane live: a cleanup that has not released it.
    *
    * Waiting on the RUNNER LANE, not just the per-chat slot, is load-bearing.
    * The flush is fired from the cleanup that deletes the slot, and that
@@ -1931,14 +2110,19 @@ export class TelegramChannel {
    * bounces off dispatchTurn's re-check. The mapping read is memory-cached
    * after the first hit, and the value can't shift under us: every command
    * that rotates it clears this chat's queue, which ends the flush.
+   *
+   * Only ever called after the flush loop's macrotask yield, so the first
+   * check already sees a settled lane — see flushQueue.
    */
-  private async waitForFreeChat(chatId: number): Promise<boolean> {
+  private async waitForFreeChat(chatId: number): Promise<'free' | 'live' | 'expired'> {
     const conversationId = (await getConversationIdForChat(chatId).catch(() => null)) ?? undefined
     const deadline = Date.now() + this.queueFlushWaitMs
-    while (this.isChatBusy(chatId, conversationId) && Date.now() < deadline) {
+    for (;;) {
+      if (conversationId && this.runner.isConversationActive(conversationId)) return 'live'
+      if (!this.isChatBusy(chatId, conversationId)) return 'free'
+      if (Date.now() >= deadline) return 'expired'
       await new Promise((r) => setTimeout(r, QUEUE_FLUSH_POLL_MS))
     }
-    return !this.isChatBusy(chatId, conversationId)
   }
 
   /**
@@ -2142,7 +2326,7 @@ export class TelegramChannel {
       // Busy (still, or newly) ⇒ park it with both flags intact, so the
       // flushed turn is byte-identical to this one.
       if (this.activeByChat.has(chatId)) {
-        await this.enqueueMessage(chatId, {
+        await this.parkMessage(chatId, {
           id: mintMessageId(),
           userId,
           ctx,
@@ -2267,7 +2451,7 @@ export class TelegramChannel {
       // the saved attachment, so the flushed turn hands the model the same
       // native document/image blocks an unqueued one would.
       if (this.activeByChat.has(chatId)) {
-        await this.enqueueMessage(chatId, {
+        await this.parkMessage(chatId, {
           id: mintMessageId(),
           userId,
           ctx,
@@ -2329,7 +2513,7 @@ export class TelegramChannel {
       // would tell the user "queued" twice for one message).
       if (this.isChatBusy(chatId, conversation.id)) {
         if (!options.fromQueue) {
-          await this.enqueueMessage(chatId, {
+          await this.parkMessage(chatId, {
             id: mintMessageId(),
             userId,
             ctx,

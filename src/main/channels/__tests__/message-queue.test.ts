@@ -1,18 +1,27 @@
 /**
- * Channel mid-turn message QUEUE — replaces the old "hold on, I'm busy"
- * decline on Telegram/WhatsApp with the in-app composer's queue semantics.
+ * Channel mid-turn messages on Telegram: INTERJECT FIRST (the message joins
+ * the running turn through TurnRunner.interject), with the sliver queue in
+ * channels/message-queue.ts kept only for the pre-send window where the chat
+ * is marked busy but the runner has no lane yet.
  *
  * Two layers under test:
  *  - ChannelMessageQueue + its copy helpers (pure unit).
  *  - The REAL TelegramChannel driven against a REAL TurnRunner, with only
  *    agent.respond / thalamus.title and the grammY bot api stubbed. That is
- *    where the bugs actually live: the flush rides the same end-of-turn
+ *    where the bugs actually live: the turn-ended sweep fires while the
+ *    finished lane is still counted, the flush rides the same end-of-turn
  *    cleanup that releases the per-chat slot, and it has to survive the
  *    microtask window where the slot is free but the runner lane is not.
  *
- * Covers: park + ack depth, FIFO drain order, media surviving the queue onto
- * the persisted user message (what the in-app feed renders and the model
- * reads), /cancel, queue-survives-/stop, and queue-cleared-on-/new.
+ * Covers: a busy chat with a live lane interjects and queues nothing; the
+ * turn drains the message when it reads its inbox (no re-dispatch); a turn
+ * that never read it hands it back (turn_ended) and the channel re-runs it
+ * as a fresh turn in order; media riding an interjection / the sliver queue
+ * onto the persisted user message; /cancel withdraws pending interjections;
+ * /stop reports the unread message and does NOT resend it; a busy chat with
+ * NO lane parks in the sliver queue and its flush interjects first; the
+ * queue is cleared on /new; and the two regressions (no "still busy" cry on a
+ * long healthy turn, a rejected render chain still releases the chat).
  *
  * Redirects the workspace to a temp home BEFORE loading the runtime graph so
  * nothing touches the real ~/.wolffish workspace.
@@ -77,8 +86,10 @@ async function run(): Promise<void> {
       queuedAckText,
       queueClearedText,
       queueEmptyText,
-      queuePendingNote
+      queuePendingNote,
+      unreadAfterStopText
     } = await import('@main/channels/message-queue')
+    const { interjectionAckText } = await import('@main/runtime/agent/interjection')
 
     type Item = { id: string; text: string; attachments: [] }
     const q = new ChannelMessageQueue<number, Item>()
@@ -99,17 +110,33 @@ async function run(): Promise<void> {
     q.clearAll()
     ok('queue: clearAll wipes every key', q.size(9) === 0)
 
-    ok('copy: depth 1 no files', queuedAckText(1, 0).includes("It's next in line."))
-    ok('copy: depth 3 counts', queuedAckText(3, 0).includes('3 messages are now waiting'))
-    ok('copy: 1 file singular', queuedAckText(1, 1).includes('with 1 file.'))
-    ok('copy: 2 files plural', queuedAckText(1, 2).includes('with 2 files'))
-    ok('copy: ack names /cancel', queuedAckText(1, 0).includes('/cancel'))
-    ok('copy: cleared singular', queueClearedText(1).includes('1 queued message.'))
-    ok('copy: cleared plural', queueClearedText(4).includes('4 queued messages.'))
+    // The sliver ack IS the interject ack — one promise, two carriers.
+    ok('copy: sliver ack = interject ack', queuedAckText(0) === interjectionAckText(0))
+    ok('copy: ack says got it', queuedAckText(0).includes("Got it. I'll read it after"))
+    ok('copy: no depth talk', !/next in line|waiting/.test(queuedAckText(0)))
+    ok('copy: no /cancel pitch in the ack', !queuedAckText(0).includes('/cancel'))
+    ok('copy: 1 file singular', queuedAckText(1).includes('with 1 file.'))
+    ok('copy: 2 files plural', queuedAckText(2).includes('with 2 files'))
+    ok('copy: cleared singular', queueClearedText(1).includes('Dropped 1 unread message.'))
+    ok('copy: cleared plural', queueClearedText(4).includes('Dropped 4 unread messages.'))
     ok('copy: empty + running points at /stop', queueEmptyText(true).includes('/stop'))
     ok('copy: empty + idle stays terse', queueEmptyText(false) === 'Nothing queued.')
     ok('copy: no pending note at 0', queuePendingNote(0) === '')
     ok('copy: pending note at 2', queuePendingNote(2).includes('2 queued messages will run next'))
+    ok(
+      'copy: stop note quotes the text',
+      unreadAfterStopText('skip the tests', 0) ===
+        '⏹ Stopped before reading "skip the tests". Resend it if you still want it.',
+      unreadAfterStopText('skip the tests', 0)
+    )
+    ok(
+      'copy: stop note truncates long text',
+      unreadAfterStopText('x'.repeat(100), 0).includes(`"${'x'.repeat(60)}…"`),
+      unreadAfterStopText('x'.repeat(100), 0)
+    )
+    ok('copy: stop note names a lone file', unreadAfterStopText('', 1).includes('your file'))
+    ok('copy: stop note counts files', unreadAfterStopText('  ', 3).includes('your 3 files'))
+    ok('copy: stop note plain fallback', unreadAfterStopText('', 0).includes('your message'))
   }
 
   // ── Layer 2: real TelegramChannel + real TurnRunner ────────────────────
@@ -118,12 +145,21 @@ async function run(): Promise<void> {
   const { TelegramChannel } = await import('@main/channels/telegram/channel')
   const { loadConversation } = await import('@main/conversations')
   const { getConversationIdForChat } = await import('@main/channels/telegram/conversations')
+  type InterjectionEvent = import('@main/runtime/agent/interjection').InterjectionEvent
+  type Interjection = import('@main/runtime/agent/interjection').Interjection
 
   /** Prompt text → gate that holds that turn open until we release it. */
   const gates = new Map<string, ReturnType<typeof deferred>>()
   /** Prompt text, in the order respond() actually saw it. */
   const responded: string[] = []
   const startedGate = new Map<string, ReturnType<typeof deferred>>()
+  /**
+   * Turns (by prompt tag) that play the agent loop's stop point: after the
+   * gate releases they pull the inbox and record each message as
+   * `drained:<text>`. Every other turn never reads its inbox, so whatever
+   * was interjected comes back from the runner's sweep with turn_ended.
+   */
+  const drainTags = new Set<string>()
 
   const corpus = new Corpus({ devLog: false })
   const agent = {
@@ -135,6 +171,7 @@ async function run(): Promise<void> {
       onSegment: (s: Record<string, unknown>) => void
       history: Array<{ content: string }>
       signal?: AbortSignal
+      takeInterjections?: () => Interjection[]
     }): Promise<{ stopReason: string; toolCalls: number }> => {
       const last = String(turn.history[turn.history.length - 1]?.content ?? '')
       // The dispatched content is the composed attachment context, so match on
@@ -145,6 +182,9 @@ async function run(): Promise<void> {
       startedGate.get(tag)?.resolve()
       const gate = gates.get(tag)
       if (gate) await gate.promise
+      if (drainTags.has(tag)) {
+        for (const item of turn.takeInterjections?.() ?? []) responded.push(`drained:${item.text}`)
+      }
       turn.onSegment({
         kind: 'turn_end',
         turnId: turn.turnId,
@@ -158,6 +198,8 @@ async function run(): Promise<void> {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const runner = new TurnRunner(agent as any)
+  const events: InterjectionEvent[] = []
+  runner.onInterjection((ev) => events.push(ev))
   const localProvider = { isReady: false }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const channel = new TelegramChannel(agent as any, runner, localProvider as any)
@@ -176,6 +218,9 @@ async function run(): Promise<void> {
   }
   ch.bot = { api }
   ch.allowedUserIds = new Set([USER_ID])
+  // What start() does; the harness never launches a bot.
+  ch.watchInterjections()
+  ok('wiring: channel subscribed to the runner', typeof ch.offInterjection === 'function')
 
   const ctx = {
     from: { id: USER_ID },
@@ -186,7 +231,9 @@ async function run(): Promise<void> {
   const send = (text: string): Promise<void> =>
     ch.handleTextMessage({ ...ctx, message: { text, message_id: ++messageId } })
 
-  const acks = (): string[] => outbox.filter((t) => t.includes('Queued'))
+  const acks = (): string[] => outbox.filter((t) => t.includes('Got it'))
+  const convId = async (): Promise<string> => (await getConversationIdForChat(CHAT_ID)) ?? ''
+  const pending = async (): Promise<Interjection[]> => runner.pendingInterjections(await convId())
   const convMessages = async (): Promise<
     Array<{ role: string; content: string; attachments?: unknown[] }>
   > => {
@@ -199,8 +246,17 @@ async function run(): Promise<void> {
       attachments?: unknown[]
     }>
   }
+  const reset = (): void => {
+    outbox.length = 0
+    responded.length = 0
+    events.length = 0
+    gates.clear()
+    startedGate.clear()
+    drainTags.clear()
+  }
 
-  // ── 1. Two messages sent mid-turn are parked, acked, and drained in order ──
+  // ── 1. Mid-turn messages INTERJECT; a turn that never read them hands ──
+  //      them back, and the channel re-runs them in order as fresh turns.
   {
     gates.set('first', deferred())
     startedGate.set('first', deferred())
@@ -210,48 +266,93 @@ async function run(): Promise<void> {
     await send('second')
     await send('third')
 
-    ok('park: two acks emitted', acks().length === 2, JSON.stringify(acks()))
-    ok('park: first ack says next in line', acks()[0]?.includes("It's next in line."), acks()[0])
+    ok('interject: two acks emitted', acks().length === 2, JSON.stringify(outbox))
+    // sendPlain prefixes a bidi mark and entity-escapes the apostrophe in
+    // "I'll", so match the unescaped tail of the sentence.
     ok(
-      'park: second ack reports depth 2',
-      acks()[1]?.includes('2 messages are now waiting'),
-      acks()[1]
+      'interject: ack is the interject ack',
+      acks()[0]?.includes('Got it. I') === true &&
+        acks()[0]?.includes('read it after the current step') === true,
+      acks()[0]
     )
-    ok('park: neither ran yet', responded.length === 1, JSON.stringify(responded))
-    ok('park: no busy decline sent', !outbox.some((t) => t.includes('Hold on')))
+    ok('interject: nothing in the sliver queue', ch.queue.size(CHAT_ID) === 0)
+    ok('interject: both pending on the runner', (await pending()).length === 2)
+    ok(
+      'interject: sender records kept for both',
+      ch.interjectedByMessageId.size === 2,
+      String(ch.interjectedByMessageId.size)
+    )
+    ok(
+      'interject: pending events tagged telegram',
+      events.filter((e) => e.state === 'pending' && e.channel === 'telegram').length === 2
+    )
+    ok('interject: neither ran yet', responded.length === 1, JSON.stringify(responded))
+    ok('interject: no busy decline sent', !outbox.some((t) => t.includes('Hold on')))
 
     gates.get('first')!.resolve()
-    await waitFor(() => responded.length === 3, 'queue drained')
+    await waitFor(() => responded.length === 3, 'returned messages re-dispatched')
     ok(
-      'drain: FIFO order preserved',
+      'sweep: turn_ended returned both',
+      events.filter((e) => e.state === 'withdrawn' && e.reason === 'turn_ended').length === 2,
+      JSON.stringify(events.map((e) => `${e.state}/${e.reason ?? ''}`))
+    )
+    ok(
+      'sweep: FIFO order preserved on re-dispatch',
       responded.join(',') === 'first,second,third',
       responded.join(',')
     )
     await waitFor(() => runner.activeTurnCount() === 0, 'runner idle')
     await tick()
+    ok('sweep: no second ack on re-dispatch', acks().length === 2, JSON.stringify(outbox))
+    ok('sweep: sender records released', ch.interjectedByMessageId.size === 0)
+    ok('sweep: sliver queue drained', ch.queue.size(CHAT_ID) === 0)
 
     const msgs = await convMessages()
     const userTexts = msgs.filter((m) => m.role === 'user').map((m) => m.content)
     ok(
-      'drain: all three persisted in order',
+      'sweep: all three persisted in order',
       userTexts.join(',') === 'first,second,third',
       userTexts.join(',')
     )
   }
 
-  // ── 2. Media survives the queue onto the persisted user message ────────
+  // ── 2. A turn that READS the message answers it in place: no re-dispatch ─
   {
-    outbox.length = 0
-    responded.length = 0
-    gates.clear()
-    startedGate.clear()
+    reset()
+    drainTags.add('host')
+    gates.set('host', deferred())
+    startedGate.set('host', deferred())
+    void send('host')
+    await startedGate.get('host')!.promise
+
+    await send('steer')
+    ok('drain: pending on the runner', (await pending()).length === 1)
+
+    gates.get('host')!.resolve()
+    await waitFor(() => runner.activeTurnCount() === 0, 'host turn done')
+    await tick()
+    await tick()
+    ok('drain: the turn read it', responded.includes('drained:steer'), JSON.stringify(responded))
+    ok('drain: never re-dispatched', !responded.includes('steer'), JSON.stringify(responded))
+    ok(
+      'drain: delivered event, no withdraw',
+      events.some((e) => e.state === 'delivered') && !events.some((e) => e.state === 'withdrawn'),
+      JSON.stringify(events.map((e) => e.state))
+    )
+    ok('drain: sender record released on delivery', ch.interjectedByMessageId.size === 0)
+    ok('drain: nothing queued', ch.queue.size(CHAT_ID) === 0)
+  }
+
+  // ── 3. Media rides an interjection AND survives the sliver queue ────────
+  {
+    reset()
     gates.set('busy2', deferred())
     startedGate.set('busy2', deferred())
     void send('busy2')
     await startedGate.get('busy2')!.promise
 
     // Stands in for a downloaded photo: the media handlers save the blob and
-    // hand the resulting attachment to enqueueMessage exactly like this.
+    // hand the resulting attachment to parkMessage exactly like this.
     const attachment = {
       id: 'att_1',
       type: 'image',
@@ -260,41 +361,46 @@ async function run(): Promise<void> {
       mimeType: 'image/png',
       sizeBytes: 1234
     }
-    await ch.enqueueMessage(CHAT_ID, {
+    await ch.parkMessage(CHAT_ID, {
       id: 'q_media',
       userId: USER_ID,
       ctx,
       text: 'look at this',
       attachments: [attachment]
     })
+    ok('media: interjected, not queued', ch.queue.size(CHAT_ID) === 0)
     ok('media: ack counts the file', acks()[0]?.includes('with 1 file'), acks()[0])
+    ok('media: attachment rides the interjection', (await pending())[0]?.attachments.length === 1)
+    // The sliver path with the same payload — a direct enqueue is what the
+    // no_live_turn branch does.
+    await ch.enqueueMessage(CHAT_ID, {
+      id: 'q_media_sliver',
+      userId: USER_ID,
+      ctx,
+      text: 'and this',
+      attachments: [attachment]
+    })
+    ok('media: sliver ack reads the same', acks()[1]?.includes('with 1 file'), acks()[1])
+    ok('media: sliver item queued', ch.queue.size(CHAT_ID) === 1)
 
     gates.get('busy2')!.resolve()
-    await waitFor(() => responded.includes('look at this'), 'media turn ran')
+    await waitFor(
+      () => responded.includes('look at this') && responded.includes('and this'),
+      'both media turns ran'
+    )
     await waitFor(() => runner.activeTurnCount() === 0, 'runner idle after media')
     await tick()
 
     const msgs = await convMessages()
-    const mediaMsg = msgs.find((m) => m.role === 'user' && m.content === 'look at this')
-    ok('media: user message persisted', !!mediaMsg)
-    ok(
-      'media: attachment rides the persisted message',
-      mediaMsg?.attachments?.length === 1,
-      JSON.stringify(mediaMsg?.attachments)
-    )
-    ok(
-      'media: model saw the attachment context',
-      responded.includes('look at this'),
-      JSON.stringify(responded)
-    )
+    for (const text of ['look at this', 'and this']) {
+      const m = msgs.find((x) => x.role === 'user' && x.content === text)
+      ok(`media: "${text}" persisted with its attachment`, m?.attachments?.length === 1)
+    }
   }
 
-  // ── 3. /cancel drops the queue and leaves the running turn alone ───────
+  // ── 4. /cancel withdraws pending interjections; the running turn is untouched ─
   {
-    outbox.length = 0
-    responded.length = 0
-    gates.clear()
-    startedGate.clear()
+    reset()
     gates.set('busy3', deferred())
     startedGate.set('busy3', deferred())
     void send('busy3')
@@ -302,15 +408,21 @@ async function run(): Promise<void> {
 
     await send('drop-me-1')
     await send('drop-me-2')
-    ok('cancel: two parked', ch.queue.size(CHAT_ID) === 2, String(ch.queue.size(CHAT_ID)))
+    ok('cancel: two pending', (await pending()).length === 2)
 
     await send('/cancel')
-    ok('cancel: queue emptied', ch.queue.size(CHAT_ID) === 0)
+    ok('cancel: inbox emptied', (await pending()).length === 0)
+    ok('cancel: sliver queue empty', ch.queue.size(CHAT_ID) === 0)
     ok(
-      'cancel: reports how many dropped',
-      outbox.some((t) => t.includes('Dropped 2 queued messages')),
+      'cancel: reports the combined count',
+      outbox.some((t) => t.includes('Dropped 2 unread messages.')),
       JSON.stringify(outbox.slice(-2))
     )
+    ok(
+      'cancel: withdrawn with reason user',
+      events.filter((e) => e.state === 'withdrawn' && e.reason === 'user').length === 2
+    )
+    ok('cancel: sender records released', ch.interjectedByMessageId.size === 0)
     ok('cancel: running turn untouched', runner.activeTurnCount() === 1)
 
     gates.get('busy3')!.resolve()
@@ -324,25 +436,31 @@ async function run(): Promise<void> {
 
     await send('/cancel')
     ok(
-      'cancel: empty queue says so',
+      'cancel: nothing pending says so',
       outbox.some((t) => t.includes('Nothing queued')),
       JSON.stringify(outbox.slice(-1))
     )
   }
 
-  // ── 4. /stop keeps the queue (it advances, like the in-app one) ─────────
+  // ── 5. /stop: an unread interjection is REPORTED, never resent; a sliver ─
+  //      item still advances (it is a turn of its own, like the in-app queue).
   {
-    outbox.length = 0
-    responded.length = 0
-    gates.clear()
-    startedGate.clear()
+    reset()
     gates.set('busy4', deferred())
     startedGate.set('busy4', deferred())
     void send('busy4')
     await startedGate.get('busy4')!.promise
 
     await send('after-stop')
-    ok('stop: one parked', ch.queue.size(CHAT_ID) === 1)
+    ok('stop: pending on the turn', (await pending()).length === 1)
+    // A sliver item parked directly (what a lost pre-send race leaves).
+    ch.queue.enqueue(CHAT_ID, {
+      id: 'q_sliver',
+      userId: USER_ID,
+      ctx,
+      text: 'sliver-after-stop',
+      attachments: []
+    })
 
     const stopped = send('/stop')
     // The gate keeps respond() parked until the abort is observed; release it
@@ -350,21 +468,82 @@ async function run(): Promise<void> {
     gates.get('busy4')!.resolve()
     await stopped
     ok(
-      'stop: reply flags the pending queue',
+      'stop: unread interjection returned as canceled',
+      events.some((e) => e.state === 'withdrawn' && e.reason === 'canceled'),
+      JSON.stringify(events.map((e) => `${e.state}/${e.reason ?? ''}`))
+    )
+    ok(
+      'stop: user told the message was not read',
+      outbox.some((t) => t.includes('Stopped before reading "after-stop"')),
+      JSON.stringify(outbox)
+    )
+    ok(
+      'stop: reply still flags the sliver queue',
       outbox.some((t) => t.includes('queued message will run next')),
       JSON.stringify(outbox.filter((t) => t.includes('Stop')))
     )
-    await waitFor(() => responded.includes('after-stop'), 'queue advanced past stop')
+    await waitFor(() => responded.includes('sliver-after-stop'), 'sliver item advanced past stop')
     await waitFor(() => runner.activeTurnCount() === 0, 'runner idle after stop')
-    ok('stop: queue drained, not dropped', ch.queue.size(CHAT_ID) === 0)
+    await sleep(100)
+    ok(
+      'stop: interjection NOT auto-resent',
+      !responded.includes('after-stop'),
+      JSON.stringify(responded)
+    )
+    ok('stop: sender record released', ch.interjectedByMessageId.size === 0)
+    ok('stop: sliver queue drained, not dropped', ch.queue.size(CHAT_ID) === 0)
   }
 
-  // ── 5. /new clears the queue — it must not flush into a NEW conversation ──
+  // ── 6. Busy chat with NO lane: sliver queue, and its flush interjects first ─
   {
-    outbox.length = 0
-    responded.length = 0
-    gates.clear()
-    startedGate.clear()
+    reset()
+    const id = await convId()
+    // The pre-send sliver: our per-chat slot is claimed (a turn is being set
+    // up) but runner.send has not registered the lane. Modelled by a bare
+    // slot that carries only what parkMessage reads.
+    ch.activeByChat.set(CHAT_ID, { conversation: { id } })
+    await send('sliver-msg')
+    ok('sliver: not interjected (no lane)', (await pending()).length === 0)
+    ok('sliver: parked in the queue', ch.queue.size(CHAT_ID) === 1)
+    ok('sliver: acked the same way', acks().length === 1 && acks()[0].includes('Got it'))
+    ok(
+      'sliver: no flush behind our own slot',
+      !ch.flushingByChat.has(CHAT_ID),
+      'enqueue must not start a wait on the map that just admitted the message'
+    )
+    ch.activeByChat.delete(CHAT_ID)
+
+    // The turn being set up goes live and will read its inbox.
+    drainTags.add('host2')
+    gates.set('host2', deferred())
+    startedGate.set('host2', deferred())
+    void send('host2')
+    await startedGate.get('host2')!.promise
+
+    // What the end-of-turn cleanup (or the setup's own release) would do.
+    ch.flushQueue(CHAT_ID)
+    await waitFor(() => ch.queue.size(CHAT_ID) === 0, 'flush took the sliver item')
+    ok(
+      'sliver: flush interjected instead of dispatching',
+      (await pending()).some((p) => p.text === 'sliver-msg'),
+      JSON.stringify(await pending())
+    )
+    ok('sliver: no second ack from the flush', acks().length === 1, JSON.stringify(outbox))
+    ok('sliver: no extra turn started', runner.activeTurnCount() === 1)
+
+    gates.get('host2')!.resolve()
+    await waitFor(() => runner.activeTurnCount() === 0, 'host2 done')
+    await tick()
+    ok(
+      'sliver: the live turn read it',
+      responded.includes('drained:sliver-msg') && !responded.includes('sliver-msg'),
+      JSON.stringify(responded)
+    )
+  }
+
+  // ── 7. /new clears the queue — it must not flush into a NEW conversation ──
+  {
+    reset()
     const before = await getConversationIdForChat(CHAT_ID)
 
     // No turn running: park directly, the way a lost race would.
@@ -400,19 +579,13 @@ async function run(): Promise<void> {
     )
   }
 
-  // ── 6. A LONG turn must not produce a "still busy" warning ─────────────
-  // The regression: enqueueMessage fired a flush whose wait polls the very
-  // map that admitted the message (activeByChat), so on any turn outliving
-  // the wait budget it could only expire — and an expiry was counted as a
-  // failed dispatch. Three of those warned the user their message hadn't run
-  // and pointed them at /stop, on a turn that was healthy and about to
-  // answer. Unreachable in this suite before: every simulated turn resolves
-  // in milliseconds and the budget is 30s, hence setQueueFlushWait.
+  // ── 8. A LONG turn must not produce a "still busy" warning ─────────────
+  // The old regression: enqueueMessage fired a flush whose wait polls the very
+  // map that admitted the message, so on a long turn it could only expire and
+  // cry wolf. Now the message is an interjection and there is no flush at
+  // all — but the sliver path still exists, so the guard stays under test.
   {
-    outbox.length = 0
-    responded.length = 0
-    gates.clear()
-    startedGate.clear()
+    reset()
     // 3 attempts × (60ms wait + 50ms backoff) ⇒ the old code warns by ~330ms.
     channel.setQueueFlushWait(60)
 
@@ -421,13 +594,10 @@ async function run(): Promise<void> {
     void send('long-turn')
     await startedGate.get('long-turn')!.promise
 
-    await send('queued-behind-a-long-turn')
-    ok('long: parked', ch.queue.size(CHAT_ID) === 1, String(ch.queue.size(CHAT_ID)))
-    ok(
-      'long: no flush loop spins behind our own turn',
-      !ch.flushingByChat.has(CHAT_ID),
-      'enqueue must not start a wait on the map that just admitted the message'
-    )
+    await send('behind-a-long-turn')
+    ok('long: interjected', (await pending()).length === 1)
+    ok('long: nothing queued', ch.queue.size(CHAT_ID) === 0)
+    ok('long: no flush loop spins behind our own turn', !ch.flushingByChat.has(CHAT_ID))
 
     // Outlive the old budget several times over.
     await sleep(600)
@@ -436,21 +606,21 @@ async function run(): Promise<void> {
       !outbox.some((t) => t.includes('Still busy')),
       JSON.stringify(outbox)
     )
-    ok('long: still parked, not dropped', ch.queue.size(CHAT_ID) === 1)
-    ok('long: did not run early', !responded.includes('queued-behind-a-long-turn'))
+    ok('long: still pending, not dropped', (await pending()).length === 1)
+    ok('long: did not run early', !responded.includes('behind-a-long-turn'))
     ok('long: the ack is still the only thing said', acks().length === 1, JSON.stringify(outbox))
 
     gates.get('long-turn')!.resolve()
-    await waitFor(() => responded.includes('queued-behind-a-long-turn'), 'long turn queue drained')
+    await waitFor(() => responded.includes('behind-a-long-turn'), 'returned message re-ran')
     await waitFor(() => runner.activeTurnCount() === 0, 'runner idle after long turn')
     ok(
-      'long: end-of-turn cleanup dispatched it, still no warning',
+      'long: end-of-turn re-dispatch, still no warning',
       !outbox.some((t) => t.includes('Still busy')),
       JSON.stringify(outbox)
     )
 
-    // The other direction: the gate must not swallow the race-closer. With no
-    // turn of ours running there is no cleanup coming, so enqueue MUST flush.
+    // The other direction: with no turn of ours running there is no cleanup
+    // coming, so a sliver enqueue MUST flush itself.
     outbox.length = 0
     responded.length = 0
     await ch.enqueueMessage(CHAT_ID, {
@@ -467,16 +637,12 @@ async function run(): Promise<void> {
     channel.setQueueFlushWait(30_000)
   }
 
-  // ── 7. A REJECTED render chain still releases the chat and drains ──────
-  // The gate in section 6 rests on "a running turn's cleanup always flushes".
-  // That cleanup hangs off the render chain, so a rejected chain used to skip
+  // ── 9. A REJECTED render chain still releases the chat and re-runs ─────
+  // The cleanup hangs off the render chain, so a rejected chain used to skip
   // it entirely: activeByChat leaked, the chat read as busy forever, and every
   // later message parked behind a turn that was already over.
   {
-    outbox.length = 0
-    responded.length = 0
-    gates.clear()
-    startedGate.clear()
+    reset()
 
     gates.set('doomed-chain', deferred())
     startedGate.set('doomed-chain', deferred())
@@ -491,17 +657,28 @@ async function run(): Promise<void> {
     ch.activeByChat.get(CHAT_ID).renderChain = rejected
 
     await send('after-a-broken-chain')
-    ok('broken chain: parked', ch.queue.size(CHAT_ID) === 1)
+    ok('broken chain: interjected', (await pending()).length === 1)
 
     gates.get('doomed-chain')!.resolve()
     await waitFor(() => !ch.activeByChat.has(CHAT_ID), 'per-chat slot released despite rejection')
     ok('broken chain: slot released, chat not wedged', !ch.activeByChat.has(CHAT_ID))
     await waitFor(
       () => responded.includes('after-a-broken-chain'),
-      'queue drained despite rejection'
+      'returned message re-ran despite rejection'
     )
-    ok('broken chain: queued message still ran', responded.includes('after-a-broken-chain'))
+    ok('broken chain: returned message still ran', responded.includes('after-a-broken-chain'))
     await waitFor(() => runner.activeTurnCount() === 0, 'runner idle after broken chain')
+  }
+
+  // ── 10. stop() unsubscribes and forgets sender records ─────────────────
+  {
+    ch.interjectedByMessageId.set('ghost', { chatId: CHAT_ID, userId: USER_ID, ctx })
+    ch.unwatchInterjections()
+    ok('teardown: unsubscribed', ch.offInterjection === null)
+    ok('teardown: sender records cleared', ch.interjectedByMessageId.size === 0)
+    ch.watchInterjections()
+    ch.watchInterjections()
+    ok('teardown: re-watch is idempotent', typeof ch.offInterjection === 'function')
   }
 
   console.log(`\n${passed} passed, ${failed} failed`)

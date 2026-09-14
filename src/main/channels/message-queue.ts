@@ -1,22 +1,37 @@
 import type { MessageAttachment } from '@main/conversations'
+import { interjectionAckText } from '@main/runtime/agent/interjection'
 
 /**
- * A user message parked while that chat's turn was still running.
+ * The PRE-SEND SLIVER queue for a channel chat.
  *
- * This is the channel-side twin of the in-app composer's `queuedPrompts`
- * (Chat.tsx): a message that arrives mid-turn is ACCEPTED and held in order,
- * then dispatched as its own turn the moment the chat frees up — replacing the
- * old "hold on, I'm busy" decline that made the user resend by hand.
+ * A message that arrives while a chat's turn is running is no longer parked
+ * here until the turn ends: it is handed to the RUNNING turn through
+ * TurnRunner.interject (see runtime/agent/interjection.ts), and the agent
+ * reads it at its next stop point. This module survives for exactly one
+ * window that interject cannot cover — the chat is already marked busy by
+ * the channel (Telegram's `activeByChat`, WhatsApp's synchronous
+ * `dispatchingByJid` claim) but the runner has no lane for its conversation
+ * yet: the pre-send stretch where a media download, a transcription or the
+ * conversation load is still running before runner.send registers the turn.
+ * interject answers `no_live_turn` there, and the message lands here instead.
+ *
+ * A flush therefore tries interject FIRST for every item (by the time it
+ * runs, the turn that was being set up is usually live and will read the
+ * message itself) and only dispatches a fresh turn when there is still no
+ * live lane. The turn-ended sweep re-uses the same path: an interjection
+ * the runner hands back with reason turn_ended/error is re-queued here and
+ * flushed by the end-of-turn cleanup, because the sweep fires while the
+ * finished lane is still counted and a direct re-interject would park the
+ * message on a turn that will never read it.
  *
  * Media is already DOWNLOADED and saved into the conversation's uploads folder
- * before it lands here. Channel file handles are short-lived (Telegram's
- * `file_path` expires; WhatsApp's media keys live on the inbound message we no
- * longer hold at flush time), so deferring the fetch would leave a queued
- * photo undeliverable minutes later. `attachments` therefore always carry real
- * on-disk paths, and a flushed message goes through the SAME
- * dispatch → composeAttachmentContext → processHistoryAttachments pipeline an
- * unqueued one does — the model cannot tell the two apart, and the in-app feed
- * renders the user bubble with its file chips the moment the turn starts.
+ * before it lands here — and before it is interjected. Channel file handles
+ * are short-lived (Telegram's `file_path` expires; WhatsApp's media keys live
+ * on the inbound message we no longer hold later), so deferring the fetch
+ * would leave a parked photo undeliverable minutes later. `attachments`
+ * therefore always carry real on-disk paths, and a flushed message goes
+ * through the SAME dispatch → composeAttachmentContext →
+ * processHistoryAttachments pipeline an unqueued one does.
  */
 export type QueuedMessageBase = {
   /** Stable id for the entry. Diagnostics only — never shown to the user. */
@@ -94,27 +109,25 @@ export class ChannelMessageQueue<K, T extends QueuedMessageBase> {
 }
 
 /**
- * What the user is told the instant their mid-turn message is accepted.
- *
- * Plain conversational text with no Markdown: it is delivered verbatim to a
- * phone chat, and WhatsApp renders none of it. Reports the file count and the
- * resulting queue depth so the user can see, without asking, that nothing was
- * dropped and how much is stacked up.
+ * What the user is told the instant their mid-turn message is accepted into
+ * the sliver queue. Deliberately the SAME sentence as the interject ack: from
+ * the phone the two are one promise ("I'll read it after the current step"),
+ * and which of the two mechanisms carried the message is an implementation
+ * detail the user must never be asked to tell apart. Plain text, no Markdown
+ * (WhatsApp renders none of it). Reports the file count so the user can see
+ * that nothing was dropped.
  */
-export function queuedAckText(depth: number, attachmentCount: number): string {
-  const files =
-    attachmentCount === 0
-      ? ''
-      : attachmentCount === 1
-        ? ' with 1 file'
-        : ` with ${attachmentCount} files`
-  const waiting = depth <= 1 ? "It's next in line." : `${depth} messages are now waiting in order.`
-  return `📥 Queued${files}. ${waiting} I'll get to it as soon as the current task finishes. Send /cancel to drop everything queued.`
+export function queuedAckText(attachmentCount: number): string {
+  return interjectionAckText(attachmentCount)
 }
 
-/** Reply to /cancel. Depth is what was actually dropped. */
+/**
+ * Reply to /cancel. `dropped` is the combined count of what was actually
+ * taken back: interjections still unread by the running turn plus anything
+ * in the sliver queue.
+ */
 export function queueClearedText(dropped: number): string {
-  return dropped === 1 ? '🗑 Dropped 1 queued message.' : `🗑 Dropped ${dropped} queued messages.`
+  return dropped === 1 ? '🗑 Dropped 1 unread message.' : `🗑 Dropped ${dropped} unread messages.`
 }
 
 /**
@@ -128,7 +141,27 @@ export function queueEmptyText(running: boolean): string {
     : 'Nothing queued.'
 }
 
-/** Trailing note appended to /stop so a pending queue is never a surprise. */
+/**
+ * One-line note for a message the running turn never got to read because the
+ * user stopped it (/stop → the runner hands the interjection back with reason
+ * `canceled`). Never auto-resent: a stop means "drop what you were doing", and
+ * the message may well have been part of that. Quotes the start of the text
+ * so the user knows WHICH message, since several may have been pending.
+ */
+export function unreadAfterStopText(text: string, attachmentCount: number): string {
+  const trimmed = text.trim().replace(/\s+/g, ' ')
+  const quoted =
+    trimmed.length === 0
+      ? attachmentCount === 1
+        ? 'your file'
+        : attachmentCount > 1
+          ? `your ${attachmentCount} files`
+          : 'your message'
+      : `"${trimmed.length > 60 ? `${trimmed.slice(0, 60)}…` : trimmed}"`
+  return `⏹ Stopped before reading ${quoted}. Resend it if you still want it.`
+}
+
+/** Trailing note appended to /stop so a still-queued sliver message is never a surprise. */
 export function queuePendingNote(depth: number): string {
   if (depth <= 0) return ''
   return depth === 1

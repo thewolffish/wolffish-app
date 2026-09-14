@@ -72,17 +72,29 @@ const EMPTY_TURN_NUDGE_TEXT =
  * end normally (it produced text, produced tool calls, wasn't an `end_turn`, or
  * the nudge budget is spent).
  *
- * The injected pair is deliberate and provider-safe:
- * - A **non-empty** assistant placeholder is required. Anthropic rejects empty
- *   text blocks and enforces strict user/assistant alternation, so a bare user
- *   message right after tool results would 400. Interposing a non-empty
- *   assistant turn keeps the sequence valid on Anthropic and is fine on
- *   OpenAI/DeepSeek (1:1 mapping). `parsed.text` is empty by definition here, so
- *   we use a literal placeholder rather than reusing it.
- * - No `toolUses` are attached — an unmatched tool call would break every
- *   adapter.
- * - `reasoningContent` is carried through only when present, matching how the
- *   loop's max_tokens continuation preserves reasoning.
+ * What is injected is a SINGLE `role: 'user'` aside — no assistant turn is
+ * interposed. There used to be one: a literal `(continuing)` placeholder,
+ * required because a bare user message right after tool results would 400 on
+ * Anthropic (strict alternation, and an empty text block is rejected). The
+ * mid-turn-message work removed that constraint — `toAnthropicMessages` now
+ * merges a user message into the preceding user turn, tool_result blocks
+ * first — and interjections ship that exact shape on every wire.
+ *
+ * Dropping it is not a cleanup, it is the fix. This file's own rule is
+ * "describe the class, never print a member of it", and the placeholder broke
+ * that rule in the worst position available: a parenthesized lowercase phrase
+ * standing in for an empty turn, written into the MODEL'S OWN MOUTH in the
+ * message immediately before the one asking it to reply. The literals that
+ * reached users are that shape exactly — `(no output)` on 2026-09-12,
+ * `(no content)` on 2026-09-14 — the leak count matched the nudge count, and
+ * the model's reasoning said it was producing output "in this format". Two
+ * rounds of copy fixes never touched the one place the runtime was
+ * demonstrating the format.
+ *
+ * The turn's `reasoningContent` goes with it. Only the OpenAI-shaped
+ * reasoning providers echo it back at all, and what is dropped is the
+ * thinking of a call that produced nothing — no tool call to keep it
+ * paired with, and Anthropic never receives it.
  */
 export function emptyTurnNudge(
   parsed: Pick<ParsedResponse, 'stopReason' | 'text' | 'toolCalls' | 'thinking'>,
@@ -93,8 +105,5 @@ export function emptyTurnNudge(
     parsed.stopReason === 'end_turn' && parsed.toolCalls.length === 0 && parsed.text.trim() === ''
   if (!isSilentEmptyTurn || nudgeCount >= maxNudges) return null
 
-  const assistant: ChatMessage = { role: 'assistant', content: '(continuing)' }
-  if (parsed.thinking) assistant.reasoningContent = parsed.thinking
-  const user: ChatMessage = { role: 'user', content: EMPTY_TURN_NUDGE_TEXT }
-  return [assistant, user]
+  return [{ role: 'user', content: EMPTY_TURN_NUDGE_TEXT }]
 }

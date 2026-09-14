@@ -1,4 +1,22 @@
-## v1.0.295 — 2026-09-14 `Latest`
+## v1.0.296 — 2026-09-14 `Latest`
+
+### You Can Message Wolffish While It Works
+
+A message typed into a running turn used to **wait in a queue**. Wolffish finished whatever it was doing — the wrong folder, the wrong file, the whole long detour — and only then read the line that would have stopped it; steering arrived after there was nothing left to steer. A message sent mid-task is now **handed to the work in flight**. The agent reads it at its **next step** — the moment the batch of tool calls it is running finishes, before it chooses the next one — and it lands in the conversation as a real message of yours, at the exact point it was read. So **"skip the tests folder", "use the other file", "that's enough, just summarise what you have"** now do what they say while the run is still going: Wolffish acknowledges the change in a line, adjusts, and **never redoes the work your message did not touch**. It is not a second turn racing the first — it is one run, steered from outside.
+
+### Pending Until It's Read, and Yours to Take Back
+
+Your message sits at the end of the feed as **its own bubble marked "Read at the next step"**, with an **X** that takes it back — straight into the composer as a draft, so a message sent too soon costs nothing. Once the agent has read it the X is gone, because a delivered message is part of the conversation and cannot be unsent. It works **everywhere Wolffish does**: the app, the terminal (type while it works; `esc` takes the last one back), your phone, Telegram and WhatsApp — and **voice notes count**, transcribed before they are handed over. A message that arrives while Wolffish is writing its final answer **keeps the turn alive** so it answers you in the same run instead of ending and starting over. Stop a turn and an unread message is handed back rather than silently applied to whatever comes next.
+
+### A Reply Ends on Its Last Real Word
+
+Some turns were still closing with a **bracketed note where silence belonged** — a stray `(no content)` stapled under a finished answer, or sent alone as a message of its own. Two rounds of fixes to the instructions never caught it, because the instructions were not the source: whenever Wolffish ended a turn with nothing, the app **wrote a parenthesised placeholder into Wolffish's own mouth** — a line in its voice, in its history, one message before it was asked to reply — and the leaks were that line's shape exactly. The placeholder is gone from all three places that used it, so the pattern is no longer demonstrated to the model at all. A stand-in typed anyway is now **noticed and reported back** the way a stray control token or a lone `.` already was, with the exact characters quoted, so Wolffish can see what reached you. Silence is written as nothing.
+
+### `wolffish` Works in a New Terminal, With Nothing to Paste
+
+Installing the terminal client wrote the command into a folder **no shell was looking in**, and left you the last step: add a line to your shell profile, by hand, on every machine. The app now **puts the folder on your PATH itself** — a marked block in the shell profiles on macOS and Linux, the user PATH on Windows — checked on every start, removed cleanly on uninstall, and never touching a line you wrote. Settings, `wolffish path` and the status screens now say **"open a new terminal"** instead of handing you something to copy, and only show the manual line if the app could not do it. Finding the command on Windows is also fixed: it is matched however the name is cased on disk.
+
+## v1.0.295 — 2026-09-14
 
 ### The Terminal Is Now a Real Screen
 
