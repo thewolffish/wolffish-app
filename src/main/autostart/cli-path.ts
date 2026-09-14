@@ -59,7 +59,13 @@ export type CliPathStatus = {
    * shell can see. Carries the line to add to the profile.
    */
   needsPathEntry: boolean
-  /** Shell snippet that fixes `needsPathEntry`, or null. */
+  /**
+   * The app has already put the shim's folder on PATH for NEW terminals —
+   * a marked block in the shell profiles (POSIX) or the user PATH (Windows).
+   * With `needsPathEntry` this means "open a new terminal", not "do this".
+   */
+  profileHasEntry: boolean
+  /** Shell snippet that fixes `needsPathEntry` by hand — only when the app could not. */
   profileHint: string | null
   /** Something else already owns the name — usually a stale symlink. */
   shadowedBy: string | null
@@ -115,6 +121,131 @@ async function removeLegacyShim(): Promise<void> {
   } catch {
     // unreadable or already gone — nothing to clean
   }
+}
+
+/* ───────────────────────── the PATH entry ─────────────────────────
+ *
+ * Writing the shim is half the job: a folder no shell looks in is a command
+ * nobody can run, and "add this line to your profile" is the step people
+ * skip, mistype, or never see on a box they only reach over SSH. So the app
+ * adds the entry itself, the way installers do — a marked block in the
+ * shell profiles on macOS/Linux, the user PATH on Windows — idempotently, on
+ * every boot, and removes exactly that on uninstall. The running terminal
+ * cannot be changed from here; every NEW one has the command.
+ *
+ * Footprint: this is the one write outside ~/.wolffish the CLI makes, and it is
+ * the one that cannot live anywhere else — PATH is read from the profile or
+ * nowhere. The block carries a marker, so it is recognisably ours to remove,
+ * and never touches a line the user wrote.
+ */
+const PROFILE_MARKER = '# Wolffish CLI — added by the app; remove with: wolffish path uninstall'
+const PROFILE_LINE = 'export PATH="$HOME/.wolffish/bin:$PATH"'
+const FISH_LINE = 'fish_add_path --global --prepend "$HOME/.wolffish/bin"'
+/** Tests set this: no registry writes, no `powershell` — file writes still go to the (faked) home. */
+const PATH_DRY_RUN = (): boolean => process.env.WOLFFISH_CLI_PATH_DRY_RUN === '1'
+
+/** The POSIX profiles that exist, or the one for $SHELL when none does. */
+function posixProfiles(): string[] {
+  const home = os.homedir()
+  const candidates = ['.zshrc', '.bashrc', '.bash_profile', '.profile'].map((f) =>
+    path.join(home, f)
+  )
+  const existing = candidates.filter((f) => existsSync(f))
+  if (existing.length > 0) return existing
+  const shell = path.basename(process.env.SHELL ?? 'bash')
+  return [path.join(home, shell === 'zsh' ? '.zshrc' : shell === 'bash' ? '.bashrc' : '.profile')]
+}
+
+/** fish keeps its PATH in conf.d, one file per tool — only when fish is set up here. */
+function fishConfPath(): string | null {
+  const dir = path.join(os.homedir(), '.config', 'fish')
+  return existsSync(dir) ? path.join(dir, 'conf.d', 'wolffish.fish') : null
+}
+
+const BLOCK_RE = /\n?# Wolffish CLI[^\n]*\nexport PATH="\$HOME\/\.wolffish\/bin:\$PATH"\n?/g
+
+async function windowsUserPath(): Promise<string[] | null> {
+  if (PATH_DRY_RUN()) return null
+  try {
+    const { stdout } = await run('powershell', [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      "[Environment]::GetEnvironmentVariable('Path', 'User')"
+    ])
+    return stdout
+      .split(';')
+      .map((s) => s.trim())
+      .filter(Boolean)
+  } catch {
+    return null
+  }
+}
+
+async function setWindowsUserPath(entries: string[]): Promise<void> {
+  if (PATH_DRY_RUN()) return
+  const joined = entries.join(';').replace(/'/g, "''")
+  await run('powershell', [
+    '-NoProfile',
+    '-NonInteractive',
+    '-Command',
+    `[Environment]::SetEnvironmentVariable('Path', '${joined}', 'User')`
+  ])
+}
+
+/** Is the shim's folder already on PATH for new terminals? */
+export async function profileHasEntry(dir = shimDir()): Promise<boolean> {
+  if (process.platform === 'win32') {
+    const entries = await windowsUserPath()
+    return entries !== null && entries.some((entry) => samePath(entry, dir))
+  }
+  for (const file of posixProfiles()) {
+    const body = await fs.readFile(file, 'utf8').catch(() => '')
+    if (body.includes(PROFILE_MARKER)) return true
+  }
+  const fish = fishConfPath()
+  return fish !== null && existsSync(fish)
+}
+
+/** Put the shim's folder on PATH for every new terminal. Idempotent. */
+export async function ensurePathEntry(dir = shimDir()): Promise<void> {
+  if (process.platform === 'win32') {
+    const entries = await windowsUserPath()
+    if (entries === null || entries.some((entry) => samePath(entry, dir))) return
+    // First, so it wins over a package manager's link to the app binary.
+    await setWindowsUserPath([dir, ...entries])
+    wlog.info(TAG, 'added the shim folder to the user PATH')
+    return
+  }
+  for (const file of posixProfiles()) {
+    const body = await fs.readFile(file, 'utf8').catch(() => '')
+    if (body.includes(PROFILE_MARKER)) continue
+    const sep = body.length === 0 || body.endsWith('\n') ? '' : '\n'
+    await fs.appendFile(file, `${sep}\n${PROFILE_MARKER}\n${PROFILE_LINE}\n`, 'utf8')
+    wlog.info(TAG, `added the PATH entry to ${file}`)
+  }
+  const fish = fishConfPath()
+  if (fish && !existsSync(fish)) {
+    await fs.mkdir(path.dirname(fish), { recursive: true })
+    await fs.writeFile(fish, `${PROFILE_MARKER}\n${FISH_LINE}\n`, 'utf8')
+  }
+}
+
+/** Take exactly our block back out. A line the user wrote is never touched. */
+export async function removePathEntry(dir = shimDir()): Promise<void> {
+  if (process.platform === 'win32') {
+    const entries = await windowsUserPath()
+    if (entries === null || !entries.some((entry) => samePath(entry, dir))) return
+    await setWindowsUserPath(entries.filter((entry) => !samePath(entry, dir)))
+    return
+  }
+  for (const file of posixProfiles()) {
+    const body = await fs.readFile(file, 'utf8').catch(() => null)
+    if (body === null || !body.includes(PROFILE_MARKER)) continue
+    await fs.writeFile(file, body.replace(BLOCK_RE, '\n').replace(/\n{3,}$/, '\n\n'), 'utf8')
+  }
+  const fish = fishConfPath()
+  if (fish) await fs.rm(fish, { force: true }).catch(() => undefined)
 }
 
 /** `wolffish-cli-darwin-arm64`, `wolffish-cli-win32-x64.exe`, … for THIS process. */
@@ -403,6 +534,9 @@ export async function cliPathStatus(callerPath?: string | null): Promise<CliPath
   const elsewhere = resolved !== null && !samePath(resolved, target)
   const packaged = elsewhere && (await isWolffishCli(resolved as string))
   const resolvedElsewhere = elsewhere && !packaged
+  // Read from the profile itself, whatever this caller's PATH says: the two
+  // answer different questions (this shell now vs. every new shell).
+  const inProfile = dirOnPath || (await profileHasEntry(dir))
 
   return {
     installed: packaged || (present && dirOnPath && !resolvedElsewhere),
@@ -410,7 +544,9 @@ export async function cliPathStatus(callerPath?: string | null): Promise<CliPath
     target,
     resolved,
     needsPathEntry: !packaged && present && !dirOnPath,
-    profileHint: packaged || dirOnPath ? null : profileHintFor(dir),
+    profileHasEntry: inProfile,
+    // The manual line only when the app could not do it itself.
+    profileHint: packaged || dirOnPath || inProfile ? null : profileHintFor(dir),
     shadowedBy: resolvedElsewhere ? resolved : null,
     error: null
   }
@@ -439,6 +575,11 @@ export async function installCliPath(execPath: string, entry: string): Promise<C
     if (bashShim) await fs.writeFile(bashShim, gitBashShim(exec, cli), 'utf8')
 
     await removeLegacyShim()
+    // The folder on PATH for every new terminal — see "the PATH entry" above.
+    // Best-effort: a profile that cannot be written leaves the manual hint up.
+    await ensurePathEntry(path.dirname(target)).catch((err) =>
+      wlog.warn(TAG, `PATH entry not written: ${err instanceof Error ? err.message : err}`)
+    )
     wlog.info(TAG, `installed ${target}`)
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err)
@@ -450,6 +591,7 @@ export async function installCliPath(execPath: string, entry: string): Promise<C
 
 export async function uninstallCliPath(): Promise<CliPathStatus> {
   await fs.rm(shimPath(), { force: true }).catch(() => undefined)
+  await removePathEntry(shimDir()).catch(() => undefined)
   // Both, or Remove leaves the command still working in Git Bash and only
   // appears to have done nothing.
   const bashShim = bashShimPath()

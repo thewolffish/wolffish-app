@@ -195,6 +195,8 @@ export type CliPathStatus = {
   target: string
   resolved: string | null
   needsPathEntry: boolean
+  /** The app already put the folder on PATH for new terminals (profile / user PATH). */
+  profileHasEntry: boolean
   profileHint: string | null
   shadowedBy: string | null
   error: string | null

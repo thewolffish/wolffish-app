@@ -165,7 +165,9 @@ async function cliStatus(client) {
       `  ${icon.warn()} ${c.yellow(`another wolffish runs first: ${shortPath(shim.shadowedBy)}`)}`
     )
   }
-  if (shim?.needsPathEntry && shim.profileHint) {
+  if (shim?.needsPathEntry && shim.profileHasEntry) {
+    out(`  ${icon.ok()} ${c.green('its folder is in your shell profile — open a new terminal')}`)
+  } else if (shim?.needsPathEntry && shim.profileHint) {
     out(`  ${icon.warn()} ${c.yellow('its folder is not on your PATH')}`)
     out(`  ${c.bold(shim.profileHint)}`)
   }

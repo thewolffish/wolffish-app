@@ -671,6 +671,8 @@ export function StatusDialog(): JSX.Element {
                   v={
                     pathInfo.installed ? (
                       <span style={{ fg: p().good }}>yes</span>
+                    ) : pathInfo.needsPathEntry && pathInfo.profileHasEntry ? (
+                      <span style={{ fg: p().warn }}>not yet — open a new terminal</span>
                     ) : (
                       <span style={{ fg: p().bad }}>no — wolffish path install</span>
                     )

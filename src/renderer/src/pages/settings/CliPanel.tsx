@@ -180,6 +180,8 @@ export function CliPanel(): React.JSX.Element {
       setPathState(next)
       if (next.error) {
         toast.show({ message: t('settings.channels.cli.path.toast.failed'), tone: 'error' })
+      } else if (next.needsPathEntry && next.profileHasEntry) {
+        toast.show({ message: t('settings.channels.cli.path.toast.openTerminal'), tone: 'success' })
       } else if (next.needsPathEntry) {
         toast.show({ message: t('settings.channels.cli.path.toast.needsPath'), tone: 'warning' })
       } else if (next.shadowedBy) {
@@ -381,6 +383,9 @@ export function CliPanel(): React.JSX.Element {
                     dir: pathState.target.replace(/[/\\][^/\\]+$/, '')
                   })}
                 </Notice>
+              )}
+              {pathState.needsPathEntry && pathState.profileHasEntry && (
+                <Notice tone="warn">{t('settings.channels.cli.path.needsEntryDone')}</Notice>
               )}
               {pathState.needsPathEntry && pathState.profileHint && (
                 <div className="flex flex-col gap-2">

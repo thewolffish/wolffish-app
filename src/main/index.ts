@@ -5856,6 +5856,8 @@ app.whenReady().then(async () => {
   )
     .then((state) => {
       if (state.error) wlog.warn('[cli]', `shim install failed: ${state.error}`)
+      else if (state.needsPathEntry && state.profileHasEntry)
+        wlog.info('[cli]', `shim written, shell profile updated — new terminals have \`wolffish\``)
       else if (state.needsPathEntry) wlog.info('[cli]', `shim written, PATH entry needed`)
       else if (is.dev) wlog.info('[cli]', `dev shim written — \`wolffish\` runs src/cli under Bun`)
     })

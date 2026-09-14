@@ -113,7 +113,9 @@ export async function status(client, { json, raw = false } = {}) {
   ])
   if (!p.installed) {
     out()
-    out(`  ${icon.warn()} ${c.yellow('run: wolffish path install')}`)
+    if (p.needsPathEntry && p.profileHasEntry)
+      out(`  ${icon.ok()} ${c.green('in your shell profile — open a new terminal')}`)
+    else out(`  ${icon.warn()} ${c.yellow('run: wolffish path install')}`)
   }
 
   const channels = Array.isArray(snapshot.channels) ? snapshot.channels : []
@@ -327,7 +329,10 @@ export async function pathCommand(client, args) {
         )
       )
     }
-    if (state.needsPathEntry && state.profileHint) {
+    if (state.needsPathEntry && state.profileHasEntry) {
+      out()
+      out(`  ${icon.ok()} ${c.green('its folder is in your shell profile — open a new terminal')}`)
+    } else if (state.needsPathEntry && state.profileHint) {
       out()
       out(`  ${icon.warn()} ${c.yellow('the shim exists but its folder is not on PATH')}`)
       out(`  ${c.bold(state.profileHint)}`)
@@ -347,6 +352,12 @@ export async function pathCommand(client, args) {
       return 1
     }
     out(`${icon.ok()} installed ${c.gray(shortPath(state.target))}`)
+    if (state.needsPathEntry && state.profileHasEntry) {
+      out(
+        `${icon.ok()} added to your shell profile — open a new terminal and \`wolffish\` is there`
+      )
+      return 0
+    }
     if (state.needsPathEntry && state.profileHint) {
       out()
       out(`${icon.warn()} ${c.yellow('one more step — that folder is not on your PATH:')}`)

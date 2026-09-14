@@ -76,6 +76,9 @@ async function asPlatform<T>(
   }
 }
 
+// The shim install also puts its folder on PATH. File writes land in the faked
+// homes below; the Windows user-PATH write (powershell) is skipped under this.
+process.env.WOLFFISH_CLI_PATH_DRY_RUN = '1'
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'wolffish-autostart-'))
 
 async function main(): Promise<void> {
@@ -455,11 +458,92 @@ async function main(): Promise<void> {
   ] as Array<[NodeJS.Platform, string]>) {
     fs.mkdirSync(home, { recursive: true })
     await asPlatform(platform, home, () => cliPath.installCliPath('/bin/app', '/res/cli.mjs'))
-    check(`${platform}: shim install writes nothing outside ~/.wolffish`, () => {
+    check(`${platform}: shim install writes nothing outside ~/.wolffish but the PATH entry`, () => {
+      // The one exception: PATH is read from the shell profile or nowhere, so
+      // the install leaves a MARKED block there and nothing else.
+      const profiles = new Set(['.zshrc', '.bashrc', '.bash_profile', '.profile'])
       const stray = fs.readdirSync(home).filter((entry) => entry !== '.wolffish')
-      assert.deepEqual(stray, [], `wrote outside the footprint: ${stray.join(', ')}`)
+      const other = stray.filter((entry) => !profiles.has(entry))
+      assert.deepEqual(other, [], `wrote outside the footprint: ${other.join(', ')}`)
+      for (const entry of stray) {
+        const body = fs.readFileSync(path.join(home, entry), 'utf8')
+        assert.ok(body.includes('Wolffish CLI — added by the app'), `${entry} is not ours`)
+      }
     })
   }
+
+  // ── the PATH entry: written by the app, once, removable, never the user's ──
+  const savedShell = process.env.SHELL
+  process.env.SHELL = '/bin/zsh'
+  const entryHome = path.join(TMP, 'path-entry')
+  fs.mkdirSync(path.join(entryHome, '.config', 'fish'), { recursive: true })
+  fs.writeFileSync(path.join(entryHome, '.zshrc'), '# mine\nexport EDITOR=vim\n')
+  const callerPath = '/usr/bin:/bin'
+  const entryStatus = await asPlatform('darwin', entryHome, async () => {
+    await cliPath.installCliPath('/Applications/Wolffish.app/Contents/MacOS/Wolffish', '/res/cli')
+    // A second boot must not stack a second block.
+    await cliPath.installCliPath('/Applications/Wolffish.app/Contents/MacOS/Wolffish', '/res/cli')
+    return cliPath.cliPathStatus(callerPath)
+  })
+  check("path entry: the profile gets ONE marked block, after the user's own lines", () => {
+    const body = fs.readFileSync(path.join(entryHome, '.zshrc'), 'utf8')
+    assert.ok(body.startsWith('# mine\nexport EDITOR=vim\n'), "the user's lines moved")
+    assert.equal(body.split('Wolffish CLI — added by the app').length, 2, body)
+    assert.ok(body.includes('export PATH="$HOME/.wolffish/bin:$PATH"'), body)
+  })
+  check('path entry: fish gets its conf.d file when fish is set up', () => {
+    const fish = path.join(entryHome, '.config', 'fish', 'conf.d', 'wolffish.fish')
+    assert.ok(fs.existsSync(fish), 'no fish entry')
+    assert.ok(fs.readFileSync(fish, 'utf8').includes('fish_add_path'))
+  })
+  check('path entry: status says "open a new terminal", not "add this line"', () => {
+    // `resolved` comes from a real login shell, so a machine that already has
+    // the command installed for real reads `installed`; either way the manual
+    // line is gone and the profile is known to carry the entry.
+    assert.ok(entryStatus.installed || entryStatus.needsPathEntry, JSON.stringify(entryStatus))
+    assert.equal(entryStatus.profileHasEntry, true)
+    assert.equal(entryStatus.profileHint, null, 'no manual line once the app did it')
+  })
+  const entryAfterRemove = await asPlatform('darwin', entryHome, async () => {
+    await cliPath.uninstallCliPath()
+    return cliPath.cliPathStatus(callerPath)
+  })
+  check('path entry: uninstall takes exactly the block back out', () => {
+    const body = fs.readFileSync(path.join(entryHome, '.zshrc'), 'utf8')
+    assert.ok(body.includes('export EDITOR=vim'), 'deleted a line the user wrote')
+    assert.ok(!body.includes('Wolffish CLI'), body)
+    assert.ok(!fs.existsSync(path.join(entryHome, '.config', 'fish', 'conf.d', 'wolffish.fish')))
+    assert.equal(entryAfterRemove.profileHasEntry, false)
+  })
+  const bareHome = path.join(TMP, 'path-entry-bare')
+  fs.mkdirSync(bareHome, { recursive: true })
+  await asPlatform('darwin', bareHome, () =>
+    cliPath.installCliPath('/Applications/Wolffish.app/Contents/MacOS/Wolffish', '/res/cli')
+  )
+  check('path entry: a home with no profile gets the one for $SHELL', () => {
+    assert.ok(fs.existsSync(path.join(bareHome, '.zshrc')), 'no .zshrc written for zsh')
+    assert.ok(
+      !fs.existsSync(path.join(bareHome, '.bashrc')),
+      'wrote a profile for a shell not in use'
+    )
+  })
+  const winEntryHome = path.join(TMP, 'path-entry-win')
+  fs.mkdirSync(winEntryHome, { recursive: true })
+  const winEntry = await asPlatform('win32', winEntryHome, async () => {
+    await cliPath.installCliPath(
+      'C:\\App\\wolffish.exe',
+      'C:\\App\\resources\\cli\\wolffish-cli-win32-x64.exe'
+    )
+    return cliPath.cliPathStatus('C:\\Windows')
+  })
+  check('path entry: windows goes through the user PATH, never a profile file', () => {
+    const stray = fs.readdirSync(winEntryHome).filter((entry) => entry !== '.wolffish')
+    assert.deepEqual(stray, [], `wrote a profile on windows: ${stray.join(', ')}`)
+    // Dry run: the registry write is skipped, so the manual line stays offered.
+    assert.equal(winEntry.profileHasEntry, false)
+    assert.ok(winEntry.profileHint?.includes('setx PATH'), String(winEntry.profileHint))
+  })
+  process.env.SHELL = savedShell
 
   // An upgraded machine must not keep the old POSIX shim: ~/.local/bin is
   // typically EARLIER on PATH than ~/.wolffish/bin, so a leftover would keep
@@ -541,7 +625,10 @@ async function main(): Promise<void> {
     assert.ok(appImageShim.includes(copied), `shim does not name the copy:\n${appImageShim}`)
   })
   check('appimage: the copy respects the rm -rf ~/.wolffish rule', () => {
-    const stray = fs.readdirSync(appImageHome).filter((entry) => entry !== '.wolffish')
+    // The shell profile carries the PATH entry (see the footprint checks above).
+    const stray = fs
+      .readdirSync(appImageHome)
+      .filter((entry) => entry !== '.wolffish' && entry !== '.zshrc')
     assert.deepEqual(stray, [], `wrote outside the footprint: ${stray.join(', ')}`)
   })
   check('appimage: a mounted launch does not make the shim self-extract', () => {
