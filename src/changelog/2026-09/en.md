@@ -1,4 +1,10 @@
-## v1.0.296 — 2026-09-14 `Latest`
+## v1.0.297 — 2026-09-15 `Latest`
+
+### A Note in Brackets Is Still a Message
+
+The bracketed sign-off came back in a far more convincing form. A turn with nothing left to say would close on **a reasoned sentence in parentheses** — that the recap above was the reply, that the notification to your phone was already on its way — and because the note was perfectly accurate, the rules as written could not reach it. They forbade a "stand-in for silence" without ever denying the premise underneath it, that **brackets are an out-of-band channel**, so a model able to argue its case felt licensed to write one. What reached you was a cryptic fragment at the end of your conversation, explaining something you never needed explained. The instructions now name what parentheses are genuinely **for** — a real aside inside a sentence Wolffish is actually saying, a clarification, a caveat, a worked example — and only then close the channel: a bracketed note about its own output is still a message to you, and **however well it argues its case, writing it is exactly the failure it describes**. The same correction runs through every place the app speaks up about this — the always-on rule, the nudge when a turn ends on nothing, the asides about the screen indicator and the task list, and all three after-the-fact notices — so there is no wording left anywhere that still treats a bracket as a way out. Nothing was tightened on the detection side, and deliberately: catching the articulate variety by pattern would mean flagging **ordinary parentheses in ordinary sentences**. Wolffish keeps writing naturally, and a finished turn simply ends.
+
+## v1.0.296 — 2026-09-14
 
 ### You Can Message Wolffish While It Works
 
