@@ -18,7 +18,9 @@ export default defineConfig(
       // ~/.wolffish on first launch. Plugin code there is JavaScript the
       // user can edit — not part of the app's TypeScript source.
       'src/defaults/workspace/**',
-      'scripts/**'
+      'scripts/**',
+      // Compiled terminal-client binaries.
+      'build/cli/**'
     ]
   },
   tseslint.configs.recommended,
@@ -55,6 +57,29 @@ export default defineConfig(
     files: ['src/cli/**/*.mjs', 'build/**/*.mjs'],
     rules: {
       '@typescript-eslint/explicit-function-return-type': 'off'
+    }
+  },
+  {
+    // The terminal client is Solid + OpenTUI, not React: its JSX elements are
+    // terminal renderables (`<box>`, `<text>`), `<For>` needs no keys, and
+    // there are no React hooks to police. The React rule sets are off here;
+    // every TypeScript and correctness rule stays on. Daemon payloads cross
+    // this boundary as untyped JSON, hence `any` is allowed at the seam.
+    files: ['src/cli/**/*.{ts,tsx}'],
+    rules: {
+      'react/no-unknown-property': 'off',
+      'react/jsx-key': 'off',
+      'react/no-children-prop': 'off',
+      'react-hooks/rules-of-hooks': 'off',
+      'react-hooks/exhaustive-deps': 'off',
+      'react-hooks/immutability': 'off',
+      'react-hooks/static-components': 'off',
+      'react-hooks/purity': 'off',
+      'react-hooks/refs': 'off',
+      'react-hooks/set-state-in-effect': 'off',
+      'react-refresh/only-export-components': 'off',
+      '@typescript-eslint/explicit-function-return-type': 'off',
+      '@typescript-eslint/no-explicit-any': 'off'
     }
   },
   eslintConfigPrettier

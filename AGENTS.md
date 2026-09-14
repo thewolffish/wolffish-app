@@ -21,6 +21,13 @@ src/
 │   └── runtime/     the brain — one folder per region
 │       ├── thalamus/, prefrontal/, hippocampus/, ...
 │       └── providers/  LLM provider adapters (anthropic/, openai/, local/)
+├── cli/             the `wolffish` terminal client (Bun + OpenTUI + Solid, compiled per platform)
+│   ├── index.ts     entry: TUI vs one-shot vs classic verbs
+│   ├── tui/         screens, dialogs, keymap, store — typecheck with `npm run cli:typecheck`, test with `npm run cli:test`
+│   ├── commands/, lib/  classic line-mode verbs (.mjs) reused by the binary
+│   └── build.ts     `bun build --compile` (CI beforePack; `npm run cli:build` to check the artifact)
+│                    DEV: `npm run dev` writes a `wolffish` shim that runs src/cli/index.ts under Bun —
+│                    every launch is the source on disk, no build; relaunch + `wolffish resume` after edits
 ├── preload/         contextBridge — types in index.d.ts
 ├── renderer/src/
 │   ├── App.tsx, main.tsx, env.d.ts, assets/

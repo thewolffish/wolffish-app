@@ -157,6 +157,12 @@ export function formatRuntimeStatus(runtime: RuntimeContext, now: Date = new Dat
     // Video-task landing notice (an async generation finished while the
     // model was mid-task) — same vehicle, same cache reason.
     (runtime.videoTasks ? `${runtime.videoTasks} ` : '') +
+    // Open-task-list notice (a list from an earlier turn is still unfinished
+    // on the user's card) and the task-list notice (the list THIS turn wrote
+    // still has open items) — same vehicle; each changes at most a few times
+    // per turn, on a todo_write. See agent/todo-guard.
+    (runtime.openTodo ? `${runtime.openTodo} ` : '') +
+    (runtime.taskList ? `${runtime.taskList} ` : '') +
     // Voice-reply notice (voice-prompted turn, Voice replies ON) — same
     // vehicle; stable across the turn, so it never churns the tail.
     (runtime.voiceReply ? `${runtime.voiceReply} ` : '') +

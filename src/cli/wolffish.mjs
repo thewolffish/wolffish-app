@@ -716,16 +716,42 @@ function usageError(line) {
   return 2
 }
 
-main()
-  .then((code) => {
-    process.exitCode = code ?? 0
-    // The socket keeps the event loop alive; commands that finished have
-    // nothing left to wait for.
-    if (process.exitCode !== undefined) setTimeout(() => process.exit(process.exitCode), 10).unref()
-  })
-  .catch((error) => {
-    err(`${icon.fail()} ${c.red(error?.message ?? String(error))}`)
-    process.exit(1)
-  })
+/**
+ * Run as a program only when this file IS the program. The compiled TUI
+ * client imports this module for its verbs (parseArgs, dispatch, oneShot)
+ * and must not start a second main().
+ */
+const isEntry = (() => {
+  try {
+    const arg = process.argv[1] ?? ''
+    return arg.endsWith('wolffish.mjs')
+  } catch {
+    return false
+  }
+})()
 
-export { DaemonClient, heading, table }
+if (isEntry)
+  main()
+    .then((code) => {
+      process.exitCode = code ?? 0
+      // The socket keeps the event loop alive; commands that finished have
+      // nothing left to wait for.
+      if (process.exitCode !== undefined)
+        setTimeout(() => process.exit(process.exitCode), 10).unref()
+    })
+    .catch((error) => {
+      err(`${icon.fail()} ${c.red(error?.message ?? String(error))}`)
+      process.exit(1)
+    })
+
+export {
+  DaemonClient,
+  heading,
+  table,
+  parseArgs,
+  dispatch,
+  readStdin,
+  oneShot,
+  USAGE,
+  nearestCommand
+}

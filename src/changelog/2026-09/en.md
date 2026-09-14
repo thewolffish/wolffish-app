@@ -1,4 +1,22 @@
-## v1.0.294 — 2026-09-13 `Latest`
+## v1.0.295 — 2026-09-14 `Latest`
+
+### The Terminal Is Now a Real Screen
+
+`wolffish` in a terminal used to be a line at a time: type, wait, read, and hope the tool calls you could not see were going somewhere. It is now a **full-screen terminal client**, on par with the app it belongs to. The conversation streams into a scrolling feed with the same cards the app draws — **tool calls with their output, file edits as diffs, delivered files, todo lists, workflow rosters, background tasks and countdowns** — and the prompt at the bottom is a real editor: **Shift+Enter** adds a line, a long paste folds into a placeholder, **`@path`** completes and attaches a file, **`/`** completes every command. Under the prompt sits what a chat window shows for free and a terminal never did: the **mode, model, thinking effort, plan mode and project** on one line, and while a turn runs, **what the agent is doing right now, how long it has been at it, how much of the context window is used, and what it has cost** — the app's context meter, made for a terminal. Approvals and questions arrive as **cards you answer with the keyboard** (allow once, allow always, deny; pick an option by number), a prompt typed mid-turn **queues** instead of being refused, `esc` twice **interrupts**, and if the app restarts under you the terminal **reconnects on its own** and picks the conversation back up.
+
+### Everything the App Can Do, From a Box With No Screen
+
+**`ctrl+p`** opens a command palette that lists every command with its key; **`ctrl+x l`** switches conversations from a fuzzy-searchable list with rename and delete; **`ctrl+x m`** switches the model, then the thinking effort; plan mode, chat mode and the project bound to the conversation each have a key and a slash command. **Settings** open as the app's own page → card → row browser — every switch, number, choice and secret edits in place, every action the app has (pairing a phone, testing a key, adding an MCP server, installing an engine) runs from the same list, and a search reaches across every row at once. **Usage** shows the same totals, providers and models as the app's panel with a range picker and a daily strip; **status** shows the daemon, brain, autostart, PATH and channels. Projects, procedures, automations (with what is running and queued), delivered files, parked approvals, background tasks and the daemon log each have a dialog. Everything that took a `--json` flag still does, and `wolffish -p "…"` with a pipe still prints plain text and exits — scripts do not change.
+
+### Built Into the App, Updated With It
+
+The client is now a **compiled program of its own**, shipped inside the app and pointed at by the same `wolffish` command as before — nothing to install, nothing to keep up to date, and an app update replaces it in the same step. On Windows it is a proper console program, so the extra launcher the old client needed is gone. The terminal's own small preferences — its theme, prompt history, recent models — live with the app's data, so a machine you reach over SSH remembers them too.
+
+### HTML Files Run Live in the Chat
+
+An HTML file in the chat — a game the agent just built, a report, a page — used to render as a static picture of its markup: the app's own security policy silently blocked every inline script, so anything interactive showed a blank canvas. The card now hosts the page in a **real browser tab of its own**: scripts run, the canvas draws, keys and sound work, `localStorage` persists between opens, and relative assets and CDN loads resolve as they would in Chrome. The card shrinks a wide page to fit; the expanded view shows it at full size, with **Reload** to start over and **Developer tools** to look inside. Every guest is hardened by the app — no access to the app's context, popups and outbound links go to your system browser — and a file too large to show as source still previews live.
+
+## v1.0.294 — 2026-09-13
 
 ### A Restart Waits for the Reply, Then Counts Down Where You Can Stop It
 

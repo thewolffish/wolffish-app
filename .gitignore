@@ -15,3 +15,6 @@ build/win-cli-launcher/*.exe
 # Python bytecode (cerebellum plugins ship .py workers, e.g. text-to-speech/synth.py)
 __pycache__/
 *.py[cod]
+
+# Compiled terminal-client binaries (scripts/cli/build.mjs)
+build/cli/

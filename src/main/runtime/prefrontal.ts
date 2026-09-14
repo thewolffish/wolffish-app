@@ -142,6 +142,14 @@ export type RuntimeContext = {
    */
   openTodo?: string
   /**
+   * Task-list notice — the list THIS turn wrote still has open items, so
+   * the model is reminded, every iteration until it closes the list, that
+   * the card the user watches must be rewritten as steps land and closed
+   * before the final reply (see agent/todo-guard). Same vehicle and cache
+   * rationale as noProgress. Undefined renders nothing.
+   */
+  taskList?: string
+  /**
    * Voice-reply notice, present on every master/single turn while the Voice
    * replies preference is ON — the switch alone gates it (no per-turn voice
    * detection; the notice's wording is conditional, so it reads truthfully
@@ -920,6 +928,7 @@ function formatRuntimeBody(runtime: RuntimeContext | undefined): string {
     // Video-task landing notice — same vehicle, same reason.
     if (runtime.videoTasks) lines.push(`  ${runtime.videoTasks}`)
     if (runtime.openTodo) lines.push(`  ${runtime.openTodo}`)
+    if (runtime.taskList) lines.push(`  ${runtime.taskList}`)
     // Voice-reply notice (voice-prompted turn, Voice replies ON) — same
     // vehicle, same reason.
     if (runtime.voiceReply) lines.push(`  ${runtime.voiceReply}`)

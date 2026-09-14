@@ -1843,7 +1843,11 @@
     "htmlViewer": {
       "preview": "Preview",
       "source": "Source",
-      "openInBrowser": "Open in browser"
+      "openInBrowser": "Open in browser",
+      "reload": "Reload",
+      "devTools": "Developer tools",
+      "openInSheet": "Showing in the expanded view",
+      "sourceTooLarge": "This file is too large to show its source here. The preview still works."
     },
     "audioPlayer": {
       "deleted": "Audio file was deleted or unavailable"

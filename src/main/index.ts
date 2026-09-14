@@ -277,6 +277,7 @@ import {
   net,
   protocol,
   screen,
+  session,
   shell,
   systemPreferences,
   Tray
@@ -284,6 +285,7 @@ import {
 import { execFileSync } from 'node:child_process'
 import os from 'node:os'
 import { isAbsolute, join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 // Redirect Chromium/Electron-managed state into ~/.wolffish so a single
 // `rm -rf ~/.wolffish` wipes every byte the app touches. Must run before
@@ -403,6 +405,11 @@ if (
 if (!app.requestSingleInstanceLock()) {
   app.quit()
 }
+
+// Storage partition of the in-chat HTML file preview guests. Persistent on
+// purpose: a page's localStorage (a game's high score) survives like it would
+// in a browser. Mirrored by the renderer's HtmlPreview component.
+const HTML_PREVIEW_PARTITION = 'persist:htmlpreview'
 
 app.on('second-instance', () => {
   restoreMainWindow()
@@ -2361,6 +2368,17 @@ function createWindow(): BrowserWindow {
     return { action: 'deny' }
   })
 
+  // Every <webview> the renderer mounts (website card, HTML file preview) is
+  // an untrusted page. Whatever attributes the tag carries, the guest never
+  // gets a preload, node, or the host's context — it is a browser tab and
+  // nothing more.
+  mainWindow.webContents.on('will-attach-webview', (_event, webPreferences) => {
+    delete webPreferences.preload
+    webPreferences.nodeIntegration = false
+    webPreferences.contextIsolation = true
+    webPreferences.sandbox = true
+  })
+
   // Spellcheck. Chromium underlines misspellings for free (webPreferences.spellcheck
   // defaults to true). The engine is per-OS: macOS uses the native OS spellchecker
   // (auto language, offline, and the setters below are no-ops), while Windows/Linux
@@ -2908,6 +2926,36 @@ app.whenReady().then(async () => {
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
   })
+
+  // <webview> guests. Two browser-tab behaviors the bare tag lacks: a popup
+  // (window.open, target=_blank) never becomes a naked BrowserWindow — an
+  // http(s) target goes to the system browser, anything else is dropped —
+  // and a LOCAL page (the HTML file preview, loaded from file:) that links
+  // out to the web hands that link to the system browser instead of turning
+  // the chat card into a browsing session. A website card keeps in-guest
+  // navigation, as before.
+  app.on('web-contents-created', (_event, contents) => {
+    if (contents.getType() !== 'webview') return
+    contents.setWindowOpenHandler(({ url }) => {
+      if (/^https?:/i.test(url)) void shell.openExternal(url)
+      return { action: 'deny' }
+    })
+    contents.on('will-navigate', (event, url) => {
+      if (!contents.getURL().startsWith('file:')) return
+      if (url.startsWith('file:') || url.startsWith('about:')) return
+      event.preventDefault()
+      if (/^https?:/i.test(url)) void shell.openExternal(url)
+    })
+  })
+
+  // Permissions a local HTML preview may ask for. Fullscreen and pointer lock
+  // are what a game wants and what a browser grants on a click; camera, mic,
+  // location, notifications and the rest stay refused.
+  session
+    .fromPartition(HTML_PREVIEW_PARTITION)
+    .setPermissionRequestHandler((_contents, permission, callback) => {
+      callback(permission === 'fullscreen' || permission === 'pointerLock')
+    })
 
   // Spellcheck corrections — the renderer's context menu calls these after the
   // main-process 'context-menu' event handed it the misspelled word + suggestions.
@@ -4482,6 +4530,17 @@ app.whenReady().then(async () => {
     }
   )
 
+  // The file: URL an in-chat <webview> loads an .html upload from. The guest
+  // renders the page from its real location — relative assets resolve and
+  // page scripts run, exactly as the OS browser would — which the old srcDoc
+  // iframe could not do (a srcdoc document inherits the app's own CSP, whose
+  // script-src 'self' blocked every inline <script>). Same workspace-scoped
+  // resolver as readFile, so a malformed path can't point the guest elsewhere.
+  handle('upload:fileUrl', async (_e, relativePath: string): Promise<string | null> => {
+    const abs = resolveUploadPath(relativePath)
+    return abs ? pathToFileURL(abs).href : null
+  })
+
   // Stat a path the assistant mentioned in chat so the renderer can decide
   // whether to show a card (and which kind). Resolves a leading ~. Not
   // workspace-scoped: assistant-referenced paths live anywhere on the user's
@@ -5787,18 +5846,20 @@ app.whenReady().then(async () => {
   // best-effort: it writes into the user's own ~/.wolffish/bin, needs no
   // privilege, and a failure only means the Channels → CLI panel shows its
   // "not on PATH" card with the fix.
-  // Skipped in dev, where process.execPath is the electron-vite binary.
-  if (!is.dev) {
-    void installCliPath(
-      app.getPath('exe'),
-      cliEntryPath(false, app.getAppPath(), process.resourcesPath)
-    )
-      .then((state) => {
-        if (state.error) wlog.warn('[cli]', `shim install failed: ${state.error}`)
-        else if (state.needsPathEntry) wlog.info('[cli]', `shim written, PATH entry needed`)
-      })
-      .catch(() => undefined)
-  }
+  //
+  // In dev the shim points at the client's SOURCE under Bun (see
+  // cliEntryPath), so `wolffish` in a terminal is the code being edited, with
+  // no build step. The installed app takes the file back on its next boot.
+  void installCliPath(
+    app.getPath('exe'),
+    cliEntryPath(is.dev, app.getAppPath(), process.resourcesPath)
+  )
+    .then((state) => {
+      if (state.error) wlog.warn('[cli]', `shim install failed: ${state.error}`)
+      else if (state.needsPathEntry) wlog.info('[cli]', `shim written, PATH entry needed`)
+      else if (is.dev) wlog.info('[cli]', `dev shim written — \`wolffish\` runs src/cli under Bun`)
+    })
+    .catch(() => undefined)
 
   if (IS_HEADLESS) {
     wlog.info('[boot]', 'headless — no window, no tray; CLI socket is the surface')

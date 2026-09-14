@@ -69,7 +69,7 @@ export function appImageLaunchEnv(): string | null {
  * The CLI client, at a path that outlives the process that copied it.
  *
  * Pointing the shim at the .AppImage fixes the binary but not the script it has
- * to run: `<mount>/resources/cli/wolffish.mjs` expires with the mount, and its
+ * to run: `<mount>/resources/cli/wolffish-cli-linux-x64` expires with the mount, and its
  * replacement is unknowable from outside (the mount name is random per run, so
  * no fixed string can name it). The client is 400 KB of plain ESM importing
  * nothing but node builtins, so the honest fix is to lift it out of the image

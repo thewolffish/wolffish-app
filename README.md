@@ -11,7 +11,7 @@ Wolffish is a local-first, markdown-powered personal AI desktop agent built with
 Built around a 15-module runtime modeled after the human brain, from memory consolidation to safety gating. Every piece of state lives in readable markdown files. To change what the agent does, you edit markdown — not code.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE.md)
-[![Version](https://img.shields.io/badge/version-1.0.294-green.svg)](https://wolffi.sh)
+[![Version](https://img.shields.io/badge/version-1.0.295-green.svg)](https://wolffi.sh)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)]()
 
 ---
@@ -218,6 +218,21 @@ Wolffish communicates through three channels, all sharing the same brain state:
 
 A `TurnRunner` serializes turns across channels (FIFO queue). A `TurnRouter` routes approval requests to whichever channel owns the active turn.
 
+### The terminal
+
+`wolffish` is a full terminal client, built for a monitorless box as much as for a laptop next to the app. It is a compiled binary (Bun + OpenTUI) that ships inside the app and talks to the running daemon over the local socket, so it holds no agent state of its own: close the terminal and the turn keeps running.
+
+```
+wolffish                     the session screen: streaming feed, cards, live context meter
+wolffish -p "…" [-f file]    one shot — print and exit (pipes: cat log | wolffish -p "why?")
+wolffish resume [id]         continue a conversation
+wolffish conversations …     the app's screens as verbs, with --json for scripts
+wolffish settings …          every setting, and every action the app has
+wolffish status | usage | service | path | pair
+```
+
+While `npm run dev` is running, the `wolffish` command runs the client straight from `src/cli` under Bun, so every launch is the code on disk. Inside the session: `ctrl+p` opens the command palette, `/` completes slash commands, `@path` attaches a file, `shift+enter` inserts a newline, `esc esc` interrupts, and the footer shows the model, mode, thinking effort, plan mode, project, elapsed time, context used and cost. Approvals, questions, todos, diffs, tasks and countdowns render as cards. Settings open as a page → card → row browser with search across every row; the few flows that need a terminal conversation (pairing, key tests) run on the plain terminal and hand back.
+
 ---
 
 ## Integrations
@@ -280,6 +295,11 @@ src/
 │   ├── workspace/               ~/.wolffish init, config, purge
 │   ├── services/                GitHub, Google, Notion, Brave
 │   └── uploads/                 File processing
+├── cli/                         The `wolffish` terminal client — Bun + OpenTUI, compiled per platform
+│   ├── index.ts                 Entry: TUI, one-shot (-p / piped), and the classic verbs
+│   ├── tui/                     Screens, dialogs, keymap, store (Solid)
+│   ├── commands/, lib/          Classic line-mode verbs and helpers (still used for scripts)
+│   └── build.ts                 `bun build --compile` per target (electron-builder beforePack)
 ├── preload/                     contextBridge (IPC types)
 ├── renderer/src/                React frontend
 │   ├── pages/                   Chat, Settings, History, ModelPicker, Onboarding, ...

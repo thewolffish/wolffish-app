@@ -45,6 +45,8 @@ import {
 } from '@main/runtime/brainstem'
 import { readViewerFile, writeViewerFile } from '@main/viewer'
 import { getCliConfig, setCliConfig, type CliConfig } from '@main/workspace/workspace'
+import { workspaceRoot } from '@main/workspace/root'
+import { diskWriter } from '@main/io/diskWriter'
 import { wlog } from '@main/workspace/logger'
 import QRCode from 'qrcode'
 import fs from 'node:fs/promises'
@@ -146,6 +148,21 @@ function displayValue(
   }
   if (setting.kind === 'secret') return maskSecret(String(value))
   return String(value)
+}
+
+/** `~/.wolffish/workspace/cli-state.json` — see the cli:kv* handlers. */
+function cliStatePath(): string {
+  return path.join(workspaceRoot(), 'cli-state.json')
+}
+
+async function readCliState(): Promise<Record<string, unknown>> {
+  try {
+    const raw = await fs.readFile(cliStatePath(), 'utf8')
+    const parsed = JSON.parse(raw)
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+  } catch {
+    return {}
+  }
 }
 
 export type CliIpcDeps = {
@@ -303,6 +320,23 @@ export function registerCliIpc(deps: CliIpcDeps): void {
     const config = await getCliConfig()
     deps.broadcast('cli:configChange', config)
     return { ok: true as const, config }
+  })
+
+  /**
+   * The terminal's own small state — theme, prompt history, recent models,
+   * which hints have been dismissed. The client holds none of it on disk:
+   * the daemon owns `~/.wolffish`, so the daemon owns this file too, and a
+   * terminal on another machine (SSH) sees the same preferences.
+   *
+   * One JSON object, read-modify-written under the disk writer's per-file
+   * queue. Values are opaque to the daemon.
+   */
+  handle('cli:kvGet', async (): Promise<Record<string, unknown>> => readCliState())
+  handle('cli:kvSet', async (_e, patch: Record<string, unknown>) => {
+    const next = { ...(await readCliState()), ...(patch ?? {}) }
+    for (const [key, value] of Object.entries(next)) if (value === null) delete next[key]
+    await diskWriter.writeFileAtomic(cliStatePath(), JSON.stringify(next, null, 2))
+    return { ok: true as const }
   })
 
   // ── Turns ────────────────────────────────────────────────────────────────
@@ -664,7 +698,11 @@ export function registerCliIpc(deps: CliIpcDeps): void {
     deps.broadcast('cli:pathChanged', status)
     return status
   })
-  handle('cli:entryPath', () => ({ execPath: deps.execPath, entry: deps.cliEntry }))
+  handle('cli:entryPath', () => ({
+    execPath: deps.execPath,
+    entry: deps.cliEntry,
+    binary: deps.cliEntry
+  }))
 
   wlog.info(TAG, 'ipc registered')
 }

@@ -2251,6 +2251,8 @@ export type UploadApi = {
     currentTotalBytes: number
   }) => Promise<UploadValidationError | null>
   openExternal: (relativePath: string) => Promise<{ ok: boolean; error?: string }>
+  /** file: URL of an upload, for the in-chat HTML preview <webview>; null when the path is invalid. */
+  fileUrl: (relativePath: string) => Promise<string | null>
   /** Existence + type of a device path (resolves a leading ~), for chat path cards. */
   statPath: (path: string) => Promise<{ exists: boolean; isDirectory: boolean }>
   /** Top-level contents of a directory (resolves a leading ~), for attaching working-folder structure to chat context. */
@@ -2574,6 +2576,7 @@ const api: WolffishApi = {
     isSupported: (fileName) => ipcRenderer.invoke('upload:isSupported', fileName),
     validate: (payload) => ipcRenderer.invoke('upload:validate', payload),
     openExternal: (relativePath) => ipcRenderer.invoke('upload:openExternal', relativePath),
+    fileUrl: (relativePath) => ipcRenderer.invoke('upload:fileUrl', relativePath),
     statPath: (path) => ipcRenderer.invoke('upload:statPath', path),
     listFolder: (path) => ipcRenderer.invoke('upload:listFolder', path),
     revealPath: (path) => ipcRenderer.invoke('upload:revealPath', path),

@@ -1861,7 +1861,11 @@
     "htmlViewer": {
       "preview": "معاينة",
       "source": "المصدر",
-      "openInBrowser": "فتح في المتصفح"
+      "openInBrowser": "فتح في المتصفح",
+      "reload": "إعادة تحميل",
+      "devTools": "أدوات المطوّر",
+      "openInSheet": "يُعرض في العرض الموسّع",
+      "sourceTooLarge": "هذا الملف أكبر من أن يُعرض مصدره هنا. المعاينة تعمل كالمعتاد."
     },
     "audioPlayer": {
       "deleted": "ملف الصوت محذوف أو غير متاح"

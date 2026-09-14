@@ -299,21 +299,19 @@ async function main(): Promise<void> {
           ? 'C:\\Users\\a b\\AppData\\Local\\Programs\\Wolffish\\wolffish.exe'
           : '/Applications/Wolffish.app/Contents/MacOS/Wolffish',
         platform === 'win32'
-          ? 'C:\\Users\\a b\\resources\\cli\\wolffish.mjs'
-          : '/res/cli/wolffish.mjs'
+          ? 'C:\\Users\\a b\\resources\\cli\\wolffish-cli-win32-x64.exe'
+          : '/res/cli/wolffish-cli-darwin-arm64'
       )
     )
     const shim = path.join(home, relative)
     check(`${platform}: shim lands at ~/${relative}`, () => {
       assert.ok(fs.existsSync(shim), `${shim} missing`)
     })
-    check(`${platform}: shim runs the binary as node, not as the app`, () => {
+    check(`${platform}: shim runs the compiled client and names the app for autostart`, () => {
       const body = fs.readFileSync(shim, 'utf8')
-      assert.ok(
-        body.includes('ELECTRON_RUN_AS_NODE=1'),
-        'without this the shim boots the whole GUI app'
-      )
-      assert.ok(body.includes('wolffish.mjs'), 'must name the client entry')
+      assert.ok(!body.includes('ELECTRON_RUN_AS_NODE'), 'the client is its own binary now')
+      assert.ok(body.includes('WOLFFISH_EXEC='), 'the client needs the app path to start a daemon')
+      assert.ok(body.includes('wolffish-cli'), 'must reach the compiled client')
     })
     if (platform === 'win32') {
       check('windows: shim is a console-subsystem .cmd that preserves the exit code', () => {
@@ -338,33 +336,30 @@ async function main(): Promise<void> {
     }
   }
 
-  // ── windows: the shim delegates to the console launcher ───────────────────
+  // ── windows: the shim runs the compiled client directly ───────────────────
   // The app binary is GUI-subsystem: a console that runs it directly gets no
-  // usable stdout, which is why `wolffish` printed a blank line and returned.
-  // When the packaged launcher is beside the binary the shim must hand over to
-  // it and stop invoking the app itself — the ELECTRON_RUN_AS_NODE form asserted
-  // above is the DEV fallback, and shipping it is the bug.
+  // usable stdout. The client is a console executable of its own (built with
+  // Bun), so the .cmd hands over to it and never invokes the app itself.
   const launcherHome = path.join(TMP, 'launcher-home')
   const launcherInstall = path.join(TMP, 'launcher-install')
   fs.mkdirSync(launcherHome, { recursive: true })
-  fs.mkdirSync(launcherInstall, { recursive: true })
-  fs.writeFileSync(path.join(launcherInstall, 'wolffish-cli.exe'), 'MZ')
+  fs.mkdirSync(path.join(launcherInstall, 'resources', 'cli'), { recursive: true })
+  const winBinary = path.join(launcherInstall, 'resources', 'cli', 'wolffish-cli-win32-x64.exe')
+  fs.writeFileSync(winBinary, 'MZ')
   await asPlatform('win32', launcherHome, () =>
-    cliPath.installCliPath(
-      path.join(launcherInstall, 'wolffish.exe'),
-      path.join(launcherInstall, 'resources', 'cli', 'wolffish.mjs')
-    )
+    cliPath.installCliPath(path.join(launcherInstall, 'wolffish.exe'), winBinary)
   )
-  check('windows: shim hands off to wolffish-cli.exe when it is packaged', () => {
+  check('windows: shim runs wolffish-cli-win32-x64.exe, never the GUI binary', () => {
     const body = fs.readFileSync(
       path.join(launcherHome, '.wolffish', 'bin', 'wolffish.cmd'),
       'utf8'
     )
-    assert.ok(body.includes('wolffish-cli.exe'), `never reached the launcher:\n${body}`)
+    assert.ok(body.includes('wolffish-cli-win32-x64.exe'), `never reached the client:\n${body}`)
     assert.ok(
       !body.includes('ELECTRON_RUN_AS_NODE'),
       'still starting the GUI binary itself — output would go nowhere'
     )
+    assert.ok(body.includes('WOLFFISH_EXEC='), 'the client needs the app path to start a daemon')
     assert.ok(body.includes('%*'), 'must forward arguments')
     assert.ok(body.includes('%ERRORLEVEL%'), 'must propagate the exit code')
   })
@@ -387,11 +382,13 @@ async function main(): Promise<void> {
     // NTFS does not really carry — so the shebang is load-bearing here.
     assert.ok(body.startsWith('#!/bin/sh'), 'without the shebang MSYS will not run it')
     assert.ok(body.includes('"$@"'), 'must forward arguments quoted')
-    assert.ok(body.includes('wolffish-cli.exe'), 'must reach the console launcher')
+    assert.ok(body.includes('wolffish-cli-win32-x64.exe'), 'must reach the compiled client')
   })
   check('windows: the Git Bash shim uses forward slashes', () => {
     const body = fs.readFileSync(bashShim, 'utf8')
-    const launcherLine = body.split('\n').find((line) => line.includes('wolffish-cli.exe'))
+    const launcherLine = body
+      .split('\n')
+      .find((line) => line.includes('wolffish-cli-win32-x64.exe'))
     assert.ok(
       launcherLine && !launcherLine.includes('\\'),
       `a backslash is an escape inside a shell string: ${launcherLine}`
@@ -514,14 +511,17 @@ async function main(): Promise<void> {
   const mountCli = path.join(mount, 'resources', 'cli')
   fs.mkdirSync(path.join(mountCli, 'lib'), { recursive: true })
   fs.mkdirSync(appImageHome, { recursive: true })
-  fs.writeFileSync(path.join(mountCli, 'wolffish.mjs'), "import './lib/client.mjs'\n")
+  fs.writeFileSync(path.join(mountCli, 'wolffish-cli-linux-x64'), 'ELF', { mode: 0o755 })
   fs.writeFileSync(path.join(mountCli, 'lib', 'client.mjs'), 'export const connect = () => {}\n')
 
   const savedAppImage = process.env.APPIMAGE
   process.env.APPIMAGE = path.join(appImageHome, '.wolffish', 'Wolffish.AppImage')
 
   await asPlatform('linux', appImageHome, () =>
-    cliPath.installCliPath(path.join(mount, 'wolffish-app'), path.join(mountCli, 'wolffish.mjs'))
+    cliPath.installCliPath(
+      path.join(mount, 'wolffish-app'),
+      path.join(mountCli, 'wolffish-cli-linux-x64')
+    )
   )
   const appImageShim = fs.readFileSync(
     path.join(appImageHome, '.wolffish', 'bin', 'wolffish'),
@@ -532,7 +532,7 @@ async function main(): Promise<void> {
     assert.ok(!appImageShim.includes(mount), 'recorded a path that dies with this process')
   })
   check('appimage: the client is lifted out of the mount, imports included', () => {
-    const copied = path.join(appImageHome, '.wolffish', 'cli', 'wolffish.mjs')
+    const copied = path.join(appImageHome, '.wolffish', 'cli', 'wolffish-cli-linux-x64')
     assert.ok(fs.existsSync(copied), 'client not copied out')
     assert.ok(
       fs.existsSync(path.join(appImageHome, '.wolffish', 'cli', 'lib', 'client.mjs')),
@@ -561,13 +561,16 @@ async function main(): Promise<void> {
   process.env.APPIMAGE = path.join(extractHome, '.wolffish', 'Wolffish.AppImage')
   process.env.APPIMAGE_EXTRACT_AND_RUN = '1'
   await asPlatform('linux', extractHome, () =>
-    cliPath.installCliPath(path.join(mount, 'wolffish-app'), path.join(mountCli, 'wolffish.mjs'))
+    cliPath.installCliPath(
+      path.join(mount, 'wolffish-app'),
+      path.join(mountCli, 'wolffish-cli-linux-x64')
+    )
   )
   delete process.env.APPIMAGE_EXTRACT_AND_RUN
   check('appimage: a self-extracting launch is carried into the shim', () => {
     const body = fs.readFileSync(path.join(extractHome, '.wolffish', 'bin', 'wolffish'), 'utf8')
     assert.ok(
-      body.includes('APPIMAGE_EXTRACT_AND_RUN=1 ELECTRON_RUN_AS_NODE=1 exec'),
+      body.includes('APPIMAGE_EXTRACT_AND_RUN=1 exec'),
       `shim would try to mount on a box that cannot:\n${body}`
     )
   })
@@ -647,7 +650,10 @@ async function main(): Promise<void> {
   const nativeHome = path.join(TMP, 'native')
   fs.mkdirSync(nativeHome, { recursive: true })
   await asPlatform('linux', nativeHome, () =>
-    cliPath.installCliPath('/opt/Wolffish/wolffish-app', '/opt/Wolffish/resources/cli/wolffish.mjs')
+    cliPath.installCliPath(
+      '/opt/Wolffish/wolffish-app',
+      '/opt/Wolffish/resources/cli/wolffish-cli-linux-x64'
+    )
   )
   check('native install: no client copy, shim points straight into /opt', () => {
     assert.ok(
@@ -655,7 +661,7 @@ async function main(): Promise<void> {
       'copied the client on an install whose paths are already stable'
     )
     const body = fs.readFileSync(path.join(nativeHome, '.wolffish', 'bin', 'wolffish'), 'utf8')
-    assert.ok(body.includes('/opt/Wolffish/resources/cli/wolffish.mjs'), body)
+    assert.ok(body.includes('/opt/Wolffish/resources/cli'), body)
   })
 
   // ── what the CLI is allowed to believe about its own stdio ────────────────
@@ -807,13 +813,46 @@ async function main(): Promise<void> {
   })
 
   // ── the packaged client entry resolves per platform ───────────────────────
-  check('cli entry resolves under resources when packaged', () => {
+  check('cli binary resolves under resources when packaged', () => {
     const entry = cliPath.cliEntryPath(false, '/app', '/res')
-    assert.equal(entry, path.join('/res', 'cli', 'wolffish.mjs'))
+    assert.equal(entry, path.join('/res', 'cli', cliPath.cliBinaryName()))
   })
-  check('cli entry resolves into the source tree in dev', () => {
+  check('cli entry resolves to the source tree in dev', () => {
     const entry = cliPath.cliEntryPath(true, '/repo', '/res')
-    assert.equal(entry, path.join('/repo', 'src', 'cli', 'wolffish.mjs'))
+    assert.equal(entry, path.join('/repo', 'src', 'cli', 'index.ts'))
+  })
+
+  // ── dev: the shim runs the source under Bun ───────────────────────────────
+  const devHome = path.join(TMP, 'dev-home')
+  fs.mkdirSync(devHome, { recursive: true })
+  await asPlatform('darwin', devHome, () =>
+    cliPath.installCliPath(
+      '/repo/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron',
+      '/repo/src/cli/index.ts'
+    )
+  )
+  check('dev: the shim runs src/cli/index.ts under the repo bun with the Solid preload', () => {
+    const body = fs.readFileSync(path.join(devHome, '.wolffish', 'bin', 'wolffish'), 'utf8')
+    assert.ok(body.includes('/repo/node_modules/bun/bin/bun.exe'), body)
+    assert.ok(body.includes('--preload'), 'JSX needs the Solid transform preloaded')
+    assert.ok(body.includes('/repo/src/cli/node_modules/@opentui/solid/scripts/preload.js'), body)
+    assert.ok(body.includes('/repo/src/cli/index.ts'), body)
+    assert.ok(body.includes('WOLFFISH_DEV=1'), body)
+    assert.ok(body.includes('WOLFFISH_EXEC='), body)
+  })
+  const devWinHome = path.join(TMP, 'dev-home-win')
+  fs.mkdirSync(devWinHome, { recursive: true })
+  await asPlatform('win32', devWinHome, () =>
+    cliPath.installCliPath(
+      'C:\\repo\\node_modules\\electron\\dist\\electron.exe',
+      'C:\\repo\\src\\cli\\index.ts'
+    )
+  )
+  check('dev windows: both shims run the source under bun.exe', () => {
+    const cmd = fs.readFileSync(path.join(devWinHome, '.wolffish', 'bin', 'wolffish.cmd'), 'utf8')
+    assert.ok(cmd.includes('bun.exe') && cmd.includes('--preload') && cmd.includes('index.ts'), cmd)
+    const bash = fs.readFileSync(path.join(devWinHome, '.wolffish', 'bin', 'wolffish'), 'utf8')
+    assert.ok(bash.includes('bun.exe') && bash.includes('index.ts'), bash)
   })
 
   fs.rmSync(TMP, { recursive: true, force: true })
