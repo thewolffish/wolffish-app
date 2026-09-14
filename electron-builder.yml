@@ -49,7 +49,11 @@ mac:
     - NSDownloadsFolderUsageDescription: Application requests access to the user's Downloads folder.
   notarize: true
   hardenedRuntime: true
-  x64ArchFiles: 'Contents/Resources/app.asar.unpacked/node_modules/**/*.{node,dylib}'
+  # Mach-O files allowed to be identical in the x64 and arm64 passes of the
+  # universal merge. The two terminal-client binaries (one per arch) ride in
+  # BOTH passes on purpose — the shim picks the right one at launch — and
+  # @electron/universal refuses identical Mach-O files it is not told about.
+  x64ArchFiles: '{Contents/Resources/app.asar.unpacked/node_modules/**/*.{node,dylib},Contents/Resources/cli/*}'
   target:
     - target: dmg
       arch:
