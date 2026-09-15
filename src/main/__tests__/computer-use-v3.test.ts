@@ -88,6 +88,7 @@ type Index = {
     region: { x: number; y: number; width: number; height: number }
   ) => Record<string, unknown>
   INDICATOR_REQUIRED: Set<string>
+  backgroundUnsupported: (button: string) => { code: string; message: string } | null
   default: { tools: Array<{ name: string }> }
 }
 
@@ -277,6 +278,24 @@ async function run(): Promise<void> {
         empty.every((w) => w.cloaked === null),
         'an empty probe result marks nothing'
       )
+    }
+  )
+
+  await check(
+    'Windows: right and middle clicks take the foreground rung; left clicks and other platforms do not',
+    () => {
+      const onWindows = process.platform === 'win32'
+      assert.equal(index.backgroundUnsupported('left'), null)
+      const right = index.backgroundUnsupported('right')
+      const middle = index.backgroundUnsupported('middle')
+      if (onWindows) {
+        assert.equal(right?.code, 'windows_secondary_button')
+        assert.equal(middle?.code, 'windows_secondary_button')
+        assert.ok(right && right.message.length > 10, 'names the reason for the evidence line')
+      } else {
+        assert.equal(right, null)
+        assert.equal(middle, null)
+      }
     }
   )
 

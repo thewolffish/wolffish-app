@@ -592,3 +592,28 @@ export function clipboardWrite({ text = undefined, imagePath = undefined, filePa
 export function callTool(name, args) {
   return guarded(() => driver.callTool(name, JSON.stringify(args ?? {})))
 }
+
+// ─── Foreground rung for keys and text ──────────────────────────────────
+//
+// The typed SDK only carries a delivery mode on click; the registry tools
+// take one for everything. 'foreground' is the driver's own escalation: a
+// brief foreground swap, real input (SendInput / CGEvent), the previous
+// foreground restored. Used only after the background rung was refused —
+// the driver documents fronting up-front as a bug.
+
+function foregroundArgs(pid, windowId, extra) {
+  return { pid: Number(pid), window_id: Number(windowId), delivery_mode: 'foreground', ...extra }
+}
+
+export function typeTextForeground({ pid, windowId, text }) {
+  return callTool('type_text', foregroundArgs(pid, windowId, { text: String(text) }))
+}
+
+export function pressKeyForeground({ pid, windowId, key, modifiers = [] }) {
+  return callTool('press_key', foregroundArgs(pid, windowId, { key: driverKeyName(key), modifiers: modifiers.map((m) => driverKeyName(m)).filter(Boolean) }))
+}
+
+export function hotkeyForeground({ pid, windowId, keys }) {
+  return callTool('hotkey', foregroundArgs(pid, windowId, { keys: keys.map((k) => driverKeyName(k)).filter(Boolean) }))
+}
+

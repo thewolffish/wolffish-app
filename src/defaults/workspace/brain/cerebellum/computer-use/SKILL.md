@@ -777,6 +777,17 @@ user's mouse away from them.
    own pointer stays free. `computer_mouse_move` aims the shadow cursor only;
    `computer_hover` is the one tool that moves the real pointer (tooltips, hover menus).
 
+Verified live on Windows 11 too (2026-09-15, build 26200, Electron 39, 35/35 checks;
+harness in `src/main/__tests__/computer-use-live/`): background clicks land through an
+occluding window, Notepad's UIA tree takes background typing with readback, menus invoke,
+the indicator is invisible to captures. Windows differs in three places, all handled: the
+driver lists DWM-cloaked shell windows (Start, Search, suspended UWP apps) as on screen,
+so they are filtered through Electron's own window enumeration; a posted right or middle
+click leaves a Chromium window dropping every later posted click, so those buttons take
+the foreground rung there; and Chromium windows refuse background typing and scrolling,
+so text and keys take the foreground rung (real input into THAT window, foreground put
+back) and scrolling the legacy path with the pointer put back afterwards.
+
 Verified live (2026-09-15, macOS 26.6, Electron 39) against a separate Chromium
 process with DOM ground truth: background clicks land on the exact pixel (16px targets
 included), double and right clicks, typing and key chords arrive, the real pointer does
@@ -814,7 +825,7 @@ runs a sequence you are sure of in one call and stops at the first miss.
 | OS | What must be granted | How the plugin tells you |
 |---|---|---|
 | **macOS** | Screen Recording (captures, window trees) and Accessibility (input), attributed to Wolffish.app. Both are one-time; Screen Recording needs a restart. | `computer_check_access` reports each grant with the System Settings path; `computer_glow_on` runs the same check; `request: true` triggers the prompts. |
-| **Windows** | Nothing to grant. Windows running as administrator cannot receive input from a non-elevated Wolffish (UIPI) — the driver reports `background_uipi_blocked`. | Same tool; elevation is reported as a limit, not a blocker. |
+| **Windows** | Nothing to grant. Windows running as administrator cannot receive input from a non-elevated Wolffish (UIPI) — the driver reports `background_uipi_blocked`. Right and middle clicks, and typing into browsers and Electron apps, use the foreground rung (the window is fronted for an instant, the previous foreground and the pointer put back); the evidence line says so. | Same tool; elevation is reported as a limit, not a blocker. |
 | **Linux X11** | Nothing to grant. Write access to `/dev/uinput` (input group or udev rule) enables a second, independent pointer; the AT-SPI bus enables the element route. | Same tool; missing pieces are reported as limits. |
 | **Linux Wayland** | Depends on the compositor: GNOME 47+ and KDE 6+ can grant remote-desktop access through the portal; KDE refuses background window input by design. Foreground delivery and display captures work through XWayland or the portal. | Same tool; it names the session type and compositor. |
 

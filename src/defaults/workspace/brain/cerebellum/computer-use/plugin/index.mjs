@@ -951,17 +951,64 @@ function pointerDrift(before, after) {
   return Math.hypot(after.x - before.x, after.y - before.y)
 }
 
+const FOREGROUND_ACTION = { effect: 'unverifiable', route: 'global_input', delivery: 'foreground', evidence: [], escalation: null }
+
+/**
+ * After a foreground-rung action. The driver moves the real pointer to act
+ * and promises to put it back, but on Windows it is still at the action
+ * point when the call returns (verified live), so the plugin puts it back
+ * itself. Only a pointer that ended somewhere ELSE means the person moved
+ * it during the action; that is the interruption the model must hear about.
+ */
+async function settlePointer(before, actedAt = null) {
+  const after = realPointer()
+  if (!before || !after) return null
+  const drift = pointerDrift(before, after)
+  if (drift <= INTERRUPT_PX) return null
+  const residue = actedAt ? Math.hypot(after.x - actedAt.x, after.y - actedAt.y) <= 12 : false
+  if (!residue) return `the real pointer moved ${Math.round(drift)}px during the action`
+  try {
+    if (nutReady) {
+      const native = dipToNative(before.x, before.y)
+      await nutMouse.setPosition(new nutPoint(native.x, native.y))
+    }
+  } catch {
+    // Cosmetic: the pointer stays at the action point.
+  }
+  return null
+}
+
 /**
  * Deliver a click at a global DIP point. Rungs: native background → native
  * foreground → legacy synthesis. Returns { ok, rung, action, refusal, win,
  * interruption, error }.
  */
+/**
+ * Windows: a posted (background) right or middle click poisons a Chromium
+ * window — every later posted click is dropped until real input arrives
+ * (verified live on Windows 11: Escape and bring_to_front do not clear it, a
+ * foreground click does) — and in a native app it opens a context menu whose
+ * modal loop swallows posted clicks anyway. Those buttons take the
+ * foreground rung there; the evidence line names why.
+ */
+export function backgroundUnsupported(button) {
+  if (process.platform === 'win32' && button !== 'left') {
+    return { code: 'windows_secondary_button', message: `a ${button} click needs real input on Windows (a posted one leaves the window dropping later clicks)` }
+  }
+  return null
+}
+
 async function deliverClick({ dip, button = 'left', count = 1, modifiers = [], delivery = 'auto' }) {
   const out = { ok: false, rung: null, action: null, refusal: null, win: null, interruption: null, error: null }
-  const wantsBg = delivery !== 'foreground'
+  const unsupported = backgroundUnsupported(button)
+  const wantsBg = delivery !== 'foreground' && !unsupported
   const allowsFg = delivery !== 'background'
   const win = driver.status().available ? await resolvePointTarget(dip) : null
   out.win = win
+  if (unsupported) {
+    out.refusal = unsupported
+    if (!allowsFg) return { ...out, error: `Background delivery refused (${unsupported.code}): ${unsupported.message}` }
+  }
 
   if (win && modifiers.length === 0 && wantsBg) {
     const scale = backingScaleFor(win.bounds)
@@ -977,16 +1024,9 @@ async function deliverClick({ dip, button = 'left', count = 1, modifiers = [], d
     const px = windowLocalPx(win.bounds, dip, scale)
     const before = realPointer()
     const r = await driver.clickWindow({ pid: win.pid, windowId: win.id, px, button, count, foreground: true })
-    const after = realPointer()
-    const drift = pointerDrift(before, after)
+    const interruption = await settlePointer(before, dip)
     if (r.ok) {
-      return {
-        ...out,
-        ok: true,
-        rung: 'foreground',
-        action: r.action,
-        interruption: drift > INTERRUPT_PX ? `the real pointer moved ${Math.round(drift)}px during the action` : null
-      }
+      return { ...out, ok: true, rung: 'foreground', action: r.action, interruption }
     }
     out.refusal = out.refusal ?? r.refusal
   }
@@ -1016,14 +1056,13 @@ async function deliverClick({ dip, button = 'left', count = 1, modifiers = [], d
   } finally {
     for (const k of held.reverse()) await nutKeyboard.releaseKey(k).catch(() => {})
   }
-  const after = realPointer()
-  const drift = before && after ? Math.hypot(after.x - native.x, after.y - native.y) : 0
+  await sleep(40)
   return {
     ...out,
     ok: true,
     rung: 'legacy',
     action: { effect: 'unverifiable', route: 'global_input', delivery: 'foreground', evidence: [], escalation: null },
-    interruption: drift > INTERRUPT_PX ? `the real pointer ended ${Math.round(drift)}px away from the click point (the user may be using the mouse)` : null
+    interruption: await settlePointer(before, dip)
   }
 }
 
@@ -1037,8 +1076,8 @@ async function coveringWindow(win, dip) {
 
 function rungPhrase(res) {
   if (res.rung === 'background') return `delivered in the background to ${describeWindow(res.win)} (your pointer did not move, the window was not raised)`
-  if (res.rung === 'foreground') return `delivered in the FOREGROUND to ${describeWindow(res.win)} — no background route (${res.refusal?.code ?? 'unavailable'}), so the window was briefly activated and the pointer restored`
-  return `delivered by moving the real pointer${res.win ? ` over ${describeWindow(res.win)}` : ''} (legacy path${res.refusal ? `; the native driver refused: ${res.refusal.code}` : ''})`
+  if (res.rung === 'foreground') return `delivered in the FOREGROUND to ${describeWindow(res.win)} — no background route (${res.refusal?.code ?? 'unavailable'}), so the window was briefly activated and the pointer put back`
+  return `delivered by moving the real pointer${res.win ? ` over ${describeWindow(res.win)}` : ''} and putting it back (legacy path${res.refusal ? `; the native driver refused: ${res.refusal.code}` : ''})`
 }
 
 function effectPhrase(action) {
@@ -1331,17 +1370,14 @@ async function mouseDrag(args) {
         await nutMouse.releaseButton(btn).catch(() => {})
       }
       await sleep(120)
-      const after = realPointer()
-      const drift = after ? Math.hypot(after.x - endNative.x, after.y - endNative.y) : 0
       res = {
         ok: true,
         rung: 'legacy',
         action: { effect: 'unverifiable', route: 'global_input', delivery: 'foreground', evidence: [], escalation: null },
         refusal: res.refusal,
         win,
-        interruption: drift > INTERRUPT_PX ? `the real pointer ended ${Math.round(drift)}px from the release point` : null
+        interruption: await settlePointer(before, endDip)
       }
-      void before
     }
     overlay.cursorPulse()
     await overlay.cursorTo(endDip, { kind: 'pointer', label: target ?? '', animate: true })
@@ -1403,6 +1439,9 @@ async function mouseScroll(args) {
     if (!res.ok) {
       if (delivery === 'background') return { success: false, error: `Background scroll refused${res.refusal ? ` (${res.refusal.code}): ${res.refusal.message}` : ''}` }
       if (!nutReady) return { success: false, error: 'No scroll path is available on this machine.' }
+      // A real wheel goes to the window under the pointer, so the pointer
+      // has to visit the point; it is put back afterwards.
+      const before = realPointer()
       const native = dipToNative(dip.x, dip.y)
       await nutMouse.setPosition(new nutPoint(native.x, native.y))
       await sleep(60)
@@ -1411,7 +1450,8 @@ async function mouseScroll(args) {
       else if (direction === 'down') await nutMouse.scrollDown(notches)
       else if (direction === 'left') await nutMouse.scrollLeft(notches)
       else await nutMouse.scrollRight(notches)
-      res = { ok: true, rung: 'legacy', action: { effect: 'unverifiable', route: 'global_input', delivery: 'foreground', evidence: [], escalation: null }, refusal: res.refusal, win, interruption: null }
+      await sleep(40)
+      res = { ok: true, rung: 'legacy', action: { effect: 'unverifiable', route: 'global_input', delivery: 'foreground', evidence: [], escalation: null }, refusal: res.refusal, win, interruption: await settlePointer(before, dip) }
     }
     if (res.win) session().lastTarget = res.win
     await sleep(150)
@@ -1481,6 +1521,12 @@ async function deliverKeys({ key, modifiers, delivery }) {
         : await driver.pressKey({ pid: win.pid, windowId: win.id, key, modifiers: [] })
     if (r.ok) return { ok: true, rung: 'background', action: r.action ?? { effect: 'unverifiable', route: 'synthetic_events', delivery: 'background', evidence: [], escalation: null }, refusal: null, win, interruption: null }
     if (delivery === 'background') return { ok: false, error: `Background key delivery refused (${r.refusal?.code}): ${r.refusal?.message}`, refusal: r.refusal, win }
+    // Foreground rung: the driver activates the target, sends real input,
+    // restores the previous foreground — the keys reach THIS window, not
+    // whatever happens to be focused.
+    const before = realPointer()
+    const f = modifiers.length > 0 ? await driver.hotkeyForeground({ pid: win.pid, windowId: win.id, keys: [...modifiers, key] }) : await driver.pressKeyForeground({ pid: win.pid, windowId: win.id, key, modifiers: [] })
+    if (f.ok) return { ok: true, rung: 'foreground', action: f.action ?? FOREGROUND_ACTION, refusal: r.refusal, win, interruption: await settlePointer(before) }
     if (!nutReady) return { ok: false, error: `Native delivery refused (${r.refusal?.code}): ${r.refusal?.message}`, refusal: r.refusal, win }
     await nutPress(key, modifiers)
     return { ok: true, rung: 'legacy', action: { effect: 'unverifiable', route: 'global_input', delivery: 'foreground', evidence: [], escalation: null }, refusal: r.refusal, win, interruption: null }
@@ -1514,6 +1560,23 @@ async function deliverText({ text, via, delivery }) {
       if (r.ok) return { ok: true, rung: 'background', path: 'keystrokes', action: r.action ?? null, refusal: null, win, note: r.text }
     }
     if (delivery === 'background') return { ok: false, error: `Background typing refused (${r.refusal?.code}): ${r.refusal?.message}`, win }
+    // Foreground rung (see deliverKeys). The clipboard variant pastes with
+    // a foreground chord; the keystroke variant types real Unicode input.
+    {
+      const before = realPointer()
+      let f
+      if (preferClipboard) {
+        const previous = electronClipboard.readText()
+        electronClipboard.writeText(text)
+        await sleep(80)
+        f = await driver.hotkeyForeground({ pid: win.pid, windowId: win.id, keys: [process.platform === 'darwin' ? 'cmd' : 'ctrl', 'v'] })
+        await sleep(200)
+        electronClipboard.writeText(previous)
+      } else {
+        f = await driver.typeTextForeground({ pid: win.pid, windowId: win.id, text })
+      }
+      if (f.ok) return { ok: true, rung: 'foreground', path: preferClipboard ? 'clipboard' : 'keystrokes', action: f.action ?? FOREGROUND_ACTION, refusal: r.refusal, win, note: f.text, interruption: await settlePointer(before) }
+    }
     if (!nutReady) return { ok: false, error: `Native typing refused (${r.refusal?.code}): ${r.refusal?.message}`, win }
     const p = await nutType(text)
     return { ok: true, rung: 'legacy', path: p, action: { effect: 'unverifiable', route: 'global_input', delivery: 'foreground', evidence: [], escalation: null }, refusal: r.refusal, win }
@@ -1585,7 +1648,7 @@ async function keyboardType(args) {
       tool: 'type',
       target: argText(args, 'target'),
       expect: argText(args, 'expect'),
-      res: { ...res, rung: res.rung, interruption: null }
+      res: { ...res, rung: res.rung, interruption: res.interruption ?? null }
     })
     return {
       success: true,
@@ -1916,8 +1979,11 @@ async function clickElementTool(args) {
       }
     }
     let res
-    const r = await driver.clickElement({ pid: win.pid, windowId: win.id, token: t.token, button, count, foreground: delivery === 'foreground' })
-    if (r.ok) res = { ok: true, rung: delivery === 'foreground' ? 'foreground' : 'background', action: r.action, refusal: null, win: { ...win, app: el ? '' : '', title: '' }, interruption: null }
+    const unsupported = backgroundUnsupported(button)
+    if (unsupported && delivery === 'background') return { success: false, error: `Background delivery refused (${unsupported.code}): ${unsupported.message}` }
+    const foreground = delivery === 'foreground' || !!unsupported
+    const r = await driver.clickElement({ pid: win.pid, windowId: win.id, token: t.token, button, count, foreground })
+    if (r.ok) res = { ok: true, rung: foreground ? 'foreground' : 'background', action: r.action, refusal: unsupported, win: { ...win, app: el ? '' : '', title: '' }, interruption: null }
     else if (r.refusal?.code === 'stale_snapshot' || /stale|snapshot/i.test(r.refusal?.message ?? '')) {
       return { success: false, error: `That token is stale — the window changed since computer_find. Call computer_find again and use the new token. (${r.refusal?.message})` }
     } else if (center && delivery !== 'background') {
