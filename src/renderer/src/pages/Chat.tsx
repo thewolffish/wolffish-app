@@ -1088,7 +1088,8 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
             // must hand these back untouched or continuing a voice-note
             // conversation in-app would strip the flag off disk.
             ...(m.voicePrompt ? { voicePrompt: true } : {}),
-            ...(m.voiceLang ? { voiceLang: m.voiceLang } : {})
+            ...(m.voiceLang ? { voiceLang: m.voiceLang } : {}),
+            ...(m.systemAside ? { systemAside: true } : {})
           }
         }
         const am = m as AssistantMessage
@@ -2138,6 +2139,12 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
          */
         workingFolders?: string[]
         contextFiles?: string[]
+        /**
+         * The app is speaking, not the person: the Continue after a stalled
+         * provider call. Persisted as a user turn flagged systemAside, so the
+         * model reads it as a system note and the feed shows a muted line.
+         */
+        systemAside?: boolean
       }
     ) => {
       const trimmed = content.trim()
@@ -2165,7 +2172,8 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
           timestamp: Date.now(),
           ...(attachments.length > 0 ? { attachments } : {}),
           ...(opts?.voice ? { voicePrompt: true } : {}),
-          ...(opts?.voice?.lang ? { voiceLang: opts.voice.lang } : {})
+          ...(opts?.voice?.lang ? { voiceLang: opts.voice.lang } : {}),
+          ...(opts?.systemAside ? { systemAside: true } : {})
         }
         const assistantPlaceholder: AssistantMessage = {
           id: cryptoId(),
@@ -2192,8 +2200,10 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
           role: 'user'
           content: string
           attachments?: MessageAttachment[]
+          systemAside?: boolean
         } = { role: 'user', content: historyContent }
         if (attachments.length > 0) currentEntry.attachments = attachments
+        if (opts?.systemAside) currentEntry.systemAside = true
         const history = textHistory(messages, workspaceRoot, {
           summary: conversationRef.current?.summary,
           summarizedThroughMessage: conversationRef.current?.summarizedThroughMessage,
@@ -2334,6 +2344,14 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     },
     [sendContent, t]
   )
+
+  // The stalled card's Continue: not a re-ask but a system aside — the model
+  // is told the previous request was aborted after five silent minutes and
+  // that everything above still stands. Rides history as a user turn (see
+  // UserMessage.systemAside) so provider alternation holds.
+  const handleContinue = useCallback(() => {
+    void sendContent(t('errors.provider.stallContinueMessage'), [], { systemAside: true })
+  }, [sendContent, t])
 
   // A procedure's Play button spawns a fresh SESSION carrying the procedure
   // on its descriptor, then switches to Chat — this instance auto-sends it
@@ -3272,6 +3290,14 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
                     m.role === 'assistant' &&
                     m.status === 'error'
                       ? handleTryAgain
+                      : undefined
+                  }
+                  onContinue={
+                    i === feedMessages.length - 1 &&
+                    !busy &&
+                    m.role === 'assistant' &&
+                    m.status === 'error'
+                      ? handleContinue
                       : undefined
                   }
                 />
@@ -4612,6 +4638,8 @@ type ChatItemProps = {
   onAskRespond: (askId: string, response: AskUserResponse) => void
   /** Present only on the last message when it's a failed turn and no turn is running. */
   onTryAgain?: (reason: string) => void
+  /** Same gate; only the stalled card renders it (see ProviderErrorCard). */
+  onContinue?: () => void
 }
 
 // Memoized so a streaming turn (or any parent state tick — token counters,
@@ -4627,7 +4655,8 @@ const ChatItem = memo(
     awaitingAsk,
     onApprovalDecision,
     onAskRespond,
-    onTryAgain
+    onTryAgain,
+    onContinue
   }: ChatItemProps): React.JSX.Element {
     if (message.role === 'user') {
       return (
@@ -4636,6 +4665,7 @@ const ChatItem = memo(
           attachments={message.attachments}
           transcribing={message.transcribing}
           voicePrompt={message.voicePrompt}
+          systemAside={message.systemAside}
           timestamp={message.timestamp}
           t={t}
         />
@@ -4650,6 +4680,7 @@ const ChatItem = memo(
         onApprovalDecision={onApprovalDecision}
         onAskRespond={onAskRespond}
         onTryAgain={onTryAgain}
+        onContinue={onContinue}
       />
     )
   },
@@ -4666,6 +4697,7 @@ const ChatItem = memo(
     // Flips between undefined and a stable callback as the row gains/loses
     // "last failed message while idle" status — must invalidate the memo.
     if (prev.onTryAgain !== next.onTryAgain) return false
+    if (prev.onContinue !== next.onContinue) return false
     // awaitingApproval/awaitingAsk are GLOBAL booleans passed to every row but
     // only drive the streaming bubble's "Awaiting…" placeholder. Ignoring them
     // for non-streaming rows is what stops a mid-turn permission prompt from
@@ -4690,6 +4722,7 @@ function UserBubble({
   attachments,
   transcribing,
   voicePrompt,
+  systemAside,
   timestamp,
   footer,
   t: tProp
@@ -4698,6 +4731,8 @@ function UserBubble({
   attachments?: MessageAttachment[]
   transcribing?: boolean
   voicePrompt?: boolean
+  /** The app spoke, not the person: a muted note instead of a bubble. */
+  systemAside?: boolean
   timestamp?: number
   /** Replaces the copy + time footer (the pending row's status + withdraw). */
   footer?: ReactNode
@@ -4715,6 +4750,15 @@ function UserBubble({
   const hasAttachments = !!attachments && attachments.length > 0
   const timeLabel = useRelativeTime(timestamp)
   const showFooter = !transcribing && hasContent
+  // After every hook: the app's own aside renders as a muted note, never as
+  // the person's bubble.
+  if (systemAside) {
+    return (
+      <div className="flex w-full justify-center py-1">
+        <span className="text-muted text-xs italic">{t('errors.provider.systemAsideLabel')}</span>
+      </div>
+    )
+  }
   return (
     <div className="flex w-full flex-col gap-1.5 items-end">
       {transcribing ? (
@@ -4803,7 +4847,8 @@ function AssistantBubble({
   awaitingAsk,
   onApprovalDecision,
   onAskRespond,
-  onTryAgain
+  onTryAgain,
+  onContinue
 }: {
   message: AssistantMessage
   todoLists: Map<string, TodoItem[]>
@@ -4812,6 +4857,7 @@ function AssistantBubble({
   onApprovalDecision: (id: string, decision: ApprovalDecision) => void
   onAskRespond: (askId: string, response: AskUserResponse) => void
   onTryAgain?: (reason: string) => void
+  onContinue?: () => void
 }): React.JSX.Element {
   const { t } = useTranslation()
   const verbose = useContext(InAppVerboseContext)
@@ -4884,7 +4930,11 @@ function AssistantBubble({
     if (providerSeg?.providerErrors?.length) {
       return (
         <div className="flex flex-col gap-1 items-start">
-          <ProviderErrorCards failures={providerSeg.providerErrors} onTryAgain={onTryAgain} />
+          <ProviderErrorCards
+            failures={providerSeg.providerErrors}
+            onTryAgain={onTryAgain}
+            onContinue={onContinue}
+          />
         </div>
       )
     }
@@ -4903,6 +4953,7 @@ function AssistantBubble({
             }
           ]}
           onTryAgain={onTryAgain}
+          onContinue={onContinue}
         />
       </div>
     )
@@ -6635,6 +6686,7 @@ function textHistory(
       const content = composeHistoryContent(m.content, m.attachments ?? [], workspaceRoot)
       const entry: ChatHistoryMessage = { role: 'user', content }
       if (m.attachments && m.attachments.length > 0) entry.attachments = m.attachments
+      if (m.systemAside) entry.systemAside = true
       out.push(entry)
     } else if (isAssistant(m) && m.status === 'complete') {
       const segments = m.segments.filter((s) => !('worker' in s && s.worker))

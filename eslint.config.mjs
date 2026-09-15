@@ -54,7 +54,11 @@ export default defineConfig(
     // reason: Node loads them directly, so there is nothing to strip
     // annotations. Exempting the rule rather than adding them to `ignores`
     // (where scripts/ sits) keeps every non-TypeScript rule on them.
-    files: ['src/cli/**/*.mjs', 'build/**/*.mjs'],
+    //
+    // The live runtime harnesses (`npx electron …/e2e-mobile-live.mjs`) are a
+    // third instance of the same shape — Electron reads them off disk, so an
+    // annotation would be a syntax error at run time.
+    files: ['src/cli/**/*.mjs', 'build/**/*.mjs', 'src/main/runtime/__tests__/*.mjs'],
     rules: {
       '@typescript-eslint/explicit-function-return-type': 'off'
     }

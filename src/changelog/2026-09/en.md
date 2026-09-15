@@ -1,4 +1,26 @@
-## v1.0.298 — 2026-09-15 `Latest`
+## v1.0.299 — 2026-09-15 `Latest`
+
+### Wolffish Can Run Your Mobile App, and Drive It
+
+Wolffish now drives **iOS simulators and Android emulators and devices** with one vocabulary: boot a device, install an app and launch it with its logs attached, read the screen, touch it, and see what happened. Touches never go to a coordinate guessed off an old screenshot — Wolffish reads the app's **accessibility tree**, gets back every button, field and cell with a reference of its own, and taps the reference. Every touch returns **proof**: a close-up patch of the exact spot with a crosshair on it, and an objective verdict on whether the screen actually changed — *"Changed: no"* means re-aim from a fresh look, not press again. Typing goes in as keystrokes for plain text and through the pasteboard for **Arabic, other scripts and emoji**, so what you asked for is what arrives. Beyond driving: screenshots and native-resolution zoom, video recording, the device log for crashes and print output, and **simulated locations, push notifications, permission grants, dark mode, the status bar and rotation**. Thirty-seven tools in all — iOS on macOS, Android everywhere.
+
+### You See the Device Being Driven
+
+A simulator moving by itself is unsettling if you do not know why. Whenever Wolffish is looking at or touching a device, a **blue frame sits around that device's window** with a pill reading *"Wolffish is driving iPhone 16 Pro"*, and a **ripple appears wherever a touch lands** — a stroke drawn across the screen for a swipe. It follows the window if you drag or resize it, clicks pass straight through it so it never gets in your way, and the tools that see or touch the device **refuse to run until it is up**. It comes down as the last act of the turn, and if a turn ever ends with it still on — finished, given up on, or failed — the app takes it down itself, so the frame on your screen always means what it says.
+
+### Building an iOS App From Source, In One Call
+
+Point Wolffish at a folder and it finds what is there: **Xcode workspaces and projects, Swift packages, Flutter, Expo, React Native and Gradle** — and how each one is run. For an Xcode app, a single call **builds it, installs it on the simulator and launches it with its logs streaming**; when the build fails, the errors come back as **file and line**, not a thousand lines of xcodebuild output. Scheme, project, configuration and device are set once for the conversation and then left out of every call after that. Whatever the framework, the loop closes the same way: run the app, then read and touch it on the device instead of guessing from the code.
+
+### A Silent API Call No Longer Hangs Your Turn
+
+A model provider can accept a request and then say **nothing at all** — one call measured here sat silent for ten minutes and returned a single token, another for four minutes and returned nothing — and the turn simply hung, because an open connection that never speaks looks exactly like one that is thinking. Wolffish now watches for it: **five minutes with no response whatsoever** and the request is dropped, the turn ends, and you get a card that says so. It is never retried automatically, because five minutes of silence is **your call to make** — so the card offers **Continue**, which carries on from exactly where things stopped. Nothing is lost: the files written, the tool results and the plan so far all still stand, and the note that resumes the conversation appears as a **quiet line in the feed**, never as something you said. Local models are exempt — a slow machine thinking about a long prompt is genuinely quiet.
+
+### Computer Use Keeps Its Session, and Stops Retrying What It Cannot Fix
+
+The screen driver's session expired after five idle minutes, and a single silent API call was enough to cross that line — after which **every** screen action refused, for the rest of the turn. The session is now kept alive for as long as the indicator is up, and if it does lapse, the next action **reconnects and repeats itself** without you ever seeing a failure. Refusals that cannot change on another attempt — a point outside the current picture, a key name the driver does not know, an action taken before the indicator is on — now come back **immediately, with the fix**, instead of burning three identical retries. Key names like *period*, *comma* and *slash* are understood now, and long text is typed **in one call**, with the character count reported, so a paragraph that arrived short is visible rather than silent.
+
+## v1.0.298 — 2026-09-15
 
 ### Computer Use Stops Taking Your Mouse
 
