@@ -60,6 +60,7 @@ type Driver = {
     point: { x: number; y: number },
     opts?: { excludePid?: number }
   ) => { id: number } | null
+  markCloaked: (windows: unknown[], ids: unknown) => Array<{ id: number; cloaked: boolean | null }>
 }
 type Elements = {
   elementAt: (els: unknown[], p: { x: number; y: number }) => { index: number } | null
@@ -193,6 +194,7 @@ async function run(): Promise<void> {
     onScreen: true,
     minimized: false,
     onCurrentSpace: true,
+    cloaked: null,
     ...extra
   })
 
@@ -214,6 +216,66 @@ async function run(): Promise<void> {
         driver.windowAt(unknownZ, { x: 160, y: 160 })?.id,
         2,
         'a known stacking order beats an unknown one'
+      )
+    }
+  )
+
+  await check(
+    'Windows: DWM-cloaked shell windows are marked from the capturable set and never targeted',
+    () => {
+      // Live shape from Windows 11: the Start menu, Search and a suspended
+      // Settings sit above the real app in z and cover the display.
+      const list = [
+        win(9, 0, 0, 1920, 1032, { app: 'StartMenuExperienceHost.exe', title: 'Start' }),
+        win(8, 531, 142, 858, 890, { app: 'SearchHost.exe', title: 'Search' }),
+        win(7, 178, 141, 1142, 587, { app: 'Notepad.exe', title: 'Untitled - Notepad' }),
+        win(2, 0, 8, 1920, 1032, { app: 'SystemSettings.exe', title: 'Settings' }),
+        win(1, 0, 0, 1920, 1080, { app: 'explorer.exe', title: 'Program Manager' }),
+        win(0, 50, 50, 10, 10, { title: '' })
+      ]
+      const marked = driver.markCloaked(list, new Set([7]))
+      assert.deepEqual(
+        marked.map((w) => [w.id, w.cloaked]),
+        [
+          [9, true],
+          [8, true],
+          [7, false],
+          [2, true],
+          [1, true],
+          [0, null]
+        ],
+        'only the capturable window is on screen; an untitled one stays unknown'
+      )
+      assert.equal(
+        driver.windowAt(marked, { x: 431, y: 240 })?.id,
+        7,
+        'the app under Start, not Start'
+      )
+      assert.equal(
+        driver.windowAt(marked, { x: 1800, y: 1000 }),
+        null,
+        'a cloaked Settings is not a target either'
+      )
+      assert.equal(
+        driver.windowAt(marked, { x: 55, y: 55 })?.id,
+        0,
+        'unknown cloaking does not exclude'
+      )
+      const untouched = driver.markCloaked(
+        list.map((w) => ({ ...w, cloaked: null })),
+        null
+      )
+      assert.ok(
+        untouched.every((w) => w.cloaked === null),
+        'no probe → nothing marked'
+      )
+      const empty = driver.markCloaked(
+        list.map((w) => ({ ...w, cloaked: null })),
+        new Set()
+      )
+      assert.ok(
+        empty.every((w) => w.cloaked === null),
+        'an empty probe result marks nothing'
       )
     }
   )
@@ -345,6 +407,19 @@ async function run(): Promise<void> {
     )
     assert.ok(elements.isSecureField(el(1, 'AXSecureTextField', null)))
     assert.ok(!elements.isSecureField(el(1, 'AXTextField', null)))
+    // Windows UIA reports a web password input as a plain edit named after
+    // its label (verified live: 'edit "Password" [web content]'); the name is
+    // the only signal, so a text-entry role with a password-like name counts.
+    assert.ok(elements.isSecureField(el(1, 'edit', null, { label: 'Password' })))
+    assert.ok(
+      elements.isSecureField(el(1, 'ControlType.Edit', null, { label: 'Confirm passphrase' }))
+    )
+    assert.ok(elements.isSecureField(el(1, 'AXTextField', null, { label: 'كلمة المرور' })))
+    assert.ok(
+      !elements.isSecureField(el(1, 'AXButton', null, { label: 'Show password' })),
+      'only text entry roles'
+    )
+    assert.ok(!elements.isSecureField(el(1, 'edit', null, { label: 'Username' })))
   })
 
   // ── 5. access report ────────────────────────────────────────────────────

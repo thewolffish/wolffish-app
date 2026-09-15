@@ -271,8 +271,33 @@ function normalizeWindow(w) {
     layer: w.layer ?? null,
     onScreen: !!w.isOnScreen,
     minimized: w.minimized ?? null,
-    onCurrentSpace: w.onCurrentSpace ?? null
+    onCurrentSpace: w.onCurrentSpace ?? null,
+    // Windows only: DWM-cloaked (see markCloaked). Null where unknown.
+    cloaked: null
   }
+}
+
+/**
+ * Windows keeps shell surfaces — the Start menu, Search, the notification
+ * center, every suspended UWP app such as a closed Settings — as top-level
+ * windows that are "visible" to EnumWindows but DWM-cloaked: they sit at the
+ * top of the stacking order, cover the whole display and receive nothing.
+ * The driver lists them as on screen (verified live on Windows 11 26200: a
+ * background click meant for an app went to StartMenuExperienceHost "Start"
+ * and vanished). Chromium's window enumeration skips cloaked and tool
+ * windows, so the ids Electron's desktopCapturer can see are the windows
+ * really on screen; everything else is marked cloaked. An empty title is
+ * left alone because Chromium skips those too, cloaked or not. Pure;
+ * exported for tests.
+ */
+export function markCloaked(windows, capturableIds) {
+  if (!(capturableIds instanceof Set) || capturableIds.size === 0) return windows
+  for (const w of windows) {
+    if (w.cloaked === true) continue
+    if (!w.title) continue
+    w.cloaked = !capturableIds.has(w.id)
+  }
+  return windows
 }
 
 /**
@@ -306,7 +331,7 @@ export async function listApps() {
 export function windowAt(windows, point, { excludePid = process.pid } = {}) {
   const inside = windows.filter((w) => {
     if (w.pid === excludePid) return false
-    if (!w.onScreen || w.minimized === true || w.onCurrentSpace === false) return false
+    if (!w.onScreen || w.minimized === true || w.onCurrentSpace === false || w.cloaked === true) return false
     if (w.layer != null && w.layer !== 0) return false
     const b = w.bounds
     return point.x >= b.x && point.x < b.x + b.width && point.y >= b.y && point.y < b.y + b.height

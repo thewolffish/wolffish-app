@@ -58,9 +58,20 @@ export function friendlyRole(role) {
   return raw.replace(/^AX/, '').replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase()
 }
 
+// Text-entry roles across the three trees (AX, UIA, AT-SPI).
+const TEXT_ENTRY_ROLE = /textfield|textarea|securetextfield|edit|entry|text$/i
+// Windows UIA (and often AT-SPI) expose a web password input as a plain
+// edit whose only tell is its accessible name (verified live on Windows 11:
+// 'edit "Password" [web content]'). The name decides there.
+const PASSWORD_NAME = /\bpass(word|code|phrase)\b|\bpwd\b|كلمة (المرور|السر)/i
+
 export function isSecureField(element) {
   const role = String(element?.role ?? '').toLowerCase()
-  return role.includes('secure') || role.includes('password')
+  if (role.includes('secure') || role.includes('password')) return true
+  const key = role.replace(/^ax/, '').replace(/^controltype\./, '').replace(/[\s_-]/g, '')
+  if (!TEXT_ENTRY_ROLE.test(key)) return false
+  const name = `${element?.label ?? ''} ${element?.valueDescription ?? ''}`
+  return PASSWORD_NAME.test(name)
 }
 
 /** `button "Close tab"` — how an element reads in tool output. Pure. */

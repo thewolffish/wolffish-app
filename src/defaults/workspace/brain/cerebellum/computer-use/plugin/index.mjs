@@ -850,11 +850,33 @@ async function zoomRegion(args) {
 
 let windowsCache = { at: 0, list: [] }
 
+/**
+ * Windows only: the ids of the top-level windows Chromium's enumeration can
+ * see — everything DWM-cloaked (Start, Search, suspended UWP apps) and every
+ * tool window is absent. ~200ms; runs alongside the driver's own listing.
+ * Null where the probe does not apply or failed, so nothing gets marked.
+ */
+async function capturableWindowIds() {
+  if (process.platform !== 'win32' || !electronDesktopCapturer) return null
+  try {
+    const sources = await electronDesktopCapturer.getSources({ types: ['window'], thumbnailSize: { width: 0, height: 0 }, fetchWindowIcons: false })
+    const ids = new Set()
+    for (const s of sources) {
+      const id = Number(String(s.id).split(':')[1])
+      if (Number.isFinite(id)) ids.add(id)
+    }
+    return ids
+  } catch {
+    return null
+  }
+}
+
 async function visibleWindows(force = false) {
   if (!driver.status().available) return []
   if (!force && Date.now() - windowsCache.at < 800) return windowsCache.list
   try {
-    const list = await driver.listWindows({ onScreenOnly: true })
+    const [raw, capturable] = await Promise.all([driver.listWindows({ onScreenOnly: true }), capturableWindowIds()])
+    const list = driver.markCloaked(raw, capturable).filter((w) => w.cloaked !== true)
     windowsCache = { at: Date.now(), list }
     return list
   } catch {
