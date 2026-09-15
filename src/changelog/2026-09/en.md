@@ -1,4 +1,30 @@
-## v1.0.297 — 2026-09-15 `Latest`
+## v1.0.298 — 2026-09-15 `Latest`
+
+### Computer Use Stops Taking Your Mouse
+
+Driving the screen used to mean surrendering it: every click moved **your pointer**, every keystroke went to whatever had focus, and a nudge of the mouse mid-action sent the click somewhere else. Computer use now delivers clicks, typing, shortcuts, scrolls and drags **straight to the target window in the background** — your pointer does not move, the window is not raised, and you keep working beside it. When an app genuinely cannot take background input, Wolffish steps down one rung on purpose — a brief foreground delivery with the pointer restored — and **says so in the result**, instead of failing quietly. Underneath sits a native driver for all three operating systems (macOS, Windows, Linux X11 and, where the compositor allows, Wayland), verified live against a real window with pixel-exact ground truth.
+
+### A Shadow Cursor Shows Where Wolffish Is Working
+
+The blue glow and the capture notice now travel with a **shadow cursor**: an arrow that glides to the exact point before every action, pulses on the press, and parks there afterwards, with a small label naming the target. You always see where Wolffish is about to act — and because it is a drawing on the indicator layer, it never touches your real pointer and never appears in Wolffish's own screenshots. The indicator also learned to stay honest under stress: if the system takes its window down (a display unplugged, a sleep), the next action puts it back on a display that exists, so **"on" always means visibly on**.
+
+### A Second Way to Find Things: By Name
+
+Beyond pixels, Wolffish can now read an app's **accessibility tree** — the same structure a screen reader uses — to find a button, field, checkbox or menu item **by its name**, click it by reference, read a field's current value, write a value directly with readback, and invoke menu paths like *File › Save As…* without aiming at tiny items. Every pixel click also reports **the control the app says sits under the point**, so a wrong aim is caught by a single lookup rather than by eyesight. Native apps expose rich trees; web content in browsers usually exposes only the window chrome, and the result says so plainly.
+
+### Evidence on Every Action
+
+Each screen action now returns one evidence line: how it was delivered, the driver's verdict on whether it took effect, an objective before-and-after comparison of the screen, the element under the point, and — for the rare foreground delivery — whether **your mouse moved during it**, in which case Wolffish refuses to repeat anything with side effects. That evidence, together with what the model said it expected, is carried into the next step so the model **verifies before it plans**. A new wait tool replaces guessed delays: wait until the screen is stable, until a window with a given title appears, or until a control appears or disappears.
+
+### Permissions, Asked Up Front
+
+A new access check tells Wolffish — and you — exactly what this machine allows before a session starts: Accessibility and Screen Recording on macOS with the settings pane to open, the session type and compositor on Linux, elevation limits on Windows, and whether the background driver loaded. Turning the indicator on runs the same check, so a missing grant is named at the first step with its fix, never discovered as a cryptic error halfway through. The Computer Use settings page shows an **Open System Settings** button next to any grant that is missing, and nothing next to one that is not.
+
+### More Ways to Act, All the Model's to Choose
+
+The toolset grows from twelve to thirty-one: window listing and per-window capture (even when the window is covered), triple clicks and modifier clicks, held mouse buttons and keys, hover for tooltips, typing with *replace* and *press Enter* in one step, scrolling by pages, clipboard read and write, and batches that run a sure sequence in one call and stop at the first miss. The approval card names the app and window an action is going to, and **"Allow for this conversation" now allows that app** rather than one tool name.
+
+## v1.0.297 — 2026-09-15
 
 ### A Note in Brackets Is Still a Message
 

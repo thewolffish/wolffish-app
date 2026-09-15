@@ -47,6 +47,7 @@ mac:
     - NSMicrophoneUsageDescription: Application requests access to the device's microphone.
     - NSDocumentsFolderUsageDescription: Application requests access to the user's Documents folder.
     - NSDownloadsFolderUsageDescription: Application requests access to the user's Downloads folder.
+    - NSAppleEventsUsageDescription: Wolffish controls other applications on your behalf when you ask it to drive the screen.
   notarize: true
   hardenedRuntime: true
   # Mach-O files allowed to be identical in the x64 and arm64 passes of the

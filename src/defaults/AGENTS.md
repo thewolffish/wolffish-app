@@ -360,7 +360,7 @@ so hidden — `ls -a` to see them). Drop a folder in, and the agent learns a ski
 | | `.github` | GitHub API — ~60 `github_*` tools (repos, issues, PRs, Actions, releases, gists, …) |
 | | `.google` | Workspace — `google_gmail_*`, `google_drive_*`, `google_calendar_*`, `google_sheets_*`, contacts, tasks |
 | | `.notion` | Pages, databases, blocks — `notion_search/read_page/create_page/…` |
-| **Desktop** | `.computer-use` | Screen control with a verified-aim loop — `computer_screenshot`, `computer_zoom`, `computer_mouse_click`, `computer_mouse_drag`, `computer_keyboard_type`, … |
+| **Desktop** | `.computer-use` | Screen control with a verified-aim loop, pointer-free background input and an element route — `computer_screenshot`, `computer_window_screenshot`, `computer_find`, `computer_click_element`, `computer_mouse_click`, `computer_keyboard_type`, `computer_wait_for`, `computer_check_access`, … |
 | **Meta** | `.skills` | The agent manages/authors its own capabilities — `skill_list`, `skill_search`, `skill_read_source`, `skill_enable`, `skill_disable`, `skill_delete`, `skill_create`, `skill_reload` |
 | | `.automations` | The agent manages its scheduled heartbeat jobs — `automation_list`, `automation_create`, `automation_edit`, `automation_delete`, `automation_check`, `automation_run` |
 | | `.introspect` | The agent inspects itself — `wolffish_status`, `channel_status`, `wolffish_performance`, `wolffish_memory`, `wolffish_recall`, `wolffish_list_files` |
