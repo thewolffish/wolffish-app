@@ -70,6 +70,15 @@ export type SnapshotSources = {
     extensionVersion?: string | null
     browsers?: readonly unknown[]
   }>
+  /** The extension server's cheap readiness (cached doctor report, or a
+   * probe-less compose) — the phone shows "ready / N blockers" without a
+   * round-trip to the browser. */
+  extensionReadiness?: () => Promise<{
+    ready?: boolean
+    tier?: string
+    findings?: readonly unknown[]
+    summary?: string
+  }>
   /** Months this build's own release notes cover (src/changelog), newest
    * first. The list alone — bodies are served one at a time by
    * Rpc.changelogRead, because the full set is hundreds of KB. */
@@ -275,6 +284,7 @@ export async function buildConfigSnapshot(sources: SnapshotSources): Promise<Con
     projects,
     compactionRuns,
     extension,
+    readiness,
     changelogMonths
   ] = await Promise.all([
     attempt(sources.dataAnalytics),
@@ -284,8 +294,14 @@ export async function buildConfigSnapshot(sources: SnapshotSources): Promise<Con
     attempt(sources.projects),
     attempt(sources.compactionRuns),
     attempt(sources.extensionStatus),
+    attempt(sources.extensionReadiness),
     attempt(sources.changelogMonths)
   ])
+
+  // Blockers count + the first blocker's title: enough for a status row on
+  // the phone; the full walkthrough is a desktop/model affair.
+  const readinessFindings = (readiness?.findings ?? []) as Array<Record<string, unknown>>
+  const readinessBlockers = readinessFindings.filter((f) => f.severity === 'blocker')
 
   // Not an `attempt`: the reader already answers '' per unreadable document,
   // so there is no failure mode that should cost the section as a whole.
@@ -395,6 +411,12 @@ export async function buildConfigSnapshot(sources: SnapshotSources): Promise<Con
         screenshotFormat: str(browserExtension.screenshotFormat, 'jpeg'),
         screenshotQuality: int(browserExtension.screenshotQuality, 80),
         connected: extension?.status === 'connected',
+        readiness: {
+          ready: readiness?.ready === true,
+          tier: str(readiness?.tier, 'none'),
+          blockers: readinessBlockers.length,
+          top: readinessBlockers.length > 0 ? str(readinessBlockers[0].title) || null : null
+        },
         browsers: (extension?.browsers ?? []).map((entry) => {
           const browser = (entry ?? {}) as Cfg
           return {

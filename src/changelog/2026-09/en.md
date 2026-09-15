@@ -1,4 +1,38 @@
-## v1.0.299 — 2026-09-15 `Latest`
+## v1.0.300 — 2026-09-16 `Latest`
+
+### Wolffish Reads a Web Page as a Map of Things It Can Act On
+
+Driving a page used to mean guessing at it: a CSS selector copied from a hunch, a click on visible text, and no way to tell whether anything happened. Wolffish now **reads the page as its accessibility tree** — the same structure a screen reader uses — and gets back every button, field, link and heading as one line with **a reference of its own**: `uid=3_4 textbox "Email" required`. It then acts on the reference, not on a guess — click it, fill it, type into it, hover it, screenshot just that element. Ask for something by description (*"the submit button"*, *"the email field"*) and it comes back with the matching references, best match first, so a three-thousand-line page costs one lookup rather than a read. Take the tree again after a click and **everything new since last time is marked with a star**, so Wolffish can see exactly what its own click opened. And every action now ends with **what the page actually did** — *navigated*, *changed*, or *no visible change* — which turns the most common automation failure, clicking hopefully at the same wrong spot three times, into a single line that says re-aim.
+
+### Forms That Actually Submit
+
+Filling a form in a modern web app was a quiet failure waiting to happen: typing into a React field sets the text on screen, the framework never registers it, and the form posts **empty**. There are now two dedicated tools — one field, or a whole form in a single call — that go in **the way the framework expects**, handling text, dropdowns by their visible option, checkboxes, radios and rich-text boxes alike. The whole-form call reports how many fields landed and **names the ones that did not**. Submitting is a real submit event rather than a hunt for the button, and on a failed submit Wolffish checks whether your text is still in the field instead of retyping a long message from scratch.
+
+### It Can Watch the Page, Not Just Touch It
+
+With the browser debugger attached, Wolffish can now see what a page is **doing**: every network request it made with its status, size and timing — and the headers, post body and full response of any one of them — plus the page's own console output with stack traces. That is how you find the JSON endpoint behind an infinite scroll, or the failing POST behind a form that silently does nothing. It also answers the page's own **alert, confirm and prompt dialogs**, and can make a tab **pretend**: a phone viewport with touch, dark mode, a location (with no permission bubble), Slow 3G or offline, a throttled CPU — with a reminder line on every result afterwards so a tab left pretending is never forgotten. Screenshots got the same lift: **the entire scrollable page, or one element**, captured without bringing the tab to the front. The debugger itself is now **attached per tab and stays attached** — attach the tab you are working in once and keep going, instead of re-attaching at every step. Eleven new tools in this release, seventy-three in all.
+
+### You Can See Where Wolffish Is Working, on the Page Itself
+
+A page moving by itself is unsettling. The tab Wolffish is using now carries **a small pill reading "Wolffish is working in this tab" and a cursor that glides to each spot before it acts**, outlining the target — so you watch cause before effect rather than guessing at a result. It never appears in Wolffish's own screenshots, so what the model sees is the real page, and it disappears when the work stops. If you would rather not see it, there is a switch for it on the Browser Extension settings page.
+
+### When the Browser Will Not Cooperate, Wolffish Names the Reason
+
+*"Cannot access contents of the page."* Some failures are not about the page at all — they are about the setup, and no amount of retrying fixes them. There is now a **readiness check**, on the settings page and available to Wolffish itself, that runs even with nothing connected: it looks at the extension server and its port, the browsers connected, whether the extension is missing, disabled, stale or blocked by policy, site access, incognito and local-file access, debugger availability, and on macOS the Screen Recording, Accessibility and Automation permissions. Each finding comes back as **a blocker, a limit or a note, with the steps to fix it** — and where Wolffish can fix it itself, or open the exact settings page for you, a **Fix** button does it and a **Verify** re-runs the check. Wolffish walks you through one blocker at a time in your own words instead of pasting a report. The connection between app and extension is also authenticated now with **a token minted per install**, so a stray copy of the extension cannot talk to your Wolffish.
+
+### Inside the Page, Outside the Page
+
+The extension stops at the edge of the page, and everything just outside it — the **native file picker**, an **OAuth or passkey popup**, a browser permission bubble, the built-in PDF viewer, a `chrome://` settings page — used to be where a browser task quietly stalled. Wolffish now knows that boundary and **crosses it on purpose**: extension tools inside the page, computer use for the window around it, and a line in the reply saying it did. The two have separate coordinate systems, so it re-aims on the side it is acting on rather than carrying a number across, holds the screen indicator up for the whole excursion instead of flickering it per click, and tells you before the first click that needs your approval.
+
+### A Message You Send Mid-Turn Is Never Lost
+
+Messaging Wolffish while it works had a hole in it. The message lived in memory and in the bubble on your screen — and nowhere else. So a desktop that quit or crashed before the agent read it, a phone that went to sleep or off the network at the wrong moment, or a run you stopped with the message still unread, could take **your words with it**, with no trace on either screen. Every mid-turn message is now **written to disk before you are told it was accepted**, and released only once it provably lives somewhere else — in the conversation as a real message, or in the transcript at the exact point it was read. Anything else is put back: re-sent as a normal turn through the channel it came from, or, when re-sending would restart work you deliberately stopped, **handed back into the composer as a draft** by whichever window next opens that conversation. A loop keeps asking until every message has a home, so a missed notification can delay one but not lose it.
+
+### Documents Get Eight Tested Palettes and a Measured Page Check
+
+Every styled PDF came out in the same blue. There are now **eight complete colour themes** — Steel, Teal, Forest, Indigo, Plum, Claret, Rust and Graphite — each a full token set with its contrast ratios checked and a specimen sheet rendered and looked at, dropping into the same components so nothing else about the document changes. Wolffish picks from the subject rather than for novelty, and a brand colour you name still wins. The bigger fix is underneath. A page could silently print its last paragraph **straight across its own footer** — the footer was pinned in place and the space reserved for it was only a comment, not a mechanism — and a page that came out a third empty looked perfectly composed in a thumbnail. Looking at rendered pages caught neither reliably; a document could survive three render-and-look cycles and still ship broken. The footer is now **a real part of the page that content cannot run under**, and Wolffish **measures every sheet before rendering it**, reporting how full each page is and whether anything was cut off — so both failures are caught as numbers instead of missed by eye.
+
+## v1.0.299 — 2026-09-15
 
 ### Wolffish Can Run Your Mobile App, and Drive It
 

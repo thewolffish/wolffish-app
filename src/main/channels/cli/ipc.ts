@@ -31,7 +31,7 @@ import {
 import type { MessageAttachmentType } from '@main/conversations'
 import type { IpcHandler } from '@main/ipc-registry'
 import type { ApprovalDecision } from '@main/runtime/amygdala'
-import type { InterjectResult, Interjection } from '@main/runtime/agent/interjection'
+import type { InterjectVerdict, Interjection } from '@main/runtime/agent/interjection'
 import type { AskUserResponse } from '@main/runtime/cerebellum'
 import { validateFile } from '@main/uploads/validation'
 import { saveUploadFromFile } from '@main/uploads/uploads'
@@ -388,7 +388,7 @@ export function registerCliIpc(deps: CliIpcDeps): void {
         text: string
         attachmentPaths?: string[]
       }
-    ): Promise<InterjectResult> => {
+    ): Promise<InterjectVerdict> => {
       const conversationId = payload?.conversationId ?? null
       if (!conversationId) return { status: 'no_live_turn' }
       const attachments = payload?.attachmentPaths?.length
