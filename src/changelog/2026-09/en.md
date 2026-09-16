@@ -1,4 +1,38 @@
-## v1.0.300 — 2026-09-16 `Latest`
+## v1.0.301 — 2026-09-17 `Latest`
+
+### Slides, Documents and Spreadsheets Look Like Themselves Now
+
+A .pptx, a .docx or an .xlsx in the chat used to be a grey file card with a name on it — you had to open it somewhere else to find out what was in it. All three now **render as the document itself**, right where they land. A deck comes through as **its actual slides**, with chevrons to page through them and the whole thing again at full size when you expand it. A Word file is laid out as **real pages** — its own margins, headings, tables, images, headers and footers — with a chip telling you which page you are on, and the page fills the width of the card instead of floating on a grey desk. A spreadsheet arrives as **a grid that kept the file's formatting**: its fills, fonts, borders, number formats, merged cells, frozen panes, column widths and sheet tabs, each sheet in its own direction so an Arabic interface never flips a Western workbook. Everything the file painted keeps exactly the colours it chose; only ink that would be invisible on a dark background falls back to something readable. The same grid now powers the workspace viewer too, which until now flattened a workbook into plain HTML.
+
+### Wolffish Makes PowerPoint Decks
+
+There is a new **presentation** capability: read a deck, build one, edit it, and check it before you send it. Building is not a thin wrapper over a slide library — you say what each slide *is* (a title, a section break, bullets, two columns, cards, stats, steps, a table, a chart, an image, a quote, a closing) and **the layout engine owns the geometry, the type scale and the palette**, so slides come out composed rather than assembled. The colour themes are **the same eight tested palettes the PDF documents use**, so a deck and its report look like they came from the same place. Reading works on anyone's deck — every slide's text and speaker notes, in order — and editing is exact-match text replacement that leaves PowerPoint's own structure untouched, because a generic rewrite is what makes PowerPoint refuse a file. A deck you upload is now read properly too, instead of being unzipped by hand.
+
+### Word Documents That Stay Editable
+
+A generated .docx used to be formatted the way a screenshot is formatted — every heading hand-styled, so changing the look meant changing every paragraph. Documents are now built on **real named Word styles**, which is how Word itself expects a document to be put together: open one, change the Heading 1 style, and **the whole document follows**. There is a design step that sets the document's look up front, a **structural check** that catches a broken file before you ever open it, and a **render-and-look pass** so Wolffish sees the page you will see. Three ways find-and-replace used to quietly corrupt a document have been found and fixed.
+
+### Spreadsheets That Actually Recalculate
+
+A workbook full of formulas could come back as **a grid of empty cells**: the formulas were written but no value was ever stored beside them, and anything that reads the file without opening Excel sees nothing. Every formula write now **recalculates the whole workbook** and stores the computed value with the formula — and the result **names any cell that evaluated to an error** (`#DIV/0!`, `#REF!`, `#VALUE!`) so it gets fixed before the file reaches you. Charts are now **native Excel charts** that Excel, Numbers and LibreOffice all draw and you can restyle, in seven kinds, instead of pictures pasted in. And Wolffish now works to a stated standard for what makes a workbook good: **formulas instead of numbers it worked out itself**, every assumption in its own labelled cell, and the analyst's colour convention — blue for inputs, black for formulas — in financial models.
+
+### A Few Options, Side by Side, Ready to Copy
+
+When the honest answer is *"here are three ways to write this"*, Wolffish used to stack three code blocks in a row and leave you scrolling between them. It now offers them as **one tabbed card**: lettered tabs across the top, the selected option underneath, and a copy button on each. The letters are the same everywhere, so *"I'd go with option C"* points at the same thing on every screen. It follows you across surfaces — the card on your desktop and in the terminal, and **on Telegram and WhatsApp each option arrives as its own tap-to-copy message**, because tabs cannot exist there. It prints in a PDF export too, every option stacked in order.
+
+### Wolffish Can Build a Tool Server, Not Just Connect to One
+
+Wolffish could already connect to MCP servers — the standard way an outside service hands tools to an assistant. It can now **write one**. A scaffold command lays down a runnable server with its tools, its manifest and a README, and Wolffish then **connects to it through the same client you use** and calls its tools to see them work before handing it over. There is a written guide behind it, so what comes out follows the protocol rather than approximating it.
+
+### A Notification Names the Conversation It Came From
+
+A conversation that had sent five notifications could show a badge reading **2**. The phone was working out which conversation a notification belonged to by reading its **link** — but a link is where a *tap* goes, and Wolffish deliberately leaves it off most mid-run notifications, so three of those five named no conversation at all and nothing counted them. Each notification now **carries its own conversation**, stamped by the desktop rather than chosen by the model, so the badge matches the notifications list. A tap still goes exactly where the link points, and an older desktop paired with a newer phone behaves precisely as it did before.
+
+### The Browser Extension Gets a Settings Page
+
+The extension's switches used to live at the bottom of the side panel, in the way of the thing you actually opened it for. They now have **their own settings page**, in a tab, split into what Wolffish shows on the page and what access it has to the browser — with a plain sentence saying why each one is needed. The on-page presence grew too: besides the pill and the cursor, the tab Wolffish is driving now carries **a soft blue glow around the edge of the window**, the same frame the desktop draws when it is using your screen, so a page being driven is obvious from across the room. It never shows up in Wolffish's own screenshots, and it respects a reduced-motion setting.
+
+## v1.0.300 — 2026-09-16
 
 ### Wolffish Reads a Web Page as a Map of Things It Can Act On
 

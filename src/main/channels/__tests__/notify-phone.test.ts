@@ -298,7 +298,6 @@ async function run(): Promise<void> {
       sent[1]?.conversationId === 'conv-2026-08-05_10-00-00'
     )
 
-
     // No conversation in scope: refused rather than sending the literal word
     // `current`, which the phone would open as a conversation that isn't one.
     const orphan = await turnScope.run(
