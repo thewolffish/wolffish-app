@@ -19,7 +19,6 @@ import {
   Tick02Icon,
   Unlink01Icon
 } from 'hugeicons-react'
-import QRCode from 'qrcode'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -116,7 +115,13 @@ export function MobilePanel(): React.JSX.Element {
         alive = false
       }
     }
-    void QRCode.toDataURL(payload, { margin: 1, width: 240, errorCorrectionLevel: 'M' })
+    // Loaded here rather than at the top, matching WhatsAppPanel: qrcode is
+    // only ever needed once a pairing offer exists, and a static import in one
+    // of the two panels pins it into the main bundle for everyone.
+    void import('qrcode')
+      .then(({ default: QRCode }) =>
+        QRCode.toDataURL(payload, { margin: 1, width: 240, errorCorrectionLevel: 'M' })
+      )
       .then((url) => {
         if (alive) setQr(url)
       })

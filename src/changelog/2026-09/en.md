@@ -1,4 +1,14 @@
-## v1.0.301 — 2026-09-17 `Latest`
+## v1.0.302 — 2026-09-17 `Latest`
+
+### Spreadsheet Colours and Deck Proportions, Corrected
+
+Two small things the new document viewers got wrong. A cell whose number format asks for a colour **by number** rather than by name — `[Color 3]` instead of `[Red]` — was painted from the wrong list, so it came out the wrong colour, and any number past the eighth came out with **no colour at all**; it now reads the palette Excel actually means. And a deck whose **first slide could not be drawn** took its shape from a guess rather than from the deck, so a 4:3 presentation was letterboxed into a widescreen card for every slide after it; the proportions now come from the first slide that really rendered.
+
+### A Faster Start
+
+The QR code library was being loaded **every time the app started**, because one of the two settings panels that draw a pairing code pulled it in eagerly. It is now fetched only when a code is actually on screen, which takes about **64 KB out of the startup bundle** — and makes the build quiet again, with no warnings left in it.
+
+## v1.0.301 — 2026-09-17
 
 ### Slides, Documents and Spreadsheets Look Like Themselves Now
 

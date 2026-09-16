@@ -9,6 +9,7 @@
  */
 
 import * as XLSX from 'xlsx'
+import { DEFAULT_INDEXED_COLORS } from './colors'
 import type { CellType } from './types'
 
 /** Excel's named format colours. */
@@ -79,10 +80,12 @@ export function formatColor(code: string | null, value: unknown): string | null 
     if (FORMAT_COLORS[inner]) return FORMAT_COLORS[inner]
     const indexed = inner.match(/^color\s*(\d+)$/)
     if (indexed) {
-      // [Color n] indexes the legacy palette, 1-based.
-      const names = Object.values(FORMAT_COLORS)
+      // [Color n] indexes the legacy indexed palette, 1-based — NOT the eight
+      // named colours above. [Color 3] is that palette's red, not whatever
+      // happens to sit third in FORMAT_COLORS.
       const i = Number(indexed[1]) - 1
-      if (i >= 0 && i < names.length) return names[i]
+      const hex = i >= 0 ? DEFAULT_INDEXED_COLORS[i] : undefined
+      if (hex) return '#' + hex
     }
   }
   return null
