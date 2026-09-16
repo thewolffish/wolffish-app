@@ -283,6 +283,22 @@ async function run(): Promise<void> {
       sent[2]?.deeplink === 'wolffish://chat?id=2026-08-05_10-00-00'
     )
 
+    // WHICH CONVERSATION RAISED IT is a different question from where a tap
+    // goes, and it is stamped on every frame regardless — harness identity,
+    // like runId. Reading the badge off the deeplink instead is what made a
+    // conversation that had sent five notifications wear a 2: the ones sent
+    // without a deeplink (which the tool deliberately allows, above) named no
+    // conversation, so the phone had nothing to count them against.
+    ok(
+      'a notification with no deeplink still names the conversation it came from',
+      sent[0]?.conversationId === 'conv-2026-08-05_10-00-00'
+    )
+    ok(
+      'and so does one that deep-links somewhere else entirely',
+      sent[1]?.conversationId === 'conv-2026-08-05_10-00-00'
+    )
+
+
     // No conversation in scope: refused rather than sending the literal word
     // `current`, which the phone would open as a conversation that isn't one.
     const orphan = await turnScope.run(
@@ -310,6 +326,14 @@ async function run(): Promise<void> {
         })
     )
     ok('a non-id conversation reference is refused', !titleAsId.success && sent.length === 3)
+
+    // Last, because the two refusals above assert on `sent.length`: a run with
+    // no conversation of its own stamps null, and the phone falls back to
+    // reading the deeplink exactly as it did before the field existed.
+    await turnScope.run({ turnId: 'turn_dl_6', conversationId: null, autonomous: true }, () =>
+      plugin.execute('notify_phone', { title: 't', body: 'b', phase: 'info' })
+    )
+    ok('a run with no conversation stamps null', sent[3]?.conversationId === null)
   }
 
   // ------------------------------------------------------------ channel layer
@@ -347,6 +371,7 @@ async function run(): Promise<void> {
       phase: 'needs_input',
       urgency: 'high',
       deeplink: null,
+      conversationId: '2026-08-05_10-00-00',
       runId: 'turn_abc'
     }
 
@@ -398,6 +423,12 @@ async function run(): Promise<void> {
     ok('phoneId comes from the pairing record', sentFrame.phoneId === 'phone-device-123456')
     ok('ttl derived from phase (needs_input=300)', sentFrame.ttl === TTL_BY_PHASE.needs_input)
     ok('runId travels with the frame', sentFrame.runId === 'turn_abc')
+    // …and so does the conversation it came out of, which is what the phone
+    // badges. Separate from the deeplink (null here) on purpose.
+    ok(
+      'the raising conversation travels with the frame',
+      sentFrame.conversationId === '2026-08-05_10-00-00' && sentFrame.deeplink === null
+    )
     ok('result id matches the frame id', result.notificationId === sentFrame.notificationId)
 
     // The user switch both withdraws the tool and kills the direct path.

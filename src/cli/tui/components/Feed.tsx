@@ -229,6 +229,12 @@ function AssistantRow(props: {
             <Match when={part.kind === 'todo'}>
               <TodoPart items={(part as Extract<Part, { kind: 'todo' }>).items} />
             </Match>
+            <Match when={part.kind === 'options'}>
+              <OptionsPart
+                part={part as Extract<Part, { kind: 'options' }>}
+                syntax={props.syntax}
+              />
+            </Match>
             <Match when={part.kind === 'workflow'}>
               <WorkflowPart snapshot={(part as Extract<Part, { kind: 'workflow' }>).snapshot} />
             </Match>
@@ -578,6 +584,79 @@ function Card(props: {
       </text>
       {props.children}
     </box>
+  )
+}
+
+/**
+ * The model's copy-and-paste options card (offer_options). A row of lettered
+ * tabs on top — click one to switch — and the selected option's body
+ * underneath, rendered as markdown. "copy" puts the RAW content on the system
+ * clipboard (the same 4-tier path /copy uses), which is this surface's copy
+ * button. The tabs WRAP rather than scrolling sideways: the app's card scrolls
+ * its row horizontally, but a terminal has no hidden horizontal overflow to
+ * scroll into, so wrapping is how the same row stays fully reachable here.
+ *
+ * Purely presentational, like the app's card: nothing is sent back, and the
+ * whole thing is rebuilt from the tool call's args on a reload.
+ */
+function OptionsPart(props: {
+  part: Extract<Part, { kind: 'options' }>
+  syntax: Accessor<SyntaxStyle>
+}): JSX.Element {
+  const app = useApp()
+  const p = theme
+  const [active, setActive] = createSignal(0)
+  const options = () => props.part.options
+  const current = () => options()[Math.min(active(), options().length - 1)]
+  // A `language` means the content is raw code, so it is fenced HERE rather
+  // than by the model — with a fence long enough to survive content that
+  // carries backtick fences of its own.
+  const body = (): string => {
+    const option = current()
+    if (!option?.language) return option?.content ?? ''
+    const longest = (option.content.match(/`{3,}/g) ?? []).reduce(
+      (max, run) => Math.max(max, run.length),
+      2
+    )
+    const fence = '`'.repeat(Math.max(3, longest + 1))
+    return `${fence}${option.language}\n${option.content}\n${fence}`
+  }
+  const copy = async (): Promise<void> => {
+    const text = current()?.content ?? ''
+    if (!text) return
+    const { copyToClipboard } = await import('../../lib/clipboard.mjs')
+    try {
+      await copyToClipboard(text)
+      app.toast.success(`copied option ${current()?.letter ?? ''}`.trim())
+    } catch (error) {
+      app.toast.error(error)
+    }
+  }
+  return (
+    <Card title={props.part.title ?? `${options().length} options to copy`} color={p().accent}>
+      <box flexDirection="row" gap={2} flexWrap="wrap">
+        <For each={options()}>
+          {(option, i) => (
+            <text
+              fg={active() === i() ? p().accent : p().muted}
+              attributes={active() === i() ? TextAttributes.BOLD : TextAttributes.NONE}
+              onMouseUp={() => setActive(i())}
+            >
+              {`${option.letter} ${truncate(option.title, 24)}`}
+            </text>
+          )}
+        </For>
+        <text fg={p().dim} onMouseUp={() => void copy()}>
+          {'  copy'}
+        </text>
+      </box>
+      <Show when={current()?.description}>
+        <text fg={p().muted} wrapMode="word">
+          {current()?.description}
+        </text>
+      </Show>
+      <markdown content={body()} syntaxStyle={props.syntax()} fg={p().text} />
+    </Card>
   )
 }
 

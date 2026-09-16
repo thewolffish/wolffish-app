@@ -1,10 +1,13 @@
 import { AudioPlayer } from '@components/common/audio-player/AudioPlayer'
 import { ChartCard } from '@components/common/chart-card/ChartCard'
 import { FileCard } from '@components/common/file-card/FileCard'
+import { DocxViewer } from '@components/common/docx-viewer/DocxViewer'
 import { HtmlFileViewer } from '@components/common/html-file-viewer/HtmlFileViewer'
+import { PresentationViewer } from '@components/common/presentation-viewer/PresentationViewer'
 import { ImageViewer } from '@components/common/image-viewer/ImageViewer'
 import { MarkdownFileViewer } from '@components/common/markdown-file-viewer/MarkdownFileViewer'
 import { PdfViewer } from '@components/common/pdf-viewer/PdfViewer'
+import { SpreadsheetViewer } from '@components/common/spreadsheet-viewer/SpreadsheetViewer'
 import { VideoPlayer } from '@components/common/video-player/VideoPlayer'
 import { cn } from '@lib/utils/cn'
 import type { MessageAttachment } from '@preload/index'
@@ -143,6 +146,38 @@ function renderViewer(att: MessageAttachment, exists: boolean): React.JSX.Elemen
       />
     )
   }
+  if (isPresentationAttachment(att)) {
+    return (
+      <PresentationViewer
+        filePath={att.filePath}
+        fileExists={exists}
+        fileName={att.originalName}
+        sizeBytes={att.sizeBytes}
+      />
+    )
+  }
+  if (isDocumentAttachment(att)) {
+    return (
+      <DocxViewer
+        filePath={att.filePath}
+        fileExists={exists}
+        fileName={att.originalName}
+        sizeBytes={att.sizeBytes}
+      />
+    )
+  }
+  // Before the plain-text check: a .csv often arrives typed text/plain, and it
+  // belongs in the grid rather than the markdown viewer.
+  if (isSpreadsheetAttachment(att)) {
+    return (
+      <SpreadsheetViewer
+        filePath={att.filePath}
+        fileExists={exists}
+        fileName={att.originalName}
+        sizeBytes={att.sizeBytes}
+      />
+    )
+  }
   if (isMarkdownAttachment(att) || isPlainTextAttachment(att)) {
     return (
       <MarkdownFileViewer
@@ -180,6 +215,24 @@ function isChartAttachment(att: MessageAttachment): boolean {
   // The full `.chart.json` suffix — not the mime type — is the chart-card
   // contract; a plain .json stays a generic file.
   return /\.chart\.json$/i.test(att.originalName)
+}
+
+/** Uploaded Office files arrive typed `other`, so the extension is the only
+ *  signal — the same one the delivered-file dispatcher in Chat.tsx uses.
+ *  Legacy binary .ppt/.doc are deliberately absent: neither renderer reads
+ *  them, and they stay plain file cards. */
+function isPresentationAttachment(att: MessageAttachment): boolean {
+  return /\.(pptx|potx)$/i.test(att.originalName)
+}
+
+function isDocumentAttachment(att: MessageAttachment): boolean {
+  return /\.docx$/i.test(att.originalName)
+}
+
+/** Legacy binary .xls reads for values only, but it still reads — unlike .doc
+ *  and .ppt, which stay plain file cards. */
+function isSpreadsheetAttachment(att: MessageAttachment): boolean {
+  return /\.(xlsx|xlsm|xltx|xls|csv)$/i.test(att.originalName)
 }
 
 function isMarkdownAttachment(att: MessageAttachment): boolean {

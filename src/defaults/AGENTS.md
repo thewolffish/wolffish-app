@@ -333,7 +333,7 @@ so hidden — `ls -a` to see them). Drop a folder in, and the agent learns a ski
 - **Plugin capability** — `SKILL.md` **+** `plugin/index.mjs` exporting executable
   tools. Most capabilities are plugins.
 
-### The full catalog (28 capabilities)
+### The catalog (43 capabilities; the table names the main ones)
 
 | Category | Capability | What it gives the agent (representative tools) |
 |---|---|---|
@@ -351,7 +351,8 @@ so hidden — `ls -a` to see them). Drop a folder in, and the agent learns a ski
 | | `.cloudflared` | Expose a local service — `cloudflared_tunnel` |
 | **Documents** | `.document` | docx/html/md — `document_read/create/modify/convert/merge` |
 | | `.pdf` | `pdf_read/create/merge/split/modify/form/secure/compress` |
-| | `.spreadsheet` | xlsx/csv — `spreadsheet_read/create/modify/formula/chart/pivot/analyze` |
+| | `.spreadsheet` | xlsx/csv — `spreadsheet_read/create/modify/formula/chart/pivot/analyze`; formulas are written with computed cached values so the file reads back as numbers |
+| | `.presentation` | pptx/potx — `deck_design` (the deck design manual), `presentation_read/create/modify/validate/render`. `presentation_create` is a layout engine: the model picks a layout per slide and supplies content, the engine owns geometry, type and colour |
 | **Media** | `.ffmpeg` | Audio/video — `ffmpeg_run` |
 | | `.speech-to-text` | Whisper, offline — `stt_transcribe`, `stt_transcribe_voice_memo`; owns its own settings — `stt_settings_get/set` (model, language), `stt_engine_install` |
 | | `.text-to-speech` | Neural TTS — `voice_generate`, `voice_respond`; owns its own settings — `voice_settings_get/set` (voice, speed), `voice_engine_install` |
@@ -366,6 +367,7 @@ so hidden — `ls -a` to see them). Drop a folder in, and the agent learns a ski
 | | `.introspect` | The agent inspects itself — `wolffish_status`, `channel_status`, `wolffish_performance`, `wolffish_memory`, `wolffish_recall`, `wolffish_list_files` |
 | | `.secrets` | Save/list the user's variables & secrets — `add_secret`, `list_secrets` |
 | | `.ask` | Ask the user one or more multiple-choice questions via an in-app card — `ask_user` |
+| | `.options` | Offer the user several alternative snippets — code, commands, config, drafts — as one tabbed card they can read and copy — `offer_options` |
 | | `.utilities` | Small built-ins — `send_file` (deliver a file to the user as an attachment) |
 
 > `.browser` vs `.browser-extension`: the **extension** acts inside the user's

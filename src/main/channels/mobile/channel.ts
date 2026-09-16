@@ -140,6 +140,7 @@ import type {
   InterjectResult,
   InterjectionEvent
 } from '@main/runtime/agent/interjection'
+import { OFFER_OPTIONS_TOOL } from '@main/runtime/cerebellum'
 import type { AskUserAnswer, AskUserRequest, AskUserResponse } from '@main/runtime/cerebellum'
 import type { ChatHistoryMessage } from '@preload/index'
 import { randomBytes } from 'node:crypto'
@@ -233,7 +234,7 @@ const BODY_SPOOL_MAX = 4
 
 /**
  * What a non-verbose phone is shown WHILE a turn runs: assistant prose,
- * file-bearing results and errors, task cards — the clean feed the Mobile
+ * file-bearing results and errors, task and options cards — the clean feed the Mobile
  * panel's "Task results / off" setting describes. Tool mechanics are held
  * back from the live push, exactly as they were when this channel nudged
  * instead of mirroring; the stored body the phone reads afterwards still
@@ -260,6 +261,10 @@ function isCleanFeedSegment(segment: Segment): boolean {
     // draws it as a compact activity row (label, path, +N −M, exit code) —
     // which needs the call's name and args, not just its result.
     (segment.kind === 'tool_call' && CODE_ACTIVITY_TOOLS.has(segment.name)) ||
+    // The copy-and-paste options card. Its ENTIRE content lives in the call's
+    // args — there is no result to fall back on — so stripping the call here
+    // would leave the phone with nothing to draw until the turn persisted.
+    (segment.kind === 'tool_call' && segment.name === OFFER_OPTIONS_TOOL) ||
     segment.kind === 'task' ||
     segment.kind === 'countdown' ||
     segment.kind === 'todo' ||
@@ -803,6 +808,7 @@ export class MobileChannel {
       body: request.body,
       urgency: request.urgency,
       deeplink: request.deeplink,
+      conversationId: request.conversationId,
       ttl: TTL_BY_PHASE[request.phase],
       ts: Date.now()
     }

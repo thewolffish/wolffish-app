@@ -1862,6 +1862,13 @@
       "unavailableFile": "File is unavailable",
       "unavailablePath": "Path is unavailable"
     },
+    "optionsCard": {
+      "heading_one": "{{count}} option to copy",
+      "heading_other": "{{count}} options to copy",
+      "tabsLabel": "Options",
+      "optionCount": "Option {{current}} of {{total}}",
+      "copy": "Copy this option"
+    },
     "questionCard": {
       "otherLabel": "Something else",
       "otherDescription": "Tell wolffish exactly what to do instead",
@@ -1895,10 +1902,25 @@
       "chars": "chars"
     },
     "docxViewer": {
-      "loading": "Loading document"
+      "loading": "Loading document",
+      "pageOf": "Page {{index}} of {{count}}"
+    },
+    "presentationViewer": {
+      "loading": "Rendering slides",
+      "slideOf": "Slide {{index}} of {{count}}",
+      "partial": "Showing the first {{count}} of {{total}} slides"
+    },
+    "viewerPager": {
+      "previous": "Previous",
+      "next": "Next"
     },
     "spreadsheetViewer": {
-      "loading": "Loading spreadsheet"
+      "loading": "Loading spreadsheet",
+      "empty": "This sheet is empty",
+      "sheets": "Sheets",
+      "clipped": "Showing the first {{rows}} rows",
+      "tierValues": "Legacy .xls file — formatting is not stored in this format",
+      "tierPlain": "Plain text file — no formatting to show"
     },
     "voice": {
       "record": "Record voice message",

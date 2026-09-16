@@ -1,6 +1,6 @@
 ---
 name: document
-description: Read, create, modify, convert, and merge documents (docx, html, markdown, plain text)
+description: "Read, create, modify, validate, render, convert and merge Word documents (docx, html, markdown, plain text) — a style engine that puts formatting in named Word styles so the document stays editable, plus structural validation and a render-and-look verify pass."
 triggers:
   - document
   - word
@@ -102,21 +102,29 @@ tools:
           - html
           - markdown
         required: false
+  - name: doc_design
+    readOnly: true
+    description: "Load the full Word document design manual into context. Call this BEFORE building any .docx — it settles the fork that decides the whole job (a document nobody will EDIT should be a PDF via pdf_design), then the section-map planning step, the theme table, every block and its fields, the writing rules, how to edit someone else's document, and the mandatory verify loop. Skip only when the user or an automation prompt fully specifies the document."
+    parameters:
+      document:
+        type: string
+        required: false
+        description: "One line naming the document you are about to build — stating it commits you to following the manual."
   - name: document_create
-    description: Create a professional .docx document with headings, paragraphs, tables, images, lists, headers, footers, and page options.
+    description: "Create a designed, EDITABLE .docx. You choose a block type per element and supply content; the engine owns a real Word style sheet (Wf Title/Subtitle/Body/Lead/Quote/Caption plus Heading 1-3), so the reader can restyle the whole document from the Styles pane, the headings reach the navigation pane, and a table of contents actually fills. Blocks: cover, toc, heading, lead, paragraph, bullets, numbered, table, callout, quote, caption, image, divider, page_break. Call doc_design FIRST — it also tells you when the answer is a PDF instead."
     parameters:
       output_path:
         type: string
         description: Absolute path for the output .docx file
       content:
         type: string
-        description: 'JSON array of content blocks. Types: heading, paragraph, table, image, list, page_break, table_of_contents, header, footer, code_block'
+        description: "JSON array of blocks — [{type:'cover',eyebrow,title,subtitle,meta}, {type:'heading',level,text}, {type:'lead',text}, {type:'paragraph',text}, {type:'bullets',items:[]}, {type:'numbered',items:[]}, {type:'table',headers:[],rows:[[]],column_widths:[],caption}, {type:'callout',tone:'info|good|warn|bad',title,text}, {type:'quote',text,attribution}, {type:'image',path,width,height,caption}, {type:'toc'}, {type:'divider'}, {type:'page_break'}]. See doc_design for every field."
       options:
         type: string
-        description: 'Optional JSON object: {page_size: "A4"|"Letter"|"Legal", orientation: "portrait"|"landscape", margins: {top,bottom,left,right}, default_font, default_size, line_spacing, page_numbers: {position, format}, watermark_text}'
+        description: "Optional JSON object: {theme (steel|teal|forest|indigo|plum|claret|rust|graphite), tokens, page: 'a4'|'letter'|'legal', orientation, margin_inches, font_display, font_body, base_size, title, author, header, footer, page_numbers}"
         required: false
   - name: document_modify
-    description: Edit an existing .docx file — find-and-replace (with regex), insert or append content, change formatting.
+    description: "Edit an existing .docx — find_replace, append, insert. find_replace works on the TEXT, not the markup: it first coalesces the split runs Word leaves behind (revision ids, spell-check state) so a phrase you can see is actually findable, edits only inside text nodes so it can never rewrite a tag or a style reference, and escapes what it writes so an ampersand cannot corrupt the file. Zero matches is reported as a WARNING, not a success — read the document with document_read again rather than assuming it worked."
     parameters:
       path:
         type: string
@@ -143,6 +151,27 @@ tools:
         type: string
         description: 'Optional JSON object: {list_separator?: string}'
         required: false
+  - name: document_validate
+    readOnly: true
+    description: "Check a .docx for the faults that make Word refuse it or offer to repair it — unbalanced paragraph/run elements, an unescaped ampersand (what a naive find/replace leaves behind), relationship targets that resolve to nothing, and a paragraph style referenced but never defined. It also warns when a document carries NO named styles at all (the direct-formatting failure — nothing can be restyled and the navigation pane is empty) and when a table-of-contents field will open blank. Run it on every document before sending."
+    parameters:
+      path:
+        type: string
+        description: Absolute path to the .docx to check
+  - name: document_render
+    description: "Render a .docx to PDF so you can actually look at the pages — then pdf_render_pages on that PDF and image_view on each page. Needs LibreOffice; when it is absent the tool says so and tells you to declare the visual check skipped rather than imply it happened. A table of contents renders blank in LibreOffice — that is expected, Word fills it on open."
+    parameters:
+      path:
+        type: string
+        description: Absolute path to the .docx to render
+      output_dir:
+        type: string
+        required: false
+        description: Where to write the PDF. Defaults to the document's own folder.
+      timeout_ms:
+        type: number
+        required: false
+        description: Conversion timeout in ms. Default 120000.
   - name: document_convert
     description: 'Convert between document formats. Supported: docx->html, docx->markdown, docx->text, html->docx, markdown->docx, html->markdown, markdown->html, docx->pdf (requires pdf capability).'
     parameters:
@@ -251,6 +280,26 @@ confirm_patterns:
 - Supported input formats: .docx, .html, .md, .txt, .rtf
 - Primary output format: .docx (create/modify/merge/template)
 - All paths must be absolute. Complex parameters are JSON strings.
+
+## The shape of this capability
+
+Two halves, like `presentation`.
+
+**The style engine** (`document_create`) owns a real Word style sheet and the blocks
+only reference it. That inversion is the whole difference between a document a person
+can work with and one they have to fight: direct formatting cannot be restyled, does
+not reach the navigation pane, and is invisible to a table of contents. Palettes are
+the eight contrast-tested themes from `pdf-design/themes.md`, so a report, its deck and
+its PDF come out of one system.
+
+**The OOXML path** (`read`/`modify`/`validate`) works on documents the engine did not
+make. `find_replace` is the part worth knowing about: Word splits a visible phrase
+across many runs, so a naive replace matches nothing and reports success; this one
+coalesces same-format runs first, then edits only inside `<w:t>` nodes and escapes what
+it writes, because an unescaped `&` makes the file unopenable.
+
+**Word or PDF?** If nobody will edit it, `pdf_design` makes a better document. Call
+`doc_design` and it settles this first.
 
 ## Rules
 

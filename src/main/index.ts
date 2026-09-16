@@ -174,6 +174,7 @@ import {
   type UpdaterState
 } from '@main/updater'
 import type { UpdaterWireState } from '@main/tunnel/protocol'
+import { renderDeckPreview, type DeckPreview } from '@main/uploads/deck-preview'
 import {
   classifyFile,
   isSupportedExtension,
@@ -4611,6 +4612,13 @@ app.whenReady().then(async () => {
 
   handle('upload:exists', async (_e, relativePath: string): Promise<boolean> => {
     return uploadExists(relativePath)
+  })
+
+  // Slides are rendered here, not in the renderer: the SVGs land as files
+  // inside the workspace, so a deck is painted once and every later mount
+  // (and every relaunch) just reads the images back.
+  handle('upload:renderDeck', async (_e, relativePath: string): Promise<DeckPreview | null> => {
+    return renderDeckPreview(relativePath)
   })
 
   handle(

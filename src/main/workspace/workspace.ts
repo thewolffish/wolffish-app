@@ -2,6 +2,7 @@ import { is } from '@electron-toolkit/utils'
 import { cleanupToolOutput } from '@main/runtime/tool-output'
 import { diskWriter } from '@main/io/diskWriter'
 import { importOutsideProjectFiles } from '@main/projects'
+import { sweepDeckPreviews } from '@main/uploads/deck-preview'
 import { mcpCapabilityName } from '@main/runtime/mcp/naming'
 import type { McpConfig, McpOauthState, McpServerConfig } from '@main/runtime/mcp/types'
 import { isKnownModelName } from '@main/runtime/models'
@@ -963,6 +964,9 @@ async function cleanupWorkspace(): Promise<void> {
   // shell run or file read) are a seven-day scratch buffer, not memory:
   // the conversation keeps the bounded preview and the path. Idempotent.
   await cleanupToolOutput(WORKSPACE_ROOT).catch(() => undefined)
+  // Rendered slide images (.previews/decks/<key>/) outlive the deck they were
+  // painted from when an upload or a conversation is deleted. Idempotent.
+  await sweepDeckPreviews().catch(() => undefined)
 }
 
 async function migrateAgentsCore(): Promise<void> {

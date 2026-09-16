@@ -58,12 +58,14 @@ import {
 import type { ApprovalDecision, ApprovalRequest } from '@main/runtime/amygdala'
 import {
   ASK_USER_TOOL,
+  OFFER_OPTIONS_TOOL,
   type AskUserAnswer,
   type AskUserQuestion,
   type AskUserRequest,
   type AskUserResponse
 } from '@main/runtime/cerebellum'
 import { compressVideoToLimit } from '@main/channels/video-compress'
+import { renderOptionsForChannel } from '@main/channels/options-render'
 import {
   upsertTaskSegment,
   upsertCountdownSegment,
@@ -2997,6 +2999,15 @@ export class TelegramChannel {
       // ask_user posts its own formatted question via onAskUserRequest — never
       // surface the raw tool call (even in verbose), or the question doubles up.
       if (segment.name === ASK_USER_TOOL) return
+      // offer_options carries its whole card in the ARGS — there is no result
+      // to render later — so it posts here, in clean and verbose alike: it is
+      // content the model produced FOR the user, not tool mechanics. One
+      // message per option, each body in a <pre> block, which is the closest
+      // Telegram has to the in-app copy button (tap to copy).
+      if (segment.name === OFFER_OPTIONS_TOOL) {
+        await this.sendOptionsCard(chatId, segment.args)
+        return
+      }
       // The master's workflow tools never render as cards (even in verbose) —
       // the workflow snapshot messages above are their surface. Prose was
       // already flushed, so ordering stays: narration → phase updates.
@@ -3021,6 +3032,9 @@ export class TelegramChannel {
       // ask_user's result is the user's own answer, already acknowledged inline
       // when they replied — don't echo it back as a tool-result block.
       if (name === ASK_USER_TOOL) return
+      // The options card already posted from the call; its result is a
+      // one-line confirmation written for the model, never for the user.
+      if (name === OFFER_OPTIONS_TOOL) return
       // Workflow tool results are the master's input — the card/phase
       // messages are the user surface.
       if (name && WORKFLOW_TOOL_NAMES.has(name)) return
@@ -3655,6 +3669,27 @@ export class TelegramChannel {
    * <pre> code blocks is more readable than plain-text monospace
    * approximations. Same fallback semantics as safeSend.
    */
+  /**
+   * Post an offer_options card as messages. Tabs don't exist here, so every
+   * option is sent in order under its letter with the body in a <pre> block;
+   * a per-option message also keeps each snippet independently copyable and
+   * each send under Telegram's 4096-character ceiling.
+   */
+  private async sendOptionsCard(chatId: number, args: Record<string, unknown>): Promise<void> {
+    const card = renderOptionsForChannel(args)
+    if (!card) return
+    const heading = card.title
+      ? `🗂 <b>${escapeHtml(card.title)}</b>`
+      : `🗂 <b>${card.options.length} options to copy</b>`
+    await this.sendHtml(chatId, heading)
+    for (const option of card.options) {
+      const head = `<b>${escapeHtml(option.letter)} · ${escapeHtml(option.title)}</b>`
+      const note = option.description ? `\n<i>${escapeHtml(option.description)}</i>` : ''
+      const cut = option.truncated ? '\n<i>(shortened — the full version is in the app)</i>' : ''
+      await this.sendHtml(chatId, `${head}${note}\n<pre>${escapeHtml(option.content)}</pre>${cut}`)
+    }
+  }
+
   private async sendHtml(chatId: number, html: string): Promise<void> {
     await this.dispatchSend(chatId, html, stripHtmlTags(html))
   }

@@ -14,8 +14,10 @@ import { PageViewer } from '@components/common/page-viewer/PageViewer'
 import { PathCard } from '@components/common/path-card/PathCard'
 import { canonicalPath } from '@components/common/path-card/pathStat'
 import { PdfViewer } from '@components/common/pdf-viewer/PdfViewer'
+import { PresentationViewer } from '@components/common/presentation-viewer/PresentationViewer'
 import { ProviderErrorCards } from '@components/common/provider-error-card/ProviderErrorCard'
 import { QuestionCard } from '@components/common/question-card/QuestionCard'
+import { OptionsCard } from '@components/common/options-card/OptionsCard'
 import { ReasoningCard } from '@components/common/reasoning-card/ReasoningCard'
 import { SpreadsheetViewer } from '@components/common/spreadsheet-viewer/SpreadsheetViewer'
 import { ToolCard } from '@components/common/tool-card/ToolCard'
@@ -5053,6 +5055,11 @@ type RenderResult = { blocks: ReactNode; empty: boolean }
 // QuestionCard rather than a generic tool card.
 const ASK_USER_TOOL = 'ask_user'
 
+// The `options` capability's single tool. Its tool_call renders as a tabbed
+// OptionsCard rather than a generic tool card — copy-and-paste content the
+// model produced FOR the user, so it shows on the clean feed too.
+const OFFER_OPTIONS_TOOL = 'offer_options'
+
 function renderSegments(
   segments: Segment[],
   approvals: Record<string, ApprovalCardState> | undefined,
@@ -5269,6 +5276,17 @@ function renderSegments(
         continue
       }
 
+      // offer_options renders its tabbed copy-and-paste card from the call's
+      // args alone — there is no answer and no live state, so it draws the
+      // instant the call lands and identically forever after. Always visible,
+      // clean feed included: like a delivered file or a PathCard it is a
+      // deliberate model act, not tool mechanics. Skip everything else for
+      // this call (the result is a one-line confirmation for the model).
+      if (seg.name === OFFER_OPTIONS_TOOL) {
+        blocks.push(<OptionsCard key={`options_${seg.segmentId}`} args={seg.args} />)
+        continue
+      }
+
       const approval = approvals?.[seg.toolCallId]
       const timing = toolTimings?.[seg.toolCallId]
 
@@ -5421,6 +5439,16 @@ function renderSegments(
             } else if (ext === 'docx') {
               blocks.push(
                 <DocxViewer
+                  key={`doc_${seg.segmentId}_${di}`}
+                  filePath={doc.path}
+                  fileExists={true}
+                  fileName={fileName}
+                  sizeBytes={doc.size}
+                />
+              )
+            } else if (ext === 'pptx' || ext === 'potx') {
+              blocks.push(
+                <PresentationViewer
                   key={`doc_${seg.segmentId}_${di}`}
                   filePath={doc.path}
                   fileExists={true}
