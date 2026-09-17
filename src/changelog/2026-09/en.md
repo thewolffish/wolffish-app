@@ -1,4 +1,10 @@
-## v1.0.303 — 2026-09-17 `Latest`
+## v1.0.304 — 2026-09-17 `Latest`
+
+### A Reply From Your Phone Reaches the Chat You Left Open
+
+Continue a conversation on your phone while the desktop still has that conversation open, and the answer arrived everywhere except here: your prompt sat with **an empty bubble underneath it**, or with a reply that stopped mid-sentence, and the only cure was **quitting Wolffish entirely** — closing the window merely hides it, so the stale conversation on screen survives that. A turn running anywhere but this window streams itself into an open chat as a series of snapshots, and the desktop kept whichever snapshot came last; for a short answer that was the very first one, sent before a single word had been written. The finished reply did arrive moments later, and was **discarded because the chat recognised it and assumed it already had it**. An open conversation now **refreshes what it is already holding** against what was actually saved, instead of only adding what it has never seen — and a turn run from your phone **sends one last snapshot the instant it finishes** rather than stopping half a second short. The same correction covers a reply written on Telegram or WhatsApp, or by a scheduled automation, while you have that conversation open in front of you.
+
+## v1.0.303 — 2026-09-17
 
 ### Wolffish Can Wait
 
