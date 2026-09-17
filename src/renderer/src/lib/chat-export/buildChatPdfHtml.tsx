@@ -6,6 +6,7 @@ import {
   todoListId,
   type TaskSnapshot,
   type CountdownSnapshot,
+  type WaitSnapshot,
   type TodoItem,
   type WorkflowSnapshot
 } from '@main/runtime/broca'
@@ -323,6 +324,26 @@ function countdownBlock(snapshot: CountdownSnapshot): string {
   return `<div class="tool wf"><div class="tool-head"><span class="tool-name">countdown · ${escapeHtml(snapshot.status)}</span></div><div class="wf-note" dir="auto">${escapeHtml(snapshot.label)} — ${escapeHtml(snapshot.target.tool)} after ${snapshot.seconds}s${detail ? ` — ${escapeHtml(detail)}` : ''}</div></div>`
 }
 
+/**
+ * A blocking wait as a static block — mirrors WaitCard's terminal line (the
+ * live clock and its input have nothing to say on paper).
+ */
+function waitBlock(snapshot: WaitSnapshot): string {
+  const seconds = Math.round(snapshot.seconds)
+  const spent = snapshot.endedAt
+    ? Math.round((snapshot.endedAt - snapshot.startedAt) / 1000)
+    : seconds
+  const detail =
+    snapshot.status === 'elapsed'
+      ? `waited ${seconds}s`
+      : snapshot.status === 'interrupted'
+        ? `woken after ${spent}s of ${seconds}s by a message`
+        : snapshot.status === 'canceled'
+          ? `stopped after ${spent}s`
+          : `waiting ${seconds}s`
+  return `<div class="tool wf"><div class="tool-head"><span class="tool-name">wait · ${escapeHtml(snapshot.status)}</span></div><div class="wf-note" dir="auto">${escapeHtml(snapshot.reason)} — ${escapeHtml(detail)}</div></div>`
+}
+
 /** The todo checklist as a static block — mirrors TodoCard, always printed. */
 /**
  * Print mirror of the feed's inline user bubble for a mid-turn message: the
@@ -408,6 +429,9 @@ function assistantParts(
     } else if (seg.kind === 'countdown') {
       flushText()
       parts.push(countdownBlock(seg.snapshot))
+    } else if (seg.kind === 'wait') {
+      flushText()
+      parts.push(waitBlock(seg.snapshot))
     } else if (seg.kind === 'todo') {
       // One block per list, at the turn that created it, in its latest state
       // — the feed's rule (Chat.tsx renderSegments), mirrored.

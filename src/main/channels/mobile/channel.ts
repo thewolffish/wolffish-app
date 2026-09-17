@@ -132,7 +132,8 @@ import {
   upsertWorkflowSegment,
   type Segment,
   type CountdownSnapshot,
-  upsertCountdownSegment
+  upsertCountdownSegment,
+  upsertWaitSegment
 } from '@main/runtime/broca'
 import type { ApprovalDecision, ApprovalRequest } from '@main/runtime/amygdala'
 import type {
@@ -267,6 +268,9 @@ function isCleanFeedSegment(segment: Segment): boolean {
     (segment.kind === 'tool_call' && segment.name === OFFER_OPTIONS_TOOL) ||
     segment.kind === 'task' ||
     segment.kind === 'countdown' ||
+    // Why the agent went quiet. A wait with no card is indistinguishable
+    // from a hang, which is the one thing the phone must never look like.
+    segment.kind === 'wait' ||
     segment.kind === 'todo' ||
     segment.kind === 'separator' ||
     segment.kind === 'turn_end'
@@ -2680,6 +2684,7 @@ export class MobileChannel {
         if (segment.kind === 'workflow') upsertWorkflowSegment(acc.segments, segment)
         else if (segment.kind === 'task') upsertTaskSegment(acc.segments, segment)
         else if (segment.kind === 'countdown') upsertCountdownSegment(acc.segments, segment)
+        else if (segment.kind === 'wait') upsertWaitSegment(acc.segments, segment)
         else if (segment.kind === 'todo') upsertTodoSegment(acc.segments, segment)
         else if (segment.kind === 'text' || segment.kind === 'reasoning')
           appendTextSegment(acc.segments, segment)
@@ -2698,7 +2703,9 @@ export class MobileChannel {
         }
         // A card flipping to running/succeeded should not wait out the text
         // throttle, exactly as in the in-app mirror.
-        scheduleMirror(segment.kind === 'task' || segment.kind === 'countdown')
+        scheduleMirror(
+          segment.kind === 'task' || segment.kind === 'countdown' || segment.kind === 'wait'
+        )
       },
       // Accumulate tokenomics for the persisted context-meter stats.
       onTurnEvent: (type, payload) => stats.note(type, payload),

@@ -6,7 +6,8 @@ import {
   Document, Packer, Paragraph, TextRun, HeadingLevel, Table, TableRow, TableCell,
   ImageRun, PageBreak, AlignmentType, WidthType, BorderStyle, Header, Footer,
   TableOfContents, NumberFormat, PageNumber, ExternalHyperlink,
-  LevelFormat, ShadingType, VerticalAlign, convertInchesToTwip, PageOrientation
+  LevelFormat, ShadingType, VerticalAlign, convertInchesToTwip, PageOrientation,
+  LineRuleType
 } from 'docx'
 import mammoth from 'mammoth'
 import TurndownService from 'turndown'
@@ -222,16 +223,28 @@ function resolveDocTheme(spec) {
  */
 function buildStyles(t, fonts, scale) {
   const body = { font: fonts.body, size: scale.body, color: t.ink }
-  const heading = (size, color, spacingBefore, spacingAfter) => ({
+  const heading = (size, color, spacingBefore, spacingAfter, extra = {}) => ({
     run: { font: fonts.display, size, bold: true, color },
-    paragraph: { spacing: { before: spacingBefore, after: spacingAfter }, keepNext: true, outlineLevel: undefined }
+    paragraph: {
+      spacing: { before: spacingBefore, after: spacingAfter },
+      keepNext: true, keepLines: true, outlineLevel: undefined, ...extra
+    }
   })
   return {
     default: {
-      document: { run: body, paragraph: { spacing: { after: 160, line: 288 } } },
-      heading1: heading(scale.h1, t.ink, 420, 160),
-      heading2: heading(scale.h2, t.ink, 340, 140),
-      heading3: heading(scale.h3, t.accentDeep, 280, 120)
+      document: { run: body, paragraph: { spacing: { after: 160, line: LINE_BODY }, widowControl: true } },
+      // Three levels told apart by size and weight alone is the default-Word
+      // look, and it is what a document is judged on in its first second. H1
+      // carries a hairline; H3 is not a small H2 but the eyebrow voice —
+      // body size, caps, letterspaced (Butterick: 5-12% extra tracking on caps).
+      heading1: heading(scale.h1, t.ink, 440, 200, {
+        border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: t.hairline, space: 8 } }
+      }),
+      heading2: heading(scale.h2, t.accentDeep, 360, 140),
+      heading3: {
+        run: { font: fonts.body, size: scale.body, bold: true, color: t.ink2, allCaps: true, characterSpacing: 20 },
+        paragraph: { spacing: { before: 320, after: 120 }, keepNext: true, keepLines: true }
+      }
     },
     paragraphStyles: [
       {
@@ -251,18 +264,18 @@ function buildStyles(t, fonts, scale) {
       },
       {
         id: 'WfBody', name: 'Wf Body', basedOn: 'Normal', next: 'WfBody', quickFormat: true,
-        run: body, paragraph: { spacing: { after: 160, line: 288 } }
+        run: body, paragraph: { spacing: { after: 160, line: LINE_BODY }, widowControl: true }
       },
       {
         id: 'WfLead', name: 'Wf Lead', basedOn: 'Normal', next: 'WfBody', quickFormat: true,
         run: { font: fonts.body, size: scale.lead, color: t.ink2 },
-        paragraph: { spacing: { after: 200, line: 300 } }
+        paragraph: { spacing: { after: 220, line: LINE_LEAD }, widowControl: true }
       },
       {
         id: 'WfQuote', name: 'Wf Quote', basedOn: 'Normal', next: 'WfBody', quickFormat: true,
         run: { font: fonts.display, size: scale.quote, italics: true, color: t.ink },
         paragraph: {
-          spacing: { before: 200, after: 200, line: 300 },
+          spacing: { before: 200, after: 200, line: LINE_BODY },
           indent: { left: 420 },
           border: { left: { style: BorderStyle.SINGLE, size: 18, space: 14, color: t.accent } }
         }
@@ -274,13 +287,23 @@ function buildStyles(t, fonts, scale) {
       },
       {
         id: 'WfTableHeader', name: 'Wf Table Header', basedOn: 'Normal', next: 'WfBody',
-        run: { font: fonts.body, size: scale.tableHead, bold: true, color: 'FFFFFF' },
-        paragraph: { spacing: { before: 40, after: 40 } }
+        run: { font: fonts.body, size: scale.eyebrow, bold: true, color: t.muted, allCaps: true, characterSpacing: 18 },
+        paragraph: { spacing: { before: 0, after: 80 } }
       },
       {
         id: 'WfTableCell', name: 'Wf Table Cell', basedOn: 'Normal', next: 'WfBody',
         run: { font: fonts.body, size: scale.tableCell, color: t.ink },
-        paragraph: { spacing: { before: 40, after: 40 } }
+        paragraph: { spacing: { before: 0, after: 0, line: 276 } }
+      },
+      {
+        id: 'WfMetaLabel', name: 'Wf Meta Label', basedOn: 'Normal', next: 'WfMetaValue',
+        run: { font: fonts.body, size: scale.eyebrow, bold: true, color: t.muted, allCaps: true, characterSpacing: 24 },
+        paragraph: { spacing: { before: 0, after: 40 }, keepNext: true }
+      },
+      {
+        id: 'WfMetaValue', name: 'Wf Meta Value', basedOn: 'Normal', next: 'WfBody',
+        run: { font: fonts.body, size: scale.tableCell, bold: true, color: t.ink },
+        paragraph: { spacing: { before: 0, after: 0 } }
       },
       {
         id: 'WfTocHeading', name: 'Wf Toc Heading', basedOn: 'Normal', next: 'WfBody', quickFormat: true,
@@ -297,6 +320,11 @@ function buildStyles(t, fonts, scale) {
     ]
   }
 }
+
+// Line spacing in 240ths of a line. 288 (120%) is the floor of the readable
+// range, not the middle of it — 312 is 130%, 336 is 140% for the standfirst.
+const LINE_BODY = 312
+const LINE_LEAD = 336
 
 /** Half-point sizes. Word measures type in half-points, so every value doubles. */
 function typeScale(base) {
@@ -473,13 +501,32 @@ async function documentRead(args) {
 
 const NO_BORDER = { style: BorderStyle.NONE, size: 0, color: 'auto' }
 
+/**
+ * The house table system (pdf-design 5.6, so a report and its PDF match):
+ * letterspaced caps column heads, a stronger rule under the header, hairline
+ * rules between rows, NO vertical rules, no zebra, no fills. Vertical rules
+ * and stripes are what make a Word table look like a 2007 spreadsheet.
+ */
 function hairlineBorders(color) {
   const line = { style: BorderStyle.SINGLE, size: 4, color }
-  return { top: line, bottom: line, left: line, right: line, insideHorizontal: line, insideVertical: line }
+  return { top: NO_BORDER, bottom: line, left: NO_BORDER, right: NO_BORDER, insideHorizontal: line, insideVertical: NO_BORDER }
 }
 
+// Left margin 0 puts the first column's text on the body text edge; the gap
+// between columns is the previous cell's right margin.
 function cellMargins() {
-  return { top: 80, bottom: 80, left: 140, right: 140 }
+  return { top: 90, bottom: 90, left: 0, right: 220 }
+}
+
+/**
+ * A figure, not prose: currency, percentages, counts, deltas. Numbers are
+ * right-aligned so digits line up against each other — the single change
+ * that makes a data table readable.
+ */
+function isNumericCell(value) {
+  const v = String(value ?? '').trim()
+  if (!v || v === '—' || v === '-') return false
+  return /^[-+(]?\s*[$€£¥]?\s*\d[\d,.\u00a0 ]*\s*(%|pp|bps|k|m|bn|x)?\s*\)?$/i.test(v)
 }
 
 function renderTable(block, ctx) {
@@ -501,28 +548,40 @@ function renderTable(block, ctx) {
     : Array.from({ length: colCount }, () => Math.round(contentWidth / colCount))
   widths[widths.length - 1] = contentWidth - widths.slice(0, -1).reduce((a, b) => a + b, 0)
 
+  // A column is numeric when most of its filled cells are figures. Decided
+  // per column, not per cell, so one "n/a" does not left-align a whole column.
+  const numericColumn = Array.from({ length: colCount }, (_, i) => {
+    const values = rows.map((row) => (Array.isArray(row) ? row[i] : row)).filter((v) => String(v ?? '').trim() !== '')
+    if (!values.length) return false
+    return values.filter(isNumericCell).length / values.length >= 0.6
+  })
+  const align = (i) => (numericColumn[i] ? AlignmentType.RIGHT : undefined)
+
   const tableRows = []
   if (headers.length) {
     tableRows.push(new TableRow({
       tableHeader: true,
+      cantSplit: true,
       children: headers.map((h, i) => new TableCell({
         width: { size: widths[i], type: WidthType.DXA },
         margins: cellMargins(),
-        // CLEAR, never SOLID — SOLID renders as a black block.
-        shading: { type: ShadingType.CLEAR, fill: t.accentDeep, color: 'auto' },
-        verticalAlign: VerticalAlign.CENTER,
-        children: [new Paragraph({ text: h, style: 'WfTableHeader' })]
+        // The header's own rule, heavier than the row hairlines. A cell
+        // border beats the table border, which is how one row gets it.
+        borders: { bottom: { style: BorderStyle.SINGLE, size: 12, color: t.ink }, top: NO_BORDER, left: NO_BORDER, right: NO_BORDER },
+        verticalAlign: VerticalAlign.BOTTOM,
+        children: [new Paragraph({ text: h, style: 'WfTableHeader', alignment: align(i) })]
       }))
     }))
   }
-  rows.forEach((row, r) => {
+  rows.forEach((row) => {
     const cells = Array.isArray(row) ? row : [row]
     tableRows.push(new TableRow({
+      cantSplit: true,
       children: widths.map((w, i) => new TableCell({
         width: { size: w, type: WidthType.DXA },
         margins: cellMargins(),
-        shading: r % 2 === 1 ? { type: ShadingType.CLEAR, fill: t.wash, color: 'auto' } : undefined,
-        children: [new Paragraph({ text: String(cells[i] ?? ''), style: 'WfTableCell' })]
+        verticalAlign: VerticalAlign.TOP,
+        children: [new Paragraph({ text: String(cells[i] ?? ''), style: 'WfTableCell', alignment: align(i) })]
       }))
     }))
   })
@@ -615,6 +674,61 @@ async function renderImage(block, ctx) {
   return out
 }
 
+/** An empty paragraph of exact height — the only reliable vertical spacer. */
+function exactSpacer(height) {
+  return new Paragraph({ children: [], spacing: { before: 0, after: 0, line: height, lineRule: LineRuleType.EXACT } })
+}
+
+/**
+ * The cover's meta block. Given a list, it is a label/value row across a
+ * hairline — who it is for, when, what scope — which is what a designed
+ * cover carries. A plain string still renders as caption lines under the
+ * same hairline, so older documents keep working.
+ */
+function renderCoverMeta(meta, ctx) {
+  const { t, contentWidth } = ctx
+  const items = Array.isArray(meta) ? meta.filter((m) => m != null && m !== '').slice(0, 4) : null
+  if (!items || !items.length) {
+    return [
+      exactSpacer(320),
+      new Paragraph({
+        text: '', spacing: { before: 0, after: 160 },
+        border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: t.hairline, space: 1 } }
+      }),
+      ...proseParagraphs(meta, { style: 'WfCaption' })
+    ]
+  }
+  const widths = Array.from({ length: items.length }, () => Math.floor(contentWidth / items.length))
+  widths[widths.length - 1] = contentWidth - widths.slice(0, -1).reduce((a, b) => a + b, 0)
+  const cells = items.map((item, i) => {
+    const isObj = item && typeof item === 'object'
+    const label = isObj ? item.label : null
+    const value = isObj ? item.value : item
+    const children = []
+    if (label) children.push(new Paragraph({ text: String(label), style: 'WfMetaLabel' }))
+    children.push(...splitProse(value).map((line) => new Paragraph({ text: line, style: 'WfMetaValue' })))
+    return new TableCell({
+      width: { size: widths[i], type: WidthType.DXA },
+      margins: { top: 140, bottom: 0, left: 0, right: 200 },
+      children
+    })
+  })
+  return [
+    exactSpacer(320),
+    new Table({
+      rows: [new TableRow({ children: cells })],
+      width: { size: contentWidth, type: WidthType.DXA },
+      columnWidths: widths,
+      borders: {
+        top: { style: BorderStyle.SINGLE, size: 4, color: t.hairline },
+        bottom: NO_BORDER, left: NO_BORDER, right: NO_BORDER,
+        insideHorizontal: NO_BORDER, insideVertical: NO_BORDER
+      }
+    }),
+    new Paragraph({ text: '', spacing: { after: 0 } })
+  ]
+}
+
 function renderDivider(ctx) {
   // A paragraph bottom border, never a one-row table: a table rule breaks
   // text flow and shows as an empty row in outline and accessibility views.
@@ -648,6 +762,22 @@ async function renderBlock(block, ctx) {
   switch (type) {
     case 'cover': {
       const out = []
+      // A cover whose first line sits on the top margin reads as page one of
+      // a memo. Word has no vertical centring in the flow, so the title block
+      // is dropped by a fixed rule of exact height.
+      // `false` pins the block to the top margin. An explicit number is
+      // honoured exactly — zero included, and clamped at zero so a negative
+      // cannot silently drop the spacer instead of removing it. Only an
+      // absent or unparseable value falls back to the default drop.
+      const askedTop = block.top_space
+      const topNumber = Number(askedTop)
+      const topSpace =
+        askedTop === false
+          ? 0
+          : askedTop == null || askedTop === '' || !Number.isFinite(topNumber)
+            ? 2100
+            : Math.max(0, topNumber)
+      if (topSpace > 0) out.push(exactSpacer(topSpace))
       if (block.eyebrow) out.push(new Paragraph({ text: String(block.eyebrow), style: 'WfEyebrow' }))
       out.push(new Paragraph({ text: String(block.title ?? ''), style: 'WfTitle' }))
       out.push(new Paragraph({
@@ -655,7 +785,7 @@ async function renderBlock(block, ctx) {
         border: { bottom: { style: BorderStyle.SINGLE, size: 12, color: ctx.t.accent, space: 1 } }
       }))
       if (block.subtitle) out.push(...proseParagraphs(block.subtitle, { style: 'WfSubtitle' }))
-      if (block.meta) out.push(...proseParagraphs(block.meta, { style: 'WfCaption' }))
+      if (block.meta) out.push(...renderCoverMeta(block.meta, ctx))
       if (block.page_break !== false) out.push(new Paragraph({ children: [new PageBreak()] }))
       return out
     }
@@ -695,10 +825,12 @@ async function renderBlock(block, ctx) {
     case 'divider':
       return renderDivider(ctx)
     case 'toc':
+      // The break after the contents is right for a report and wrong for a
+      // three-page brief, where it spends a whole page on four lines.
       return [
         new Paragraph({ text: String(block.title || 'Contents'), style: 'WfTocHeading' }),
         new TableOfContents(String(block.title || 'Contents'), { hyperlink: true, headingStyleRange: '1-3' }),
-        new Paragraph({ children: [new PageBreak()] })
+        ...(block.page_break === false ? [] : [new Paragraph({ children: [new PageBreak()] })])
       ]
     case 'page_break':
     case 'pagebreak':
@@ -729,13 +861,13 @@ async function documentCreate(args) {
   try { t = resolveDocTheme(options) } catch (err) { return { success: false, error: err.message } }
 
   const fonts = {
-    display: String(options.font_display || options.default_font || 'Calibri'),
+    display: String(options.font_display || options.default_font || 'Cambria'),
     body: String(options.font_body || options.default_font || 'Calibri')
   }
   const scale = typeScale(options.base_size || options.default_size || 11)
   const paper = PAGE_SIZES[String(options.page || 'a4').toLowerCase()] || PAGE_SIZES.a4
   const landscape = String(options.orientation || '').toLowerCase() === 'landscape'
-  const margin = Math.round(convertInchesToTwip(Number(options.margin_inches) || 1))
+  const margin = Math.round(convertInchesToTwip(Number(options.margin_inches) || 1.25))
   // Landscape takes PORTRAIT dimensions plus the orientation flag — the
   // library swaps them itself, and passing swapped values silently squares up.
   const pageWidth = paper.width
@@ -756,31 +888,42 @@ async function documentCreate(args) {
   }
 
   const footerText = options.footer ? String(options.footer) : ''
+  const hasCover = content.some((b) => String(b?.type).toLowerCase() === 'cover')
+  const runningHeader = options.header
+    ? new Header({ children: [new Paragraph({ text: String(options.header), style: 'WfFooter' })] })
+    : undefined
+  const runningFooter = options.page_numbers === false && !footerText
+    ? undefined
+    : new Footer({
+        children: [new Paragraph({
+          style: 'WfFooter',
+          tabStops: [{ type: 'right', position: contentWidth }],
+          border: { top: { style: BorderStyle.SINGLE, size: 4, color: t.hairline, space: 8 } },
+          children: [
+            new TextRun({ text: footerText }),
+            new TextRun({ text: '\t' }),
+            ...(options.page_numbers === false ? [] : [new TextRun({ children: [PageNumber.CURRENT] })])
+          ]
+        })]
+      })
   const section = {
     properties: {
+      // A cover with a page number and a running head on it is not a cover.
+      // titlePage gives page one its own (empty) header and footer, and
+      // starting the count at zero makes the first content page "1".
+      titlePage: hasCover,
       page: {
         size: { width: pageWidth, height: paper.height, orientation: landscape ? PageOrientation.LANDSCAPE : PageOrientation.PORTRAIT },
-        margin: { top: margin, right: margin, bottom: margin, left: margin }
+        margin: { top: margin, right: margin, bottom: margin, left: margin },
+        ...(hasCover ? { pageNumbers: { start: 0 } } : {})
       }
     },
-    headers: options.header
-      ? { default: new Header({ children: [new Paragraph({ text: String(options.header), style: 'WfFooter' })] }) }
+    headers: runningHeader
+      ? { default: runningHeader, ...(hasCover ? { first: new Header({ children: [] }) } : {}) }
       : undefined,
-    footers: options.page_numbers === false && !footerText
-      ? undefined
-      : {
-          default: new Footer({
-            children: [new Paragraph({
-              style: 'WfFooter',
-              tabStops: [{ type: 'right', position: contentWidth }],
-              children: [
-                new TextRun({ text: footerText }),
-                new TextRun({ text: '\t' }),
-                ...(options.page_numbers === false ? [] : [new TextRun({ children: [PageNumber.CURRENT] })])
-              ]
-            })]
-          })
-        },
+    footers: runningFooter
+      ? { default: runningFooter, ...(hasCover ? { first: new Footer({ children: [] }) } : {}) }
+      : undefined,
     children
   }
 

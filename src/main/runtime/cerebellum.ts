@@ -20,6 +20,7 @@ import type {
 import type { WorkflowEffort, WorkflowWaitOutcome } from '@main/runtime/workflow'
 import type { CountdownSnapshot, TaskSnapshot, WorkflowAgentView } from '@main/runtime/broca'
 import type { CountdownArmInput, CountdownArmResult } from '@main/runtime/countdown'
+import type { WaitStartInput, WaitStartResult } from '@main/runtime/wait'
 import type { VideoSubmitInput, VideoSubmitResult } from '@main/runtime/video-tasks'
 import { sudoSession, type SudoSession } from '@main/runtime/sudoSession'
 import type { ToolDefinition } from '@main/runtime/thalamus'
@@ -727,6 +728,21 @@ export type CountdownHost = {
 }
 
 /**
+ * Blocking waits, injected into the `utilities` plugin via its init context
+ * (PluginContext.wait). Implemented in the main process over the WaitManager
+ * singleton: it renders the waiting card, blocks for as long as the model
+ * asked, and resolves early when the user sends a mid-turn message.
+ */
+export type WaitHost = {
+  /**
+   * Block for `input.seconds`, showing a card that says why. Resolves with
+   * how the wait ended (`elapsed` / `interrupted` / `canceled`) — never
+   * rejects, and never imposes a maximum.
+   */
+  start: (input: WaitStartInput, signal?: AbortSignal) => Promise<WaitStartResult>
+}
+
+/**
  * Retrieval surface injected into the `introspect` capability's plugin via
  * its init context (PluginContext.cortex). Implemented in the main process
  * (index.ts) over the live Cortex index + Hippocampus write path, so the
@@ -983,6 +999,11 @@ export type PluginContext = {
    */
   countdown?: CountdownHost
   /**
+   * Blocking waits for the `utilities` capability's `wait` tool. Present
+   * once main calls setWaitHost — see WaitHost.
+   */
+  wait?: WaitHost
+  /**
    * Ask the user a multiple-choice question and block until they answer.
    * Used by the `ask` capability to pause the agent loop, render an
    * interactive question card in the chat, and resume with the user's
@@ -1207,6 +1228,7 @@ export class Cerebellum {
   private voiceHost?: VoiceHost
   private videoTasksHost?: VideoTasksHost
   private countdownHost?: CountdownHost
+  private waitHost?: WaitHost
   /**
    * Bumped every time the live tool surface changes — a reload (skills
    * added/edited/removed) or an enable/disable toggle. The agent loop pins
@@ -1427,6 +1449,15 @@ export class Cerebellum {
    */
   setCountdownHost(host: CountdownHost): void {
     this.countdownHost = host
+  }
+
+  /**
+   * Wire the blocking-wait host (implemented in the main process over the
+   * WaitManager singleton) that the `utilities` capability's `wait` tool
+   * receives in its init context. Set once at startup; survives reload().
+   */
+  setWaitHost(host: WaitHost): void {
+    this.waitHost = host
   }
 
   isDisabled(name: string): boolean {
@@ -2727,6 +2758,7 @@ export class Cerebellum {
         voice: this.voiceHost,
         videoTasks: this.videoTasksHost,
         countdown: this.countdownHost,
+        wait: this.waitHost,
         askUser: (input) => this.dispatchAskUser(input),
         getChannelStatus: () => this.channelStatusProvider?.() ?? []
       })

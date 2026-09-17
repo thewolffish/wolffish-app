@@ -244,6 +244,9 @@ function AssistantRow(props: {
             <Match when={part.kind === 'countdown'}>
               <CountdownPart snapshot={(part as Extract<Part, { kind: 'countdown' }>).snapshot} />
             </Match>
+            <Match when={part.kind === 'wait'}>
+              <WaitPart snapshot={(part as Extract<Part, { kind: 'wait' }>).snapshot} />
+            </Match>
             <Match when={part.kind === 'compaction'}>
               <CompactionPart part={part as Extract<Part, { kind: 'compaction' }>} />
             </Match>
@@ -836,6 +839,57 @@ function CountdownPart(props: { snapshot: Record<string, unknown> }): JSX.Elemen
       </Show>
     </Card>
   )
+}
+
+/**
+ * The blocking-wait card in the terminal. No input of its own — typing in
+ * the CLI composer is already a mid-turn message, which is exactly what ends
+ * a wait, so the hint points there instead of inventing a second control.
+ */
+function WaitPart(props: { snapshot: Record<string, unknown> }): JSX.Element {
+  const p = theme
+  const [now, setNow] = createSignal(Date.now())
+  const timer = setInterval(() => setNow(Date.now()), 500)
+  onCleanup(() => clearInterval(timer))
+  const status = () => String(props.snapshot.status ?? '')
+  const waiting = () => status() === 'waiting'
+  const endsAt = () =>
+    typeof props.snapshot.endsAt === 'number' ? (props.snapshot.endsAt as number) : 0
+  const remaining = () => Math.max(0, endsAt() - now())
+  const reason = () => String(props.snapshot.reason ?? 'waiting')
+  const color = () => (waiting() ? p().warn : status() === 'canceled' ? p().muted : p().good)
+  return (
+    <Card title={`Wait · ${reason()}`} color={color()}>
+      <Show
+        when={waiting()}
+        fallback={
+          <text fg={p().muted}>
+            {status() === 'elapsed'
+              ? 'waited out'
+              : status() === 'interrupted'
+                ? 'woken early by your message'
+                : 'stopped'}
+          </text>
+        }
+      >
+        <text fg={p().text}>
+          {'continues in '}
+          <span style={{ fg: p().warn, bold: true }}>{formatWaitRemaining(remaining())}</span>
+          <span style={{ fg: p().dim }}>{'   send a message to continue now'}</span>
+        </text>
+      </Show>
+    </Card>
+  )
+}
+
+/** "1h 4m" / "12m" / "45s" — matches the desktop card's shape. */
+function formatWaitRemaining(ms: number): string {
+  const s = Math.ceil(ms / 1000)
+  if (s < 60) return `${s}s`
+  if (s < 3600) return `${Math.ceil(s / 60)}m`
+  const h = Math.floor(s / 3600)
+  const m = Math.round((s % 3600) / 60)
+  return m ? `${h}h ${m}m` : `${h}h`
 }
 
 function CompactionPart(props: { part: Extract<Part, { kind: 'compaction' }> }): JSX.Element {

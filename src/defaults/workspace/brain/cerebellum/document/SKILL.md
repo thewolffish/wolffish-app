@@ -111,14 +111,14 @@ tools:
         required: false
         description: "One line naming the document you are about to build — stating it commits you to following the manual."
   - name: document_create
-    description: "Create a designed, EDITABLE .docx. You choose a block type per element and supply content; the engine owns a real Word style sheet (Wf Title/Subtitle/Body/Lead/Quote/Caption plus Heading 1-3), so the reader can restyle the whole document from the Styles pane, the headings reach the navigation pane, and a table of contents actually fills. Blocks: cover, toc, heading, lead, paragraph, bullets, numbered, table, callout, quote, caption, image, divider, page_break. Call doc_design FIRST — it also tells you when the answer is a PDF instead."
+    description: "Create a designed, EDITABLE .docx. You choose a block type per element and supply content; the engine owns a real Word style sheet (Wf Title/Subtitle/Body/Lead/Quote/Caption plus Heading 1-3), so the reader can restyle the whole document from the Styles pane, the headings reach the navigation pane, and a table of contents actually fills. Blocks: cover, toc, heading, lead, paragraph, bullets, numbered, table, callout, quote, caption, image, divider, page_break. The cover page carries no page number, figures right-align themselves in tables, and heading levels 1-3 are three voices (ruled claim, accent heading, caps label) — doc_design has the rules. Call doc_design FIRST — it also tells you when the answer is a PDF instead."
     parameters:
       output_path:
         type: string
         description: Absolute path for the output .docx file
       content:
         type: string
-        description: "JSON array of blocks — [{type:'cover',eyebrow,title,subtitle,meta}, {type:'heading',level,text}, {type:'lead',text}, {type:'paragraph',text}, {type:'bullets',items:[]}, {type:'numbered',items:[]}, {type:'table',headers:[],rows:[[]],column_widths:[],caption}, {type:'callout',tone:'info|good|warn|bad',title,text}, {type:'quote',text,attribution}, {type:'image',path,width,height,caption}, {type:'toc'}, {type:'divider'}, {type:'page_break'}]. See doc_design for every field."
+        description: "JSON array of blocks — [{type:'cover',eyebrow,title,subtitle,meta:[{label,value}],top_space}, {type:'heading',level,text}, {type:'lead',text}, {type:'paragraph',text}, {type:'bullets',items:[]}, {type:'numbered',items:[]}, {type:'table',headers:[],rows:[[]],column_widths:[],caption}, {type:'callout',tone:'info|good|warn|bad',title,text}, {type:'quote',text,attribution}, {type:'image',path,width,height,caption}, {type:'toc',page_break}, {type:'divider'}, {type:'page_break'}]. See doc_design for every field."
       options:
         type: string
         description: "Optional JSON object: {theme (steel|teal|forest|indigo|plum|claret|rust|graphite), tokens, page: 'a4'|'letter'|'legal', orientation, margin_inches, font_display, font_body, base_size, title, author, header, footer, page_numbers}"

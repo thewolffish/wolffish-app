@@ -1,3 +1,4 @@
+import { releaseAttention, requestAttention } from '@main/attention'
 import {
   buildAssistantMessage,
   type AssistantAccumulator,
@@ -18,6 +19,7 @@ import {
   appendTextSegment,
   upsertTaskSegment,
   upsertCountdownSegment,
+  upsertWaitSegment,
   upsertTodoSegment,
   upsertWorkflowSegment
 } from '@main/runtime/broca'
@@ -283,6 +285,7 @@ export class ElectronChannel {
       this.pendingAsks.delete(id)
       entry.resolve({ kind: 'canceled' })
     }
+    this.releaseBlockedAttention()
   }
 
   /**
@@ -361,6 +364,7 @@ export class ElectronChannel {
     if (!entry) return { ok: false as const }
     this.pendingApprovals.delete(payload.id)
     entry.resolve(payload.decision)
+    this.releaseBlockedAttention()
     return { ok: true as const }
   }
 
@@ -370,7 +374,19 @@ export class ElectronChannel {
     if (!entry) return { ok: false as const }
     this.pendingAsks.delete(payload.id)
     entry.resolve(payload.response)
+    this.releaseBlockedAttention()
     return { ok: true as const }
+  }
+
+  /**
+   * Retract the Dock bounce / taskbar flash a blocking card raised, once no
+   * card is blocking any live turn. Scoped to 'needs-user' so it cannot cancel
+   * the one-second bounce a turn ending fires in the same breath (a canceled
+   * turn drains its own pending cards on the way out).
+   */
+  private releaseBlockedAttention(): void {
+    if (this.pendingApprovals.size > 0 || this.pendingAsks.size > 0) return
+    releaseAttention('needs-user')
   }
 
   /** Currently running any turn? Used by the quit-drain logic. */
@@ -472,6 +488,7 @@ export class ElectronChannel {
         if (segment.kind === 'workflow') upsertWorkflowSegment(acc.segments, segment)
         else if (segment.kind === 'task') upsertTaskSegment(acc.segments, segment)
         else if (segment.kind === 'countdown') upsertCountdownSegment(acc.segments, segment)
+        else if (segment.kind === 'wait') upsertWaitSegment(acc.segments, segment)
         else if (segment.kind === 'todo') upsertTodoSegment(acc.segments, segment)
         else if (segment.kind === 'text' || segment.kind === 'reasoning')
           appendTextSegment(acc.segments, segment)
@@ -480,7 +497,9 @@ export class ElectronChannel {
         if (segment.kind === 'text') acc.assistantContent += segment.delta
         // Task snapshots flush the mirror immediately — a card flipping to
         // running/succeeded should not wait out the text throttle.
-        scheduleMirror(segment.kind === 'task' || segment.kind === 'countdown')
+        scheduleMirror(
+          segment.kind === 'task' || segment.kind === 'countdown' || segment.kind === 'wait'
+        )
         // Prose is cheap to lose a few seconds of and arrives per token;
         // everything else — a tool call, its result, a task or workflow
         // snapshot, the turn's end — is the slow, expensive part of a run and
@@ -515,6 +534,9 @@ export class ElectronChannel {
             reason: req.reason,
             description: req.description
           })
+          // The turn stops here until the user answers, and they may be in
+          // another app with no idea of it.
+          requestAttention('needs-user')
         })
       },
       onAskUserRequest: (req: AskUserRequest & { id: string }) => {
@@ -531,6 +553,7 @@ export class ElectronChannel {
             toolCallId: req.toolCallId,
             questions: req.questions
           })
+          requestAttention('needs-user')
         })
       },
       onDone: () => {
@@ -542,10 +565,12 @@ export class ElectronChannel {
         // either way.
         void checkpoint?.flush({ final: true })
         safeSend('chat:done', { turnId, conversationId })
+        requestAttention('turn-ended')
       },
       onError: (error) => {
         void checkpoint?.flush({ final: true })
         safeSend('chat:error', { turnId, conversationId, error })
+        requestAttention('turn-ended')
       },
       onCredentialBlocked: (type) => {
         safeSend('chat:credentialBlocked', { turnId, conversationId, type })

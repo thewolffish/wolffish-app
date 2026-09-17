@@ -83,18 +83,23 @@ A named brand colour beats the table — pass a full `tokens` object, every toke
 half of them. The semantic trio (green good, amber warn, red bad) is not yours to
 restyle.
 
-**Fonts.** Default `Calibri`. For more voice, pair a serif display with a sans body:
-`font_display: "Cambria"`, `font_body: "Calibri"`. Both ship with Office everywhere.
-Never specify Aptos — no substitute on older installs. `page` takes `a4` (default),
-`letter` or `legal`.
+**Fonts.** The default is a pair — `Cambria` headings over `Calibri` text. Both ship
+with Office everywhere, and one typeface doing every job is the flattest a document
+can look. Override with `font_display` / `font_body`; `Georgia`+`Calibri` and
+`Calibri`+`Calibri` (plainest) are the other safe pairs. Never specify Aptos — no
+substitute on older installs. `page` takes `a4` (default), `letter` or `legal`.
+
+**Margins default to 1.25 inches** and the body sets solid on 130%. Both are measure
+decisions: at one inch an A4 line runs past 90 characters, which is over the top of
+the readable range. Widen them for a document with wide tables, never to fit more in.
 
 ## 5. The blocks
 
 | `type` | Carries | Key fields |
 |---|---|---|
-| `cover` | Title page | `eyebrow`, `title`, `subtitle`, `meta`, `page_break` |
-| `toc` | Contents field | `title` |
-| `heading` | Section head | `text`, `level` (1–3) |
+| `cover` | Title page | `eyebrow`, `title`, `subtitle`, `meta`, `top_space`, `page_break` |
+| `toc` | Contents field | `title`, `page_break` |
+| `heading` | Section head | `text`, `level` (1–3 — see below) |
 | `lead` | The paragraph that answers the section | `text` |
 | `paragraph` | Body | `text`, `bold`, `italic`, `alignment`, `rtl` |
 | `bullets` | Unordered list | `items[]` (string or `{text, bold, level}`) |
@@ -110,6 +115,22 @@ Never specify Aptos — no substitute on older installs. `page` takes `a4` (defa
 `options` carries `theme`, `page`, `orientation`, `margin_inches`, `font_display`,
 `font_body`, `base_size`, `title`, `author`, `header`, `footer`, `page_numbers`.
 
+**The contents breaks to a new page after itself.** In a short document that spends a
+page on four lines — pass `page_break: false` on the `toc` block and let the contents
+sit under the title block on page one, or drop the contents entirely.
+
+**Give `cover.meta` a list, not a paragraph.** `[{label: "Prepared for", value: "The
+board"}, {label: "Date", value: "17 September 2026"}]` sets a label/value row across a
+hairline — the thing that makes a cover look composed rather than typed. Up to four
+columns; a plain string still works and prints as caption lines. The title block sits a
+third of the way down the page; `top_space` (twips) moves it, `top_space: false`
+pins it to the top margin for a one-page memo.
+
+**The three heading levels are three different voices, not three sizes.** Level 1 is the
+section claim and carries a rule beneath it. Level 2 is a heading inside a section, in
+the accent. Level 3 is a letterspaced caps label at body size — use it for a short
+label over a list or a table, never for a heading with a paragraph of its own beneath.
+
 **Hard page breaks are for a cover and a genuinely new part — nothing else.** A
 `page_break` before every section is the fastest way to a document with half-empty
 pages: a section that ends two lines into a page leaves the rest of it white. Let the
@@ -121,13 +142,24 @@ invisible in the block list.
 called out nothing.
 
 **`column_widths` are relative** — `[3, 2, 2, 1.5]` means the first column gets 3/8.5
-of the text width. Give the column holding sentences the largest share.
+of the text width. Give the column holding sentences the largest share, and give a
+column of figures enough width for its heading: heads set in letterspaced caps are
+wider than they look in your block list.
+
+**Numbers right-align themselves.** A column whose cells are mostly figures is detected
+and set right, header included, so digits line up against digits. Never pad a cell with
+spaces to fake alignment, and keep a column's figures to one format — `5.1%` and
+`5.10%` in the same column do not line up however they are aligned. Tables carry no
+vertical rules, no stripes and no fills: a rule under the header, hairlines between
+rows, and the same system `pdf_design` uses, so a report and its PDF match.
 
 ## 6. Writing a document someone will edit
 
 - **Say it in the heading and the lead.** A reader who reads only those two must still
   get the answer. Everything below is support.
 - **One idea per paragraph**, and the first sentence carries it.
+- **Curly quotes and real dashes.** `"price"` and `--` are the two marks that say a
+  machine typed this; write “price” and an em dash. One space after a period.
 - **Numbers get their comparison** — "11.4%, up from 5.9%", never a bare figure.
 - **Name the owner and the date** for anything that is someone's job. A plan with no
   name against it is a wish.

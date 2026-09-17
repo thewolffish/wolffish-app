@@ -81,6 +81,7 @@ import { renderOptionsForChannel } from '@main/channels/options-render'
 import {
   upsertTaskSegment,
   upsertCountdownSegment,
+  upsertWaitSegment,
   upsertTodoSegment,
   appendTextSegment,
   upsertWorkflowSegment,
@@ -2512,6 +2513,7 @@ export class WhatsAppChannel {
     if (segment.kind === 'workflow') upsertWorkflowSegment(active.segments, segment)
     else if (segment.kind === 'task') upsertTaskSegment(active.segments, segment)
     else if (segment.kind === 'countdown') upsertCountdownSegment(active.segments, segment)
+    else if (segment.kind === 'wait') upsertWaitSegment(active.segments, segment)
     else if (segment.kind === 'todo') upsertTodoSegment(active.segments, segment)
     else if (segment.kind === 'text' || segment.kind === 'reasoning')
       appendTextSegment(active.segments, segment)

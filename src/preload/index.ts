@@ -9,7 +9,9 @@ import type {
   TodoStatus,
   ToolResultDiff,
   ToolResultMeta,
-  ToolResultStatus
+  ToolResultStatus,
+  WaitSnapshot,
+  WaitStatus
 } from '@main/runtime/broca'
 import type {
   InterjectVerdict,
@@ -29,7 +31,9 @@ export type {
   TodoStatus,
   ToolResultDiff,
   ToolResultMeta,
-  ToolResultStatus
+  ToolResultStatus,
+  WaitSnapshot,
+  WaitStatus
 }
 
 export type ThemeSource = 'system' | 'light' | 'dark'

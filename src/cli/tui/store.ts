@@ -45,6 +45,7 @@ export type Part =
   | { kind: 'todo'; id: string; listId: string; items: TodoItem[] }
   | { kind: 'workflow'; id: string; snapshot: Record<string, unknown> }
   | { kind: 'task'; id: string; snapshot: Record<string, unknown> }
+  | { kind: 'wait'; id: string; snapshot: Record<string, unknown> }
   | { kind: 'countdown'; id: string; snapshot: Record<string, unknown> }
   | {
       kind: 'compaction'
@@ -579,14 +580,17 @@ export function applySegment(
     }
     case 'workflow':
     case 'task':
-    case 'countdown': {
+    case 'countdown':
+    case 'wait': {
       const snapshot = (segment.snapshot as Record<string, unknown>) ?? {}
       const keyField =
         segment.kind === 'workflow'
           ? 'workflowId'
           : segment.kind === 'task'
             ? 'taskId'
-            : 'countdownId'
+            : segment.kind === 'wait'
+              ? 'waitId'
+              : 'countdownId'
       const key = String(snapshot[keyField] ?? segmentId)
       let replaced = false
       set(
@@ -597,7 +601,10 @@ export function applySegment(
             for (const part of message.parts) {
               if (
                 part.kind === segment.kind &&
-                (part.kind === 'workflow' || part.kind === 'task' || part.kind === 'countdown') &&
+                (part.kind === 'workflow' ||
+                  part.kind === 'task' ||
+                  part.kind === 'countdown' ||
+                  part.kind === 'wait') &&
                 String(part.snapshot[keyField] ?? part.id) === key
               ) {
                 part.snapshot = snapshot
@@ -610,7 +617,7 @@ export function applySegment(
       if (!replaced) {
         editParts((parts) =>
           parts.push({
-            kind: segment.kind as 'workflow' | 'task' | 'countdown',
+            kind: segment.kind as 'workflow' | 'task' | 'countdown' | 'wait',
             id: segmentId,
             snapshot
           })

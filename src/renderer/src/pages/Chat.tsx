@@ -35,6 +35,7 @@ import { UpdateCard } from '@components/common/update-card/UpdateCard'
 import { VideoPlayer } from '@components/common/video-player/VideoPlayer'
 import { TaskCard } from '@components/common/task-card/TaskCard'
 import { CountdownCard } from '@components/common/countdown-card/CountdownCard'
+import { WaitCard } from '@components/common/wait-card/WaitCard'
 import { TodoCard } from '@components/common/todo-card/TodoCard'
 import { TouchedFolders } from '@components/common/touched-folders/TouchedFolders'
 import { WorkflowCard } from '@components/common/workflow-card/WorkflowCard'
@@ -56,6 +57,7 @@ import {
   todoListId,
   upsertTaskSegment,
   upsertCountdownSegment,
+  upsertWaitSegment,
   upsertTodoSegment,
   upsertWorkflowSegment,
   WORKFLOW_TOOL_NAMES,
@@ -5221,6 +5223,13 @@ function renderSegments(
       blocks.push(
         <CountdownCard key={`countdown-${seg.snapshot.countdownId}`} snapshot={seg.snapshot} />
       )
+    } else if (seg.kind === 'wait') {
+      // The blocking-wait card: one per wait, upserted by waitId, carrying
+      // its own input while it runs. Output FOR the user — it renders
+      // regardless of verbose, like the task and countdown cards: a turn
+      // that went quiet with no explanation reads as a hang.
+      flushText()
+      blocks.push(<WaitCard key={`wait-${seg.snapshot.waitId}`} snapshot={seg.snapshot} />)
     } else if (seg.kind === 'todo') {
       // The model's task list: one checklist card per LIST, at the turn that
       // created it, in its latest state — a later turn's write that continues
@@ -6586,6 +6595,7 @@ function appendSegment(messages: ChatMessage[], segment: Segment): ChatMessage[]
       if (segment.kind === 'workflow') upsertWorkflowSegment(nextSegments, segment)
       else if (segment.kind === 'task') upsertTaskSegment(nextSegments, segment)
       else if (segment.kind === 'countdown') upsertCountdownSegment(nextSegments, segment)
+      else if (segment.kind === 'wait') upsertWaitSegment(nextSegments, segment)
       else if (segment.kind === 'todo') upsertTodoSegment(nextSegments, segment)
       else nextSegments.push(segment)
       const next: AssistantMessage = { ...m, segments: nextSegments }
