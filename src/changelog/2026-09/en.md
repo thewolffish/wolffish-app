@@ -1,4 +1,10 @@
-## v1.0.304 — 2026-09-17 `Latest`
+## v1.0.305 — 2026-09-17 `Latest`
+
+### The Stray Fragment at the End of a Finished Job
+
+A scheduled run would do everything right — build the file, publish the post, write up its own notes — and then close with **a cryptic fragment like `[Empty response]`** where a clean ending belonged. Wolffish already watches for this: a model that means "nothing more to say" but cannot send a truly empty message sometimes types a stand-in for the silence instead, and when it does, it is told so on its next reply and corrects itself. The catch was that **every scheduled run gets a conversation of its own, closed the moment the run ends** — so the correction was addressed to a conversation that would never speak again, and was quietly thrown away. The check was catching every one of these and telling nobody, which is exactly why you saw it on automations and almost never in chat. That note now **reaches Wolffish wherever it next speaks**, carrying a line saying the slip happened somewhere else, so it never apologises to you for a message you never saw. Alongside it, the instructions Wolffish works from are firmer about the ordinary case: **a turn that did real work ends by talking to you** — what it did, what came of it, what failed or is still pending — and nothing is stapled on after that.
+
+## v1.0.304 — 2026-09-17
 
 ### A Reply From Your Phone Reaches the Chat You Left Open
 

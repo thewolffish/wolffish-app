@@ -57,10 +57,32 @@
  * the only move that improves anything.
  *
  * The leak typically happens on a turn's FINAL call (there is no next
- * iteration to tell), so an armed notice survives the turn: it is keyed by
- * conversation and drained by that conversation's next model call, whichever
- * turn that is. In-memory only, like the channels' pending format notices —
- * a restart forgets an undelivered notice, which costs nothing (advisory).
+ * iteration to tell), so an armed notice survives the turn and is drained by
+ * the next model call — ANY next model call, in any conversation. One global
+ * slot, not one per conversation.
+ *
+ * That is deliberate, and it is the whole reason this guard does anything at
+ * all for autonomous work. A heartbeat, procedure or automation run mints a
+ * FRESH sealed conversation per run (see `processAutonomous`) and ends after a
+ * single turn, so a notice keyed by conversation was armed into a conversation
+ * that would never make another model call and was silently dropped — the
+ * guard detected every scheduled-run leak and told nobody. Observed live
+ * 2026-09-17: deepseek-flash closed a heartbeat run with a literal
+ * `[Empty response]`, the placeholder check matched it, and the notice died
+ * with the conversation. The model is one model across conversations; the
+ * lesson travels with it even when the conversation does not.
+ *
+ * Delivery into a DIFFERENT conversation carries one extra clause, because the
+ * quoted reply is not in the history the model is looking at and the user
+ * there never saw it: carry the rule forward, raise nothing here. Without that
+ * clause a cross-conversation notice invites an apology to the wrong person
+ * for a message they cannot see.
+ *
+ * Draining is gated to the same roles that arm — worker text never reaches the
+ * user, so a worker must not consume the one notice the master is owed.
+ *
+ * In-memory only, like the channels' pending format notices — a restart
+ * forgets an undelivered notice, which costs nothing (advisory).
  */
 
 /**
@@ -252,13 +274,29 @@ export function silencePlaceholderNotice(placeholder: SilencePlaceholder): strin
   )
 }
 
-/** Pending notice per conversation — armed at the leak, drained by the next model call. */
-const pending = new Map<string, string>()
+/**
+ * The clause appended when the notice is delivered in a different conversation
+ * from the one the leak happened in. It has to override, not soften, the base
+ * notice's "clear it up with the user" advice: here there is no stray
+ * character on screen and no user who saw one.
+ */
+const ELSEWHERE_CLAUSE =
+  'That reply was in a DIFFERENT conversation from this one — it is not in the history above, ' +
+  'and the user you are talking to now never saw it. Do not mention it, apologise for it or ' +
+  'try to clear it up here; there is nothing here to clear up. Carry the rule forward, nothing else.'
 
-/** Arm the notice for `conversationId`'s next model call (latest leak wins). */
+/** The one pending notice — armed at the leak, drained by the next model call anywhere. */
+let pending: { conversationId: string | null; notice: string } | null = null
+
+/**
+ * Arm the notice for the next model call (latest leak wins).
+ *
+ * A single slot, deliberately global: see the header. The conversation id is
+ * remembered only to decide which wording the drain hands back, never to
+ * decide whether the notice is delivered at all.
+ */
 export function armControlTokenNotice(conversationId: string | null, token: string): void {
-  if (!conversationId) return
-  pending.set(conversationId, controlTokenNotice(token))
+  pending = { conversationId, notice: controlTokenNotice(token) }
 }
 
 /**
@@ -269,8 +307,7 @@ export function armControlTokenNotice(conversationId: string | null, token: stri
  * only). Latest leak wins, as above.
  */
 export function armContentFreeReplyNotice(conversationId: string | null, reply: string): void {
-  if (!conversationId) return
-  pending.set(conversationId, contentFreeReplyNotice(reply))
+  pending = { conversationId, notice: contentFreeReplyNotice(reply) }
 }
 
 /**
@@ -284,14 +321,25 @@ export function armSilencePlaceholderNotice(
   conversationId: string | null,
   placeholder: SilencePlaceholder
 ): void {
-  if (!conversationId) return
-  pending.set(conversationId, silencePlaceholderNotice(placeholder))
+  pending = { conversationId, notice: silencePlaceholderNotice(placeholder) }
 }
 
-/** Drain (return and clear) the pending notice, or undefined when none. */
+/**
+ * Drain (return and clear) the pending notice, or undefined when none.
+ *
+ * Delivers wherever the next model call happens — the leak is the model's, not
+ * the conversation's. `conversationId` only selects the wording: the same
+ * conversation gets the notice as written (the stray characters are in the
+ * history above, and the user there did see them), any other gets it plus the
+ * clause that says so.
+ */
 export function drainControlTokenNotice(conversationId: string | null): string | undefined {
-  if (!conversationId) return undefined
-  const notice = pending.get(conversationId)
-  if (notice !== undefined) pending.delete(conversationId)
-  return notice
+  const leak = pending
+  if (!leak) return undefined
+  pending = null
+  const sameConversation =
+    leak.conversationId !== null &&
+    conversationId !== null &&
+    leak.conversationId === conversationId
+  return sameConversation ? leak.notice : `${leak.notice} ${ELSEWHERE_CLAUSE}`
 }

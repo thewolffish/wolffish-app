@@ -1416,13 +1416,22 @@ export class Agent {
         const channelNotices = turn.formatNotices?.() ?? []
         const channelFormatText = channelNotices.length > 0 ? channelNotices.join(' ') : undefined
 
-        // Control-token notice — this conversation's previous model call ended
-        // its visible text in a literal tokenizer control token, which the user
-        // saw as-is (observe-and-notify: the model repairs its own behaviour;
-        // nothing rewrites its output). Drained once per iteration; rides the
-        // same volatile vehicle as the no-progress notice so it never perturbs
-        // the cached prompt prefix. Undefined (the common case) renders nothing.
-        const controlTokenText = drainControlTokenNotice(turn.conversationId ?? null)
+        // Faked-silence notice — the previous model call ended its visible text
+        // in a literal control token, a lone punctuation mark or a bracketed
+        // stand-in for silence, which the user saw as-is (observe-and-notify:
+        // the model repairs its own behaviour; nothing rewrites its output).
+        // Drained once per iteration; rides the same volatile vehicle as the
+        // no-progress notice so it never perturbs the cached prompt prefix.
+        // Undefined (the common case) renders nothing.
+        //
+        // The slot is global, so the notice reaches the model even when the
+        // leak happened in a conversation that ended with it (every autonomous
+        // run mints a fresh sealed conversation, so that is the common case,
+        // not the corner one). Draining is gated to the same roles that arm:
+        // worker text never reaches the user, so a worker must not swallow the
+        // notice the master is owed.
+        const controlTokenText =
+          turn.role !== 'agent' ? drainControlTokenNotice(turn.conversationId ?? null) : undefined
 
         // Async video-task landings the model has not consumed (it moved on
         // instead of calling video_await). Rides the same volatile vehicle;
