@@ -1621,7 +1621,11 @@ export class MobileChannel {
       const messageId = /^m_\d{1,17}_[0-9a-f]{6}$/.test(String(params.messageId ?? ''))
         ? String(params.messageId)
         : mintMessageId()
-      if (!this.deps.runner.isConversationActive(conversationId)) {
+      // Asked ahead of the transcribe below, which is expensive and pointless
+      // with nothing to hand the result to — and asked as `canInterject`, the
+      // same question interject() answers, so an automation run (which owns no
+      // lane) is not refused here after the inbox agreed to take it.
+      if (!this.deps.runner.canInterject(conversationId)) {
         return { status: 'no_live_turn' } satisfies InterjectResult
       }
       let content = text
@@ -2733,7 +2737,10 @@ export class MobileChannel {
         // A card flipping to running/succeeded should not wait out the text
         // throttle, exactly as in the in-app mirror.
         scheduleMirror(
-          segment.kind === 'task' || segment.kind === 'countdown' || segment.kind === 'wait'
+          segment.kind === 'task' ||
+            segment.kind === 'countdown' ||
+            segment.kind === 'wait' ||
+            segment.kind === 'user_message'
         )
       },
       // Accumulate tokenomics for the persisted context-meter stats.
@@ -2963,6 +2970,18 @@ export class MobileChannel {
         this.tunnel?.emit(Event.messageAppended, { conversationId, ...prompt })
         return
       }
+      // A mid-turn message the run has just read takes the same urgent lane a
+      // parked approval's anchor does, and for the same reason: its
+      // `delivered` push has already retired the phone's pending bubble, so
+      // until this snapshot lands the user's own words are on no screen at
+      // all. Only the FIRST snapshot carrying it skips the pacing — compared
+      // against the previous cache, so the rest of the turn pays as usual.
+      const seenUserMessages = new Set(
+        this.userMessageIdsOf(this.lastMirrors.get(conversationId)?.message)
+      )
+      const carriesNewUserMessage = this.userMessageIdsOf(fitted.message).some(
+        (id) => !seenUserMessages.has(id)
+      )
       this.lastMirrors.set(conversationId, {
         message: fitted.message,
         deltaSeq: this.mirrorDeltaSeq.get(conversationId) ?? 0,
@@ -2972,7 +2991,7 @@ export class MobileChannel {
       // phone BEFORE the request event) go regardless; everything else pays
       // the byte pacing. A deferred tick is not lost — the trailing flush
       // sends the newest cached snapshot when the window opens.
-      if (!opts?.urgent && this.deferMirror(conversationId)) return
+      if (!opts?.urgent && !carriesNewUserMessage && this.deferMirror(conversationId)) return
       this.mirrorPace.set(conversationId, {
         sentAt: Date.now(),
         sentBytes: fitted.bytes,
@@ -2987,6 +3006,23 @@ export class MobileChannel {
       return
     }
     this.tunnel?.emit(Event.messageAppended, { conversationId, ...prompt })
+  }
+
+  /**
+   * The `user_message` ids a mirror snapshot carries — a mid-turn message the
+   * run has read, sitting at the point it read it.
+   */
+  private userMessageIdsOf(message: unknown): string[] {
+    const segments = (message as { segments?: unknown } | null | undefined)?.segments
+    if (!Array.isArray(segments)) return []
+    const out: string[] = []
+    for (const seg of segments) {
+      if (!seg || typeof seg !== 'object') continue
+      if ((seg as { kind?: unknown }).kind !== 'user_message') continue
+      const id = (seg as { messageId?: unknown }).messageId
+      if (typeof id === 'string') out.push(id)
+    }
+    return out
   }
 
   /** Cancel a conversation's pending mirror flush, if any. Returns null for
@@ -3197,7 +3233,7 @@ export class MobileChannel {
       // Reported as NOT sent, which is the truth: the running turn owns the
       // message now, the park keeps it, and the next reconciler pass steps over
       // it because it is back in the live inbox.
-      if (this.deps.runner.isConversationActive(item.conversationId)) {
+      if (this.deps.runner.canInterject(item.conversationId)) {
         const handed = this.deps.runner.interject(item.conversationId, {
           messageId: item.messageId,
           text: item.text,

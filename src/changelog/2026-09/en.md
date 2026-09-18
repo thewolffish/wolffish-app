@@ -1,4 +1,18 @@
-## v1.0.305 — 2026-09-17 `Latest`
+## v1.0.306 — 2026-09-18 `Latest`
+
+### You Can Talk to a Job While It Works
+
+Wolffish learned to take a message mid-turn a few versions ago — but only in a chat you had started yourself. **A scheduled automation, a procedure or a heartbeat job took none of it**, and those are exactly the runs that work unattended for minutes at a time and most need steering: *that post text is wrong, fix it before you publish.* Type into one and the message was refused outright — your bubble went up and came straight back down, and your words then waited, **on no screen at all**, until the run ended and the window sent them as a brand-new turn, far too late to matter. Those runs do not travel the same track a chat turn does, so nothing had ever registered them as steerable. They now **borrow the very same inbox**: the same acceptance, the same pending row, the same button to take a message back, and the same return of anything the job never got around to reading. Two rough edges on the chat side went with it. A message sent in **the sliver where a turn is closing** used to disappear with nothing to show for it, because the composer had already been emptied the moment you pressed Enter; it now **stays on screen saying it is waiting for the current turn to finish**, and taking it back hands the words to the composer rather than dropping them. And the instant a run actually reads your message, **it appears at the point it was read** — on the desktop, on your phone and in the terminal — instead of waiting out the pacing the rest of a turn pays.
+
+### A Browser Group of Its Own for Every Job
+
+Wolffish works in its own blue tab group rather than in your tabs — but there was **only ever one group**, so two jobs running side by side, or one starting right after another, **landed in each other's tab** and left one job's label standing over the other's work. Every conversation now gets **a group, a tab and a title of its own**: an automation browsing in the background never takes over the tab you are watching, and never renames it out from under you. The browser's side panel follows the same rule — it shows **the name of the conversation that actually ran the commands**, not whichever chat the app window happened to be sitting on, and a conversation named seconds ago shows that name straight away instead of `Untitled`.
+
+### Cards That Stop Drifting From What They Describe
+
+On the Automations, Procedures and Projects pages, the small grey detail line at the foot of each card was pinned to the card's floor so that every card in a row ended on the same line. What that actually bought was the opposite: **a card standing next to a taller neighbour opened a gap above the line**, and the detail floated away from the thing it belonged to. It now **sits directly beneath its own content**, so the wells line up across a row where that helps and the slack falls underneath, where nothing has to look at it.
+
+## v1.0.305 — 2026-09-17
 
 ### The Stray Fragment at the End of a Finished Job
 

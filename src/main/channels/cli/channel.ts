@@ -560,7 +560,10 @@ export class CliChannel {
         if (segment.kind === 'turn_end') acc.stopReason = segment.stopReason
         if (segment.kind === 'text') acc.assistantContent += segment.delta
         scheduleMirror(
-          segment.kind === 'task' || segment.kind === 'countdown' || segment.kind === 'wait'
+          segment.kind === 'task' ||
+            segment.kind === 'countdown' ||
+            segment.kind === 'wait' ||
+            segment.kind === 'user_message'
         )
       },
       onTurnEvent: <E extends keyof CorpusEvents>(type: E, payload: CorpusEvents[E]): void => {

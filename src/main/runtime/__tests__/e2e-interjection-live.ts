@@ -365,6 +365,76 @@ async function main(): Promise<void> {
     )
   }
 
+  // ── 4. an AUTONOMOUS run (automation / procedure / heartbeat) ──────────
+  // The case that was broken: these runs call agent.respond() directly rather
+  // than riding a TurnRunner lane, so nothing registered them as live, the
+  // inbox refused every message aimed at them, and the sending window — which
+  // reads `busy` for them all the same — put a bubble up and took it straight
+  // back down. Proven here through the real bridge main wires.
+  console.log('\n4. message during an autonomous run')
+  {
+    agent.setAutonomousInterjections({
+      open: (conversationId) => runner.openOffLaneRun(conversationId),
+      take: (conversationId, turnId) => runner.drainInterjections(conversationId, turnId),
+      close: (conversationId, reason) => runner.closeOffLaneRun(conversationId, reason)
+    })
+    // An autonomous run has no sink of its own to hand us — it streams
+    // through the message mirror, which is exactly what an open window
+    // watches. Interject off that, the way a user would.
+    // Typed up front: assigned only inside the mirror callback, which TS
+    // narrows to `never` if the annotation is left to inference.
+    const mirror: { message: { segments?: Segment[] } | null } = { message: null }
+    let interjected = false
+    agent.setAutonomousMessageMirror((cid, message) => {
+      if (message) mirror.message = message as unknown as { segments?: Segment[] }
+      if (interjected || !message) return
+      if (!(message.segments ?? []).some((s) => s.kind === 'tool_result')) return
+      interjected = true
+      const res = runner.interject(cid, {
+        messageId: 'live_m4',
+        text: 'Change of plan: do NOT read the bravo file. End your final reply with the single word PAPAYA.',
+        attachments: [],
+        channel: 'electron',
+        sentAt: Date.now()
+      })
+      ok('autonomous: interject accepted mid-run', res.status === 'pending')
+    })
+    const result = await agent
+      .processAutonomous({
+        instruction: `Read these two files ONE AT A TIME, each with its own separate file_read call: ${A} then ${B}. After each read, say in one short line which file you just read. Then reply with the total number of characters across them.`,
+        channel: 'heartbeat',
+        jobLabel: 'live-interjection-autonomous'
+      })
+      .catch((err) => {
+        ok('autonomous: run finished without throwing', false, String(err))
+        return null
+      })
+    ok('autonomous: something was steerable mid-run', interjected)
+    // The transcript is the proof the user's own diagnostic export showed as
+    // EMPTY before this fix: zero user_message segments on the run's message.
+    const segments: Segment[] = (mirror.message?.segments ?? []) as Segment[]
+    const i = userMsgAt(segments)
+    ok('autonomous: a user_message segment reached the transcript', i >= 0)
+    ok(
+      'autonomous: the run read it and carried on',
+      i >= 0 && segments.slice(i + 1).some((s) => s.kind === 'active_model')
+    )
+    ok(
+      'autonomous: the reply honours the mid-run message',
+      /PAPAYA/i.test(result?.response ?? textOf(segments)),
+      (result?.response ?? textOf(segments)).slice(-160)
+    )
+    ok(
+      'autonomous: delivered, not bounced',
+      events.some((e) => e.messageId === 'live_m4' && e.state === 'delivered') &&
+        !events.some((e) => e.messageId === 'live_m4' && e.state === 'withdrawn')
+    )
+    ok(
+      'autonomous: the inbox closes with the run',
+      result !== null && !runner.hasOffLaneRun(result.conversationId)
+    )
+  }
+
   await tick()
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed > 0 ? 1 : 0)

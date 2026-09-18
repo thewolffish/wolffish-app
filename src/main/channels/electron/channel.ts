@@ -496,9 +496,15 @@ export class ElectronChannel {
         if (segment.kind === 'turn_end') acc.stopReason = segment.stopReason
         if (segment.kind === 'text') acc.assistantContent += segment.delta
         // Task snapshots flush the mirror immediately — a card flipping to
-        // running/succeeded should not wait out the text throttle.
+        // running/succeeded should not wait out the text throttle. So does a
+        // `user_message`: the `delivered` push takes the pending bubble down
+        // the moment the agent reads it, so a throttled snapshot would leave
+        // the user's own words off the screen until the next tick.
         scheduleMirror(
-          segment.kind === 'task' || segment.kind === 'countdown' || segment.kind === 'wait'
+          segment.kind === 'task' ||
+            segment.kind === 'countdown' ||
+            segment.kind === 'wait' ||
+            segment.kind === 'user_message'
         )
         // Prose is cheap to lose a few seconds of and arrives per token;
         // everything else — a tool call, its result, a task or workflow
