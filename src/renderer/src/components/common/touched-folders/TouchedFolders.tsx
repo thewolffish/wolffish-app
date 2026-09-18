@@ -8,10 +8,12 @@ import { useTranslation } from 'react-i18next'
  * The folders this conversation has changed files in, as a strip of chips
  * laid over the transcript's top edge — starting after the leading glass
  * disc, on the row the FloatingChrome owns, ending before the trailing disc.
- * One chip per folder (its path relative to the working folder, with the
- * number of files changed there); click opens the folder in the system
- * file manager. The strip never wraps: it scrolls on x, scrollbar hidden,
- * so a run that touches twenty folders costs the transcript no height.
+ * One chip per parent folder — each touched directory collapses to its top
+ * level under the working folder, so nested folders never each get one —
+ * carrying the number of files changed anywhere under it; click opens the
+ * folder in the system file manager. The strip never wraps: it scrolls on x,
+ * scrollbar hidden, so a run that touches twenty folders costs the transcript
+ * no height.
  *
  * Fed by collectTouchedFolders over the persisted segments, so the chips
  * are identical live, after the turn and on a reopened conversation.
@@ -29,10 +31,11 @@ export function TouchedFolders({
       aria-label={t('chat.touchedFolders.label')}
       className={cn(
         // Same row as the floating discs (FloatingChrome): mac clears the
-        // traffic lights at top-12/px-3, other platforms sit at top-6/px-4.
-        // The start/end padding clears a 40px disc plus its gap on each side.
-        'pointer-events-none fixed inset-x-0 z-20 flex h-10 items-center',
-        isMac ? 'top-12 ps-[3.75rem] pe-[3.75rem]' : 'top-6 ps-[4rem] pe-[4rem]'
+        // traffic lights at top-12, other platforms sit at top-6; the discs
+        // attach at px-4 from the side edges on every platform. The start/end
+        // padding clears a 40px disc plus its gap on each side.
+        'pointer-events-none fixed inset-x-0 z-20 flex h-10 items-center ps-16 pe-16',
+        isMac ? 'top-12' : 'top-6'
       )}
     >
       <div

@@ -34,19 +34,22 @@ export function FloatingChrome(): React.JSX.Element {
   const [projectDialogOpen, setProjectDialogOpen] = useState(false)
   // The dialog's `busy` lock (instructions/files frozen under a running turn):
   // the active conversation's live phase is the app-level equivalent of the
-  // old per-session `streaming` flag.
+  // old per-session `streaming` flag. Exiting is deliberately not part of the
+  // lock — it only switches what the window shows, and the project's running
+  // turn keeps going in its own session.
   const busy =
     activeConversationId !== null && runStatuses[activeConversationId]?.phase === 'processing'
 
   return (
     <>
-      {/* macOS clears the traffic lights at top-12/px-3; Windows/Linux keep
-          their native titlebar above the webview, so the discs ride higher and
-          get a touch more breathing room from the window edges. */}
+      {/* macOS clears the traffic lights at top-12; Windows/Linux keep their
+          native titlebar above the webview and sit at top-6. Left and right
+          are the same everywhere — px-4 — so the discs attach the same
+          distance from the window edges on every platform. */}
       <div
         className={cn(
-          'pointer-events-none fixed inset-x-0 z-30 flex items-center justify-between',
-          isMac ? 'top-12 px-3' : 'top-6 px-4'
+          'pointer-events-none fixed inset-x-0 z-30 flex items-center justify-between px-4',
+          isMac ? 'top-12' : 'top-6'
         )}
       >
         <button
@@ -90,7 +93,9 @@ export function FloatingChrome(): React.JSX.Element {
         // Close = leave project mode and land in a fresh plain chat, right
         // here — no detour to the Projects page. newSession() without a
         // projectId both spawns/refocuses the blank session and clears the
-        // active project (syncProjectFor(null)).
+        // active project (syncProjectFor(null)). Stays available under a
+        // running turn: the project's session stays mounted, so its stream
+        // and the conversation itself are untouched.
         onExitProject={() => {
           setProjectDialogOpen(false)
           newSession()

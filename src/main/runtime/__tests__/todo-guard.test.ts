@@ -96,7 +96,7 @@ check('ending a turn with open items is sent back once', () => {
   )
   assert.ok(
     aside.includes('yours to decide'),
-    'the conversation is the model\'s: it chooses how the turn ends'
+    "the conversation is the model's: it chooses how the turn ends"
   )
   assert.ok(
     aside.includes('renders BELOW it'),

@@ -51,9 +51,10 @@ export type ProjectDialogProps = {
   /** Chat project-mode extras: leave the project (back to the projects list). */
   onExitProject?: () => void
   /**
-   * A turn is executing in this project's session — execution-affecting
-   * controls lock (close project, instructions editing, file add/remove)
-   * so the base can't shift under a running turn.
+   * A turn is executing in this project's session — the controls that edit
+   * the project's own base under it lock (instructions, files, folders) so
+   * it can't shift mid-turn. Exiting does not lock: it is a view switch, and
+   * the running turn keeps going in its session.
    */
   busy?: boolean
 }
@@ -260,14 +261,10 @@ function ProjectDialogBody({
         <div className="flex w-full items-center gap-2">
           {onExitProject && (
             // Muted, not destructive-red: closing a project is a benign mode
-            // switch — the ghost variant's own neutral hover applies.
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={onExitProject}
-              disabled={busy}
-              className="text-muted disabled:cursor-not-allowed disabled:opacity-40"
-            >
+            // switch — the ghost variant's own neutral hover applies. Never
+            // disabled under a running turn: exit only swaps the visible
+            // session, and the project's turn keeps running in its own.
+            <Button variant="ghost" size="sm" onClick={onExitProject} className="text-muted">
               {t('projects.exit')}
             </Button>
           )}
