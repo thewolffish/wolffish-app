@@ -204,6 +204,63 @@ function testSilencePlaceholderDetectsTheObservedLeaks(): void {
   console.log('ok: bracketed stand-ins trip, alone and stapled onto prose')
 }
 
+function testSilencePlaceholderDetectsTheChineseLeak(): void {
+  // Observed live 2026-09-18 (deepseek-flash, heartbeat run): the runtime's own
+  // todo close-out nudge ordered "end with an entirely empty response — zero
+  // characters", and the model answered with the Chinese set phrase for
+  // "utterly empty" — four characters, four output tokens, the whole final
+  // reply. Every check here was English-only, so nothing saw it and the model
+  // was never told. See CJK_SILENCE_PHRASES and todo-guard.
+  assert.deepEqual(silencePlaceholder('空空如也'), {
+    text: '空空如也',
+    trailing: false
+  })
+  // Stapled under prose, the same second shape the English vocabulary has.
+  assert.deepEqual(
+    silencePlaceholder('Published, verified live, ledgered.\n\n空空如也'),
+    { text: '空空如也', trailing: true },
+    'a CJK stand-in after real prose is the trailing shape'
+  )
+  // Bare, and inside brackets of either width — both reach the user identically.
+  for (const reply of [
+    '无内容',
+    '無內容',
+    '无输出',
+    '没有内容',
+    '无话可说',
+    '保持沉默',
+    '（无输出）',
+    '[无内容]',
+    '【空回复】',
+    '无内容。'
+  ]) {
+    assert.ok(silencePlaceholder(reply), `detects ${reply}`)
+  }
+  console.log('ok: the Chinese stand-in trips, bare and bracketed, alone and after prose')
+}
+
+function testSilencePlaceholderNeverTripsOnChineseContent(): void {
+  // A set phrase inside a sentence is content, exactly as in English.
+  assert.equal(
+    silencePlaceholder('我们的数据库空空如也，需要重新导入数据'),
+    null,
+    'mid-sentence is Chinese, not a faked silence'
+  )
+  assert.equal(silencePlaceholder('The folder was 空空如也 when I checked it.'), null)
+  assert.equal(
+    silencePlaceholder('任务已完成，所有五条推文已发布。'),
+    null,
+    'a real Chinese wrap-up is a reply, not a stand-in'
+  )
+  // Single characters are deliberately off the list, for the same reason
+  // `(none)` is off the English one: each has an ordinary use as content.
+  assert.equal(silencePlaceholder('空'), null)
+  assert.equal(silencePlaceholder('无'), null)
+  // A longer idiom that merely contains a listed phrase is not that phrase.
+  assert.equal(silencePlaceholder('沉默是金，但这次需要说明'), null)
+  console.log('ok: Chinese prose, single characters and longer idioms never trip')
+}
+
 function testSilencePlaceholderNeverTripsOnContent(): void {
   assert.equal(silencePlaceholder(''), null)
   assert.equal(silencePlaceholder('Done.'), null)
@@ -266,6 +323,8 @@ function main(): void {
   testContentFreeNeverTripsOnContent()
   testContentFreeNoticeEchoesAndDefers()
   testSilencePlaceholderDetectsTheObservedLeaks()
+  testSilencePlaceholderDetectsTheChineseLeak()
+  testSilencePlaceholderNeverTripsOnChineseContent()
   testSilencePlaceholderNeverTripsOnContent()
   testSilencePlaceholderNoticeSeparatesTheTwoShapes()
   testSilencePlaceholderSharesTheNoticeSlot()

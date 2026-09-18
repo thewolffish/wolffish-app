@@ -1949,8 +1949,11 @@ export class Agent {
               `[agent] end_turn with the task list still open — nudging for a todo_write ` +
                 `close-out (${todoNudges}/${MAX_TODO_NUDGES}, iter ${iterationCount})`
             )
-            // Same honour as the indicator nudge: an empty close after the
-            // write is the instructed outcome, not a dropout to chase.
+            // Same honour as the indicator nudge. The aside no longer ORDERS
+            // an empty close — demanding silence from a model that cannot emit
+            // a zero-token content channel is what buys a placeholder — but it
+            // still offers one, so a model that takes it is making the call the
+            // aside handed it, not dropping out. Never chase that.
             emptyTurnNudges = MAX_EMPTY_TURN_NUDGES
             messages.push(...todoNudge)
             continue

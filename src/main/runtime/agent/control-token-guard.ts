@@ -213,6 +213,105 @@ const BRACKETED_TAIL = /(?:^|\n)[ \t]*([([{<（【][^\n]{1,40}?[)\]}>）】])[ \
 const SILENCE_PHRASE =
   /^(?:no\s+(?:content|output|reply|response|text|message|further\s+(?:content|output|reply|response|text|message|comment))|nothing(?:\s+(?:to\s+add|to\s+say|further|more|else))?|empty(?:\s+(?:reply|response|message))?|silence|silent|staying\s+silent|end\s+of\s+(?:turn|reply|response|message))[\s.!…]*$/iu
 
+/**
+ * The same vocabulary in the script the models actually think in.
+ *
+ * Seven of the providers wired into this app are Chinese labs — deepseek,
+ * qwen, kimi, minimax, z.ai, mimo, stepfun — and a model reaching for the
+ * smallest stand-in it can find reaches for the one in its own language, not
+ * the English one. Observed live 2026-09-18: deepseek-flash closed a heartbeat
+ * run with a bare `空空如也` ("utterly empty"), four characters and four output
+ * tokens, the entire final reply of the run — the English-only check below saw
+ * nothing, so the model was never told and the user got Chinese at the end of
+ * an English conversation. The runtime had just ORDERED that silence, too; see
+ * todo-guard for that half of the fix.
+ *
+ * Brackets are deliberately NOT required here, unlike the English path. The
+ * asymmetry is not an oversight: an unbracketed "Nothing to add." is a
+ * legitimate English answer to a question and must never be second-guessed,
+ * whereas these are set phrases whose entire job is to stand in for an absent
+ * message, and a reply that is nothing but one of them — in a conversation
+ * conducted in another language — has never been anything else.
+ *
+ * Simplified and traditional forms both appear because the providers differ on
+ * which they emit. Single characters (`空`, `无`) stay OFF the list for the same
+ * reason `(none)` is off the English one: each has an ordinary use as real
+ * content, and a false positive spends a tail line arguing with a model that
+ * was writing normally.
+ */
+const CJK_SILENCE_PHRASES = [
+  '空空如也', // "utterly empty" — the observed leak
+  '空无一物',
+  '空無一物',
+  '无内容',
+  '無內容',
+  '无输出',
+  '無輸出',
+  '无回复',
+  '無回覆',
+  '无响应',
+  '無響應',
+  '没有内容',
+  '沒有內容',
+  '没有输出',
+  '沒有輸出',
+  '无更多内容',
+  '無更多內容',
+  '无话可说',
+  '無話可說',
+  '没什么可说的',
+  '沒什麼可說的',
+  '无需回复',
+  '無需回覆',
+  '空回复',
+  '空回覆',
+  '保持沉默',
+  '沉默'
+]
+
+/** Bracket pairs the models reach for, ASCII and full-width/CJK alike. */
+const BRACKET_PAIRS: ReadonlyArray<readonly [string, string]> = [
+  ['(', ')'],
+  ['[', ']'],
+  ['{', '}'],
+  ['<', '>'],
+  ['（', '）'],
+  ['【', '】'],
+  ['「', '」'],
+  ['『', '』'],
+  ['〔', '〕']
+]
+
+/** Trailing sentence punctuation, both widths — a stand-in often wears one. */
+const TRAILING_PUNCTUATION = /[\s.。!！?？…、,，:：;；~～-]+$/u
+
+/** `text` with one matched bracket pair peeled off, or `text` unchanged. */
+function unwrapBrackets(text: string): string {
+  for (const [open, close] of BRACKET_PAIRS) {
+    if (text.length > 2 && text.startsWith(open) && text.endsWith(close)) {
+      return text.slice(open.length, -close.length).trim()
+    }
+  }
+  return text
+}
+
+/**
+ * The CJK stand-in in `text`, or null. Matches the whole reply or a line that
+ * sits alone at its end — the same two positions as the English check, since
+ * both shapes have shipped: the phrase as the entire message, and the phrase
+ * stapled under real prose. A phrase inside a sentence is content and never
+ * matches.
+ */
+function cjkSilencePlaceholder(text: string): SilencePlaceholder | null {
+  const trimmed = text.trim()
+  if (trimmed === '') return null
+  const lastLine = trimmed.slice(trimmed.lastIndexOf('\n') + 1).trim()
+  if (lastLine === '') return null
+  const bare = unwrapBrackets(lastLine).replace(TRAILING_PUNCTUATION, '').trim()
+  if (!CJK_SILENCE_PHRASES.includes(bare)) return null
+  return { text: lastLine, trailing: lastLine !== trimmed }
+}
+
 /** A faked silence typed as a bracketed placeholder, and where it sat. */
 export type SilencePlaceholder = { text: string; trailing: boolean }
 
@@ -228,13 +327,17 @@ export type SilencePlaceholder = { text: string; trailing: boolean }
  * control-token list (these carry no tokenizer marker) nor the punctuation
  * check (these are words) saw either one, so nothing ever told the model.
  *
- * Brackets are REQUIRED. An unbracketed "Nothing to add." as an entire reply
- * is a legitimate answer to a question, and this guard must never second-guess
- * a model that answered one.
+ * Brackets are REQUIRED for the English vocabulary. An unbracketed "Nothing to
+ * add." as an entire reply is a legitimate answer to a question, and this guard
+ * must never second-guess a model that answered one. The CJK set phrases
+ * checked first carry no such ambiguity, so they match bare — see
+ * CJK_SILENCE_PHRASES for why the asymmetry is deliberate.
  */
 export function silencePlaceholder(text: string): SilencePlaceholder | null {
   const trimmed = text.trim()
   if (trimmed === '') return null
+  const cjk = cjkSilencePlaceholder(trimmed)
+  if (cjk) return cjk
   const match = BRACKETED_TAIL.exec(trimmed)
   if (!match) return null
   const group = match[1]
