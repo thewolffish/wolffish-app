@@ -1,4 +1,8 @@
-## v1.0.307 — 2026-09-19 `Latest`
+## v1.0.308 — 2026-09-19 `Latest`
+
+### The Folder Chips Stop Sliding Down Into the Weeds
+
+The strip of folder chips over a transcript is meant to answer one question — where did this run work? — and it had started answering a different one. On a chat with **no working folder set**, every chip was labeled by the **leaf of the path it happened to touch**, so the folders you actually worked in were invisible: `…/wolffish-app/.github/workflows/ci.yml` billed a chip reading **`workflows`**, `…/wolffish-app/src/lib/deep/nested/x.ts` billed one reading **`nested`**, and you had to click each chip and open it to find out what any of them meant. Worse, work spanning **two projects built the same way** put **two chips both named `src`** on the strip — `wolffish-app` and the cloud desktop each collapsed to their own second `src`, two identical labels over two different codebases, with nothing to tell them apart. Each touched directory now collapses to **the project folder that opens its tree**: the chip reads `wolffish-app`, `wolffish-cloud`, `capabilities`, and the counts add up across everything underneath. The scan runs **outermost boundary first** — the first `src`, `lib`, `test`, `docs` or dot-directory on the path — while containers like `apps` are passed straight through, so the cloud desktop still bills as **`desktop`** rather than as a generic `apps`, and a `.github` folder now folds into its project instead of claiming a chip of its own.
 
 ### A Finished Job No Longer Signs Off in Another Language
 
