@@ -23,6 +23,7 @@
 import type { Agent } from '@main/runtime/agent'
 import { readViewerFile } from '@main/viewer'
 import { readConfig } from '@main/workspace/workspace'
+import { reasoningModesFor } from '@main/runtime/reasoning'
 import { app } from 'electron'
 
 /** Mirrors wolffish-mobile's ConfigSnapshot. Kept structural on purpose: the
@@ -313,6 +314,22 @@ export async function buildConfigSnapshot(sources: SnapshotSources): Promise<Con
   const thinkingModes = (llm.thinkingModes ?? {}) as Record<string, unknown>
   const thinkingMode = thinkingModes[str(brain.model)]
 
+  // The ordered modes THIS model honours — the same registry the desktop's
+  // brain button renders from. Served so the phone's Library cards offer
+  // exactly what the model accepts and never a mode it would silently ignore;
+  // a phone paired with an older desktop gets no list and falls back to the
+  // full canonical scale on its side.
+  const localModelId = bool(llm.localOnly)
+    ? typeof local.model === 'string'
+      ? local.model
+      : null
+    : null
+  const reasoningModes = bool(llm.localOnly)
+    ? localModelId
+      ? reasoningModesFor('local', localModelId)
+      : []
+    : reasoningModesFor(str(brain.providerId), str(brain.model))
+
   const snapshot: Record<string, unknown> = {
     capabilities: capabilities.map((capability) => ({
       name: capability.name,
@@ -515,6 +532,8 @@ export async function buildConfigSnapshot(sources: SnapshotSources): Promise<Con
       ...(typeof thinkingMode === 'string' && THINKING_MODES.has(thinkingMode)
         ? { thinkingMode }
         : {}),
+      // What this model can actually do, in the brain button's own order.
+      reasoningModes,
       local: {
         enabled: bool(local.enabled),
         model: typeof local.model === 'string' ? local.model : null,

@@ -266,12 +266,19 @@ export const Rpc = {
    * serialized by one mutation tail.
    *
    * `projectsList` answers `{ projects }` (newest-edited first, as the desktop
-   * lists them). `projectCreate` takes `{ title, icon?, instructions? }`,
-   * `projectUpdate` a partial `{ id, title?, icon?, instructions?, files? }`
-   * — a `files` array is a whole-list replace and the desktop deletes the
-   * copies it owns for anything dropped, exactly as its own dialog does — and
-   * `projectDelete` takes `{ id }`. Each answers the stored project (or
-   * `{ ok }` for the delete), never the phone's optimism.
+   * lists them). `projectCreate` takes `{ title, icon?, instructions?,
+   * thinking? }`, `projectUpdate` a partial `{ id, title?, icon?,
+   * instructions?, thinking?, files? }` — a `files` array is a whole-list
+   * replace and the desktop deletes the copies it owns for anything dropped,
+   * exactly as its own dialog does — and `projectDelete` takes `{ id }`. Each
+   * answers the stored project (or `{ ok }` for the delete), never the phone's
+   * optimism.
+   *
+   * `thinking` is the item's own reasoning effort and rides the same
+   * create/update contract `mode` already has on procedures: absent ⇒ the item
+   * follows the selected model's mode, present ⇒ the run uses it. Setting it
+   * is how the phone's card switch and the desktop's card switch stay one
+   * state seen from two places.
    */
   projectsList: 'desktop.projects.list',
   projectCreate: 'desktop.projects.create',
@@ -281,6 +288,7 @@ export const Rpc = {
    * Procedures — `brain/procedures.json`, same contract as the projects trio
    * above: `{ procedures }`, then create/update/delete answering the stored
    * row. `projectId: ''` on an update unbinds, matching the desktop's setter.
+   * `thinking` behaves as it does on projects.
    *
    * `files` and `directories` on an update are WHOLE-LIST replaces, honoured
    * only as real arrays: dropping a file DELETES the desktop's copy, so an
@@ -307,6 +315,11 @@ export const Rpc = {
    * atomic writer the desktop's markdown view uses, so the file watcher
    * reloads the scheduler for both screens. `automationRun` takes `{ label }`
    * and answers the brainstem's own `{ ok, started, error? }`.
+   *
+   * Each `AutomationJob` also carries its `thinking` — the job's own
+   * `thinking:` marker, or null when it has none. It is the one marker the
+   * phone cannot read off its own parse without duplicating the engine's
+   * regex set, and it is what the card's switch renders.
    */
   /**
    * Validate a working-folder path against THIS machine. A phone cannot browse
@@ -599,6 +612,23 @@ export type SyncMessage = {
 export type SyncProjectFile = { path: string; name: string }
 
 /**
+ * The canonical reasoning scale, on the wire.
+ *
+ * Declared here rather than imported from `@main/runtime/reasoning` because
+ * protocol.ts has NO imports — it is the one file that must stay
+ * byte-identical between the desktop and the phone, and the phone cannot reach
+ * into the desktop's main process. The desktop's own ReasoningMode is
+ * structurally identical; the two must be changed together.
+ *
+ * A model may honour fewer modes than this list (some have no distinct max,
+ * some only off/on). The wire carries the item's STAMP, which is always one of
+ * these four canonical tokens; the phone renders whichever subset the selected
+ * model supports, exactly as the desktop's card does.
+ */
+export type ReasoningMode = 'off' | 'on' | 'high' | 'max'
+export const REASONING_MODES: readonly ReasoningMode[] = ['off', 'on', 'high', 'max']
+
+/**
  * The diagnostic export, on the wire — the desktop's own DiagnosticStep,
  * DiagnosticProgress and DiagnosticResult (src/main/diagnostics.ts) verbatim,
  * so both overlays render one shape and neither has to translate.
@@ -674,6 +704,12 @@ export type SyncProject = {
    * is. An added one is checked against the desktop's own filesystem first.
    */
   directories: string[]
+  /**
+   * The project's own reasoning effort — what every turn inside it runs at.
+   * Null ⇒ follows the selected model's thinking mode. Omitted by a desktop
+   * older than this field; the phone normalizes it to null.
+   */
+  thinking: ReasoningMode | null
   createdAt: number
   updatedAt: number
 }
@@ -685,6 +721,12 @@ export type SyncProcedure = {
   prompt: string
   /** Null ⇒ the row follows the workspace's global chat mode. */
   mode: 'single' | 'workflow' | null
+  /**
+   * The procedure's own reasoning effort. Null ⇒ the row follows the model's
+   * thinking mode — the same live-fallback contract as `mode`. Omitted by a
+   * desktop older than this field, which the phone normalizes to null.
+   */
+  thinking: ReasoningMode | null
   /** Always present on the wire; the desktop defaults it at creation. */
   icon: string
   /** Null ⇒ unbound. */
@@ -723,6 +765,8 @@ export type AutomationJob = {
   cron: string | null
   nextRunMs: number | null
   mode: 'single' | 'workflow' | null
+  /** The job's own reasoning effort; null ⇒ follows the model's mode. */
+  thinking: ReasoningMode | null
 }
 
 /**

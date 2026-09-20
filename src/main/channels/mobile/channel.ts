@@ -89,7 +89,9 @@ import {
   DEFAULT_RELAY_URL,
   Event,
   PUSH_WIRE_VERSION,
+  REASONING_MODES,
   Rpc,
+  type ReasoningMode,
   type AutomationJob,
   type AutomationRuns,
   type ConversationMeta,
@@ -1797,7 +1799,10 @@ export class MobileChannel {
       const project = await createProject({
         title: wireText(params.title, TITLE_MAX) ?? '',
         icon: wireText(params.icon, ICON_MAX),
-        instructions: wireText(params.instructions, INSTRUCTIONS_MAX)
+        instructions: wireText(params.instructions, INSTRUCTIONS_MAX),
+        // Same contract as procedureCreate: absent ⇒ the store stamps chat's
+        // current mode at creation.
+        thinking: wireReasoning(params.thinking)
       })
       this.log(`project created from the phone — ${project.id}`)
       return { project: toWireProject(project) }
@@ -1824,6 +1829,9 @@ export class MobileChannel {
         title: wireText(params.title, TITLE_MAX),
         icon: wireText(params.icon, ICON_MAX),
         instructions: wireText(params.instructions, INSTRUCTIONS_MAX),
+        // `undefined` leaves the stamp alone; a canonical token sets it. The
+        // wire never carries null here — the phone sends a mode or nothing.
+        ...(wireReasoning(params.thinking) ? { thinking: wireReasoning(params.thinking)! } : {}),
         ...(files ? { files } : {}),
         ...(directories ? { directories } : {})
       })
@@ -1852,6 +1860,10 @@ export class MobileChannel {
         title: wireText(params.title, TITLE_MAX) ?? '',
         prompt: wireText(params.prompt, PROMPT_MAX) ?? '',
         mode: wireMode(params.mode),
+        // Absent ⇒ the store stamps the chat's current mode, which is the
+        // desktop's own create contract; the phone only sends one when the
+        // user overrode it on the card.
+        thinking: wireReasoning(params.thinking),
         icon: wireText(params.icon, ICON_MAX),
         projectId: wireText(params.projectId, ID_MAX)
       })
@@ -1884,6 +1896,7 @@ export class MobileChannel {
         // '' unbinds, exactly as the desktop's setter reads it — so this one
         // passes an empty string through rather than treating it as absent.
         projectId: wireText(params.projectId, ID_MAX),
+        ...(wireReasoning(params.thinking) ? { thinking: wireReasoning(params.thinking)! } : {}),
         ...(files ? { files } : {}),
         ...(directories ? { directories } : {})
       })
@@ -2279,7 +2292,10 @@ export class MobileChannel {
       // else resolves from its cron. Served rather than computed on the phone:
       // these fire against this machine's clock and zone.
       nextRunMs: job.runAt ?? (job.cron ? nextCronMs(job.cron, now) : null),
-      mode: job.mode
+      mode: job.mode,
+      // Straight off the engine's parse — the same value the run uses, so the
+      // phone's card switch can never show a mode the scheduler disagrees with.
+      thinking: job.thinking ?? null
     }))
   }
 
@@ -3546,6 +3562,7 @@ function toWireProject(project: Project): SyncProject {
       name: file.name
     })),
     directories: project.directories ?? [],
+    thinking: project.thinking ?? null,
     createdAt: project.createdAt,
     updatedAt: project.updatedAt
   }
@@ -3566,6 +3583,7 @@ function toWireProcedure(procedure: Procedure): SyncProcedure {
     // resolveProcedureFiles below.
     files: procedure.files?.map((file) => ({ path: toWirePath(file.path), name: file.name })) ?? [],
     directories: procedure.directories ?? [],
+    thinking: procedure.thinking ?? null,
     createdAt: procedure.createdAt,
     updatedAt: procedure.updatedAt
   }
@@ -3628,6 +3646,22 @@ function wireText(value: unknown, max: number): string | undefined {
 /** The two chat modes, or undefined — which means "leave it alone". */
 function wireMode(value: unknown): 'single' | 'workflow' | undefined {
   return value === 'single' || value === 'workflow' ? value : undefined
+}
+
+/**
+ * A canonical reasoning token off the wire, or undefined for anything else.
+ *
+ * Only the four canonical tokens are ever stored, so a stray value is read as
+ * absent rather than written through — an unknown mode would make the item's
+ * run fall back to a default silently, which is worse than leaving the stamp
+ * as it was. `null` reads as undefined too: the phone never needs to CLEAR a
+ * stamp (the fallback is "no marker, follow the model"), and the desktop's
+ * setters take `undefined` as "leave alone".
+ */
+function wireReasoning(value: unknown): ReasoningMode | undefined {
+  return typeof value === 'string' && (REASONING_MODES as readonly string[]).includes(value)
+    ? (value as ReasoningMode)
+    : undefined
 }
 
 /**
