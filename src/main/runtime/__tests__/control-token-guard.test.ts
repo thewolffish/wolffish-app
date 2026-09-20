@@ -60,7 +60,7 @@ function testNoticeNamesTokenAndDefers(): void {
   const notice = controlTokenNotice('<|eos|>')
   assert.match(notice, /<\|eos\|>/, 'the notice names the leaked token')
   assert.match(notice, /disregard/, 'the notice defers to deliberate quoting')
-  assert.match(notice, /empty reply/, 'the notice names the silent ending as the fix')
+  assert.match(notice, /close_turn/, 'the notice names the producible exit as the fix')
   assert.match(notice, /Parentheses are for real/, 'and says what brackets are actually for')
   assert.doesNotMatch(
     notice,
@@ -147,7 +147,7 @@ function testContentFreeNeverTripsOnContent(): void {
 function testContentFreeNoticeEchoesAndDefers(): void {
   const notice = contentFreeReplyNotice('.')
   assert.match(notice, /`\.`/, 'the notice echoes the characters the user saw')
-  assert.match(notice, /zero characters/, 'the notice names the silent ending as the fix')
+  assert.match(notice, /close_turn/, 'the notice names the producible exit as the fix')
   assert.doesNotMatch(
     notice,
     /\(no output\)|\(nothing to add\)/i,
@@ -202,6 +202,40 @@ function testSilencePlaceholderDetectsTheObservedLeaks(): void {
     assert.ok(silencePlaceholder(reply), `detects ${reply}`)
   }
   console.log('ok: bracketed stand-ins trip, alone and stapled onto prose')
+}
+
+function testSilencePlaceholderClosesTheClass(): void {
+  // The whole point of the structural detector. Observed live 2026-09-19
+  // (deepseek-flash, mobile, conversation 2026-09-19_23-43-28_568-9587df):
+  // the model wrote its reply, sent its notification, then typed this —
+  // APPENDED to a reply that had already finished. The old exact-match
+  // allowlist rejected it (the `empty` branch was anchored and forbade
+  // trailing text), so no notice was armed and the model was never told.
+  assert.deepEqual(
+    silencePlaceholder('One flag: the two lines conflict. 🐟[(empty — nothing further)]'),
+    { text: '[(empty — nothing further)]', trailing: true },
+    'the 2026-09-19 appended leak must trip'
+  )
+  assert.deepEqual(silencePlaceholder('[(empty — nothing further)]'), {
+    text: '[(empty — nothing further)]',
+    trailing: false
+  })
+  // Nobody has ever seen these. They must trip anyway — that is what proves
+  // the guard stopped being a list of known literals. A vocabulary test can
+  // only verify the past; these verify the future.
+  for (const reply of [
+    '(nothing else to say)',
+    '[no message follows]',
+    '(I have nothing to add here)',
+    '(empty, no content)',
+    '{nothing further from me}',
+    '(no further response required)',
+    '(nothing more)',
+    '(silent)'
+  ]) {
+    assert.ok(silencePlaceholder(reply), `detects the never-seen phrasing ${reply}`)
+  }
+  console.log('ok: novel phrasings trip — the class is closed, not enumerated')
 }
 
 function testSilencePlaceholderDetectsTheChineseLeak(): void {
@@ -286,7 +320,7 @@ function testSilencePlaceholderNeverTripsOnContent(): void {
 function testSilencePlaceholderNoticeSeparatesTheTwoShapes(): void {
   const alone = silencePlaceholderNotice({ text: '(no content)', trailing: false })
   assert.match(alone, /`\(no content\)`/, 'echoes what the user saw')
-  assert.match(alone, /zero characters/, 'names the silent ending as the fix')
+  assert.match(alone, /close_turn/, 'names the producible exit as the fix')
   assert.match(alone, /entire previous reply/, 'says the whole reply was the stand-in')
   assert.match(alone, /disregard/, 'defers to deliberate content')
 
@@ -323,6 +357,7 @@ function main(): void {
   testContentFreeNeverTripsOnContent()
   testContentFreeNoticeEchoesAndDefers()
   testSilencePlaceholderDetectsTheObservedLeaks()
+  testSilencePlaceholderClosesTheClass()
   testSilencePlaceholderDetectsTheChineseLeak()
   testSilencePlaceholderNeverTripsOnChineseContent()
   testSilencePlaceholderNeverTripsOnContent()

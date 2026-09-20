@@ -77,7 +77,7 @@ tools:
         required: false
         description: "Speech rate multiplier between 0.5 and 1.5 (default 1.0). Omit to use the user's configured default."
   - name: voice_respond
-    description: Reply to the user as a spoken voice memo — the default close for a <voice_note> prompt. The audio carries the reply — never restate its text as a regular message; a brief label like "Voice memo" is the only prose it needs. Files and other deliverables still go out normally BEFORE it.
+    description: Reply to the user as a spoken voice memo — the default close for a <voice_note> prompt. The audio carries the reply — never restate its text as a regular message; a brief label like "Voice memo" is the only prose it needs. Files and other deliverables still go out normally BEFORE it. The memo is the TURN'S CLOSE, not an intermission: your wrap-up is SPOKEN by this call, so no second written version of it follows. If you find yourself composing prose after it, you have already said that news — end that reply with zero characters.
     parameters:
       text:
         type: string

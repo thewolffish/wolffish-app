@@ -26,7 +26,7 @@ import type { ParsedResponse } from '@main/runtime/wernicke'
  *               lose it to a 25k-token prompt.
  *   2. NUDGE    A turn may not END with an indicator it raised. When the
  *               model stops calling tools while the glow is up,
- *               screenIndicatorNudge injects a system aside and the loop runs
+ *               indicatorNudge injects a system aside and the loop runs
  *               again, so the model closes it itself — model-led, just later
  *               than it should have been. Bounded by
  *               MAX_SCREEN_INDICATOR_NUDGES so it can never spin.
@@ -86,64 +86,29 @@ export type LastComputerAction = {
 }
 
 /**
- * The full indicator line for one iteration: the standing notice, plus the
- * last action's evidence and expectation when there is one. Pure.
- */
-export function screenIndicatorNotice(last: LastComputerAction | null | undefined): string {
-  if (!last) return SCREEN_INDICATOR_NOTICE
-  const expect = last.expect ? ` Expected: ${last.expect}.` : ''
-  return (
-    `${SCREEN_INDICATOR_NOTICE} LAST SCREEN ACTION: ${last.summary}.${expect} ` +
-    'Before your next action, check on a fresh capture (or computer_read_element) that this actually happened; ' +
-    'if it did not, re-aim or take another route rather than repeating it.'
-  )
-}
-
-/**
- * Pull the last computer action out of a tool result's UI-only meta, when
- * the result carries one. Pure.
- */
-export function lastComputerActionFrom(
-  meta: Record<string, unknown> | undefined
-): LastComputerAction | null {
-  const cu = meta?.computerUse
-  if (!cu || typeof cu !== 'object') return null
-  const la = (cu as { lastAction?: unknown }).lastAction
-  if (!la || typeof la !== 'object') return null
-  const rec = la as Record<string, unknown>
-  if (typeof rec.summary !== 'string') return null
-  return {
-    tool: typeof rec.tool === 'string' ? rec.tool : 'action',
-    target: typeof rec.target === 'string' ? rec.target : null,
-    expect: typeof rec.expect === 'string' ? rec.expect : null,
-    summary: rec.summary
-  }
-}
-
-/**
- * The nudge, injected when the model ends its turn with the indicator up.
+ * The nudge, injected when the model ends its turn with an indicator up.
  *
  * Written for a model that believes it is already done: the reply is gone,
  * so the only thing left is the tool call, and the fastest honest way out is
  * to make it. It offers the genuine alternative too (keep working) so the
- * nudge can never talk a model out of an unfinished task, and it closes the
- * empty-reply exit explicitly — the turn has nothing left to say, and
- * without permission to be silent a model will manufacture a second closing
- * message the user did not need. The stand-in warning is the same lesson
- * empty-turn-guard paid for twice: describe the class, never print a member
- * of it, or the model learns the literal and types it.
+ * nudge can never talk a model out of an unfinished task, and it names the
+ * producible exit (`close_turn`) for the case where there is genuinely
+ * nothing left to say — without one, a model that cannot emit a zero-token
+ * content channel manufactures a second closing message or a stand-in for
+ * silence. The stand-in warning is the same lesson empty-turn-guard paid for
+ * twice: describe the class, never print a member of it, or the model learns
+ * the literal and types it.
  */
 const SCREEN_INDICATOR_NUDGE_TEXT =
   '[System: You are ending your turn, but the screen indicator is still ON — the user is still being shown ' +
   '"Wolffish is capturing your screen" even though you have stopped. Only computer_glow_off clears it; nothing ' +
   'else will, ever. Call computer_glow_off now. (If you are in fact not finished with their screen, carry on with ' +
   'the task instead — but no turn may end with the indicator up.) Your reply has already been delivered to the ' +
-  'user and cannot be unsent, so if they need nothing further you can end with an entirely empty response — zero ' +
-  'characters, a complete and valid ending. That is offered, not ordered: how the turn ends is yours to decide, ' +
-  'and if there is something they still need to hear, say it. What is never an ending is a typed stand-in for ' +
-  'the silence — a bracketed note, a lone punctuation mark, a word or set phrase meaning "empty" or "nothing ' +
-  'further" in ANY language — since anything you write is delivered to them verbatim, in whatever script you ' +
-  'wrote it.]'
+  'user and cannot be unsent, so if there is something they still need to hear, say it — and if they genuinely ' +
+  'need nothing further, call `close_turn` to end the turn cleanly. That is offered, not ordered: how the turn ' +
+  'ends is yours to decide. What is never an ending is a typed stand-in for the silence — a bracketed note, a ' +
+  'lone punctuation mark, a word or set phrase meaning "empty" or "nothing further" in ANY language — since ' +
+  'anything you write is delivered to them verbatim, in whatever script you wrote it.]'
 
 // ─── Every indicator, one registry ─────────────────────────────────────────
 //
@@ -167,12 +132,11 @@ const MOBILE_INDICATOR_NUDGE_TEXT =
   '"Wolffish is driving <device>" around their simulator even though you have stopped. Only mobile_indicator_off clears it; nothing ' +
   'else will, ever. Call mobile_indicator_off now. (If you are in fact not finished with their device, carry on with ' +
   'the task instead — but no turn may end with the indicator up.) Your reply has already been delivered to the ' +
-  'user and cannot be unsent, so if they need nothing further you can end with an entirely empty response — zero ' +
-  'characters, a complete and valid ending. That is offered, not ordered: how the turn ends is yours to decide, ' +
-  'and if there is something they still need to hear, say it. What is never an ending is a typed stand-in for ' +
-  'the silence — a bracketed note, a lone punctuation mark, a word or set phrase meaning "empty" or "nothing ' +
-  'further" in ANY language — since anything you write is delivered to them verbatim, in whatever script you ' +
-  'wrote it.]'
+  'user and cannot be unsent, so if there is something they still need to hear, say it — and if they genuinely ' +
+  'need nothing further, call `close_turn` to end the turn cleanly. That is offered, not ordered: how the turn ' +
+  'ends is yours to decide. What is never an ending is a typed stand-in for the silence — a bracketed note, a ' +
+  'lone punctuation mark, a word or set phrase meaning "empty" or "nothing further" in ANY language — since ' +
+  'anything you write is delivered to them verbatim, in whatever script you wrote it.]'
 
 export type IndicatorSpec = {
   id: 'screen' | 'mobile'
@@ -217,7 +181,8 @@ export type LastIndicatorAction = LastComputerAction & { indicator: IndicatorSpe
 
 /**
  * Fold one completed tool call into the set of indicators this run has up.
- * Successful calls only, same reasoning as trackScreenIndicator. Pure —
+ * Successful calls only — a `computer_glow_on` that failed put nothing on
+ * screen, and a `computer_glow_off` that failed took nothing down. Pure —
  * returns a new Set.
  */
 export function trackIndicators(
@@ -284,8 +249,8 @@ export function lastIndicatorActionFrom(
 
 /**
  * The nudge for the first indicator still up when the model ends its turn,
- * or null. Same shape and bounds as screenIndicatorNudge; the caller logs
- * `offTool` so the transcript names what was asked for.
+ * or null. The caller logs `offTool` so the transcript names what was asked
+ * for. Bounded by MAX_SCREEN_INDICATOR_NUDGES so it can never spin.
  */
 export function indicatorNudge(
   state: ReadonlySet<string>,
@@ -323,44 +288,3 @@ export function indicatorOffTools(state: ReadonlySet<string>): string[] {
  * Only successful calls move the flag: a `computer_glow_on` that failed put
  * nothing on screen, and a `computer_glow_off` that failed took nothing down.
  */
-export function trackScreenIndicator(on: boolean, toolName: string, ok: boolean): boolean {
-  if (!ok) return on
-  if (toolName === SCREEN_INDICATOR_ON_TOOL) return true
-  if (toolName === SCREEN_INDICATOR_OFF_TOOL) return false
-  return on
-}
-
-/**
- * Returns the messages to inject before looping again when the model ends its
- * turn with the indicator still up, or `null` when the turn should end
- * normally (indicator already down, the model is still calling tools, this
- * wasn't an end_turn, or the nudge budget is spent).
- *
- * Shape follows empty-turn-guard: the aside is a `role: 'user'` message, and
- * an assistant turn is interposed ONLY when the model actually produced text.
- * Echoing a real reply back is right — it already streamed to the user, and
- * leaving it out of the history would make the model think it never said it.
- * Inventing one when the reply was empty is not: a literal `(continuing)`
- * placeholder used to stand in there, and a parenthesized stand-in for an
- * empty turn written in the model's own voice is exactly the thing that keeps
- * leaking back out as user-visible text. Anthropic no longer needs the filler
- * either — `toAnthropicMessages` merges a user message into the preceding
- * user turn.
- */
-export function screenIndicatorNudge(
-  indicatorOn: boolean,
-  parsed: Pick<ParsedResponse, 'stopReason' | 'text' | 'toolCalls' | 'thinking'>,
-  nudgeCount: number,
-  maxNudges: number = MAX_SCREEN_INDICATOR_NUDGES
-): ChatMessage[] | null {
-  if (!indicatorOn || nudgeCount >= maxNudges) return null
-  if (parsed.stopReason !== 'end_turn' || parsed.toolCalls.length > 0) return null
-
-  const user: ChatMessage = { role: 'user', content: SCREEN_INDICATOR_NUDGE_TEXT }
-  const delivered = parsed.text.trim()
-  if (!delivered) return [user]
-
-  const assistant: ChatMessage = { role: 'assistant', content: delivered }
-  if (parsed.thinking) assistant.reasoningContent = parsed.thinking
-  return [assistant, user]
-}

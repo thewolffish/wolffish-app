@@ -9,7 +9,7 @@ next to this file — open it and look. When in doubt, **read the markdown**: in
 Wolffish, the markdown files *are* the source of truth.
 
 > This is an orientation guide for a *visiting* assistant (you). It is **not**
-> the Wolffish agent's own operating manual — that lives in
+> the Wolffish agent's own core contract — that lives in
 > `workspace/brain/prefrontal/agents.core.md`. Don't confuse the two.
 
 ---
@@ -156,7 +156,7 @@ brain/
 │   ├── soul.md                the agent's character: tone, humor, hard limits
 │   └── user.md                who you are: name, work, prefs, goals, boundaries
 │
-├── prefrontal/            PLANNING. The operating manual + per-turn prompt dumps.
+├── prefrontal/            PLANNING. The core contract + per-turn prompt dumps.
 │   ├── agents.core.md         shipped core procedures (app-managed, overwritten)
 │   ├── agents.md              YOUR overrides (never overwritten; wins on conflict)
 │   └── .debug/                one timestamped dump per turn of the exact system
@@ -333,7 +333,7 @@ so hidden — `ls -a` to see them). Drop a folder in, and the agent learns a ski
 - **Plugin capability** — `SKILL.md` **+** `plugin/index.mjs` exporting executable
   tools. Most capabilities are plugins.
 
-### The catalog (43 capabilities; the table names the main ones)
+### The catalog (42 capabilities; the table names the main ones)
 
 | Category | Capability | What it gives the agent (representative tools) |
 |---|---|---|

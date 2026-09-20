@@ -6,6 +6,7 @@ import { sweepDeckPreviews } from '@main/uploads/deck-preview'
 import { mcpCapabilityName } from '@main/runtime/mcp/naming'
 import type { McpConfig, McpOauthState, McpServerConfig } from '@main/runtime/mcp/types'
 import { isKnownModelName } from '@main/runtime/models'
+import { normalizeReasoningMode, type ReasoningMode } from '@main/runtime/reasoning'
 import { app } from 'electron'
 import yaml from 'js-yaml'
 import { execFile } from 'node:child_process'
@@ -1352,6 +1353,28 @@ export async function setThinkingMode(model: string, mode: string): Promise<Work
       thinkingModes: { ...c.llm.thinkingModes, [model]: mode }
     }
   }))
+}
+
+/**
+ * The chat's currently selected thinking mode — the raw per-model pick the
+ * brain button writes, canonicalized so a legacy token (none/basic/extended/
+ * fast/budget) reads as the canonical scale. Undefined when nothing is
+ * selected for the current model. Two callers: stamping a NEW automation/
+ * procedure/project with the same setting chat is running RIGHT NOW, and
+ * resolving the run-time fallback for items saved before the field existed
+ * (they follow chat live, exactly like `mode`).
+ *
+ * Clamping to the model's own modes is deliberately NOT done here — that
+ * needs the provider context the display and run sites already hold, and both
+ * re-clamp through normalizeReasoningMode before anything consumes the value.
+ */
+export async function currentThinkingModeSetting(): Promise<ReasoningMode | undefined> {
+  const cfg = await readConfig().catch(() => null)
+  if (!cfg) return undefined
+  const model = cfg.llm.localOnly ? cfg.llm.local?.model : cfg.llm.brain?.model
+  const raw = model ? cfg.llm.thinkingModes?.[model] : undefined
+  if (typeof raw !== 'string' || raw.trim() === '') return undefined
+  return normalizeReasoningMode(raw, ['off', 'on', 'high', 'max'])
 }
 
 export async function setLaunchAtStartup(value: boolean): Promise<WorkspaceConfig> {

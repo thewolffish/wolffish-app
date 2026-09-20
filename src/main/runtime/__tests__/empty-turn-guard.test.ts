@@ -102,8 +102,9 @@ async function main(): Promise<void> {
     nudgeText
   )
   ok(
-    'nudge denies the structural-requirement premise and names the trailing-marker shape',
-    /structurally required/.test(nudgeText) && /trailing marker/.test(nudgeText)
+    'nudge names the producible exit and the trailing-marker shape',
+    /close_turn/.test(nudgeText) && /trailing marker/.test(nudgeText),
+    nudgeText
   )
   // The eloquent variant: a model that agrees silence is right and then writes
   // a reasoned parenthetical saying so (observed live: a bracketed sentence

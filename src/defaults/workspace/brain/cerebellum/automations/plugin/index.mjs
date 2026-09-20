@@ -295,6 +295,7 @@ async function editAutomation(args) {
     composeBody(
       {
         mode,
+        thinking: target.block.thinking,
         project: target.block.project,
         icon: target.block.icon,
         name: newName || target.block.name,
@@ -482,12 +483,13 @@ function parseActiveBlocks(raw) {
       .replace(/^---+\s*$/gm, '')
       .replace(/\n{3,}/g, '\n\n')
       .trim()
-    const { body, mode, project, icon, name, files, dirs } = splitMarkers(rawBody)
+    const { body, mode, thinking, project, icon, name, files, dirs } = splitMarkers(rawBody)
     blocks.push({
       index: i + 1,
       label: h.label,
       body,
       mode,
+      thinking,
       project,
       icon,
       name,
@@ -532,6 +534,10 @@ function tidyOutsideComments(raw) {
  * working directories.
  */
 const MODE_MARKER_RE = /^mode:\s*(single|workflow)\s*$/i
+// The job's own reasoning effort — canonical tokens, exactly as the engine's
+// THINKING_MARKER_RE reads them (brainstem.ts) and the Automations page writes
+// them. An edit must PRESERVE this line, or the job silently loses its stamp.
+const THINKING_MARKER_RE = /^thinking:\s*(off|on|high|max)\s*$/i
 const PROJECT_MARKER_RE = /^project:\s*(\S+)\s*$/i
 const ICON_MARKER_RE = /^icon:\s*(\S+)\s*$/i
 // The automation's display name — free text, so it takes the rest of the line.
@@ -545,6 +551,7 @@ const DIR_MARKER_RE = /^dir:\s*(.+?)\s*$/i
 function splitMarkers(body) {
   const lines = body.split('\n')
   let mode = null
+  let thinking = null
   let project = null
   let icon = null
   let name = null
@@ -560,6 +567,12 @@ function splitMarkers(body) {
     const m = MODE_MARKER_RE.exec(line)
     if (m) {
       mode = m[1].toLowerCase()
+      i++
+      continue
+    }
+    const t = THINKING_MARKER_RE.exec(line)
+    if (t) {
+      thinking = t[1].toLowerCase()
       i++
       continue
     }
@@ -595,12 +608,13 @@ function splitMarkers(body) {
     }
     break
   }
-  return { body: lines.slice(i).join('\n').trim(), mode, project, icon, name, files, dirs }
+  return { body: lines.slice(i).join('\n').trim(), mode, thinking, project, icon, name, files, dirs }
 }
 
 function composeBody(markers, body) {
   const lines = []
   if (markers.mode) lines.push(`mode: ${markers.mode}`)
+  if (markers.thinking) lines.push(`thinking: ${markers.thinking}`)
   if (markers.project) lines.push(`project: ${markers.project}`)
   if (markers.icon) lines.push(`icon: ${markers.icon}`)
   if (markers.name) lines.push(`name: ${markers.name}`)

@@ -1,4 +1,20 @@
-## v1.0.308 — 2026-09-19 `Latest`
+## v1.0.309 — 2026-09-20 `Latest`
+
+### Saying Nothing No Longer Says Something
+
+A model that had finished its work had no way to say so. The runtime told it to close with **an entirely empty response — zero characters**, and no provider carries an empty message: the content channel cannot be empty, which is why the app itself refuses to store one. So a finished turn had exactly one legal move left — **type a small stand-in for the silence and send it to you.** You have seen the results: `(no output)`, `(no content)`, `[Empty response]`, and most recently `[(empty — nothing further)]` stuck onto the end of a reply that had already finished. **The instruction was impossible, and the workaround was the bug.**
+
+That instruction is gone. There is now a **`close_turn`** tool whose only job is to end the turn when everything you need is already said and delivered. Saying "nothing further" is a tool call — something a model can actually produce — instead of a zero-character message it cannot. The prompt no longer asks for the impossible and no longer prints the forbidden literals while forbidding them (printing one is how a model learns it); it names the correct action instead. This stays **model-led end to end**: nothing rewrites, strips or suppresses a character the model wrote. The model still decides when the turn is over — it just has a real way to say so.
+
+### The Silence Detector Stopped Keeping a List
+
+The guard that catches a faked silence worked from a **hand-written list of phrases**, and it kept losing the race: `(no output)` → `(no content)` → `[Empty response]` → `空空如也` → `[(empty — nothing further)]`, each one added to the list _after_ it reached you. The last one is the cleanest demonstration of why the approach could not work — the old pattern anchored on the word `empty` and **rejected anything after it**, so `empty — nothing further` matched nothing at all, no correction was ever sent to the model, and it kept doing it.
+
+Detection is now **structural** rather than a vocabulary: a short bracketed group that closes a reply and is _about_ the absence of content trips it, whether or not anyone has seen that exact phrasing before. The same fix catches the shape that had been invisible: a marker **glued directly onto the end of prose** — `…just say the word. 🐟[(empty — nothing further)]` — which the old pattern missed because it required the bracket to start its own line. Ordinary parentheticals are still content: `The build ran clean (no output)` and `Blockers: (none)` are never second-guessed, in English or Chinese, because a false positive spends a correction on a model that was writing normally. The guard **observes and tells; it never edits** — the model sees what you saw and corrects itself.
+
+### One Wrap-Up per Turn
+
+A turn that wrote its closing answer, sent the phone notification and then **wrote the same news again** left you reading one paragraph twice — the turn's own contract made it likely: the wrap-up comes _after_ the file, the notification is the closing beat, so a model that followed all of it landed in a fresh step whose only exit was more prose, and it closed a second time. The one-wrap-up rule is now explicit in the prompt **and in the notification tool's own description** — the place a model actually reads at the moment it would break it. A landed notification is the finish line, not an intermission: say what is genuinely new, or call `close_turn` and stop.
 
 ### The Folder Chips Stop Sliding Down Into the Weeds
 
