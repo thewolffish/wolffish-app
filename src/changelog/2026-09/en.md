@@ -1,4 +1,22 @@
-## v1.0.309 — 2026-09-20 `Latest`
+## v1.0.310 — 2026-09-20 `Latest`
+
+### An Automation Can Think As Hard As It Needs To
+
+Every scheduled run, saved procedure and project used to inherit **whatever thinking level the chat happened to be set to** — so a nightly report that only needed a light pass could quietly run at maximum, and a deep analysis could run at minimum because you had switched the composer down earlier in the day. The effort a job deserves is a property of the job, not of the window you last typed in.
+
+**Each automation, procedure and project now carries its own thinking level** — off, on, high or max — chosen from a switch right on its card, next to the mode toggle it already had. New ones start from **the mode you are running right now**, so nothing changes until you say so; after that the item decides, and its runs use it. Anything you saved before this release carries no setting and keeps following your chat exactly as it always did, so **nothing you already have behaves differently.**
+
+### The Phone Sees the Same Switch
+
+The same three cards on your phone carry the same control, reading and writing **the very same setting** — flip it on the desktop and the phone shows it, flip it on the phone and the desktop shows it, because they are one value seen from two places rather than two copies that take turns.
+
+The levels your phone offers are **the ones your selected model actually honours**, sent from the desktop rather than guessed, so a card can never offer you a level the model would silently ignore.
+
+### The Terminal Gets It Too
+
+`wolffish procedures thinking <id> high` sets it from the command line, `wolffish procedures thinking <id> default` hands the decision back to your chat, and both the procedures and automations lists now show **a thinking column** so you can see at a glance what each one runs at — with the browsable menus gaining a picker for the same setting.
+
+## v1.0.309 — 2026-09-20
 
 ### Saying Nothing No Longer Says Something
 
