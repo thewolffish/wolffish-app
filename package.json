@@ -16,6 +16,7 @@
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck": "npm run typecheck:node && npm run typecheck:web && npm run cli:typecheck",
     "cli:typecheck": "tsc --noEmit -p src/cli/tsconfig.json",
+    "precli:test": "node scripts/cli/deps.mjs",
     "cli:test": "bun --cwd src/cli test",
     "cli:build": "node scripts/cli/build.mjs --host",
     "start": "electron-vite preview --noSandbox",

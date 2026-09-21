@@ -15,12 +15,10 @@
 import { execFileSync } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 
-const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
-// The real binary, not npm's .bin shim (a .cmd on Windows that execFileSync
-// cannot run without a shell). The bun package names it bun.exe everywhere.
-const bun = path.join(repo, 'node_modules', 'bun', 'bin', 'bun.exe')
+import { bunBinary, repoRoot as repo, resolveBun } from './bun.mjs'
+
+const bun = resolveBun()
 const cliDir = path.join(repo, 'src', 'cli')
 
 const TARGETS = {
@@ -33,8 +31,8 @@ const args = process.argv.slice(2)
 const host = args.includes('--host')
 const platform = args.includes('--platform') ? args[args.indexOf('--platform') + 1] : null
 
-if (!existsSync(bun)) {
-  console.error(`bun not found at ${bun} — run npm install (bun is a devDependency)`)
+if (!bun) {
+  console.error(`bun not usable at ${bunBinary} — run npm install (bun is a devDependency)`)
   process.exit(1)
 }
 
