@@ -4,6 +4,7 @@
     "tagline": "A calm home for your work"
   },
   "common": {
+    "save": "Save",
     "back": "Back",
     "cancel": "Cancel",
     "loading": "Loading…",
