@@ -102,6 +102,21 @@ export function describeRecord(r: ProcessRecord, now = Date.now()): string {
   return bits.join(' · ')
 }
 
+/**
+ * The log a name left behind when its record is gone: a one-shot that exited 0
+ * is dropped from the registry at once, but its log file stays, and the call
+ * that follows "it has already finished" is nearly always for that log.
+ */
+async function keptLog(
+  manager: ProcessManager,
+  name: string,
+  lines: number,
+  grep?: string
+): Promise<string | null> {
+  const text = await manager.logs(name, { lines, grep })
+  return text.trim() ? text : null
+}
+
 function describeFull(r: ProcessRecord): string {
   const lines = [
     describeRecord(r),
@@ -278,6 +293,9 @@ export function registerProcessesCapability(
             else if (up.warning) result.warnings.push(up.warning)
           }
           const r = manager.get(name) ?? result.record
+          // wait=false returns before any output exists; a command that died
+          // in the meantime still has its last words in the log.
+          const tail = result.tail || (!isLive(r) ? await manager.logs(name, { lines: 20 }) : '')
           const head = result.alreadyRunning
             ? `"${name}" is already running${r.run.url ? ` on ${r.run.url}` : ''} (since ${r.run.startedAt ? new Date(r.run.startedAt).toLocaleTimeString() : '?'}); reusing it.`
             : `Started ${name} (pid ${r.run.pid})${r.run.url ? ` on ${r.run.url}` : r.run.port ? ` on port ${r.run.port}` : ''}${result.ready ? `, ready in ${r.run.readyAt && r.run.startedAt ? ((r.run.readyAt - r.run.startedAt) / 1000).toFixed(1) : '?'} s` : ' (readiness not observed yet)'}.`
@@ -288,9 +306,9 @@ export function registerProcessesCapability(
             r.run.logPath ? `  log: ${r.run.logPath}` : '',
             `  policy: restart ${r.restart} · ${r.onQuit} on quit · autostart ${r.autostart}`,
             ...result.warnings.map((w) => `  warning: ${w}`),
-            result.tail ? `Last lines:\n${result.tail}` : '',
+            tail ? `Last lines:\n${tail}` : '',
             !isLive(r)
-              ? 'It has already finished. For a one-off command like this, shell_exec (when available) returns the output directly; process_start is for things that keep running.'
+              ? `It has already finished${tail ? '' : ' without writing any output'}. For a one-off command like this, shell_exec returns the output directly; process_start is for things that keep running.`
               : r.run.url
                 ? `Next: preview_open ${r.run.url} to show it. After a rebuild, process_status name=${name} waitFor={logMatch} then preview_reload. It keeps running after this turn; process_stop only when the user is done with it.`
                 : `Next: process_logs name=${name} to read its output; process_status name=${name} waitFor={state:"exited"} to wait for it to finish. It keeps running after this turn.`
@@ -342,11 +360,19 @@ export function registerProcessesCapability(
               ? (args.waitFor as Record<string, unknown>)
               : null
           let record = manager.get(name)
-          if (!record)
+          if (!record) {
+            const kept = await keptLog(manager, name, 40)
+            if (kept)
+              return {
+                success: true,
+                output: `"${name}" finished (exit 0) before it was ready and its record was dropped as a one-shot; nothing is running under that name. Its log was kept — last lines:\n${kept}`,
+                meta: { label: 'Process status', outputPath: manager.logPathFor(name) }
+              }
             return {
               success: false,
               error: `No process named "${name}". process_list shows what exists.`
             }
+          }
           let waitNote = ''
           if (wait && (str(wait.state) || str(wait.logMatch))) {
             const res = await manager.waitFor(name, {
@@ -377,11 +403,24 @@ export function registerProcessesCapability(
         case 'process_logs': {
           if (!name) return { success: false, error: 'name is required.' }
           const record = manager.get(name)
-          if (!record) return { success: false, error: `No process named "${name}".` }
+          const lines = typeof args.lines === 'number' ? args.lines : 100
+          if (!record) {
+            // A finished one-shot is forgotten by the registry but its log
+            // stays on disk: the natural next call after "it has already
+            // finished" must still answer.
+            const kept = await keptLog(manager, name, lines, str(args.grep) || undefined)
+            if (kept)
+              return {
+                success: true,
+                output: `("${name}" already finished; its record was dropped, this is its kept log)\n${kept}`,
+                meta: { label: 'Process log', outputPath: manager.logPathFor(name) }
+              }
+            return { success: false, error: `No process named "${name}".` }
+          }
           if (!record.run.logPath)
             return { success: true, output: `"${name}" has no log (adopted without one).` }
           const text = await manager.logs(name, {
-            lines: typeof args.lines === 'number' ? args.lines : 100,
+            lines,
             grep: str(args.grep) || undefined
           })
           return {
@@ -606,7 +645,7 @@ export function registerProcessesCapability(
         {
           name: 'process_start',
           description:
-            "Start a process that must keep running after this call returns — a dev server, watcher, tunnel, database, bundler, long script. NEVER shell_exec for these. Name it after what it is (web-dev, api, tunnel). Put {port} in the command the way THAT tool takes a port — Next.js: `npm run dev -- -p {port}`; Vite/Astro/SvelteKit: `npm run dev -- --port {port} --strictPort`; Django: `manage.py runserver {port}`; uvicorn/Flask: `--port {port}`; anything else: PORT env is set too. Read package.json scripts first: a flag one framework takes another rejects (`--strictPort` is Vite-only): Wolffish fills it with a free port from its own band (20000-20999) and also sets PORT, so it never collides with the user's own servers on 3000/5173/8000. A busy port belongs to whoever is on it: pass a fixed `port` only when the user asked for that exact port, and `takeover=true` only when they asked you to replace what is on it (asks for confirmation). Blocks until the process is ready (a listener appears or the log prints a URL / `ready.logMatch`), up to 30 s, and returns pid, port, URL, log path and the last lines. If a process with this name already runs the same command it is reused, never duplicated. It keeps running after the turn ends; leave it up while the user is working on it and stop it only when it was just for a check.",
+            "Start a process that must keep running after this call returns — a dev server, watcher, tunnel, database, bundler, long script. NEVER shell_exec for these. Name it after what it is (web-dev, api, tunnel). Put {port} in the command the way THAT tool takes a port — Next.js: `npm run dev -- -p {port}`; Vite/Astro/SvelteKit: `npm run dev -- --port {port} --strictPort`; Django: `manage.py runserver {port}`; uvicorn/Flask: `--port {port}`; anything else: PORT env is set too. Read package.json scripts first: a flag one framework takes another rejects (`--strictPort` is Vite-only): Wolffish fills it with a free port from its own band (20000-20999) and also sets PORT, so it never collides with the user's own servers on 3000/5173/8000. A busy port belongs to whoever is on it: pass a fixed `port` only when the user asked for that exact port, and `takeover=true` only when they asked you to replace what is on it (asks for confirmation). Blocks until the process is ready (a listener appears or the log prints a URL / `ready.logMatch`), up to 30 s, and returns pid, port, URL, log path and the last lines. If a process with this name already runs the same command it is reused, never duplicated. It keeps running after the turn ends; leave it up while the user is working on it and stop it only when it was just for a check. On Windows the command runs through cmd.exe in a hidden console of its own (chain with `&&`, quote paths with double quotes; PowerShell syntax belongs in a .ps1 run as `powershell -File`).",
           parameters: {
             name: {
               type: 'string',
@@ -658,7 +697,7 @@ export function registerProcessesCapability(
               type: 'string',
               required: false,
               description:
-                '"off" (default) · "wolffish": started whenever Wolffish starts — the right level for "keep it running", "start it on its own", "at login" (Wolffish itself launches at login) · "system": an OS login unit that runs even when Wolffish is closed (confirmed); only when the user says it must run without Wolffish. On macOS a login unit cannot read Desktop, Documents or Downloads, so a project there needs "wolffish".'
+                '"off" (default) · "wolffish": started whenever Wolffish starts — the right level for "keep it running", "start it on its own", "at login" (Wolffish itself launches at login) · "system": an OS login unit that runs even when Wolffish is closed (confirmed); only when the user says it must run without Wolffish. On macOS a login unit cannot read Desktop, Documents or Downloads, so a project there needs "wolffish". On Windows it is a per-user Task Scheduler logon task — never register one by hand with schtasks. Most users never need this: get the process running and shown first, and treat login registration as a separate, last step only when it was asked for.'
             },
             wait: {
               type: 'boolean',

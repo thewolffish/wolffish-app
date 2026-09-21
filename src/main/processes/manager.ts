@@ -11,7 +11,8 @@ import {
   processInfo,
   signalTree,
   spawnDetached,
-  treeOf
+  treeOf,
+  type Spawned
 } from './platform'
 import { allocateBandPort, commandWantsPort, fillPort, portOwner } from './ports'
 import { ProcessRegistry } from './registry'
@@ -96,10 +97,12 @@ type CardHandle = {
 export class ProcessManager {
   readonly registry: ProcessRegistry
   private readonly logsRoot: string
-  private children = new Map<string, ReturnType<typeof spawnDetached>>()
+  private children = new Map<string, Extract<Spawned, { pid: number }>>()
   private restartTimes = new Map<string, number[]>()
   private restartTimers = new Map<string, NodeJS.Timeout>()
   private stopping = new Set<string>()
+  /** Names whose spawn is in flight — the window in which the registry does not yet say "starting". */
+  private starting = new Set<string>()
   private pollTimer: NodeJS.Timeout | null = null
   private quitting = false
 
@@ -270,8 +273,9 @@ export class ProcessManager {
     }
 
     const existing = this.registry.get(name)
+    const sameDefinition = !!existing && existing.command === command && existing.cwd === cwd
     if (existing) {
-      const sameThing = existing.command === command && existing.cwd === cwd
+      const sameThing = sameDefinition
       if (isLive(existing) && (await this.isAlive(existing))) {
         if (sameThing) {
           return {
@@ -301,12 +305,16 @@ export class ProcessManager {
       name,
       command,
       cwd,
-      env: input.env ?? existing?.env ?? {},
+      // A different command is a new definition: its port policy, readiness
+      // rule and env come from the call, not from what the old command had.
+      // (Inheriting them left a redefined `{port}` command with the old
+      // "none" policy — `{port}` unfilled — or the old band port.)
+      env: input.env ?? (sameDefinition ? existing?.env : undefined) ?? {},
       port:
         input.port ??
-        existing?.port ??
+        (sameDefinition ? existing?.port : undefined) ??
         (commandWantsPort(command) ? { mode: 'wolffish' } : { mode: 'none' }),
-      ready: input.ready ?? existing?.ready ?? {},
+      ready: input.ready ?? (sameDefinition ? existing?.ready : undefined) ?? {},
       restart: input.restart ?? existing?.restart ?? 'on-failure',
       onQuit: input.onQuit ?? existing?.onQuit ?? 'keep',
       autostart: input.autostart ?? existing?.autostart ?? 'off',
@@ -325,6 +333,33 @@ export class ProcessManager {
    * detached, record the OS start stamp, then (optionally) wait for readiness.
    */
   private async startRecord(
+    record: ProcessRecord,
+    opts: { wait: boolean; keepPort?: number | null; isRestart?: boolean }
+  ): Promise<ProcessStartResult> {
+    const name = record.name
+    // One spawn per name at a time. A crashed record's supervisor holds a
+    // backoff timer; a process_start that redefines the name while it is
+    // pending used to race it — two copies of the new command, one dying on
+    // the port, the record blamed for the loser's exit and restarted again
+    // while the winner ran on untracked. The timer goes, and the spawn
+    // window (seconds on Windows) is held so the timer's own path skips it.
+    const pending = this.restartTimers.get(name)
+    if (pending) {
+      clearTimeout(pending)
+      this.restartTimers.delete(name)
+    }
+    if (this.starting.has(name)) {
+      return { ok: false, error: `"${name}" is already being started; wait for it.`, record }
+    }
+    this.starting.add(name)
+    try {
+      return await this.startRecordInner(record, opts)
+    } finally {
+      this.starting.delete(name)
+    }
+  }
+
+  private async startRecordInner(
     record: ProcessRecord,
     opts: { wait: boolean; keepPort?: number | null; isRestart?: boolean }
   ): Promise<ProcessStartResult> {
@@ -406,10 +441,12 @@ export class ProcessManager {
       ...record.env
     }
     if (port) env.PORT = String(port)
-    const spawned = spawnDetached(shell, command, {
+    const spawned = await spawnDetached(shell, command, {
       cwd: record.cwd,
       env,
-      logFd: logFd?.fd ?? null
+      logFd: logFd?.fd ?? null,
+      logPath: logFd ? logPath : null,
+      signature: signatureOf(record.command)
     })
     await logFd?.close().catch(() => undefined)
     if ('error' in spawned) {
@@ -632,10 +669,17 @@ export class ProcessManager {
     code: number | null,
     signal: NodeJS.Signals | null
   ): Promise<void> {
-    this.children.delete(name)
+    // A late exit from a previous run (Windows delivers it a beat after the
+    // pid is gone) must not drop the handle of the run that replaced it.
+    if (this.children.get(name)?.pid === pid) this.children.delete(name)
     const record = this.registry.get(name)
     if (!record || record.run.pid !== pid) return
-    const wasStopping = this.stopping.has(name) || record.run.state === 'stopping'
+    // stop() may have already closed the run out ("stopped") before the exit
+    // event arrives: that exit is confirmation, not a crash — reading it as
+    // one would hand an on-failure record to the supervisor, which then
+    // re-spawns a process nobody asked for next to the one restart() started.
+    const wasStopping =
+      this.stopping.has(name) || record.run.state === 'stopping' || record.run.state === 'stopped'
     const state = wasStopping ? 'stopped' : code === 0 ? 'exited' : 'crashed'
     const updated = await this.registry.mutate(name, (cur) => ({
       ...cur,
@@ -675,7 +719,7 @@ export class ProcessManager {
     const timer = setTimeout(() => {
       this.restartTimers.delete(record.name)
       const cur = this.registry.get(record.name)
-      if (!cur || isLive(cur) || this.quitting) return
+      if (!cur || isLive(cur) || this.starting.has(cur.name) || this.quitting) return
       void this.registry
         .mutate(cur.name, (c) => ({ ...c, run: { ...c.run, restarts: c.run.restarts + 1 } }))
         .then(
@@ -880,12 +924,20 @@ export class ProcessManager {
     record = merged ?? record
     if (nextName && nextName !== name) {
       const renamed: ProcessRecord = { ...record, name: nextName }
-      await fs
+      // Windows refuses to move a folder while the running command holds its
+      // log open; the record then keeps pointing at the log that is really
+      // being written, and the next start lands in the new folder.
+      const moved = await fs
         .rename(path.join(this.logsRoot, name), path.join(this.logsRoot, nextName))
-        .catch(() => undefined)
+        .then(() => true)
+        .catch(() => false)
       renamed.run = {
         ...renamed.run,
-        logPath: renamed.run.logPath ? this.logPathFor(nextName) : null
+        logPath: renamed.run.logPath
+          ? moved
+            ? this.logPathFor(nextName)
+            : renamed.run.logPath
+          : null
       }
       await this.registry.remove(name)
       const child = this.children.get(name)

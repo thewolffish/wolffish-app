@@ -124,19 +124,31 @@ async function main(): Promise<void> {
   await units.removeUnit('web-dev', 'linux')
   ok('unit removed', !fs.existsSync(unitPath))
 
-  console.log('\n— Windows task action')
-  const action = units.schtasksAction(
-    record,
-    'C:\\wolffish\\files\\processes\\web-dev\\current.log'
-  )
+  console.log('\n— Windows logon task')
+  const winLog = 'C:\\wolffish\\files\\processes\\web-dev\\current.log'
+  const command = units.windowsUnitCommand(record, winLog)
   ok(
     'cd, set env, run, append log',
-    /cmd \/c ".*cd \/d .*set .*PORT=20347.*npm run dev -- --port 20347 --strictPort >> .*current\.log.* 2>&1"/.test(
-      action
+    /^cd \/d ".*" && set "NO_COLOR=1" && .*set "PORT=20347" && npm run dev -- --port 20347 --strictPort >> ".*current\.log" 2>&1$/.test(
+      command
     ),
-    action
+    command
   )
+  const stateW = await units.installUnit(record, winLog, 'win32')
+  const vbs = units.unitScriptPath('web-dev')
+  ok('launcher written under the faked HOME', vbs.startsWith(HOME) && fs.existsSync(vbs), vbs)
+  const launcher = fs.existsSync(vbs) ? fs.readFileSync(vbs, 'utf8') : ''
+  ok(
+    'launcher runs cmd hidden and waits, with every quote doubled',
+    launcher.includes('sh.Run "cmd.exe /d /s /c ""cd /d ""') &&
+      launcher.includes('"", 0, True') &&
+      launcher.includes('set ""PORT=20347""'),
+    launcher
+  )
+  ok('dry-run state reports installed', stateW.installed)
   ok('label', units.unitLabel('web-dev', 'win32') === 'Wolffish\\process-web-dev')
+  await units.removeUnit('web-dev', 'win32')
+  ok('launcher removed', !fs.existsSync(vbs))
 
   fs.rmSync(HOME, { recursive: true, force: true })
   console.log(`\n${passed} passed, ${failed} failed`)

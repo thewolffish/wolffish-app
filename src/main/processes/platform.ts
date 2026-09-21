@@ -43,7 +43,12 @@ async function probeWindowsShell(): Promise<ShellSpec> {
   return { bin: 'cmd.exe', args: ['/c'] }
 }
 
-/** The shell a command runs through — the shell plugin's choice, byte for byte. */
+/**
+ * The shell a command runs through — the shell plugin's choice, byte for
+ * byte, on POSIX. On Windows a managed process runs under cmd.exe whatever
+ * this says (see spawnDetachedWindows); the probe still answers who else
+ * asks.
+ */
 export function detectShell(): Promise<ShellSpec> {
   if (shellPromise) return shellPromise
   shellPromise =
@@ -53,16 +58,27 @@ export function detectShell(): Promise<ShellSpec> {
   return shellPromise
 }
 
+export type Spawned = { pid: number; child: ReturnType<typeof spawn> } | { error: string }
+
 /**
  * Start a command detached from this process: its own process group (POSIX)
- * or its own console (Windows), stdout+stderr on the log descriptor, and
- * unref'd so it outlives the tool call, the turn and Wolffish itself.
+ * or its own console (Windows), stdout+stderr on the log file, and unref'd so
+ * it outlives the tool call, the turn and Wolffish itself. The returned
+ * `child` is the handle whose `exit` event means the command itself ended.
  */
 export function spawnDetached(
   shell: ShellSpec,
   command: string,
-  opts: { cwd: string; env: NodeJS.ProcessEnv; logFd: number | null }
-): { pid: number; child: ReturnType<typeof spawn> } | { error: string } {
+  opts: {
+    cwd: string
+    env: NodeJS.ProcessEnv
+    logFd: number | null
+    logPath: string | null
+    /** The record's command signature (see manager signatureOf), for the Windows wrapper. */
+    signature?: string
+  }
+): Promise<Spawned> {
+  if (process.platform === 'win32') return spawnDetachedWindows(command, opts)
   try {
     const child = spawn(shell.bin, [...shell.args, command], {
       cwd: opts.cwd,
@@ -73,12 +89,127 @@ export function spawnDetached(
     })
     child.on('error', () => {})
     const pid = child.pid
-    if (!pid) return { error: 'failed to start process (no PID returned)' }
+    if (!pid) return Promise.resolve({ error: 'failed to start process (no PID returned)' })
     child.unref()
-    return { pid, child }
+    return Promise.resolve({ pid, child })
   } catch (err) {
-    return { error: err instanceof Error ? err.message : String(err) }
+    return Promise.resolve({ error: err instanceof Error ? err.message : String(err) })
   }
+}
+
+const PID_LINE_RE = /^WOLFFISH_PID=(\d+)\s*$/m
+const ERROR_LINE_RE = /^WOLFFISH_ERROR=(.*)$/m
+const LAUNCH_TIMEOUT_MS = 20_000
+
+/** A PowerShell single-quoted literal: only the quote itself needs doubling. */
+function psQuote(text: string): string {
+  return `'${text.replace(/'/g, "''")}'`
+}
+
+/**
+ * Windows cannot take the POSIX shortcut. Node's `detached: true` maps to
+ * DETACHED_PROCESS, and a console-less process does not host console
+ * programs: powershell.exe exits 0 at once without running anything, and
+ * under a detached cmd.exe every external program (node, npm, …) runs with
+ * its output lost — even `> file` redirections come out empty. Measured on
+ * Windows 11 / Node 22–24; it is what made every process_start on Windows
+ * look like a finished one-shot. Without `detached`, the child sits in
+ * libuv's kill-on-close job and dies with Wolffish, so "keep on quit" is
+ * impossible that way.
+ *
+ * So the command gets a console of its own, hidden: a short-lived PowerShell
+ * launcher (in the job, like every other helper here) calls Start-Process
+ * -WindowStyle Hidden on a cmd.exe that runs the command and appends its
+ * stdout+stderr to the log. Start-Process children are outside the job, so
+ * the tree survives Wolffish quitting; cmd.exe is the pid we track (taskkill
+ * /t reaches the whole tree, and the port scan already walks descendants).
+ * The launcher prints that pid, then waits on the process and exits with its
+ * exit code — that is the `exit` event the manager listens for.
+ *
+ * The command itself runs under cmd.exe, not the PowerShell that shell_exec
+ * uses: with its stderr on a file, Windows PowerShell serialises every
+ * stderr line of a native command as CLIXML (`#< CLIXML`, `<S S="Error">…`),
+ * which would fill a server's log with XML and hide it from the readiness
+ * scan. cmd writes the bytes as they come. Server commands (`npm run dev`,
+ * `node server.js`, `manage.py runserver`) read the same in both.
+ */
+function spawnDetachedWindows(
+  command: string,
+  opts: { cwd: string; env: NodeJS.ProcessEnv; logPath: string | null; signature?: string }
+): Promise<Spawned> {
+  const redirect = opts.logPath ? ` >> "${opts.logPath}" 2>&1` : ''
+  // The tracked pid is cmd.exe, whose command line would otherwise show only
+  // the encoded script: a leading `title` (an internal command that leaves
+  // the exit code to what follows) puts the command's signature in it, so the
+  // liveness fallback that matches the signature against the command line
+  // still has something to match, and so does anyone reading a task list.
+  const signature = (opts.signature ?? '').replace(/[^A-Za-z0-9._-]/g, '').slice(0, 40)
+  const marker = signature ? `title wolffish:${signature} & ` : ''
+  const inner = `${marker}${command}${redirect}`
+  const launcher = [
+    '$ErrorActionPreference = "Stop"',
+    'try {',
+    `  $p = Start-Process -FilePath "cmd.exe" -ArgumentList ${psQuote(`/d /s /c "${inner}"`)} -WorkingDirectory ${psQuote(opts.cwd)} -WindowStyle Hidden -PassThru`,
+    '  [Console]::Out.WriteLine("WOLFFISH_PID=" + $p.Id)',
+    '  [Console]::Out.Flush()',
+    '  $p.WaitForExit()',
+    '  exit $p.ExitCode',
+    '} catch {',
+    '  [Console]::Out.WriteLine("WOLFFISH_ERROR=" + $_.Exception.Message)',
+    '  exit 1',
+    '}'
+  ].join('\r\n')
+  return new Promise((resolve) => {
+    let child: ReturnType<typeof spawn>
+    try {
+      child = spawn(
+        'powershell',
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-EncodedCommand',
+          Buffer.from(launcher, 'utf16le').toString('base64')
+        ],
+        { cwd: opts.cwd, env: opts.env, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }
+      )
+    } catch (err) {
+      resolve({ error: err instanceof Error ? err.message : String(err) })
+      return
+    }
+    let out = ''
+    let settled = false
+    const settle = (result: Spawned): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      child.stdout?.removeAllListeners('data')
+      // The pipe stays open (the launcher lives as long as the command) but
+      // must not keep the event loop alive.
+      ;(child.stdout as unknown as { unref?: () => void } | null)?.unref?.()
+      child.unref()
+      resolve(result)
+    }
+    const timer = setTimeout(() => {
+      try {
+        child.kill()
+      } catch {
+        // already gone
+      }
+      settle({ error: 'the process launcher did not report a pid in time' })
+    }, LAUNCH_TIMEOUT_MS)
+    child.on('error', (err) => settle({ error: err.message }))
+    child.on('exit', (code) => {
+      const failure = ERROR_LINE_RE.exec(out)?.[1]?.trim()
+      settle({ error: failure || `failed to start process (launcher exited ${code ?? '?'})` })
+    })
+    child.stdout?.on('data', (chunk: Buffer | string) => {
+      out += String(chunk)
+      const pid = PID_LINE_RE.exec(out)?.[1]
+      if (pid) settle({ pid: Number(pid), child })
+      const failure = ERROR_LINE_RE.exec(out)?.[1]?.trim()
+      if (failure) settle({ error: failure })
+    })
+  })
 }
 
 export function pidExists(pid: number): boolean {
@@ -106,12 +237,22 @@ function powershell(script: string, timeout = 10000): Promise<string | null> {
 export async function processInfo(pid: number): Promise<ProcessInfo | null> {
   if (!pid || !pidExists(pid)) return null
   if (process.platform === 'win32') {
+    // Explicit strings: a bare DateTime goes through the formatter, which
+    // pads it with a blank line first — the start stamp then read as empty
+    // and every relaunch judged its processes dead.
     const out = await powershell(
-      `$p = Get-CimInstance Win32_Process -Filter "ProcessId = ${Number(pid)}"; if ($p) { $p.CreationDate; $p.CommandLine }`
+      `$p = Get-CimInstance Win32_Process -Filter "ProcessId = ${Number(pid)}"; if ($p) { Write-Output ('START=' + $p.CreationDate.ToString('o')); Write-Output ([string]$p.CommandLine) }`
     )
     if (!out?.trim()) return null
-    const [startedAt, ...rest] = out.split(/\r?\n/)
-    return { startedAt: startedAt?.trim() || null, commandLine: rest.join('\n').trim() || null }
+    const lines = out.split(/\r?\n/)
+    const startLine = lines.findIndex((l) => l.startsWith('START='))
+    if (startLine < 0) return null
+    const startedAt = lines[startLine].slice('START='.length).trim()
+    const commandLine = lines
+      .slice(startLine + 1)
+      .join('\n')
+      .trim()
+    return { startedAt: startedAt || null, commandLine: commandLine || null }
   }
   if (process.platform === 'linux') {
     try {
@@ -225,9 +366,18 @@ export type StopSignal = 'SIGTERM' | 'SIGINT' | 'SIGKILL'
  */
 export async function signalTree(pid: number, signal: StopSignal): Promise<void> {
   if (process.platform === 'win32') {
+    // taskkill /t walks parent links as they are when it runs; a grandchild
+    // whose parent has already gone is reparented and missed. The hard pass
+    // therefore also names every descendant from a snapshot taken before
+    // anything dies.
+    const descendants = signal === 'SIGKILL' ? await treeOf(pid).catch(() => [] as number[]) : []
     const args = ['/pid', String(pid), '/t']
     if (signal === 'SIGKILL') args.push('/f')
     await runQuiet('taskkill', args, 15000)
+    const left = descendants.filter((kid) => pidExists(kid))
+    if (left.length) {
+      await runQuiet('taskkill', ['/f', ...left.flatMap((kid) => ['/pid', String(kid)])], 15000)
+    }
     return
   }
   const descendants = await treeOf(pid).catch(() => [] as number[])
@@ -322,14 +472,31 @@ export async function listeningPorts(): Promise<ListeningPort[]> {
   return out
 }
 
-/** The one authoritative "free" test: a real bind on the loopback, released at once. */
-export function isPortFree(port: number): Promise<boolean> {
+function bindProbe(port: number, host: string): Promise<boolean> {
   return new Promise((resolve) => {
     const server = net.createServer()
     server.unref()
-    server.once('error', () => resolve(false))
-    server.listen({ port, host: '127.0.0.1', exclusive: true }, () => {
+    server.once('error', (err: NodeJS.ErrnoException) =>
+      // No IPv6 on this machine is not "busy".
+      resolve(err.code === 'EAFNOSUPPORT' || err.code === 'EADDRNOTAVAIL')
+    )
+    server.listen({ port, host, exclusive: true }, () => {
       server.close(() => resolve(true))
     })
   })
+}
+
+/**
+ * The one authoritative "free" test: a real bind, released at once. POSIX
+ * answers on the loopback alone. Windows does not: a server on the IPv6
+ * wildcard (`::`, what Node's listen() takes by default) leaves 127.0.0.1,
+ * 0.0.0.0 and ::1 all bindable, so every address family is tried and the
+ * port is free only when all of them are.
+ */
+export async function isPortFree(port: number): Promise<boolean> {
+  if (process.platform !== 'win32') return bindProbe(port, '127.0.0.1')
+  for (const host of ['127.0.0.1', '0.0.0.0', '::1', '::']) {
+    if (!(await bindProbe(port, host))) return false
+  }
+  return true
 }

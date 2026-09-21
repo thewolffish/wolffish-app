@@ -5,6 +5,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
+import { signalTree } from './platform'
 import type { ProcessRecord, RestartPolicy } from './types'
 
 const run = promisify(execFile)
@@ -14,9 +15,9 @@ const TAG = '[processes:units]'
  * Per-process login units — `autostart: system`.
  *
  * The same three writers autostart.ts uses for the app itself (LaunchAgent,
- * systemd user unit, Task Scheduler ONLOGON), parametrised by a process
- * definition. Two rules carried over from that module because both were
- * learned from incidents:
+ * systemd user unit, a per-user Task Scheduler logon task), parametrised by
+ * a process definition. Two rules carried over from that module because
+ * both were learned from incidents:
  *
  *  - `WOLFFISH_AUTOSTART_DRY_RUN=1` writes the unit file and never talks to
  *    the live service manager. A test that fakes the home directory does
@@ -164,14 +165,100 @@ WantedBy=default.target
 `
 }
 
-/** The single command line a Task Scheduler action runs: cd, set env, run, log. */
-export function schtasksAction(record: ProcessRecord, logPath: string): string {
+/** The single cmd.exe line a Windows unit runs: cd, set env, run, append the log. */
+export function windowsUnitCommand(record: ProcessRecord, logPath: string): string {
   const env = unitEnv(record)
   const sets = Object.entries(env)
     .map(([k, v]) => `set "${k}=${v}"`)
     .join(' && ')
-  const body = `cd /d "${record.cwd}" && ${sets ? `${sets} && ` : ''}${resolvedCommand(record)} >> "${logPath}" 2>&1`
-  return `cmd /c "${body.replace(/"/g, '\\"')}"`
+  return `cd /d "${record.cwd}" && ${sets ? `${sets} && ` : ''}${resolvedCommand(record)} >> "${logPath}" 2>&1`
+}
+
+/**
+ * The launcher a Windows unit actually executes. Task Scheduler runs an
+ * interactive user's action visibly, so a bare cmd.exe would open a console
+ * window at every logon; wscript.exe is windowless and `Run(…, 0, True)`
+ * starts cmd hidden and stays alive until it ends — so the task reads
+ * "Running" while the server runs and its wscript pid is the tree root.
+ */
+export function windowsLauncherScript(record: ProcessRecord, logPath: string): string {
+  const vb = (s: string): string => s.replace(/"/g, '""')
+  return [
+    `' Wolffish process "${record.name}" — started at logon by Task Scheduler (${unitLabel(record.name, 'win32')}).`,
+    'Set sh = CreateObject("WScript.Shell")',
+    `sh.CurrentDirectory = "${vb(record.cwd)}"`,
+    `sh.Run "cmd.exe /d /s /c ""${vb(windowsUnitCommand(record, logPath))}""", 0, True`,
+    ''
+  ].join('\r\n')
+}
+
+/** Where a Windows unit's launcher lives: beside the process's log. */
+export function unitScriptPath(name: string): string {
+  return path.join(os.homedir(), '.wolffish', 'workspace', 'files', 'processes', name, 'unit.vbs')
+}
+
+const WIN_TASK_PATH = '\\Wolffish\\'
+
+function winTaskName(name: string): string {
+  return `process-${name}`
+}
+
+/** A PowerShell single-quoted literal. */
+function psq(text: string): string {
+  return `'${text.replace(/'/g, "''")}'`
+}
+
+function encodePs(script: string): string {
+  return Buffer.from(script, 'utf16le').toString('base64')
+}
+
+/** Run a PowerShell script; a thrown error carries the script's own message. */
+async function ps(script: string): Promise<string> {
+  const wrapped = `$ErrorActionPreference = 'Stop'\r\ntry {\r\n${script}\r\n} catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }`
+  return serviceCall('powershell', [
+    '-NoProfile',
+    '-NonInteractive',
+    '-EncodedCommand',
+    encodePs(wrapped)
+  ])
+}
+
+/**
+ * Start-ScheduledTask returns before the launcher exists; a state read taken
+ * at once says "stopped" about a server that answers a second later. Wait
+ * for the wscript pid, briefly.
+ */
+async function waitForWindowsUnitPid(name: string, timeoutMs = 6000): Promise<number | null> {
+  if (DRY_RUN) return null
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    const pid = await windowsUnitPid(name)
+    if (pid || Date.now() >= deadline) return pid
+    await new Promise((r) => setTimeout(r, 300))
+  }
+}
+
+/** The wscript.exe hosting a unit's launcher — the root of its process tree — or null. */
+async function windowsUnitPid(name: string): Promise<number | null> {
+  if (DRY_RUN) return null
+  const marker = unitScriptPath(name).toLowerCase()
+  const out = await ps(
+    `Get-CimInstance Win32_Process -Filter "Name = 'wscript.exe'" | Where-Object { $_.CommandLine -and $_.CommandLine.ToLower().Contains(${psq(marker)}) } | ForEach-Object { $_.ProcessId }`
+  ).catch(() => '')
+  const pid = Number(out.trim().split(/\r?\n/)[0])
+  return Number.isInteger(pid) && pid > 0 ? pid : null
+}
+
+function windowsRegisterScript(record: ProcessRecord): string {
+  const tn = winTaskName(record.name)
+  return [
+    '$who = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name',
+    `$a = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument ('//B //Nologo "' + ${psq(unitScriptPath(record.name))} + '"') -WorkingDirectory ${psq(record.cwd)}`,
+    '$t = New-ScheduledTaskTrigger -AtLogOn -User $who',
+    '$p = New-ScheduledTaskPrincipal -UserId $who -LogonType Interactive -RunLevel Limited',
+    '$s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew',
+    `Register-ScheduledTask -TaskPath ${psq(WIN_TASK_PATH)} -TaskName ${psq(tn)} -Action $a -Trigger $t -Principal $p -Settings $s -Force | Out-Null`
+  ].join('\r\n')
 }
 
 export async function installUnit(
@@ -210,19 +297,23 @@ export async function installUnit(
     }
     return unitState(record.name, 'linux')
   }
+  // Windows: a per-user "at logon" task through the Task Scheduler cmdlets.
+  // schtasks.exe's ONLOGON form is refused without elevation ("Access is
+  // denied", even at /rl limited); Register-ScheduledTask with the user's
+  // own AtLogOn trigger and an Interactive, Limited principal needs none.
   await fs.mkdir(path.dirname(logPath), { recursive: true })
-  await serviceCall('schtasks', [
-    '/create',
-    '/f',
-    '/tn',
-    unitLabel(record.name, 'win32'),
-    '/tr',
-    schtasksAction(record, logPath),
-    '/sc',
-    'onlogon',
-    '/rl',
-    'limited'
-  ])
+  const script = unitScriptPath(record.name)
+  await fs.mkdir(path.dirname(script), { recursive: true })
+  await fs.writeFile(script, windowsLauncherScript(record, logPath), 'utf8')
+  await ps(windowsRegisterScript(record))
+  // Start it now, as launchd (RunAtLoad) and systemd (--now) do; the state
+  // read below waits a beat for wscript to appear.
+  await ps(
+    `Start-ScheduledTask -TaskPath ${psq(WIN_TASK_PATH)} -TaskName ${psq(winTaskName(record.name))}`
+  ).catch((err) =>
+    wlog.warn(TAG, `unit start failed: ${err instanceof Error ? err.message : String(err)}`)
+  )
+  await waitForWindowsUnitPid(record.name)
   return unitState(record.name, 'win32')
 }
 
@@ -247,9 +338,11 @@ export async function removeUnit(
     await serviceCall('systemctl', ['--user', 'daemon-reload']).catch(() => undefined)
     return
   }
-  await serviceCall('schtasks', ['/delete', '/f', '/tn', unitLabel(name, 'win32')]).catch(
-    () => undefined
-  )
+  await unitStop(name, 'win32').catch(() => undefined)
+  await ps(
+    `Unregister-ScheduledTask -TaskPath ${psq(WIN_TASK_PATH)} -TaskName ${psq(winTaskName(name))} -Confirm:$false`
+  ).catch(() => undefined)
+  await fs.rm(unitScriptPath(name), { force: true })
 }
 
 export async function unitState(
@@ -319,21 +412,47 @@ export async function unitState(
       return { installed, active: false, running: false, pid: null, location, warning: null }
     }
   }
+  const scriptPresent = existsSync(unitScriptPath(name))
   if (DRY_RUN)
-    return { installed: false, active: false, running: false, pid: null, location, warning: null }
+    return {
+      installed: scriptPresent,
+      active: scriptPresent,
+      running: false,
+      pid: null,
+      location,
+      warning: null
+    }
+  let state = ''
   try {
-    const out = await serviceCall('schtasks', [
-      '/query',
-      '/tn',
-      unitLabel(name, 'win32'),
-      '/fo',
-      'LIST',
-      '/v'
-    ])
-    const running = /Status:\s+Running/i.test(out)
-    return { installed: true, active: true, running, pid: null, location, warning: null }
+    state = (
+      await ps(
+        `(Get-ScheduledTask -TaskPath ${psq(WIN_TASK_PATH)} -TaskName ${psq(winTaskName(name))}).State`
+      )
+    ).trim()
   } catch {
-    return { installed: false, active: false, running: false, pid: null, location, warning: null }
+    return {
+      installed: false,
+      active: false,
+      running: false,
+      pid: null,
+      location,
+      warning: scriptPresent
+        ? 'The launcher is written but Task Scheduler has no such task — install the unit again.'
+        : null
+    }
+  }
+  const pid = await windowsUnitPid(name)
+  return {
+    installed: true,
+    active: !/disabled/i.test(state),
+    running: pid !== null || /running/i.test(state),
+    pid,
+    location,
+    warning: /disabled/i.test(state)
+      ? 'The task is disabled in Task Scheduler, so it will not start at logon.'
+      : scriptPresent
+        ? null
+        : 'The task exists but its launcher file is gone — install the unit again.'
   }
 }
 
@@ -350,7 +469,10 @@ export async function unitStart(
     await serviceCall('systemctl', ['--user', 'start', unitLabel(name, 'linux')])
     return
   }
-  await serviceCall('schtasks', ['/run', '/tn', unitLabel(name, 'win32')])
+  await ps(
+    `Start-ScheduledTask -TaskPath ${psq(WIN_TASK_PATH)} -TaskName ${psq(winTaskName(name))}`
+  )
+  await waitForWindowsUnitPid(name)
 }
 
 /** Stop through the manager, so KeepAlive / Restart= cannot bring it straight back. */
@@ -372,7 +494,13 @@ export async function unitStop(
     await serviceCall('systemctl', ['--user', 'stop', unitLabel(name, 'linux')])
     return
   }
-  await serviceCall('schtasks', ['/end', '/tn', unitLabel(name, 'win32')]).catch(() => undefined)
+  // Stop-ScheduledTask ends only the launcher (wscript); the server it
+  // started keeps running, so the tree goes first.
+  const pid = await windowsUnitPid(name)
+  if (pid) await signalTree(pid, 'SIGKILL').catch(() => undefined)
+  await ps(
+    `Stop-ScheduledTask -TaskPath ${psq(WIN_TASK_PATH)} -TaskName ${psq(winTaskName(name))}`
+  ).catch(() => undefined)
 }
 
 export async function unitRestart(
@@ -396,6 +524,6 @@ export async function unitRestart(
     await serviceCall('systemctl', ['--user', 'restart', unitLabel(name, 'linux')])
     return
   }
-  await serviceCall('schtasks', ['/end', '/tn', unitLabel(name, 'win32')]).catch(() => undefined)
-  await serviceCall('schtasks', ['/run', '/tn', unitLabel(name, 'win32')])
+  await unitStop(name, 'win32')
+  await unitStart(name, 'win32')
 }

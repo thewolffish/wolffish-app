@@ -186,6 +186,14 @@ setInterval(()=>{},1000);`
   ok('processInfo answers for a live pid', !!info?.startedAt, info)
   ok('processInfo null for a dead pid', (await processInfo(oldPid)) === null)
 
+  // m1 and m2 are done: retire their liveness polls now. Left running, their
+  // stale in-memory copies of the registry see m3's later stops as crashes
+  // and their supervisors re-spawn records m3 has already removed — a leak
+  // this test would otherwise leave behind (and, on Windows, trip over when
+  // it deletes the workspace). The app runs exactly one manager.
+  m1.shutdown()
+  m2.shutdown()
+
   console.log('\n— readiness by logMatch and exit-before-ready')
   const m3 = new ProcessManager(WORKSPACE)
   await m3.init()
@@ -348,9 +356,13 @@ setInterval(()=>{},1000);`
     up
   )
   ok('old name gone', m3.get('srv2') === null)
+  // Windows cannot move a folder whose log the running command holds open;
+  // the record then keeps the log that is actually being written.
   ok(
     'renamed log dir moved',
-    fs.existsSync(path.join(WORKSPACE, 'files', 'processes', 'srv-renamed', 'current.log'))
+    process.platform === 'win32'
+      ? !!up.record?.run.logPath && fs.existsSync(up.record.run.logPath)
+      : fs.existsSync(path.join(WORKSPACE, 'files', 'processes', 'srv-renamed', 'current.log'))
   )
   const rm = await m3.remove('srv-renamed')
   ok('remove stops and forgets', rm.ok && m3.get('srv-renamed') === null)
@@ -384,11 +396,41 @@ setInterval(()=>{},1000);`
   ok('supervisor restarted it', f2?.run.state === 'running' && f2.run.restarts === 1, f2?.run)
   await m3.remove('flaky')
 
+  console.log('\n— redefining a crashed name cancels its pending restart')
+  const bad = await m3.start({
+    name: 'redo',
+    command: `node ${crashJs}`,
+    cwd: WORKSPACE,
+    restart: 'on-failure',
+    ready: { port: false, timeoutMs: 1500 }
+  })
+  ok('bad command crashed', !bad.ok, bad)
+  // The supervisor now holds a 1 s backoff timer for "redo". Redefine it
+  // before that fires: exactly one copy of the new command must run.
+  const good = await m3.start({
+    name: 'redo',
+    command: `node ${serverJs} {port}`,
+    cwd: WORKSPACE,
+    restart: 'on-failure'
+  })
+  ok('new command started and is ready', good.ok && good.ready, good)
+  await sleep(3500)
+  const redo = m3.get('redo')
+  const redoListeners = (await listeningPorts()).filter((l) => l.port === redo?.run.port)
+  ok(
+    'still running with no supervisor restart',
+    redo?.run.state === 'running' && redo.run.restarts === 0,
+    redo?.run
+  )
+  ok('one listener on its port', redoListeners.length === 1, redoListeners)
+  await m3.remove('redo')
+
   await m3.stopAll()
   m1.shutdown()
   m2.shutdown()
   m3.shutdown()
-  fs.rmSync(TMP, { recursive: true, force: true })
+  // Windows releases a killed tree's log handles a beat after taskkill returns.
+  fs.rmSync(TMP, { recursive: true, force: true, maxRetries: 10, retryDelay: 250 })
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed ? 1 : 0)
 }
