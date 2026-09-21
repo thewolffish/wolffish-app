@@ -252,6 +252,34 @@ setInterval(()=>{},1000);`
       oneShot.tail.includes('hello-one-shot'),
     oneShot
   )
+  ok('a finished one-shot leaves no record behind', m3.get('oneshot') === null)
+  ok(
+    'its log survives',
+    fs.existsSync(path.join(WORKSPACE, 'files', 'processes', 'oneshot', 'current.log'))
+  )
+  // A stale one-shot record (pre-rule, or finished while the app was closed) is pruned at reconcile.
+  const { emptyRun } = await import('../../processes/types')
+  await m3.registry.upsert({
+    id: 'stale',
+    name: 'stale-probe',
+    command: 'ls',
+    cwd: WORKSPACE,
+    env: {},
+    port: { mode: 'none' },
+    ready: {},
+    restart: 'never',
+    onQuit: 'keep',
+    autostart: 'off',
+    origin: { conversationId: null, kind: 'started' },
+    createdAt: 1,
+    updatedAt: 1,
+    run: { ...emptyRun(), state: 'exited', exitCode: 0, endedAt: Date.now() - 7_200_000 }
+  })
+  await m3.reconcile()
+  ok(
+    'reconcile prunes a stale finished one-shot regardless of origin',
+    m3.get('stale-probe') === null
+  )
   const selfAdopt = await m3.adopt({ name: 'me', pid: process.pid })
   ok(
     'adopting our own pid is refused',

@@ -2662,7 +2662,7 @@
   },
   "processes": {
     "title": "Processes",
-    "subtitle": "Dev servers, tunnels, watchers and scripts Wolffish keeps running — across turns, conversations and restarts.",
+    "subtitle": "Servers, tunnels and scripts Wolffish keeps running.",
     "runningBadge": "{{running}} of {{total}} running",
     "stopAll": "Stop all",
     "stoppedCount": "Stopped {{count}}",
@@ -2673,7 +2673,7 @@
       "wolffish": "With Wolffish",
       "system": "At login"
     },
-    "restartLabel": "Restart:",
+    "restartLabel": "Restart",
     "restart": {
       "never": "never",
       "on-failure": "on failure",
@@ -2699,6 +2699,26 @@
     "removeTitle": "Remove process",
     "removeConfirm": "Stop \"{{name}}\" if it is running, remove its login entry if any, and forget it along with its logs?",
     "removed": "Removed {{name}}",
-    "error": "Something went wrong"
+    "error": "Something went wrong",
+    "searchPlaceholder": "Search by name, command, folder or URL",
+    "filterStatus": "Status",
+    "status": {
+      "all": "All",
+      "running": "Running",
+      "stopped": "Stopped",
+      "crashed": "Crashed"
+    },
+    "groupCount": "{{running}} of {{total}} running",
+    "noMatches": "No processes match these filters.",
+    "showingCount": "Showing {{shown}} of {{total}}",
+    "pid": "pid {{pid}}",
+    "deleteAll": "Delete all",
+    "stopAllTitle": "Stop all processes",
+    "stopAllConfirm_one": "Stop the {{count}} running process?",
+    "stopAllConfirm_other": "Stop all {{count}} running processes?",
+    "deleteAllTitle": "Delete all processes",
+    "deleteAllConfirm": "Stop everything still running ({{running}}), remove any login entries, and forget all {{count}} processes along with their logs?",
+    "removedCount_one": "Removed {{count}} process",
+    "removedCount_other": "Removed {{count}} processes"
   }
 }

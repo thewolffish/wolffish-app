@@ -2957,7 +2957,7 @@
   },
   "processes": {
     "title": "العمليات",
-    "subtitle": "خوادم التطوير والأنفاق والمراقِبات والنصوص البرمجية التي يُبقيها Wolffish قيد التشغيل — عبر الأدوار والمحادثات وإعادة التشغيل.",
+    "subtitle": "خوادم وأنفاق ونصوص يُبقيها Wolffish قيد التشغيل.",
     "runningBadge": "{{running}} من {{total}} قيد التشغيل",
     "stopAll": "إيقاف الكل",
     "stoppedCount": "تم إيقاف {{count}}",
@@ -2968,7 +2968,7 @@
       "wolffish": "مع Wolffish",
       "system": "عند تسجيل الدخول"
     },
-    "restartLabel": "إعادة التشغيل:",
+    "restartLabel": "إعادة التشغيل",
     "restart": {
       "never": "أبدًا",
       "on-failure": "عند الفشل",
@@ -2994,6 +2994,34 @@
     "removeTitle": "إزالة العملية",
     "removeConfirm": "إيقاف \"{{name}}\" إن كانت تعمل، وإزالة إدخال تسجيل الدخول إن وُجد، ونسيانها مع سجلاتها؟",
     "removed": "تمت إزالة {{name}}",
-    "error": "حدث خطأ ما"
+    "error": "حدث خطأ ما",
+    "searchPlaceholder": "ابحث بالاسم أو الأمر أو المجلد أو الرابط",
+    "filterStatus": "الحالة",
+    "status": {
+      "all": "الكل",
+      "running": "قيد التشغيل",
+      "stopped": "متوقف",
+      "crashed": "متعطّل"
+    },
+    "groupCount": "{{running}} من {{total}} قيد التشغيل",
+    "noMatches": "لا توجد عمليات تطابق هذه المرشحات.",
+    "showingCount": "عرض {{shown}} من {{total}}",
+    "pid": "المعرّف {{pid}}",
+    "deleteAll": "حذف الكل",
+    "stopAllTitle": "إيقاف جميع العمليات",
+    "stopAllConfirm_zero": "لا عمليات قيد التشغيل.",
+    "stopAllConfirm_one": "إيقاف العملية الوحيدة قيد التشغيل؟",
+    "stopAllConfirm_two": "إيقاف العمليتين قيد التشغيل؟",
+    "stopAllConfirm_few": "إيقاف العمليات الـ{{count}} قيد التشغيل؟",
+    "stopAllConfirm_many": "إيقاف العمليات الـ{{count}} قيد التشغيل؟",
+    "stopAllConfirm_other": "إيقاف العمليات الـ{{count}} قيد التشغيل؟",
+    "deleteAllTitle": "حذف جميع العمليات",
+    "deleteAllConfirm": "إيقاف كل ما لا يزال يعمل ({{running}})، وإزالة أي إدخالات تسجيل دخول، ونسيان جميع العمليات الـ{{count}} مع سجلاتها؟",
+    "removedCount_zero": "لم تُزَل أي عملية",
+    "removedCount_one": "تمت إزالة عملية واحدة",
+    "removedCount_two": "تمت إزالة عمليتين",
+    "removedCount_few": "تمت إزالة {{count}} عمليات",
+    "removedCount_many": "تمت إزالة {{count}} عملية",
+    "removedCount_other": "تمت إزالة {{count}} عملية"
   }
 }

@@ -506,7 +506,11 @@ export class ProcessManager {
         const tail = await this.logs(name, { lines: 40 })
         if (cur.run.state === 'exited' && cur.run.exitCode === 0) {
           // A command that finished cleanly before it was "ready" was a
-          // one-shot, not a server: report it as done with its output.
+          // one-shot, not a server: report it as done with its output, and
+          // forget the definition — it had no port, never became ready and
+          // cannot be restarted, so a record would only be list noise. The
+          // log file stays.
+          await this.registry.remove(name)
           return {
             ok: true,
             record: cur,
@@ -1108,18 +1112,11 @@ export class ProcessManager {
    * records ask the service manager. NOTHING is killed here.
    */
   async reconcile(): Promise<void> {
-    // Shell-background one-shots that finished more than a day ago are noise
-    // in every list; nothing can restart them and their logs said what they said.
-    for (const record of this.registry.list()) {
-      if (
-        record.origin.kind === 'shell' &&
-        !isLive(record) &&
-        record.run.endedAt &&
-        Date.now() - record.run.endedAt > 86_400_000
-      ) {
-        await this.registry.remove(record.name)
-      }
-    }
+    // A finished one-shot — exited 0, never ready, no port — is noise in
+    // every list whoever started it; nothing can restart it and its log said
+    // what it said. Keyed on that shape, not on origin, so records that
+    // finished while Wolffish was closed (or predate this rule) go too.
+    await this.pruneStale()
     for (const record of this.registry.list()) {
       if (record.run.unit || record.autostart === 'system') {
         if (record.autostart === 'system' && !record.run.unit) {
@@ -1149,8 +1146,15 @@ export class ProcessManager {
   }
 
   /** Periodic liveness for runs we do not hold a child handle for (adopted, relaunched, unit-owned). */
+  private async pruneStale(): Promise<void> {
+    for (const record of this.registry.list()) {
+      if (isStaleRecord(record)) await this.registry.remove(record.name)
+    }
+  }
+
   private async pollLiveness(): Promise<void> {
     if (this.quitting) return
+    await this.pruneStale()
     for (const record of this.registry.list()) {
       if (!isLive(record)) continue
       if (this.children.has(record.name)) continue
@@ -1327,6 +1331,31 @@ export class ProcessManager {
 }
 
 // ───────────────────────────────────────────── helpers
+
+/** Exited 0 without ever being ready or holding a port: a command, not a service. */
+export function isFinishedOneShot(record: ProcessRecord): boolean {
+  return (
+    !isLive(record) &&
+    record.run.state === 'exited' &&
+    record.run.exitCode === 0 &&
+    record.run.port === null &&
+    record.run.unit === null
+  )
+}
+
+const STALE_AFTER_MS = 3_600_000
+
+/**
+ * Records nothing can act on any more: a finished one-shot (its "readiness"
+ * was only "alive for a while" or a URL it printed), or an adopted process
+ * that ended (there is no command to start again). Kept for an hour so a
+ * turn that is still looking at it finds it, then dropped; the log stays.
+ */
+function isStaleRecord(record: ProcessRecord, now = Date.now()): boolean {
+  if (isLive(record) || !record.run.endedAt || now - record.run.endedAt < STALE_AFTER_MS)
+    return false
+  return isFinishedOneShot(record) || record.origin.kind === 'adopted'
+}
 
 /**
  * macOS keeps Desktop, Documents and Downloads behind TCC: a launchd agent
