@@ -2249,7 +2249,8 @@
       "tokens": "{{compact}} tok"
     },
     "touchedFolders": {
-      "label": "Folders changed in this conversation",
+      "label": "Folders this conversation works in",
+      "attached": "Working folder of this conversation, no files changed yet. Click to open it",
       "chip_one": "{{count}} file changed here. Click to open the folder",
       "chip_other": "{{count}} files changed here. Click to open the folder"
     },

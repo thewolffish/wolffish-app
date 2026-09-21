@@ -134,9 +134,15 @@ async function main(): Promise<void> {
     ),
     command
   )
+  const filesRoot = path.join(HOME, 'custom-workspace', 'files', 'processes')
+  units.setProcessFilesRoot(filesRoot)
   const stateW = await units.installUnit(record, winLog, 'win32')
   const vbs = units.unitScriptPath('web-dev')
-  ok('launcher written under the faked HOME', vbs.startsWith(HOME) && fs.existsSync(vbs), vbs)
+  ok(
+    'launcher written under the configured files root',
+    vbs.startsWith(filesRoot) && fs.existsSync(vbs),
+    vbs
+  )
   const launcher = fs.existsSync(vbs) ? fs.readFileSync(vbs, 'utf8') : ''
   ok(
     'launcher runs cmd hidden and waits, with every quote doubled',

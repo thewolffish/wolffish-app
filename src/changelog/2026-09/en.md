@@ -1,4 +1,46 @@
-## v1.0.310 — 2026-09-20 `Latest`
+## v1.0.311 — 2026-09-22 `Latest`
+
+### Wolffish Keeps Your Servers Running
+
+A dev server you asked for used to live and die inside the one command that started it: the shell call ended, the turn ended, and whatever it launched was either gone or orphaned somewhere with no name, no log and no way to ask about it later. **Wolffish now manages long-lived processes as first-class things you own.** Give one a name and a command and it becomes a record that survives the turn, the conversation and the app itself — with its own log, its real process id, and a state you can read at any moment.
+
+Each process carries **the policies that decide how it behaves without you**: a port picked for it from Wolffish's own band, or an exact one you name — taking it over from whoever holds it, once you confirm; a restart rule — **never, on failure, or always** — so a crashed server comes back on its own; whether it **keeps running or stops when you quit Wolffish**; and whether it **starts itself when you log into your computer**, as a real login unit your operating system owns. A readiness check means a start only reports success once the thing is actually answering, not merely spawned.
+
+They are visible everywhere you work: a **Processes tab in your Library** with grouped rows and expandable detail, a **card in the conversation** that keeps showing its state after the turn ends, and `wolffish process` in the terminal for listing, starting, stopping, restarting, reading logs and setting autostart. A one-shot command that simply finished is **forgotten rather than filed** — a command is not a service, and your list stays the things that actually run.
+
+### A Browser That Lives in the Conversation
+
+Wolffish gains **a real browser inside the conversation** — a Chromium session it drives directly, reading an accessibility snapshot of the page rather than guessing over pixels, so it acts on the element it meant to. It appears as a card in the transcript with its own tabs and chrome, and you can take it over with your own mouse and keyboard whenever you want.
+
+A browser that was used in a conversation **comes back with that conversation**. Where reopening previously restored a single page, it now brings back **every tab of the strip, in order, with the one you were on still in front** — so a conversation you left with six tabs of research open is the same conversation when you return to it.
+
+### Your Phone Drives Both
+
+Everything above reaches your phone. **Managed processes are fully drivable from it** — list, start, stop, stop all, restart, edit a definition, remove one, read a log tail — through the very functions the desktop's own page calls, so a Stop pressed on the phone and a Stop pressed on the desktop are one function, and what comes back is always the desktop's stored record rather than the phone's optimism. The registry pushes its own changes, so a process the model starts on the desktop re-lists on the phone by itself.
+
+The conversation's browser reaches the phone too, as **a read-only card with a still frame** — one image per settled page load, captured only while a phone is actually paired, so the desktop alone never pays for a picture nobody is looking at.
+
+### The Chips Show Where You Work, Not Only What Changed
+
+The strip of folder chips over a transcript answered only half the question. A folder you had **attached to the conversation** stayed invisible until something inside it changed, so a chat you had just pointed at a repository showed an empty strip and looked like it was working nowhere. **Every working folder you attach now earns a chip from the first message on**, carrying no number while nothing in it has changed yet, and picking up the count the moment it does.
+
+The two halves meet on one path instead of splitting into two chips: attach `wolffish-app/src/renderer`, edit a page underneath it, and the strip shows **`wolffish-app` once**, because an attached folder shows as the project it opens. A folder spelled three ways — plain, with a trailing slash, or starting with `~` — is **one chip**, and a `~` now resolves to your home directory everywhere a path is read, including the `dir:` line of an automation.
+
+### Processes Come to Windows
+
+Managed processes and login units now work on Windows. Starting one used to look like a command that had **already finished the instant it began**: the detached launch made PowerShell exit cleanly without running anything, and swallowed the output of every program it did start. A hidden launcher now hosts the command in its own console, keeps it clear of the job that dies with Wolffish, and **reports the real process id and the real exit code**. Login units, which needed administrator rights through the old route and were simply refused without them, are now **an ordinary per-user scheduled task** that runs hidden and stops through the same manager as everything else.
+
+Several races surfaced while testing and are fixed alongside it: a late exit after a stop read as a crash and resurrected the process; a start that redefined a name which had just crashed raced its own pending restart and inherited the previous command's port and readiness rules; and a process that outlives Wolffish's own shutdown **is no longer written off as dead** on the way out.
+
+### Two Capabilities Were Quietly Loading as Errors
+
+The **shell** and **text-to-speech** capabilities each had an invalid line in their definition — a description that had grown a colon where the format cannot take one — and the result was not a warning but a silent failure: both loaded as errors, and **`shell_exec` was an unknown tool.** Both are fixed, and a test now parses **every bundled capability definition**, so a stray character can never again take a capability offline without saying so.
+
+### Your Commit Messages Are Yours
+
+Wolffish used to append a co-author line to every commit it helped you write, enforced by a hook that rewrote the message and a check that failed the build without it. Both are gone. **A commit message is yours now** — no tool credit is added, and nothing rewrites what you wrote.
+
+## v1.0.310 — 2026-09-20
 
 ### An Automation Can Think As Hard As It Needs To
 

@@ -21,6 +21,7 @@ import { projectFolderFor, projectFoldersFor } from '../../uploads/project-folde
 import {
   changedDirectories,
   collectChangedFiles,
+  folderChips,
   groupTouchedFolders
 } from '../../../renderer/src/lib/touched-folders/touchedFolders'
 
@@ -295,9 +296,81 @@ function projectResolution(): void {
   )
 }
 
+function homeExpansion(): void {
+  const tree = deps([`${LANDING}/.git`])
+  eq(
+    '~ in a directory expands to home before the walk',
+    projectFolderFor('~/Documents/wolffish/wolffish-landing/content/blog/en', [], tree),
+    LANDING
+  )
+  eq(
+    '~ in a working folder expands to home',
+    projectFolderFor(`${HOME}/Desktop/notes/a`, ['~/Desktop/notes'], deps([])),
+    `${HOME}/Desktop/notes`
+  )
+  eq('~ alone is home', projectFolderFor('~', [], deps([])), HOME)
+}
+
+/**
+ * The strip: attached folders show as chips from the first message on, an
+ * attached repo that was edited is one chip with the count, an untouched
+ * folder's chip goes when the folder is removed, a touched one's stays, and
+ * two spellings of one folder never make two chips.
+ */
+function strip(): void {
+  const project = (dir: string): string | undefined => {
+    if (dir === '/pending') return undefined
+    for (const root of [LANDING, APP]) {
+      if (dir === root || dir === `${root}/` || dir.startsWith(`${root}/`)) return root
+    }
+    if (dir === '~/Documents/wolffish/wolffish-landing') return LANDING
+    return dir
+  }
+  const landing = { path: LANDING, label: 'wolffish-landing', files: 10 }
+  const touched = [landing]
+  eq(
+    'attached folders first; an attached repo that was edited is ONE chip carrying the count',
+    folderChips([APP, LANDING], touched, project),
+    [{ path: APP, label: 'wolffish-app', files: 0 }, landing]
+  )
+  eq(
+    'a project edited outside every attached folder follows the attached ones',
+    folderChips([APP], touched, project),
+    [{ path: APP, label: 'wolffish-app', files: 0 }, landing]
+  )
+  eq(
+    'an untouched folder removed is gone; a touched one stays',
+    folderChips([], touched, project),
+    [landing]
+  )
+  eq(
+    'one folder attached three ways — as is, trailing slash, ~ — is one chip',
+    folderChips([LANDING, `${LANDING}/`, '~/Documents/wolffish/wolffish-landing'], [], project),
+    [{ path: LANDING, label: 'wolffish-landing', files: 0 }]
+  )
+  eq(
+    'an attached subfolder of a repo shows as the repo, and meets its edits there',
+    folderChips([`${APP}/src/renderer`], [{ path: APP, label: 'wolffish-app', files: 3 }], project),
+    [{ path: APP, label: 'wolffish-app', files: 3 }]
+  )
+  eq(
+    'an attached folder main has not resolved yet earns no chip',
+    folderChips(['/pending', ''], [], project),
+    []
+  )
+  const many = folderChips(
+    [APP, LANDING, `${APP}/`],
+    [landing, { path: '/tmp/x', label: 'x', files: 1 }],
+    project
+  )
+  ok('chips are unique by path', new Set(many.map((c) => c.path)).size === many.length, many)
+}
+
 function main(): void {
   segmentScan()
   projectResolution()
+  homeExpansion()
+  strip()
   console.log(`\n${passed} passed, ${failed} failed`)
   if (failed > 0) process.exit(1)
 }

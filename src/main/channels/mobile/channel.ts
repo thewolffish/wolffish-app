@@ -13,6 +13,7 @@
  * in when it is in the foreground and disappears when iOS suspends it, which
  * is why every reconnect re-handshakes and nothing here assumes continuity.
  */
+import type { BrowserTabSnapshot } from '@main/browser/types'
 import {
   loadIdentity,
   loadPairing,
@@ -84,6 +85,7 @@ import { adoptUploadedAutomationFile } from '@main/automations/files'
 import { resolveWorkingDirectory } from '@main/uploads/owned-copies'
 import { readViewerFile, writeViewerFile } from '@main/viewer'
 import { workspaceRoot } from '@main/workspace/root'
+import { processManager } from '@main/processes/instance'
 import {
   CHUNK_SIZE,
   DEFAULT_RELAY_URL,
@@ -1708,6 +1710,113 @@ export class MobileChannel {
         `countdown abort from phone — ${result.ok ? 'aborted' : (result.error ?? 'refused')}`
       )
       return result
+    })
+
+    // -------------------------------------------------------- processes
+    // The desktop's process manager, driven from the phone through the same
+    // functions its Library tab and the model's process_* tools call. Every
+    // answer is the stored record; the registry's own push (processesChanged)
+    // is what re-lists the phone, exactly as it does the desktop page.
+
+    tunnel.onRpc(Rpc.processesList, async () => {
+      const processes = processManager.list()
+      this.debug(`served ${processes.length} process(es)`)
+      return { processes }
+    })
+
+    tunnel.onRpc(Rpc.processStart, async (params) => {
+      const name = String(params.name ?? '')
+      const command = String(params.command ?? '')
+      if (!name || !command) throw new Error('processStart needs a name and a command')
+      const result = await processManager.start({
+        name,
+        command,
+        cwd: typeof params.cwd === 'string' ? params.cwd : undefined,
+        env:
+          params.env && typeof params.env === 'object'
+            ? (params.env as Record<string, string>)
+            : undefined,
+        port: params.port as Parameters<typeof processManager.start>[0]['port'],
+        restart: params.restart as Parameters<typeof processManager.start>[0]['restart'],
+        onQuit: params.onQuit as Parameters<typeof processManager.start>[0]['onQuit'],
+        autostart: params.autostart as Parameters<typeof processManager.start>[0]['autostart'],
+        origin: { conversationId: null, kind: 'started' },
+        wait: true
+      })
+      this.log(`process ${name} started from the phone — ${result.ok ? 'ok' : result.error}`)
+      return result.ok
+        ? { ok: true, record: result.record }
+        : { ok: false, error: result.error, record: result.record }
+    })
+
+    tunnel.onRpc(Rpc.processStop, async (params) => {
+      const name = String(params.name ?? '')
+      if (!name) throw new Error('processStop needs a name')
+      const result = await processManager.stop(name)
+      this.log(
+        `process ${name} stop from the phone — ${result.ok ? (result.stopped ? 'stopped' : 'was not running') : result.error}`
+      )
+      return result
+    })
+
+    tunnel.onRpc(Rpc.processStopAll, async () => {
+      const results = await processManager.stopAll()
+      this.log(`stop all from the phone — ${results.filter((r) => r.stopped).length} stopped`)
+      return { results }
+    })
+
+    tunnel.onRpc(Rpc.processRestart, async (params) => {
+      const name = String(params.name ?? '')
+      if (!name) throw new Error('processRestart needs a name')
+      const result = await processManager.restart(name)
+      this.log(`process ${name} restart from the phone — ${result.ok ? 'ok' : result.error}`)
+      return result.ok
+        ? { ok: true, record: result.record }
+        : { ok: false, error: result.error, record: result.record }
+    })
+
+    tunnel.onRpc(Rpc.processUpdate, async (params) => {
+      const name = String(params.name ?? '')
+      if (!name) throw new Error('processUpdate needs a name')
+      const patch: Parameters<typeof processManager.update>[1] = {}
+      if (typeof params.command === 'string') patch.command = params.command
+      if (typeof params.cwd === 'string') patch.cwd = params.cwd
+      if (params.env && typeof params.env === 'object')
+        patch.env = params.env as Record<string, string>
+      if (params.port && typeof params.port === 'object')
+        patch.port = params.port as NonNullable<typeof patch.port>
+      if (
+        params.restart === 'never' ||
+        params.restart === 'on-failure' ||
+        params.restart === 'always'
+      )
+        patch.restart = params.restart
+      if (params.onQuit === 'keep' || params.onQuit === 'stop') patch.onQuit = params.onQuit
+      if (
+        params.autostart === 'off' ||
+        params.autostart === 'wolffish' ||
+        params.autostart === 'system'
+      )
+        patch.autostart = params.autostart
+      if (typeof params.newName === 'string') patch.newName = params.newName
+      const result = await processManager.update(name, patch)
+      this.log(`process ${name} update from the phone — ${result.ok ? 'ok' : result.error}`)
+      return result
+    })
+
+    tunnel.onRpc(Rpc.processRemove, async (params) => {
+      const name = String(params.name ?? '')
+      if (!name) throw new Error('processRemove needs a name')
+      const result = await processManager.remove(name)
+      this.log(`process ${name} removed from the phone — ${result.ok ? 'ok' : result.error}`)
+      return result
+    })
+
+    tunnel.onRpc(Rpc.processLogs, async (params) => {
+      const name = String(params.name ?? '')
+      if (!name) throw new Error('processLogs needs a name')
+      const lines = typeof params.lines === 'number' ? params.lines : 200
+      return { text: await processManager.logs(name, { lines }) }
     })
 
     tunnel.onRpc(Rpc.abortTurn, async (params) => {
@@ -3348,6 +3457,16 @@ export class MobileChannel {
     this.tunnel?.emit(Event.proceduresChanged, { at: Date.now() })
   }
 
+  /** The process registry changed — same contract as projects. */
+  pushProcessesChanged(): void {
+    this.tunnel?.emit(Event.processesChanged, { at: Date.now() })
+  }
+
+  /** A process card re-rendered — see Event.processCardChanged. */
+  pushProcessCardChanged(snapshot: unknown): void {
+    this.tunnel?.emit(Event.processCardChanged, { snapshot })
+  }
+
   /** The scheduler reloaded: heartbeat.md changed, whatever wrote it. */
   pushAutomationsChanged(): void {
     this.tunnel?.emit(Event.automationsChanged, { at: Date.now() })
@@ -3396,6 +3515,11 @@ export class MobileChannel {
   /** A turn-end countdown transition after its turn ended — see Event.countdownChanged. */
   pushCountdownChanged(snapshot: CountdownSnapshot): void {
     this.tunnel?.emit(Event.countdownChanged, { snapshot })
+  }
+
+  /** The in-app browser moved (load, tab switch, still frame) — see Event.browserChanged. */
+  pushBrowserChanged(snapshot: BrowserTabSnapshot): void {
+    this.tunnel?.emit(Event.browserChanged, { snapshot })
   }
 
   // ----------------------------------------------------------------- status

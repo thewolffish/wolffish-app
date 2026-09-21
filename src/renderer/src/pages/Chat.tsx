@@ -58,6 +58,7 @@ import { pageTopPadding } from '@lib/utils/platform'
 import {
   changedDirectories,
   collectChangedFiles,
+  folderChips,
   groupTouchedFolders
 } from '@lib/touched-folders/touchedFolders'
 import {
@@ -655,13 +656,24 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     () => collectChangedFiles(messages, workingFolders),
     [messages, workingFolders]
   )
-  const changedDirsKey = useMemo(() => changedDirectories(changedFiles).join('\n'), [changedFiles])
+  // Main is asked about every changed file's directory AND every attached
+  // working folder — an attached folder's chip names the project it opens
+  // (the repo it sits in, or itself), which is how an attached repo and the
+  // edits made inside it land on one chip. Distinct, so the key moves only
+  // when the set does.
+  const folderDirsKey = useMemo(
+    () =>
+      Array.from(
+        new Set([...changedDirectories(changedFiles), ...workingFolders.filter(Boolean)])
+      ).join('\n'),
+    [changedFiles, workingFolders]
+  )
   const [projectByDir, setProjectByDir] = useState<Record<string, string>>({})
   useEffect(() => {
-    if (!changedDirsKey) return
+    if (!folderDirsKey) return
     let alive = true
     void window.api.upload
-      .projectFolders(changedDirsKey.split('\n'), workingFolders)
+      .projectFolders(folderDirsKey.split('\n'), workingFolders)
       .then((map) => {
         if (alive) setProjectByDir((prev) => ({ ...prev, ...map }))
       })
@@ -669,11 +681,18 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
     return () => {
       alive = false
     }
-  }, [changedDirsKey, workingFolders])
-  const touchedFolders = useMemo(
-    () => groupTouchedFolders(changedFiles, (dir) => projectByDir[dir]),
-    [changedFiles, projectByDir]
-  )
+  }, [folderDirsKey, workingFolders])
+  // The strip: attached folders first, then the projects with changes, one
+  // chip per path (folderChips). An attached folder that saw no changes is a
+  // chip only while it stays attached; one that did keeps its chip from the
+  // segments after removal. Nothing before the first message — until then the
+  // composer's own folder row is the only place the folders show.
+  const firstMessageSent = messages.length > 0
+  const folderStrip = useMemo(() => {
+    if (!firstMessageSent) return []
+    const projectFor = (dir: string): string | undefined => projectByDir[dir]
+    return folderChips(workingFolders, groupTouchedFolders(changedFiles, projectFor), projectFor)
+  }, [firstMessageSent, workingFolders, changedFiles, projectByDir])
   /**
    * Reference files this conversation's turns are told about — seeded by a
    * procedure's Play from that procedure's attachments and persisted on the
@@ -3396,7 +3415,7 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
           conversations sheet) laid over this transcript — no rails, no
           header. It stays live while turns stream; only the composer of a
           PROCESSING conversation is gated (below). */}
-      <TouchedFolders folders={touchedFolders} />
+      <TouchedFolders folders={folderStrip} />
       <div
         ref={scrollerRef}
         className="relative flex flex-1 flex-col-reverse overflow-y-auto px-6 py-8"

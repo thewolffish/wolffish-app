@@ -27,7 +27,8 @@ export type TouchedFolder = {
   path: string
   /** Short display name: the project folder's own name. */
   label: string
-  /** Distinct files changed anywhere under this folder. */
+  /** Distinct files changed anywhere under this folder; 0 for a folder that is
+   *  attached to the conversation but has no changes yet. */
   files: number
 }
 
@@ -144,6 +145,47 @@ export function groupTouchedFolders(
   const out: TouchedFolder[] = []
   for (const [project, set] of byProject) {
     out.push({ path: project, label: basename(project), files: set.size })
+  }
+  return out
+}
+
+/**
+ * The strip itself: every attached working folder, in the order it was
+ * attached, followed by every project the conversation changed files in that
+ * is not already on the strip. One chip per path — an attached repo that was
+ * then edited is ONE chip, in its attached position, carrying the count.
+ *
+ * Each working folder appears as the project it opens (`projectFor` — the
+ * repository it sits in, or itself), which is what makes the two halves meet
+ * on the same path: attach `wolffish-app/src/renderer`, edit a page under it,
+ * and the strip shows `wolffish-app` once. Two spellings of one folder — a
+ * trailing slash, a `~` — resolve to the same path and collapse the same way.
+ *
+ * Attached-and-unchanged chips live only as long as the folder stays attached
+ * (they are recomputed from the current list); a changed folder's chip comes
+ * from the segments and so outlives its removal.
+ */
+export function folderChips(
+  workingFolders: readonly string[],
+  touched: readonly TouchedFolder[],
+  projectFor: (dir: string) => string | undefined
+): TouchedFolder[] {
+  const out: TouchedFolder[] = []
+  const at = new Map<string, number>()
+  for (const folder of workingFolders) {
+    const project = folder ? projectFor(folder) : undefined
+    if (!project || at.has(project)) continue
+    at.set(project, out.length)
+    out.push({ path: project, label: basename(project), files: 0 })
+  }
+  for (const chip of touched) {
+    const index = at.get(chip.path)
+    if (index !== undefined) {
+      out[index] = { ...out[index], files: chip.files }
+      continue
+    }
+    at.set(chip.path, out.length)
+    out.push(chip)
   }
   return out
 }

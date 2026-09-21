@@ -73,6 +73,14 @@ export function normalizePath(p: string): string {
   return slashed
 }
 
+/** A leading `~` is the home directory — a folder typed into an automation's
+ *  `dir:` line, or a project's, may carry one; the filesystem does not. */
+function expandHome(p: string, home: string): string {
+  if (p === '~') return home
+  if (p.startsWith('~/')) return `${home}/${p.slice(2)}`
+  return p
+}
+
 function parentOf(p: string): string | null {
   const idx = p.lastIndexOf('/')
   if (idx < 0) return null
@@ -146,7 +154,8 @@ export function projectFolderFor(
   workingFolders: readonly string[],
   deps: ProjectFolderDeps
 ): string {
-  const dir = normalizePath(rawDir)
+  const home = normalizePath(deps.home)
+  const dir = expandHome(normalizePath(rawDir), home)
   if (!dir) return dir
   const containers = fixedContainers(deps)
   const stopAt = containers.find((c) => isWithin(dir, c)) ?? null
@@ -162,7 +171,7 @@ export function projectFolderFor(
   // first folder under it is.
   let working: string | null = null
   for (const raw of workingFolders) {
-    const folder = normalizePath(raw)
+    const folder = expandHome(normalizePath(raw), home)
     if (folder && isWithin(dir, folder) && (!working || folder.length > working.length)) {
       working = folder
     }

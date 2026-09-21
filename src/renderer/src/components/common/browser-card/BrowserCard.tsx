@@ -60,22 +60,19 @@ export function BrowserCard({ snapshot }: { snapshot: BrowserTabSnapshot }): Rea
   const attachedRef = useRef(false)
 
   // A browser that was used in this conversation comes back with it. Tabs
-  // die with the app process; the card's segment remembers the page, so on
+  // die with the app process; the card's segment remembers the strip, so on
   // the FIRST look — and only then, a browser the user just closed stays
-  // closed — an empty browser reopens on the URL it had.
+  // closed — an empty browser reopens on the tabs it had.
   useEffect(() => {
     if (!loaded || restoreStartedRef.current) return
     restoreStartedRef.current = true
     const settle = (): void => setRestoreSettled(true)
     if (tabs.length === 0 && snapshot.url) {
-      void window.api.browser
-        .createTab({ url: snapshot.url, conversationId: snapshot.conversationId })
-        .catch(() => {})
-        .finally(settle)
+      void restoreBrowser(snapshot).finally(settle)
     } else {
       void Promise.resolve().then(settle)
     }
-  }, [loaded, tabs.length, snapshot.url, snapshot.conversationId])
+  }, [loaded, tabs.length, snapshot])
 
   // Frames for the active tab: decode off the main thread, draw 1:1.
   useEffect(() => {
@@ -318,11 +315,7 @@ export function BrowserCard({ snapshot }: { snapshot: BrowserTabSnapshot }): Rea
           <span>{t('chat.browser.closedNote')}</span>
           <button
             type="button"
-            onClick={() =>
-              void window.api.browser
-                .createTab({ url: snapshot.url, conversationId: snapshot.conversationId })
-                .catch(() => {})
-            }
+            onClick={() => void restoreBrowser(snapshot)}
             className="border-border text-fg hover:bg-border/40 mt-1 flex cursor-pointer items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium focus-visible:ring-2 focus-visible:ring-accent"
           >
             <PlayIcon size={13} aria-hidden />
@@ -392,6 +385,31 @@ export function BrowserCard({ snapshot }: { snapshot: BrowserTabSnapshot }): Rea
       )}
     </div>
   )
+}
+
+/**
+ * Bring a persisted browser back: every tab of its strip, in order, then the
+ * one that was showing. A segment from before strips were recorded restores
+ * its single page.
+ */
+async function restoreBrowser(snapshot: BrowserTabSnapshot): Promise<void> {
+  const entries =
+    snapshot.strip && snapshot.strip.length > 0
+      ? snapshot.strip
+      : [{ url: snapshot.url, title: snapshot.title, active: true }]
+  let activeId: string | null = null
+  for (const e of entries) {
+    try {
+      const made = await window.api.browser.createTab({
+        url: e.url,
+        conversationId: snapshot.conversationId
+      })
+      if (e.active) activeId = made.tabId
+    } catch {
+      // a page that will not open is skipped; the rest still come back
+    }
+  }
+  if (activeId) await window.api.browser.activate(activeId).catch(() => {})
 }
 
 /**

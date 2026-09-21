@@ -192,9 +192,21 @@ export function windowsLauncherScript(record: ProcessRecord, logPath: string): s
   ].join('\r\n')
 }
 
+/**
+ * The manager's `files/processes` directory. Set once by ProcessManager from
+ * the workspace root it was built with, so a Windows unit's launcher lands
+ * beside the process's log wherever the workspace lives; the default only
+ * covers a call made before any manager exists.
+ */
+let processFilesRoot = path.join(os.homedir(), '.wolffish', 'workspace', 'files', 'processes')
+
+export function setProcessFilesRoot(dir: string): void {
+  processFilesRoot = dir
+}
+
 /** Where a Windows unit's launcher lives: beside the process's log. */
 export function unitScriptPath(name: string): string {
-  return path.join(os.homedir(), '.wolffish', 'workspace', 'files', 'processes', name, 'unit.vbs')
+  return path.join(processFilesRoot, name, 'unit.vbs')
 }
 
 const WIN_TASK_PATH = '\\Wolffish\\'

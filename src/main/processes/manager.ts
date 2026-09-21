@@ -16,7 +16,14 @@ import {
 } from './platform'
 import { allocateBandPort, commandWantsPort, fillPort, portOwner } from './ports'
 import { ProcessRegistry } from './registry'
-import { installUnit, removeUnit, unitRestart, unitState, unitStop } from './service-units'
+import {
+  installUnit,
+  removeUnit,
+  setProcessFilesRoot,
+  unitRestart,
+  unitState,
+  unitStop
+} from './service-units'
 import {
   emptyRun,
   isLive,
@@ -115,6 +122,7 @@ export class ProcessManager {
   constructor(workspaceRoot: string) {
     this.registry = new ProcessRegistry(workspaceRoot)
     this.logsRoot = path.join(workspaceRoot, 'files', 'processes')
+    setProcessFilesRoot(this.logsRoot)
     this.registry.onChanged((record) => {
       for (const cb of this.changedListeners) {
         try {
@@ -674,6 +682,11 @@ export class ProcessManager {
     if (this.children.get(name)?.pid === pid) this.children.delete(name)
     const record = this.registry.get(name)
     if (!record || record.run.pid !== pid) return
+    // On Windows the exit we hear is the launcher's, and the launcher dies
+    // with Wolffish's job at quit while the command it started lives on. An
+    // exit that lands during shutdown says nothing about the command, so the
+    // record keeps its live state and the relaunch reconcile re-tests the pid.
+    if (this.quitting) return
     // stop() may have already closed the run out ("stopped") before the exit
     // event arrives: that exit is confirmation, not a crash — reading it as
     // one would hand an on-failure record to the supervisor, which then
@@ -685,7 +698,7 @@ export class ProcessManager {
       ...cur,
       run: { ...cur.run, state, exitCode: code, exitSignal: signal, endedAt: Date.now() }
     }))
-    if (!updated || wasStopping || this.quitting) return
+    if (!updated || wasStopping) return
     this.superviseAfterExit(updated)
   }
 

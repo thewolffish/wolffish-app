@@ -2084,8 +2084,12 @@ registerCountdownCapability(agent.cerebellum, agent.amygdala, countdowns)
 // never through broadcast, whose CLI/mobile fan-out would serialise 30 JPEG
 // buffers a second onto a terminal socket.
 registerPreviewCapability(agent.cerebellum, browserTabs)
+browserTabs.setStillGate(() => mobileChannel.hasPeer)
 browserTabs.setHandlers({
-  onChanged: (snapshot) => broadcast('browser:changed', snapshot),
+  onChanged: (snapshot) => {
+    broadcast('browser:changed', snapshot)
+    if (mobileChannel.hasPeer) mobileChannel.pushBrowserChanged(snapshot)
+  },
   onClosed: (tabId, reason) => broadcast('browser:closed', { tabId, reason }),
   onFrame: (frame) => {
     const win = mainBrowserWindow()
@@ -2168,9 +2172,13 @@ agent.cerebellum.setProcessesHost({
   findByPid: (pid) =>
     processManager.list().find((r) => r.run.pid === pid && isProcessLive(r))?.name ?? null
 })
-processManager.onChanged(() => broadcast('processes:changed', {}))
+processManager.onChanged(() => {
+  broadcast('processes:changed', {})
+  if (mobileChannel.hasPeer) mobileChannel.pushProcessesChanged()
+})
 processManager.onCard((snapshot) => {
   broadcast('process:cardChanged', snapshot)
+  if (mobileChannel.hasPeer) mobileChannel.pushProcessCardChanged(snapshot)
   if (processManager.isOwningTurnLive(snapshot.cardId) || !snapshot.conversationId) return
   // The opening turn is over: rewrite the card in the conversation file in
   // place so a reopened conversation shows its last state.

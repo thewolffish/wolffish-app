@@ -56,7 +56,20 @@ export type BrowserTabSnapshot = {
   error: BrowserTabError | null
   /** The conversation's browser shows ONE tab at a time; this is it. */
   active: boolean
+  /**
+   * Every tab of this conversation's browser, in strip order, so the card's
+   * persisted segment can bring the whole browser back — not just this tab.
+   */
+  strip: BrowserStripEntry[]
+  /**
+   * Workspace-relative path of the latest still frame of this tab (a JPEG
+   * under files/screenshots/), for the phone's read-only card. Captured only
+   * while a phone is paired; null until the first capture.
+   */
+  still: string | null
 }
+
+export type BrowserStripEntry = { url: string; title: string; active: boolean }
 
 /**
  * Input the card forwards into the page (webContents.sendInputEvent shape).

@@ -25,6 +25,9 @@
  */
 import { WebContentsView, shell, type BrowserWindow, type WebContents } from 'electron'
 import { randomUUID } from 'node:crypto'
+import { promises as fs } from 'node:fs'
+import path from 'node:path'
+import { workspaceRoot } from '@main/workspace/workspace'
 import { wlog } from '@main/workspace/logger'
 import { CdpSession } from '@main/browser/cdp'
 import { FrameStreamer, type FrameSink } from '@main/browser/frames'
@@ -42,6 +45,7 @@ import {
   type BrowserFps,
   type BrowserPartition,
   type BrowserInputEvent,
+  type BrowserStripEntry,
   type BrowserRect,
   type BrowserTabMode,
   type BrowserTabSnapshot
@@ -63,6 +67,10 @@ export type TabEvents = {
   onFrame: FrameSink
   /** Whether this tab is the one its conversation's browser is showing. */
   isActive: (tabId: string) => boolean
+  /** The conversation's tabs in strip order (see BrowserTabSnapshot.strip). */
+  strip: (conversationId: string | null) => BrowserStripEntry[]
+  /** Whether anyone wants still frames right now (a phone is paired). */
+  wantsStill: () => boolean
   /** A window.open guest, adopted into an app-owned tab rather than a naked
    *  BrowserWindow. Returns the adopted contents, which is what Electron's
    *  createWindow callback must hand back. */
@@ -84,6 +92,10 @@ export class Tab {
    *  that, so a failed open leaves nothing in the chat. */
   ready = false
   mode: BrowserTabMode = 'card'
+  /** Latest still frame, workspace-relative — see BrowserTabSnapshot.still. */
+  still: string | null = null
+  private stillSeq = 0
+  private stillTimer: ReturnType<typeof setTimeout> | null = null
   generation = 0
   error: { code: string; message: string } | null = null
   loadState: BrowserTabSnapshot['loadState'] = 'idle'
@@ -198,6 +210,7 @@ export class Tab {
       this.emit()
     })
     wc.on('did-stop-loading', () => {
+      this.scheduleStill()
       this.loadState = this.error ? 'error' : 'ready'
       this.emit()
     })
@@ -280,7 +293,48 @@ export class Tab {
       frameSize: { width: this.stage.width, height: this.stage.height },
       generation: this.generation,
       error: this.error,
-      active: this.events.isActive(this.id)
+      active: this.events.isActive(this.id),
+      strip: this.events.strip(this.conversationId),
+      still: this.still
+    }
+  }
+
+  /**
+   * The phone's view of this tab: one JPEG per settled load (and per
+   * activation), never a stream. Debounced so a page that fires several
+   * did-stop-loading events in a row costs one capture; skipped entirely
+   * when no phone is paired, so the desktop alone never writes a frame.
+   */
+  scheduleStill(delayMs = 1200): void {
+    if (!this.events.wantsStill()) return
+    if (this.stillTimer) clearTimeout(this.stillTimer)
+    this.stillTimer = setTimeout(() => {
+      this.stillTimer = null
+      void this.captureStill()
+    }, delayMs)
+  }
+
+  private async captureStill(): Promise<void> {
+    if (!this.isAlive || this.loadState === 'loading') return
+    try {
+      const image = await this.view.webContents.capturePage()
+      if (image.isEmpty()) return
+      const scaled = image.getSize().width > 800 ? image.resize({ width: 800 }) : image
+      const safe = (this.conversationId ?? 'unknown').replace(/[^A-Za-z0-9._-]/g, '_')
+      const relDir = path.posix.join('files', 'screenshots', `conv-${safe}`)
+      const dir = path.join(workspaceRoot(), 'files', 'screenshots', `conv-${safe}`)
+      await fs.mkdir(dir, { recursive: true })
+      const name = `browser-${this.id.slice(0, 8)}-${++this.stillSeq}.jpg`
+      await fs.writeFile(path.join(dir, name), scaled.toJPEG(68))
+      if (!this.isAlive) return
+      const prev = this.still
+      this.still = path.posix.join(relDir, name)
+      // A new name per capture so the phone's path-keyed cache refetches;
+      // the previous frame goes so the folder never accumulates.
+      if (prev) void fs.unlink(path.join(workspaceRoot(), prev)).catch(() => undefined)
+      this.emit()
+    } catch (err) {
+      wlog.debug(TAG, `still capture failed for ${this.id}:`, err)
     }
   }
 
@@ -303,6 +357,7 @@ export class Tab {
     if (this.window && !this.window.isDestroyed()) {
       this.window.off('resize', this.onWindowResize)
     }
+    if (this.stillTimer) clearTimeout(this.stillTimer)
     this.streamer.dispose()
     this.cdp.detach()
 
@@ -379,6 +434,12 @@ export class BrowserTabManager {
    * conversation id, '' for the rare tab with none.
    */
   private readonly activeByConversation = new Map<string, string>()
+  /** Set by index.ts: true while a phone is paired (Tab.scheduleStill). */
+  private stillGate: () => boolean = () => false
+
+  setStillGate(gate: () => boolean): void {
+    this.stillGate = gate
+  }
 
   private convKey(tab: Tab): string {
     return tab.conversationId ?? ''
@@ -398,6 +459,7 @@ export class BrowserTabManager {
     this.activeByConversation.set(key, tabId)
     if (prevId) this.tabs.get(prevId)?.emit()
     tab.emit()
+    tab.scheduleStill(300)
   }
 
   private events(): TabEvents {
@@ -424,6 +486,15 @@ export class BrowserTabManager {
         }
       },
       isActive: (tabId) => this.isActive(tabId),
+      wantsStill: () => this.stillGate(),
+      strip: (conversationId) =>
+        [...this.tabs.values()]
+          .filter((t) => t.isAlive && t.conversationId === conversationId)
+          .map((t) => ({
+            url: t.webContents.getURL(),
+            title: t.webContents.getTitle(),
+            active: this.isActive(t.id)
+          })),
       onFrame: (f) => this.onFrameCb(f),
       adopt: (opener, adopted) => {
         const window = this.getWindow()
