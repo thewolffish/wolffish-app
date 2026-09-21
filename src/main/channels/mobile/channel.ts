@@ -135,7 +135,9 @@ import {
   type Segment,
   type CountdownSnapshot,
   upsertCountdownSegment,
-  upsertWaitSegment
+  upsertWaitSegment,
+  upsertProcessSegment,
+  upsertBrowserSegment
 } from '@main/runtime/broca'
 import type { ApprovalDecision, ApprovalRequest } from '@main/runtime/amygdala'
 import type {
@@ -273,6 +275,10 @@ function isCleanFeedSegment(segment: Segment): boolean {
     // Why the agent went quiet. A wait with no card is indistinguishable
     // from a hang, which is the one thing the phone must never look like.
     segment.kind === 'wait' ||
+    // A live process card: the phone lists the processes with their state.
+    segment.kind === 'process' ||
+    // A page open in the in-app browser: the phone draws it as a link card.
+    segment.kind === 'browser' ||
     segment.kind === 'todo' ||
     segment.kind === 'separator' ||
     segment.kind === 'turn_end'
@@ -2734,6 +2740,8 @@ export class MobileChannel {
         else if (segment.kind === 'task') upsertTaskSegment(acc.segments, segment)
         else if (segment.kind === 'countdown') upsertCountdownSegment(acc.segments, segment)
         else if (segment.kind === 'wait') upsertWaitSegment(acc.segments, segment)
+        else if (segment.kind === 'process') upsertProcessSegment(acc.segments, segment)
+        else if (segment.kind === 'browser') upsertBrowserSegment(acc.segments, segment)
         else if (segment.kind === 'todo') upsertTodoSegment(acc.segments, segment)
         else if (segment.kind === 'text' || segment.kind === 'reasoning')
           appendTextSegment(acc.segments, segment)
@@ -2756,6 +2764,8 @@ export class MobileChannel {
           segment.kind === 'task' ||
             segment.kind === 'countdown' ||
             segment.kind === 'wait' ||
+            segment.kind === 'process' ||
+            segment.kind === 'browser' ||
             segment.kind === 'user_message'
         )
       },

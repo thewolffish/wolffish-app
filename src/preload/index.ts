@@ -14,6 +14,25 @@ import type {
   WaitStatus
 } from '@main/runtime/broca'
 import type {
+  ListeningPort,
+  ProcessAutostart,
+  ProcessCardSnapshot,
+  ProcessPortPolicy,
+  ProcessRecord,
+  ProcessState,
+  RestartPolicy
+} from '@main/processes/types'
+import type {
+  BrowserCloseReason,
+  BrowserFps,
+  BrowserFrame,
+  BrowserInputEvent,
+  BrowserPartition,
+  BrowserRect,
+  BrowserTabMode,
+  BrowserTabSnapshot
+} from '@main/browser/types'
+import type {
   InterjectVerdict,
   Interjection,
   InterjectionEvent
@@ -21,6 +40,21 @@ import type {
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 
 export type {
+  ListeningPort,
+  ProcessAutostart,
+  ProcessCardSnapshot,
+  ProcessPortPolicy,
+  ProcessRecord,
+  ProcessState,
+  RestartPolicy,
+  BrowserCloseReason,
+  BrowserFps,
+  BrowserFrame,
+  BrowserInputEvent,
+  BrowserPartition,
+  BrowserRect,
+  BrowserTabMode,
+  BrowserTabSnapshot,
   CountdownSnapshot,
   CountdownStatus,
   Segment,
@@ -1133,6 +1167,52 @@ export type TaskApi = {
   onChanged: (listener: (snapshot: TaskSnapshot) => void) => () => void
 }
 
+/**
+ * Wolffish's own browser — the in-app pages the model opens, each a live
+ * card in the chat. Main owns every tab (a WebContentsView z-parked under the
+ * app UI); the renderer only draws frames, reports the card's rect, and
+ * flips the same tab between card and expanded.
+ */
+export type BrowserApi = {
+  createTab: (input: {
+    url: string
+    conversationId: string | null
+    partition?: BrowserPartition
+  }) => Promise<BrowserTabSnapshot>
+  closeTab: (tabId: string) => Promise<void>
+  listTabs: () => Promise<BrowserTabSnapshot[]>
+  navigate: (tabId: string, url: string) => Promise<BrowserTabSnapshot>
+  goBack: (tabId: string) => Promise<BrowserTabSnapshot>
+  goForward: (tabId: string) => Promise<BrowserTabSnapshot>
+  reload: (tabId: string) => Promise<BrowserTabSnapshot>
+  /** A card is on screen: start (refcounted) the screencast at this size and rate. */
+  attachViewer: (
+    tabId: string,
+    size: { width: number; height: number },
+    fps: BrowserFps
+  ) => Promise<void>
+  detachViewer: (tabId: string) => Promise<void>
+  setViewerFps: (tabId: string, fps: BrowserFps) => Promise<void>
+  /** The card's device-pixel size changed (resize, dpr change). */
+  setViewerSize: (tabId: string, size: { width: number; height: number }) => Promise<void>
+  /** Make this tab the one the conversation's browser shows. */
+  activate: (tabId: string) => Promise<void>
+  /** Mouse/keyboard from the card, in the page's CSS pixels. Fire-and-forget. */
+  sendInput: (tabId: string, event: BrowserInputEvent) => Promise<void>
+  /** Hand an http(s) URL to the system's default browser. */
+  openExternal: (url: string) => Promise<{ ok: boolean; error?: string }>
+  /** The expanded host's rect in window CSS pixels; null when collapsed. Main clamps. */
+  setStageRect: (tabId: string, rect: BrowserRect | null) => Promise<void>
+  setMode: (tabId: string, mode: BrowserTabMode) => Promise<BrowserTabSnapshot>
+  /** Screencast frames (JPEG bytes). High-frequency: decode off the main thread. */
+  onFrame: (listener: (frame: BrowserFrame) => void) => () => void
+  /** Every tab state change (browser:changed), including after the opening turn ended. */
+  onChanged: (listener: (snapshot: BrowserTabSnapshot) => void) => () => void
+  onClosed: (
+    listener: (payload: { tabId: string; reason: BrowserCloseReason }) => void
+  ) => () => void
+}
+
 export type CountdownApi = {
   /** The countdown card's Abort: stops a pending turn-end countdown for good. */
   abort: (countdownId: string) => Promise<{ ok: boolean; error?: string }>
@@ -1143,6 +1223,45 @@ export type CountdownApi = {
    * segment (by countdownId) and into its in-memory conversation.
    */
   onChanged: (listener: (snapshot: CountdownSnapshot) => void) => () => void
+}
+
+export type ProcessesApi = {
+  list: () => Promise<ProcessRecord[]>
+  start: (payload: {
+    name: string
+    command: string
+    cwd?: string
+    env?: Record<string, string>
+    port?: ProcessPortPolicy
+    restart?: RestartPolicy
+    onQuit?: 'keep' | 'stop'
+    autostart?: ProcessAutostart
+  }) => Promise<{ ok: boolean; error?: string; record?: ProcessRecord }>
+  stop: (name: string) => Promise<{ ok: boolean; stopped: boolean; error?: string }>
+  stopAll: () => Promise<Array<{ name: string; stopped: boolean }>>
+  restart: (name: string) => Promise<{ ok: boolean; error?: string; record?: ProcessRecord }>
+  update: (payload: {
+    name: string
+    command?: string
+    cwd?: string
+    env?: Record<string, string>
+    port?: ProcessPortPolicy
+    restart?: RestartPolicy
+    onQuit?: 'keep' | 'stop'
+    autostart?: ProcessAutostart
+    newName?: string
+  }) => Promise<{ ok: boolean; error?: string; record?: ProcessRecord; warning?: string }>
+  remove: (name: string) => Promise<{ ok: boolean; error?: string }>
+  logs: (name: string, lines?: number) => Promise<string>
+  ports: () => Promise<Array<ListeningPort & { managed: string | null }>>
+  /** Fired on every registry write (processes:changed); payload-free — re-list. */
+  onChanged: (listener: () => void) => () => void
+  /**
+   * A process card's snapshot changed after its turn ended
+   * (process:cardChanged). The renderer folds it into the matching
+   * `process` segment by cardId.
+   */
+  onCardChanged: (listener: (snapshot: ProcessCardSnapshot) => void) => () => void
 }
 
 export type ConversationApi = {
@@ -2437,6 +2556,12 @@ export type UploadApi = {
   fileUrl: (relativePath: string) => Promise<string | null>
   /** Existence + type of a device path (resolves a leading ~), for chat path cards. */
   statPath: (path: string) => Promise<{ exists: boolean; isDirectory: boolean }>
+  /** The project folder each directory is charged to, keyed by the directory
+   *  as given — the repository root above it, else its manifest's folder, else
+   *  the working folder or workspace/home container it sits in (see
+   *  src/main/uploads/project-folders.ts). Feeds the folder chips over a
+   *  transcript: one chip per project, never one per nested directory. */
+  projectFolders: (dirs: string[], workingFolders: string[]) => Promise<Record<string, string>>
   /** Top-level contents of a directory (resolves a leading ~), for attaching working-folder structure to chat context. */
   listFolder: (path: string) => Promise<FolderListing>
   /** Open a directory, or reveal a file in its parent folder (resolves a leading ~). */
@@ -2483,6 +2608,8 @@ export type WolffishApi = {
   conversation: ConversationApi
   task: TaskApi
   countdown: CountdownApi
+  processes: ProcessesApi
+  browser: BrowserApi
   viewer: ViewerApi
   heartbeat: HeartbeatApi
   automationFiles: AutomationFilesApi
@@ -2622,6 +2749,41 @@ const api: WolffishApi = {
   countdown: {
     abort: (countdownId) => ipcRenderer.invoke('countdown:abort', { countdownId }),
     onChanged: (listener) => subscribe('countdown:changed', listener)
+  },
+  processes: {
+    list: () => ipcRenderer.invoke('processes:list'),
+    start: (payload) => ipcRenderer.invoke('processes:start', payload),
+    stop: (name) => ipcRenderer.invoke('processes:stop', { name }),
+    stopAll: () => ipcRenderer.invoke('processes:stopAll'),
+    restart: (name) => ipcRenderer.invoke('processes:restart', { name }),
+    update: (payload) => ipcRenderer.invoke('processes:update', payload),
+    remove: (name) => ipcRenderer.invoke('processes:remove', { name }),
+    logs: (name, lines) => ipcRenderer.invoke('processes:logs', { name, lines }),
+    ports: () => ipcRenderer.invoke('processes:ports'),
+    onChanged: (listener) => subscribe('processes:changed', listener),
+    onCardChanged: (listener) => subscribe('process:cardChanged', listener)
+  },
+  browser: {
+    createTab: (input) => ipcRenderer.invoke('browser:createTab', input),
+    closeTab: (tabId) => ipcRenderer.invoke('browser:closeTab', { tabId }),
+    listTabs: () => ipcRenderer.invoke('browser:listTabs'),
+    navigate: (tabId, url) => ipcRenderer.invoke('browser:navigate', { tabId, url }),
+    goBack: (tabId) => ipcRenderer.invoke('browser:goBack', { tabId }),
+    goForward: (tabId) => ipcRenderer.invoke('browser:goForward', { tabId }),
+    reload: (tabId) => ipcRenderer.invoke('browser:reload', { tabId }),
+    attachViewer: (tabId, size, fps) =>
+      ipcRenderer.invoke('browser:attachViewer', { tabId, size, fps }),
+    detachViewer: (tabId) => ipcRenderer.invoke('browser:detachViewer', { tabId }),
+    setViewerFps: (tabId, fps) => ipcRenderer.invoke('browser:setViewerFps', { tabId, fps }),
+    setViewerSize: (tabId, size) => ipcRenderer.invoke('browser:setViewerSize', { tabId, size }),
+    activate: (tabId) => ipcRenderer.invoke('browser:activate', { tabId }),
+    sendInput: (tabId, event) => ipcRenderer.invoke('browser:sendInput', { tabId, event }),
+    openExternal: (url) => ipcRenderer.invoke('browser:openExternal', { url }),
+    setStageRect: (tabId, rect) => ipcRenderer.invoke('browser:setStageRect', { tabId, rect }),
+    setMode: (tabId, mode) => ipcRenderer.invoke('browser:setMode', { tabId, mode }),
+    onFrame: (listener) => subscribe('browser:frame', listener),
+    onChanged: (listener) => subscribe('browser:changed', listener),
+    onClosed: (listener) => subscribe('browser:closed', listener)
   },
   viewer: {
     readTree: () => ipcRenderer.invoke('viewer:readTree'),
@@ -2768,6 +2930,8 @@ const api: WolffishApi = {
     openExternal: (relativePath) => ipcRenderer.invoke('upload:openExternal', relativePath),
     fileUrl: (relativePath) => ipcRenderer.invoke('upload:fileUrl', relativePath),
     statPath: (path) => ipcRenderer.invoke('upload:statPath', path),
+    projectFolders: (dirs, workingFolders) =>
+      ipcRenderer.invoke('upload:projectFolders', dirs, workingFolders),
     listFolder: (path) => ipcRenderer.invoke('upload:listFolder', path),
     revealPath: (path) => ipcRenderer.invoke('upload:revealPath', path),
     downloadPath: (path) => ipcRenderer.invoke('upload:downloadPath', path),

@@ -142,6 +142,14 @@ export type RuntimeContext = {
    */
   openTodo?: string
   /**
+   * Managed-process notice — one line naming what the process manager is
+   * running or has seen crash, so the model knows before it starts a second
+   * copy of a dev server or forgets that one died. Computed once per turn by
+   * the Agent from the registry (no I/O). Same vehicle and cache rationale
+   * as noProgress. Undefined renders nothing.
+   */
+  processes?: string
+  /**
    * Task-list notice — the list THIS turn wrote still has open items, so
    * the model is reminded, every iteration until it closes the list, that
    * the card the user watches must be rewritten as steps land and closed
@@ -947,6 +955,7 @@ function formatRuntimeBody(runtime: RuntimeContext | undefined): string {
     // Video-task landing notice — same vehicle, same reason.
     if (runtime.videoTasks) lines.push(`  ${runtime.videoTasks}`)
     if (runtime.openTodo) lines.push(`  ${runtime.openTodo}`)
+    if (runtime.processes) lines.push(`  ${runtime.processes}`)
     if (runtime.taskList) lines.push(`  ${runtime.taskList}`)
     // Voice-reply notice (voice-prompted turn, Voice replies ON) — same
     // vehicle, same reason.

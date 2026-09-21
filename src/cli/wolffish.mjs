@@ -69,6 +69,7 @@ import {
   viewFile
 } from './commands/workspace.mjs'
 import { pathCommand, service, status } from './commands/service.mjs'
+import { processCommand } from './commands/process.mjs'
 import { pair } from './commands/pair.mjs'
 
 /**
@@ -125,6 +126,7 @@ ${c.gray('MACHINE')}
   wolffish status                   daemon, brain, autostart, channels
   wolffish cancel [id|--all]        stop a running turn, on any channel
   wolffish service <install|status|uninstall|stop|logs>
+  wolffish process                  what the agent keeps running ${c.gray('· show · start · stop · restart · logs · autostart · rm · ports')}
   wolffish path <status|install>    make "wolffish" resolvable
   wolffish pair <phone|whatsapp|telegram>
     ${c.gray('on a box with no screen: pair phone --code, pair whatsapp --number')}
@@ -514,6 +516,10 @@ async function dispatch(client, command, args, flags) {
 
     case 'service':
       return service(client, args)
+
+    case 'process':
+    case 'processes':
+      return processCommand(client, args, flags)
 
     case 'path':
       return pathCommand(client, args)

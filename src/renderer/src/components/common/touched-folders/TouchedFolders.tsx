@@ -8,15 +8,16 @@ import { useTranslation } from 'react-i18next'
  * The folders this conversation has changed files in, as a strip of chips
  * laid over the transcript's top edge — starting after the leading glass
  * disc, on the row the FloatingChrome owns, ending before the trailing disc.
- * One chip per parent folder — each touched directory collapses to the top
- * level of the project it belongs to, so nested folders never each get one —
+ * One chip per project — each touched directory collapses to the repository
+ * (or project) folder it belongs to, so nested folders never each get one —
  * carrying the number of files changed anywhere under it; click opens the
  * folder in the system file manager. The strip never wraps: it scrolls on x,
  * scrollbar hidden, so a run that touches twenty folders costs the transcript
  * no height.
  *
- * Fed by collectTouchedFolders over the persisted segments, so the chips
- * are identical live, after the turn and on a reopened conversation.
+ * Fed by groupTouchedFolders over the persisted segments, with each
+ * directory's project resolved once by main (upload.projectFolders), so the
+ * chips are identical live, after the turn and on a reopened conversation.
  */
 export function TouchedFolders({
   folders

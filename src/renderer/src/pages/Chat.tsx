@@ -35,6 +35,7 @@ import { UpdateCard } from '@components/common/update-card/UpdateCard'
 import { VideoPlayer } from '@components/common/video-player/VideoPlayer'
 import { TaskCard } from '@components/common/task-card/TaskCard'
 import { CountdownCard } from '@components/common/countdown-card/CountdownCard'
+import { ProcessCard } from '@components/common/process-card/ProcessCard'
 import { WaitCard } from '@components/common/wait-card/WaitCard'
 import { TodoCard } from '@components/common/todo-card/TodoCard'
 import { TouchedFolders } from '@components/common/touched-folders/TouchedFolders'
@@ -54,7 +55,11 @@ import { RTL_LOCALES } from '@lib/i18n'
 import { cn } from '@lib/utils/cn'
 import { formatBytesL, formatCompact } from '@lib/utils/format'
 import { pageTopPadding } from '@lib/utils/platform'
-import { collectTouchedFolders } from '@lib/touched-folders/touchedFolders'
+import {
+  changedDirectories,
+  collectChangedFiles,
+  groupTouchedFolders
+} from '@lib/touched-folders/touchedFolders'
 import {
   CODE_ACTIVITY_TOOLS,
   latestTodoLists,
@@ -62,6 +67,9 @@ import {
   upsertTaskSegment,
   upsertCountdownSegment,
   upsertWaitSegment,
+  upsertProcessSegment,
+  browserKey,
+  upsertBrowserSegment,
   upsertTodoSegment,
   upsertWorkflowSegment,
   WORKFLOW_TOOL_NAMES,
@@ -69,6 +77,8 @@ import {
   type CountdownSnapshot,
   type WorkflowSnapshot
 } from '@main/runtime/broca'
+import { BrowserCard } from '@components/common/browser-card/BrowserCard'
+import { keepLatestBrowserCard } from '@main/runtime/browser-card'
 import {
   normalizeReasoningMode,
   reasoningModesFor,
@@ -78,6 +88,7 @@ import { preselectSettingsTab } from '@pages/settings/settingsNav'
 import type {
   ApprovalDecision,
   AskUserResponse,
+  BrowserTabSnapshot,
   ChatHistoryMessage,
   ConversationFile,
   ConversationStats,
@@ -87,6 +98,7 @@ import type {
   Segment,
   ThinkingMode,
   TimelineEntry,
+  ProcessCardSnapshot,
   TodoItem
 } from '@preload/index'
 import {
@@ -634,10 +646,33 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
   )
   // The folders this conversation changed files in — chips over the
   // transcript's top edge. Derived from the persisted segments so the strip
-  // is the same live, after the turn and on a reopened conversation.
-  const touchedFolders = useMemo(
-    () => collectTouchedFolders(messages, workingFolders),
+  // is the same live, after the turn and on a reopened conversation. Each
+  // changed directory is charged to ONE project folder (the repository root
+  // above it, else the container it sits in), resolved by main because that
+  // needs the filesystem — asked once per distinct set of directories, not per
+  // streamed token, and a reply for a set that has since changed is dropped.
+  const changedFiles = useMemo(
+    () => collectChangedFiles(messages, workingFolders),
     [messages, workingFolders]
+  )
+  const changedDirsKey = useMemo(() => changedDirectories(changedFiles).join('\n'), [changedFiles])
+  const [projectByDir, setProjectByDir] = useState<Record<string, string>>({})
+  useEffect(() => {
+    if (!changedDirsKey) return
+    let alive = true
+    void window.api.upload
+      .projectFolders(changedDirsKey.split('\n'), workingFolders)
+      .then((map) => {
+        if (alive) setProjectByDir((prev) => ({ ...prev, ...map }))
+      })
+      .catch(() => undefined)
+    return () => {
+      alive = false
+    }
+  }, [changedDirsKey, workingFolders])
+  const touchedFolders = useMemo(
+    () => groupTouchedFolders(changedFiles, (dir) => projectByDir[dir]),
+    [changedFiles, projectByDir]
   )
   /**
    * Reference files this conversation's turns are told about — seeded by a
@@ -1650,6 +1685,49 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
         for (const message of conv.messages) {
           for (const seg of message.segments ?? []) {
             if (seg.kind === 'countdown' && seg.snapshot.countdownId === snapshot.countdownId) {
+              seg.snapshot = snapshot
+            }
+          }
+        }
+      }
+    })
+  }, [activeConversationId])
+
+  // Process-card changes after the opening turn ended (a stop from Library,
+  // a crash, a restart) arrive as pushes — the countdown fold, keyed by cardId.
+  useEffect(() => {
+    if (!activeConversationId) return
+    const targetId = activeConversationId
+    return window.api.processes.onCardChanged((snapshot) => {
+      if (snapshot.conversationId !== targetId || conversationIdRef.current !== targetId) return
+      setMessages((prev) => foldProcessSnapshot(prev, snapshot))
+      const conv = conversationRef.current
+      if (conv && conv.id === targetId) {
+        for (const message of conv.messages) {
+          for (const seg of message.segments ?? []) {
+            if (seg.kind === 'process' && seg.snapshot.cardId === snapshot.cardId) {
+              seg.snapshot = snapshot
+            }
+          }
+        }
+      }
+    })
+  }, [activeConversationId])
+
+  // In-app browser page changes after the opening turn ended (a navigation,
+  // a title, a load state) arrive as pushes — the countdown fold, keyed by
+  // tabId, so a reopened conversation shows the card's last state.
+  useEffect(() => {
+    if (!activeConversationId) return
+    const targetId = activeConversationId
+    return window.api.browser.onChanged((snapshot) => {
+      if (snapshot.conversationId !== targetId || conversationIdRef.current !== targetId) return
+      setMessages((prev) => foldBrowserSnapshot(prev, snapshot))
+      const conv = conversationRef.current
+      if (conv && conv.id === targetId) {
+        for (const message of conv.messages) {
+          for (const seg of message.segments ?? []) {
+            if (seg.kind === 'browser' && browserKey(seg.snapshot) === browserKey(snapshot)) {
               seg.snapshot = snapshot
             }
           }
@@ -5317,6 +5395,12 @@ function renderSegments(
       blocks.push(
         <CountdownCard key={`countdown-${seg.snapshot.countdownId}`} snapshot={seg.snapshot} />
       )
+    } else if (seg.kind === 'process') {
+      // The live process card the model chose to show: one per cardId,
+      // upserted on append and folded from process:cardChanged pushes after
+      // the turn ends. Output FOR the user — renders regardless of verbose.
+      flushText()
+      blocks.push(<ProcessCard key={`process-${seg.snapshot.cardId}`} snapshot={seg.snapshot} />)
     } else if (seg.kind === 'wait') {
       // The blocking-wait card: one per wait, upserted by waitId, carrying
       // its own input while it runs. Output FOR the user — it renders
@@ -5324,6 +5408,15 @@ function renderSegments(
       // that went quiet with no explanation reads as a hang.
       flushText()
       blocks.push(<WaitCard key={`wait-${seg.snapshot.waitId}`} snapshot={seg.snapshot} />)
+    } else if (seg.kind === 'browser') {
+      // A page in Wolffish's own browser: one live card per page, upserted by
+      // tabId on append and folded from browser:changed pushes after the turn
+      // ends. Output FOR the user — renders regardless of verbose; the whole
+      // point is that they can see it.
+      flushText()
+      blocks.push(
+        <BrowserCard key={`browser-${browserKey(seg.snapshot)}`} snapshot={seg.snapshot} />
+      )
     } else if (seg.kind === 'todo') {
       // The model's task list: one checklist card per LIST, at the turn that
       // created it, in its latest state — a later turn's write that continues
@@ -6676,6 +6769,52 @@ function foldCountdownSnapshot(
   })
 }
 
+/**
+ * Fold a post-turn process-card push into whichever message holds the
+ * matching `process` segment — the countdown fold, keyed by cardId.
+ */
+function foldProcessSnapshot(
+  messages: ChatMessage[],
+  snapshot: ProcessCardSnapshot
+): ChatMessage[] {
+  return messages.map((m) => {
+    if (!isAssistant(m)) return m
+    if (!m.segments.some((s) => s.kind === 'process' && s.snapshot.cardId === snapshot.cardId))
+      return m
+    return {
+      ...m,
+      segments: m.segments.map((s) =>
+        s.kind === 'process' && s.snapshot.cardId === snapshot.cardId ? { ...s, snapshot } : s
+      )
+    }
+  })
+}
+
+/**
+ * Fold a post-turn browser-page push into whichever message holds the
+ * matching `browser` segment — the countdown fold, keyed by tabId.
+ */
+function foldBrowserSnapshot(messages: ChatMessage[], snapshot: BrowserTabSnapshot): ChatMessage[] {
+  return messages.map((m) => {
+    if (!isAssistant(m)) return m
+    if (
+      !m.segments.some(
+        (s) => s.kind === 'browser' && browserKey(s.snapshot) === browserKey(snapshot)
+      )
+    ) {
+      return m
+    }
+    return {
+      ...m,
+      segments: m.segments.map((s) =>
+        s.kind === 'browser' && browserKey(s.snapshot) === browserKey(snapshot)
+          ? { ...s, snapshot }
+          : s
+      )
+    }
+  })
+}
+
 function appendSegment(messages: ChatMessage[], segment: Segment): ChatMessage[] {
   const out = [...messages]
   for (let i = out.length - 1; i >= 0; i--) {
@@ -6690,6 +6829,8 @@ function appendSegment(messages: ChatMessage[], segment: Segment): ChatMessage[]
       else if (segment.kind === 'task') upsertTaskSegment(nextSegments, segment)
       else if (segment.kind === 'countdown') upsertCountdownSegment(nextSegments, segment)
       else if (segment.kind === 'wait') upsertWaitSegment(nextSegments, segment)
+      else if (segment.kind === 'process') upsertProcessSegment(nextSegments, segment)
+      else if (segment.kind === 'browser') upsertBrowserSegment(nextSegments, segment)
       else if (segment.kind === 'todo') upsertTodoSegment(nextSegments, segment)
       else nextSegments.push(segment)
       const next: AssistantMessage = { ...m, segments: nextSegments }
@@ -6709,7 +6850,9 @@ function appendSegment(messages: ChatMessage[], segment: Segment): ChatMessage[]
         }
       }
       out[i] = next
-      return out
+      // The browser card lives in the latest turn that used the browser;
+      // an earlier turn's copy of it goes.
+      return segment.kind === 'browser' ? keepLatestBrowserCard(out) : out
     }
   }
   return out

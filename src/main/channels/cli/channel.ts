@@ -50,6 +50,8 @@ import {
   upsertTaskSegment,
   upsertCountdownSegment,
   upsertWaitSegment,
+  upsertProcessSegment,
+  upsertBrowserSegment,
   upsertTodoSegment,
   upsertWorkflowSegment,
   type Segment
@@ -553,6 +555,8 @@ export class CliChannel {
         else if (segment.kind === 'task') upsertTaskSegment(acc.segments, segment)
         else if (segment.kind === 'countdown') upsertCountdownSegment(acc.segments, segment)
         else if (segment.kind === 'wait') upsertWaitSegment(acc.segments, segment)
+        else if (segment.kind === 'process') upsertProcessSegment(acc.segments, segment)
+        else if (segment.kind === 'browser') upsertBrowserSegment(acc.segments, segment)
         else if (segment.kind === 'todo') upsertTodoSegment(acc.segments, segment)
         else if (segment.kind === 'text' || segment.kind === 'reasoning')
           appendTextSegment(acc.segments, segment)
@@ -563,6 +567,7 @@ export class CliChannel {
           segment.kind === 'task' ||
             segment.kind === 'countdown' ||
             segment.kind === 'wait' ||
+            segment.kind === 'process' ||
             segment.kind === 'user_message'
         )
       },

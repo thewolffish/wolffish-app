@@ -1998,6 +1998,33 @@
         "relaunch": "Dropped because Wolffish was relaunched before it fired."
       }
     },
+    "browser": {
+      "untitled": "Untitled page",
+      "back": "Back",
+      "forward": "Forward",
+      "reload": "Reload",
+      "expand": "Expand — take over the page",
+      "close": "Close this page",
+      "closed": "Closed",
+      "loading": "Loading the page",
+      "waiting": "Nothing to show yet",
+      "openInSheet": "Open in the expanded view",
+      "livePage": "The live page",
+      "open": "Wolffish Browser",
+      "newTab": "New page",
+      "address": "Enter an address",
+      "pages": "Open pages",
+      "closeTab": "Close page",
+      "blank": "Blank page",
+      "startTitle": "Wolffish Browser",
+      "startTagline": "Sign in once and let Wolffish take it from here",
+      "startChip": "Browser",
+      "closeAll": "Close the browser",
+      "openInBrowser": "Open in browser",
+      "closedNote": "The browser is closed",
+      "relaunch": "Relaunch the browser",
+      "opening": "Opening {{host}}"
+    },
     "wait": {
       "status": {
         "waiting": "Waiting",
@@ -2225,6 +2252,38 @@
       "label": "Folders changed in this conversation",
       "chip_one": "{{count}} file changed here. Click to open the folder",
       "chip_other": "{{count}} files changed here. Click to open the folder"
+    },
+    "processes": "Processes",
+    "process": {
+      "title": "Processes",
+      "titleOne": "Process",
+      "empty": "Nothing to show.",
+      "runningCount": "{{count}} of {{total}} running",
+      "state": {
+        "starting": "Starting",
+        "running": "Running",
+        "stopping": "Stopping",
+        "stopped": "Stopped",
+        "exited": "Exited",
+        "crashed": "Crashed"
+      },
+      "exitCode": "exit {{code}}",
+      "adopted": "Adopted",
+      "stop": "Stop",
+      "stopping": "Stopping…",
+      "restart": "Restart",
+      "restarting": "Restarting…",
+      "start": "Start",
+      "since": "Up for {{time}}",
+      "endedAt": "Ended {{time}}",
+      "port": "Port {{port}}",
+      "restarts_one": "{{count}} restart",
+      "restarts_other": "{{count}} restarts",
+      "autostart": {
+        "off": "",
+        "wolffish": "Starts with Wolffish",
+        "system": "Starts at login"
+      }
     }
   },
   "library": {
@@ -2600,5 +2659,46 @@
       "timeout": "provider timed out",
       "serverError": "provider unavailable"
     }
+  },
+  "processes": {
+    "title": "Processes",
+    "subtitle": "Dev servers, tunnels, watchers and scripts Wolffish keeps running — across turns, conversations and restarts.",
+    "runningBadge": "{{running}} of {{total}} running",
+    "stopAll": "Stop all",
+    "stoppedCount": "Stopped {{count}}",
+    "empty": "No managed processes yet. Ask for a dev server to be started, or have Wolffish adopt one that is already running.",
+    "autostartLabel": "Autostart",
+    "autostart": {
+      "off": "Off",
+      "wolffish": "With Wolffish",
+      "system": "At login"
+    },
+    "restartLabel": "Restart:",
+    "restart": {
+      "never": "never",
+      "on-failure": "on failure",
+      "always": "always"
+    },
+    "onQuitLabel": "When Wolffish quits",
+    "onQuit": {
+      "keep": "Keep running",
+      "stop": "Stop"
+    },
+    "createdAt": "Added {{time}}",
+    "logs": "Logs",
+    "logsTitle": "Log · {{name}}",
+    "logsEmpty": "The log is empty.",
+    "edit": "Edit",
+    "editTitle": "Edit {{name}}",
+    "command": "Command",
+    "cwd": "Working directory",
+    "portHint": "Write {port} in the command where the port goes; Wolffish fills it with a free port from its own band and sets PORT.",
+    "saved": "Saved",
+    "savedRestartHint": "Saved. The running copy keeps its old definition until you restart it.",
+    "remove": "Remove",
+    "removeTitle": "Remove process",
+    "removeConfirm": "Stop \"{{name}}\" if it is running, remove its login entry if any, and forget it along with its logs?",
+    "removed": "Removed {{name}}",
+    "error": "Something went wrong"
   }
 }

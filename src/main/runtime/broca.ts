@@ -1,5 +1,7 @@
 import type { Corpus } from '@main/runtime/corpus'
 import type { NoProviderAvailableInfo, StreamChunk } from '@main/runtime/thalamus'
+import type { BrowserTabSnapshot } from '@main/browser/types'
+import type { ProcessCardSnapshot } from '@main/processes/types'
 
 /**
  * Broca produces the final, user-facing response.
@@ -396,6 +398,48 @@ export function upsertWaitSegment(
 }
 
 /**
+ * Replace-by-id upsert for in-app browser page cards — the task contract,
+ * keyed by snapshot.tabId. One card per page on every surface, so a
+ * navigation or a load-state change updates the card in place.
+ */
+/**
+ * What a browser card stands for: the CONVERSATION's browser, not one tab.
+ * One card per conversation, updated in place as its tabs come and go; a
+ * tab with no conversation (never in practice) keys on itself.
+ */
+export function browserKey(snapshot: Pick<BrowserTabSnapshot, 'conversationId' | 'tabId'>): string {
+  return snapshot.conversationId ?? snapshot.tabId
+}
+
+export function upsertProcessSegment(
+  segments: Segment[],
+  segment: Extract<Segment, { kind: 'process' }>
+): void {
+  for (let i = segments.length - 1; i >= 0; i--) {
+    const s = segments[i]
+    if (s.kind === 'process' && s.snapshot.cardId === segment.snapshot.cardId) {
+      segments[i] = segment
+      return
+    }
+  }
+  segments.push(segment)
+}
+
+export function upsertBrowserSegment(
+  segments: Segment[],
+  segment: Extract<Segment, { kind: 'browser' }>
+): void {
+  for (let i = segments.length - 1; i >= 0; i--) {
+    const s = segments[i]
+    if (s.kind === 'browser' && browserKey(s.snapshot) === browserKey(segment.snapshot)) {
+      segments[i] = segment
+      return
+    }
+  }
+  segments.push(segment)
+}
+
+/**
  * Replace-by-turnId upsert for the todo checklist — one card per turn, in
  * its latest state, at the position of the first write. Same contract as
  * the snapshot upserts above; shared by every surface that accumulates
@@ -646,6 +690,32 @@ export type Segment =
       turnId: string
       segmentId: string
       snapshot: WaitSnapshot
+    }
+  | {
+      /**
+       * A page open in Wolffish's own browser (see BrowserTabSnapshot): the
+       * live card in the chat. Replace-by-tabId semantics on every surface —
+       * one card per page, in its latest state, at the position the page was
+       * opened. Display-only: both model-context rebuild paths ignore it; the
+       * tool results carry what the model needs.
+       */
+      kind: 'browser'
+      turnId: string
+      segmentId: string
+      snapshot: BrowserTabSnapshot
+    }
+  | {
+      /**
+       * A live process card (see ProcessCardSnapshot): the processes the
+       * model chose to show, with Stop/Restart controls. Replace-by-cardId
+       * semantics on every surface; after the opening turn ends the same
+       * snapshots ride the process:cardChanged broadcast. Display-only: both
+       * model-context rebuild paths ignore it.
+       */
+      kind: 'process'
+      turnId: string
+      segmentId: string
+      snapshot: ProcessCardSnapshot
     }
   | {
       kind: 'compaction_started'
@@ -1002,6 +1072,16 @@ export class Broca {
   }
 
   /**
+   * Emit an in-app browser page snapshot into the active turn — the card of
+   * a page opened by this turn. Consumers upsert by snapshot.tabId; after the
+   * turn ends the same snapshots ride the browser:changed broadcast.
+   */
+  emitBrowser(turnId: string, snapshot: BrowserTabSnapshot): void {
+    if (this.turnId !== turnId || !this.sink) return
+    this.emit({ kind: 'browser', turnId, segmentId: this.nextId(), snapshot })
+  }
+
+  /**
    * Emit a wait snapshot into the active turn — the `waiting` card and its
    * terminal state, both from inside the blocking tool call (WaitManager,
    * via the turn emitter Agent registers). Consumers upsert by
@@ -1010,6 +1090,16 @@ export class Broca {
   emitWait(turnId: string, snapshot: WaitSnapshot): void {
     if (this.turnId !== turnId || !this.sink) return
     this.emit({ kind: 'wait', turnId, segmentId: this.nextId(), snapshot })
+  }
+
+  /**
+   * Emit a process-card snapshot into the active turn — the card a
+   * process_show opened in this turn. Consumers upsert by snapshot.cardId;
+   * after the turn ends the same snapshots ride process:cardChanged.
+   */
+  emitProcess(turnId: string, snapshot: ProcessCardSnapshot): void {
+    if (this.turnId !== turnId || !this.sink) return
+    this.emit({ kind: 'process', turnId, segmentId: this.nextId(), snapshot })
   }
 
   emitCompactionStarted(

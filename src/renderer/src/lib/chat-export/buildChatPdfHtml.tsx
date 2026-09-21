@@ -1,4 +1,4 @@
-import type { Segment } from '@preload/index'
+import type { ProcessCardSnapshot, Segment } from '@preload/index'
 import {
   CODE_ACTIVITY_TOOLS,
   WORKFLOW_TOOL_NAMES,
@@ -313,6 +313,17 @@ function taskBlock(snapshot: TaskSnapshot): string {
   return `<div class="tool wf"><div class="tool-head"><span class="tool-name">video task · ${escapeHtml(snapshot.status)}</span></div><div class="wf-note" dir="auto">${escapeHtml(snapshot.title)}${facts ? ` — ${escapeHtml(facts)}` : ''}</div>${error}${file}</div>`
 }
 
+/** The process card as a static block — one line per process in its last state. */
+function processBlock(snapshot: ProcessCardSnapshot): string {
+  const rows = snapshot.processes
+    .map((r) => {
+      const where = r.run.url ?? (r.run.port ? `:${r.run.port}` : '')
+      return `<div class="wf-note" dir="ltr">${escapeHtml(r.name)} — ${escapeHtml(r.run.state)}${where ? ` · ${escapeHtml(where)}` : ''}</div>`
+    })
+    .join('')
+  return `<div class="tool wf"><div class="tool-head"><span class="tool-name">processes · ${escapeHtml(snapshot.title ?? String(snapshot.processes.length))}</span></div>${rows}</div>`
+}
+
 /** The countdown card as a static block — label, state, what it ran. */
 function countdownBlock(snapshot: CountdownSnapshot): string {
   const detail =
@@ -342,6 +353,21 @@ function waitBlock(snapshot: WaitSnapshot): string {
           ? `stopped after ${spent}s`
           : `waiting ${seconds}s`
   return `<div class="tool wf"><div class="tool-head"><span class="tool-name">wait · ${escapeHtml(snapshot.status)}</span></div><div class="wf-note" dir="auto">${escapeHtml(snapshot.reason)} — ${escapeHtml(detail)}</div></div>`
+}
+
+/**
+ * An in-app browser page as a static block: the live card has nothing to
+ * say on paper beyond where it was and what it showed. Typed structurally so
+ * this file stays free of the browser module.
+ */
+function browserBlock(snapshot: {
+  url: string
+  title: string
+  loadState: string
+  error: { message: string } | null
+}): string {
+  const detail = snapshot.error ? snapshot.error.message : snapshot.loadState
+  return `<div class="tool wf"><div class="tool-head"><span class="tool-name">browser · ${escapeHtml(detail)}</span></div><div class="wf-note" dir="auto">${escapeHtml(snapshot.title || snapshot.url)}${snapshot.title ? ` — ${escapeHtml(snapshot.url)}` : ''}</div></div>`
 }
 
 /** The todo checklist as a static block — mirrors TodoCard, always printed. */
@@ -432,6 +458,12 @@ function assistantParts(
     } else if (seg.kind === 'wait') {
       flushText()
       parts.push(waitBlock(seg.snapshot))
+    } else if (seg.kind === 'process') {
+      flushText()
+      parts.push(processBlock(seg.snapshot))
+    } else if (seg.kind === 'browser') {
+      flushText()
+      parts.push(browserBlock(seg.snapshot))
     } else if (seg.kind === 'todo') {
       // One block per list, at the turn that created it, in its latest state
       // — the feed's rule (Chat.tsx renderSegments), mirrored.

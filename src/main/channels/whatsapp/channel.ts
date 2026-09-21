@@ -82,6 +82,7 @@ import {
   upsertTaskSegment,
   upsertCountdownSegment,
   upsertWaitSegment,
+  upsertProcessSegment,
   upsertTodoSegment,
   appendTextSegment,
   upsertWorkflowSegment,
@@ -2514,6 +2515,7 @@ export class WhatsAppChannel {
     else if (segment.kind === 'task') upsertTaskSegment(active.segments, segment)
     else if (segment.kind === 'countdown') upsertCountdownSegment(active.segments, segment)
     else if (segment.kind === 'wait') upsertWaitSegment(active.segments, segment)
+    else if (segment.kind === 'process') upsertProcessSegment(active.segments, segment)
     else if (segment.kind === 'todo') upsertTodoSegment(active.segments, segment)
     else if (segment.kind === 'text' || segment.kind === 'reasoning')
       appendTextSegment(active.segments, segment)
