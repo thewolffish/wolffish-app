@@ -1,4 +1,18 @@
-## v1.0.311 — 2026-09-22 `Latest`
+## v1.0.312 — 2026-09-23 `Latest`
+
+### Find Any Conversation by Its Title
+
+A long history used to mean scrolling for the conversation you wanted. **The Conversations page and the conversations sheet now each have a search field** that narrows the list as you type. It matches **every word you type, in any order** — "release notes" finds "Notes for the new release" — and it ignores **case and accents**, so "cafe" finds "Café" and a bare Arabic word finds its vowelled spelling. The field stays put while the results move, and the page links above it in the sheet are never filtered away.
+
+The terminal searches the same way. In a session, **`/conversations` followed by a few words** lists only the matching titles, and `/more` keeps paging through that search; `/conversations` on its own brings the whole list back. From the shell, **`wolffish conversations --search release notes`** (or `-s`) narrows the listing — no quotes needed — as JSON, as a table, or as the interactive menu, which opens already filtered.
+
+### Wolffish Can Pause and Resume Your Automations
+
+Ask Wolffish to **turn a scheduled job off** and it now switches it off exactly the way the Automations page's own switch does: the job **stays in its place, listed and paused**, and stops firing until you ask for it back — instead of being deleted, or edited by hand in the heartbeat file. Wolffish sees paused jobs too, so "turn the morning digest back on" finds it. A paused job can be reworded or rescheduled without switching it back on, and a paused one-time job whose moment has passed comes back **with a new time** rather than into a slot that is already gone.
+
+Every other change to an automation also goes through Wolffish's automation tools now, never through a hand edit of the heartbeat file — so each one is **validated, applied to the scheduler at once and reflected on the page**, instead of occasionally skipping all three and being silently overwritten by the next change. The file stays yours to read, and to edit by hand when the file itself is what you're working on. Because the automations capability now carries a version, all of this **reaches installs that already exist**, not only fresh ones.
+
+## v1.0.311 — 2026-09-22
 
 ### Wolffish Keeps Your Servers Running
 
