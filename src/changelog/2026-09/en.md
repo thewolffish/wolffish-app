@@ -1,4 +1,12 @@
-## v1.0.312 — 2026-09-23 `Latest`
+## v1.0.313 — 2026-09-23 `Latest`
+
+### Notifications Arrive Whole
+
+A notification's text was **cut off at 180 characters**, and the cut happened before it ever reached you — so the notifications page, which exists precisely so a message you missed can be read in full, could only ever show the shortened version. **That ceiling is gone.** What Wolffish writes travels whole now, and **the notifications page and a conversation's own notifications sheet show all of it**.
+
+The lock-screen banner is still brief, because a banner is one line: your phone shows as much of a long notification as fits, exactly as it always did. What changed is that the short version is no longer the only version — **the full text is kept**, so a notification with something substantive to say says all of it, and you can still read it properly tonight.
+
+## v1.0.312 — 2026-09-23
 
 ### Find Any Conversation by Its Title
 
