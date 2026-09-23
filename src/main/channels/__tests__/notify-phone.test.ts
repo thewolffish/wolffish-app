@@ -114,8 +114,9 @@ async function run(): Promise<void> {
         sent.length === 0
     )
 
-    // Model text is sanitized: newlines/controls stripped from the title,
-    // both fields clamped to the wire limits, enums fall back to defaults.
+    // Model text is sanitized: newlines/controls stripped from the title, the
+    // title clamped to its one-line ceiling, the body left whole because the
+    // phone renders it in full, enums fall back to defaults.
     // The deeplink is normalized to one canonical shape on the way out —
     // extra slashes and unknown query parameters do not travel.
     const messy = await plugin.execute('notify_phone', {
@@ -130,7 +131,7 @@ async function run(): Promise<void> {
     ok('title is one line', !frame.title.includes('\n') && !frame.title.includes('\x07'))
     ok('title clamped to 60', frame.title.length <= 60)
     ok('body keeps newlines', frame.body.includes('\n'))
-    ok('body clamped to 180', frame.body.length <= 180)
+    ok('body is not clamped', frame.body.length > 180)
     ok('unknown phase defaults to info', frame.phase === 'info')
     ok('unknown urgency defaults to normal', frame.urgency === 'normal')
     ok('sloppy deeplink normalized', frame.deeplink === 'wolffish://settings/usage')

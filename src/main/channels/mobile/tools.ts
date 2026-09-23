@@ -1,5 +1,4 @@
 import {
-  NOTIFY_BODY_MAX,
   NOTIFY_PHASES,
   NOTIFY_TITLE_MAX,
   NOTIFY_URGENCIES,
@@ -142,14 +141,15 @@ function sanitizeTitle(raw: string): string {
   )
 }
 
-/** Bodies may wrap, but carry no other control characters. */
+/** Bodies may wrap, but carry no other control characters. Deliberately
+ *  unclamped: the phone renders the body whole on its notifications page, so a
+ *  ceiling here would cut text the user could then read nowhere at all. */
 function sanitizeBody(raw: string): string {
   return (
     raw
       // eslint-disable-next-line no-control-regex
       .replace(/[\x00-\x09\x0b-\x1f\x7f]+/g, ' ')
       .trim()
-      .slice(0, NOTIFY_BODY_MAX)
   )
 }
 
@@ -202,7 +202,7 @@ export function buildMobileCapability(deps: ToolDeps): {
         },
         body: {
           type: 'string',
-          description: `The notification body. At most ${NOTIFY_BODY_MAX} characters. Say what happened and what (if anything) the user should do — e.g. "All 214 rows converted cleanly. Nothing needs your attention."`,
+          description: `The notification body. Say what happened and what (if anything) the user should do — e.g. "All 214 rows converted cleanly. Nothing needs your attention." The lock-screen banner shows only as much as fits, but the phone keeps the whole body on its notifications page, so write what is worth reading rather than trimming to a banner.`,
           required: true
         },
         phase: {
