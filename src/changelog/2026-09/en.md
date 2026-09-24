@@ -1,4 +1,12 @@
-## v1.0.313 — 2026-09-23 `Latest`
+## v1.0.314 — 2026-09-24 `Latest`
+
+### A Finished Turn No Longer Reports Itself as Failed
+
+When a run's work was already done and delivered, Wolffish could still end the turn with an error: **a "Provider rejected" card, on a run that had succeeded.** The cause was internal. Finishing a turn is a tool call — the model's way of saying "everything is delivered and nothing further is needed" — and when that call arrived **alongside other calls in the same batch**, the request sent back to the provider declared it as a call that nothing would ever answer. No provider accepts that shape, so the reply was refused and the refusal was written onto the turn as a failure. It was most visible on your phone, where a turn marked failed **showed the error and hid everything the turn had produced** — the finished report, the published post, the files — so the work looked lost when it was sitting intact in the transcript the whole time.
+
+The close is now taken out of the request **before the message is built**, so the call the model uses to say "nothing further" can never appear in a request that cannot be accepted. Closing a turn alongside real work behaves exactly as it always meant to: **the work in the batch still runs, and then the turn ends.** A turn that succeeded reports success.
+
+## v1.0.313 — 2026-09-23
 
 ### Notifications Arrive Whole
 
