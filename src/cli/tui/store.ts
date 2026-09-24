@@ -11,7 +11,7 @@ import { createStore, produce, type SetStoreFunction } from 'solid-js/store'
 
 export type Attachment = { name: string; path?: string; type?: string; size?: number }
 
-export type ToolStatus = 'running' | 'ok' | 'error' | 'denied'
+export type ToolStatus = 'running' | 'ok' | 'error' | 'denied' | 'checked_in'
 
 export type Delivery = { path: string; kind: string; index: number }
 
@@ -548,9 +548,11 @@ export function applySegment(
             `${tool.error ?? ''} ${rest.slice(0, 200)}`
           )
             ? 'denied'
-            : status === 'error' || status === 'failed' || tool.error
-              ? 'error'
-              : 'ok'
+            : status === 'checked_in'
+              ? 'checked_in'
+              : status === 'error' || status === 'failed' || tool.error
+                ? 'error'
+                : 'ok'
       })
       if (deliveries.length > 0) set('files', (files) => [...files, ...deliveries])
       if (options.live) set('activity', 'Thinking')

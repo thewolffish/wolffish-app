@@ -19,6 +19,12 @@ let getWorkingFolders = () => []
 // `process_*` — instead of this plugin's own map that dies with the app.
 let processesHost = null
 
+// Injected at init: binds a progress reporter to the tool call in flight. A
+// check-in (the runtime parking a long command and asking the model what to
+// do) reads what it reported — the last lines and the output rate — so the
+// model judges the command by what it printed, not by elapsed time alone.
+let progressReporterFactory = null
+
 function defaultCwd() {
   try {
     const folders = getWorkingFolders()
@@ -379,7 +385,7 @@ const toolDefinitions = [
         timeout: {
           type: 'number',
           description:
-            'Optional timeout in ms. Default: omit and let the command run until it exits. Only set this when you have a good reason to expect fast completion. Ignored when background is true.'
+            'Optional hard limit in ms — the command is killed when it passes. Rarely needed: without it the command runs until it exits and checks in with you (check_in_after) while it does, so you stay in control without killing anything. Ignored when background is true.'
         },
         background: {
           type: 'boolean',
@@ -561,6 +567,8 @@ function describeJob(job) {
 
 async function execShell(args, signal) {
   if (signal?.aborted) return { success: false, error: 'Stopped by user.' }
+  // Bound here, synchronously, while the call's async context is current.
+  const reportProgress = progressReporterFactory ? progressReporterFactory() : null
 
   const command = String(args?.command ?? '').trim()
   if (!command) return { success: false, error: 'empty command' }
@@ -673,6 +681,7 @@ async function execShell(args, signal) {
     cwd,
     shell,
     timeoutMs,
+    reportProgress,
     env: execEnv,
     signal
   })
@@ -731,9 +740,17 @@ async function execBackground({ command, display, cwd, shell, env }) {
   }
 }
 
-function execForeground({ command, display, cwd, shell, timeoutMs, env, signal }) {
+function execForeground({ command, display, cwd, shell, timeoutMs, env, signal, reportProgress }) {
   const startedAt = Date.now()
   const label = describeCommand(display).label
+  // Output-rate window for the check-in report: (timestamp, bytes) pairs
+  // from the last 30 s. Cheap to keep; only read when the command runs long.
+  const recent = []
+  const noteChunk = (bytes) => {
+    const now = Date.now()
+    recent.push([now, bytes])
+    while (recent.length > 0 && now - recent[0][0] > 30_000) recent.shift()
+  }
   return new Promise((resolve) => {
     let child
     try {
@@ -759,6 +776,25 @@ function execForeground({ command, display, cwd, shell, timeoutMs, env, signal }
     let resolved = false
     let timer = null
     let onAbort = null
+
+    if (reportProgress) {
+      // A function, computed on demand: the check-in reads it once when the
+      // command runs long, so a chatty command costs nothing per chunk.
+      reportProgress(() => {
+        const now = Date.now()
+        const bytes = recent.reduce((n, [, b]) => n + b, 0)
+        const span = recent.length > 0 ? Math.max(1, (now - recent[0][0]) / 1000) : 0
+        const rate =
+          recent.length > 0
+            ? `${Math.round(bytes / span)} B/s over the last ${Math.round(span)}s`
+            : 'no output in the last 30s'
+        const text = stripAnsi(capture.text())
+        const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0)
+        const tail = lines.slice(-20).join('\n')
+        const head = `Output rate: ${rate}. ${lines.length} line(s) so far${lines.length > 20 ? ' (last 20 shown)' : ''}.`
+        return tail ? `${head}\n${tail}` : `${head}\n(nothing printed yet)`
+      })
+    }
 
     const finalize = async (base) => {
       const raw = capture.text().trim()
@@ -838,7 +874,7 @@ function execForeground({ command, display, cwd, shell, timeoutMs, env, signal }
         kill()
         finish({
           success: false,
-          error: `Command timed out after ${timeoutMs}ms. If this command is expected to take longer and is not waiting for interactive input, retry with a larger timeout (or none) — or run it with background=true.`,
+          error: `Command timed out after ${timeoutMs}ms (a hard limit you set). Decide from what it printed: a narrower command, a managed process (process_start) for something that must keep running, or the same command with no timeout — it will check in with you while it runs.`,
           output: ''
         })
       }, timeoutMs)
@@ -847,9 +883,11 @@ function execForeground({ command, display, cwd, shell, timeoutMs, env, signal }
     child.stdout?.on('data', (chunk) => {
       stdoutSeen = true
       capture.push(chunk)
+      noteChunk(chunk.length)
     })
     child.stderr?.on('data', (chunk) => {
       capture.push(chunk)
+      noteChunk(chunk.length)
       if (stderrOnly.length < 20_000) stderrOnly += chunk.toString()
     })
     child.on('error', (err) => {
@@ -952,6 +990,8 @@ const plugin = {
   async init(context) {
     sudoCtx = context?.sudo ?? null
     processesHost = context?.processes ?? null
+    progressReporterFactory =
+      typeof context?.progressReporter === 'function' ? context.progressReporter : null
     if (typeof context?.getWorkingFolders === 'function') {
       getWorkingFolders = context.getWorkingFolders
     }

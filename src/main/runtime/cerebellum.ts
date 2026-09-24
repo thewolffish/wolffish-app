@@ -18,7 +18,12 @@ import type {
   McpTestResult
 } from '@main/runtime/mcp/types'
 import type { WorkflowEffort, WorkflowWaitOutcome } from '@main/runtime/workflow'
-import type { CountdownSnapshot, TaskSnapshot, WorkflowAgentView } from '@main/runtime/broca'
+import type {
+  CountdownSnapshot,
+  TaskSnapshot,
+  ToolResultStatus,
+  WorkflowAgentView
+} from '@main/runtime/broca'
 import type { CountdownArmInput, CountdownArmResult } from '@main/runtime/countdown'
 import type { WaitStartInput, WaitStartResult } from '@main/runtime/wait'
 import type { VideoSubmitInput, VideoSubmitResult } from '@main/runtime/video-tasks'
@@ -373,7 +378,7 @@ export type DependencyEmitHook = {
   emitToolCall: (toolCallId: string, name: string, args: Record<string, unknown>) => void
   emitToolResult: (
     toolCallId: string,
-    status: 'success' | 'failed' | 'denied',
+    status: ToolResultStatus,
     output: string,
     error?: string
   ) => void
@@ -958,6 +963,16 @@ export type PluginContext = {
    */
   getWorkingFolders: () => string[]
   /**
+   * Progress for the tool call in flight. Called synchronously at the top of
+   * execute() — it binds to the current tool call id — and the reporter it
+   * returns takes either a text or a function that produces one on demand.
+   * A check-in (runtime/check-in.ts) reads the latest value when the call
+   * runs long, so the model sees what the call has done so far. Optional
+   * for every plugin; a call that never reports checks in with elapsed time
+   * only.
+   */
+  progressReporter: () => (value: string | (() => string)) => void
+  /**
    * Shared, app-lifetime admin-password session. Plugins that run privileged
    * (sudo) commands call `sudo.ensurePassword()` once and merge
    * `sudo.getElevatedEnv()` into their elevated spawns so the user is prompted
@@ -1126,6 +1141,9 @@ const PLUGIN_FILES = ['index.mjs', 'index.js', 'index.cjs']
  */
 export const CORE_CAPABILITIES: ReadonlySet<string> = new Set([
   'tool-discovery',
+  // call_wait / call_stop — the two moves a check-in offers. The moment a
+  // tool call reports STILL RUNNING, both must be callable without a hop.
+  'check-in',
   // Turn-end countdowns (countdown_start) — the safe way to run anything that
   // would cut off the reply announcing it; `system` (core) arms through the
   // same manager, so the generic tool must be callable without a hop too.
@@ -1196,6 +1214,7 @@ export const CORE_CAPABILITIES: ReadonlySet<string> = new Set([
  * membership here is the single source of truth for "cannot be disabled".
  */
 export const LOCKED_CAPABILITIES: ReadonlySet<string> = new Set([
+  'check-in',
   'processes',
   'workflow',
   'countdown',
@@ -1298,6 +1317,8 @@ export class Cerebellum {
    * anchor one turn's ask card to another turn's tool_call segment.
    */
   private toolCallCtx = new AsyncLocalStorage<string>()
+  /** Latest progress per in-flight tool call — see PluginContext.progressReporter. */
+  private readonly toolProgress = new Map<string, string | (() => string)>()
   /**
    * The turn's working folders, entered by the agent once it has resolved
    * them (conversation picker ∪ project directories). Plugins read it at
@@ -2377,9 +2398,28 @@ export class Cerebellum {
     // async tree only, so nested executeTool invocations (dependency checks)
     // and concurrent turns' tool calls each resolve their own id.
     if (toolCallId) {
-      return this.toolCallCtx.run(toolCallId, () => this.executeToolInner(name, args, signal))
+      try {
+        return await this.toolCallCtx.run(toolCallId, () =>
+          this.executeToolInner(name, args, signal)
+        )
+      } finally {
+        this.toolProgress.delete(toolCallId)
+      }
     }
     return this.executeToolInner(name, args, signal)
+  }
+
+  /** The latest progress a running tool reported for this call, if any. */
+  getToolProgress(toolCallId: string): string | (() => string) | null {
+    return this.toolProgress.get(toolCallId) ?? null
+  }
+
+  private progressReporter(): (value: string | (() => string)) => void {
+    const id = this.toolCallCtx.getStore() ?? null
+    if (!id) return () => undefined
+    return (value) => {
+      this.toolProgress.set(id, value)
+    }
   }
 
   private async executeToolInner(
@@ -2868,6 +2908,7 @@ export class Cerebellum {
         workspaceRoot: this.options.workspaceRoot ?? '',
         getCurrentConversationId: () => this.getCurrentConversationId(),
         getWorkingFolders: () => this.getWorkingFolders(),
+        progressReporter: () => this.progressReporter(),
         sudo: sudoSession,
         host: this.pluginHost,
         automations: this.automationsHost,

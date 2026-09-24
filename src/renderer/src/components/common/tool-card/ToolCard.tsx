@@ -14,6 +14,10 @@ type CardStatus = ToolResultStatus | 'running'
 
 const STATUS_COLOR: Record<CardStatus, string> = {
   running: 'bg-accent/10 text-accent',
+  // A call that checked in: the model has its progress report, the call is
+  // still running. Amber, pulsing — neither done nor failed — until the
+  // in-place update lands (or forever, if the call outlives its turn).
+  checked_in: 'bg-amber-500/10 text-amber-600 dark:text-amber-400',
   success: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
   failed: 'bg-red-500/10 text-red-600 dark:text-red-400',
   denied: 'bg-muted/20 text-muted'
@@ -43,7 +47,7 @@ export function ToolCard({
 }): React.JSX.Element {
   const { t } = useTranslation()
   const status: CardStatus = result?.status ?? 'running'
-  const isRunning = status === 'running'
+  const isRunning = status === 'running' || status === 'checked_in'
   const meta: ToolResultMeta | undefined = result?.meta
   const argsKeys = Object.keys(call.args)
   const hasOutput = !!result?.output && result.output.length > 0
@@ -59,18 +63,20 @@ export function ToolCard({
   // Live-tick a wall clock while the tool is running so the elapsed
   // counter on the card moves. Once the result lands, timing.endedAt is
   // set and the effect tears the interval down — the card freezes the
-  // final duration instead of drifting.
+  // final duration instead of drifting. A checked-in call keeps ticking:
+  // its result is a progress report, not an end.
   const [now, setNow] = useState<number>(() => Date.now())
+  const ticking = status === 'checked_in' || (!!timing && timing.endedAt === undefined)
   useEffect(() => {
-    if (!timing || timing.endedAt !== undefined) return
+    if (!timing || !ticking) return
     const id = setInterval(() => setNow(Date.now()), 200)
     return () => clearInterval(id)
-  }, [timing])
+  }, [timing, ticking])
 
   // A reopened conversation has no live timing; the tool's own measured
   // duration (shell runs record it) fills the same slot.
   const elapsedMs = timing
-    ? (timing.endedAt ?? now) - timing.startedAt
+    ? (status === 'checked_in' ? now : (timing.endedAt ?? now)) - timing.startedAt
     : typeof meta?.durationMs === 'number'
       ? meta.durationMs
       : null
@@ -109,6 +115,9 @@ export function ToolCard({
               <span className="text-emerald-600 dark:text-emerald-400">+{meta.diff.additions}</span>{' '}
               <span className="text-red-600 dark:text-red-400">−{meta.diff.deletions}</span>
             </span>
+          )}
+          {meta?.checkIn && status === 'checked_in' && (
+            <span className="text-muted shrink-0 text-[11px]">{meta.checkIn.handle}</span>
           )}
           {typeof meta?.exitCode === 'number' && (
             <span

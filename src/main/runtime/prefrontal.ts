@@ -150,6 +150,14 @@ export type RuntimeContext = {
    */
   processes?: string
   /**
+   * Checked-in calls notice — tool calls this conversation parked as still
+   * running (runtime/check-in.ts), or that finished unread. One line naming
+   * each with its handle and elapsed time, every iteration until the model
+   * reads or stops them. Nothing ends them for it. Same vehicle and cache
+   * rationale as noProgress. Undefined renders nothing.
+   */
+  checkIns?: string
+  /**
    * Task-list notice — the list THIS turn wrote still has open items, so
    * the model is reminded, every iteration until it closes the list, that
    * the card the user watches must be rewritten as steps land and closed
@@ -956,6 +964,7 @@ function formatRuntimeBody(runtime: RuntimeContext | undefined): string {
     if (runtime.videoTasks) lines.push(`  ${runtime.videoTasks}`)
     if (runtime.openTodo) lines.push(`  ${runtime.openTodo}`)
     if (runtime.processes) lines.push(`  ${runtime.processes}`)
+    if (runtime.checkIns) lines.push(`  ${runtime.checkIns}`)
     if (runtime.taskList) lines.push(`  ${runtime.taskList}`)
     // Voice-reply notice (voice-prompted turn, Voice replies ON) — same
     // vehicle, same reason.

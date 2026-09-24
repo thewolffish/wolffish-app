@@ -278,7 +278,16 @@ export class Motor {
    * the transcript, and returns a structured result. The agent loop
    * decides whether to keep going.
    */
-  async executeStep(taskId: TaskId, call: ToolCall, signal?: AbortSignal): Promise<StepResult> {
+  async executeStep(
+    taskId: TaskId,
+    call: ToolCall,
+    signal?: AbortSignal,
+    // A per-call signal (runtime/check-in.ts): the ONLY way to stop one call
+    // without stopping the task. When given, it — not the task signal — is
+    // what the plugin sees; the agent links the turn's Stop into it while the
+    // call is in flight and aborts it alone when the model says call_stop.
+    stepSignal?: AbortSignal
+  ): Promise<StepResult> {
     const task = this.tasks.get(taskId)
     if (!task) throw new Error(`unknown task: ${taskId}`)
     if (!this.cerebellum) {
@@ -310,9 +319,10 @@ export class Motor {
     await this.writeTranscript(task)
     this.corpus?.emit('tool.called', { taskId, tool: call.name, args: call.args })
 
+    const execSignal = stepSignal ?? abort?.signal
     let attemptArgs = call.args
     for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
-      if (abort?.signal.aborted) {
+      if (abort?.signal.aborted || execSignal?.aborted) {
         step.status = 'stopped'
         step.finishedAt = Date.now()
         step.error = 'aborted'
@@ -326,7 +336,7 @@ export class Motor {
 
       let result: ToolExecutionResult
       try {
-        result = await this.cerebellum.executeTool(call.name, attemptArgs, abort?.signal, call.id)
+        result = await this.cerebellum.executeTool(call.name, attemptArgs, execSignal, call.id)
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
         result = { success: false, error: message }

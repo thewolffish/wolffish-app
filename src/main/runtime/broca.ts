@@ -27,7 +27,14 @@ export type SegmentTurnEndReason =
   | 'no_provider_available'
   | 'closed'
 
-export type ToolResultStatus = 'success' | 'failed' | 'denied'
+/**
+ * `checked_in`: the call is STILL RUNNING — it passed its check-in delay and
+ * the model got a progress report instead of a result (runtime/check-in.ts).
+ * The card stays open on that status until a second tool_result for the same
+ * toolCallId replaces it in place (upsertToolResultSegment) with the final
+ * outcome, or forever if the call outlives its turn.
+ */
+export type ToolResultStatus = 'success' | 'failed' | 'denied' | 'checked_in'
 
 /**
  * LEGACY (removed Orchestrator mode, ≤1.0.204): segments persisted by old
@@ -196,6 +203,13 @@ export type ToolResultMeta = {
   cwd?: string
   /** A short human label chosen by the tool (e.g. "Run tests"). */
   label?: string
+  /**
+   * The call checked in as still running (runtime/check-in.ts): its handle
+   * and where it stands. `running` on the check-in result itself and on a
+   * call_wait that timed out again; `finished` / `stopped` on the in-place
+   * update and on the call_wait that delivered the final result.
+   */
+  checkIn?: { handle: string; state: 'running' | 'finished' | 'stopped' }
 }
 
 /**
@@ -371,6 +385,27 @@ export function upsertCountdownSegment(
   for (let i = segments.length - 1; i >= 0; i--) {
     const s = segments[i]
     if (s.kind === 'countdown' && s.snapshot.countdownId === segment.snapshot.countdownId) {
+      segments[i] = segment
+      return
+    }
+  }
+  segments.push(segment)
+}
+
+/**
+ * Replace-by-toolCallId upsert for tool results. A call that checked in as
+ * still running gets a SECOND tool_result when it finally lands (the
+ * in-place card update); every persist path folds it onto the first so a
+ * conversation never carries two results for one call — which the history
+ * rebuild would replay as two tool messages for one tool_use.
+ */
+export function upsertToolResultSegment(
+  segments: Segment[],
+  segment: Extract<Segment, { kind: 'tool_result' }>
+): void {
+  for (let i = segments.length - 1; i >= 0; i--) {
+    const s = segments[i]
+    if (s.kind === 'tool_result' && s.toolCallId === segment.toolCallId) {
       segments[i] = segment
       return
     }
@@ -926,6 +961,35 @@ export class Broca {
     if (error !== undefined) segment.error = error
     if (meta !== undefined) segment.meta = meta
     this.emit(segment)
+  }
+
+  /**
+   * Re-emit a tool_result for a call that already has one: the in-place
+   * update of a checked-in card once the parked call lands. Bypasses the
+   * open-call bookkeeping (the call was closed by its check-in result) and
+   * relies on upsertToolResultSegment on every consumer to fold it.
+   */
+  emitToolResultUpdate(
+    turnId: string,
+    toolCallId: string,
+    status: ToolResultStatus,
+    output: string,
+    error?: string,
+    meta?: ToolResultMeta
+  ): boolean {
+    if (this.turnId !== turnId || !this.sink) return false
+    const segment: Segment = {
+      kind: 'tool_result',
+      turnId,
+      segmentId: this.nextId(),
+      toolCallId,
+      status,
+      output
+    }
+    if (error !== undefined) segment.error = error
+    if (meta !== undefined) segment.meta = meta
+    this.emit(segment)
+    return true
   }
 
   /**

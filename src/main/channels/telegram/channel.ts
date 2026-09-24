@@ -72,6 +72,7 @@ import {
   upsertWaitSegment,
   upsertProcessSegment,
   upsertBrowserSegment,
+  upsertToolResultSegment,
   upsertTodoSegment,
   appendTextSegment,
   upsertWorkflowSegment,
@@ -2945,6 +2946,7 @@ export class TelegramChannel {
     else if (segment.kind === 'wait') upsertWaitSegment(active.segments, segment)
     else if (segment.kind === 'process') upsertProcessSegment(active.segments, segment)
     else if (segment.kind === 'browser') upsertBrowserSegment(active.segments, segment)
+    else if (segment.kind === 'tool_result') upsertToolResultSegment(active.segments, segment)
     else if (segment.kind === 'todo') upsertTodoSegment(active.segments, segment)
     else if (segment.kind === 'text' || segment.kind === 'reasoning')
       appendTextSegment(active.segments, segment)

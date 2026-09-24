@@ -469,6 +469,9 @@ function ToolPart(props: {
           <Show when={props.part.status === 'denied'}>
             <span style={{ fg: p().muted }}>{'  denied'}</span>
           </Show>
+          <Show when={props.part.status === 'checked_in'}>
+            <span style={{ fg: p().muted }}>{'  still running'}</span>
+          </Show>
         </text>
       </box>
       <Show when={props.part.status === 'error' && props.part.error}>

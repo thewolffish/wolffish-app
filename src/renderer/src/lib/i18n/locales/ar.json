@@ -2088,7 +2088,8 @@
         "running": "قيد التنفيذ",
         "success": "اكتمل",
         "failed": "فشل",
-        "denied": "مرفوض"
+        "denied": "مرفوض",
+        "checked_in": "لا يزال قيد التنفيذ"
       }
     },
     "compactionCard": {

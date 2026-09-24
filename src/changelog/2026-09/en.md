@@ -1,4 +1,14 @@
-## v1.0.314 — 2026-09-24 `Latest`
+## v1.0.315 — 2026-09-25 `Latest`
+
+### Long Commands Check In Instead of Holding Wolffish Hostage
+
+A single tool call used to be a black box for as long as it ran. Ask for a folder and the search could crawl your entire home directory for an hour, and **nothing in Wolffish could tell the model it was happening** — it was frozen inside the call, unable to read your messages, unable to notice, unable to stop. **Every tool call now checks in.** A call that runs past its check-in time (two minutes by default, and the model sets it per call to whatever the job should reasonably need) keeps running exactly as it was, but the model gets a report instead of a wait: how long it has been going, **what it has printed so far** — a shell command shows its output rate and its last lines — and a handle. Then the model decides, at a real stop point: keep waiting on it, stop it, or carry on with other work while it runs.
+
+Nothing is capped and nothing is killed for it. An hour-long build is an hour of check-ins the model chose to wait through, each one after reading the progress. What changes is the reflex: most steps finish in seconds, so a check-in on a search or a listing almost always means the command was wrong — too broad, hung on a prompt — and the model now **stops it and takes a narrower route** instead of sitting blind. A parked call the model moves on from is named in its runtime status every step until it reads the result or ends it, and pressing Stop on a turn stops whatever that turn parked.
+
+You can see it happen. **The tool card shows "Still running"** in amber with the handle and a clock that keeps counting, on the desktop, in the terminal and on your phone, and it updates in place with the real result and total duration the moment the call lands.
+
+## v1.0.314 — 2026-09-24
 
 ### A Finished Turn No Longer Reports Itself as Failed
 

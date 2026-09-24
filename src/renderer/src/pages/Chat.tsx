@@ -71,6 +71,7 @@ import {
   upsertProcessSegment,
   browserKey,
   upsertBrowserSegment,
+  upsertToolResultSegment,
   upsertTodoSegment,
   upsertWorkflowSegment,
   WORKFLOW_TOOL_NAMES,
@@ -3278,7 +3279,8 @@ export function Chat({ sessionKey, visible, descriptor }: ChatProps): React.JSX.
           running: t('chat.toolCard.status.running'),
           success: t('chat.toolCard.status.success'),
           failed: t('chat.toolCard.status.failed'),
-          denied: t('chat.toolCard.status.denied')
+          denied: t('chat.toolCard.status.denied'),
+          checked_in: t('chat.toolCard.status.checked_in')
         },
         verbose: inAppVerbose,
         locale,
@@ -6851,6 +6853,7 @@ function appendSegment(messages: ChatMessage[], segment: Segment): ChatMessage[]
       else if (segment.kind === 'process') upsertProcessSegment(nextSegments, segment)
       else if (segment.kind === 'browser') upsertBrowserSegment(nextSegments, segment)
       else if (segment.kind === 'todo') upsertTodoSegment(nextSegments, segment)
+      else if (segment.kind === 'tool_result') upsertToolResultSegment(nextSegments, segment)
       else nextSegments.push(segment)
       const next: AssistantMessage = { ...m, segments: nextSegments }
       if (segment.kind === 'turn_end') next.stopReason = segment.stopReason
@@ -6860,8 +6863,10 @@ function appendSegment(messages: ChatMessage[], segment: Segment): ChatMessage[]
           [segment.toolCallId]: { startedAt: Date.now() }
         }
       } else if (segment.kind === 'tool_result') {
+        // A checked-in result is a progress report, not an end: the clock
+        // keeps running until the in-place update with the real outcome.
         const existing = m.toolTimings?.[segment.toolCallId]
-        if (existing && existing.endedAt === undefined) {
+        if (existing && segment.status !== 'checked_in') {
           next.toolTimings = {
             ...m.toolTimings,
             [segment.toolCallId]: { ...existing, endedAt: Date.now() }

@@ -58,6 +58,8 @@ import { turnScope } from '@main/runtime/corpus'
 import { countdowns } from '@main/runtime/countdown'
 import { waits } from '@main/runtime/wait'
 import { registerCountdownCapability } from '@main/runtime/countdown-capability'
+import { registerCheckInCapability } from '@main/runtime/check-in-capability'
+import { checkIns } from '@main/runtime/check-in'
 import { processManager } from '@main/processes/instance'
 import { registerProcessesCapability } from '@main/processes/tools'
 import { isLive as isProcessLive } from '@main/processes/types'
@@ -2077,6 +2079,12 @@ agent.cerebellum.setCountdownHost({
   pending: () => countdowns.pending()
 })
 registerCountdownCapability(agent.cerebellum, agent.amygdala, countdowns)
+// ── Check-ins ────────────────────────────────────────────────────────────
+// A tool call that runs past its check-in delay is parked, still running,
+// and the model decides (runtime/check-in.ts). The progress a running tool
+// reports (PluginContext.progressReporter) is what the check-in shows.
+checkIns.setProgressSource((toolCallId) => agent.cerebellum.getToolProgress(toolCallId))
+registerCheckInCapability(agent.cerebellum, checkIns)
 // ── Wolffish's own browser ───────────────────────────────────────────────
 // Tabs live in main (WebContentsView, z-parked under the app UI); the
 // `preview` capability is the model's handle on them. State changes reach

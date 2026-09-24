@@ -52,6 +52,7 @@ import {
   upsertWaitSegment,
   upsertProcessSegment,
   upsertBrowserSegment,
+  upsertToolResultSegment,
   upsertTodoSegment,
   upsertWorkflowSegment,
   type Segment
@@ -557,6 +558,7 @@ export class CliChannel {
         else if (segment.kind === 'wait') upsertWaitSegment(acc.segments, segment)
         else if (segment.kind === 'process') upsertProcessSegment(acc.segments, segment)
         else if (segment.kind === 'browser') upsertBrowserSegment(acc.segments, segment)
+        else if (segment.kind === 'tool_result') upsertToolResultSegment(acc.segments, segment)
         else if (segment.kind === 'todo') upsertTodoSegment(acc.segments, segment)
         else if (segment.kind === 'text' || segment.kind === 'reasoning')
           appendTextSegment(acc.segments, segment)

@@ -45,7 +45,7 @@ import remarkGfm from 'remark-gfm'
 
 type ToolCallSegment = Extract<Segment, { kind: 'tool_call' }>
 type ToolResultSegment = Extract<Segment, { kind: 'tool_result' }>
-type ToolStatus = 'running' | 'success' | 'failed' | 'denied'
+type ToolStatus = 'running' | 'success' | 'failed' | 'denied' | 'checked_in'
 
 const ASK_USER_TOOL = 'ask_user'
 const OFFER_OPTIONS_TOOL = 'offer_options'
@@ -517,7 +517,13 @@ function assistantParts(
  * disabled state and the document contents can never disagree.
  */
 export function hasExportableContent(messages: ChatMessage[], verbose: boolean): boolean {
-  const noLabels: Record<ToolStatus, string> = { running: '', success: '', failed: '', denied: '' }
+  const noLabels: Record<ToolStatus, string> = {
+    running: '',
+    success: '',
+    failed: '',
+    denied: '',
+    checked_in: ''
+  }
   const todoLists = latestTodoLists(
     messages.map((m) => (m.role === 'assistant' ? m.segments : undefined))
   )

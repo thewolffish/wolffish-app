@@ -106,7 +106,7 @@ triggers:
 tools:
   - name: shell_exec
     description: >-
-      Run a shell command and return its output (stdout+stderr in order, ANSI stripped). Default cwd is the first working folder when the conversation has one (the runtime tail names it), else the user home directory — so `npm test` or `git status` land in the project without a cwd argument. Commands run until they exit — only set a timeout when you have a good reason to expect fast completion. Long output keeps the LAST 2000 lines / 50 KB (where a failing run reports its failure) and the full text is saved to a log file the result names. A command shaped like a server or watcher (dev servers, `--watch`, `vitest` without `run`) is refused in the foreground — anything that must keep running is a managed process: use process_start (it picks a free port, waits for readiness and returns the URL); background=true is the plain fallback and registers the same way; pass force=true only if it really exits. Elevation commands (sudo, doas) authenticate automatically through the app's saved admin session — no TTY needed. This tool is for terminal work (git, package managers, builds, tests, scripts); use file_read / file_edit / file_grep / file_glob for reading, editing and searching files.
+      Run a shell command and return its output (stdout+stderr in order, ANSI stripped). Default cwd is the first working folder when the conversation has one (the runtime tail names it), else the user home directory — so `npm test` or `git status` land in the project without a cwd argument. Commands run until they exit, and a command that runs past its check-in (check_in_after, default 120s) reports STILL RUNNING with its last lines and a handle instead of holding you: you then call_wait on it or call_stop it. Most commands finish in seconds; a check-in on a search or a listing almost always means the command is too broad (a scan of the whole home directory) — stop it and narrow it. Long output keeps the LAST 2000 lines / 50 KB (where a failing run reports its failure) and the full text is saved to a log file the result names. A command shaped like a server or watcher (dev servers, `--watch`, `vitest` without `run`) is refused in the foreground — anything that must keep running is a managed process: use process_start (it picks a free port, waits for readiness and returns the URL); background=true is the plain fallback and registers the same way; pass force=true only if it really exits. Elevation commands (sudo, doas) authenticate automatically through the app's saved admin session — no TTY needed. This tool is for terminal work (git, package managers, builds, tests, scripts); use file_read / file_edit / file_grep / file_glob for reading, editing and searching files.
     parameters:
       command:
         type: string
@@ -118,7 +118,8 @@ tools:
       timeout:
         type: number
         required: false
-        description: Optional timeout in ms. Default is no timeout — commands run until they exit. Only set this when you have a good reason to expect fast completion. Ignored when background is true.
+        description: >-
+          Optional hard limit in ms — the command is killed when it passes. Rarely needed, because without it the command runs until it exits and checks in with you (check_in_after) while it does, so you stay in control without killing anything. Ignored when background is true.
       background:
         type: boolean
         required: false
@@ -209,7 +210,7 @@ confirm_patterns:
 - Method: runs commands via the host's preferred shell, detected once at startup:
   - **Unix:** `/bin/sh -c`
   - **Windows:** PowerShell 7+ (`pwsh`) if installed, else Windows PowerShell 5.1 (`powershell.exe`), else `cmd.exe`. Check the `<device>` block in your system prompt to see which one is active — it's reported as `shell:`.
-- Timeout: none by default — commands run until they exit. You may pass an explicit timeout if you want fast failure on a command you expect to finish quickly.
+- Check-ins: no hard limit by default. A command that runs past `check_in_after` (default 120 s; set it per call to what the command should reasonably need) reports STILL RUNNING — elapsed time, output rate, last lines, a `call-N` handle — and keeps running while you decide: `call_wait handle` blocks on it again and returns its real output, `call_stop handle` kills the process tree. `timeout` remains an explicit hard kill for the rare case you want one.
 - Elevation: `sudo` and `doas` commands are **fully supported**. The plugin detects them, pops a native OS password dialog (macOS: system dialog via osascript, Linux: zenity or kdialog), and injects the `-A` flag so no TTY is needed. On macOS and Linux the password is captured **once per app run** and held in memory, so every later privileged command is silent (Linux needs a GUI password tool — zenity/kdialog/ssh-askpass — and otherwise falls back to sudo's ~5-minute timestamp cache); Windows has no sudo. Either way the user sees one prompt, not one per command.
 - stdin: set to `/dev/null` (EOF) so commands that unexpectedly wait for input fail fast instead of hanging.
 - Returns combined stdout+stderr in arrival order, ANSI codes stripped, `NO_COLOR=1`/`PAGER=cat` set. Output keeps the LAST 2000 lines / 50 KB; when cut, the full text is saved under `<workspace>/tool-output/` and the result names the file.
@@ -227,18 +228,36 @@ The selected shell determines the syntax that works. Mismatched syntax fails fas
 
 If you're unsure which dialect a command needs, prefer external `.exe` invocations (`where.exe`, `findstr.exe`, `cloudflared.exe`) — those work identically across all three shells.
 
-## Timeout guidelines
+## Long commands: check in, decide, never sit blind
 
-**Default: no timeout.** Let commands run until they finish. Long
-execution is normal in an agentic workflow — nothing is wasted while the
-device runs a command, and most things self-terminate anyway.
+There is no hard limit and no automatic kill. Instead the command **checks in**
+with you when it runs past `check_in_after` (default 120 s): the tool result
+says STILL RUNNING and shows elapsed time, the output rate over the last 30 s,
+the last 20 lines, and a `call-N` handle. The command keeps running. You decide:
 
-Only set a timeout when you have a really good reason — when you know
-for a fact the command should finish quickly and hanging would mean
-something is wrong. For most commands, just let them run.
+- **Most steps finish in seconds to minutes.** A check-in on a search, a
+  listing, a status query or a small script almost always means the command is
+  wrong, not slow: `find ~ -name x` crawling the whole home directory and every
+  `node_modules` and `Library` inside it, a command hung on a prompt, a network
+  call that will never answer. `call_stop handle="call-N"` and take the narrow
+  route — `mdfind -name x` on macOS, a specific root, `-maxdepth`, `-prune`
+  for `node_modules`/`Library`/`.git`, `fd`/`rg` when installed.
+- **Keep waiting only when the progress shows real work on a job you know is
+  long** — a build printing targets, an install pulling packages, a download
+  with a moving byte count, a large test suite. `call_wait handle="call-N"`
+  blocks on it again; set `check_in_after` on that call to what the job
+  should reasonably need. Ten waits on a genuine hour-long build are fine —
+  each one is a decision you made after reading its progress.
+- Set `check_in_after` on the original call when you already know the shape:
+  a few seconds for a query you expect to be instant, several minutes for a
+  known build. The default only decides when you get to think, never what
+  you do.
+- If you move on without waiting or stopping, the runtime status names the
+  parked call every step until you read (`call_wait`) or stop it. Nothing ends
+  it for you — including the end of the turn.
 
-For processes that never exit on their own (dev servers, watchers,
-daemons), use `background: true` — timeout is irrelevant.
+For processes that never exit on their own (dev servers, watchers, daemons),
+use `process_start` or `background: true` — a check-in is for work that ends.
 
 ## Elevation commands (sudo, doas, etc.)
 

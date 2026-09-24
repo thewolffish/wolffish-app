@@ -68,6 +68,7 @@ import {
   upsertWaitSegment,
   upsertProcessSegment,
   upsertBrowserSegment,
+  upsertToolResultSegment,
   appendTextSegment,
   upsertWorkflowSegment,
   WORKFLOW_TOOL_NAMES,
@@ -108,6 +109,13 @@ import { Hippocampus, type TurnToolCall } from '@main/runtime/hippocampus'
 import { countdowns } from '@main/runtime/countdown'
 import { processManager } from '@main/processes/instance'
 import { waits } from '@main/runtime/wait'
+import {
+  checkIns,
+  CHECK_IN_EXEMPT_TOOLS,
+  DEFAULT_CHECK_IN_SECONDS,
+  splitCheckInArg,
+  type ParkedCall
+} from '@main/runtime/check-in'
 import { browserTabs } from '@main/browser/tab-manager'
 import { videoTasks } from '@main/runtime/video-tasks'
 import { Hypothalamus } from '@main/runtime/hypothalamus'
@@ -988,6 +996,12 @@ export class Agent {
     const unregisterProcessEmitter = processManager.registerTurnEmitter(turn.turnId, (snapshot) =>
       broca.emitProcess(turn.turnId, snapshot)
     )
+    // Same pattern for a tool call that checked in as still running: when it
+    // finally lands while this turn is still open, its card flips in place
+    // (a second tool_result for the same call, folded by every persist path).
+    const unregisterCheckInEmitter = checkIns.registerTurnEmitter(turn.turnId, (record) =>
+      this.emitCheckInLanding(broca, turn.turnId, record)
+    )
     try {
       return await this.cerebellum.runWithConversation(turn.conversationId ?? null, () =>
         this.workflowCtx.run(workflow, () => this.runRespond(turn, workflow, broca))
@@ -998,7 +1012,28 @@ export class Agent {
       unregisterWaitEmitter()
       unregisterBrowserEmitter()
       unregisterProcessEmitter()
+      unregisterCheckInEmitter()
     }
+  }
+
+  /** The in-place card update for a parked call that landed (or was stopped) mid-turn. */
+  private emitCheckInLanding(broca: Broca, turnId: string, record: ParkedCall): void {
+    const result = record.result
+    if (!result) return
+    const stopped = record.state === 'stopped'
+    const meta = {
+      ...(result.meta ?? {}),
+      durationMs: (record.finishedAt ?? Date.now()) - record.startedAt,
+      checkIn: { handle: record.handle, state: stopped ? 'stopped' : 'finished' }
+    } as ToolResultMeta
+    broca.emitToolResultUpdate(
+      turnId,
+      record.toolCallId,
+      result.ok ? 'success' : 'failed',
+      result.output,
+      result.ok ? undefined : (result.verbose ?? result.output),
+      meta
+    )
   }
 
   /**
@@ -1471,6 +1506,10 @@ export class Agent {
         // perturbs the cached prompt prefix. `null` renders nothing.
         const noProgressSignal = noProgress.signal()
         const noProgressText = noProgressNotice(noProgressSignal) ?? undefined
+        // Parked tool calls (runtime/check-in.ts): still running or finished
+        // unread. Same vehicle as noProgress — the model is told every
+        // iteration until it reads or stops them; nothing ends them for it.
+        const checkInsText = checkIns.noticeText(turn.conversationId ?? turn.turnId)
 
         // Channel-format notices — a prose-mirroring channel reporting that an
         // already-DELIVERED prose block reached the user's phone with raw
@@ -1563,6 +1602,7 @@ export class Agent {
             inheritedTodo && !todoWrittenThisTurn ? openTodoNotice(inheritedTodo) : undefined,
           taskList: todoItemsThisTurn ? openTaskListNotice(todoItemsThisTurn) : undefined,
           processes: processManager.noticeText(turn.conversationId ?? null) || undefined,
+          checkIns: checkInsText,
           voiceReply: voiceReplyNotice,
           phoneNotify: phoneNotifyText,
           screenIndicator: screenIndicatorText,
@@ -1724,7 +1764,8 @@ export class Agent {
               voiceReplyNotice ||
               phoneNotifyText ||
               screenIndicatorText ||
-              interjectionNoticeText)
+              interjectionNoticeText ||
+              checkInsText)
               ? formatRuntimeStatus({
                   iteration: iterationCount,
                   toolsCalled: totalToolCalls,
@@ -1736,6 +1777,7 @@ export class Agent {
                   controlToken: controlTokenText,
                   videoTasks: videoTasksText,
                   closing: closingNoticeText,
+                  checkIns: checkInsText,
                   voiceReply: voiceReplyNotice,
                   phoneNotify: phoneNotifyText,
                   screenIndicator: screenIndicatorText,
@@ -2079,6 +2121,35 @@ export class Agent {
         // first. Segment order is untouched: tool_call segments already
         // streamed in order, and tool_result segments are emitted by the
         // sequential loop, in order, as each result is awaited.
+        // The universal `check_in_after` argument (runtime/check-in.ts) is the
+        // model's, not the tool's: split it off BEFORE the safety match and
+        // the dispatch so it never reaches a plugin's schema or changes an
+        // approval signature. The assistant message above keeps the args as
+        // emitted — that is what the provider must see echoed back.
+        const checkInSeconds = new Map<string, number>()
+        parsed.toolCalls = parsed.toolCalls.map((tc) => {
+          // call_wait takes the argument ITSELF — it is the delay of the
+          // wait it performs, read by the check-in plugin — so it is the
+          // one call that keeps it.
+          if (tc.name === 'call_wait') return tc
+          const split = splitCheckInArg(tc.args)
+          if (split.seconds !== null) checkInSeconds.set(tc.id, split.seconds)
+          return split.args === tc.args ? tc : { ...tc, args: split.args }
+        })
+        // One AbortController per call: the turn's Stop reaches the call
+        // through it while the call is in flight, and call_stop aborts that
+        // one call alone once it is parked (the motor's task signal would
+        // take every later call of the turn down with it).
+        const callControllers = new Map<string, AbortController>()
+        const controllerFor = (id: string): AbortController => {
+          let c = callControllers.get(id)
+          if (!c) {
+            c = new AbortController()
+            callControllers.set(id, c)
+          }
+          return c
+        }
+
         const prestarted = new Map<string, Promise<StepResult>>()
         if (task && parsed.toolCalls.length > 1) {
           let inflight = 0
@@ -2090,7 +2161,12 @@ export class Agent {
             const level = this.amygdala.match(call)?.level ?? 'safe'
             if (level !== 'safe' && level !== 'warn') continue
             const taskId = task.id
-            const p = this.motor.executeStep(taskId, call, turn.signal)
+            const p = this.motor.executeStep(
+              taskId,
+              call,
+              turn.signal,
+              controllerFor(call.id).signal
+            )
             // Swallow here; the awaiting slot below re-throws through the
             // same promise and handles it. Without this an early rejection
             // would surface as an unhandled rejection before its turn.
@@ -2104,6 +2180,10 @@ export class Agent {
         for (const call of parsed.toolCalls) {
           if (turn.signal?.aborted) {
             aborted = true
+            // Pre-started read-only calls whose slot was never reached are
+            // linked to the turn's Stop only when awaited; abort them here so
+            // a Stop mid-batch ends every call the batch started.
+            for (const c of callControllers.values()) c.abort()
             break
           }
 
@@ -2280,18 +2360,61 @@ export class Agent {
             verbose?: string
             meta?: Record<string, unknown>
           }
+          let checkedIn = false
           try {
             // A read-only call the batch pre-started (see prestarted above)
             // is awaited here, at its own position, so results land in call
             // order even though execution overlapped.
-            const r = await (prestarted.get(call.id) ??
-              this.motor.executeStep(task.id, call, turn.signal))
-            result = {
-              ok: r.ok,
-              output: r.output,
-              images: r.images,
-              verbose: r.verbose,
-              meta: r.meta
+            const controller = controllerFor(call.id)
+            const onTurnStop = (): void => controller.abort()
+            if (turn.signal) {
+              if (turn.signal.aborted) controller.abort()
+              else turn.signal.addEventListener('abort', onTurnStop, { once: true })
+            }
+            const pending =
+              prestarted.get(call.id) ??
+              this.motor.executeStep(task.id, call, turn.signal, controller.signal)
+            // The check-in race (runtime/check-in.ts): a call that outlives
+            // its delay is parked — still running — and the model gets a
+            // STILL RUNNING report instead of blocking on it. Tools whose
+            // blocking is the model's own decision are never raced.
+            const raced = CHECK_IN_EXEMPT_TOOLS.has(call.name)
+              ? { kind: 'settled' as const, result: await pending }
+              : await checkIns.race({
+                  promise: pending,
+                  controller,
+                  conversationKey: turn.conversationId ?? turn.turnId,
+                  turnId: turn.turnId,
+                  toolCallId: call.id,
+                  name: call.name,
+                  argsSummary,
+                  seconds: checkInSeconds.get(call.id) ?? DEFAULT_CHECK_IN_SECONDS
+                })
+            if (raced.kind === 'checked_in') {
+              // Parked: the turn's Stop no longer reaches it through this
+              // listener — abortTurn below covers a Stop explicitly — so a
+              // turn that ENDS naturally leaves the call running, as the
+              // model chose.
+              turn.signal?.removeEventListener('abort', onTurnStop)
+              checkedIn = true
+              result = {
+                ok: true,
+                output: raced.text,
+                meta: {
+                  checkIn: { handle: raced.record.handle, state: 'running' },
+                  durationMs: Date.now() - raced.record.startedAt
+                }
+              }
+            } else {
+              turn.signal?.removeEventListener('abort', onTurnStop)
+              const r = raced.result
+              result = {
+                ok: r.ok,
+                output: r.output,
+                images: r.images,
+                verbose: r.verbose,
+                meta: r.meta
+              }
             }
           } catch (err) {
             if (err instanceof SafetyBlockedError) {
@@ -2329,7 +2452,11 @@ export class Agent {
           }
           if (INDICATOR_OFF_TOOLS.has(call.name) && result.ok) lastComputerAction = null
 
-          const status: ToolResultStatus = result.ok ? 'success' : 'failed'
+          const status: ToolResultStatus = checkedIn
+            ? 'checked_in'
+            : result.ok
+              ? 'success'
+              : 'failed'
 
           // Tools whose name ends with _to_chat inject their output directly
           // into the chat stream instead of showing a tool result card.
@@ -2441,6 +2568,11 @@ export class Agent {
       // stream — which the renderer and channels replay into the next
       // request's history — stays valid. No-op on a clean turn.
       broca.closeOpenToolCalls(turn.turnId, 'failed', INTERRUPTED_TOOL_RESULT)
+      // A Stop on the turn stops what the turn parked too — the user pressed
+      // Stop on THIS work. A turn that ends on its own leaves parked calls
+      // running: that was the model's decision, and the next turn's runtime
+      // status names them.
+      if (stopReason === 'canceled') checkIns.abortTurn(turn.turnId)
 
       if (task) {
         // Motor derives succeeded/failed from per-step outcomes. We only
@@ -2921,6 +3053,7 @@ export class Agent {
       else if (seg.kind === 'wait') upsertWaitSegment(segments, seg)
       else if (seg.kind === 'process') upsertProcessSegment(segments, seg)
       else if (seg.kind === 'browser') upsertBrowserSegment(segments, seg)
+      else if (seg.kind === 'tool_result') upsertToolResultSegment(segments, seg)
       else if (seg.kind === 'text' || seg.kind === 'reasoning') appendTextSegment(segments, seg)
       else segments.push(seg)
       if (seg.kind === 'text') acc.assistantContent += seg.delta
