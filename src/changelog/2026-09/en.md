@@ -1,4 +1,12 @@
-## v1.0.315 — 2026-09-25 `Latest`
+## v1.0.316 — 2026-09-26 `Latest`
+
+### The Extension Panel No Longer Opens a Tab Every Time You Look at It
+
+Open the browser extension panel with Chrome connected and **a blank tab appeared in your browser** — another one on every visit, and another each time the connection blinked. The panel runs a readiness check when it opens, and part of that check asks the extension which tab a command would land on. The extension answered that question the way it answers it for real work: **if the conversation had no tab yet, it made one.** A diagnostic was opening pages nobody asked for.
+
+The check now **only looks at tabs that already exist** — the conversation's own tab if it is still open, otherwise the one you are looking at — and skips that part of the probe when there is nothing to look at. The bundled extension is updated to **0.1.68** with the fix; reload it once from chrome://extensions and the panel stays quiet.
+
+## v1.0.315 — 2026-09-25
 
 ### Long Commands Check In Instead of Holding Wolffish Hostage
 
