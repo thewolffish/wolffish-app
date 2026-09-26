@@ -1063,7 +1063,7 @@ tools:
         required: false
   - name: ext_list_network_requests
     readOnly: true
-    description: 'List the network requests the page has made since its last navigation — method, URL, status, type, size and duration. Needs the debugger attached to that tab. Use it to see what an app actually called, to find the API behind a view, or to explain a failure the page swallowed.'
+    description: 'List the network requests captured on the tab — method, URL, status, type, size and duration. Capture starts when the debugger attaches and resets on each navigation, so a page that loaded before the attach shows nothing until you reload or navigate. Needs the debugger attached to that tab. Use it to see what an app actually called, to find the API behind a view, or to explain a failure the page swallowed.'
     parameters:
       pageSize:
         type: number
@@ -1217,7 +1217,7 @@ confirm_patterns:
     reason: Modifying browser cookies
   - pattern: 'ext_navigate\s.*(?:bank|paypal|venmo|stripe\.com|checkout|payment)'
     reason: Navigating to a financial or payment site
-version: 2.1.0
+version: 2.1.1
 ---
 
 # Browser Extension

@@ -1,4 +1,16 @@
-## v1.0.316 — 2026-09-26 `Latest`
+## v1.0.317 — 2026-09-26 `Latest`
+
+### The Network Tab Says When It Started Watching
+
+Attach the debugger to a page that had already loaded, ask for its network requests, and the answer was **"no requests since the last navigation"** — which reads as "this page called nothing", when a Next.js app had just pulled thirty assets. The truth is simpler: capture can only start the moment the debugger attaches, and nothing before that instant is recoverable. The tool knew that and did not say it, so the model tried again, got the same empty list, and concluded the feature was broken.
+
+The list now **reports its own capture window**. When the page loaded before capture began, the empty result says exactly that and tells the model what to do: **reload the page or navigate on**, then list again. The tool's own description says the same, so the model no longer expects a page's load to be in a buffer that started after it. The bundled extension is updated to **0.1.69** with this; reload it once from chrome://extensions.
+
+### A Missing Request Id Is Not Retried Three Times
+
+Ask for a network request by an id that is not in the buffer and the error was correct, but the retry logic treated it as transient and **tried the same lookup three times** before giving up. It is a local array lookup and cannot change on a retry, so it now fails once and moves on.
+
+## v1.0.316 — 2026-09-26
 
 ### The Extension Panel No Longer Opens a Tab Every Time You Look at It
 

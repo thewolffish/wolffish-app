@@ -1265,6 +1265,7 @@ const checkStoragePermission = (e) => {
   dialog: null,
   network: [],
   networkById: /* @__PURE__ */ new Map(),
+  navigations: 0,
   console: [],
   reqSeq: 0,
   msgSeq: 0,
@@ -1432,7 +1433,7 @@ const checkStoragePermission = (e) => {
   o && (o.fromCache = !0);
 }, onFrameNavigated = (e, t) => {
   const s = t;
-  s.frame.parentId || resetForNavigation(e, s.frame.loaderId);
+  s.frame.parentId || (e.navigations += 1, resetForNavigation(e, s.frame.loaderId));
 }, onDialogOpening = (e, t) => {
   const s = t;
   e.dialog = { type: s.type, message: s.message, defaultPrompt: s.defaultPrompt ?? "", url: s.url };
@@ -2380,7 +2381,13 @@ const restoreSessions = async () => {
   fromCache: e.fromCache
 }), handleListNetworkRequests = async (e) => {
   const { pageSize: t, pageIdx: s, resourceTypes: o } = e, n = await sessionForCapture(e, "Network capture"), a = Array.isArray(o) ? o.map((m) => String(m).toLowerCase()) : [], r = a.length > 0 ? n.network.filter((m) => a.includes(m.type)) : n.network, { items: i, total: c, page: d } = paginate(r, t, s);
-  return { requests: i.map(summarize), total: c, page: d };
+  return {
+    requests: i.map(summarize),
+    total: c,
+    page: d,
+    captureSince: n.attachedAt,
+    pageLoadedBeforeCapture: n.navigations === 0
+  };
 }, handleGetNetworkRequest = async (e) => {
   const { reqid: t, includeBody: s } = e, o = await sessionForCapture(e, "Network capture"), n = o.network.find((i) => i.reqid === t);
   if (!n)

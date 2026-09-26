@@ -206,7 +206,8 @@ const main = async (): Promise<void> => {
       'Network capture needs the debugger. Call ext_debugger_attach first.',
       'Cannot access contents of the page',
       'selector syntax is incorrect: bad',
-      'Cannot attach the debugger to a browser-internal page (chrome://settings)'
+      'Cannot attach the debugger to a browser-internal page (chrome://settings)',
+      'Network request 0 is not in the capture buffer. Call ext_list_network_requests for current ids.'
     ]) {
       assert.equal(plugin.classifyError(message).retryable, false, `non-retryable: ${message}`)
     }
